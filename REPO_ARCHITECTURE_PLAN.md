@@ -1,4 +1,4 @@
-# Forge — Repo Architecture & Gating Plan
+# Forge â€” Repo Architecture & Gating Plan
 
 > **Companion to:** BUILD_PLAN.md
 > **Purpose:** Defines the repository structure, licensing, gating mechanics, and operational separation between the free CLI, the marketing site, and the paid Business platform.
@@ -13,21 +13,21 @@ You will run **three repos**, not one or two:
 
 | Repo | Visibility | Purpose | Hosts |
 |---|---|---|---|
-| `forge` | **Public** | The free CLI tool | PyPI, GitHub community |
-| `forge-web` | Public | Marketing site + docs source | Vercel + Mintlify |
-| `forge-platform` | **Private** | The paid Business web app + license server | Your infra (and customer infra for self-hosted) |
+| `decoy` | **Public** | The free CLI tool | PyPI, GitHub community |
+| `decoy-web` | Public | Marketing site + docs source | Vercel + Mintlify |
+| `decoy-platform` | **Private** | The paid Business web app + license server | Your infra (and customer infra for self-hosted) |
 
 Gating happens in **three layers**:
 
-1. **CLI feature gating** — the public CLI checks for a signed license key before unlocking Business commands
-2. **Platform-only features** — web UI, scheduling persistence, audit logs, RBAC live entirely in the private platform repo and are inaccessible to free users by definition
-3. **License issuance** — Stripe billing → license server (in platform) → signed JWT delivered to customer
+1. **CLI feature gating** â€” the public CLI checks for a signed license key before unlocking Business commands
+2. **Platform-only features** â€” web UI, scheduling persistence, audit logs, RBAC live entirely in the private platform repo and are inaccessible to free users by definition
+3. **License issuance** â€” Stripe billing â†’ license server (in platform) â†’ signed JWT delivered to customer
 
-Build them in this order: **`forge` first, `forge-web` in parallel, `forge-platform` LAST** (after CLI demand is validated).
+Build them in this order: **`decoy` first, `decoy-web` in parallel, `decoy-platform` LAST** (after CLI demand is validated).
 
 ---
 
-## Phase 0 — Decisions to Lock Before Any Code
+## Phase 0 â€” Decisions to Lock Before Any Code
 
 ### 0.1 License Choice for the CLI (MUST-HAVE)
 
@@ -37,16 +37,16 @@ You must pick a license before your first PyPI release. Changing it later is leg
 
 | License | What it does | Used by | Verdict for Forge |
 |---|---|---|---|
-| **MIT / Apache 2.0** | Fully open source. Anyone can use, modify, redistribute, even sell. | Most OSS dev tools | ❌ Too permissive — a competitor could fork and offer a managed Forge |
-| **Business Source License (BUSL)** | Source-available now. Commercial use restricted. Auto-converts to Apache 2.0 after N years (typically 4). | Sentry, MariaDB, CockroachDB, Couchbase | ✅ **Recommended** |
-| **Elastic License v2 (ELv2)** | Source-available. Can't be offered as a competing managed service. Can't be modified to remove license/auth checks. | Elastic, Redis (post-2024), MinIO | ✅ Acceptable alternative |
+| **MIT / Apache 2.0** | Fully open source. Anyone can use, modify, redistribute, even sell. | Most OSS dev tools | âŒ Too permissive â€” a competitor could fork and offer a managed Forge |
+| **Business Source License (BUSL)** | Source-available now. Commercial use restricted. Auto-converts to Apache 2.0 after N years (typically 4). | Sentry, MariaDB, CockroachDB, Couchbase | âœ… **Recommended** |
+| **Elastic License v2 (ELv2)** | Source-available. Can't be offered as a competing managed service. Can't be modified to remove license/auth checks. | Elastic, Redis (post-2024), MinIO | âœ… Acceptable alternative |
 
 **Recommended choice: BUSL with a 4-year change date and Apache 2.0 as the change license.**
 
-This signals "community-friendly but we're a business" — it's the modern default for monetized dev tools. The 4-year auto-conversion is a strong signal of long-term openness without giving away the present.
+This signals "community-friendly but we're a business" â€” it's the modern default for monetized dev tools. The 4-year auto-conversion is a strong signal of long-term openness without giving away the present.
 
 - [ ] License chosen (recommend BUSL)
-- [ ] LICENSE.md added to `forge` repo before first release
+- [ ] LICENSE.md added to `decoy` repo before first release
 - [ ] License documented prominently in README
 - [ ] Decision recorded with reasoning (in case you have to defend it later to investors or community)
 
@@ -55,15 +55,15 @@ This signals "community-friendly but we're a business" — it's the modern defau
 Pick once, stay consistent. Recommended:
 
 ```
-forge                    ← the CLI (the headline name, no suffix)
-forge-web                ← the marketing site + docs
-forge-platform           ← the paid Business product
-forge-helm               ← (later) Helm chart for self-hosted deploys
-forge-docker             ← (later) Docker images for the platform
-forge-examples           ← (later) example pipelines and recipes
+forge                    â† the CLI (the headline name, no suffix)
+forge-web                â† the marketing site + docs
+forge-platform           â† the paid Business product
+forge-helm               â† (later) Helm chart for self-hosted deploys
+forge-docker             â† (later) Docker images for the platform
+forge-examples           â† (later) example pipelines and recipes
 ```
 
-The unsuffixed name (`forge`) belongs to the most important public artifact — the CLI. This is GitHub convention (e.g., `vercel/next.js`, not `vercel/next-js-cli`). When someone hits `github.com/forgeio/forge`, they should land on the thing they install.
+The unsuffixed name (`decoy`) belongs to the most important public artifact â€” the CLI. This is GitHub convention (e.g., `vercel/next.js`, not `vercel/next-js-cli`). When someone hits `github.com/forgeio/forge`, they should land on the thing they install.
 
 - [ ] GitHub org name decided (e.g., `forgeio`, `forgehq`, `getforge`)
 - [ ] Repo names confirmed
@@ -73,31 +73,31 @@ The unsuffixed name (`forge`) belongs to the most important public artifact — 
 
 You have two macro paths. Pick one:
 
-**Path A — Source-available CLI (recommended)**
+**Path A â€” Source-available CLI (recommended)**
 - Public repo, BUSL license
 - Code is readable, forkable for personal/internal use
 - Builds trust with technical buyers
 - Community can submit PRs for connectors, transforms, bug fixes
 - License key prevents unauthorized commercial use
 
-**Path B — Closed binary CLI**
+**Path B â€” Closed binary CLI**
 - Private repo
 - Ship as compiled wheels or PyInstaller binary only
 - No source visibility
 - No community contributions
 - Smaller surface area for license circumvention
 
-**Strong recommendation: Path A.** Your buyers (senior data engineers) trust tools whose code they can read. Closed binaries trigger "what is this thing actually doing to my data?" alarms — which is the *opposite* of what you want for a data masking tool. The trust signal of source-availability is worth more than the marginal protection of a closed binary, and BUSL gives you adequate commercial protection.
+**Strong recommendation: Path A.** Your buyers (senior data engineers) trust tools whose code they can read. Closed binaries trigger "what is this thing actually doing to my data?" alarms â€” which is the *opposite* of what you want for a data masking tool. The trust signal of source-availability is worth more than the marginal protection of a closed binary, and BUSL gives you adequate commercial protection.
 
 - [ ] Path chosen (recommend A)
 
 ---
 
-## Repo 1 — `forge` (Public CLI)
+## Repo 1 â€” `decoy` (Public CLI)
 
 ### Purpose
 
-The free Python CLI tool. This is what `pip install forge` installs. This is what data engineers fall in love with at 11pm on a Tuesday.
+The free Python CLI tool. This is what `pip install decoy` installs. This is what data engineers fall in love with at 11pm on a Tuesday.
 
 ### Visibility
 
@@ -110,16 +110,16 @@ The free Python CLI tool. This is what `pip install forge` installs. This is wha
 - All synthetic data generation logic
 - All connectors (source/destination implementations)
 - YAML schema definitions and validation
-- License *verification* code (NOT issuance — see below)
+- License *verification* code (NOT issuance â€” see below)
 - CLI tests
 - CHANGELOG.md
 - CONTRIBUTING.md
 - Issue templates and PR templates
-- Documentation source (only the parts that document the CLI itself; marketing copy lives in `forge-web`)
+- Documentation source (only the parts that document the CLI itself; marketing copy lives in `decoy-web`)
 
 ### What Does NOT Live Here
 
-- License *signing/issuance* code (lives in `forge-platform`)
+- License *signing/issuance* code (lives in `decoy-platform`)
 - Web UI code
 - Scheduler/orchestration backend
 - Billing/Stripe integration
@@ -131,43 +131,43 @@ The free Python CLI tool. This is what `pip install forge` installs. This is wha
 
 ```
 forge/
-├── .github/
-│   ├── workflows/
-│   │   ├── test.yml              # multi-OS, multi-Python CI
-│   │   ├── release.yml           # publishes to PyPI on tag
-│   │   └── lint.yml
-│   ├── ISSUE_TEMPLATE/
-│   │   ├── bug_report.md
-│   │   ├── feature_request.md
-│   │   └── connector_request.md
-│   └── PULL_REQUEST_TEMPLATE.md
-├── src/
-│   └── forge/
-│       ├── __init__.py
-│       ├── __main__.py
-│       ├── cli/                  # Typer commands
-│       ├── transforms/           # masking transforms
-│       ├── generators/           # synthetic data
-│       ├── connectors/           # source/dest plugins
-│       ├── schema/               # Pydantic YAML models
-│       ├── license/              # JWT verification only
-│       ├── telemetry/            # opt-in usage events
-│       └── ui/                   # Rich-based output formatting
-├── tests/
-├── examples/                     # sample YAML pipelines
-├── docs/                         # if any docs are repo-local; main docs live in forge-web/Mintlify
-├── pyproject.toml
-├── README.md
-├── LICENSE.md                    # BUSL
-├── CHANGELOG.md
-├── CONTRIBUTING.md
-├── SECURITY.md
-└── CODE_OF_CONDUCT.md
+â”œâ”€â”€ .github/
+â”‚   â”œâ”€â”€ workflows/
+â”‚   â”‚   â”œâ”€â”€ test.yml              # multi-OS, multi-Python CI
+â”‚   â”‚   â”œâ”€â”€ release.yml           # publishes to PyPI on tag
+â”‚   â”‚   â””â”€â”€ lint.yml
+â”‚   â”œâ”€â”€ ISSUE_TEMPLATE/
+â”‚   â”‚   â”œâ”€â”€ bug_report.md
+â”‚   â”‚   â”œâ”€â”€ feature_request.md
+â”‚   â”‚   â””â”€â”€ connector_request.md
+â”‚   â””â”€â”€ PULL_REQUEST_TEMPLATE.md
+â”œâ”€â”€ src/
+â”‚   â””â”€â”€ forge/
+â”‚       â”œâ”€â”€ __init__.py
+â”‚       â”œâ”€â”€ __main__.py
+â”‚       â”œâ”€â”€ cli/                  # Typer commands
+â”‚       â”œâ”€â”€ transforms/           # masking transforms
+â”‚       â”œâ”€â”€ generators/           # synthetic data
+â”‚       â”œâ”€â”€ connectors/           # source/dest plugins
+â”‚       â”œâ”€â”€ schema/               # Pydantic YAML models
+â”‚       â”œâ”€â”€ license/              # JWT verification only
+â”‚       â”œâ”€â”€ telemetry/            # opt-in usage events
+â”‚       â””â”€â”€ ui/                   # Rich-based output formatting
+â”œâ”€â”€ tests/
+â”œâ”€â”€ examples/                     # sample YAML pipelines
+â”œâ”€â”€ docs/                         # if any docs are repo-local; main docs live in forge-web/Mintlify
+â”œâ”€â”€ pyproject.toml
+â”œâ”€â”€ README.md
+â”œâ”€â”€ LICENSE.md                    # BUSL
+â”œâ”€â”€ CHANGELOG.md
+â”œâ”€â”€ CONTRIBUTING.md
+â”œâ”€â”€ SECURITY.md
+â””â”€â”€ CODE_OF_CONDUCT.md
 ```
 
 ### CI/CD
 
-- [ ] **Test workflow:** runs on every PR, matrix of Python 3.10–3.13 × Mac/Linux/Windows
+- [ ] **Test workflow:** runs on every PR, matrix of Python 3.10â€“3.13 Ã— Mac/Linux/Windows
 - [ ] **Lint workflow:** ruff + mypy on every PR
 - [ ] **Release workflow:** triggered on tag push (e.g., `v1.2.3`), builds wheel, publishes to PyPI, creates GitHub Release with changelog
 - [ ] **Branch protection:** require passing CI + 1 review for `main` (even if you're solo, this prevents accidental direct pushes)
@@ -178,7 +178,7 @@ forge/
 2. Bump version in `pyproject.toml`
 3. PR, merge
 4. Tag the merge commit with `vX.Y.Z`
-5. Push tag → release workflow auto-publishes to PyPI
+5. Push tag â†’ release workflow auto-publishes to PyPI
 
 ### License Verification (Critical Section)
 
@@ -186,7 +186,7 @@ This is the trickiest part of the public repo. You need code that can *verify* a
 
 **How it works:**
 
-1. **You generate an asymmetric keypair** (e.g., RSA or Ed25519). The private key lives in `forge-platform` and *never* leaves your platform's secret store. The public key is embedded in the `forge` CLI repo.
+1. **You generate an asymmetric keypair** (e.g., RSA or Ed25519). The private key lives in `decoy-platform` and *never* leaves your platform's secret store. The public key is embedded in the `decoy` CLI repo.
 2. **When a customer subscribes,** your platform issues them a signed JWT containing:
    - `customer_id` (opaque)
    - `tier` (e.g., `business`, `enterprise`)
@@ -195,19 +195,19 @@ This is the trickiest part of the public repo. You need code that can *verify* a
    - `expires_at`
    - `features` (array of feature flags they're entitled to)
 3. **The CLI verifies the JWT** using the embedded public key. Verification only confirms the signature is valid and the token hasn't expired. It does *not* require a network call.
-4. **Cached result is fine for offline use.** The CLI caches the verified license at `~/.forge/license.json` after first verification.
+4. **Cached result is fine for offline use.** The CLI caches the verified license at `~/.decoy/license.json` after first verification.
 5. **Periodic re-validation** (e.g., every 7 days) calls back to the platform to confirm the license is still active (covers cancellations, fraud). If offline, the CLI grants access until the JWT's own expiration.
 
 **Why this works in public code:**
 
-- Anyone can read the verification code. That's fine — it's just signature verification.
+- Anyone can read the verification code. That's fine â€” it's just signature verification.
 - Generating a fake license requires the private key, which is never in this repo.
-- An attacker would have to either steal your private key (defended by normal opsec) or modify the CLI to skip verification (which violates BUSL — and at that point they're not your customer anyway).
+- An attacker would have to either steal your private key (defended by normal opsec) or modify the CLI to skip verification (which violates BUSL â€” and at that point they're not your customer anyway).
 
 **Example pseudocode for the CLI:**
 
 ```python
-# src/forge/license/verify.py
+# src/decoy/license/verify.py
 from jose import jwt
 from pathlib import Path
 
@@ -246,8 +246,8 @@ def require_business(func):
 
 - [ ] Asymmetric keypair generated; private key in platform secret store; public key embedded in CLI
 - [ ] JWT structure designed and documented
-- [ ] `forge login` command implemented (accepts license key, validates, caches)
-- [ ] `forge license` command implemented (shows current license status)
+- [ ] `decoy login` command implemented (accepts license key, validates, caches)
+- [ ] `decoy license` command implemented (shows current license status)
 - [ ] `@require_business` decorator implemented for gated commands
 - [ ] Friendly upgrade message component built (the messaging when someone hits a paid feature)
 
@@ -262,11 +262,11 @@ def require_business(func):
 
 ---
 
-## Repo 2 — `forge-web` (Marketing Site + Docs Source)
+## Repo 2 â€” `decoy-web` (Marketing Site + Docs Source)
 
 ### Purpose
 
-The website at `forge.dev`. Includes the marketing pages and the Mintlify docs source.
+The website at `decoy.dev`. Includes the marketing pages and the Mintlify docs source.
 
 ### Visibility
 
@@ -293,77 +293,77 @@ The website at `forge.dev`. Includes the marketing pages and the Mintlify docs s
 
 ```
 forge-web/
-├── .github/workflows/
-│   └── lint.yml
-├── app/                          # Next.js app router pages
-│   ├── page.tsx                  # home
-│   ├── pricing/page.tsx
-│   ├── product/
-│   │   ├── masking/page.tsx
-│   │   ├── synthetic-data/page.tsx
-│   │   ├── transforms/page.tsx
-│   │   └── analytics/page.tsx
-│   ├── compare/
-│   │   ├── tonic/page.tsx
-│   │   ├── delphix/page.tsx
-│   │   └── informatica/page.tsx
-│   ├── solutions/
-│   │   ├── dev-test-data/page.tsx
-│   │   ├── compliance/page.tsx
-│   │   └── ai-training/page.tsx
-│   ├── security/page.tsx
-│   ├── self-hosting/page.tsx
-│   ├── about/page.tsx
-│   ├── blog/
-│   ├── changelog/page.tsx
-│   └── (legal)/
-│       ├── privacy/
-│       └── terms/
-├── components/                   # shadcn/ui components
-├── content/
-│   ├── blog/                     # MDX blog posts
-│   └── changelog/
-├── docs/                         # Mintlify source — separate deployment
-│   ├── mint.json                 # Mintlify config
-│   ├── getting-started/
-│   ├── concepts/
-│   ├── cli-reference/
-│   ├── yaml-reference/
-│   ├── connectors/
-│   ├── transforms/
-│   ├── recipes/
-│   ├── business-tier/
-│   ├── self-hosting/
-│   └── security/
-├── public/                       # static assets
-├── next.config.js                # includes /docs → Mintlify rewrite
-├── tailwind.config.ts
-├── package.json
-└── README.md
+â”œâ”€â”€ .github/workflows/
+â”‚   â””â”€â”€ lint.yml
+â”œâ”€â”€ app/                          # Next.js app router pages
+â”‚   â”œâ”€â”€ page.tsx                  # home
+â”‚   â”œâ”€â”€ pricing/page.tsx
+â”‚   â”œâ”€â”€ product/
+â”‚   â”‚   â”œâ”€â”€ masking/page.tsx
+â”‚   â”‚   â”œâ”€â”€ synthetic-data/page.tsx
+â”‚   â”‚   â”œâ”€â”€ transforms/page.tsx
+â”‚   â”‚   â””â”€â”€ analytics/page.tsx
+â”‚   â”œâ”€â”€ compare/
+â”‚   â”‚   â”œâ”€â”€ tonic/page.tsx
+â”‚   â”‚   â”œâ”€â”€ delphix/page.tsx
+â”‚   â”‚   â””â”€â”€ informatica/page.tsx
+â”‚   â”œâ”€â”€ solutions/
+â”‚   â”‚   â”œâ”€â”€ dev-test-data/page.tsx
+â”‚   â”‚   â”œâ”€â”€ compliance/page.tsx
+â”‚   â”‚   â””â”€â”€ ai-training/page.tsx
+â”‚   â”œâ”€â”€ security/page.tsx
+â”‚   â”œâ”€â”€ self-hosting/page.tsx
+â”‚   â”œâ”€â”€ about/page.tsx
+â”‚   â”œâ”€â”€ blog/
+â”‚   â”œâ”€â”€ changelog/page.tsx
+â”‚   â””â”€â”€ (legal)/
+â”‚       â”œâ”€â”€ privacy/
+â”‚       â””â”€â”€ terms/
+â”œâ”€â”€ components/                   # shadcn/ui components
+â”œâ”€â”€ content/
+â”‚   â”œâ”€â”€ blog/                     # MDX blog posts
+â”‚   â””â”€â”€ changelog/
+â”œâ”€â”€ docs/                         # Mintlify source â€” separate deployment
+â”‚   â”œâ”€â”€ mint.json                 # Mintlify config
+â”‚   â”œâ”€â”€ getting-started/
+â”‚   â”œâ”€â”€ concepts/
+â”‚   â”œâ”€â”€ cli-reference/
+â”‚   â”œâ”€â”€ yaml-reference/
+â”‚   â”œâ”€â”€ connectors/
+â”‚   â”œâ”€â”€ transforms/
+â”‚   â”œâ”€â”€ recipes/
+â”‚   â”œâ”€â”€ business-tier/
+â”‚   â”œâ”€â”€ self-hosting/
+â”‚   â””â”€â”€ security/
+â”œâ”€â”€ public/                       # static assets
+â”œâ”€â”€ next.config.js                # includes /docs â†’ Mintlify rewrite
+â”œâ”€â”€ tailwind.config.ts
+â”œâ”€â”€ package.json
+â””â”€â”€ README.md
 ```
 
 ### Deployment
 
 - [ ] **Marketing site:** deploys to Vercel from `main` automatically
-- [ ] **Docs:** Mintlify pulls from `forge-web/docs` directory automatically on push
-- [ ] **Domain:** `forge.dev` (Vercel), `forge.dev/docs` (Mintlify rewrite)
-- [ ] **Preview deploys:** every PR gets a Vercel preview URL — useful for reviewing copy changes
+- [ ] **Docs:** Mintlify pulls from `decoy-web/docs` directory automatically on push
+- [ ] **Domain:** `decoy.dev` (Vercel), `decoy.dev/docs` (Mintlify rewrite)
+- [ ] **Preview deploys:** every PR gets a Vercel preview URL â€” useful for reviewing copy changes
 
 ### What Connects to Where
 
 The site has these outbound links:
 
-- Hero install command → copy to clipboard, no link
-- "GitHub" / "Star us" → `github.com/forgeio/forge` (the CLI repo)
-- "Docs" → `forge.dev/docs` (same domain via rewrite)
-- "Start free trial" → `app.forge.dev/signup` (the platform)
-- "Login" → `app.forge.dev/login` (the platform)
+- Hero install command â†’ copy to clipboard, no link
+- "GitHub" / "Star us" â†’ `github.com/forgeio/forge` (the CLI repo)
+- "Docs" â†’ `decoy.dev/docs` (same domain via rewrite)
+- "Start free trial" â†’ `app.forge.dev/signup` (the platform)
+- "Login" â†’ `app.forge.dev/login` (the platform)
 
 The site itself never embeds product UI. It links to it.
 
 ---
 
-## Repo 3 — `forge-platform` (Private Business Product)
+## Repo 3 â€” `decoy-platform` (Private Business Product)
 
 ### Purpose
 
@@ -401,58 +401,58 @@ This discipline is critical. The single biggest way solo founders torch their fi
 
 ### What Does NOT Live Here
 
-- Public CLI code (lives in `forge`)
-- Marketing pages (live in `forge-web`)
+- Public CLI code (lives in `decoy`)
+- Marketing pages (live in `decoy-web`)
 - Anything a free user would ever execute on their machine
 
 ### Repo Skeleton
 
 ```
 forge-platform/
-├── .github/workflows/
-│   ├── test.yml
-│   ├── docker-publish.yml
-│   └── helm-publish.yml
-├── api/                          # FastAPI backend
-│   ├── main.py
-│   ├── auth/
-│   ├── billing/                  # Stripe webhooks, subscription mgmt
-│   ├── licenses/                 # JWT issuance
-│   ├── pipelines/
-│   ├── runs/
-│   ├── audit/
-│   └── teams/
-├── web/                          # Next.js Business app
-│   ├── app/
-│   │   ├── dashboard/
-│   │   ├── pipelines/
-│   │   ├── runs/
-│   │   ├── audit/
-│   │   ├── team/
-│   │   ├── billing/
-│   │   └── settings/
-│   └── components/
-├── scheduler/                    # background job runner
-├── deploy/
-│   ├── docker-compose.yml        # for single-node self-hosted
-│   ├── helm/                     # for k8s self-hosted
-│   └── terraform/                # your hosted version
-├── secrets/                      # gitignored, references only
-└── README.md
+â”œâ”€â”€ .github/workflows/
+â”‚   â”œâ”€â”€ test.yml
+â”‚   â”œâ”€â”€ docker-publish.yml
+â”‚   â””â”€â”€ helm-publish.yml
+â”œâ”€â”€ api/                          # FastAPI backend
+â”‚   â”œâ”€â”€ main.py
+â”‚   â”œâ”€â”€ auth/
+â”‚   â”œâ”€â”€ billing/                  # Stripe webhooks, subscription mgmt
+â”‚   â”œâ”€â”€ licenses/                 # JWT issuance
+â”‚   â”œâ”€â”€ pipelines/
+â”‚   â”œâ”€â”€ runs/
+â”‚   â”œâ”€â”€ audit/
+â”‚   â””â”€â”€ teams/
+â”œâ”€â”€ web/                          # Next.js Business app
+â”‚   â”œâ”€â”€ app/
+â”‚   â”‚   â”œâ”€â”€ dashboard/
+â”‚   â”‚   â”œâ”€â”€ pipelines/
+â”‚   â”‚   â”œâ”€â”€ runs/
+â”‚   â”‚   â”œâ”€â”€ audit/
+â”‚   â”‚   â”œâ”€â”€ team/
+â”‚   â”‚   â”œâ”€â”€ billing/
+â”‚   â”‚   â””â”€â”€ settings/
+â”‚   â””â”€â”€ components/
+â”œâ”€â”€ scheduler/                    # background job runner
+â”œâ”€â”€ deploy/
+â”‚   â”œâ”€â”€ docker-compose.yml        # for single-node self-hosted
+â”‚   â”œâ”€â”€ helm/                     # for k8s self-hosted
+â”‚   â””â”€â”€ terraform/                # your hosted version
+â”œâ”€â”€ secrets/                      # gitignored, references only
+â””â”€â”€ README.md
 ```
 
 ### License Issuance Flow
 
 1. Customer signs up at `app.forge.dev/signup`
 2. Selects Business tier, enters payment info (Stripe Checkout)
-3. Stripe webhook → `forge-platform` billing service
+3. Stripe webhook â†’ `decoy-platform` billing service
 4. Billing service calls license issuance service
 5. License service signs a JWT with the private key, including tier/seats/expiration
 6. JWT is delivered to customer:
    - In the web UI (copy/paste)
    - Via email
-   - Via `forge login --sso` flow (CLI opens browser, authenticates, downloads license automatically)
-7. CLI stores license at `~/.forge/license.json`
+   - Via `decoy login --sso` flow (CLI opens browser, authenticates, downloads license automatically)
+7. CLI stores license at `~/.decoy/license.json`
 8. Gated commands now work
 
 ### Self-Hosted Distribution
@@ -470,43 +470,43 @@ For Enterprise customers who run the platform on their own infra:
 ## How the Three Repos Talk to Each Other
 
 ```
-┌─────────────────────────────────────────────────────────────┐
-│                                                             │
-│   github.com/forgeio/forge          (PUBLIC, BUSL)          │
-│   ├─ pip install forge                                      │
-│   ├─ contains: CLI, transforms, connectors, JWT verifier    │
-│   └─ embedded: PUBLIC KEY for license verification          │
-│                                                             │
-└──────────────────────────┬──────────────────────────────────┘
-                           │
-                           │  reads license JWT
-                           │  (offline-capable)
-                           ▼
-┌─────────────────────────────────────────────────────────────┐
-│                                                             │
-│   github.com/forgeio/forge-platform     (PRIVATE)           │
-│   ├─ deploys to: app.forge.dev                              │
-│   ├─ contains: web UI, scheduler, billing, license signer   │
-│   └─ secret: PRIVATE KEY (never leaves platform)            │
-│                                                             │
-└──────────────────────────┬──────────────────────────────────┘
-                           │
-                           │  links to PyPI, GitHub
-                           │  (no shared code, just URLs)
-                           ▼
-┌─────────────────────────────────────────────────────────────┐
-│                                                             │
-│   github.com/forgeio/forge-web          (PUBLIC)            │
-│   ├─ deploys to: forge.dev (Vercel)                         │
-│   ├─ contains: marketing pages, blog, MDX docs              │
-│   └─ links out to: github.com/forgeio/forge,                │
-│                    pypi.org/project/forge,                  │
-│                    app.forge.dev                            │
-│                                                             │
-└─────────────────────────────────────────────────────────────┘
+â”Œâ”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”
+â”‚                                                             â”‚
+â”‚   github.com/forgeio/forge          (PUBLIC, BUSL)          â”‚
+â”‚   â”œâ”€ pip install decoy                                      â”‚
+â”‚   â”œâ”€ contains: CLI, transforms, connectors, JWT verifier    â”‚
+â”‚   â””â”€ embedded: PUBLIC KEY for license verification          â”‚
+â”‚                                                             â”‚
+â””â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”¬â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”˜
+                           â”‚
+                           â”‚  reads license JWT
+                           â”‚  (offline-capable)
+                           â–¼
+â”Œâ”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”
+â”‚                                                             â”‚
+â”‚   github.com/forgeio/forge-platform     (PRIVATE)           â”‚
+â”‚   â”œâ”€ deploys to: app.forge.dev                              â”‚
+â”‚   â”œâ”€ contains: web UI, scheduler, billing, license signer   â”‚
+â”‚   â””â”€ secret: PRIVATE KEY (never leaves platform)            â”‚
+â”‚                                                             â”‚
+â””â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”¬â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”˜
+                           â”‚
+                           â”‚  links to PyPI, GitHub
+                           â”‚  (no shared code, just URLs)
+                           â–¼
+â”Œâ”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”
+â”‚                                                             â”‚
+â”‚   github.com/forgeio/forge-web          (PUBLIC)            â”‚
+â”‚   â”œâ”€ deploys to: forge.dev (Vercel)                         â”‚
+â”‚   â”œâ”€ contains: marketing pages, blog, MDX docs              â”‚
+â”‚   â””â”€ links out to: github.com/forgeio/forge,                â”‚
+â”‚                    pypi.org/project/forge,                  â”‚
+â”‚                    app.forge.dev                            â”‚
+â”‚                                                             â”‚
+â””â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”˜
 ```
 
-**No shared code between repos.** Each repo is self-contained. The "shared interface" is the JWT format (defined once, documented, never changed casually) and the URL conventions (`forge.dev`, `app.forge.dev`).
+**No shared code between repos.** Each repo is self-contained. The "shared interface" is the JWT format (defined once, documented, never changed casually) and the URL conventions (`decoy.dev`, `app.forge.dev`).
 
 ---
 
@@ -517,7 +517,7 @@ For Enterprise customers who run the platform on their own infra:
 The CLI knows which commands require Business. The decorator pattern handles this cleanly:
 
 ```python
-# Free commands — anyone can run
+# Free commands â€” anyone can run
 @app.command()
 def run(pipeline: Path):
     ...
@@ -526,7 +526,7 @@ def run(pipeline: Path):
 def validate(pipeline: Path):
     ...
 
-# Business commands — gated
+# Business commands â€” gated
 @app.command()
 @require_business
 def schedule(pipeline: Path, cron: str):
@@ -538,31 +538,31 @@ def push(pipeline: Path):
     ...
 ```
 
-When someone runs `forge schedule` without a license:
+When someone runs `decoy schedule` without a license:
 
 ```
-✗ This command requires a Business license.
+âœ— This command requires a Business license.
 
   Scheduling is part of the Business tier, along with the web UI,
   audit logs, and team collaboration features.
 
-  → Start a free 14-day trial: https://forge.dev/trial
-  → Already have a license? Run `forge login`
+  â†’ Start a free 14-day trial: https://forge.dev/trial
+  â†’ Already have a license? Run `decoy login`
 
-  Free CLI users can still run pipelines locally with `forge run`.
+  Free CLI users can still run pipelines locally with `decoy run`.
 ```
 
-This message is critical UX. It must be **helpful, not pushy**. The last line is intentional — it confirms what they *can* still do, so the upgrade prompt feels like an offer, not a wall.
+This message is critical UX. It must be **helpful, not pushy**. The last line is intentional â€” it confirms what they *can* still do, so the upgrade prompt feels like an offer, not a wall.
 
 ### Layer 2: Platform-Only Features
 
-The web UI, persistent run history, audit logs, RBAC, and scheduling backend all live in `forge-platform`. Free CLI users have no way to access them — not because they're locked, but because they're hosted on infrastructure those users don't have credentials for.
+The web UI, persistent run history, audit logs, RBAC, and scheduling backend all live in `decoy-platform`. Free CLI users have no way to access them â€” not because they're locked, but because they're hosted on infrastructure those users don't have credentials for.
 
 This is the cleanest gate possible: features that aren't in the free product can't be unlocked even theoretically.
 
 ### Layer 3: License Issuance
 
-Stripe → webhook → license service → signed JWT → customer. The customer never sees or handles the private key. The CLI never communicates with Stripe. License lifecycle (renewal, cancellation, seat changes) is handled in the platform and propagates to the CLI on next sync.
+Stripe â†’ webhook â†’ license service â†’ signed JWT â†’ customer. The customer never sees or handles the private key. The CLI never communicates with Stripe. License lifecycle (renewal, cancellation, seat changes) is handled in the platform and propagates to the CLI on next sync.
 
 ---
 
@@ -575,33 +575,33 @@ Pick one and stay consistent:
 - GitHub org: `forgeio` (or whatever)
 - npm scope (if you ever publish JS packages): `@forgeio`
 - Docker Hub / GHCR org: `forgeio`
-- PyPI: `forge` (no scope on PyPI; squat the name)
-- Domain: `forge.dev` (apex), `app.forge.dev` (platform), `docs.forge.dev` *or* `forge.dev/docs` (pick one and stick)
+- PyPI: `decoy` (no scope on PyPI; squat the name)
+- Domain: `decoy.dev` (apex), `app.forge.dev` (platform), `docs.forge.dev` *or* `decoy.dev/docs` (pick one and stick)
 
 ### Secrets Management
 
 | Secret | Lives in | Never in |
 |---|---|---|
 | License signing private key | Platform secret store (AWS Secrets Manager, Vault, Doppler) | Any repo, ever |
-| License verification public key | `forge` CLI source code (embedded constant) | — (this is meant to be public) |
+| License verification public key | `decoy` CLI source code (embedded constant) | â€” (this is meant to be public) |
 | Stripe API keys | Platform env vars | Any repo |
 | Customer DB credentials | Platform env vars | Any repo |
-| PyPI publish token | GitHub Actions secret on `forge` repo | Any committed file |
-| Vercel deploy token | Vercel-managed | — |
+| PyPI publish token | GitHub Actions secret on `decoy` repo | Any committed file |
+| Vercel deploy token | Vercel-managed | â€” |
 
 ### Versioning
 
-- **CLI (`forge`):** SemVer. Major version bumps for breaking YAML schema changes only.
-- **Platform (`forge-platform`):** Internal version for SaaS-hosted (continuous deploy). For self-hosted, customers pin to a release version (e.g., `v2024.05`).
-- **Web (`forge-web`):** No versioning. Continuous deploy.
+- **CLI (`decoy`):** SemVer. Major version bumps for breaking YAML schema changes only.
+- **Platform (`decoy-platform`):** Internal version for SaaS-hosted (continuous deploy). For self-hosted, customers pin to a release version (e.g., `v2024.05`).
+- **Web (`decoy-web`):** No versioning. Continuous deploy.
 
 ### Cross-Repo Coordination
 
 Some changes affect multiple repos:
 
-- **YAML schema change** → CLI version bump → docs update in `forge-web/docs` → if it affects pipeline storage, platform migration needed
-- **New feature gated to Business** → CLI adds `@require_business` → platform adds the backend support → web updates pricing page
-- **New connector** → CLI adds connector code → docs page added in `forge-web` → integrations grid updated in `forge-web`
+- **YAML schema change** â†’ CLI version bump â†’ docs update in `decoy-web/docs` â†’ if it affects pipeline storage, platform migration needed
+- **New feature gated to Business** â†’ CLI adds `@require_business` â†’ platform adds the backend support â†’ web updates pricing page
+- **New connector** â†’ CLI adds connector code â†’ docs page added in `decoy-web` â†’ integrations grid updated in `decoy-web`
 
 Keep a `CHANGELOG.md` in each repo. For cross-repo changes, the CLI changelog references the docs PR and platform release notes. This sounds like overhead but it'll save you when a customer reports a bug spanning two repos.
 
@@ -611,23 +611,23 @@ Keep a `CHANGELOG.md` in each repo. For cross-repo changes, the CLI changelog re
 
 Before you write a single line of code, do this admin work in one half-day session:
 
-- [ ] Buy domain (`forge.dev` or whatever)
+- [ ] Buy domain (`decoy.dev` or whatever)
 - [ ] Create GitHub org
-- [ ] Create `forge` repo (public, BUSL license, README placeholder)
-- [ ] Create `forge-web` repo (public, README placeholder)
+- [ ] Create `decoy` repo (public, BUSL license, README placeholder)
+- [ ] Create `decoy-web` repo (public, README placeholder)
 - [ ] Reserve PyPI package name (publish a 0.0.1 placeholder that just prints "coming soon")
 - [ ] Reserve npm scope if you might use one later
 - [ ] Reserve Docker Hub / GHCR org names
 - [ ] Reserve Twitter/X, LinkedIn, BlueSky handles
 - [ ] Reserve Discord server name (or Slack workspace)
-- [ ] Set up Vercel account, point `forge.dev` at it
+- [ ] Set up Vercel account, point `decoy.dev` at it
 - [ ] Set up Mintlify account
 - [ ] Set up PostHog or Plausible account for analytics
 - [ ] Set up email forwarding for `support@`, `hello@`, `security@`
 - [ ] Set up password manager (1Password / Bitwarden) entry for the project
 - [ ] Generate the license signing keypair (store private key in 1Password for now; move to proper secret store when platform exists)
 
-**Do not** create `forge-platform` yet. You don't need it. Resist.
+**Do not** create `decoy-platform` yet. You don't need it. Resist.
 
 ---
 
@@ -653,15 +653,15 @@ You'll spend 3 months building a web UI for a tool no one uses. Launch the CLI f
 
 ### Mistake 5: "Marketing copy goes in the CLI README"
 
-The CLI README should be technical: install, quick start, link to full docs, link to website. The marketing copy lives at `forge.dev`. Keeping them separate prevents the README from becoming a sales page (which technical buyers find off-putting on GitHub).
+The CLI README should be technical: install, quick start, link to full docs, link to website. The marketing copy lives at `decoy.dev`. Keeping them separate prevents the README from becoming a sales page (which technical buyers find off-putting on GitHub).
 
-### Mistake 6: "I'll make `forge-platform` public to simplify CI"
+### Mistake 6: "I'll make `decoy-platform` public to simplify CI"
 
 It's tempting. Don't. The moment you take payments, your platform repo contains code paths that handle billing, license issuance, and customer data. Public visibility creates legal exposure and weakens your moat.
 
 ### Mistake 7: "I'll skip the public/private split and use a monorepo"
 
-Monorepos work for unified teams shipping to one customer. They don't work for "free OSS-adjacent CLI + private SaaS platform" because the visibility requirements are *opposite*. You'd either expose platform code or hide CLI code — both are wrong.
+Monorepos work for unified teams shipping to one customer. They don't work for "free OSS-adjacent CLI + private SaaS platform" because the visibility requirements are *opposite*. You'd either expose platform code or hide CLI code â€” both are wrong.
 
 ---
 
@@ -675,7 +675,7 @@ This three-repo structure works for:
 
 You should consider reorganizing when:
 
-- **You add a second paid product.** Might want a fourth repo (`forge-data-quality` etc.) or migrate the platform repo into a monorepo internally.
+- **You add a second paid product.** Might want a fourth repo (`decoy-data-quality` etc.) or migrate the platform repo into a monorepo internally.
 - **You hire an OSS community team.** Might want to split connectors into their own public repos so community can own them.
 - **You IPO or get acquired.** Whoever acquires you will reorganize anyway.
 
@@ -686,15 +686,15 @@ For the first 2 years, this structure is correct. Don't over-engineer.
 ## Critical Path Summary
 
 1. **Phase 0:** Lock license, naming, and secrets management (1 day of admin)
-2. **Day 1:** Create `forge` and `forge-web` repos, both public
-3. **Weeks 1–4:** Build CLI in `forge`, with license verification baked in from the start
-4. **Weeks 3–6:** Build site in `forge-web` in parallel
+2. **Day 1:** Create `decoy` and `decoy-web` repos, both public
+3. **Weeks 1â€“4:** Build CLI in `decoy`, with license verification baked in from the start
+4. **Weeks 3â€“6:** Build site in `decoy-web` in parallel
 5. **Week 8:** Launch CLI to PyPI, post to HN, validate demand
-6. **Months 3–4:** *If demand is real,* create `forge-platform` (private) and start building the Business web app
+6. **Months 3â€“4:** *If demand is real,* create `decoy-platform` (private) and start building the Business web app
 7. **Month 6:** Launch Business tier with license issuance flow
 
 Three repos, three jobs, three lifecycles. Keep them clean from day one.
 
 ---
 
-*End of architecture plan. This doc is a living standard — update it when the architecture evolves.*
+*End of architecture plan. This doc is a living standard â€” update it when the architecture evolves.*

@@ -1,4 +1,4 @@
-"""`forge validate` — check whether a YAML pipeline config is well-formed."""
+"""`decoy validate` — check whether a YAML pipeline config is well-formed."""
 
 from pathlib import Path
 
@@ -18,9 +18,9 @@ def validate(
         help="Path to the YAML pipeline config to validate.",
     ),
 ) -> None:
-    """Validate a forge pipeline config without running it."""
-    from forge_engine import validate_config
-    from forge_engine.exceptions import ConfigError, PipelineValidationError
+    """Validate a decoy pipeline config without running it."""
+    from decoy_engine import validate_config
+    from decoy_engine.exceptions import ConfigError, PipelineValidationError
 
     try:
         validate_config(str(config))

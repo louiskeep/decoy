@@ -1,4 +1,4 @@
-"""`forge run` — execute a masking or synthetic-generation pipeline from a YAML config."""
+"""`decoy run` — execute a masking or synthetic-generation pipeline from a YAML config."""
 
 import logging
 from enum import Enum
@@ -31,7 +31,7 @@ def run(
         False, "--verbose", "-v", help="Verbose CLI output."
     ),
 ) -> None:
-    """Run a forge pipeline from a YAML config.
+    """Run a decoy pipeline from a YAML config.
 
     The engine handles its own logging according to the YAML's `logging`
     section. CLI flags here only affect output from the CLI itself.
@@ -40,17 +40,17 @@ def run(
         level=logging.DEBUG if verbose else logging.INFO,
         format="%(message)s",
     )
-    cli_log = logging.getLogger("forge")
+    cli_log = logging.getLogger("decoy")
 
     config_str = str(config)
 
     if mode in (Mode.mask, Mode.convert):
-        from forge_engine import Masker
+        from decoy_engine import Masker
 
         Masker(config_str).mask()
         cli_log.info(f"{mode.value} completed: {config}")
     elif mode is Mode.generate:
-        from forge_engine import DataGenerator
+        from decoy_engine import DataGenerator
 
         DataGenerator(config_str).generate()
         cli_log.info(f"generate completed: {config}")

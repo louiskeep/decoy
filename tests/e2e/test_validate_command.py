@@ -1,12 +1,12 @@
-"""End-to-end tests for `forge validate` and the `--version` flag."""
+"""End-to-end tests for `decoy validate` and the `--version` flag."""
 
 from pathlib import Path
 
 import yaml
 from typer.testing import CliRunner
 
-from forge import __version__
-from forge.__main__ import app
+from decoy import __version__
+from decoy.__main__ import app
 
 runner = CliRunner()
 
@@ -34,7 +34,7 @@ def test_version_flag_prints_version_and_exits():
     result = runner.invoke(app, ["--version"])
     assert result.exit_code == 0
     assert __version__ in result.stdout
-    assert "forge" in result.stdout
+    assert "decoy" in result.stdout
 
 
 def test_help_lists_validate_subcommand():

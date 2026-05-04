@@ -3,14 +3,14 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "forge"
+name = "decoy"
 version = "0.1.0"
-description = "Forge CLI — data masking and synthetic generation from the terminal"
+description = "Decoy CLI — data masking and synthetic generation from the terminal"
 readme = "README.md"
 requires-python = ">=3.10"
 authors = [{ name = "louiskeep" }]
 dependencies = [
-    "forge-engine>=0.1.0",
+    "decoy-engine>=0.1.0",
     "typer>=0.9",
     "rich>=13.0",
 ]
@@ -21,10 +21,11 @@ dev = [
 ]
 
 [project.scripts]
-forge = "forge.__main__:app"
+decoy = "decoy.__main__:app"
+forge = "decoy._deprecated:forge_shim"
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/forge"]
+packages = ["src/decoy"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

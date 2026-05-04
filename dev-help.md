@@ -1,16 +1,16 @@
-# forge — Developer Reference
+# decoy — Developer Reference
 
 ## First-time setup
 
 ```bash
-# forge-engine must be installed first (it's a dependency)
-pip install -e ../forge-engine
+# decoy-engine must be installed first (it's a dependency)
+pip install -e ../forge-engine    # directory still named forge-engine on disk; package is decoy-engine
 
-# Install forge CLI in editable mode
+# Install decoy CLI in editable mode
 pip install -e .
 
 # Verify
-forge --help
+decoy --help
 ```
 
 > Both repos should be cloned side-by-side under the same parent directory so the `../forge-engine` path resolves correctly.
@@ -21,11 +21,11 @@ forge --help
 # 1. Branch
 git checkout -b feature/my-change
 
-# 2. Edit src/forge/...
-# Changes to forge-engine are live immediately (editable install)
+# 2. Edit src/decoy/...
+# Changes to decoy-engine are live immediately (editable install)
 
 # 3. Test
-forge run examples/mask_example.yaml --mode mask
+decoy run examples/mask_example.yaml --mode mask
 pytest tests/e2e/
 
 # 4. Commit and push
@@ -38,18 +38,20 @@ git push -u origin feature/my-change
 ## Common commands
 
 ```bash
-forge run <config.yaml> --mode mask        # run a masking pipeline
-forge run <config.yaml> --mode generate    # run a generation pipeline
-forge run <config.yaml> --mode convert     # convert file format
-forge validate <config.yaml>               # validate config without running
-forge init                                 # interactive config scaffolder
-forge demo                                 # bundled 30-second sample run
-forge login                                # activate a Business license
-forge license                              # show current license status
-forge --version                            # show version
-forge --help                               # full help
-forge run --help                           # command-specific help
+decoy run <config.yaml> --mode mask        # run a masking pipeline
+decoy run <config.yaml> --mode generate    # run a generation pipeline
+decoy run <config.yaml> --mode convert     # convert file format
+decoy validate <config.yaml>               # validate config without running
+decoy init                                 # interactive config scaffolder
+decoy demo                                 # bundled 30-second sample run
+decoy login                                # activate a Business license
+decoy license                              # show current license status
+decoy --version                            # show version
+decoy --help                               # full help
+decoy run --help                           # command-specific help
 ```
+
+`forge ...` still resolves during the deprecation window — it prints the rename message and exits non-zero.
 
 ## Testing
 
@@ -59,21 +61,21 @@ pytest tests/e2e/ -v                       # verbose E2E (invokes CLI directly)
 pytest -k "test_mask"                      # run matching tests
 ```
 
-E2E tests use Typer's `CliRunner` or `subprocess` — they invoke `forge` as a real CLI call and check output/exit codes.
+E2E tests use Typer's `CliRunner` or `subprocess` — they invoke `decoy` as a real CLI call and check output/exit codes.
 
 ## Adding a new CLI command
 
-1. Create (or edit) a file in `src/forge/cli/`
+1. Create (or edit) a file in `src/decoy/cli/`
 2. Define a Typer command function
-3. Register it in `src/forge/__main__.py`
-4. Any data logic goes in `forge-engine`, not here — the CLI just calls the engine
+3. Register it in `src/decoy/__main__.py`
+4. Any data logic goes in `decoy-engine`, not here — the CLI just calls the engine
 
 ## Updating the engine during CLI development
 
-If you need a new `forge-engine` feature while working on the CLI:
-1. Switch to `forge-engine` repo, create a feature branch there
+If you need a new `decoy-engine` feature while working on the CLI:
+1. Switch to the engine repo, create a feature branch there
 2. Implement and test the engine change
-3. Come back to `forge` — the editable install picks it up immediately
+3. Come back to `decoy` — the editable install picks it up immediately
 4. Open PRs in both repos; note the dependency in the PR description
 
 ## Sample YAML configs
