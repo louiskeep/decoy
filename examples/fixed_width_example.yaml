@@ -1,0 +1,65 @@
+# Fixed Width File Masking Configuration
+version: "1.0"
+
+# Global settings
+global_settings:
+  seed: 42  # For deterministic masking
+  large_file_threshold_gb: 1.0
+  chunk_size: 100000
+
+# Logging configuration
+logging:
+  level: "debug"
+  file: "logs/fixed_width_masker.log"
+  console: true
+  verbose: true
+
+# Input configuration
+input:
+  type: "fixed_width"
+  path: "data/sample/fixed_width_data_employee.txt"
+  definition_path: "data/sample/fixed_width_definition_employee.csv"
+  fixed_width_options:
+    encoding: "utf-8"
+    definition_delimiter: ","
+
+# Output configuration
+output:
+  type: "fixed_width"
+  path: "data/masked/masked_fixed_width_data_employee.txt"
+  definition_path: "data/sample/fixed_width_definition_employee.csv"
+  fixed_width_options:
+    encoding: "utf-8"
+
+# Define masking rules - using lowercase column names to match those in the definition file
+masking_rules:
+  # Mask employee names with faker
+  - column: "employee_name"
+    type: "faker"
+    faker_type: "name"
+    seed: 101
+
+  # Mask department with consistent mapping
+  - column: "department"
+    type: "map"
+    map_type: "fixed"
+    fixed_prefix: "DEPT"
+    seed: 102
+
+  # Mask salary with random adjustments
+  - column: "salary"
+    type: "faker"
+    faker_type: "random_number"
+    seed: 103
+
+  # Mask birth dates with consistent fake dates
+  - column: "birth_date"
+    type: "faker"
+    faker_type: "date_of_birth"
+    seed: 104
+
+  # Mask phone numbers with consistent fake numbers
+  - column: "phone"
+    type: "faker"
+    faker_type: "phone_number"
+    seed: 105
