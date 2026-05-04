@@ -1,29 +1,29 @@
-# forge
+# decoy
 
-**Public.** The free Forge CLI tool — `pip install forge`.
+**Public.** The free Decoy CLI tool — `pip install decoy`.
 
 ## What lives here
 
-- Typer-based CLI commands (`forge run`, `forge validate`, `forge init`, `forge demo`)
-- Rich terminal UI (`forge.ui`)
-- License verification (`forge login`, `forge license`)
+- Typer-based CLI commands (`decoy run`, `decoy validate`, `decoy init`, `decoy demo`)
+- Rich terminal UI (`decoy.ui`)
+- License verification (`decoy login`, `decoy license`)
 - Sample pipeline configs (`examples/`)
 - End-to-end CLI tests
 
 ## What does NOT live here
 
-- Data manipulation logic → `forge-engine` (the engine is a dependency, not duplicated here)
-- Web platform → `forge-platform`
-- Marketing site → `forge-web`
+- Data manipulation logic → `decoy-engine` (the engine is a dependency, not duplicated here)
+- Web platform → `decoy-platform`
+- Marketing site → `decoy-web`
 
 ## Dev setup
 
 ```bash
 # Install engine as editable dep (local dev only)
-pip install -e ../forge-engine
+pip install -e ../forge-engine    # directory still named forge-engine on disk
 pip install -e .
 
-forge run examples/mask_example.yaml --mode mask
+decoy run examples/mask_example.yaml --mode mask
 ```
 
 ## License

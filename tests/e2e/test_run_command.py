@@ -1,4 +1,4 @@
-"""End-to-end tests for `forge run`.
+"""End-to-end tests for `decoy run`.
 
 Uses Typer's CliRunner so the CLI is invoked exactly like a real user
 would invoke it, but in-process (no subprocess). Each test writes a
@@ -12,7 +12,7 @@ import pytest
 import yaml
 from typer.testing import CliRunner
 
-from forge.__main__ import app
+from decoy.__main__ import app
 
 runner = CliRunner()
 
@@ -83,9 +83,9 @@ def test_run_mask_produces_masked_output(mask_config: Path, tmp_path: Path):
     masked = pd.read_csv(output_path)
     # customer_id is passthrough, must be unchanged
     assert masked["customer_id"].tolist() == ["C1", "C2", "C3"]
-    # first_name and email are faker-replaced — must differ from originals
+    # first_name and email are faker-replaced â€” must differ from originals
     assert masked["first_name"].tolist() != ["Alice", "Bob", "Carol"]
-    # ssn is hashed — must not match originals
+    # ssn is hashed â€” must not match originals
     assert masked["ssn"].tolist() != ["111-22-3333", "444-55-6666", "777-88-9999"]
 
 
