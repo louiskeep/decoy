@@ -1,5 +1,8 @@
 # Decoy CLI — UX standards & practices
 
+> **Status:** target — none of the slices below are implemented yet
+> **Last reviewed:** 2026-05-04
+
 The standards every contributor follows when adding or modifying a `decoy` CLI command. Read this before you write a new command. If you're tempted to deviate, file a PR against this doc first.
 
 This guide is opinionated and Decoy-specific, not a generic CLI-design listicle. It's the reason every Decoy command feels like the same tool instead of a grab-bag.
