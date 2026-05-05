@@ -2,6 +2,8 @@
 
 The public CLI tool. A thin Typer wrapper around `decoy-engine`. Contains zero data manipulation logic — if it touches data, it belongs in `decoy-engine`.
 
+**CLI UX standards: read [CLI_UX_GUIDE.md](CLI_UX_GUIDE.md) before adding or modifying a command.**
+
 ## Repo structure
 
 ```
