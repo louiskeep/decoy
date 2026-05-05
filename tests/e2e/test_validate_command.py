@@ -67,3 +67,10 @@ def test_validate_fails_for_invalid_config(tmp_path: Path):
 def test_validate_fails_for_missing_file():
     result = runner.invoke(app, ["validate", "/nonexistent/path.yaml"])
     assert result.exit_code != 0
+
+
+def test_validate_help_includes_examples_and_see_also():
+    result = runner.invoke(app, ["validate", "--help"])
+    assert result.exit_code == 0
+    assert "Examples:" in result.stdout
+    assert "See also:" in result.stdout

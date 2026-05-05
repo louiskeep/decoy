@@ -97,3 +97,16 @@ def test_run_with_missing_config_fails():
 def test_run_with_invalid_mode_fails(mask_config: Path):
     result = runner.invoke(app, ["run", str(mask_config), "--mode", "bogus"])
     assert result.exit_code != 0
+
+
+def test_run_help_includes_examples_and_see_also():
+    result = runner.invoke(app, ["run", "--help"])
+    assert result.exit_code == 0
+    assert "Examples:" in result.stdout
+    assert "See also:" in result.stdout
+
+
+def test_root_help_advertises_completion_install():
+    result = runner.invoke(app, ["--help"])
+    assert result.exit_code == 0
+    assert "--install-completion" in result.stdout

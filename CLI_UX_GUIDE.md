@@ -1,6 +1,6 @@
 # Decoy CLI — UX standards & practices
 
-> **Status:** target — none of the slices below are implemented yet
+> **Status:** partial — Slices 1–3 shipped 2026-05-04: theme module, --json/--quiet/--verbose plumbing, --install-completion, progress wrappers (spinner / bar / multistage), run-summary cards, themed Rich tables, new commands (`storm scan`, `forecast recommend`, `init`, `demo`), and tab-completion sources for Disguises / transforms / Faker providers. Future commands must continue to follow these standards; ~/.decoy/logs traceback fallback (section 9) and telemetry (section 15) remain forward-looking.
 > **Last reviewed:** 2026-05-04
 
 The standards every contributor follows when adding or modifying a `decoy` CLI command. Read this before you write a new command. If you're tempted to deviate, file a PR against this doc first.
