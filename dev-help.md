@@ -65,10 +65,13 @@ E2E tests use Typer's `CliRunner` or `subprocess` — they invoke `decoy` as a r
 
 ## Adding a new CLI command
 
+**Before you start: read [CLI_UX_GUIDE.md](CLI_UX_GUIDE.md).** It covers help format, color tokens, output modes (`--json` / `--quiet` / `--verbose`), progress patterns, run summary cards, error UX, exit codes, tab completion, and the explicit list of things the CLI is NOT for. The end-of-doc checklist is the gate before opening a PR.
+
 1. Create (or edit) a file in `src/decoy/cli/`
 2. Define a Typer command function
 3. Register it in `src/decoy/__main__.py`
 4. Any data logic goes in `decoy-engine`, not here — the CLI just calls the engine
+5. Walk the CLI_UX_GUIDE.md checklist before opening the PR.
 
 ## Updating the engine during CLI development
 
