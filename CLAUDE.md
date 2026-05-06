@@ -13,9 +13,22 @@ We use two doc types. Distinguishing them keeps long-term plans aligned and shor
 
 Orientation files (this `CLAUDE.md`, `dev-help.md`, `README.md`) are conventional contributor entry points and stay outside the guide/plan taxonomy.
 
+## Comment style
+
+Comments explain what a section / code block does in good detail, in **1–2 sentences**. Reach for more only when the block is genuinely complex — a state machine, a non-obvious algorithm, security-sensitive math, a workaround for a specific bug. Default mode: terse and to the point.
+
+- **Yes:** `# Format inference is the whole point — pandas warns when it falls back to dateutil; suppress.`
+- **No:** silent code with no context.
+- **No:** restating what the next ten lines obviously do.
+
+Comments live next to the surprise, not at the top of the file. If the non-obvious thing is the *why*, write that, not the *what*.
+
 ### Active guides
 
-- [CLI_UX_GUIDE.md](CLI_UX_GUIDE.md) — CLI UX standards & practices. *(target)*
+- [CLI_UX_GUIDE.md](CLI_UX_GUIDE.md) — CLI UX standards & practices. *(partial)*
+- [PIPELINE_GRAPH_GUIDE.md](PIPELINE_GRAPH_GUIDE.md) — CLI-side mirror of the cross-repo graph pipeline contract; `decoy run/validate` dispatch. *(target)*
+
+The CLI's planned `RichLogger` (Slice F in [`../forge-platform/LOGGING_GUIDE.md`](../forge-platform/LOGGING_GUIDE.md) section 10) bridges `decoy.ui.output.OutputState` to the engine's `Logger` Protocol so engine narration surfaces in the terminal. Until that slice ships, `decoy run` invokes the engine without a logger and runs silent from the CLI's perspective.
 
 ## Repo structure
 
@@ -26,15 +39,17 @@ src/decoy/
 ├── cli/
 │   ├── run.py           ← decoy run <config.yaml> [--mode mask|generate|convert]
 │   ├── validate.py      ← decoy validate <config.yaml>
+│   ├── storm.py         ← decoy storm scan <csv> -- STORM analysis
+│   ├── forecast.py      ← decoy forecast recommend <scan.json>
 │   ├── init.py          ← decoy init (interactive scaffolder)
-│   └── demo.py          ← decoy demo (30-second bundled sample)
-├── ui/
-│   ├── logger.py        ← RichLogger — implements decoy_engine.context.Logger
-│   ├── progress.py      ← Rich progress bar
-│   └── theme.py         ← colors/styles
-├── license/commands.py  ← decoy login, decoy license
-├── config/settings.py   ← ~/.decoy/ local config
-└── telemetry/client.py  ← opt-in usage events
+│   ├── demo.py          ← decoy demo (bundled scan→forecast→mask walkthrough)
+│   └── completers.py    ← tab-completion sources (Disguises, transforms, Faker)
+└── ui/
+    ├── theme.py         ← semantic color tokens (success, error, hint, ...)
+    ├── output.py        ← OutputState + --json/--quiet/--verbose plumbing
+    ├── progress.py      ← spinner / progress_bar / multistage wrappers
+    ├── card.py          ← run-summary Panel
+    └── table.py         ← Rich Table styled with the theme
 examples/                ← sample YAML pipeline configs
 tests/e2e/               ← CLI invocation tests (CliRunner or subprocess)
 ```

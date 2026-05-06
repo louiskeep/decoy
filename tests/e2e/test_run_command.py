@@ -97,3 +97,62 @@ def test_run_with_missing_config_fails():
 def test_run_with_invalid_mode_fails(mask_config: Path):
     result = runner.invoke(app, ["run", str(mask_config), "--mode", "bogus"])
     assert result.exit_code != 0
+
+
+def test_run_help_includes_examples_and_see_also():
+    result = runner.invoke(app, ["run", "--help"])
+    assert result.exit_code == 0
+    assert "Examples:" in result.stdout
+    assert "See also:" in result.stdout
+
+
+def test_root_help_advertises_completion_install():
+    result = runner.invoke(app, ["--help"])
+    assert result.exit_code == 0
+    assert "--install-completion" in result.stdout
+
+
+@pytest.fixture
+def graph_config(tmp_path: Path, sample_csv: Path) -> Path:
+    out_csv = tmp_path / "graph_out.csv"
+    config = {
+        "mode": "graph",
+        "nodes": [
+            {"id": "src", "kind": "source.file", "config": {"path": str(sample_csv)}},
+            {"id": "drop", "kind": "drop_column", "config": {"columns": ["ssn"]}},
+            {"id": "out", "kind": "target.file", "config": {"output_filename": str(out_csv)}},
+        ],
+        "edges": [
+            {"from": "src", "to": "drop"},
+            {"from": "drop", "to": "out"},
+        ],
+    }
+    p = tmp_path / "graph.yaml"
+    p.write_text(yaml.dump(config), encoding="utf-8")
+    return p
+
+
+def test_run_graph_pipeline(graph_config: Path, tmp_path: Path):
+    """`decoy run` on a mode: graph YAML dispatches to run_graph."""
+    result = runner.invoke(app, ["run", str(graph_config)])
+    assert result.exit_code == 0, result.stdout
+    out_csv = tmp_path / "graph_out.csv"
+    assert out_csv.exists()
+    written = pd.read_csv(out_csv)
+    assert "ssn" not in written.columns
+    assert len(written) == 3
+
+
+def test_run_bad_graph_fails(tmp_path: Path):
+    bad = {
+        "mode": "graph",
+        "nodes": [
+            {"id": "a", "kind": "drop_column", "config": {"columns": ["x"]}},
+            {"id": "b", "kind": "drop_column", "config": {"columns": ["y"]}},
+        ],
+        "edges": [{"from": "a", "to": "b"}, {"from": "b", "to": "a"}],
+    }
+    p = tmp_path / "bad.yaml"
+    p.write_text(yaml.dump(bad), encoding="utf-8")
+    result = runner.invoke(app, ["run", str(p)])
+    assert result.exit_code != 0
