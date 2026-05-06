@@ -4,6 +4,10 @@ The public CLI tool. A thin Typer wrapper around `decoy-engine`. Contains zero d
 
 **CLI UX standards: read [CLI_UX_GUIDE.md](CLI_UX_GUIDE.md) before adding or modifying a command.**
 
+## What's next?
+
+The cross-repo roadmap lives in **[forge-platform/ROADMAP.md](../forge-platform/ROADMAP.md)**. Start there for "where should we go?" questions, then come back here for CLI-specific guides and plans.
+
 ## Docs in this repo
 
 We use two doc types. Distinguishing them keeps long-term plans aligned and short-term plans from rotting.
@@ -11,7 +15,7 @@ We use two doc types. Distinguishing them keeps long-term plans aligned and shor
 - **Guides** are durable specs describing target state. Filename: `*_GUIDE.md`, repo root. Header carries `Status:` (`target` / `partial` / `superseded`) and `Last reviewed:`. When a feature ships, the implementer updates the relevant guide in the same PR.
 - **Plans** are transient, scoped to a PR or sprint. Live in `plans/`, dated. Header carries `Status:` (`planning` / `in-progress` / `shipped` / `abandoned`), `Branch:`, and `References:` (the guides being implemented). Once a plan ships, it can be deleted — git history is the archive.
 
-Orientation files (this `CLAUDE.md`, `dev-help.md`, `README.md`) are conventional contributor entry points and stay outside the guide/plan taxonomy.
+Orientation files (this `CLAUDE.md`, `dev-help.md`, `README.md`) are conventional contributor entry points and stay outside the guide/plan taxonomy. The cross-repo **ROADMAP.md** lives in `forge-platform/`.
 
 ## Comment style
 
