@@ -58,11 +58,14 @@ def validate(
     state = setup_output(json_, quiet, verbose)
     config_str = str(config)
 
-    from decoy_engine import validate_config
+    from decoy_engine import validate_config, validate_graph
     from decoy_engine.exceptions import ConfigError, PipelineValidationError
 
     try:
-        validate_config(config_str)
+        if _is_graph_yaml(config):
+            validate_graph(config.read_text(encoding="utf-8"))
+        else:
+            validate_config(config_str)
     except (PipelineValidationError, ConfigError) as exc:
         if state.mode is OutputMode.json:
             emit_json(
@@ -93,3 +96,14 @@ def validate(
 
 
 VALIDATE_EPILOG = _VALIDATE_EPILOG
+
+
+def _is_graph_yaml(config_path: Path) -> bool:
+    """True iff the YAML's top-level ``mode`` is ``graph``."""
+    try:
+        import yaml
+
+        cfg = yaml.safe_load(config_path.read_text(encoding="utf-8"))
+        return isinstance(cfg, dict) and (cfg.get("mode") or "").lower() == "graph"
+    except Exception:
+        return False

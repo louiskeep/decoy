@@ -2,6 +2,7 @@
 
 from pathlib import Path
 
+import pandas as pd
 import yaml
 from typer.testing import CliRunner
 
@@ -9,6 +10,40 @@ from decoy import __version__
 from decoy.__main__ import app
 
 runner = CliRunner()
+
+
+def test_validate_good_graph_yaml(tmp_path: Path):
+    """`decoy validate` accepts a well-formed graph YAML."""
+    src = tmp_path / "in.csv"
+    pd.DataFrame({"a": [1, 2], "b": [3, 4]}).to_csv(src, index=False)
+    cfg = {
+        "mode": "graph",
+        "nodes": [
+            {"id": "s", "kind": "source.file", "config": {"path": str(src)}},
+            {"id": "d", "kind": "drop_column", "config": {"columns": ["a"]}},
+            {"id": "t", "kind": "target.file", "config": {"output_filename": str(tmp_path / "o.csv")}},
+        ],
+        "edges": [{"from": "s", "to": "d"}, {"from": "d", "to": "t"}],
+    }
+    p = tmp_path / "good.yaml"
+    p.write_text(yaml.dump(cfg), encoding="utf-8")
+    result = runner.invoke(app, ["validate", str(p)])
+    assert result.exit_code == 0
+
+
+def test_validate_rejects_graph_cycle(tmp_path: Path):
+    bad = {
+        "mode": "graph",
+        "nodes": [
+            {"id": "a", "kind": "drop_column", "config": {"columns": ["x"]}},
+            {"id": "b", "kind": "drop_column", "config": {"columns": ["y"]}},
+        ],
+        "edges": [{"from": "a", "to": "b"}, {"from": "b", "to": "a"}],
+    }
+    p = tmp_path / "bad.yaml"
+    p.write_text(yaml.dump(bad), encoding="utf-8")
+    result = runner.invoke(app, ["validate", str(p)])
+    assert result.exit_code == 1
 
 
 def _valid_mask_config(tmp_path: Path) -> dict:
