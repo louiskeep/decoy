@@ -27,6 +27,9 @@ forge = "decoy._deprecated:forge_shim"
 [tool.hatch.build.targets.wheel]
 packages = ["src/decoy"]
 
+[tool.hatch.build.targets.wheel.force-include]
+"src/decoy/templates" = "decoy/templates"
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["src"]

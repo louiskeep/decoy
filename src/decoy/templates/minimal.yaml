@@ -1,0 +1,38 @@
+# minimal -- the smallest sensible decoy pipeline.
+# Edit input.path and output.path, then: decoy validate pipeline.yaml && decoy run pipeline.yaml
+version: '1.0'
+
+global_settings:
+  seed: 42
+
+input:
+  type: csv
+  path: 'data/input.csv'
+  csv_options:
+    delimiter: ','
+    encoding: utf-8
+
+output:
+  type: csv
+  path: 'data/masked.csv'
+  csv_options:
+    delimiter: ','
+    encoding: utf-8
+
+mappings:
+  store_directory: 'mappings'
+
+logging:
+  level: info
+  file: 'decoy_run.log'
+
+masking_rules:
+  - column: name
+    type: faker
+    faker_type: name
+  - column: email
+    type: faker
+    faker_type: email
+  - column: ssn
+    type: hash
+    algorithm: sha256

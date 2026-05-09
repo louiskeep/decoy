@@ -1,7 +1,7 @@
 # Decoy CLI — UX standards & practices
 
-> **Status:** partial — Slices 1–3 shipped 2026-05-04: theme module, --json/--quiet/--verbose plumbing, --install-completion, progress wrappers (spinner / bar / multistage), run-summary cards, themed Rich tables, new commands (`storm scan`, `forecast recommend`, `init`, `demo`), and tab-completion sources for Disguises / transforms / Faker providers. Future commands must continue to follow these standards; ~/.decoy/logs traceback fallback (section 9) and telemetry (section 15) remain forward-looking.
-> **Last reviewed:** 2026-05-04
+> **Status:** partial — Slices 1–4 shipped: theme module, --json/--quiet/--verbose plumbing, --install-completion, progress wrappers (spinner / bar / multistage), run-summary cards, themed Rich tables, commands (`storm scan`, `forecast recommend`, `init`, `demo`, `info`, `explain <topic>`, `templates list/show`), bundled YAML templates (minimal / hipaa / pci / gdpr / generate / graph), branded banner, and tab-completion sources for Disguises / transforms / Faker providers / run modes / explain topics / template names / init presets. Future commands must continue to follow these standards; ~/.decoy/logs traceback fallback (section 9) and telemetry (section 15) remain forward-looking.
+> **Last reviewed:** 2026-05-09
 
 The standards every contributor follows when adding or modifying a `decoy` CLI command. Read this before you write a new command. If you're tempted to deviate, file a PR against this doc first.
 
@@ -564,5 +564,13 @@ This document is the standard. Implementation lands in three slices, each ≤ ~1
 - `decoy init` (interactive Q&A scaffold).
 - `decoy demo` (bundled CSV + 30-second walkthrough).
 - Custom tab completers for Disguise IDs, transform IDs, Faker types.
+
+**Slice 4 — discoverability and templates:**
+- `decoy info` (branded banner + quick-start hints — the answer to "I just `pip install`'d it, now what?").
+- `decoy explain <topic>` (built-in topic help: modes, transforms, disguises, output, pipeline, storm, forecast, keys, completion). Each topic renders as a Rich Panel with title / body / `See also:`. Unknown topic → did-you-mean suggestion.
+- `decoy templates list` / `decoy templates show <name>` (browse and dump bundled starter pipeline YAMLs). Templates: `minimal`, `hipaa`, `pci`, `gdpr`, `generate`, `graph`.
+- `decoy init --preset <name>` skips the preset prompt and uses any bundled template directly.
+- Tab completers added for: `decoy explain <topic>`, `decoy templates show <name>`, `decoy init --preset`, `decoy run --mode`. Wired via the `autocompletion=` parameter on the Typer Argument/Option.
+- ASCII logo in `src/decoy/ui/banner.py` (no Unicode arrows / box-drawing per section 14 — Rich draws the border).
 
 Each slice ships with tests that snapshot rendered output (default + `--json`) so future changes can't regress the visual spec without breaking a test.

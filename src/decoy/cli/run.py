@@ -50,6 +50,7 @@ def run(
         "--mode",
         "-m",
         help="Operation: mask existing data, generate synthetic data, or convert format.",
+        case_sensitive=False,
     ),
     json_: bool = typer.Option(
         False,

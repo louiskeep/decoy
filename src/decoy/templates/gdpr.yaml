@@ -1,0 +1,87 @@
+# gdpr -- GDPR Article 4(1) personal-data masking.
+#
+# Aimed at the categories named in Recital 26 / Art 4(1): name, ID,
+# location, online identifier, plus the special-category data in
+# Art 9 (we redact those rather than pseudonymize). Tune for your
+# Article 6 lawful basis.
+version: '1.0'
+
+global_settings:
+  seed: 42
+
+input:
+  type: csv
+  path: 'data/users.csv'
+  csv_options:
+    delimiter: ','
+    encoding: utf-8
+
+output:
+  type: csv
+  path: 'data/users_masked.csv'
+  csv_options:
+    delimiter: ','
+    encoding: utf-8
+
+mappings:
+  store_directory: 'mappings'
+
+logging:
+  level: info
+  file: 'decoy_run.log'
+
+masking_rules:
+  # Direct identifiers
+  - column: full_name
+    type: faker
+    faker_type: name
+  - column: email
+    type: faker
+    faker_type: email
+  - column: phone
+    type: faker
+    faker_type: phone_number
+
+  # Online identifiers
+  - column: ip_address
+    type: faker
+    faker_type: ipv4
+  - column: user_agent
+    type: redact
+    redact_with: 'REDACTED'
+  - column: device_id
+    type: hash
+    algorithm: sha256
+
+  # Location
+  - column: country
+    type: passthrough
+  - column: city
+    type: faker
+    faker_type: city
+  - column: postal_code
+    type: redact
+    keep_chars: 3
+
+  # National ID / passport -- hash, do not preserve.
+  - column: national_id
+    type: hash
+    algorithm: sha256
+  - column: passport_number
+    type: hash
+    algorithm: sha256
+
+  # Special category (Art 9) -- redact entirely.
+  - column: ethnicity
+    type: redact
+    redact_with: 'REDACTED'
+  - column: religion
+    type: redact
+    redact_with: 'REDACTED'
+  - column: health_condition
+    type: redact
+    redact_with: 'REDACTED'
+
+  # Behavioral / preference -- shuffle to break the link to a single user.
+  - column: salary
+    type: shuffle

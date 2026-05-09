@@ -67,3 +67,38 @@ def _faker_provider_ids_cached() -> tuple[str, ...]:
 def faker_provider_ids() -> list[str]:
     """Tab-complete `--faker-type` values."""
     return list(_faker_provider_ids_cached())
+
+
+# Static set: the modes `decoy run --mode` accepts. Mirrors cli.run.Mode.
+RUN_MODES: tuple[str, ...] = ("mask", "generate", "convert", "graph")
+
+
+def run_modes() -> list[str]:
+    """Tab-complete `decoy run --mode` values."""
+    return list(RUN_MODES)
+
+
+def explain_topics() -> list[str]:
+    """Tab-complete `decoy explain <topic>` values."""
+    # Imported lazily so a broken explain module doesn't break the shell.
+    try:
+        from decoy.cli.explain import topic_names
+
+        return topic_names()
+    except Exception:
+        return []
+
+
+def template_names() -> list[str]:
+    """Tab-complete `decoy templates show <name>` values."""
+    try:
+        from decoy.templates import template_names as _names
+
+        return _names()
+    except Exception:
+        return []
+
+
+def init_presets() -> list[str]:
+    """Tab-complete `decoy init --preset` values. Mirrors templates."""
+    return template_names()

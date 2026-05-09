@@ -1,0 +1,63 @@
+# pci -- PCI DSS card-data masking.
+#
+# Covers the cardholder data elements that PCI DSS forbids storing in
+# the clear: PAN, cardholder name, expiration date, CVV/CVC. PAN is
+# replaced with a faker credit-card number to preserve format; CVV is
+# redacted entirely (must never be retained per PCI DSS req 3.2).
+version: '1.0'
+
+global_settings:
+  seed: 42
+
+input:
+  type: csv
+  path: 'data/transactions.csv'
+  csv_options:
+    delimiter: ','
+    encoding: utf-8
+
+output:
+  type: csv
+  path: 'data/transactions_masked.csv'
+  csv_options:
+    delimiter: ','
+    encoding: utf-8
+
+mappings:
+  store_directory: 'mappings'
+
+logging:
+  level: info
+  file: 'decoy_run.log'
+
+masking_rules:
+  - column: cardholder_name
+    type: faker
+    faker_type: name
+
+  # Primary Account Number -- format-preserving fake card.
+  - column: card_number
+    type: faker
+    faker_type: credit_card_number
+
+  - column: card_expiry
+    type: faker
+    faker_type: credit_card_expire
+
+  # CVV / CVC must be wiped, not pseudonymized -- never retain.
+  - column: cvv
+    type: redact
+    redact_with: 'XXX'
+
+  - column: billing_zip
+    type: redact
+    keep_chars: 3
+
+  - column: email
+    type: faker
+    faker_type: email
+
+  # Transaction id stays linkable across systems via deterministic hash.
+  - column: transaction_id
+    type: hash
+    algorithm: sha256
