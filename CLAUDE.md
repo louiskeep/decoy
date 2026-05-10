@@ -12,6 +12,10 @@ The cross-repo roadmap lives in **[forge-platform/ROADMAP.md](../forge-platform/
 
 Cross-repo glossary lives at **[../forge-platform/GLOSSARY.md](../forge-platform/GLOSSARY.md)**. Source of truth for Decoy vocabulary — Disguise, STORM, Mask, MIRROR, RichLogger, hybrid engine, plus the in-flight `forge → decoy` rename status.
 
+## Decisions
+
+CLI architecture decision records (ADRs) live in [`docs/adr/`](docs/adr/). The "why" behind non-obvious CLI decisions — currently the BUSL-1.1 license choice (ADR-0001) — and the home for any new architectural decision worth recording. Format and threshold are pinned in [`docs/adr/template.md`](docs/adr/template.md); ADRs are immutable once landed (supersede with a new ADR rather than editing).
+
 ## Docs in this repo
 
 We use two doc types. Distinguishing them keeps long-term plans aligned and short-term plans from rotting.
