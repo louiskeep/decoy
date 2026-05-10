@@ -16,6 +16,10 @@
 - Web platform → `decoy-platform`
 - Marketing site → `decoy-web`
 
+## Architecture
+
+See [`docs/architecture.md`](docs/architecture.md) for the system map and module overview.
+
 ## Dev setup
 
 ```bash
