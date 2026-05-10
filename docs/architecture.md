@@ -58,7 +58,7 @@ python scripts/build_docs.py
 3. `pyproject.toml` — the `decoy = "decoy.__main__:app"` script binding and the engine dependency.
 4. `examples/` — real YAML pipelines that exercise the engine end-to-end.
 
-## Related repos
+## Sibling maps
 
-- `decoy-engine` — the data masking / synthetic generation engine. The CLI's only meaningful runtime dependency.
-- `decoy-platform` — web platform (separate repo).
+- [`decoy-engine/docs/architecture.md`](https://github.com/louiskeep/decoy-engine/blob/main/docs/architecture.md) — domain components (transforms, pipeline graph, generators). The CLI's only meaningful runtime dependency.
+- [`decoy-platform/docs/architecture.md`](https://github.com/louiskeep/decoy-platform/blob/main/docs/architecture.md) — system containers, deployment topology, cross-repo workflows.
