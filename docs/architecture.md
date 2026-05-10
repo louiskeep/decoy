@@ -37,6 +37,20 @@ Inside `src/decoy/`:
 | `ui/` | Rich-based output primitives (banner, card, table, progress, theme). No business logic. |
 | `templates/` | Bundled starter YAML pipelines surfaced via `decoy templates`. |
 
+## Generated diagrams
+
+Auto-generated from the source by `scripts/build_docs.py`. Regenerate after
+significant structural changes; the script is idempotent.
+
+- [`diagrams/deps.svg`](diagrams/deps.svg) — module dependency graph (pydeps).
+- [`diagrams/classes_decoy.svg`](diagrams/classes_decoy.svg) — class diagram (pyreverse).
+- [`diagrams/packages_decoy.svg`](diagrams/packages_decoy.svg) — package layout (pyreverse).
+
+```bash
+pip install pydeps pylint        # one-time; graphviz `dot` must also be on PATH
+python scripts/build_docs.py
+```
+
 ## Where to start reading
 
 1. `src/decoy/__main__.py` — entry point; shows every registered command.
