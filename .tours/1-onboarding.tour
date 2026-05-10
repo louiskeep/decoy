@@ -1,0 +1,61 @@
+{
+  "$schema": "https://aka.ms/codetour-schema",
+  "title": "1 - Onboarding: how the CLI is wired",
+  "description": "Click-through introduction to the decoy CLI for first-time contributors. ~10 minutes. Install the CodeTour VS Code extension (publisher: vsls-contrib) to play it. Pairs with the engine onboarding tour in `decoy-engine/.tours/1-onboarding.tour` — start there if you haven't already, since this tour assumes you know what `Masker`, `ExecutionContext`, and `derive_key` mean.",
+  "steps": [
+    {
+      "file": "src/decoy/__main__.py",
+      "line": 1,
+      "title": "Where you are",
+      "description": "**`decoy`** is the public CLI. It's a thin Typer wrapper around `decoy-engine` — every command in here parses arguments, builds an `ExecutionContext`, calls into the engine, and renders the result. **No data manipulation logic lives in this repo.** If a future PR adds a function that touches a DataFrame, it belongs in `decoy-engine`, not here.\n\nThe shape of the rest of this tour: entry point → command registration → one representative command (`run`) → the engine boundary → the UI primitives every command shares."
+    },
+    {
+      "file": "src/decoy/__main__.py",
+      "line": 40,
+      "title": "The Typer app",
+      "description": "`app = typer.Typer(...)` is the root CLI object. The `name=\"decoy\"` becomes the binary name; `no_args_is_help=True` is why bare `decoy` prints the help screen rather than a cryptic usage error.\n\n`_ROOT_HELP` (lines 23–38) is the help text Typer renders. The same content appears as a Rich Panel in `decoy info` for first-run flair — keep them in sync when adding commands.\n\nThe `app` symbol at this line is what `pyproject.toml` references in `[project.scripts]` (`decoy = \"decoy.__main__:app\"`). When you `pip install -e .`, that line is what creates the `decoy` shim on your PATH."
+    },
+    {
+      "file": "src/decoy/__main__.py",
+      "line": 69,
+      "title": "Command registration",
+      "description": "Every command is registered in this block. Two patterns:\n\n- **`app.command(...)`** for leaf commands like `run`, `validate`, `init`, `demo`, `explain`, `info`. Each is a function imported from `decoy.cli.<name>`.\n- **`app.add_typer(<sub_app>, name=...)`** for nested command groups: `storm` (with `scan`/`list`/`show`), `forecast` (`recommend`), `templates` (`list`/`show`/`new`). Each sub-app is its own `typer.Typer()` instance defined in its module.\n\nWhen you add a new top-level command, add the import at the top of this file and an `app.command(...)` line here. When you add a sub-command to an existing group, edit the sub-app module — the registration here doesn't change.\n\nThe `_ROOT_HELP` text on line 23 needs a matching line, and `decoy info` (in `cli/info.py`) wants to know about it too."
+    },
+    {
+      "file": "src/decoy/cli/run.py",
+      "line": 40,
+      "title": "A real command — `decoy run`",
+      "description": "`def run(...)` is what `decoy run pipeline.yaml --mode mask` actually executes. The whole signature is Typer-decorated parameters: each `typer.Option` / `typer.Argument` becomes a CLI flag with help text, validation, and (for `--master-key`) an `envvar=`.\n\nNotice the **separation of concerns**: this signature handles argument parsing only. The body (starting around line 102) does the work. Every CLI command in this repo follows the same shape: typer-decorated signature, then `setup_output(...)` to choose JSON vs human-readable mode, then the actual work, then `render_card(...)` or `emit_json(...)` to print the result.\n\n`RUN_EPILOG` (line 24) is the trailing examples block that gets attached to the command's help when `__main__.py` registers it. CLI commands carry their own example text — keep examples in the module that owns the command, not in a central docs file."
+    },
+    {
+      "file": "src/decoy/cli/run.py",
+      "line": 102,
+      "title": "Output flow — `setup_output(json_, quiet, verbose)`",
+      "description": "Every command's first line of real work is `setup_output(...)`. It validates the flag combo (`--json` + `--quiet` is a usage error), constructs Rich consoles for stdout and stderr, and returns an `OutputState` dataclass that the rest of the command writes through.\n\nFour modes the command must respect:\n- **default** — Rich panels and progress on stdout; `info`/`hint` on stderr.\n- **`--json`** — single JSON object on stdout, progress on stderr; nothing else on stdout.\n- **`--quiet`** — silent stdout; exit code carries success/failure; errors still go to stderr.\n- **`--verbose`** — adds the engine's debug traceback on errors; turns off the `UserWarning` filter that normally hides pandas chatter.\n\nFor the implementation, jump to `src/decoy/ui/output.py:45` (`setup_output`). For the rationale and the per-mode contract, see `CLI_UX_GUIDE.md` section 4.\n\nThe rule the team enforces: **never call `print()` or `logging` directly in a CLI command.** Always go through `state.console.print(...)` or `state.err_console.print(...)`. That's what makes `--json` work without per-command branching everywhere."
+    },
+    {
+      "file": "src/decoy/cli/run.py",
+      "line": 115,
+      "title": "The engine dispatch boundary",
+      "description": "**This is the line where CLI ends and engine begins.** The `with spinner(...)` block builds an `ExecutionContext` (line 116–117) and dispatches to one of three engine entry points based on YAML mode:\n\n- **`graph`** mode (line 119) — `run_graph(yaml_text, ctx=ctx)`. Multi-op DAG; the entry point used by the platform too.\n- **`mask` / `convert`** (line 134) — `Masker(config_str, ctx=ctx).mask()`. Single-pipeline classic mode.\n- **`generate`** (line 138) — `DataGenerator(config_str, ctx=ctx).generate()`.\n\nNotice the engine imports happen **inside** the `with spinner` block, not at module load time (lines 116, 120, 135, 139). That's deliberate — `from decoy_engine import Masker` triggers loading pandas / pyarrow / DuckDB / Polars, which is ~50 MB and noticeable on a cold CLI invocation. Lazy-importing keeps `decoy --help` fast.\n\nThe `ctx = ExecutionContext(derive_key=resolver)` line is where keyed determinism enters the engine. `resolver` is built up at line 111 from the user's `--master-key` (or `DECOY_MASTER_KEY` env) — see the next stop. Without a master key, `resolver` is `None` and the engine falls back to its legacy seeded path, which the engine tour covers at `transforms/hash.py`."
+    },
+    {
+      "file": "src/decoy/cli/run.py",
+      "line": 159,
+      "title": "Building the keyed-determinism resolver",
+      "description": "`_build_resolver(master_key_hex, key_label, config_path, state)` is what turns `--master-key abc123... --key-label customers_q4` into the closure the engine consumes via `ctx.derive_key`.\n\nThe flow:\n1. **Parse hex** (lines 167–179). Accepts `0x`-prefixed or bare hex; trims whitespace; rejects anything that doesn't decode to 32 bytes. Errors are `typer.BadParameter`, which renders as a friendly red `error:` line, not a stack trace.\n2. **Resolve label** (lines 181–187). `--key-label` on the command line wins; otherwise read `key_label:` from the YAML's top level. Without either, fail with a clear message — the master key alone isn't enough.\n3. **Build the closure** (lines 189–190). `make_key_resolver(master, label)` is the engine helper that pre-binds master + label and returns the column-keyed function the engine calls per value.\n\nThis closure is the **mask** resolver only — see `decoy-engine` ADR-0002 for why mask and generate use different resolvers, and why mask is master-bound while generate is pipeline-bound. The CLI today only passes `derive_key`; when generate keying lands, this file gets a sibling `_build_pipeline_resolver` that produces `pipeline_derive_key`.\n\nThe BUSL-1.1 license decision (`docs/adr/0001-busl-1.1-with-auto-apache-conversion.md`) is also worth a read at this point — keyed determinism is what makes the CLI valuable enough that licensing matters."
+    },
+    {
+      "file": "src/decoy/ui/theme.py",
+      "line": 14,
+      "title": "UI primitives — semantic color tokens",
+      "description": "`TOKEN_STYLES` is the **only** place colors are decided in this repo. Every CLI-side print flows through one of the helpers below it (`success`, `error`, `warn`, `info`, `hint`, `accent`, `code`, `risk_high`, `risk_med`) — never raw ANSI escape codes, never raw Rich markup, never hardcoded color names in command modules.\n\nWhy: a single change here re-themes the entire CLI. When a buyer says \"those reds are too aggressive,\" you change `\"bold red\"` to `\"red\"` once and every command updates. When `NO_COLOR` is set in the environment (`ui/output.py:35`), Rich strips colors automatically and the helpers still produce the right text.\n\nThe parallel React-side primitives live in `decoy-platform/web/src/theme/` — that file does for the web UI what this one does for the CLI. The two color systems are deliberately not unified; the CLI runs in arbitrary terminal themes, the web UI controls its own.\n\nWhen adding a new semantic concept (e.g. a `pending` state for long-running ops), add a token here first, then helpers below, then use the helpers in commands. Don't reach for a new color name at the call site."
+    },
+    {
+      "file": "src/decoy/_deprecated.py",
+      "line": 9,
+      "title": "The `forge` deprecation shim",
+      "description": "Trivia stop, but worth a minute. The CLI was previously named `forge` and got renamed to `decoy` (see `forge → decoy` in the cross-repo glossary). `forge_shim` is registered as a `pyproject.toml` console script alongside `decoy` itself:\n\n```toml\n[project.scripts]\ndecoy = \"decoy.__main__:app\"\nforge = \"decoy._deprecated:forge_shim\"\n```\n\nSo `pip install decoy` puts both binaries on the user's PATH. `decoy …` runs the real CLI; `forge …` prints the rename message and exits non-zero. **One minor version**, then the shim and its `pyproject.toml` line both get deleted.\n\nThis is the canonical pattern for renames in this codebase — never silently break muscle memory; always emit a clear migration message and a non-zero exit code so scripts catch the change.\n\n**You're done with the tour.** From here:\n\n- *What's coming next* across all three repos → `../forge-platform/ROADMAP.md`.\n- *Why* the engine is hybrid, why there are two key resolvers, why the CLI is BUSL-1.1 → `../forge-platform/docs/adr/`, `../forge-engine/docs/adr/`, and `docs/adr/` in this repo.\n- *Vocabulary* — Disguise vs Mask, STORM vs FORECAST, MIRROR vs Aqueduct → `../forge-platform/GLOSSARY.md`.\n- *Engine internals* — start with the engine onboarding tour in `../forge-engine/.tours/1-onboarding.tour`.\n\nIf a stop in this tour ever points at a line that no longer says what the description claims, fix the tour in the same PR as the code change. A wrong tour is worse than no tour."
+    }
+  ]
+}
