@@ -1,13 +1,13 @@
 """Storm-themed multi-stage indicator for `decoy storm scan`.
 
-Same surface as `decoy.ui.progress.multistage` -- only the running-stage
-icon swaps from a static `[*]` to a cycling ASCII weather glyph, plus a
-one-line forecast header above the stages. Lives here (not in progress.py)
-because it is storm-specific theming; no other command should reach for it.
+Bigger version: a multi-line ASCII storm cloud cycles above the stages, a
+narrative header line tracks the scene, and the per-stage running marker
+cycles a small weather glyph in place of the static `[*]`. All ASCII per
+CLI_UX_GUIDE section 14; auto-disables in --quiet or non-TTY per section 7.
 
-Per CLI_UX_GUIDE.md sections 7 + 13 + 14: ASCII-only output, the cycling
-glyph still serves the same communicative purpose as multistage's `[*]`
-(this stage is the active one), auto-disabled in --quiet or non-TTY.
+The cloud and the per-stage glyph index off the same monotonic frame
+counter modulo their respective lengths -- they don't have to match in
+count, just the cloud + header lengths do (they ride together).
 """
 
 from __future__ import annotations
@@ -24,21 +24,117 @@ from decoy.ui.output import OutputMode, OutputState
 from decoy.ui.theme import accent, hint, success, warn
 
 
-# ASCII weather frames. The running-stage icon and the header line share a
-# monotonic frame counter so they stay in phase.
-RUNNING_FRAMES: list[str] = ["~", ";", "*", "."]
-HEADER_FRAMES: list[str] = [
-    "clouds gathering...",
-    "rain falling.......",
-    "lightning strikes!.",
-    "storm passing......",
+# 8 multi-line ASCII storm scenes. Each frame is exactly 7 lines tall and
+# 30 chars wide so the stage list below stays anchored.
+_CLOUD_FRAMES_RAW: list[list[str]] = [
+    # Frame 0: calm sky
+    [
+        "                              ",
+        "       .--.    .-.            ",
+        "    .-(    )--(   )-.         ",
+        "   (___.__)__)___..-'         ",
+        "                              ",
+        "                              ",
+        "                              ",
+    ],
+    # Frame 1: first drops
+    [
+        "                              ",
+        "       .--.    .-.            ",
+        "    .-(    )--(   )-.         ",
+        "   (___.__)__)___..-'         ",
+        "        '          '          ",
+        "                              ",
+        "                              ",
+    ],
+    # Frame 2: steady rain
+    [
+        "                              ",
+        "       .--.    .-.            ",
+        "    .-(    )--(   )-.         ",
+        "   (___.__)__)___..-'         ",
+        "        '   '   '             ",
+        "          '   '   '           ",
+        "        '   '   '             ",
+    ],
+    # Frame 3: the heavens open
+    [
+        "                              ",
+        "       .--.    .-.            ",
+        "    .-(    )--(   )-.         ",
+        "   (___.__)__)___..-'         ",
+        "      ' ' ' ' ' ' '           ",
+        "       ' ' ' ' ' '            ",
+        "      ' ' ' ' ' ' '           ",
+    ],
+    # Frame 4: LIGHTNING from the left
+    [
+        "                              ",
+        "       .--.    .-.            ",
+        "    .-(    )--(   )-.         ",
+        "   (___.__)__)___..-'         ",
+        "       /' '  ' ' '            ",
+        "      / ' ' ' ' '             ",
+        "     *  ' ' ' ' '             ",
+    ],
+    # Frame 5: LIGHTNING from the right
+    [
+        "                              ",
+        "       .--.    .-.            ",
+        "    .-(    )--(   )-.         ",
+        "   (___.__)__)___..-'         ",
+        "       ' '  ' ' '\\           ",
+        "        ' ' ' ' ' \\           ",
+        "        ' ' ' ' '  *           ",
+    ],
+    # Frame 6: DOUBLE STRIKE -- thunder rages
+    [
+        "                              ",
+        "       .--.    .-.            ",
+        "    .-(    )--(   )-.         ",
+        "   (___.__)__)___..-'         ",
+        "       /' ' ' ' '\\           ",
+        "      / ' ' ' ' ' \\           ",
+        "     *  ' ' ' ' '  *           ",
+    ],
+    # Frame 7: storm passes
+    [
+        "                              ",
+        "       .--.    .-.            ",
+        "    .-(    )--(   )-.         ",
+        "   (___.__)__)___..-'         ",
+        "        '       '             ",
+        "           '                  ",
+        "                              ",
+    ],
 ]
+
+CLOUD_FRAMES: list[str] = ["\n".join(lines) for lines in _CLOUD_FRAMES_RAW]
+
+# Narrative header -- one phrase per cloud frame, padded to a consistent
+# width so the layout doesn't twitch as the text changes.
+HEADER_FRAMES: list[str] = [
+    "  skies clear...........",
+    "  first drops fall......",
+    "  rain steadies.........",
+    "  the heavens open......",
+    "  ** LIGHTNING **.......",
+    "  ** THUNDER CRACKS **..",
+    "  ** STORM RAGES **.....",
+    "  the storm passes......",
+]
+
+# Per-stage running marker -- cycles independently to give the active
+# stage a small pulse beneath the bigger cloud animation.
+RUNNING_FRAMES: list[str] = ["~", ";", "*", "."]
+
+# Frame indices that should render in `warn` (yellow) -- the lightning beats.
+_LIGHTNING_FRAMES: frozenset[int] = frozenset({4, 5, 6})
 
 PENDING_ICON = " "
 DONE_ICON = "v"
 
-# Quarter-second cadence: fast enough to read as motion, slow enough that
-# the `*` lightning frame doesn't strobe.
+# Quarter-second cadence keeps motion fluid without strobing the lightning.
 REFRESH_INTERVAL_S = 0.25
 
 
@@ -58,14 +154,23 @@ class _StormyHandle:
 
     def _build(self) -> Group:
         frame = self._frame_state["frame"]
+        cloud_idx = frame % len(CLOUD_FRAMES)
         running_glyph = RUNNING_FRAMES[frame % len(RUNNING_FRAMES)]
-        header_text = HEADER_FRAMES[frame % len(HEADER_FRAMES)]
-        is_lightning = running_glyph == "*"
+        header_text = HEADER_FRAMES[cloud_idx]
+        is_lightning = cloud_idx in _LIGHTNING_FRAMES
 
-        # Header pops yellow on the lightning frame, cyan otherwise.
-        header = warn(header_text) if is_lightning else accent(header_text)
-        lines: list[Text] = [header]
+        cloud_str = CLOUD_FRAMES[cloud_idx]
+        if is_lightning:
+            cloud = warn(cloud_str)
+            header: Text = warn(header_text)
+        elif cloud_idx == 0:
+            cloud = hint(cloud_str)
+            header = hint(header_text)
+        else:
+            cloud = accent(cloud_str)
+            header = accent(header_text)
 
+        lines: list = [cloud, header]
         for i, label in enumerate(self._stages):
             if i < self._idx:
                 lines.append(success(f"[{DONE_ICON}] {label}"))
@@ -92,10 +197,11 @@ def _disabled(state: OutputState) -> bool:
 def stormy_multistage(
     state: OutputState, stages: list[str]
 ) -> Iterator[_StormyHandle]:
-    """Multi-stage indicator with cycling weather glyphs on the running stage.
+    """Multi-stage indicator with a big cycling storm cloud + per-stage glyph.
 
-    Drop-in replacement for `multistage()` for the `storm scan` command. The
-    handle exposes the same `complete()` so callers can swap freely.
+    Drop-in replacement for `multistage()` for the `storm scan` and
+    `storm test` commands. The handle exposes the same `complete()` so
+    callers can swap freely.
     """
     if _disabled(state) or not stages:
         yield _StormyHandle(None, stages, {"frame": 0})

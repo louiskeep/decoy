@@ -8,6 +8,7 @@ from rich.console import Console
 
 from decoy.ui.output import OutputMode, OutputState
 from decoy.ui.storm_animation import (
+    CLOUD_FRAMES,
     HEADER_FRAMES,
     RUNNING_FRAMES,
     _StormyHandle,
@@ -55,7 +56,7 @@ def test_stormy_multistage_handles_no_stages_gracefully():
     assert err.getvalue() == ""
 
 
-def test_stormy_handle_renders_done_running_pending_in_order():
+def test_stormy_handle_renders_cloud_header_and_stages():
     """Direct render exercise -- no Live, no thread, just the build output."""
     handle = _StormyHandle(
         live=None, stages=["Load", "Profile", "Save"], frame_state={"frame": 0}
@@ -69,24 +70,36 @@ def test_stormy_handle_renders_done_running_pending_in_order():
 
     # "Load" is done.
     assert "[v] Load" in out
-    # "Profile" is running -- the icon is the frame-0 glyph.
+    # "Profile" is running -- the icon is the frame-0 running glyph.
     assert f"[{RUNNING_FRAMES[0]}] Profile" in out
     # "Save" is pending.
     assert "[ ] Save" in out
     # Header line is present.
-    assert HEADER_FRAMES[0] in out
+    assert HEADER_FRAMES[0].strip() in out
+    # A recognisable piece of the cloud silhouette is present.
+    assert ".--." in out
 
 
-def test_running_and_header_frame_counts_match():
-    """Frame indices are taken modulo each list -- they don't have to match in
-    length, but if they ever drift we want a deliberate change, not an accident.
+def test_cloud_and_header_frame_counts_match():
+    """Cloud scene and narrative header are taken from the same frame index;
+    if they drift in length we want a deliberate change, not an accident.
     """
-    assert len(RUNNING_FRAMES) == len(HEADER_FRAMES)
+    assert len(CLOUD_FRAMES) == len(HEADER_FRAMES)
 
 
-def test_running_frames_are_ascii_only():
+def test_all_frames_are_ascii_only():
     """Per CLI_UX_GUIDE.md section 14 -- no Unicode in default output."""
     for frame in RUNNING_FRAMES:
         frame.encode("ascii")
     for header in HEADER_FRAMES:
         header.encode("ascii")
+    for cloud in CLOUD_FRAMES:
+        cloud.encode("ascii")
+
+
+def test_cloud_frames_have_consistent_height():
+    """Every cloud frame must be the same line count, otherwise the stages
+    below jump up and down each refresh.
+    """
+    heights = {len(frame.split("\n")) for frame in CLOUD_FRAMES}
+    assert len(heights) == 1, f"cloud frames have inconsistent heights: {heights}"
