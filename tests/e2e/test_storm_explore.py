@@ -127,7 +127,6 @@ def test_storm_fields_json_envelope_shape(scan_file: Path):
     assert payload["status"] == "ok"
     assert payload["total"] == 4
     assert payload["matched"] == 4
-    # Each row carries the derived bucket/quasi flag.
     by_name = {f["name"]: f for f in payload["fields"]}
     assert by_name["ssn"]["pii_bucket"] == "high"
     assert by_name["customer_id"]["pii_bucket"] == "none"
@@ -136,7 +135,6 @@ def test_storm_fields_json_envelope_shape(scan_file: Path):
 
 
 def test_storm_fields_invalid_pii_value_exits_user_error(scan_file: Path):
-    # Typer rejects unknown enum values before our code runs.
     result = runner.invoke(
         app, ["storm", "fields", str(scan_file), "--pii", "extreme"]
     )
@@ -151,13 +149,35 @@ def test_storm_fields_missing_scan_exits_user_error(tmp_path: Path):
 
 
 def test_storm_fields_no_match_prints_friendly_hint(scan_file: Path):
-    """All fields have at least one detector hit, but `--pii none --quasi`
-    intersects to empty -- we should not crash, and we should explain."""
     result = runner.invoke(
         app, ["storm", "fields", str(scan_file), "--pii", "none", "--quasi"]
     )
     assert result.exit_code == 0
     assert "No fields match" in result.stdout
+
+
+def test_storm_fields_csv_input_emits_scan_first_hint(tmp_path: Path):
+    """Passing a raw CSV instead of a scan -> friendly 'scan it first' hint."""
+    csv = tmp_path / "patients.csv"
+    csv.write_text("customer_id,first_name,email\n1,Alice,a@x.com\n")
+    result = runner.invoke(app, ["storm", "fields", str(csv)])
+    assert result.exit_code == 1
+    # The error names the file and identifies it as raw data.
+    assert "patients.csv" in result.stdout
+    assert "raw data" in result.stdout
+    # The hint includes the literal scan command the user should run.
+    assert "decoy storm scan" in result.stdout
+
+
+def test_storm_fields_csv_input_json_emits_error_envelope(tmp_path: Path):
+    csv = tmp_path / "patients.csv"
+    csv.write_text("a,b,c\n1,2,3\n")
+    result = runner.invoke(app, ["storm", "fields", str(csv), "--json"])
+    assert result.exit_code == 1
+    payload = _json.loads(result.stdout)
+    assert payload["command"] == "storm fields"
+    assert payload["status"] == "error"
+    assert "raw data" in payload["error"]
 
 
 # -- storm show ---------------------------------------------------------
@@ -171,7 +191,7 @@ def test_storm_show_help_includes_examples():
 
 
 def test_storm_show_renders_field_card(scan_file: Path):
-    result = runner.invoke(app, ["storm", "show", "ssn", str(scan_file)])
+    result = runner.invoke(app, ["storm", "show", str(scan_file), "ssn"])
     assert result.exit_code == 0, result.stdout
     assert "ssn" in result.stdout
     assert "PII score" in result.stdout
@@ -179,37 +199,35 @@ def test_storm_show_renders_field_card(scan_file: Path):
 
 
 def test_storm_show_includes_top_values_table(scan_file: Path):
-    result = runner.invoke(app, ["storm", "show", "first_name", str(scan_file)])
+    result = runner.invoke(app, ["storm", "show", str(scan_file), "first_name"])
     assert result.exit_code == 0
     assert "Top values" in result.stdout
     assert "Alice" in result.stdout
 
 
 def test_storm_show_includes_qi_membership(scan_file: Path):
-    result = runner.invoke(app, ["storm", "show", "email", str(scan_file)])
+    result = runner.invoke(app, ["storm", "show", str(scan_file), "email"])
     assert result.exit_code == 0
     assert "Quasi-identifier" in result.stdout
-    # The other QI group member is named in the card.
     assert "first_name" in result.stdout
 
 
 def test_storm_show_includes_sentinels_table(scan_file: Path):
-    result = runner.invoke(app, ["storm", "show", "ssn", str(scan_file)])
+    result = runner.invoke(app, ["storm", "show", str(scan_file), "ssn"])
     assert result.exit_code == 0
     assert "Sentinel" in result.stdout
     assert "000-00-0000" in result.stdout
 
 
 def test_storm_show_unknown_field_exits_with_did_you_mean(scan_file: Path):
-    result = runner.invoke(app, ["storm", "show", "ssm", str(scan_file)])
+    result = runner.invoke(app, ["storm", "show", str(scan_file), "ssm"])
     assert result.exit_code == 1
-    # CliRunner mixes stderr into stdout by default.
     assert "ssn" in result.stdout  # the suggestion
 
 
 def test_storm_show_json_envelope_shape(scan_file: Path):
     result = runner.invoke(
-        app, ["storm", "show", "ssn", str(scan_file), "--json"]
+        app, ["storm", "show", str(scan_file), "ssn", "--json"]
     )
     assert result.exit_code == 0
     payload = _json.loads(result.stdout)
@@ -222,7 +240,7 @@ def test_storm_show_json_envelope_shape(scan_file: Path):
 
 def test_storm_show_quiet_produces_empty_stdout(scan_file: Path):
     result = runner.invoke(
-        app, ["storm", "show", "ssn", str(scan_file), "--quiet"]
+        app, ["storm", "show", str(scan_file), "ssn", "--quiet"]
     )
     assert result.exit_code == 0
     assert result.stdout == ""
@@ -230,7 +248,7 @@ def test_storm_show_quiet_produces_empty_stdout(scan_file: Path):
 
 def test_storm_show_unknown_field_json_emits_error_envelope(scan_file: Path):
     result = runner.invoke(
-        app, ["storm", "show", "wat", str(scan_file), "--json"]
+        app, ["storm", "show", str(scan_file), "wat", "--json"]
     )
     assert result.exit_code == 1
     payload = _json.loads(result.stdout)
@@ -257,6 +275,17 @@ def test_storm_show_accepts_envelope_shape(tmp_path: Path):
             }
         )
     )
-    result = runner.invoke(app, ["storm", "show", "x", str(path)])
+    result = runner.invoke(app, ["storm", "show", str(path), "x"])
     assert result.exit_code == 0
     assert "x" in result.stdout
+
+
+def test_storm_show_csv_input_emits_scan_first_hint(tmp_path: Path):
+    csv = tmp_path / "patients.csv"
+    csv.write_text("customer_id,first_name,email\n1,Alice,a@x.com\n")
+    # Even a valid-looking field name doesn't help -- we should bail at load.
+    result = runner.invoke(app, ["storm", "show", str(csv), "first_name"])
+    assert result.exit_code == 1
+    assert "patients.csv" in result.stdout
+    assert "raw data" in result.stdout
+    assert "decoy storm scan" in result.stdout

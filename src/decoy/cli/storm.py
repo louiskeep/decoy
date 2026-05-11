@@ -40,6 +40,11 @@ class PiiLevel(str, Enum):
 
 _BUCKET_RANK: dict[str, int] = {"none": 0, "low": 1, "med": 2, "high": 3}
 
+# Suffixes that almost certainly mean "this is raw data, not a saved scan."
+# Used by `_emit_load_error` to swap the generic JSON parse hint for a
+# specific "scan it first" suggestion.
+_RAW_DATA_SUFFIXES = {".csv", ".tsv", ".txt", ".parquet", ".json.gz", ".jsonl"}
+
 
 _SCAN_EPILOG = """\
 Examples:
@@ -76,13 +81,13 @@ See also: decoy storm show, decoy forecast recommend.
 _SHOW_EPILOG = """\
 Examples:
 
-  decoy storm show ssn scan.json
+  decoy storm show scan.json ssn
     Per-field detail card -- PII score, detectors, sentinels, top values, QI.
 
-  decoy storm show email scan.json --json
+  decoy storm show scan.json email --json
     Same data as a structured JSON envelope.
 
-  decoy storm scan data.csv --json | decoy storm show ssn -
+  decoy storm scan data.csv --json | decoy storm show - ssn
     Pipe a fresh scan straight in.
 
 See also: decoy storm fields, decoy forecast recommend.
@@ -164,9 +169,57 @@ def _canon_qi(group: list) -> tuple[str, ...]:
     return tuple(sorted(str(x) for x in group))
 
 
+def _looks_like_raw_data(scan_path: str) -> bool:
+    """True when the path is almost certainly raw data, not a saved scan.
+
+    Suffix check first (cheap + decisive); content sniff as a fallback for
+    paths without a recognised suffix. Stays lenient -- only triggers the
+    'scan it first' hint when we're confident.
+    """
+    if scan_path == "-":
+        return False
+    p = Path(scan_path)
+    suffix = p.suffix.lower()
+    if suffix in _RAW_DATA_SUFFIXES:
+        return True
+    # Multi-suffix files like .json.gz where Path.suffix only sees `.gz`.
+    suffixes = "".join(p.suffixes).lower()
+    if any(suffixes.endswith(s) for s in _RAW_DATA_SUFFIXES):
+        return True
+    # Content sniff: a STORM scan JSON always starts with `{`. If the file
+    # exists and the first non-whitespace char isn't `{`, it isn't a scan.
+    try:
+        with p.open("r", encoding="utf-8", errors="replace") as fh:
+            head = fh.read(64).lstrip()
+    except OSError:
+        return False
+    return bool(head) and head[0] != "{"
+
+
 def _emit_load_error(
     state: OutputState, scan: str, exc: Exception, command_name: str
 ) -> None:
+    """Friendly error UX when a scan path won't load.
+
+    Detects three cases: missing file, raw-data-mistaken-for-scan, and
+    malformed JSON. Each gets a tailored hint per CLI_UX_GUIDE section 9
+    (cause line + verb-sentence hint).
+    """
+    raw_data = _looks_like_raw_data(scan)
+    if raw_data:
+        label = Path(scan).name
+        message = f"{label} looks like raw data, not a STORM scan JSON."
+        scan_cmd = f"decoy storm scan {scan}"
+    elif isinstance(exc, FileNotFoundError):
+        message = f"could not open {scan}: file not found."
+        scan_cmd = None
+    elif isinstance(exc, _json.JSONDecodeError):
+        message = f"could not parse {scan} as JSON ({exc.msg})."
+        scan_cmd = None
+    else:
+        message = str(exc)
+        scan_cmd = None
+
     if state.mode is OutputMode.json:
         emit_json(
             state,
@@ -174,17 +227,21 @@ def _emit_load_error(
                 "command": command_name,
                 "status": "error",
                 "scan": scan,
-                "error": str(exc),
+                "error": message,
             },
         )
     elif state.mode is not OutputMode.quiet:
-        state.err_console.print(error("error:"), str(exc))
-        state.err_console.print(
-            " ", hint("hint:"),
-            "the path should point at a file produced by",
-            code("decoy storm scan"),
-            ".",
-        )
+        state.err_console.print(error("error:"), message)
+        if scan_cmd is not None:
+            state.err_console.print(
+                " ", hint("hint:"), "scan it first:", code(scan_cmd),
+            )
+        else:
+            state.err_console.print(
+                " ", hint("hint:"),
+                "pass the JSON file produced by",
+                code("decoy storm scan"),
+            )
 
 
 def _scan(
@@ -422,14 +479,14 @@ def _fields(
 
     if rows and scan != "-":
         first = rows[0]["name"]
-        state.console.print(hint("Next:"), code(f"decoy storm show {first} {scan}"))
+        state.console.print(hint("Next:"), code(f"decoy storm show {scan} {first}"))
 
 
 def _show(
-    field: str = typer.Argument(..., help="Field name to inspect."),
     scan: str = typer.Argument(
         ..., help="Path to a STORM scan JSON, or `-` for stdin."
     ),
+    field: str = typer.Argument(..., help="Field name to inspect."),
     json_: bool = typer.Option(
         False, "--json", help="Emit the full field detail as JSON to stdout."
     ),
@@ -478,12 +535,12 @@ def _show(
             )
             if suggestion:
                 state.err_console.print(
-                    " ", hint("hint:"), "did you mean", code(suggestion[0]), "?"
+                    " ", hint("hint:"), "did you mean", code(suggestion[0]),
                 )
             else:
                 state.err_console.print(
                     " ", hint("hint:"), "list all fields with",
-                    code(f"decoy storm fields {scan}"), ".",
+                    code(f"decoy storm fields {scan}"),
                 )
         raise typer.Exit(code=1)
 
@@ -753,9 +810,9 @@ def _diff(
     status_token = "warn" if drift else "ok"
     next_hint = None
     if pii_increased and new != "-":
-        next_hint = f"decoy storm show {pii_increased[0]['name']} {new}"
+        next_hint = f"decoy storm show {new} {pii_increased[0]['name']}"
     elif new_high_pii and new != "-":
-        next_hint = f"decoy storm show {new_high_pii[0]['name']} {new}"
+        next_hint = f"decoy storm show {new} {new_high_pii[0]['name']}"
 
     render_card(
         state,
