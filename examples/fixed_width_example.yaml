@@ -1,9 +1,14 @@
-# Fixed Width File Masking Configuration
+# Decoy CLI — fixed-width file masking example.
+#
+#   decoy validate examples/fixed_width_example.yaml
+#   decoy run      examples/fixed_width_example.yaml
+
 version: "1.0"
+mode: mask
 
 # Global settings
 global_settings:
-  seed: 42  # For deterministic masking
+  seed: 42  # For deterministic masking on the legacy seeded path
   large_file_threshold_gb: 1.0
   chunk_size: 100000
 
