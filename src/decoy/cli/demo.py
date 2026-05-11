@@ -4,10 +4,9 @@ Default flow: a small single-table CSV, scanned (STORM) -> recommended (FORECAST
 -> masked. All artifacts land in `./decoy_demo/`.
 
 With `--ref`: three related CSVs (customers, orders, payments) with foreign-key
-relationships, masked through three pipelines that share a single `mappings/`
-store -- so the joins still resolve in the masked outputs. Used to demonstrate
-that referential integrity survives masking, and what a multi-pipeline YAML
-setup looks like in practice.
+relationships, masked through three pipelines that each apply `hash` to the
+FK columns. Determinism is what preserves the joins -- not any shared state.
+Same input -> same hash -> joins work across pipelines with no coordination.
 """
 
 from __future__ import annotations
@@ -32,8 +31,8 @@ Examples:
 
   decoy demo --ref
     Generate 3 related CSVs (customers, orders, payments) with FK
-    relationships, mask all three with a shared mapping store, then verify
-    the joins still work after masking. ~1000 rows each.
+    relationships and mask all three with deterministic hashing.
+    FK joins survive masking without any shared state. ~1000 rows each.
 
   decoy demo --ref --rows 5000 --dir my_demo
     Same, but 5K rows per dataset and a custom output directory.
@@ -87,8 +86,12 @@ output:
 mappings:
   store_directory: '{mappings_dir.as_posix()}'
 masking_rules:
-  # `map` persists customer_id -> CUST_N in mappings_dir so re-runs produce
-  # the same masked IDs. The other fields don't need cross-run stability.
+  # customer_id uses `map_type: fixed` -- assigns CUST_1, CUST_2, ... in
+  # *order of first appearance* and persists the assignments under the
+  # mappings/ store. Stable on re-runs, readable in the output. But this
+  # is NOT a deterministic function: a different input ordering produces
+  # different CUST_N values. For FK joins across tables, use the `hash`
+  # transform instead (see `decoy demo --ref`).
   - column: customer_id
     type: map
     map_type: fixed
@@ -219,6 +222,11 @@ _GENDERS = ["F", "M", "X"]
 _ORDER_STATUSES = ["pending", "shipped", "delivered", "cancelled", "refunded"]
 _PAYMENT_METHODS = ["card", "ach", "wire", "check", "crypto"]
 
+# Length we truncate the SHA-256 hex output to for FK columns. 12 hex chars
+# = 48 bits of entropy, comfortably collision-free at the demo's 1K-row
+# scale and still readable in the output.
+_FK_HASH_TRUNCATE = 12
+
 
 def _generate_ref_datasets(out_dir: Path, n_rows: int, seed: int = 42) -> tuple[int, int, int]:
     """Build customers / orders / payments CSVs with FK relationships.
@@ -299,11 +307,11 @@ def _build_customers_yaml(out_dir: Path) -> str:
     return f"""\
 # customers pipeline -- the PK source for the FK relationships.
 #
-# customer_id uses `map` with map_type: fixed so each value gets a stable
-# masked replacement (e.g. C00042 -> CUST_42), persisted under the shared
-# mappings/ store. The orders pipeline points at the SAME store, so its
-# customer_id column gets the same replacements. That's what makes the
-# join survive masking.
+# customer_id uses `hash` (SHA-256, truncated to {_FK_HASH_TRUNCATE} hex chars).
+# Hash is a pure function: same input always produces the same output, with
+# no state, no mapping store, no coordination between pipelines. Every
+# pipeline that hashes the same customer_id produces the same hex string,
+# so FK joins survive masking automatically -- that's the whole story.
 version: '1.0'
 global_settings:
   seed: 42
@@ -319,13 +327,16 @@ output:
   csv_options:
     delimiter: ','
     encoding: utf-8
+# `mappings.store_directory` is required by the engine config but unused
+# here -- the hash and faker transforms don't persist anything. The dir
+# below will be empty after the run; the demo removes it for tidiness.
 mappings:
   store_directory: '{mappings}'
 masking_rules:
   - column: customer_id
-    type: map
-    map_type: fixed
-    fixed_prefix: CUST
+    type: hash
+    algorithm: sha256
+    truncate: {_FK_HASH_TRUNCATE}
   - column: first_name
     type: faker
     faker_type: first_name
@@ -337,7 +348,7 @@ masking_rules:
     faker_type: email
   - column: ssn
     type: hash
-    algorithm: sha256
+    algorithm: sha256  # full 64-char hash for the canonical PII column
   - column: dob
     type: date_shift
     jitter_days: 30
@@ -357,10 +368,10 @@ def _build_orders_yaml(out_dir: Path) -> str:
     out_path = (out_dir / "orders_masked.csv").as_posix()
     mappings = (out_dir / "mappings").as_posix()
     return f"""\
-# orders pipeline -- depends on the customers pipeline running first (or at
-# least the customer_id mapping existing in the shared store). order_id gets
-# its own `map` with prefix ORD; customer_id reuses the CUST mapping that
-# customers_pipeline.yaml created.
+# orders pipeline -- customer_id uses the SAME hash config as the customers
+# pipeline. No shared state needed: hash is deterministic, so the masked
+# customer_id in orders matches the masked customer_id in customers row by
+# row, joining cleanly.
 version: '1.0'
 global_settings:
   seed: 42
@@ -380,13 +391,13 @@ mappings:
   store_directory: '{mappings}'
 masking_rules:
   - column: order_id
-    type: map
-    map_type: fixed
-    fixed_prefix: ORD
-  - column: customer_id  # shares the CUST mapping with customers_pipeline.yaml
-    type: map
-    map_type: fixed
-    fixed_prefix: CUST
+    type: hash
+    algorithm: sha256
+    truncate: {_FK_HASH_TRUNCATE}
+  - column: customer_id  # same hash config as customers_pipeline.yaml -> joinable
+    type: hash
+    algorithm: sha256
+    truncate: {_FK_HASH_TRUNCATE}
   - column: amount
     type: passthrough
   - column: order_date
@@ -402,8 +413,9 @@ def _build_payments_yaml(out_dir: Path) -> str:
     out_path = (out_dir / "payments_masked.csv").as_posix()
     mappings = (out_dir / "mappings").as_posix()
     return f"""\
-# payments pipeline -- order_id shares the ORD mapping that orders_pipeline
-# created. payment_id gets a fresh PAY mapping.
+# payments pipeline -- order_id uses the SAME hash config as the orders
+# pipeline. Determinism preserves the order_id join the same way customer_id
+# is preserved between customers and orders.
 version: '1.0'
 global_settings:
   seed: 42
@@ -423,13 +435,13 @@ mappings:
   store_directory: '{mappings}'
 masking_rules:
   - column: payment_id
-    type: map
-    map_type: fixed
-    fixed_prefix: PAY
-  - column: order_id  # shares the ORD mapping with orders_pipeline.yaml
-    type: map
-    map_type: fixed
-    fixed_prefix: ORD
+    type: hash
+    algorithm: sha256
+    truncate: {_FK_HASH_TRUNCATE}
+  - column: order_id  # same hash config as orders_pipeline.yaml -> joinable
+    type: hash
+    algorithm: sha256
+    truncate: {_FK_HASH_TRUNCATE}
   - column: amount
     type: passthrough
   - column: method
@@ -446,8 +458,8 @@ def _verify_ref_integrity(out_dir: Path) -> dict:
     Reads the masked outputs and computes: how many customer_id values in
     masked_orders DON'T appear in masked_customers (should be 0), and how
     many order_id values in masked_payments DON'T appear in masked_orders
-    (should be 0). The whole point of sharing mappings/ is that these are
-    both zero.
+    (should be 0). Both are zero whenever the same deterministic transform
+    is applied to the same FK column across the related pipelines.
     """
     import pandas as pd
 
@@ -476,11 +488,21 @@ def _verify_ref_integrity(out_dir: Path) -> dict:
     }
 
 
+def _cleanup_empty_mappings_dir(out_dir: Path) -> None:
+    """The engine eagerly creates `mappings/` on Masker init even when no
+    transform writes to it. Remove the empty dir so the demo output is tidy.
+    Best-effort -- failures are not fatal.
+    """
+    try:
+        mappings_dir = out_dir / "mappings"
+        if mappings_dir.exists() and not any(mappings_dir.iterdir()):
+            mappings_dir.rmdir()
+    except OSError:
+        pass
+
+
 def _run_ref_demo(state: OutputState, out_dir: Path, n_rows: int) -> int:
     """3-table FK demo. Returns the exit code (always 0 on success)."""
-    customers_csv = out_dir / "customers.csv"
-    orders_csv = out_dir / "orders.csv"
-    payments_csv = out_dir / "payments.csv"
     customers_yaml = out_dir / "customers_pipeline.yaml"
     orders_yaml = out_dir / "orders_pipeline.yaml"
     payments_yaml = out_dir / "payments_pipeline.yaml"
@@ -499,20 +521,21 @@ def _run_ref_demo(state: OutputState, out_dir: Path, n_rows: int) -> int:
     from decoy_engine import Masker
 
     if state.mode is OutputMode.default:
-        state.console.print(accent("[2/5]"), "Masking customers (writes CUST_N mappings)...")
+        state.console.print(accent("[2/5]"), "Masking customers (hash on customer_id)...")
     Masker(str(customers_yaml)).mask()
 
     if state.mode is OutputMode.default:
-        state.console.print(accent("[3/5]"), "Masking orders (reuses CUST_N, writes ORD_N)...")
+        state.console.print(accent("[3/5]"), "Masking orders (same hash, same output)...")
     Masker(str(orders_yaml)).mask()
 
     if state.mode is OutputMode.default:
-        state.console.print(accent("[4/5]"), "Masking payments (reuses ORD_N, writes PAY_N)...")
+        state.console.print(accent("[4/5]"), "Masking payments (same hash, same output)...")
     Masker(str(payments_yaml)).mask()
 
     if state.mode is OutputMode.default:
         state.console.print(accent("[5/5]"), "Verifying referential integrity post-mask...")
     integrity = _verify_ref_integrity(out_dir)
+    _cleanup_empty_mappings_dir(out_dir)
 
     ok = (
         integrity["orders_customer_id_orphans"] == 0
@@ -538,6 +561,7 @@ def _run_ref_demo(state: OutputState, out_dir: Path, n_rows: int) -> int:
                     "payments": str(payments_masked),
                 },
                 "integrity": integrity,
+                "fk_strategy": "hash-sha256-truncated",
             },
         )
         return 0
@@ -559,7 +583,7 @@ def _run_ref_demo(state: OutputState, out_dir: Path, n_rows: int) -> int:
             ("Customers", f"{integrity['customers_rows']:,} rows -> {customers_masked.name}"),
             ("Orders", f"{integrity['orders_rows']:,} rows -> {orders_masked.name}"),
             ("Payments", f"{integrity['payments_rows']:,} rows -> {payments_masked.name}"),
-            ("Pipelines", "3 (shared mappings/ store)"),
+            ("FK strategy", f"hash (sha256, truncated to {_FK_HASH_TRUNCATE} hex)"),
             ("Integrity", integrity_summary),
         ],
         next_hint=f"head {customers_masked}",
@@ -568,9 +592,8 @@ def _run_ref_demo(state: OutputState, out_dir: Path, n_rows: int) -> int:
     if ok:
         state.console.print(
             success("OK"),
-            "all FK joins survive masking. The CUST_N / ORD_N mappings in",
-            code((out_dir / "mappings").as_posix()),
-            "made it work.",
+            "all FK joins survive masking via deterministic hashing --",
+            "same input -> same hash -> joins work with no shared state.",
         )
     else:
         state.console.print(
@@ -580,7 +603,8 @@ def _run_ref_demo(state: OutputState, out_dir: Path, n_rows: int) -> int:
         )
         state.console.print(
             " ", hint("hint:"),
-            "check that all three pipelines point at the same mappings/ store.",
+            "check that all three pipelines use identical hash config",
+            "(algorithm + truncate) for the shared FK columns.",
         )
     return 0
 
@@ -626,9 +650,8 @@ def _demo(
 
     Pass `--ref` to run the referential-integrity variant instead: three
     related CSVs (customers, orders, payments) with foreign-key columns,
-    masked through three pipelines that share a single mapping store so
-    the joins survive masking. Useful for showing what a multi-pipeline
-    YAML setup looks like, and proving that masking doesn't break FKs.
+    masked through three pipelines that hash the FK columns identically.
+    Determinism is what preserves the joins -- no shared state needed.
     """
     state = setup_output(json_, quiet, verbose)
 
