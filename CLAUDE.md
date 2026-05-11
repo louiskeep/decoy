@@ -44,7 +44,7 @@ src/decoy/
 │   ├── run.py           ← decoy run <config.yaml> [--mode mask|generate|convert]
 │   ├── validate.py      ← decoy validate <config.yaml>
 │   ├── storm.py         ← decoy storm scan <csv> -- STORM analysis
-│   ├── forecast.py      ← decoy forecast recommend <scan.json>
+│   ├── forecast.py      ← decoy forecast <scan.json>
 │   ├── init.py          ← decoy init (interactive scaffolder)
 │   ├── demo.py          ← decoy demo (bundled scan→forecast→mask walkthrough)
 │   └── completers.py    ← tab-completion sources (Disguises, transforms, Faker)

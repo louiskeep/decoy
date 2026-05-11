@@ -1,4 +1,4 @@
-"""End-to-end tests for `decoy forecast recommend`."""
+"""End-to-end tests for `decoy forecast`."""
 
 from __future__ import annotations
 
@@ -46,14 +46,14 @@ def saved_scan(tmp_path: Path) -> Path:
 
 
 def test_forecast_help_includes_examples():
-    result = runner.invoke(app, ["forecast", "recommend", "--help"])
+    result = runner.invoke(app, ["forecast", "--help"])
     assert result.exit_code == 0
     assert "Examples:" in result.stdout
     assert "See also:" in result.stdout
 
 
-def test_forecast_recommend_writes_report_and_pipeline(saved_scan: Path):
-    result = runner.invoke(app, ["forecast", "recommend", str(saved_scan)])
+def test_forecast_writes_report_and_pipeline(saved_scan: Path):
+    result = runner.invoke(app, ["forecast", str(saved_scan)])
     assert result.exit_code == 0, result.stdout
 
     forecast_files = list(saved_scan.parent.glob("forecast_*.json"))
@@ -66,20 +66,20 @@ def test_forecast_recommend_writes_report_and_pipeline(saved_scan: Path):
     assert report["proposed_pipeline_yaml"]
 
 
-def test_forecast_recommend_json_envelope(saved_scan: Path):
+def test_forecast_json_envelope(saved_scan: Path):
     result = runner.invoke(
-        app, ["forecast", "recommend", str(saved_scan), "--json"]
+        app, ["forecast", str(saved_scan), "--json"]
     )
     assert result.exit_code == 0
     payload = _json.loads(result.stdout)
-    assert payload["command"] == "forecast recommend"
+    assert payload["command"] == "forecast"
     assert payload["status"] == "ok"
     assert payload["report"]["disguise_recommendations"]
 
 
-def test_forecast_recommend_quiet_produces_empty_stdout(saved_scan: Path):
+def test_forecast_quiet_produces_empty_stdout(saved_scan: Path):
     result = runner.invoke(
-        app, ["forecast", "recommend", str(saved_scan), "--quiet"]
+        app, ["forecast", str(saved_scan), "--quiet"]
     )
     assert result.exit_code == 0
     assert result.stdout == ""

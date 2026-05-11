@@ -13,26 +13,19 @@ from decoy.ui.card import render_card
 from decoy.ui.output import OutputMode, emit_json, setup_output
 from decoy.ui.progress import spinner
 from decoy.ui.table import make_table
-from decoy.ui.theme import code, error, hint
+from decoy.ui.theme import error, hint
 
 
-forecast_app = typer.Typer(
-    name="forecast",
-    help="Recommend Disguises and per-field Masks from a STORM profile.",
-    no_args_is_help=True,
-)
-
-
-_RECOMMEND_EPILOG = """\
+_FORECAST_EPILOG = """\
 Examples:
 
-  decoy forecast recommend scan.json
+  decoy forecast scan.json
     Print the top Disguise + risk flags. Saves forecast_<timestamp>.json.
 
-  decoy storm scan data.csv --json | decoy forecast recommend -
+  decoy storm scan data.csv --json | decoy forecast -
     Pipe a fresh scan straight in.
 
-  decoy forecast recommend scan.json --json
+  decoy forecast scan.json --json
     Emit the full ForecastReport JSON.
 
 See also: decoy storm scan, decoy run.
@@ -75,7 +68,7 @@ def _load_profile(scan_path: str) -> "StormProfile":  # noqa: F821 -- forward
     return _storm_profile_from_dict(data)
 
 
-def _recommend(
+def forecast(
     scan: str = typer.Argument(
         ...,
         help="Path to the STORM scan JSON, or `-` for stdin.",
@@ -113,7 +106,7 @@ def _recommend(
             emit_json(
                 state,
                 {
-                    "command": "forecast recommend",
+                    "command": "forecast",
                     "status": "error",
                     "scan": scan,
                     "error": str(exc),
@@ -152,7 +145,7 @@ def _recommend(
             emit_json(
                 state,
                 {
-                    "command": "forecast recommend",
+                    "command": "forecast",
                     "status": "ok",
                     "scan": scan,
                     "saved": str(out_path) if out_path else None,
@@ -179,7 +172,7 @@ def _recommend(
 
     render_card(
         state,
-        command="decoy forecast recommend",
+        command="decoy forecast",
         facts=facts,
         next_hint=(f"decoy run {pipeline_path}" if pipeline_path else None),
         status="ok",
@@ -199,4 +192,4 @@ def _recommend(
         state.console.print(t)
 
 
-forecast_app.command(name="recommend", epilog=_RECOMMEND_EPILOG)(_recommend)
+FORECAST_EPILOG = _FORECAST_EPILOG

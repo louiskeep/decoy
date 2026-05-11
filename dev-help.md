@@ -43,7 +43,7 @@ decoy run <config.yaml> --mode generate    # run a generation pipeline
 decoy run <config.yaml> --mode convert     # convert file format
 decoy validate <config.yaml>               # validate config without running
 decoy storm scan <csv>                     # PII / sentinel / re-id risk scan
-decoy forecast recommend <scan.json>       # pick a Disguise + draft a pipeline
+decoy forecast <scan.json>                 # pick a Disguise + draft a pipeline
 decoy init                                 # interactive config scaffolder
 decoy demo                                 # bundled scan->forecast->mask walkthrough
 decoy --install-completion                 # install shell tab completion
