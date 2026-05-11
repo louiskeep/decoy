@@ -1,0 +1,52 @@
+# customers pipeline -- the PK source for the FK relationships.
+#
+# customer_id uses `map` with map_type: fixed so each value gets a stable
+# masked replacement (e.g. C00042 -> CUST_42), persisted under the shared
+# mappings/ store. The orders pipeline points at the SAME store, so its
+# customer_id column gets the same replacements. That's what makes the
+# join survive masking.
+version: '1.0'
+global_settings:
+  seed: 42
+input:
+  type: csv
+  path: 'decoy_demo_ref/customers.csv'
+  csv_options:
+    delimiter: ','
+    encoding: utf-8
+output:
+  type: csv
+  path: 'decoy_demo_ref/customers_masked.csv'
+  csv_options:
+    delimiter: ','
+    encoding: utf-8
+mappings:
+  store_directory: 'decoy_demo_ref/mappings'
+masking_rules:
+  - column: customer_id
+    type: map
+    map_type: fixed
+    fixed_prefix: CUST
+  - column: first_name
+    type: faker
+    faker_type: first_name
+  - column: last_name
+    type: faker
+    faker_type: last_name
+  - column: email
+    type: faker
+    faker_type: email
+  - column: ssn
+    type: hash
+    algorithm: sha256
+  - column: dob
+    type: date_shift
+    jitter_days: 30
+  - column: zip
+    type: redact
+    keep_chars: 3
+  - column: phone
+    type: faker
+    faker_type: phone_number
+  - column: gender
+    type: passthrough

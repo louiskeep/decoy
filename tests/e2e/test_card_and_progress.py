@@ -77,12 +77,10 @@ def test_multistage_handles_no_stages_gracefully():
     state, _, err = _state(OutputMode.default)
     with multistage(state, []) as ms:
         ms.complete()  # should not raise
-    # Empty stages: nothing rendered.
     assert err.getvalue() == ""
 
 
 def test_spinner_renders_to_stderr_in_default_mode_when_terminal():
-    # Force a terminal so the spinner activates.
     out_buf = StringIO()
     err_buf = StringIO()
     state = OutputState(
@@ -93,5 +91,26 @@ def test_spinner_renders_to_stderr_in_default_mode_when_terminal():
     )
     with spinner(state, "Working"):
         pass
-    # Transient progress wipes itself; we just need to confirm no crash.
+    assert err_buf.getvalue() is not None
+
+
+def test_spinner_accepts_custom_style():
+    """`style=` selects a Rich spinner by name; quiet mode is the safe smoke test."""
+    state, _, _ = _state(OutputMode.quiet)
+    with spinner(state, "loading", style="simpleDotsScrolling"):
+        pass  # should not raise
+
+
+def test_spinner_custom_style_renders_in_terminal():
+    out_buf = StringIO()
+    err_buf = StringIO()
+    state = OutputState(
+        mode=OutputMode.default,
+        verbose=False,
+        console=Console(file=out_buf, theme=DECOY_THEME, force_terminal=False),
+        err_console=Console(file=err_buf, theme=DECOY_THEME, force_terminal=True, no_color=True),
+    )
+    with spinner(state, "Working", style="line"):
+        pass
+    # Transient -- we're just confirming the style param doesn't break Rich.
     assert err_buf.getvalue() is not None

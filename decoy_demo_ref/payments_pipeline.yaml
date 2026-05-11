@@ -1,0 +1,35 @@
+# payments pipeline -- order_id shares the ORD mapping that orders_pipeline
+# created. payment_id gets a fresh PAY mapping.
+version: '1.0'
+global_settings:
+  seed: 42
+input:
+  type: csv
+  path: 'decoy_demo_ref/payments.csv'
+  csv_options:
+    delimiter: ','
+    encoding: utf-8
+output:
+  type: csv
+  path: 'decoy_demo_ref/payments_masked.csv'
+  csv_options:
+    delimiter: ','
+    encoding: utf-8
+mappings:
+  store_directory: 'decoy_demo_ref/mappings'
+masking_rules:
+  - column: payment_id
+    type: map
+    map_type: fixed
+    fixed_prefix: PAY
+  - column: order_id  # shares the ORD mapping with orders_pipeline.yaml
+    type: map
+    map_type: fixed
+    fixed_prefix: ORD
+  - column: amount
+    type: passthrough
+  - column: method
+    type: passthrough
+  - column: paid_at
+    type: date_shift
+    jitter_days: 7

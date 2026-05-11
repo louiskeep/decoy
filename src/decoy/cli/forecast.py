@@ -61,8 +61,6 @@ def _load_profile(scan_path: str) -> "StormProfile":  # noqa: F821 -- forward
     else:
         raw = Path(scan_path).read_text(encoding="utf-8")
     data = _json.loads(raw)
-    # Accept both the bare to_dict() shape and the {"profile": {...}} envelope
-    # that `decoy storm scan --json` (non-stdin) emits.
     if "profile" in data and "row_count" not in data:
         data = data["profile"]
     return _storm_profile_from_dict(data)
@@ -98,7 +96,10 @@ def forecast(
     try:
         from decoy_engine import recommend
 
-        with spinner(state, "Recommending Disguises..."):
+        # `simpleDotsScrolling` reads as scrolling raindrops -- carries the
+        # storm theme into the forecast step (which is the natural follow-up
+        # to `storm scan`). ASCII-safe per CLI_UX_GUIDE section 14.
+        with spinner(state, "Recommending Disguises...", style="simpleDotsScrolling"):
             profile = _load_profile(scan)
             report = recommend(profile)
     except Exception as exc:
@@ -178,7 +179,6 @@ def forecast(
         status="ok",
     )
 
-    # Detail follow-up: list each disguise with score, plus risk flags table.
     if report.disguise_recommendations:
         t = make_table("Disguise", "Score", "Fields", title="All Disguises")
         for d in report.disguise_recommendations:

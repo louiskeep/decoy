@@ -1,0 +1,37 @@
+# orders pipeline -- depends on the customers pipeline running first (or at
+# least the customer_id mapping existing in the shared store). order_id gets
+# its own `map` with prefix ORD; customer_id reuses the CUST mapping that
+# customers_pipeline.yaml created.
+version: '1.0'
+global_settings:
+  seed: 42
+input:
+  type: csv
+  path: 'decoy_demo_ref/orders.csv'
+  csv_options:
+    delimiter: ','
+    encoding: utf-8
+output:
+  type: csv
+  path: 'decoy_demo_ref/orders_masked.csv'
+  csv_options:
+    delimiter: ','
+    encoding: utf-8
+mappings:
+  store_directory: 'decoy_demo_ref/mappings'
+masking_rules:
+  - column: order_id
+    type: map
+    map_type: fixed
+    fixed_prefix: ORD
+  - column: customer_id  # shares the CUST mapping with customers_pipeline.yaml
+    type: map
+    map_type: fixed
+    fixed_prefix: CUST
+  - column: amount
+    type: passthrough
+  - column: order_date
+    type: date_shift
+    jitter_days: 30
+  - column: status
+    type: passthrough
