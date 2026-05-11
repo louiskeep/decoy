@@ -5,6 +5,7 @@ from __future__ import annotations
 import difflib
 import json as _json
 import sys
+import time
 from datetime import datetime
 from enum import Enum
 from pathlib import Path
@@ -44,6 +45,21 @@ _BUCKET_RANK: dict[str, int] = {"none": 0, "low": 1, "med": 2, "high": 3}
 # Used by `_emit_load_error` to swap the generic JSON parse hint for a
 # specific "scan it first" suggestion.
 _RAW_DATA_SUFFIXES = {".csv", ".tsv", ".txt", ".parquet", ".json.gz", ".jsonl"}
+
+# `storm test` -- demo command. Stages and a fixed set of made-up facts the
+# fake summary card renders. Marked clearly so no one mistakes the output
+# for a real scan.
+_TEST_STAGES: tuple[str, ...] = ("Load source", "Profile columns", "Save profile")
+_DEFAULT_TEST_SECONDS = 10.0
+_FAKE_FACTS: list[tuple[str, str]] = [
+    ("Mode", "demo (no data scanned)"),
+    ("Source", "patients_demo.csv (sample)"),
+    ("Rows scanned", "50,000 (head)"),
+    ("Columns", "10"),
+    ("PII columns", "6"),
+    ("Reid risk", "88.9"),
+    ("Quasi-identifiers", "(first_name + last_name + zip)"),
+]
 
 
 _SCAN_EPILOG = """\
@@ -108,6 +124,23 @@ Examples:
     Boolean drift flag for scripting.
 
 See also: decoy storm scan, decoy storm fields.
+"""
+
+
+_TEST_EPILOG = """\
+Examples:
+
+  decoy storm test
+    10 seconds of stormy multistage animation, then a fake summary card.
+    No data is read; nothing is written.
+
+  decoy storm test --seconds 30
+    Stretch the demo to 30 seconds -- handy for screen recording.
+
+  decoy storm test --json
+    Skip the animation, emit a fake envelope. For pipeline smoke tests.
+
+See also: decoy storm scan, decoy demo.
 """
 
 
@@ -182,12 +215,9 @@ def _looks_like_raw_data(scan_path: str) -> bool:
     suffix = p.suffix.lower()
     if suffix in _RAW_DATA_SUFFIXES:
         return True
-    # Multi-suffix files like .json.gz where Path.suffix only sees `.gz`.
     suffixes = "".join(p.suffixes).lower()
     if any(suffixes.endswith(s) for s in _RAW_DATA_SUFFIXES):
         return True
-    # Content sniff: a STORM scan JSON always starts with `{`. If the file
-    # exists and the first non-whitespace char isn't `{`, it isn't a scan.
     try:
         with p.open("r", encoding="utf-8", errors="replace") as fh:
             head = fh.read(64).lstrip()
@@ -334,7 +364,6 @@ def _scan(
         raise typer.Exit(code=3)
 
     if state.mode is OutputMode.json:
-        # Full StormProfile to stdout when piping.
         if out is not None and str(out) == "-":
             sys.stdout.write(_json.dumps(profile.to_dict()) + "\n")
         else:
@@ -893,7 +922,70 @@ def _diff(
         raise typer.Exit(code=1)
 
 
+def _test_command(
+    seconds: float = typer.Option(
+        _DEFAULT_TEST_SECONDS, "--seconds",
+        help="How long to run the simulated scan stages (default 10).",
+        min=0.0,
+    ),
+    json_: bool = typer.Option(
+        False, "--json",
+        help="Skip the animation, emit a fake scan-shaped envelope to stdout.",
+    ),
+    quiet: bool = typer.Option(
+        False, "--quiet", "-q",
+        help="Suppress stdout. Skips the animation and exits 0.",
+    ),
+    verbose: bool = typer.Option(
+        False, "--verbose", "-v",
+        help="Enable debug-level CLI logs on stderr.",
+    ),
+) -> None:
+    """Preview the `storm scan` UX without scanning any data.
+
+    Runs the stormy multistage animation for ~10 seconds (the default), then
+    prints a clearly-marked fake summary card. No data is read; nothing is
+    written. Use this to demo the CLI on a clean terminal, record a screen
+    capture, or confirm the storm animation renders before pointing the real
+    scan at a slow dataset.
+
+    --json and --quiet skip the animation -- they are pipeline-shape only.
+    """
+    state = setup_output(json_, quiet, verbose)
+
+    if state.mode is OutputMode.json:
+        emit_json(
+            state,
+            {
+                "command": "storm test",
+                "status": "ok",
+                "demo": True,
+                "facts": dict(_FAKE_FACTS),
+            },
+        )
+        return
+
+    if state.mode is OutputMode.quiet:
+        return
+
+    per_stage = (seconds / len(_TEST_STAGES)) if _TEST_STAGES else 0.0
+    with stormy_multistage(state, list(_TEST_STAGES)) as ms:
+        for _ in _TEST_STAGES:
+            if per_stage > 0:
+                time.sleep(per_stage)
+            ms.complete()
+
+    render_card(
+        state,
+        command="decoy storm test",
+        facts=_FAKE_FACTS,
+        next_hint="decoy storm scan path/to/your/data.csv",
+        status="ok",
+    )
+
+
 storm_app.command(name="scan", epilog=_SCAN_EPILOG)(_scan)
 storm_app.command(name="fields", epilog=_FIELDS_EPILOG)(_fields)
 storm_app.command(name="show", epilog=_SHOW_EPILOG)(_show)
 storm_app.command(name="diff", epilog=_DIFF_EPILOG)(_diff)
+storm_app.command(name="test", epilog=_TEST_EPILOG)(_test_command)
