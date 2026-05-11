@@ -2,8 +2,8 @@
 
 A fixed multi-line ASCII cumulus silhouette anchors the top of the scene;
 eight rain/lightning frames cycle underneath. The per-stage running marker
-cycles its own little glyph (~ ; * .) on the active stage. Cloud + header
-pop yellow on the lightning beats, dim on the calm frames.
+cycles its own little glyph (~ ; * .) on the active stage. Cloud pops
+yellow on the lightning beats, dim on the calm frames.
 
 All ASCII per CLI_UX_GUIDE section 14; auto-disables in --quiet or non-TTY
 per section 7.
@@ -17,7 +17,6 @@ from typing import Iterator
 
 from rich.console import Group
 from rich.live import Live
-from rich.text import Text
 
 from decoy.ui.output import OutputMode, OutputState
 from decoy.ui.theme import accent, hint, success, warn
@@ -93,18 +92,6 @@ CLOUD_FRAMES: list[str] = [
     "\n".join(_CLOUD_LINES + rain) for rain in _RAIN_FRAMES_RAW
 ]
 
-# Narrative header -- one phrase per scene frame.
-HEADER_FRAMES: list[str] = [
-    "  skies clear...........",
-    "  first drops fall......",
-    "  rain steadies.........",
-    "  the heavens open......",
-    "  ** LIGHTNING **.......",
-    "  ** THUNDER CRACKS **..",
-    "  ** STORM RAGES **.....",
-    "  the storm passes......",
-]
-
 # Per-stage running marker -- cycles independently to give the active
 # stage a small pulse beneath the bigger cloud animation.
 RUNNING_FRAMES: list[str] = ["~", ";", "*", "."]
@@ -137,21 +124,17 @@ class _StormyHandle:
         frame = self._frame_state["frame"]
         scene_idx = frame % len(CLOUD_FRAMES)
         running_glyph = RUNNING_FRAMES[frame % len(RUNNING_FRAMES)]
-        header_text = HEADER_FRAMES[scene_idx]
         is_lightning = scene_idx in _LIGHTNING_FRAMES
 
         scene_str = CLOUD_FRAMES[scene_idx]
         if is_lightning:
             scene = warn(scene_str)
-            header: Text = warn(header_text)
         elif scene_idx == 0:
             scene = hint(scene_str)
-            header = hint(header_text)
         else:
             scene = accent(scene_str)
-            header = accent(header_text)
 
-        lines: list = [scene, header]
+        lines: list = [scene]
         for i, label in enumerate(self._stages):
             if i < self._idx:
                 lines.append(success(f"[{DONE_ICON}] {label}"))

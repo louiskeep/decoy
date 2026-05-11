@@ -9,7 +9,6 @@ from rich.console import Console
 from decoy.ui.output import OutputMode, OutputState
 from decoy.ui.storm_animation import (
     CLOUD_FRAMES,
-    HEADER_FRAMES,
     RUNNING_FRAMES,
     _CLOUD_LINES,
     _RAIN_FRAMES_RAW,
@@ -58,7 +57,7 @@ def test_stormy_multistage_handles_no_stages_gracefully():
     assert err.getvalue() == ""
 
 
-def test_stormy_handle_renders_cloud_header_and_stages():
+def test_stormy_handle_renders_cloud_and_stages():
     """Direct render exercise -- no Live, no thread, just the build output."""
     handle = _StormyHandle(
         live=None, stages=["Load", "Profile", "Save"], frame_state={"frame": 0}
@@ -76,15 +75,9 @@ def test_stormy_handle_renders_cloud_header_and_stages():
     assert f"[{RUNNING_FRAMES[0]}] Profile" in out
     # "Save" is pending.
     assert "[ ] Save" in out
-    # Header line is present.
-    assert HEADER_FRAMES[0].strip() in out
     # Recognisable bits of the cumulus silhouette show up.
     assert "_.-~-._" in out
     assert "~-..__" in out or "`~-.." in out
-
-
-def test_cloud_and_header_frame_counts_match():
-    assert len(CLOUD_FRAMES) == len(HEADER_FRAMES)
 
 
 def test_cloud_silhouette_is_constant_across_frames():
@@ -100,8 +93,6 @@ def test_all_frames_are_ascii_only():
     """Per CLI_UX_GUIDE.md section 14 -- no Unicode in default output."""
     for frame in RUNNING_FRAMES:
         frame.encode("ascii")
-    for header in HEADER_FRAMES:
-        header.encode("ascii")
     for cloud in CLOUD_FRAMES:
         cloud.encode("ascii")
 

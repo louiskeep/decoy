@@ -29,13 +29,22 @@ def _disabled(state: OutputState) -> bool:
 
 
 @contextmanager
-def spinner(state: OutputState, message: str) -> Iterator[None]:
-    """Indeterminate spinner. Use for ops < ~10s with no progress signal."""
+def spinner(
+    state: OutputState, message: str, *, style: str = "dots"
+) -> Iterator[None]:
+    """Indeterminate spinner. Use for ops < ~10s with no progress signal.
+
+    `style` is any Rich spinner name -- run `python -m rich.spinner` to see
+    the gallery. Default `dots` matches Rich's own default. Notable picks:
+    `simpleDotsScrolling` for an ASCII-safe rain-drop feel that complements
+    the storm theme; `line` for a minimal ASCII rotor; `dots12` for a
+    Braille trickle.
+    """
     if _disabled(state):
         yield
         return
     progress = Progress(
-        SpinnerColumn(),
+        SpinnerColumn(spinner_name=style),
         TextColumn("[info]{task.description}[/info]"),
         TimeElapsedColumn(),
         console=state.err_console,
