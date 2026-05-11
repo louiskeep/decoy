@@ -15,7 +15,7 @@ from decoy.ui.card import render_card
 from decoy.ui.output import OutputMode, OutputState, emit_json, setup_output
 from decoy.ui.storm_animation import stormy_multistage
 from decoy.ui.table import make_table
-from decoy.ui.theme import code, error, hint, risk_high, risk_med
+from decoy.ui.theme import code, error, hint, risk_high, risk_med, success
 
 
 storm_app = typer.Typer(
@@ -36,6 +36,9 @@ class PiiLevel(str, Enum):
     med = "med"
     low = "low"
     none = "none"
+
+
+_BUCKET_RANK: dict[str, int] = {"none": 0, "low": 1, "med": 2, "high": 3}
 
 
 _SCAN_EPILOG = """\
@@ -86,6 +89,23 @@ See also: decoy storm fields, decoy forecast recommend.
 """
 
 
+_DIFF_EPILOG = """\
+Examples:
+
+  decoy storm diff baseline.json new.json
+    Print field-, PII-, QI-, and risk-level differences between two scans.
+
+  decoy storm diff baseline.json new.json --strict
+    Same, but exit 1 on drift (PII bucket bumped up, new high-PII field, or
+    new quasi-identifier group). Wire this into CI.
+
+  decoy storm diff baseline.json new.json --json | jq '.drift'
+    Boolean drift flag for scripting.
+
+See also: decoy storm scan, decoy storm fields.
+"""
+
+
 def _load_csv_with_sampling(path: Path, rows: int | None, strategy: SampleStrategy):
     import pandas as pd
 
@@ -131,8 +151,17 @@ def _pii_bucket(score: float | None) -> str:
     return "none"
 
 
+def _bucket_rank(bucket: str) -> int:
+    return _BUCKET_RANK.get(bucket, 0)
+
+
 def _is_quasi(name: str, qi_groups: list) -> bool:
     return any(name in g for g in qi_groups)
+
+
+def _canon_qi(group: list) -> tuple[str, ...]:
+    """Canonical, hashable form of a QI group for set comparison."""
+    return tuple(sorted(str(x) for x in group))
 
 
 def _emit_load_error(
@@ -544,6 +573,270 @@ def _show(
         state.console.print(t)
 
 
+def _diff(
+    old: str = typer.Argument(
+        ..., help="Path to the older STORM scan JSON, or `-` for stdin."
+    ),
+    new: str = typer.Argument(
+        ..., help="Path to the newer STORM scan JSON, or `-` for stdin."
+    ),
+    strict: bool = typer.Option(
+        False, "--strict",
+        help="Exit 1 on drift -- any PII bucket bumped up, any new high-PII field, or any new quasi-identifier group.",
+    ),
+    json_: bool = typer.Option(
+        False, "--json", help="Emit the categorized diff as JSON to stdout."
+    ),
+    quiet: bool = typer.Option(
+        False, "--quiet", "-q", help="Suppress stdout. Errors still go to stderr."
+    ),
+    verbose: bool = typer.Option(
+        False, "--verbose", "-v", help="Enable debug-level CLI logs on stderr."
+    ),
+) -> None:
+    """Compare two STORM scans -- catch schema, PII, and risk drift.
+
+    Designed for CI: run `decoy storm diff baseline.json new.json --strict`
+    on every PR to fail the build when a column's PII bucket goes up, a new
+    high-PII field appears, or a new quasi-identifier group forms. Read-only
+    -- the scans are JSON; raw data never enters the CLI.
+    """
+    state = setup_output(json_, quiet, verbose)
+
+    if old == "-" and new == "-":
+        if state.mode is OutputMode.json:
+            emit_json(
+                state,
+                {
+                    "command": "storm diff",
+                    "status": "error",
+                    "error": "only one of OLD or NEW can be `-` (stdin).",
+                },
+            )
+        elif state.mode is not OutputMode.quiet:
+            state.err_console.print(
+                error("error:"), "only one of OLD or NEW can be `-` (stdin)."
+            )
+            state.err_console.print(
+                " ", hint("hint:"), "pipe one scan, pass the other as a path."
+            )
+        raise typer.Exit(code=1)
+
+    try:
+        old_data = _load_scan_dict(old)
+    except (FileNotFoundError, _json.JSONDecodeError, OSError) as exc:
+        _emit_load_error(state, old, exc, "storm diff")
+        raise typer.Exit(code=1)
+    try:
+        new_data = _load_scan_dict(new)
+    except (FileNotFoundError, _json.JSONDecodeError, OSError) as exc:
+        _emit_load_error(state, new, exc, "storm diff")
+        raise typer.Exit(code=1)
+
+    old_fields = {
+        f.get("name"): f for f in old_data.get("fields", []) if f.get("name")
+    }
+    new_fields = {
+        f.get("name"): f for f in new_data.get("fields", []) if f.get("name")
+    }
+
+    added_names = sorted(set(new_fields) - set(old_fields))
+    removed_names = sorted(set(old_fields) - set(new_fields))
+    common_names = sorted(set(old_fields) & set(new_fields))
+
+    pii_increased: list[dict] = []
+    pii_decreased: list[dict] = []
+    for name in common_names:
+        old_score = old_fields[name].get("pii_score") or 0
+        new_score = new_fields[name].get("pii_score") or 0
+        old_bucket = _pii_bucket(old_score)
+        new_bucket = _pii_bucket(new_score)
+        if _bucket_rank(new_bucket) > _bucket_rank(old_bucket):
+            pii_increased.append(
+                {
+                    "name": name,
+                    "old_score": old_score, "new_score": new_score,
+                    "old_bucket": old_bucket, "new_bucket": new_bucket,
+                }
+            )
+        elif _bucket_rank(new_bucket) < _bucket_rank(old_bucket):
+            pii_decreased.append(
+                {
+                    "name": name,
+                    "old_score": old_score, "new_score": new_score,
+                    "old_bucket": old_bucket, "new_bucket": new_bucket,
+                }
+            )
+
+    old_qi = {_canon_qi(g) for g in old_data.get("quasi_identifier_groups", [])}
+    new_qi = {_canon_qi(g) for g in new_data.get("quasi_identifier_groups", [])}
+    qi_added = sorted(new_qi - old_qi)
+    qi_removed = sorted(old_qi - new_qi)
+
+    old_risk = old_data.get("reid_risk_score")
+    new_risk = new_data.get("reid_risk_score")
+    risk_delta: float | None = None
+    if isinstance(old_risk, (int, float)) and isinstance(new_risk, (int, float)):
+        risk_delta = float(new_risk) - float(old_risk)
+
+    added_rows = [
+        {
+            "name": n,
+            "pii_score": new_fields[n].get("pii_score"),
+            "pii_bucket": _pii_bucket(new_fields[n].get("pii_score")),
+        }
+        for n in added_names
+    ]
+    removed_rows = [
+        {
+            "name": n,
+            "pii_score": old_fields[n].get("pii_score"),
+            "pii_bucket": _pii_bucket(old_fields[n].get("pii_score")),
+        }
+        for n in removed_names
+    ]
+
+    new_high_pii = [r for r in added_rows if r["pii_bucket"] == "high"]
+    drift = bool(pii_increased or new_high_pii or qi_added)
+
+    if state.mode is OutputMode.json:
+        emit_json(
+            state,
+            {
+                "command": "storm diff",
+                "status": "ok",
+                "old": old,
+                "new": new,
+                "summary": {
+                    "added": len(added_rows),
+                    "removed": len(removed_rows),
+                    "pii_increased": len(pii_increased),
+                    "pii_decreased": len(pii_decreased),
+                    "qi_groups_added": len(qi_added),
+                    "qi_groups_removed": len(qi_removed),
+                    "reid_risk_delta": risk_delta,
+                },
+                "changes": {
+                    "added": added_rows,
+                    "removed": removed_rows,
+                    "pii_increased": pii_increased,
+                    "pii_decreased": pii_decreased,
+                    "qi_groups_added": [list(g) for g in qi_added],
+                    "qi_groups_removed": [list(g) for g in qi_removed],
+                },
+                "drift": drift,
+            },
+        )
+        if strict and drift:
+            raise typer.Exit(code=1)
+        return
+
+    if state.mode is OutputMode.quiet:
+        if strict and drift:
+            raise typer.Exit(code=1)
+        return
+
+    facts: list[tuple[str, str]] = [
+        ("Old", old if old != "-" else "stdin"),
+        ("New", new if new != "-" else "stdin"),
+        ("Fields added", str(len(added_rows))),
+        ("Fields removed", str(len(removed_rows))),
+        ("PII bucket increased", str(len(pii_increased))),
+        ("PII bucket decreased", str(len(pii_decreased))),
+    ]
+    if risk_delta is not None:
+        sign = "+" if risk_delta > 0 else ""
+        facts.append(("Reid risk delta", f"{sign}{risk_delta:.2f}"))
+    if qi_added or qi_removed:
+        facts.append(("QI groups", f"+{len(qi_added)} -{len(qi_removed)}"))
+
+    status_token = "warn" if drift else "ok"
+    next_hint = None
+    if pii_increased and new != "-":
+        next_hint = f"decoy storm show {pii_increased[0]['name']} {new}"
+    elif new_high_pii and new != "-":
+        next_hint = f"decoy storm show {new_high_pii[0]['name']} {new}"
+
+    render_card(
+        state,
+        command="decoy storm diff",
+        facts=facts,
+        next_hint=next_hint,
+        status=status_token,
+    )
+
+    if pii_increased:
+        t = make_table("Field", "Old", "New", title="PII bucket increased")
+        for r in pii_increased:
+            new_cell_text = f"{r['new_bucket']} ({r['new_score']:.2f})"
+            if r["new_bucket"] == "high":
+                new_cell = risk_high(new_cell_text)
+            elif r["new_bucket"] == "med":
+                new_cell = risk_med(new_cell_text)
+            else:
+                new_cell = new_cell_text
+            t.add_row(
+                r["name"],
+                f"{r['old_bucket']} ({r['old_score']:.2f})",
+                new_cell,
+            )
+        state.console.print(t)
+
+    if pii_decreased:
+        t = make_table("Field", "Old", "New", title="PII bucket decreased")
+        for r in pii_decreased:
+            t.add_row(
+                r["name"],
+                f"{r['old_bucket']} ({r['old_score']:.2f})",
+                f"{r['new_bucket']} ({r['new_score']:.2f})",
+            )
+        state.console.print(t)
+
+    if added_rows:
+        t = make_table("Field", "PII score", "Bucket", title="Fields added")
+        for r in added_rows:
+            score = r["pii_score"]
+            score_cell = f"{score:.2f}" if isinstance(score, (int, float)) else "-"
+            bucket = r["pii_bucket"]
+            if bucket == "high":
+                bucket_cell = risk_high(bucket)
+            elif bucket == "med":
+                bucket_cell = risk_med(bucket)
+            else:
+                bucket_cell = hint(bucket)
+            t.add_row(r["name"], score_cell, bucket_cell)
+        state.console.print(t)
+
+    if removed_rows:
+        t = make_table(
+            "Field", "PII score (was)", "Bucket (was)", title="Fields removed"
+        )
+        for r in removed_rows:
+            score = r["pii_score"]
+            score_cell = f"{score:.2f}" if isinstance(score, (int, float)) else "-"
+            t.add_row(r["name"], score_cell, r["pii_bucket"])
+        state.console.print(t)
+
+    if qi_added:
+        t = make_table("Group", title="Quasi-identifier groups added")
+        for g in qi_added:
+            t.add_row("(" + " + ".join(g) + ")")
+        state.console.print(t)
+
+    if qi_removed:
+        t = make_table("Group", title="Quasi-identifier groups removed")
+        for g in qi_removed:
+            t.add_row("(" + " + ".join(g) + ")")
+        state.console.print(t)
+
+    if not drift and not (pii_decreased or removed_rows or qi_removed or added_rows):
+        state.console.print(success("No drift detected."))
+
+    if strict and drift:
+        raise typer.Exit(code=1)
+
+
 storm_app.command(name="scan", epilog=_SCAN_EPILOG)(_scan)
 storm_app.command(name="fields", epilog=_FIELDS_EPILOG)(_fields)
 storm_app.command(name="show", epilog=_SHOW_EPILOG)(_show)
+storm_app.command(name="diff", epilog=_DIFF_EPILOG)(_diff)
