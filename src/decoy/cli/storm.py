@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import difflib
 import json as _json
+import sys
 from datetime import datetime
 from enum import Enum
 from pathlib import Path
@@ -10,9 +12,10 @@ from pathlib import Path
 import typer
 
 from decoy.ui.card import render_card
-from decoy.ui.output import OutputMode, emit_json, setup_output
+from decoy.ui.output import OutputMode, OutputState, emit_json, setup_output
 from decoy.ui.storm_animation import stormy_multistage
-from decoy.ui.theme import code, error, hint
+from decoy.ui.table import make_table
+from decoy.ui.theme import code, error, hint, risk_high, risk_med
 
 
 storm_app = typer.Typer(
@@ -28,6 +31,13 @@ class SampleStrategy(str, Enum):
     random = "random"
 
 
+class PiiLevel(str, Enum):
+    high = "high"
+    med = "med"
+    low = "low"
+    none = "none"
+
+
 _SCAN_EPILOG = """\
 Examples:
 
@@ -40,7 +50,39 @@ Examples:
   decoy storm scan data.csv --json > scan.json
     Pipe the full StormProfile JSON for forecast --stdin.
 
-See also: decoy forecast recommend, decoy run.
+See also: decoy storm fields, decoy storm show, decoy forecast recommend.
+"""
+
+
+_FIELDS_EPILOG = """\
+Examples:
+
+  decoy storm fields scan.json
+    List every field with PII score, bucket, quasi-identifier flag.
+
+  decoy storm fields scan.json --pii high --quasi
+    Only fields that are high PII *and* part of a quasi-identifier group.
+
+  decoy storm fields scan.json --json | jq '.fields[].name'
+    Pipe just the matching field names somewhere else.
+
+See also: decoy storm show, decoy forecast recommend.
+"""
+
+
+_SHOW_EPILOG = """\
+Examples:
+
+  decoy storm show ssn scan.json
+    Per-field detail card -- PII score, detectors, sentinels, top values, QI.
+
+  decoy storm show email scan.json --json
+    Same data as a structured JSON envelope.
+
+  decoy storm scan data.csv --json | decoy storm show ssn -
+    Pipe a fresh scan straight in.
+
+See also: decoy storm fields, decoy forecast recommend.
 """
 
 
@@ -57,6 +99,63 @@ def _load_csv_with_sampling(path: Path, rows: int | None, strategy: SampleStrate
             return df
         return df.sample(n=rows, random_state=42).reset_index(drop=True)
     return pd.read_csv(path)
+
+
+def _load_scan_dict(scan_path: str) -> dict:
+    """Load a STORM scan JSON file (or stdin when path is `-`).
+
+    Accepts both shapes that `decoy storm scan` produces -- the bare
+    `to_dict()` written to disk by default, and the `{"profile": {...}}`
+    envelope from `--json` mode. Mirrors the loader in `decoy.cli.forecast`.
+    """
+    if scan_path == "-":
+        raw = sys.stdin.read()
+    else:
+        raw = Path(scan_path).read_text(encoding="utf-8")
+    data = _json.loads(raw)
+    if "profile" in data and "row_count" not in data:
+        data = data["profile"]
+    return data
+
+
+def _pii_bucket(score: float | None) -> str:
+    """Same buckets as the `storm scan` card uses (>=0.6 PII columns count)."""
+    if score is None:
+        return "none"
+    if score >= 0.6:
+        return "high"
+    if score >= 0.3:
+        return "med"
+    if score > 0:
+        return "low"
+    return "none"
+
+
+def _is_quasi(name: str, qi_groups: list) -> bool:
+    return any(name in g for g in qi_groups)
+
+
+def _emit_load_error(
+    state: OutputState, scan: str, exc: Exception, command_name: str
+) -> None:
+    if state.mode is OutputMode.json:
+        emit_json(
+            state,
+            {
+                "command": command_name,
+                "status": "error",
+                "scan": scan,
+                "error": str(exc),
+            },
+        )
+    elif state.mode is not OutputMode.quiet:
+        state.err_console.print(error("error:"), str(exc))
+        state.err_console.print(
+            " ", hint("hint:"),
+            "the path should point at a file produced by",
+            code("decoy storm scan"),
+            ".",
+        )
 
 
 def _scan(
@@ -99,7 +198,8 @@ def _scan(
     Use this when you've been handed a dataset and want to know what's in it
     -- which fields are PII, which look like quasi-identifiers, what
     re-identification risk the dataset carries -- before writing a masking
-    pipeline. Pass the saved scan JSON to `decoy forecast recommend`.
+    pipeline. Pass the saved scan JSON to `decoy storm fields`,
+    `decoy storm show`, or `decoy forecast recommend`.
     """
     state = setup_output(json_, quiet, verbose)
     source_str = str(source)
@@ -150,8 +250,6 @@ def _scan(
     if state.mode is OutputMode.json:
         # Full StormProfile to stdout when piping.
         if out is not None and str(out) == "-":
-            import sys
-
             sys.stdout.write(_json.dumps(profile.to_dict()) + "\n")
         else:
             emit_json(
@@ -183,7 +281,7 @@ def _scan(
     next_hint = None
     if out_path is not None:
         facts.append(("Saved", str(out_path)))
-        next_hint = f"decoy forecast recommend {out_path}"
+        next_hint = f"decoy storm fields {out_path}"
 
     render_card(
         state,
@@ -194,4 +292,258 @@ def _scan(
     )
 
 
+def _fields(
+    scan: str = typer.Argument(
+        ..., help="Path to a STORM scan JSON, or `-` for stdin."
+    ),
+    pii: PiiLevel | None = typer.Option(
+        None, "--pii",
+        help="Filter to fields whose PII score falls in this bucket.",
+    ),
+    quasi: bool = typer.Option(
+        False, "--quasi",
+        help="Only fields that participate in any quasi-identifier group.",
+    ),
+    json_: bool = typer.Option(
+        False, "--json", help="Emit the filtered field list as JSON to stdout."
+    ),
+    quiet: bool = typer.Option(
+        False, "--quiet", "-q", help="Suppress stdout. Errors still go to stderr."
+    ),
+    verbose: bool = typer.Option(
+        False, "--verbose", "-v", help="Enable debug-level CLI logs on stderr."
+    ),
+) -> None:
+    """List fields from a saved STORM scan, with optional filters.
+
+    The list view of the web FORECAST drill-down -- print the fields that
+    matter, filter by PII bucket or quasi-identifier membership, pipe the
+    result somewhere else. For per-field detail, see `decoy storm show`.
+    """
+    state = setup_output(json_, quiet, verbose)
+
+    try:
+        data = _load_scan_dict(scan)
+    except (FileNotFoundError, _json.JSONDecodeError, OSError) as exc:
+        _emit_load_error(state, scan, exc, "storm fields")
+        raise typer.Exit(code=1)
+
+    fields = data.get("fields", [])
+    qi_groups = data.get("quasi_identifier_groups", [])
+    total = len(fields)
+
+    if pii is not None:
+        fields = [f for f in fields if _pii_bucket(f.get("pii_score")) == pii.value]
+    if quasi:
+        fields = [f for f in fields if _is_quasi(f.get("name", ""), qi_groups)]
+
+    rows = [
+        {
+            "name": f.get("name"),
+            "pii_score": f.get("pii_score"),
+            "pii_bucket": _pii_bucket(f.get("pii_score")),
+            "quasi_identifier": _is_quasi(f.get("name", ""), qi_groups),
+        }
+        for f in fields
+    ]
+
+    if state.mode is OutputMode.json:
+        emit_json(
+            state,
+            {
+                "command": "storm fields",
+                "status": "ok",
+                "scan": scan,
+                "matched": len(rows),
+                "total": total,
+                "fields": rows,
+            },
+        )
+        return
+
+    if state.mode is OutputMode.quiet:
+        return
+
+    label = Path(scan).name if scan != "-" else "stdin"
+    if not rows:
+        state.console.print(hint(f"No fields match in {label} (scanned {total})."))
+        return
+
+    table = make_table(
+        "Field", "PII score", "Bucket", "QI",
+        title=f"Fields in {label} ({len(rows)} of {total})",
+    )
+    for r in rows:
+        bucket = r["pii_bucket"]
+        if bucket == "high":
+            bucket_cell = risk_high(bucket)
+        elif bucket == "med":
+            bucket_cell = risk_med(bucket)
+        else:
+            bucket_cell = hint(bucket)
+        score = r["pii_score"]
+        score_cell = f"{score:.2f}" if isinstance(score, (int, float)) else "-"
+        table.add_row(
+            str(r["name"]),
+            score_cell,
+            bucket_cell,
+            "yes" if r["quasi_identifier"] else "",
+        )
+    state.console.print(table)
+
+    if rows and scan != "-":
+        first = rows[0]["name"]
+        state.console.print(hint("Next:"), code(f"decoy storm show {first} {scan}"))
+
+
+def _show(
+    field: str = typer.Argument(..., help="Field name to inspect."),
+    scan: str = typer.Argument(
+        ..., help="Path to a STORM scan JSON, or `-` for stdin."
+    ),
+    json_: bool = typer.Option(
+        False, "--json", help="Emit the full field detail as JSON to stdout."
+    ),
+    quiet: bool = typer.Option(
+        False, "--quiet", "-q", help="Suppress stdout. Errors still go to stderr."
+    ),
+    verbose: bool = typer.Option(
+        False, "--verbose", "-v", help="Enable debug-level CLI logs on stderr."
+    ),
+) -> None:
+    """Per-field detail from a saved STORM scan.
+
+    The drill-down view of one field: PII score + bucket, detector matches,
+    sentinel hits, top values, quasi-identifier membership. Stays read-only
+    -- for live exploration use the web FORECAST panel.
+    """
+    state = setup_output(json_, quiet, verbose)
+
+    try:
+        data = _load_scan_dict(scan)
+    except (FileNotFoundError, _json.JSONDecodeError, OSError) as exc:
+        _emit_load_error(state, scan, exc, "storm show")
+        raise typer.Exit(code=1)
+
+    fields = data.get("fields", [])
+    matched = next((f for f in fields if f.get("name") == field), None)
+
+    if matched is None:
+        names = [str(f.get("name", "")) for f in fields]
+        suggestion = difflib.get_close_matches(field, names, n=1)
+        if state.mode is OutputMode.json:
+            emit_json(
+                state,
+                {
+                    "command": "storm show",
+                    "status": "error",
+                    "scan": scan,
+                    "field": field,
+                    "error": f"Field {field!r} not in scan.",
+                    "suggestion": suggestion[0] if suggestion else None,
+                },
+            )
+        elif state.mode is not OutputMode.quiet:
+            state.err_console.print(
+                error("error:"), f"Field {field!r} not in scan."
+            )
+            if suggestion:
+                state.err_console.print(
+                    " ", hint("hint:"), "did you mean", code(suggestion[0]), "?"
+                )
+            else:
+                state.err_console.print(
+                    " ", hint("hint:"), "list all fields with",
+                    code(f"decoy storm fields {scan}"), ".",
+                )
+        raise typer.Exit(code=1)
+
+    qi_groups = data.get("quasi_identifier_groups", [])
+    qi_member = [g for g in qi_groups if field in g]
+    score = matched.get("pii_score")
+    bucket = _pii_bucket(score)
+    detectors = matched.get("detector_matches", []) or []
+    sentinels = matched.get("sentinels", []) or []
+    top_values = matched.get("top_values", []) or []
+
+    if state.mode is OutputMode.json:
+        emit_json(
+            state,
+            {
+                "command": "storm show",
+                "status": "ok",
+                "scan": scan,
+                "field": matched,
+                "pii_bucket": bucket,
+                "quasi_identifier_groups": qi_member,
+            },
+        )
+        return
+
+    if state.mode is OutputMode.quiet:
+        return
+
+    facts: list[tuple[str, str]] = [("Field", field)]
+    if isinstance(score, (int, float)):
+        facts.append(("PII score", f"{score:.2f} ({bucket})"))
+    else:
+        facts.append(("PII score", f"- ({bucket})"))
+    for key, label in (
+        ("dtype", "Type"),
+        ("null_count", "Nulls"),
+        ("unique_count", "Distinct"),
+    ):
+        if key in matched and matched[key] is not None:
+            facts.append((label, str(matched[key])))
+    if detectors:
+        names = [
+            str(d.get("detector") or d.get("name") or "?")
+            if isinstance(d, dict)
+            else str(d)
+            for d in detectors
+        ]
+        facts.append(("Detectors", ", ".join(names)))
+    if sentinels:
+        facts.append(("Sentinels", str(len(sentinels))))
+    if qi_member:
+        qi_str = ", ".join("(" + " + ".join(g) + ")" for g in qi_member)
+        facts.append(("Quasi-identifier in", qi_str))
+
+    next_hint = None
+    if scan != "-":
+        next_hint = f"decoy forecast recommend {scan}"
+
+    render_card(
+        state,
+        command="decoy storm show",
+        facts=facts,
+        next_hint=next_hint,
+        status="ok",
+    )
+
+    if top_values:
+        t = make_table("Value", "Count", title="Top values")
+        for tv in top_values[:10]:
+            if isinstance(tv, dict):
+                v = str(tv.get("value", ""))
+                c = str(tv.get("count", ""))
+            else:
+                v, c = str(tv), ""
+            t.add_row(v, c)
+        state.console.print(t)
+
+    if sentinels:
+        t = make_table("Sentinel", "Count", title="Sentinel hits")
+        for s in sentinels:
+            if isinstance(s, dict):
+                v = str(s.get("value") or s.get("kind") or "?")
+                c = str(s.get("count", ""))
+            else:
+                v, c = str(s), ""
+            t.add_row(v, c)
+        state.console.print(t)
+
+
 storm_app.command(name="scan", epilog=_SCAN_EPILOG)(_scan)
+storm_app.command(name="fields", epilog=_FIELDS_EPILOG)(_fields)
+storm_app.command(name="show", epilog=_SHOW_EPILOG)(_show)
