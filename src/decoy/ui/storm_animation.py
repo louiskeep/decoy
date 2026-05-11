@@ -1,13 +1,12 @@
 """Storm-themed multi-stage indicator for `decoy storm scan`.
 
-Bigger version: a multi-line ASCII storm cloud cycles above the stages, a
-narrative header line tracks the scene, and the per-stage running marker
-cycles a small weather glyph in place of the static `[*]`. All ASCII per
-CLI_UX_GUIDE section 14; auto-disables in --quiet or non-TTY per section 7.
+A fixed multi-line ASCII cumulus silhouette anchors the top of the scene;
+eight rain/lightning frames cycle underneath. The per-stage running marker
+cycles its own little glyph (~ ; * .) on the active stage. Cloud + header
+pop yellow on the lightning beats, dim on the calm frames.
 
-The cloud and the per-stage glyph index off the same monotonic frame
-counter modulo their respective lengths -- they don't have to match in
-count, just the cloud + header lengths do (they ride together).
+All ASCII per CLI_UX_GUIDE section 14; auto-disables in --quiet or non-TTY
+per section 7.
 """
 
 from __future__ import annotations
@@ -24,95 +23,77 @@ from decoy.ui.output import OutputMode, OutputState
 from decoy.ui.theme import accent, hint, success, warn
 
 
-# 8 multi-line ASCII storm scenes. Each frame is exactly 7 lines tall and
-# 30 chars wide so the stage list below stays anchored.
-_CLOUD_FRAMES_RAW: list[list[str]] = [
-    # Frame 0: calm sky
+# Cumulus silhouette -- two puffs, flat-ish base. Stays put across all
+# frames so only the rain/lightning beneath it changes (the eye locks onto
+# the cloud and reads the rain as motion).
+_CLOUD_LINES: list[str] = [
+    "         _.-~-._   _.-~-._         ",
+    "      .-~      ~~-~      ~-.        ",
+    "     :                      :       ",
+    "      `.                  .'        ",
+    "        `~-..__________..-~'        ",
+]
+
+# Rain / lightning area beneath the cloud -- 3 lines per frame so total
+# scene height stays a fixed 8 lines and the stage list below never jumps.
+_RAIN_FRAMES_RAW: list[list[str]] = [
+    # Frame 0: calm sky -- no rain at all.
     [
-        "                              ",
-        "       .--.    .-.            ",
-        "    .-(    )--(   )-.         ",
-        "   (___.__)__)___..-'         ",
-        "                              ",
-        "                              ",
-        "                              ",
+        "                                   ",
+        "                                   ",
+        "                                   ",
     ],
-    # Frame 1: first drops
+    # Frame 1: first drops.
     [
-        "                              ",
-        "       .--.    .-.            ",
-        "    .-(    )--(   )-.         ",
-        "   (___.__)__)___..-'         ",
-        "        '          '          ",
-        "                              ",
-        "                              ",
+        "              .                    ",
+        "            .   .                  ",
+        "                                   ",
     ],
-    # Frame 2: steady rain
+    # Frame 2: gentle rain (dotted drops).
     [
-        "                              ",
-        "       .--.    .-.            ",
-        "    .-(    )--(   )-.         ",
-        "   (___.__)__)___..-'         ",
-        "        '   '   '             ",
-        "          '   '   '           ",
-        "        '   '   '             ",
+        "         . . . . . . .             ",
+        "        . . . . . . .              ",
+        "         . . . . . . .             ",
     ],
-    # Frame 3: the heavens open
+    # Frame 3: heavy slanted rain (diagonal sheets).
     [
-        "                              ",
-        "       .--.    .-.            ",
-        "    .-(    )--(   )-.         ",
-        "   (___.__)__)___..-'         ",
-        "      ' ' ' ' ' ' '           ",
-        "       ' ' ' ' ' '            ",
-        "      ' ' ' ' ' ' '           ",
+        "       / / / / / / /               ",
+        "        / / / / / /                ",
+        "       / / / / / / /               ",
     ],
-    # Frame 4: LIGHTNING from the left
+    # Frame 4: LIGHTNING strikes from the left, rain still falling.
     [
-        "                              ",
-        "       .--.    .-.            ",
-        "    .-(    )--(   )-.         ",
-        "   (___.__)__)___..-'         ",
-        "       /' '  ' ' '            ",
-        "      / ' ' ' ' '             ",
-        "     *  ' ' ' ' '             ",
+        "       /' / / / / /                ",
+        "      /  / / / / /                 ",
+        "     V  / / / / /                  ",
     ],
-    # Frame 5: LIGHTNING from the right
+    # Frame 5: LIGHTNING strikes from the right.
     [
-        "                              ",
-        "       .--.    .-.            ",
-        "    .-(    )--(   )-.         ",
-        "   (___.__)__)___..-'         ",
-        "       ' '  ' ' '\\           ",
-        "        ' ' ' ' ' \\           ",
-        "        ' ' ' ' '  *           ",
+        "       / / / / / '\\                ",
+        "        / / / / /  \\               ",
+        "        / / / / /   V               ",
     ],
-    # Frame 6: DOUBLE STRIKE -- thunder rages
+    # Frame 6: DOUBLE STRIKE -- thunder rolls.
     [
-        "                              ",
-        "       .--.    .-.            ",
-        "    .-(    )--(   )-.         ",
-        "   (___.__)__)___..-'         ",
-        "       /' ' ' ' '\\           ",
-        "      / ' ' ' ' ' \\           ",
-        "     *  ' ' ' ' '  *           ",
+        "       /'  / / /  '\\               ",
+        "      /   / / /    \\               ",
+        "     V    / / /     V               ",
     ],
-    # Frame 7: storm passes
+    # Frame 7: storm passes -- last few drops.
     [
-        "                              ",
-        "       .--.    .-.            ",
-        "    .-(    )--(   )-.         ",
-        "   (___.__)__)___..-'         ",
-        "        '       '             ",
-        "           '                  ",
-        "                              ",
+        "            . .                    ",
+        "              .                    ",
+        "                                   ",
     ],
 ]
 
-CLOUD_FRAMES: list[str] = ["\n".join(lines) for lines in _CLOUD_FRAMES_RAW]
 
-# Narrative header -- one phrase per cloud frame, padded to a consistent
-# width so the layout doesn't twitch as the text changes.
+# Cached as one string per frame -- joined once at module load.
+CLOUD_FRAMES: list[str] = [
+    "\n".join(_CLOUD_LINES + rain) for rain in _RAIN_FRAMES_RAW
+]
+
+# Narrative header -- one phrase per scene frame.
 HEADER_FRAMES: list[str] = [
     "  skies clear...........",
     "  first drops fall......",
@@ -154,23 +135,23 @@ class _StormyHandle:
 
     def _build(self) -> Group:
         frame = self._frame_state["frame"]
-        cloud_idx = frame % len(CLOUD_FRAMES)
+        scene_idx = frame % len(CLOUD_FRAMES)
         running_glyph = RUNNING_FRAMES[frame % len(RUNNING_FRAMES)]
-        header_text = HEADER_FRAMES[cloud_idx]
-        is_lightning = cloud_idx in _LIGHTNING_FRAMES
+        header_text = HEADER_FRAMES[scene_idx]
+        is_lightning = scene_idx in _LIGHTNING_FRAMES
 
-        cloud_str = CLOUD_FRAMES[cloud_idx]
+        scene_str = CLOUD_FRAMES[scene_idx]
         if is_lightning:
-            cloud = warn(cloud_str)
+            scene = warn(scene_str)
             header: Text = warn(header_text)
-        elif cloud_idx == 0:
-            cloud = hint(cloud_str)
+        elif scene_idx == 0:
+            scene = hint(scene_str)
             header = hint(header_text)
         else:
-            cloud = accent(cloud_str)
+            scene = accent(scene_str)
             header = accent(header_text)
 
-        lines: list = [cloud, header]
+        lines: list = [scene, header]
         for i, label in enumerate(self._stages):
             if i < self._idx:
                 lines.append(success(f"[{DONE_ICON}] {label}"))

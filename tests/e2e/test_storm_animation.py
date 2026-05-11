@@ -11,6 +11,8 @@ from decoy.ui.storm_animation import (
     CLOUD_FRAMES,
     HEADER_FRAMES,
     RUNNING_FRAMES,
+    _CLOUD_LINES,
+    _RAIN_FRAMES_RAW,
     _StormyHandle,
     stormy_multistage,
 )
@@ -76,15 +78,22 @@ def test_stormy_handle_renders_cloud_header_and_stages():
     assert "[ ] Save" in out
     # Header line is present.
     assert HEADER_FRAMES[0].strip() in out
-    # A recognisable piece of the cloud silhouette is present.
-    assert ".--." in out
+    # Recognisable bits of the cumulus silhouette show up.
+    assert "_.-~-._" in out
+    assert "~-..__" in out or "`~-.." in out
 
 
 def test_cloud_and_header_frame_counts_match():
-    """Cloud scene and narrative header are taken from the same frame index;
-    if they drift in length we want a deliberate change, not an accident.
-    """
     assert len(CLOUD_FRAMES) == len(HEADER_FRAMES)
+
+
+def test_cloud_silhouette_is_constant_across_frames():
+    """Only the rain/lightning area changes between frames -- the cloud
+    stays put so the eye locks on it and reads the rain as motion.
+    """
+    cloud_block = "\n".join(_CLOUD_LINES)
+    for frame in CLOUD_FRAMES:
+        assert frame.startswith(cloud_block)
 
 
 def test_all_frames_are_ascii_only():
@@ -97,9 +106,11 @@ def test_all_frames_are_ascii_only():
         cloud.encode("ascii")
 
 
-def test_cloud_frames_have_consistent_height():
-    """Every cloud frame must be the same line count, otherwise the stages
-    below jump up and down each refresh.
+def test_all_frames_have_consistent_height():
+    """Every scene frame must have the same line count, otherwise the stage
+    list below jumps each refresh.
     """
     heights = {len(frame.split("\n")) for frame in CLOUD_FRAMES}
-    assert len(heights) == 1, f"cloud frames have inconsistent heights: {heights}"
+    assert len(heights) == 1, f"frames have inconsistent heights: {heights}"
+    # Cloud (5) + rain (3) = 8 lines per frame.
+    assert heights == {len(_CLOUD_LINES) + len(_RAIN_FRAMES_RAW[0])}
