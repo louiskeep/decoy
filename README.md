@@ -91,5 +91,10 @@ the "adding a new CLI command" walkthrough.
 
 ## License
 
-BUSL-1.1 — see [LICENSE.md](LICENSE.md). Auto-converts to Apache 2.0
-after 4 years.
+Source-available under the Business Source License 1.1 (BUSL-1.1) — see [LICENSE.md](LICENSE.md). The Change License is Apache License, Version 2.0, effective on the Change Date `2030-05-10` (or four years from first publication, whichever comes first).
+
+Use of the "Decoy" name and marks is governed by [TRADEMARKS.md](TRADEMARKS.md).
+
+## Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md). Contributions require a DCO sign-off (`git commit -s`) and are licensed under BUSL-1.1. Security issues: see [SECURITY.md](SECURITY.md).

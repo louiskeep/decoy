@@ -1,5 +1,5 @@
 [build-system]
-requires = ["hatchling"]
+requires = ["hatchling>=1.27"]
 build-backend = "hatchling.build"
 
 [project]
@@ -8,6 +8,8 @@ version = "0.1.0"
 description = "Decoy CLI — data masking and synthetic generation from the terminal"
 readme = "README.md"
 requires-python = ">=3.10"
+license = "LicenseRef-BUSL-1.1"
+license-files = ["LICENSE.md"]
 authors = [{ name = "louiskeep" }]
 dependencies = [
     "decoy-engine>=0.1.0",
