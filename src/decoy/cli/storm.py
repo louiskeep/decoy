@@ -11,7 +11,7 @@ import typer
 
 from decoy.ui.card import render_card
 from decoy.ui.output import OutputMode, emit_json, setup_output
-from decoy.ui.progress import multistage
+from decoy.ui.storm_animation import stormy_multistage
 from decoy.ui.theme import code, error, hint
 
 
@@ -107,7 +107,7 @@ def _scan(
     try:
         from decoy_engine import run_storm
 
-        with multistage(state, ["Load source", "Profile columns", "Save profile"]) as ms:
+        with stormy_multistage(state, ["Load source", "Profile columns", "Save profile"]) as ms:
             df = _load_csv_with_sampling(source, rows, strategy)
             ms.complete()
             profile = run_storm(
