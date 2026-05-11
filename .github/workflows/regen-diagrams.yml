@@ -1,0 +1,69 @@
+# Regenerate auto-generated dependency + class diagrams in docs/diagrams/.
+#
+# Trigger: push to main that touches src/ or scripts/build_docs.py.
+# The workflow auto-commits any changes back to main authored by
+# github-actions[bot]. PRs do NOT trigger this — diagrams are an
+# after-merge artefact since they can change with any combination of
+# merged work, and a PR-time regen would race with reviewers.
+#
+# Per Item 50 Phase F: 'auto-generated artefacts run in CI, never by
+# hand. If it can drift, it will drift.' If you find yourself running
+# scripts/build_docs.py locally and committing the SVGs by hand, that's
+# a smell — fix this workflow instead.
+#
+# Loop safety: this workflow is filtered to src/** and scripts/...,
+# so the auto-commit (which only touches docs/diagrams/**) does not
+# re-trigger it.
+
+name: regen-diagrams
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'src/**'
+      - 'scripts/build_docs.py'
+      - '.github/workflows/regen-diagrams.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write    # required to commit regenerated SVGs back to main
+
+concurrency:
+  group: regen-diagrams
+  cancel-in-progress: false
+
+jobs:
+  regenerate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+
+      - name: Install graphviz (for the dot binary pyreverse uses)
+        run: sudo apt-get update && sudo apt-get install -y graphviz
+
+      - name: Install Python tools + package
+        run: |
+          python -m pip install --upgrade pip
+          pip install pydeps pylint
+          pip install -e .
+
+      - name: Regenerate diagrams
+        run: python scripts/build_docs.py
+
+      - name: Commit if changed
+        run: |
+          if git diff --quiet docs/diagrams/; then
+            echo "No diagram changes; skipping commit."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add docs/diagrams/
+          git commit -m "chore(docs): regenerate dep + class diagrams"
+          git push
