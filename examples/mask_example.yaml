@@ -1,11 +1,24 @@
-# Data Masking Tool - Example Configuration File
-# This file demonstrates all available configuration options
+# Decoy CLI — masking example, exhaustive reference.
+#
+# Demonstrates every available masking_rules transform. Edit
+# input.path / output.path, then:
+#   decoy validate examples/mask_example.yaml
+#   decoy run      examples/mask_example.yaml
+#
+# Keyed deterministic masking (recommended for portable output across
+# runs and machines): set DECOY_MASTER_KEY in your env (32-byte hex,
+# generate via `python -c 'import secrets; print(secrets.token_hex(32))'`)
+# and add `key_label:` below, or pass --master-key / --key-label on the
+# command line. Without either, masking falls back to the legacy seeded
+# path (per-input deterministic but not portable).
 
 version: "1.0"
+mode: mask          # read by `decoy run`; --mode on the CLI is fallback only
+# key_label: "customers_q4"   # uncomment when using --master-key
 
 # Global settings control tool behavior
 global_settings:
-  seed: 42  # Random seed for deterministic masking
+  seed: 42  # Random seed for the legacy seeded path; ignored when keyed.
   large_file_threshold_gb: 1.0  # Files larger than this will use chunked processing
   chunk_size: 100000  # Number of rows per chunk when processing large files
 
@@ -17,7 +30,7 @@ input:
     delimiter: ","
     encoding: "utf-8"
     header: true  # Headers are required
-  
+
   # Fixed-width file input configuration
   # type: "fixed_width"
   # path: "data/input.fixed"
@@ -25,7 +38,7 @@ input:
   # fixed_width_options:
   #   encoding: "utf-8"
   #   definition_delimiter: ","  # Delimiter used in the definition file
-  
+
 # Output configuration defines where masked data will be saved
 output:
   type: "csv"  # Options: "csv" or "fixed_width"
@@ -34,55 +47,55 @@ output:
     delimiter: ","
     encoding: "utf-8"
     quoting: "minimal"  # Options: "minimal", "all", "nonnumeric", "none"
-  
+
   # Fixed-width file output configuration
   # type: "fixed_width"
   # path: "data/masked_output.fixed"
   # fixed_width_options:
   #   encoding: "utf-8"
-  
+
 # Directory to store mapping files (for consistent masking across runs)
 mappings:
   store_directory: "mappings/"
-  
+
 # Masking rules define what transformations to apply
 masking_rules:
   # Faker-based masking: replaces with realistic fake data
   - column: "full_name"
     type: "faker"
     faker_type: "name"  # Available types: name, first_name, last_name, email, address, phone_number, ssn, job, word
-  
+
   - column: "email"
     type: "faker"
     faker_type: "email"
     preserve_domain: true  # Keep original domain names (for emails only)
-  
+
   # Map masking: uses saved mappings for consistent replacement
   - column: "customer_id"
     type: "map"
     map_type: "faker"  # Available types: faker, hash, fixed
     faker_type: "word"  # Required if map_type is "faker"
     seed: 123  # Optional override of global seed
-  
+
   - column: "product_id"
     type: "map"
     map_type: "fixed"
     fixed_prefix: "PRODUCT"  # Produces PRODUCT_1, PRODUCT_2, etc.
-  
+
   # Redaction masking: replaces with fixed text
   - column: "ssn"
     type: "redact"
     redact_with: "XXX-XX-XXXX"  # Text to use for redaction
-  
+
   # Shuffle masking: randomly reorders values within a column
   - column: "salary"
     type: "shuffle"
-  
+
   # Hash masking: replaces with deterministic hash
   - column: "password"
     type: "hash"
     seed: 456  # Optional override of global seed
-  
+
   # Passthrough: leaves values unchanged
   - column: "department"
     type: "passthrough"

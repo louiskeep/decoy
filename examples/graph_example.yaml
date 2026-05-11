@@ -1,0 +1,50 @@
+# Decoy CLI — graph-mode pipeline example.
+#
+# Use this shape (mode: graph) when your pipeline is a multi-step DAG
+# rather than a flat list of column rules: one or more sources, a chain
+# of transforms, one or more sinks. Edges define the data flow; cycles
+# are rejected by `decoy validate`.
+#
+#   decoy validate examples/graph_example.yaml
+#   decoy run      examples/graph_example.yaml
+#
+# A more compact starter ships with the package — see
+# `decoy templates show graph` (or src/decoy/templates/graph.yaml).
+
+mode: graph
+
+nodes:
+  # Source: read a CSV from disk.
+  - id: src
+    kind: source.file
+    config:
+      path: 'data/input.csv'
+
+  # Transform 1: drop columns we never want to leave the engine.
+  - id: drop_secrets
+    kind: drop_column
+    config:
+      columns: ['ssn', 'password_hash']
+
+  # Transform 2: redact a free-text column.
+  - id: redact_notes
+    kind: redact_column
+    config:
+      column: 'internal_notes'
+      redact_with: '[REDACTED]'
+
+  # Sink: write the cleaned dataset back to disk.
+  - id: out
+    kind: target.file
+    config:
+      output_filename: 'data/cleaned.csv'
+
+# Edges: data flows from `from` to `to`. The graph runner topologically
+# sorts these and refuses to run if the DAG contains a cycle.
+edges:
+  - from: src
+    to: drop_secrets
+  - from: drop_secrets
+    to: redact_notes
+  - from: redact_notes
+    to: out
