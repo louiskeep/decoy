@@ -1,6 +1,6 @@
 # Decoy CLI — UX standards & practices
 
-> **Status:** partial — Slices 1–4 shipped: theme module, --json/--quiet/--verbose plumbing, --install-completion, progress wrappers (spinner / bar / multistage), run-summary cards, themed Rich tables, commands (`storm scan`, `forecast recommend`, `init`, `demo`, `info`, `explain <topic>`, `templates list/show`), bundled YAML templates (minimal / hipaa / pci / gdpr / generate / graph), branded banner, and tab-completion sources for Disguises / transforms / Faker providers / run modes / explain topics / template names / init presets. Future commands must continue to follow these standards; ~/.decoy/logs traceback fallback (section 9) and telemetry (section 15) remain forward-looking.
+> **Status:** partial — Slices 1–4 shipped: theme module, --json/--quiet/--verbose plumbing, --install-completion, progress wrappers (spinner / bar / multistage), run-summary cards, themed Rich tables, commands (`storm scan`, `forecast`, `init`, `demo`, `info`, `explain <topic>`, `templates list/show`), bundled YAML templates (minimal / hipaa / pci / gdpr / generate / graph), branded banner, and tab-completion sources for Disguises / transforms / Faker providers / run modes / explain topics / template names / init presets. Future commands must continue to follow these standards; ~/.decoy/logs traceback fallback (section 9) and telemetry (section 15) remain forward-looking.
 > **Last reviewed:** 2026-05-09
 
 The standards every contributor follows when adding or modifying a `decoy` CLI command. Read this before you write a new command. If you're tempted to deviate, file a PR against this doc first.
@@ -172,7 +172,7 @@ Options:
 │   Sample 50K random rows from a saved Postgres connector.    │
 ╰──────────────────────────────────────────────────────────────╯
 
-See also: decoy forecast recommend, decoy run.
+See also: decoy forecast, decoy run.
 Docs: https://decoy.dev/docs/storm
 ```
 
@@ -281,12 +281,12 @@ After any meaningful command finishes, print a Rich `Panel` summarizing what hap
 │  Reid risk score   88.9                                   │
 │  Saved profile     scan_2026-05-04.json                   │
 │                                                           │
-│  Next: decoy forecast recommend scan_2026-05-04.json      │
+│  Next: decoy forecast scan_2026-05-04.json                │
 ╰───────────────────────────────────────────────────────────╯
 ```
 
 ```
-╭── ✓ decoy forecast recommend ────────────────────────────╮
+╭── ✓ decoy forecast ──────────────────────────────────────╮
 │  Top recommendation   HIPAA Disguise (score 0.90)         │
 │  Fields covered       6 of 10                             │
 │  Risk flags           4 (2 sentinels, 2 quasi-identifier) │
@@ -558,7 +558,7 @@ This document is the standard. Implementation lands in three slices, each ≤ ~1
 - `src/decoy/ui/progress.py` — spinner, bar, multistage wrappers.
 - `src/decoy/ui/card.py` — run-summary Panel.
 - `src/decoy/ui/table.py` — Rich Table styled with the theme.
-- New: `decoy storm scan`, `decoy forecast recommend`. These are the primary consumers of the new UI components and the test surface for slice 1.
+- New: `decoy storm scan`, `decoy forecast`. These are the primary consumers of the new UI components and the test surface for slice 1.
 
 **Slice 3 — polish:**
 - `decoy init` (interactive Q&A scaffold).

@@ -87,7 +87,7 @@ _TOPICS: dict[str, _Topic] = {
             "To see what's in a Disguise, run `decoy templates show hipaa` (the pipeline shape) or\n"
             "browse the engine source -- decoy_engine.disguises."
         ),
-        see_also=("decoy forecast recommend --help", "decoy templates show hipaa"),
+        see_also=("decoy forecast --help", "decoy templates show hipaa"),
     ),
     "output": _Topic(
         name="output",
@@ -155,7 +155,7 @@ _TOPICS: dict[str, _Topic] = {
             "FORECAST never reads raw data -- only the statistical summary STORM produced. That\n"
             "split lets you scan once, recommend many times, share scans without sharing data."
         ),
-        see_also=("decoy forecast recommend --help", "decoy explain storm"),
+        see_also=("decoy forecast --help", "decoy explain storm"),
     ),
     "keys": _Topic(
         name="keys",

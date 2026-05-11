@@ -40,7 +40,7 @@ Examples:
   decoy storm scan data.csv --json > scan.json
     Pipe the full StormProfile JSON for forecast --stdin.
 
-See also: decoy forecast recommend, decoy run.
+See also: decoy forecast, decoy run.
 """
 
 
@@ -99,7 +99,7 @@ def _scan(
     Use this when you've been handed a dataset and want to know what's in it
     -- which fields are PII, which look like quasi-identifiers, what
     re-identification risk the dataset carries -- before writing a masking
-    pipeline. Pass the saved scan JSON to `decoy forecast recommend`.
+    pipeline. Pass the saved scan JSON to `decoy forecast`.
     """
     state = setup_output(json_, quiet, verbose)
     source_str = str(source)
@@ -183,7 +183,7 @@ def _scan(
     next_hint = None
     if out_path is not None:
         facts.append(("Saved", str(out_path)))
-        next_hint = f"decoy forecast recommend {out_path}"
+        next_hint = f"decoy forecast {out_path}"
 
     render_card(
         state,

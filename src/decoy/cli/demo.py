@@ -26,7 +26,7 @@ Examples:
   decoy demo --json
     Same flow, but emit a JSON summary instead of cards.
 
-See also: decoy storm scan, decoy forecast recommend, decoy run.
+See also: decoy storm scan, decoy forecast, decoy run.
 """
 
 
@@ -67,8 +67,12 @@ output:
 mappings:
   store_directory: '{mappings_dir.as_posix()}'
 masking_rules:
+  # `map` persists customer_id -> CUST_N in mappings_dir so re-runs produce
+  # the same masked IDs. The other fields don't need cross-run stability.
   - column: customer_id
-    type: passthrough
+    type: map
+    map_type: fixed
+    fixed_prefix: CUST
   - column: first_name
     type: faker
     faker_type: first_name
