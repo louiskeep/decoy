@@ -21,7 +21,7 @@ Nine commands, grouped by what they do:
 **Analyze a dataset (the STORM / FORECAST pair)**
 - `decoy storm scan <data.csv>` — profile a dataset for PII, sentinels,
   and re-identification risk; saves a JSON profile.
-- `decoy forecast recommend <scan.json>` — recommend a Disguise and
+- `decoy forecast <scan.json>` — recommend a Disguise and
   draft a pipeline YAML from a saved STORM profile.
 
 **Discover what's available**
@@ -47,7 +47,9 @@ output across runs and machines.
 
 ## Architecture
 
-See [`docs/architecture.md`](docs/architecture.md) for the system map
+Start with [`docs/product-flow.md`](docs/product-flow.md) for the developer-oriented CLI product flow: commands, STORM/FORECAST, templates, output modes, key handling, examples, and diagrams.
+
+Then see [`docs/architecture.md`](docs/architecture.md) for the system map
 and module overview. The CLI UX standards every command follows are in
 [`CLI_UX_GUIDE.md`](CLI_UX_GUIDE.md).
 
@@ -60,7 +62,7 @@ pip install decoy
 decoy storm scan data.csv
 
 # 2. Recommend a Disguise + draft a pipeline.
-decoy forecast recommend scan_*.json
+decoy forecast scan_*.json
 
 # 3. Validate the draft, then run it.
 decoy validate forecast_*.pipeline.yaml

@@ -53,6 +53,7 @@ python scripts/build_docs.py
 
 ## Where to start reading
 
+0. [`docs/product-flow.md`](product-flow.md) - developer-first CLI flow: commands, STORM/FORECAST, templates, output modes, key handling, and extension points.
 1. `src/decoy/__main__.py` — entry point; shows every registered command.
 2. `src/decoy/cli/run.py` — the canonical command shape; other commands follow it.
 3. `pyproject.toml` — the `decoy = "decoy.__main__:app"` script binding and the engine dependency.

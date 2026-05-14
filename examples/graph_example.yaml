@@ -26,12 +26,14 @@ nodes:
     config:
       columns: ['ssn', 'password_hash']
 
-  # Transform 2: redact a free-text column.
+  # Transform 2: redact a free-text column using the graph mask op.
   - id: redact_notes
-    kind: redact_column
+    kind: mask
     config:
-      column: 'internal_notes'
-      redact_with: '[REDACTED]'
+      columns:
+        internal_notes:
+          strategy: redact
+          redact_with: '[REDACTED]'
 
   # Sink: write the cleaned dataset back to disk.
   - id: out

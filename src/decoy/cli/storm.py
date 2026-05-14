@@ -626,7 +626,7 @@ def _show(
 
     next_hint = None
     if scan != "-":
-        next_hint = f"decoy forecast recommend {scan}"
+        next_hint = f"decoy forecast {scan}"
 
     render_card(
         state,
