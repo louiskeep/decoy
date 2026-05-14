@@ -185,9 +185,9 @@ flowchart TD
     Mode[Read mode from YAML<br/>fallback to --mode]
     Key[Build key resolver<br/>from --master-key and --key-label]
     Dispatch{Mode}
-    Mask[Masker(config, ctx).mask]
-    Gen[DataGenerator(config, ctx).generate]
-    Graph[run_graph(yaml_text, ctx)]
+    Mask["Masker(config, ctx).mask"]
+    Gen["DataGenerator(config, ctx).generate"]
+    Graph["run_graph(yaml_text, ctx)"]
     Success{Command succeeded}
     Card[Render card]
     Json[Emit JSON envelope]
