@@ -1,0 +1,12 @@
+.git/
+.github/
+.pytest_cache/
+__pycache__/
+.mypy_cache/
+.ruff_cache/
+logs/
+mappings/
+coverage/
+htmlcov/
+decoy_demo/
+decoy_demo_ref/
