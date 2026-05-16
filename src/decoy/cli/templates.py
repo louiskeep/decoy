@@ -50,8 +50,8 @@ Examples:
   decoy templates show pci > pipeline.yaml
     Save the PCI template directly to a file.
 
-  decoy templates show graph | decoy validate -
-    Validate without writing to disk (planned -- needs `decoy validate -`).
+  decoy templates show graph > graph.yaml
+    Save the graph template, then validate it with `decoy validate graph.yaml`.
 
 See also: decoy templates list, decoy init.
 """

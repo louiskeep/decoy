@@ -150,7 +150,7 @@ def run(
                     "command": "run",
                     "status": "error",
                     "config": config_str,
-                    "mode": mode.value,
+                    "mode": yaml_mode,
                     "error": str(exc),
                 },
             )

@@ -7,6 +7,7 @@ self-contained YAML config + input CSV into a tmp dir.
 
 from pathlib import Path
 
+import json as _json
 import pandas as pd
 import pytest
 import yaml
@@ -157,3 +158,32 @@ def test_run_bad_graph_fails(tmp_path: Path):
     p.write_text(yaml.dump(bad), encoding="utf-8")
     result = runner.invoke(app, ["run", str(p)])
     assert result.exit_code != 0
+
+
+def test_run_bad_graph_json_reports_detected_yaml_mode(tmp_path: Path):
+    """Error envelopes should report the YAML mode, not the --mode fallback."""
+    bad = {
+        "mode": "graph",
+        "nodes": [
+            {
+                "id": "src",
+                "kind": "source.file",
+                "config": {"path": str(tmp_path / "missing.csv")},
+            },
+            {
+                "id": "out",
+                "kind": "target.file",
+                "config": {"output_filename": str(tmp_path / "out.csv")},
+            },
+        ],
+        "edges": [{"from": "src", "to": "out"}],
+    }
+    p = tmp_path / "bad_graph.yaml"
+    p.write_text(yaml.dump(bad), encoding="utf-8")
+
+    result = runner.invoke(app, ["run", str(p), "--json"])
+
+    assert result.exit_code == 3
+    payload = _json.loads(result.stdout)
+    assert payload["status"] == "error"
+    assert payload["mode"] == "graph"
