@@ -1,7 +1,7 @@
-# orders pipeline -- depends on the customers pipeline running first (or at
-# least the customer_id mapping existing in the shared store). order_id gets
-# its own `map` with prefix ORD; customer_id reuses the CUST mapping that
-# customers_pipeline.yaml created.
+# orders pipeline -- customer_id uses the SAME hash config as the customers
+# pipeline. No shared state needed: hash is deterministic, so the masked
+# customer_id in orders matches the masked customer_id in customers row by
+# row, joining cleanly.
 version: '1.0'
 global_settings:
   seed: 42
@@ -17,17 +17,15 @@ output:
   csv_options:
     delimiter: ','
     encoding: utf-8
-mappings:
-  store_directory: 'decoy_demo_ref/mappings'
 masking_rules:
   - column: order_id
-    type: map
-    map_type: fixed
-    fixed_prefix: ORD
-  - column: customer_id  # shares the CUST mapping with customers_pipeline.yaml
-    type: map
-    map_type: fixed
-    fixed_prefix: CUST
+    type: hash
+    algorithm: sha256
+    truncate: 12
+  - column: customer_id  # same hash config as customers_pipeline.yaml -> joinable
+    type: hash
+    algorithm: sha256
+    truncate: 12
   - column: amount
     type: passthrough
   - column: order_date

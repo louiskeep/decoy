@@ -54,10 +54,6 @@ output:
   # fixed_width_options:
   #   encoding: "utf-8"
 
-# Directory to store mapping files (for consistent masking across runs)
-mappings:
-  store_directory: "mappings/"
-
 # Masking rules define what transformations to apply
 masking_rules:
   # Faker-based masking: replaces with realistic fake data
@@ -70,7 +66,7 @@ masking_rules:
     faker_type: "email"
     preserve_domain: true  # Keep original domain names (for emails only)
 
-  # Map masking: uses saved mappings for consistent replacement
+  # Map masking: deterministic replacement without saved mapping files
   - column: "customer_id"
     type: "map"
     map_type: "faker"  # Available types: faker, hash, fixed
@@ -80,7 +76,7 @@ masking_rules:
   - column: "product_id"
     type: "map"
     map_type: "fixed"
-    fixed_prefix: "PRODUCT"  # Produces PRODUCT_1, PRODUCT_2, etc.
+    fixed_prefix: "PRODUCT"  # Produces stable PRODUCT_<hash> values
 
   # Redaction masking: replaces with fixed text
   - column: "ssn"

@@ -87,22 +87,15 @@ def test_demo_ref_creates_all_three_tables_and_pipelines(tmp_path: Path):
         assert (out_dir / f"{name}_pipeline.yaml").exists(), f"missing {name}_pipeline.yaml"
 
 
-def test_demo_ref_cleans_up_empty_mappings_dir(tmp_path: Path):
-    """The engine eagerly creates `mappings/` on Masker init even when no
-    transform writes to it. The demo removes it post-run since the
-    deterministic transforms have nothing to persist.
-    """
+def test_demo_ref_does_not_create_mappings_dir(tmp_path: Path):
+    """Deterministic hash/faker transforms should not create mappings/."""
     out_dir = tmp_path / "demo_ref"
     result = runner.invoke(
         app, ["demo", "--ref", "--dir", str(out_dir), "--rows", "50"]
     )
     assert result.exit_code == 0
-    # Either the mappings dir doesn't exist (removed post-run) or it exists
-    # but is empty (cleanup failed harmlessly).
     mappings_dir = out_dir / "mappings"
-    if mappings_dir.exists():
-        assert not any(mappings_dir.iterdir()), \
-            "mappings/ should be empty -- deterministic transforms don't use it"
+    assert not mappings_dir.exists()
 
 
 def test_demo_ref_each_table_has_requested_row_count(tmp_path: Path):

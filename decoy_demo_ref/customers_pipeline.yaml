@@ -1,10 +1,10 @@
 # customers pipeline -- the PK source for the FK relationships.
 #
-# customer_id uses `map` with map_type: fixed so each value gets a stable
-# masked replacement (e.g. C00042 -> CUST_42), persisted under the shared
-# mappings/ store. The orders pipeline points at the SAME store, so its
-# customer_id column gets the same replacements. That's what makes the
-# join survive masking.
+# customer_id uses `hash` (SHA-256, truncated to 12 hex chars).
+# Hash is a pure function: same input always produces the same output, with
+# no state, no mapping store, no coordination between pipelines. Every
+# pipeline that hashes the same customer_id produces the same hex string,
+# so FK joins survive masking automatically -- that's the whole story.
 version: '1.0'
 global_settings:
   seed: 42
@@ -20,13 +20,11 @@ output:
   csv_options:
     delimiter: ','
     encoding: utf-8
-mappings:
-  store_directory: 'decoy_demo_ref/mappings'
 masking_rules:
   - column: customer_id
-    type: map
-    map_type: fixed
-    fixed_prefix: CUST
+    type: hash
+    algorithm: sha256
+    truncate: 12
   - column: first_name
     type: faker
     faker_type: first_name
@@ -38,7 +36,7 @@ masking_rules:
     faker_type: email
   - column: ssn
     type: hash
-    algorithm: sha256
+    algorithm: sha256  # full 64-char hash for the canonical PII column
   - column: dob
     type: date_shift
     jitter_days: 30

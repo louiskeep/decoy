@@ -22,9 +22,6 @@ output:
     delimiter: ','
     encoding: utf-8
 
-mappings:
-  store_directory: 'mappings'
-
 logging:
   level: info
   file: 'decoy_run.log'

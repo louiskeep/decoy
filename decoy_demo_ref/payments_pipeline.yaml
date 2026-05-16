@@ -1,5 +1,6 @@
-# payments pipeline -- order_id shares the ORD mapping that orders_pipeline
-# created. payment_id gets a fresh PAY mapping.
+# payments pipeline -- order_id uses the SAME hash config as the orders
+# pipeline. Determinism preserves the order_id join the same way customer_id
+# is preserved between customers and orders.
 version: '1.0'
 global_settings:
   seed: 42
@@ -15,17 +16,15 @@ output:
   csv_options:
     delimiter: ','
     encoding: utf-8
-mappings:
-  store_directory: 'decoy_demo_ref/mappings'
 masking_rules:
   - column: payment_id
-    type: map
-    map_type: fixed
-    fixed_prefix: PAY
-  - column: order_id  # shares the ORD mapping with orders_pipeline.yaml
-    type: map
-    map_type: fixed
-    fixed_prefix: ORD
+    type: hash
+    algorithm: sha256
+    truncate: 12
+  - column: order_id  # same hash config as orders_pipeline.yaml -> joinable
+    type: hash
+    algorithm: sha256
+    truncate: 12
   - column: amount
     type: passthrough
   - column: method

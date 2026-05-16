@@ -66,7 +66,7 @@ def _write_sample_csv(path: Path) -> None:
     path.write_text("\n".join(",".join(r) for r in rows) + "\n", encoding="utf-8")
 
 
-def _build_pipeline_yaml(input_path: Path, output_path: Path, mappings_dir: Path) -> str:
+def _build_pipeline_yaml(input_path: Path, output_path: Path) -> str:
     return f"""\
 version: '1.0'
 global_settings:
@@ -83,15 +83,10 @@ output:
   csv_options:
     delimiter: ','
     encoding: utf-8
-mappings:
-  store_directory: '{mappings_dir.as_posix()}'
 masking_rules:
-  # customer_id uses `map_type: fixed` -- assigns CUST_1, CUST_2, ... in
-  # *order of first appearance* and persists the assignments under the
-  # mappings/ store. Stable on re-runs, readable in the output. But this
-  # is NOT a deterministic function: a different input ordering produces
-  # different CUST_N values. For FK joins across tables, use the `hash`
-  # transform instead (see `decoy demo --ref`).
+  # customer_id uses `map_type: fixed` -- assigns stable CUST_<hash> values
+  # without writing a mappings folder. For FK joins across tables, use the
+  # `hash` transform instead (see `decoy demo --ref`).
   - column: customer_id
     type: map
     map_type: fixed
@@ -123,7 +118,6 @@ def _run_single_demo(state: OutputState, out_dir: Path) -> int:
     """Original one-CSV walkthrough. Returns the exit code (always 0 on success)."""
     sample_csv = out_dir / "patients.csv"
     masked_csv = out_dir / "patients_masked.csv"
-    mappings_dir = out_dir / "mappings"
     pipeline_yaml = out_dir / "pipeline.yaml"
     scan_json = out_dir / "scan.json"
     forecast_json = out_dir / "forecast.json"
@@ -150,7 +144,7 @@ def _run_single_demo(state: OutputState, out_dir: Path) -> int:
 
     if state.mode is OutputMode.default:
         state.console.print(accent("[4/4]"), "Running masking pipeline...")
-    pipeline_yaml.write_text(_build_pipeline_yaml(sample_csv, masked_csv, mappings_dir))
+    pipeline_yaml.write_text(_build_pipeline_yaml(sample_csv, masked_csv))
     from decoy_engine import Masker
 
     Masker(str(pipeline_yaml)).mask()
@@ -303,7 +297,6 @@ def _generate_ref_datasets(out_dir: Path, n_rows: int, seed: int = 42) -> tuple[
 def _build_customers_yaml(out_dir: Path) -> str:
     in_path = (out_dir / "customers.csv").as_posix()
     out_path = (out_dir / "customers_masked.csv").as_posix()
-    mappings = (out_dir / "mappings").as_posix()
     return f"""\
 # customers pipeline -- the PK source for the FK relationships.
 #
@@ -327,11 +320,6 @@ output:
   csv_options:
     delimiter: ','
     encoding: utf-8
-# `mappings.store_directory` is required by the engine config but unused
-# here -- the hash and faker transforms don't persist anything. The dir
-# below will be empty after the run; the demo removes it for tidiness.
-mappings:
-  store_directory: '{mappings}'
 masking_rules:
   - column: customer_id
     type: hash
@@ -366,7 +354,6 @@ masking_rules:
 def _build_orders_yaml(out_dir: Path) -> str:
     in_path = (out_dir / "orders.csv").as_posix()
     out_path = (out_dir / "orders_masked.csv").as_posix()
-    mappings = (out_dir / "mappings").as_posix()
     return f"""\
 # orders pipeline -- customer_id uses the SAME hash config as the customers
 # pipeline. No shared state needed: hash is deterministic, so the masked
@@ -387,8 +374,6 @@ output:
   csv_options:
     delimiter: ','
     encoding: utf-8
-mappings:
-  store_directory: '{mappings}'
 masking_rules:
   - column: order_id
     type: hash
@@ -411,7 +396,6 @@ masking_rules:
 def _build_payments_yaml(out_dir: Path) -> str:
     in_path = (out_dir / "payments.csv").as_posix()
     out_path = (out_dir / "payments_masked.csv").as_posix()
-    mappings = (out_dir / "mappings").as_posix()
     return f"""\
 # payments pipeline -- order_id uses the SAME hash config as the orders
 # pipeline. Determinism preserves the order_id join the same way customer_id
@@ -431,8 +415,6 @@ output:
   csv_options:
     delimiter: ','
     encoding: utf-8
-mappings:
-  store_directory: '{mappings}'
 masking_rules:
   - column: payment_id
     type: hash
@@ -489,10 +471,7 @@ def _verify_ref_integrity(out_dir: Path) -> dict:
 
 
 def _cleanup_empty_mappings_dir(out_dir: Path) -> None:
-    """The engine eagerly creates `mappings/` on Masker init even when no
-    transform writes to it. Remove the empty dir so the demo output is tidy.
-    Best-effort -- failures are not fatal.
-    """
+    """Best-effort cleanup for stale demo output from older engine builds."""
     try:
         mappings_dir = out_dir / "mappings"
         if mappings_dir.exists() and not any(mappings_dir.iterdir()):

@@ -79,6 +79,7 @@ def test_run_mask_produces_masked_output(mask_config: Path, tmp_path: Path):
 
     assert result.exit_code == 0, result.stdout
     assert output_path.exists()
+    assert not (tmp_path / "mappings").exists()
 
     masked = pd.read_csv(output_path)
     # customer_id is passthrough, must be unchanged
