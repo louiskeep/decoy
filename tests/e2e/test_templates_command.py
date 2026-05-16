@@ -26,6 +26,7 @@ def test_templates_show_help_includes_examples():
     assert result.exit_code == 0
     assert "Examples:" in result.stdout
     assert "See also:" in result.stdout
+    assert "decoy validate -" not in result.stdout
 
 
 def test_templates_list_default_renders_every_name():
