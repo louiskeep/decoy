@@ -64,7 +64,7 @@ Installable Typer/Rich CLI that wraps `decoy-engine` for local validation, runs,
 | Gotcha | Note |
 |---|---|
 | CLI is thin | No FastAPI, DB, auth, platform persistence, or data semantics |
-| Deprecated `forge` shim may exist | Keep only for compatibility messaging |
+| Legacy CLI compatibility shim may exist | Keep only for compatibility messaging |
 | Exit codes are public UX | Ask before changing command contracts |
 
 ## Ignore For Navigation
