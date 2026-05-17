@@ -2,9 +2,10 @@
 
 The CLI ships every topic the user might Google before reaching for
 `--help`: modes, transforms, disguises, output flags, pipeline schema,
-STORM, FORECAST, master-key flow. Each topic renders as a styled Panel
-with a one-line summary, a body, and a `See also:` line. Tab completion
-suggests topic names; unknown topics produce a `did you mean?` hint.
+YAML authoring, STORM, FORECAST, master-key flow, and safety boundaries.
+Each topic renders as a styled Panel with a one-line summary, a body,
+and a `See also:` line. Tab completion suggests topic names; unknown
+topics produce a `did you mean?` hint.
 """
 
 from __future__ import annotations
@@ -128,6 +129,31 @@ _TOPICS: dict[str, _Topic] = {
         ),
         see_also=("decoy validate --help", "decoy templates list"),
     ),
+    "yaml": _Topic(
+        name="yaml",
+        summary="How to author a Decoy YAML file without starting from scratch.",
+        body=(
+            "Start from a template, edit paths, validate, then run on a small fixture:\n\n"
+            "  decoy templates list\n"
+            "  decoy templates show minimal > pipeline.yaml\n"
+            "  decoy validate pipeline.yaml\n"
+            "  decoy run pipeline.yaml\n\n"
+            "Pick one top-level mode:\n"
+            "  mask      input/output plus masking_rules.\n"
+            "  generate  generator_settings plus tables and columns.\n"
+            "  graph     nodes and edges for source -> transform -> target.\n\n"
+            "Common masking rule shape:\n\n"
+            "  - column: email\n"
+            "    type: faker\n"
+            "    faker_type: email\n\n"
+            "Use `key_label:` with DECOY_MASTER_KEY when you need portable deterministic\n"
+            "masking across machines. Treat STORM scan JSON, manual mappings, reference\n"
+            "files, and real input/output files as sensitive artifacts.\n\n"
+            "Full guide in the docs hub:\n"
+            "  decoy-platform/docs/guides/cli-yaml-workflows.md"
+        ),
+        see_also=("decoy explain pipeline", "decoy templates list", "decoy validate --help"),
+    ),
     "storm": _Topic(
         name="storm",
         summary="Dataset analysis -- scan first, then forecast.",
@@ -175,6 +201,25 @@ _TOPICS: dict[str, _Topic] = {
             "different masked output."
         ),
         see_also=("decoy run --help",),
+    ),
+    "security": _Topic(
+        name="security",
+        summary="What the CLI can expose and how to keep local artifacts safe.",
+        body=(
+            "The CLI reads and writes local files. It does not provide platform RBAC,\n"
+            "audit rows, server logs, Reporting, runtime secrets, schedules, reviews,\n"
+            "or evidence packages.\n\n"
+            "Keep these artifacts private:\n"
+            "  - Raw input files and masked/generated outputs.\n"
+            "  - STORM scan JSON, because it can contain sensitive aggregates and top values.\n"
+            "  - Master keys and key labels.\n"
+            "  - Reference files, manual maps, and categorical policy values.\n\n"
+            "Prefer DECOY_MASTER_KEY over --master-key so the raw key is less likely to\n"
+            "land in shell history. Do not commit scan JSON, real data, or keys.\n\n"
+            "CLI JSON output is command status, not platform evidence, unless a future\n"
+            "`--evidence-out` feature is explicitly implemented and tested."
+        ),
+        see_also=("decoy explain keys", "decoy explain yaml"),
     ),
     "completion": _Topic(
         name="completion",
@@ -278,8 +323,9 @@ def explain(
 ) -> None:
     """Explain a Decoy concept in plain English.
 
-    Built-in topics: modes, transforms, disguises, output, pipeline, storm,
-    forecast, keys, completion. Run with no topic to see the full list.
+    Built-in topics: modes, transforms, disguises, output, pipeline, yaml,
+    storm, forecast, keys, security, completion. Run with no topic to see the
+    full list.
     """
     state = setup_output(json_, quiet, verbose)
 
