@@ -14,7 +14,7 @@ authors = [{ name = "louiskeep" }]
 dependencies = [
     "decoy-engine>=0.1.0",
     "typer>=0.9",
-    "rich>=13.0",
+    "rich>=15.0.0",
 ]
 
 [project.optional-dependencies]
