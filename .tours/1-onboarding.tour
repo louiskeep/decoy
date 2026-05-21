@@ -1,7 +1,7 @@
 {
   "$schema": "https://aka.ms/codetour-schema",
-  "title": "1 - Onboarding: how the CLI is wired",
-  "description": "Click-through introduction to the decoy CLI for first-time contributors. ~10 minutes. Install the CodeTour VS Code extension (publisher: vsls-contrib) to play it. Pairs with the engine onboarding tour in `decoy-engine/.tours/1-onboarding.tour` — start there if you haven't already, since this tour assumes you know what `Masker`, `ExecutionContext`, and `derive_key` mean.",
+  "title": "1 - Onboarding (STALE - do not use for V1 onboarding)",
+  "description": "STALE AT V1. This tour points at the old Forge product paths (forge-platform, forge-engine, forge-platform/GLOSSARY.md) and predates the V1 scope cut. Do not use this as a first-day onboarding asset. Use docs/guides/new-developer-onboarding.md in decoy-platform instead. Refresh of this tour is post-V1 work.",
   "steps": [
     {
       "file": "src/decoy/__main__.py",
