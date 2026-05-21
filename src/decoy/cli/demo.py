@@ -84,8 +84,10 @@ output:
     delimiter: ','
     encoding: utf-8
 masking_rules:
-  # customer_id uses `hash` -- a pure deterministic transform. For FK joins
-  # across tables, use the same hash config everywhere (see `decoy demo --ref`).
+  # customer_id uses `hash` (SHA-256, truncated to 12 hex chars).
+  # Hash is a pure function: same input always produces the same output with
+  # no state or mapping store. For FK joins across related tables, the same
+  # hash produces the same output everywhere -- see `decoy demo --ref`.
   - column: customer_id
     type: hash
     algorithm: sha256
