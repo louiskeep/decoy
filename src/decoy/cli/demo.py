@@ -86,16 +86,14 @@ output:
 mappings:
   store_directory: '{mappings_dir.as_posix()}'
 masking_rules:
-  # customer_id uses `map_type: fixed` -- assigns CUST_1, CUST_2, ... in
-  # *order of first appearance* and persists the assignments under the
-  # mappings/ store. Stable on re-runs, readable in the output. But this
-  # is NOT a deterministic function: a different input ordering produces
-  # different CUST_N values. For FK joins across tables, use the `hash`
-  # transform instead (see `decoy demo --ref`).
+  # customer_id uses `hash` (SHA-256, truncated to 12 hex chars).
+  # Hash is a pure function: same input always produces the same output with
+  # no state or mapping store. For FK joins across related tables, the same
+  # hash produces the same output everywhere -- see `decoy demo --ref`.
   - column: customer_id
-    type: map
-    map_type: fixed
-    fixed_prefix: CUST
+    type: hash
+    algorithm: sha256
+    truncate: 12
   - column: first_name
     type: faker
     faker_type: first_name
