@@ -24,7 +24,7 @@ TRANSFORM_IDS: tuple[str, ...] = (
     "faker",
     "hash",
     "redact",
-    "map",
+    "categorical",
     "shuffle",
     "passthrough",
     "date_shift",

@@ -84,13 +84,12 @@ output:
     delimiter: ','
     encoding: utf-8
 masking_rules:
-  # customer_id uses `map_type: fixed` -- assigns stable CUST_<hash> values
-  # without writing a mappings folder. For FK joins across tables, use the
-  # `hash` transform instead (see `decoy demo --ref`).
+  # customer_id uses `hash` -- a pure deterministic transform. For FK joins
+  # across tables, use the same hash config everywhere (see `decoy demo --ref`).
   - column: customer_id
-    type: map
-    map_type: fixed
-    fixed_prefix: CUST
+    type: hash
+    algorithm: sha256
+    truncate: 12
   - column: first_name
     type: faker
     faker_type: first_name
@@ -302,7 +301,7 @@ def _build_customers_yaml(out_dir: Path) -> str:
 #
 # customer_id uses `hash` (SHA-256, truncated to {_FK_HASH_TRUNCATE} hex chars).
 # Hash is a pure function: same input always produces the same output, with
-# no state, no mapping store, no coordination between pipelines. Every
+# no local state and no coordination between pipelines. Every
 # pipeline that hashes the same customer_id produces the same hex string,
 # so FK joins survive masking automatically -- that's the whole story.
 version: '1.0'
@@ -470,16 +469,6 @@ def _verify_ref_integrity(out_dir: Path) -> dict:
     }
 
 
-def _cleanup_empty_mappings_dir(out_dir: Path) -> None:
-    """Best-effort cleanup for stale demo output from older engine builds."""
-    try:
-        mappings_dir = out_dir / "mappings"
-        if mappings_dir.exists() and not any(mappings_dir.iterdir()):
-            mappings_dir.rmdir()
-    except OSError:
-        pass
-
-
 def _run_ref_demo(state: OutputState, out_dir: Path, n_rows: int) -> int:
     """3-table FK demo. Returns the exit code (always 0 on success)."""
     customers_yaml = out_dir / "customers_pipeline.yaml"
@@ -514,7 +503,6 @@ def _run_ref_demo(state: OutputState, out_dir: Path, n_rows: int) -> int:
     if state.mode is OutputMode.default:
         state.console.print(accent("[5/5]"), "Verifying referential integrity post-mask...")
     integrity = _verify_ref_integrity(out_dir)
-    _cleanup_empty_mappings_dir(out_dir)
 
     ok = (
         integrity["orders_customer_id_orphans"] == 0

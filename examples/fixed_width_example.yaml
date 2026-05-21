@@ -44,11 +44,10 @@ masking_rules:
     faker_type: "name"
     seed: 101
 
-  # Mask department with consistent mapping
+  # Mask department with deterministic category selection
   - column: "department"
-    type: "map"
-    map_type: "fixed"
-    fixed_prefix: "DEPT"
+    type: "categorical"
+    categories: ["operations", "finance", "support", "engineering"]
     seed: 102
 
   # Mask salary with random adjustments

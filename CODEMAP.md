@@ -32,7 +32,7 @@ Installable Typer/Rich CLI that wraps `decoy-engine` for local validation, runs,
 | `examples/` | Example YAML configs |
 | `tests/` | CLI tests |
 | `docs/` | Local/legacy docs; active planning in `../decoy-platform/docs/` |
-| `logs/`, `mappings/`, `.pytest_cache/`, `__pycache__/` | Ignore generated/runtime content |
+| `logs/`, `.pytest_cache/`, `__pycache__/` | Ignore generated/runtime content |
 
 ## Where Do I Find...
 
@@ -72,5 +72,5 @@ Installable Typer/Rich CLI that wraps `decoy-engine` for local validation, runs,
 | Path | Reason |
 |---|---|
 | `.pytest_cache/`, `__pycache__/` | Generated |
-| `logs/`, `mappings/` | Runtime output |
+| `logs/` | Runtime output |
 | `decoy_demo/`, `decoy_demo_ref/` | Demo output unless demo task |

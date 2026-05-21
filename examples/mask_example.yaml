@@ -66,17 +66,17 @@ masking_rules:
     faker_type: "email"
     preserve_domain: true  # Keep original domain names (for emails only)
 
-  # Map masking: deterministic replacement without saved mapping files
+  # Categorical masking: deterministic selection from an explicit value list
   - column: "customer_id"
-    type: "map"
-    map_type: "faker"  # Available types: faker, hash, fixed
-    faker_type: "word"  # Required if map_type is "faker"
+    type: "categorical"
+    categories: ["bronze", "silver", "gold", "platinum"]
+    weights: [0.45, 0.35, 0.15, 0.05]
     seed: 123  # Optional override of global seed
 
   - column: "product_id"
-    type: "map"
-    map_type: "fixed"
-    fixed_prefix: "PRODUCT"  # Produces stable PRODUCT_<hash> values
+    type: "hash"
+    algorithm: "sha256"
+    truncate: 12  # Produces stable compact identifiers
 
   # Redaction masking: replaces with fixed text
   - column: "ssn"

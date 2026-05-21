@@ -46,7 +46,6 @@ def mask_config(tmp_path: Path, sample_csv: Path) -> Path:
             "path": str(tmp_path / "masked.csv"),
             "csv_options": {"delimiter": ",", "encoding": "utf-8"},
         },
-        "mappings": {"store_directory": str(tmp_path / "mappings")},
         "logging": {"level": "info", "file": str(tmp_path / "run.log")},
         "masking_rules": [
             {"column": "customer_id", "type": "passthrough"},
