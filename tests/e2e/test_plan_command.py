@@ -76,14 +76,41 @@ def test_plan_no_profile_emits_yaml(tmp_path: Path) -> None:
     assert "seed_protocol_version: 0" in result.stdout
 
 
-def test_plan_no_profile_records_skipped_check(tmp_path: Path) -> None:
+def test_plan_no_profile_records_skipped_checks(tmp_path: Path) -> None:
+    """H1 (Dennis slice 4-6 review): both fk_plan_ordering AND
+    basic_uniqueness_pre_flight must land in checks_skipped under --no-profile."""
     config_path = tmp_path / "pipeline.yaml"
     _write_yaml(config_path, _good_config())
 
     result = runner.invoke(app, ["plan", str(config_path), "--no-profile"])
     assert result.exit_code == 0, result.stdout
     plan_doc = yaml.safe_load(result.stdout)
-    assert "basic_uniqueness_pre_flight" in plan_doc["plan_compile"]["checks_skipped"]
+    skipped = plan_doc["plan_compile"]["checks_skipped"]
+    assert "basic_uniqueness_pre_flight" in skipped
+    assert "fk_plan_ordering" in skipped
+
+
+def test_plan_no_profile_strips_skipped_from_passed(tmp_path: Path) -> None:
+    """H1: skipped checks must NOT also appear in checks_passed; a check
+    cannot be claimed as both verified and skipped."""
+    config_path = tmp_path / "pipeline.yaml"
+    _write_yaml(config_path, _good_config())
+
+    result = runner.invoke(app, ["plan", str(config_path), "--no-profile"])
+    assert result.exit_code == 0, result.stdout
+    plan_doc = yaml.safe_load(result.stdout)
+    passed = set(plan_doc["plan_compile"]["checks_passed"])
+    skipped = set(plan_doc["plan_compile"]["checks_skipped"])
+    assert not (passed & skipped), (
+        f"checks_passed and checks_skipped overlap: {passed & skipped!r}; "
+        "a check can be in one list or the other, never both."
+    )
+    # The three remaining checks should be in passed.
+    assert {
+        "namespace_ambiguity",
+        "unknown_provider",
+        "composite_columns_length_match",
+    } <= passed
 
 
 def test_plan_no_profile_warns_on_stderr(tmp_path: Path) -> None:
@@ -96,7 +123,52 @@ def test_plan_no_profile_warns_on_stderr(tmp_path: Path) -> None:
     )
     assert result.exit_code == 0
     assert "WARNING" in result.stderr
+    # H1: warning must name both skipped checks.
     assert "basic_uniqueness_pre_flight" in result.stderr
+    assert "fk_plan_ordering" in result.stderr
+    assert "2 profile-dependent checks" in result.stderr
+
+
+def test_plan_no_profile_rejects_unique_cardinality_mode(tmp_path: Path) -> None:
+    """H2 (Dennis slice 4-6 review): --no-profile is incompatible with
+    cardinality_mode: unique because the pool-capacity pre-flight check
+    cannot run without profile data; the runtime failure mode is severe."""
+    config = {
+        "global_settings": {"seed": 1},
+        "tables": [
+            {
+                "name": "customers",
+                "columns": [
+                    {
+                        "name": "customer_id",
+                        "strategy": "pool",
+                        "provider": "uuid",
+                        "backend_type": "pool",
+                        "cardinality_mode": "unique",
+                        "pool_size": 5,
+                    }
+                ],
+            }
+        ],
+    }
+    config_path = tmp_path / "pipeline.yaml"
+    _write_yaml(config_path, config)
+
+    result = runner.invoke(app, ["plan", str(config_path), "--no-profile"])
+    assert result.exit_code == 1
+    assert "cardinality_mode: unique" in result.stderr
+    assert "tables.customers.columns.customer_id" in result.stderr
+    assert "--profile" in result.stderr
+
+
+def test_plan_no_profile_accepts_non_unique_cardinality(tmp_path: Path) -> None:
+    """Sanity-check H2 narrowness: cardinality_mode: reuse (or omitted) still
+    works with --no-profile."""
+    config_path = tmp_path / "pipeline.yaml"
+    _write_yaml(config_path, _good_config())  # uses cardinality_mode: reuse
+
+    result = runner.invoke(app, ["plan", str(config_path), "--no-profile"])
+    assert result.exit_code == 0, result.stdout
 
 
 # -- --json output ----------------------------------------------------

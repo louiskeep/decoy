@@ -131,12 +131,35 @@ def plan(
         raise typer.Exit(code=1)
 
     if no_profile:
+        # H2 (Dennis slice 4-6 review): --no-profile cannot run the pool-capacity
+        # pre-flight check, so configs with cardinality_mode: unique would skip
+        # it silently and ship a plan whose runtime would fail unpredictably.
+        # Hard-error here per S1 spec line 225.
+        unique_column_path = _find_first_unique_column_path(config_dict)
+        if unique_column_path is not None:
+            typer.echo(
+                f"ERROR: --no-profile is incompatible with cardinality_mode: unique.\n"
+                f"       Offending column: {unique_column_path}\n"
+                "       The basic_uniqueness_pre_flight check requires profile data\n"
+                "       (distinct_count) to verify pool capacity. Without it, the\n"
+                "       runtime failure mode is severe (pool exhaustion mid-job).\n"
+                "       Use --profile <profile.json> to load a pre-computed Profile,\n"
+                "       or remove the unique cardinality_mode.",
+                err=True,
+            )
+            raise typer.Exit(code=1)
+
         profile = _empty_profile_for_no_profile(config_dict, engine_version)
-        skipped_checks = ("basic_uniqueness_pre_flight",)
+        # H1 (Dennis slice 4-6 review): both fk_plan_ordering AND
+        # basic_uniqueness_pre_flight need profile data. Under --no-profile they
+        # ran against an empty graph / empty profile and trivially passed; that
+        # is a silent-fallback (correctness-contract §7 non-negotiable). Both
+        # land in checks_skipped, stripped from checks_passed.
+        skipped_checks = ("fk_plan_ordering", "basic_uniqueness_pre_flight")
         typer.echo(
-            "WARNING: --no-profile skipped 1 profile-dependent check "
-            "(basic_uniqueness_pre_flight). Pass without --no-profile for "
-            "full validation.",
+            "WARNING: --no-profile skipped 2 profile-dependent checks "
+            "(fk_plan_ordering, basic_uniqueness_pre_flight). Pass without "
+            "--no-profile for full validation.",
             err=True,
         )
     else:
@@ -269,13 +292,46 @@ def _empty_profile_for_no_profile(config_dict: dict, engine_version: str):
 
 
 def _attach_checks_skipped(plan_obj, skipped: tuple[str, ...]):
-    """Return a new Plan with `plan_compile.checks_skipped` populated.
+    """Return a new Plan with `plan_compile.checks_skipped` populated AND
+    `checks_passed` stripped of the skipped names.
 
     Frozen dataclasses can't mutate in-place; this builds a new Plan
     that swaps the `plan_compile` field. Used by the --no-profile path
-    to record which checks were skipped.
+    to record which checks were skipped. The strip-from-passed half
+    (H1 of the Dennis slice 4-6 review) keeps a single check name from
+    appearing in both lists, which would mislead manifest consumers
+    about what was actually verified.
     """
     from dataclasses import replace
 
-    new_pc = replace(plan_obj.plan_compile, checks_skipped=skipped)
+    skipped_set = set(skipped)
+    new_passed = tuple(
+        c for c in plan_obj.plan_compile.checks_passed if c not in skipped_set
+    )
+    new_pc = replace(
+        plan_obj.plan_compile, checks_passed=new_passed, checks_skipped=skipped
+    )
     return replace(plan_obj, plan_compile=new_pc)
+
+
+def _find_first_unique_column_path(config_dict: dict) -> str | None:
+    """Return the dotted path of the first column with cardinality_mode: unique,
+    or None if no such column exists.
+
+    Used by the --no-profile guard (H2). Path format matches the planner's
+    error-rendering convention: `tables.<name>.columns.<name>`.
+    """
+    tables = config_dict.get("tables", [])
+    if not isinstance(tables, list):
+        return None
+    for table_entry in tables:
+        if not isinstance(table_entry, dict):
+            continue
+        table_name = table_entry.get("name", "?")
+        for col_entry in table_entry.get("columns", []) or []:
+            if not isinstance(col_entry, dict):
+                continue
+            if col_entry.get("cardinality_mode") == "unique":
+                col_name = col_entry.get("name", "?")
+                return f"tables.{table_name}.columns.{col_name}"
+    return None
