@@ -3,29 +3,31 @@
 S1 spec §3 (decoy plan CLI subcommand) + §4 (decoy replan stub).
 
 `decoy plan <config.yaml>`:
-  Compile the pipeline config into a Plan (per `decoy_engine.plan.compile_plan`)
-  and print as YAML to stdout. Exit 0 on success; exit 1 with the typed error
-  on stderr if any of the five S1 plan-compile checks fires.
+  Validate the pipeline config through `decoy_engine.config.PipelineConfig`,
+  profile every source declared in `config.sources` via `profile_source`,
+  compile the plan via `decoy_engine.plan.compile_plan`, print the result
+  as YAML to stdout. Exit 0 on success; exit 1 with the typed error on
+  stderr if validation fails or any of the five S1 plan-compile checks fires.
+
+  Two flags control the profile phase:
+
+    (default)                  Full automated path: validate config, profile
+                               sources via the engine reader (CSV/Parquet),
+                               compile the plan.
+    --profile <profile.json>   Skip the profile phase; load a pre-computed
+                               Profile from JSON instead. Useful for replay
+                               or when source data isn't available locally.
+    --no-profile               Skip the profile phase entirely; populate
+                               plan_compile.checks_skipped with the
+                               profile-dependent check names. Hard error
+                               on configs with cardinality_mode: unique
+                               (the pre-flight check cannot run without
+                               profile data).
 
 `decoy replan --from <manifest>`:
   Re-compile the plan from a job manifest. S1 stub: errors with a clear
-  pointer to the plan-as-manifest slice (S1 slice 7) which has not landed
-  yet. Full behavior per S2 H3: re-profile + re-compile + stdout.
-
-Scope cut (honest about what's not yet implemented):
-
-  The profile_source orchestration slice (which would let `decoy plan
-  config.yaml` infer the profile by walking source files) is deferred
-  pending the V2 pipeline-config shape decision. Until it lands, this
-  CLI requires the caller to pass one of:
-
-    --profile <profile.json>   load a pre-computed Profile from JSON
-    --no-profile               skip the profile entirely; populate
-                               plan_compile.checks_skipped with the
-                               profile-dependent check names
-
-  Bare `decoy plan config.yaml` (no profile flag) exits 1 with a pointer
-  to this gap so the user knows what's missing.
+  pointer to the plan-as-manifest slice (slice 7) on decoy-platform.
+  Full behavior per S2 H3 lands once slice 7 ships on platform main.
 """
 
 from __future__ import annotations
@@ -46,23 +48,25 @@ import yaml
 _PLAN_EPILOG = """\
 Examples:
 
+  decoy plan pipeline.yaml
+    Full automated path: validate config, profile sources from the
+    declared file paths, compile + emit the plan.
+
   decoy plan pipeline.yaml --no-profile
     Compile-check the config without loading source data. Faster; some
     profile-dependent checks are skipped (recorded in
-    plan_compile.checks_skipped on the emitted plan).
+    plan_compile.checks_skipped on the emitted plan). Hard error on
+    configs with cardinality_mode: unique.
 
   decoy plan pipeline.yaml --profile profile.json
-    Load a pre-computed Profile (JSON) and run all five S1 plan-compile
-    checks.
+    Load a pre-computed Profile (JSON) instead of profiling the live
+    source data. Useful for replay or when source data is not local.
 
-  decoy plan pipeline.yaml --no-profile --json
+  decoy plan pipeline.yaml --json
     Emit the plan as JSON (yaml.safe_load -> json.dumps round-trip).
 
-  decoy plan pipeline.yaml --no-profile --out plan.yaml
+  decoy plan pipeline.yaml --out plan.yaml
     Write the plan to a file instead of stdout.
-
-The fully-automated path (`decoy plan pipeline.yaml` with no profile
-flag) lands once the profile_source orchestration slice ships.
 """
 
 
@@ -100,20 +104,10 @@ def plan(
 ) -> None:
     """Compile a pipeline config into a versioned plan artifact."""
     from decoy_engine import __version__ as engine_version
+    from decoy_engine.config import PipelineConfig
     from decoy_engine.plan import PlanCompileError, compile_plan, plan_to_yaml
-    from decoy_engine.profile import profile_from_json
-
-    if not no_profile and profile_path is None:
-        typer.echo(
-            "ERROR: decoy plan requires either --no-profile or --profile <path>.\n"
-            "       The fully-automated profile_source orchestration slice has not\n"
-            "       landed yet (deferred pending the V2 pipeline-config shape\n"
-            "       decision). Use --no-profile for a partial compile (profile-\n"
-            "       dependent checks land in plan_compile.checks_skipped) or\n"
-            "       --profile <profile.json> to load a pre-computed Profile.",
-            err=True,
-        )
-        raise typer.Exit(code=1)
+    from decoy_engine.profile import profile_from_json, profile_source
+    from pydantic import ValidationError
 
     if no_profile and profile_path is not None:
         typer.echo(
@@ -122,13 +116,24 @@ def plan(
         )
         raise typer.Exit(code=1)
 
-    config_dict = yaml.safe_load(config.read_text(encoding="utf-8"))
-    if not isinstance(config_dict, dict):
+    raw_yaml = yaml.safe_load(config.read_text(encoding="utf-8"))
+    if not isinstance(raw_yaml, dict):
         typer.echo(
             f"ERROR: {config} does not parse to a YAML mapping at the top level.",
             err=True,
         )
         raise typer.Exit(code=1)
+
+    # Validate through the choke-point. Pydantic raises ValidationError with
+    # a structured error tree; render the first error in a CLI-readable way.
+    try:
+        config_dict = PipelineConfig.model_validate(raw_yaml).model_dump()
+    except ValidationError as exc:
+        typer.echo(
+            f"ERROR: pipeline-config validation failed for {config}:\n{exc}",
+            err=True,
+        )
+        raise typer.Exit(code=1) from exc
 
     if no_profile:
         # H2 (Dennis slice 4-6 review): --no-profile cannot run the pool-capacity
@@ -143,7 +148,8 @@ def plan(
                 "       The basic_uniqueness_pre_flight check requires profile data\n"
                 "       (distinct_count) to verify pool capacity. Without it, the\n"
                 "       runtime failure mode is severe (pool exhaustion mid-job).\n"
-                "       Use --profile <profile.json> to load a pre-computed Profile,\n"
+                "       Drop --no-profile (default path now profiles automatically),\n"
+                "       pass --profile <profile.json> for a pre-computed Profile,\n"
                 "       or remove the unique cardinality_mode.",
                 err=True,
             )
@@ -158,17 +164,36 @@ def plan(
         skipped_checks = ("fk_plan_ordering", "basic_uniqueness_pre_flight")
         typer.echo(
             "WARNING: --no-profile skipped 2 profile-dependent checks "
-            "(fk_plan_ordering, basic_uniqueness_pre_flight). Pass without "
-            "--no-profile for full validation.",
+            "(fk_plan_ordering, basic_uniqueness_pre_flight). Drop --no-profile "
+            "for full validation.",
             err=True,
         )
-    else:
-        assert profile_path is not None  # narrowed by the validation above
+    elif profile_path is not None:
         try:
             profile = profile_from_json(profile_path.read_text(encoding="utf-8"))
         except (ValueError, KeyError) as exc:
             typer.echo(
                 f"ERROR: --profile {profile_path} did not parse as a Profile JSON: {exc}",
+                err=True,
+            )
+            raise typer.Exit(code=1) from exc
+        skipped_checks = ()
+    else:
+        # Default path: profile_source orchestration reads config["sources"]
+        # and walks each declared file. Seed defaults to global_settings.seed
+        # for cross-run reproducibility.
+        job_seed = config_dict.get("global_settings", {}).get("seed")
+        try:
+            profile = profile_source(
+                config_dict,
+                seed=job_seed if isinstance(job_seed, int) else None,
+            )
+        except (FileNotFoundError, OSError) as exc:
+            typer.echo(
+                f"ERROR: profile_source could not read a declared source file: {exc}\n"
+                "       Check the `sources.<table>.path` entries in the config.\n"
+                "       Use --no-profile to compile-check without reading sources, or\n"
+                "       --profile <profile.json> to load a pre-computed Profile.",
                 err=True,
             )
             raise typer.Exit(code=1) from exc

@@ -23,10 +23,22 @@ def _write_yaml(path: Path, data: dict) -> None:
     path.write_text(yaml.safe_dump(data), encoding="utf-8")
 
 
-def _good_config() -> dict:
-    """Minimal config that compiles cleanly when --no-profile is used."""
+def _good_config(source_path: str = "/nonexistent/customers.csv") -> dict:
+    """A minimal valid PipelineConfig that compiles cleanly under --no-profile.
+
+    `source_path` defaults to a nonexistent path so --no-profile tests do not
+    accidentally read disk. Auto-profile tests pass a real fixture path.
+    """
     return {
-        "global_settings": {"seed": 7},
+        "version": 1,
+        "global_settings": {"seed": 7, "post_validation": False},
+        "sources": {
+            "customers": {
+                "type": "file",
+                "format": "csv",
+                "path": source_path,
+            }
+        },
         "tables": [
             {
                 "name": "customers",
@@ -42,7 +54,34 @@ def _good_config() -> dict:
                 ],
             }
         ],
+        "relationships": [],
+        "targets": {
+            "customers": {
+                "type": "file",
+                "format": "csv",
+                "path": "/tmp/out_customers.csv",
+            }
+        },
     }
+
+
+def _golden_fixture_config() -> dict:
+    """A config that points at the real golden-fixture customers.csv (slice 4
+    of S1 fixtures, on decoy-engine main). Used by the auto-profile path
+    smoke tests."""
+    # Locate decoy-engine's golden fixture root via the sibling repo checkout.
+    here = Path(__file__).resolve()
+    decoy_engine_root = here.parent.parent.parent.parent / "decoy-engine"
+    customers_csv = (
+        decoy_engine_root
+        / "tests"
+        / "fixtures"
+        / "golden"
+        / "relational_parent_child"
+        / "customers.csv"
+    )
+    cfg = _good_config(source_path=str(customers_csv))
+    return cfg
 
 
 # -- help -------------------------------------------------------------
@@ -133,23 +172,15 @@ def test_plan_no_profile_rejects_unique_cardinality_mode(tmp_path: Path) -> None
     """H2 (Dennis slice 4-6 review): --no-profile is incompatible with
     cardinality_mode: unique because the pool-capacity pre-flight check
     cannot run without profile data; the runtime failure mode is severe."""
-    config = {
-        "global_settings": {"seed": 1},
-        "tables": [
-            {
-                "name": "customers",
-                "columns": [
-                    {
-                        "name": "customer_id",
-                        "strategy": "pool",
-                        "provider": "uuid",
-                        "backend_type": "pool",
-                        "cardinality_mode": "unique",
-                        "pool_size": 5,
-                    }
-                ],
-            }
-        ],
+    config = _good_config()
+    # Swap the column to a pool-backed unique config.
+    config["tables"][0]["columns"][0] = {
+        "name": "customer_id",
+        "strategy": "pool",
+        "provider": "uuid",
+        "backend_type": "pool",
+        "cardinality_mode": "unique",
+        "pool_size": 5,
     }
     config_path = tmp_path / "pipeline.yaml"
     _write_yaml(config_path, config)
@@ -206,16 +237,32 @@ def test_plan_out_writes_to_file(tmp_path: Path) -> None:
 # -- error paths ------------------------------------------------------
 
 
-def test_plan_no_flags_points_at_deferred_slice(tmp_path: Path) -> None:
+def test_plan_default_path_profiles_and_compiles(tmp_path: Path) -> None:
+    """The bare `decoy plan config.yaml` (no profile flag) takes the
+    full automated path: validate -> profile_source -> compile_plan.
+    Uses a golden-fixture CSV so the source actually loads."""
     config_path = tmp_path / "pipeline.yaml"
-    _write_yaml(config_path, _good_config())
+    _write_yaml(config_path, _golden_fixture_config())
 
-    result = runner.invoke(
-        app,
-        ["plan", str(config_path)],
-    )
+    result = runner.invoke(app, ["plan", str(config_path)])
+    assert result.exit_code == 0, result.stdout + result.stderr
+    plan_doc = yaml.safe_load(result.stdout)
+    # Full path: all 5 checks pass, nothing skipped.
+    assert plan_doc["plan_compile"]["checks_skipped"] == []
+    assert "basic_uniqueness_pre_flight" in plan_doc["plan_compile"]["checks_passed"]
+    assert "fk_plan_ordering" in plan_doc["plan_compile"]["checks_passed"]
+
+
+def test_plan_default_path_reports_missing_source_clearly(tmp_path: Path) -> None:
+    """When the bare command fails to read a declared source, the error
+    points at the path issue and suggests --no-profile / --profile."""
+    config_path = tmp_path / "pipeline.yaml"
+    cfg = _good_config(source_path=str(tmp_path / "does_not_exist.csv"))
+    _write_yaml(config_path, cfg)
+
+    result = runner.invoke(app, ["plan", str(config_path)])
     assert result.exit_code == 1
-    assert "profile_source orchestration" in result.stderr
+    assert "profile_source" in result.stderr
     assert "--no-profile" in result.stderr or "--profile" in result.stderr
 
 
