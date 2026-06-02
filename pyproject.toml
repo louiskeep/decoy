@@ -3,14 +3,64 @@ requires = ["hatchling>=1.29.0"]
 build-backend = "hatchling.build"
 
 [project]
-name = "decoy"
+# OSS.3 (2026-06-02) / Q-OSS-1 RESOLVED 2026-06-01: PyPI distribution
+# name is `decoy-cli`; the import package + console script stay `decoy`.
+# Rationale: the bare `decoy` PyPI name is not gating the launch window;
+# `decoy-cli` is honest about what the dist is (the CLI) and leaves the
+# engine name (`decoy-engine`) unaffected.
+name = "decoy-cli"
 version = "0.1.0"
-description = "Decoy CLI — data masking and synthetic generation from the terminal"
+description = "Free, open-source CLI for data masking and synthetic generation. Wraps the decoy-engine library; runs masking + generate jobs from the terminal or a notebook."
 readme = "README.md"
 requires-python = ">=3.10"
+# OSS.2 (license flip to Apache-2.0) is a separate, one-way, PO-gated
+# sprint. Until OSS.2 ships, the CLI keeps the BUSL-1.1 license that
+# pairs with the commercial platform.
 license = "LicenseRef-BUSL-1.1"
 license-files = ["LICENSE.md"]
 authors = [{ name = "louiskeep" }]
+
+# PyPI Trove classifiers. Bare-minimum honest set: the Python versions
+# we actually test against (3.10/3.11/3.12 in release-smoke.yml), the OS
+# support tier (cross-platform; CI gates linux today, mac/windows in
+# OSS.7), the topic taxonomy that data-engineering operators search for,
+# and the maturity marker ("Beta" pre-1.0 per semver). The full
+# reference list lives at https://pypi.org/classifiers/.
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    "Intended Audience :: System Administrators",
+    "Intended Audience :: Information Technology",
+    "License :: Other/Proprietary License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3 :: Only",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Database",
+    "Topic :: Security",
+    "Topic :: Software Development :: Libraries",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+    "Topic :: Utilities",
+    "Typing :: Typed",
+]
+
+# Search keywords. These show up in `pip search` analogues + the PyPI
+# project page's search-indexing. Kept short, kept honest.
+keywords = [
+    "data-masking",
+    "synthetic-data",
+    "anonymization",
+    "pii",
+    "privacy",
+    "data-generation",
+    "faker",
+    "cli",
+    "decoy",
+]
+
 dependencies = [
     "decoy-engine>=0.1.0",
     "typer>=0.9",
@@ -22,11 +72,24 @@ dev = [
     "pytest>=7.0.0",
 ]
 
+# Project URLs surfaced on the PyPI sidebar. Source key is the
+# convention pip/Warehouse uses.
+[project.urls]
+Homepage = "https://github.com/louiskeep/decoy"
+Repository = "https://github.com/louiskeep/decoy"
+Documentation = "https://github.com/louiskeep/decoy/blob/main/README.md"
+Issues = "https://github.com/louiskeep/decoy/issues"
+Changelog = "https://github.com/louiskeep/decoy/blob/main/CHANGELOG.md"
+"Release smoke log" = "https://github.com/louiskeep/decoy/blob/main/docs/legacy/release-smoke-log.md"
+
 [project.scripts]
+# Console script name STAYS `decoy` regardless of the distribution
+# name. Same with `forge` (the deprecation shim from S22).
 decoy = "decoy.__main__:app"
 forge = "decoy._deprecated:forge_shim"
 
 [tool.hatch.build.targets.wheel]
+# Import package stays `decoy` (Q-OSS-1 RESOLVED).
 packages = ["src/decoy"]
 
 [tool.hatch.build.targets.wheel.force-include]
