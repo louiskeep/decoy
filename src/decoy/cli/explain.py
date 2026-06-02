@@ -216,7 +216,7 @@ _TOPICS: dict[str, _Topic] = {
         name="exit-codes",
         summary="The process exit codes every `decoy` command returns.",
         body=(
-            "Every `decoy` subcommand returns one of four exit codes. Scripts,\n"
+            "Every `decoy` subcommand returns one of five exit codes. Scripts,\n"
             "Make recipes, and CI pipelines can switch on the integer value.\n\n"
             "  0   Success. The command did what it said. POSIX convention.\n"
             "  1   Usage error. The caller's request was wrong: config did not\n"
@@ -228,10 +228,16 @@ _TOPICS: dict[str, _Topic] = {
             "  3   Runtime error. The CLI itself failed mid-run: the engine\n"
             "      raised an unexpected error, an output write failed, a\n"
             "      transient I/O problem happened. The fix is in the CLI or\n"
-            "      engine, not the user's request.\n\n"
+            "      engine, not the user's request.\n"
+            "  4   Findings. The CLI ran cleanly but found data issues (e.g.\n"
+            "      `decoy storm integrity` flagged residual PII or FK\n"
+            "      preservation failures). The fix is in the data being\n"
+            "      checked, not in the CLI invocation. Pattern source:\n"
+            "      semgrep's exit-code split.\n\n"
             "Integer values are stable across releases. The named constants\n"
-            "(EXIT_OK / EXIT_USAGE / EXIT_DEPRECATED_SHIM / EXIT_RUNTIME) live\n"
-            "in `decoy.cli.exit_codes` for callers that import them in Python."
+            "(EXIT_OK / EXIT_USAGE / EXIT_DEPRECATED_SHIM / EXIT_RUNTIME /\n"
+            "EXIT_FINDINGS) live in `decoy.cli.exit_codes` for callers that\n"
+            "import them in Python."
         ),
         see_also=("decoy --help", "decoy run --help"),
     ),
