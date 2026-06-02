@@ -1,35 +1,48 @@
 # minimal -- the smallest sensible decoy pipeline.
-# Edit input.path and output.path, then: decoy validate pipeline.yaml && decoy run pipeline.yaml
-version: '1.0'
+#
+# A single-table mask: takes a CSV in, writes a masked CSV out. Edit the
+# source + target paths, then:
+#
+#   decoy validate pipeline.yaml && decoy run pipeline.yaml
+#
+# V2 PipelineConfig shape per decoy-engine `decoy_engine.config._pipeline`.
+# Provider names come from the engine's default registry (see
+# `decoy_engine.providers.get_default_registry`).
+# CLI.3 (2026-06-02) rewrite: replaces V1 `version: '1.0'` + V1
+# `masking_rules:` shape.
+
+version: 1
+mode: mask
 
 global_settings:
   seed: 42
 
-input:
-  type: csv
-  path: 'data/input.csv'
-  csv_options:
-    delimiter: ','
-    encoding: utf-8
+sources:
+  people:
+    type: file
+    format: csv
+    path: ./input.csv
 
-output:
-  type: csv
-  path: 'data/masked.csv'
-  csv_options:
-    delimiter: ','
-    encoding: utf-8
+tables:
+  - name: people
+    columns:
+      - name: first_name
+        strategy: faker
+        provider: person_first_name
+      - name: last_name
+        strategy: faker
+        provider: person_last_name
+      - name: email
+        strategy: faker
+        provider: person_email
+      - name: ssn
+        strategy: faker
+        provider: synthetic_ssn
+      - name: account_status
+        strategy: passthrough
 
-logging:
-  level: info
-  file: 'decoy_run.log'
-
-masking_rules:
-  - column: name
-    type: faker
-    faker_type: name
-  - column: email
-    type: faker
-    faker_type: email
-  - column: ssn
-    type: hash
-    algorithm: sha256
+targets:
+  people:
+    type: file
+    format: csv
+    path: ./output.csv

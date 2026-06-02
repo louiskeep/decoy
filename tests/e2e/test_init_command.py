@@ -22,14 +22,18 @@ def test_init_help_includes_examples():
 
 
 def test_init_quiet_writes_minimal_pipeline(tmp_path: Path):
+    """CLI.3 (2026-06-02): bundled minimal template is now V2 PipelineConfig
+    shape: `version: 1`, `tables[].columns`, no `masking_rules`."""
     out = tmp_path / "pipeline.yaml"
     result = runner.invoke(app, ["init", "--out", str(out), "--quiet"])
     assert result.exit_code == 0
     assert result.stdout == ""
     assert out.exists()
     data = yaml.safe_load(out.read_text())
-    assert "masking_rules" in data
-    assert len(data["masking_rules"]) >= 3
+    assert data.get("version") == 1
+    assert "tables" in data
+    assert len(data["tables"]) >= 1
+    assert len(data["tables"][0]["columns"]) >= 3
 
 
 def test_init_json_returns_metadata(tmp_path: Path):
@@ -52,11 +56,12 @@ def test_init_refuses_to_overwrite_in_json_mode(tmp_path: Path):
 
 
 def test_init_overwrites_with_yes_flag(tmp_path: Path):
+    """CLI.3 (2026-06-02): bundled template body is V2 (`tables:` block)."""
     out = tmp_path / "pipeline.yaml"
     out.write_text("existing")
     result = runner.invoke(app, ["init", "--out", str(out), "--yes", "--quiet"])
     assert result.exit_code == 0
-    assert "masking_rules" in out.read_text()
+    assert "tables:" in out.read_text()
 
 
 def test_init_preset_hipaa_writes_hipaa_template(tmp_path: Path):
@@ -97,7 +102,9 @@ def test_init_preset_json_envelope_carries_preset_and_count(tmp_path: Path):
 
 
 def test_init_preset_generate_produces_generator_yaml(tmp_path: Path):
-    """The generate preset has a different YAML shape (tables/columns)."""
+    """The generate preset uses `mode: generate` + `generate_columns`. CLI.3
+    (2026-06-02): V1 `generator_settings:` block folded into the unified
+    V2 `global_settings:`."""
     out = tmp_path / "pipeline.yaml"
     result = runner.invoke(
         app, ["init", "--preset", "generate", "--out", str(out), "--quiet"]
@@ -105,4 +112,5 @@ def test_init_preset_generate_produces_generator_yaml(tmp_path: Path):
     assert result.exit_code == 0
     body = out.read_text()
     assert "tables:" in body
-    assert "generator_settings:" in body
+    assert "mode: generate" in body
+    assert "generate_columns:" in body

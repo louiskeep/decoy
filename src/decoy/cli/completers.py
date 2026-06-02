@@ -54,10 +54,15 @@ def disguise_ids() -> list[str]:
 
 @lru_cache(maxsize=1)
 def _faker_provider_ids_cached() -> tuple[str, ...]:
+    """CLI.3 (2026-06-02): import path moved from
+    decoy_engine.internal.helpers (deleted) to
+    decoy_engine.internal.faker_setup. Pre-fix the silent except
+    masked the ImportError + completers returned (), so the
+    --faker-type tab-completer was a no-op everywhere."""
     try:
         from faker import Faker
 
-        from decoy_engine.internal.helpers import get_faker_providers
+        from decoy_engine.internal.faker_setup import get_faker_providers
 
         return tuple(sorted(get_faker_providers(Faker()).keys()))
     except Exception:
@@ -70,7 +75,10 @@ def faker_provider_ids() -> list[str]:
 
 
 # Static set: the modes `decoy run --mode` accepts. Mirrors cli.run.Mode.
-RUN_MODES: tuple[str, ...] = ("mask", "generate", "convert", "graph")
+# CLI.1 (2026-06-02): "convert" and "graph" were V1-only modes removed
+# under storm-reframe-C / S22-CL-V1GRAPHRUNNER. The V2 PipelineConfig
+# choke point accepts only mask + generate.
+RUN_MODES: tuple[str, ...] = ("mask", "generate")
 
 
 def run_modes() -> list[str]:

@@ -2,83 +2,79 @@
 #
 # Aimed at the categories named in Recital 26 / Art 4(1): name, ID,
 # location, online identifier, plus the special-category data in
-# Art 9 (we redact those rather than pseudonymize). Tune for your
-# Article 6 lawful basis.
-version: '1.0'
+# Art 9 (redact rather than pseudonymize). Tune for your Article 6
+# lawful basis.
+#
+# V2 PipelineConfig shape per decoy-engine `decoy_engine.config._pipeline`.
+# Provider names come from the engine's default registry (see
+# `decoy_engine.providers.get_default_registry`).
+# CLI.3 (2026-06-02) rewrite: replaces V1 `version: '1.0'` +
+# `masking_rules:` shape.
+
+version: 1
+mode: mask
 
 global_settings:
   seed: 42
 
-input:
-  type: csv
-  path: 'data/users.csv'
-  csv_options:
-    delimiter: ','
-    encoding: utf-8
+sources:
+  users:
+    type: file
+    format: csv
+    path: ./users.csv
 
-output:
-  type: csv
-  path: 'data/users_masked.csv'
-  csv_options:
-    delimiter: ','
-    encoding: utf-8
+tables:
+  - name: users
+    columns:
+      # Direct identifiers
+      - name: full_name
+        strategy: faker
+        provider: person_name
+      - name: email
+        strategy: faker
+        provider: person_email
+      - name: phone
+        strategy: faker
+        provider: person_phone
 
-logging:
-  level: info
-  file: 'decoy_run.log'
+      # Online identifiers
+      - name: ip_address
+        strategy: redact
+      - name: user_agent
+        strategy: redact
+      - name: device_id
+        strategy: faker
+        provider: uuid
 
-masking_rules:
-  # Direct identifiers
-  - column: full_name
-    type: faker
-    faker_type: name
-  - column: email
-    type: faker
-    faker_type: email
-  - column: phone
-    type: faker
-    faker_type: phone_number
+      # Location
+      - name: country
+        strategy: passthrough
+      - name: city
+        strategy: faker
+        provider: address_city
+      - name: postal_code
+        strategy: redact
 
-  # Online identifiers
-  - column: ip_address
-    type: faker
-    faker_type: ipv4
-  - column: user_agent
-    type: redact
-    redact_with: 'REDACTED'
-  - column: device_id
-    type: hash
-    algorithm: sha256
+      # National ID / passport -- redact, do not preserve.
+      - name: national_id
+        strategy: redact
+      - name: passport_number
+        strategy: redact
 
-  # Location
-  - column: country
-    type: passthrough
-  - column: city
-    type: faker
-    faker_type: city
-  - column: postal_code
-    type: redact
-    keep_chars: 3
+      # Special category (Art 9) -- redact entirely.
+      - name: ethnicity
+        strategy: redact
+      - name: religion
+        strategy: redact
+      - name: health_condition
+        strategy: redact
 
-  # National ID / passport -- hash, do not preserve.
-  - column: national_id
-    type: hash
-    algorithm: sha256
-  - column: passport_number
-    type: hash
-    algorithm: sha256
+      # Behavioral / preference -- shuffle to break the link to a single user.
+      - name: salary
+        strategy: shuffle
 
-  # Special category (Art 9) -- redact entirely.
-  - column: ethnicity
-    type: redact
-    redact_with: 'REDACTED'
-  - column: religion
-    type: redact
-    redact_with: 'REDACTED'
-  - column: health_condition
-    type: redact
-    redact_with: 'REDACTED'
-
-  # Behavioral / preference -- shuffle to break the link to a single user.
-  - column: salary
-    type: shuffle
+targets:
+  users:
+    type: file
+    format: csv
+    path: ./users_masked.csv

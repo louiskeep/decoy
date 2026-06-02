@@ -1,53 +1,51 @@
 # generate -- synthetic-data generation pipeline.
 #
-# Run with: decoy run pipeline.yaml --mode generate
-# Produces an Employees CSV from scratch -- no input file required.
-# Edit `rows`, columns, and faker_type to shape the output.
-version: '1.0'
+# Produces an employees CSV from scratch -- no input file required.
+# Edit `row_count`, columns, and faker_type to shape the output.
+#
+#   decoy run pipeline.yaml
+#
+# The YAML's `mode: generate` selects the synthesis path; the engine's
+# generate_tables() entry returns one Arrow table per declared table.
+# V2 PipelineConfig shape per decoy-engine `decoy_engine.config._pipeline`.
+# CLI.3 (2026-06-02) rewrite: replaces V1 `version: '1.0'` +
+# `generator_settings:` block; V2 uses unified `global_settings`.
 
-generator_settings:
+version: 1
+mode: generate
+
+global_settings:
   seed: 42
-  output_directory: 'data/generated'
-  chunk_size: 10000
+
+sources: {}
 
 tables:
   - name: employees
-    output_path: 'data/generated/employees.csv'
-    rows: 1000
-    columns:
+    row_count: 1000
+    generate_columns:
       - name: employee_id
         type: sequence
         start: 1000
-        prefix: 'EMP'
-        pad_length: 6
-
+        step: 1
       - name: first_name
         type: faker
         faker_type: first_name
-
       - name: last_name
         type: faker
         faker_type: last_name
-
       - name: email
-        type: formula
-        formula_type: template
-        formula: '{first_name}.{last_name}@example.com'
-
+        type: faker
+        faker_type: email
       - name: department
         type: categorical
-        categories: ['Engineering', 'Marketing', 'Sales', 'HR', 'Finance']
+        categories: ["Engineering", "Marketing", "Sales", "HR", "Finance"]
         weights: [0.3, 0.2, 0.3, 0.1, 0.1]
-
       - name: job_title
         type: faker
         faker_type: job
 
-      - name: salary
-        type: formula
-        formula_type: basic
-        formula: 'round(randint(50000, 150000), -3)'
-
-      - name: hire_date
-        type: faker
-        faker_type: date
+targets:
+  employees:
+    type: file
+    format: csv
+    path: ./employees.csv
