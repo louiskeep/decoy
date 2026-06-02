@@ -66,15 +66,37 @@ def test_release_smoke_workflow_does_not_publish() -> None:
     """OSS.1 is a smoke gate, not a publish pipeline. Any real publish
     action here is a scope violation; publishing belongs to OSS.7.
 
-    The check scans the EXECUTABLE step bodies, not comments / docs.
-    Mentioning PyPI in a comment that explains the eventual transition
-    is fine; running `twine upload` is not."""
+    The check scans the EXECUTABLE step entries (both ``run:`` shell
+    bodies AND ``uses:`` action invocations). Mentioning PyPI in a
+    comment that explains the eventual transition is fine; running
+    ``twine upload`` (run body) or invoking ``pypa/gh-action-pypi-publish``
+    (uses entry) is not.
+
+    Dennis M1 follow-up (2026-06-02, FC-2/OSS.1 merge clearance):
+    pre-fix this test only scanned ``run:`` bodies; a step that uses
+    the trusted-publish action via ``uses:`` (no ``run:`` body) would
+    have slipped past. Now both surfaces gate.
+    """
     data = yaml.safe_load(WORKFLOW.read_text(encoding="utf-8"))
     job = data["jobs"]["fresh-install"]
     run_bodies = "\n".join(s.get("run", "") for s in job["steps"]).lower()
+    uses_entries = [
+        (s.get("uses", "") or "").lower()
+        for s in job["steps"]
+    ]
     assert "twine upload" not in run_bodies, (
         "OSS.1 must not publish; twine upload belongs to OSS.7"
     )
     assert "upload-pypi" not in run_bodies, (
         "OSS.1 must not publish; the trusted-publish action belongs to OSS.7"
     )
+    # The well-known PyPA trusted-publish action + any author/fork of
+    # it. Pattern check on the `uses:` field, since trusted-publish
+    # actions never have a `run:` body.
+    publish_action_substrings = ("pypi-publish", "pypa/gh-action-pypi", "twine")
+    for uses in uses_entries:
+        for substring in publish_action_substrings:
+            assert substring not in uses, (
+                f"OSS.1 must not publish; step uses {uses!r} matches "
+                f"publish-action pattern {substring!r} (belongs to OSS.7)"
+            )

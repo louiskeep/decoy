@@ -8,4 +8,4 @@ Until the first green run lands, this file is the documented gap. Do not delete 
 
 | Date | SHA | Python | Run | Notes |
 |------|-----|--------|-----|-------|
-| _no green runs yet_ | | | | OSS.1 commit 3 (2026-06-02) shipped the gate; first run will land on the next `workflow_dispatch` or tag push. |
+| _no green runs yet_ | | | | OSS.1 commit 3 (2026-06-02) shipped the gate. The wheel-build collision fix landed in OSS.3 followup commit `808fd1d` (merged into main as `1a10c8c`), so the gate can now actually build the wheel. **Trigger the first run from the GitHub Actions UI**: Actions tab -> "release-smoke" -> "Run workflow" -> select `main`. Paste the resulting (SHA, Python version, workflow run URL) into a new row below once it lands green. |
