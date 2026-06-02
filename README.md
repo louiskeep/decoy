@@ -6,8 +6,12 @@ it at a YAML pipeline that describes your sources, your tables, and the
 strategy for each column, and it produces a masked or synthesized copy of
 your data with deterministic, repeatable output.
 
-The CLI is Apache-2.0 licensed and runs locally: there is no server, no
-account, no telemetry phone-home. Input data and output data stay on your
+The CLI is source-available under the Business Source License 1.1 (BUSL-1.1):
+source is readable, non-commercial and internal-business use is permitted by
+the Additional Use Grant, and commercial competing-service use is restricted.
+The license auto-converts to Apache-2.0 on the Change Date (2030-05-10). See
+`LICENSE.md` for the full terms. The CLI runs locally: there is no server,
+no account, no telemetry phone-home. Input data and output data stay on your
 machine.
 
 ## Install
@@ -84,4 +88,9 @@ the same table from the CLI.
 
 ## License
 
-Apache License 2.0. See `LICENSE.md` and `TRADEMARKS.md`.
+Business Source License 1.1 (BUSL-1.1). The source is readable, internal and
+non-commercial use is permitted, and competing-service use is restricted by
+the Additional Use Grant. The license auto-converts to Apache License 2.0
+on the Change Date (2030-05-10). BUSL-1.1 is source-available, not OSI
+open-source. See `LICENSE.md` for the full terms and `TRADEMARKS.md` for
+the trademark policy.
