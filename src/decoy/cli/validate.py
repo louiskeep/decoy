@@ -1,8 +1,22 @@
-"""`decoy validate` -- check whether a YAML pipeline config is well-formed."""
+"""`decoy validate` -- check whether a YAML pipeline config is well-formed.
+
+CLI.2 commit 1 (2026-06-02): rewired against the V2 choke point. Pre-fix the
+module imported `validate_graph` (deleted under S22) from `decoy_engine`
+and `ConfigError` + `PipelineValidationError` from `decoy_engine.exceptions`
+(wrong module; the engine path is `decoy_engine.errors`, exported at the
+top-level). Both broke import at runtime. The `_is_graph_yaml` helper +
+its branch handled a V1-only `mode: graph` value the V2 schema rejects
+at the model layer; deleted.
+
+The V2 choke point is `decoy_engine.PipelineConfig.model_validate(dict)`.
+Validates as a single typed step; the cli-product-flow.md doc names it
+as the validation contract (line 139).
+"""
 
 from pathlib import Path
 
 import typer
+import yaml as _yaml
 
 from decoy.ui.output import OutputMode, emit_json, setup_output
 from decoy.ui.theme import code, error, hint, success
@@ -58,15 +72,10 @@ def validate(
     state = setup_output(json_, quiet, verbose)
     config_str = str(config)
 
-    from decoy_engine import validate_config, validate_graph
-    from decoy_engine.exceptions import ConfigError, PipelineValidationError
+    from decoy_engine import ConfigError, PipelineConfig, PipelineValidationError
+    from pydantic import ValidationError
 
-    try:
-        if _is_graph_yaml(config):
-            validate_graph(config.read_text(encoding="utf-8"))
-        else:
-            validate_config(config_str)
-    except (PipelineValidationError, ConfigError) as exc:
+    def _emit_error(message: str) -> None:
         if state.mode is OutputMode.json:
             emit_json(
                 state,
@@ -74,12 +83,29 @@ def validate(
                     "command": "validate",
                     "status": "error",
                     "config": config_str,
-                    "error": str(exc),
+                    "error": message,
                 },
             )
         elif state.mode is not OutputMode.quiet:
-            state.err_console.print(error("error:"), f"Invalid config: {exc}")
+            state.err_console.print(error("error:"), f"Invalid config: {message}")
             state.err_console.print(" ", hint("hint:"), "see `decoy validate --help` for the expected schema.")
+
+    try:
+        raw = _yaml.safe_load(config.read_text(encoding="utf-8"))
+    except _yaml.YAMLError as exc:
+        _emit_error(f"YAML parse error: {exc}")
+        raise typer.Exit(code=1)
+
+    if not isinstance(raw, dict):
+        _emit_error(
+            f"Pipeline YAML must be a YAML mapping (object), not {type(raw).__name__}."
+        )
+        raise typer.Exit(code=1)
+
+    try:
+        PipelineConfig.model_validate(raw)
+    except (ValidationError, PipelineValidationError, ConfigError) as exc:
+        _emit_error(str(exc))
         raise typer.Exit(code=1)
 
     if state.mode is OutputMode.json:
@@ -96,14 +122,3 @@ def validate(
 
 
 VALIDATE_EPILOG = _VALIDATE_EPILOG
-
-
-def _is_graph_yaml(config_path: Path) -> bool:
-    """True iff the YAML's top-level ``mode`` is ``graph``."""
-    try:
-        import yaml
-
-        cfg = yaml.safe_load(config_path.read_text(encoding="utf-8"))
-        return isinstance(cfg, dict) and (cfg.get("mode") or "").lower() == "graph"
-    except Exception:
-        return False

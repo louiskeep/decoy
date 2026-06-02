@@ -56,11 +56,16 @@ def test_plan_help_includes_examples() -> None:
     assert "Examples:" in result.stdout
 
 
-def test_replan_help_documents_s1_stub() -> None:
+def test_replan_help_documents_not_yet_implemented() -> None:
+    """CLI.2 (2026-06-02): replan help no longer references the dead 'S1 stub'
+    + 'slice 7' framing. It names `decoy plan` as the workaround instead."""
     result = runner.invoke(app, ["replan", "--help"])
     assert result.exit_code == 0
-    assert "S1 stub" in result.stdout
+    assert "Not yet implemented" in result.stdout or "not yet implemented" in result.stdout
+    assert "decoy plan" in result.stdout
     assert "--from" in result.stdout
+    assert "S1 stub" not in result.stdout
+    assert "slice 7" not in result.stdout
 
 
 # -- --no-profile happy path -----------------------------------------
@@ -73,7 +78,11 @@ def test_plan_no_profile_emits_yaml(tmp_path: Path) -> None:
     result = runner.invoke(app, ["plan", str(config_path), "--no-profile"])
     assert result.exit_code == 0, result.stdout
     assert "plan_version: 1" in result.stdout
-    assert "seed_protocol_version: 0" in result.stdout
+    # CLI.2 (2026-06-02): seed_protocol_version was bumped from 0 to 4
+    # across the QA-walks-gen + formula-hash migration window; the
+    # test's expected literal lagged the engine constant. Pin to the
+    # current canonical value.
+    assert "seed_protocol_version: 4" in result.stdout
 
 
 def test_plan_no_profile_records_skipped_checks(tmp_path: Path) -> None:
@@ -182,7 +191,9 @@ def test_plan_json_emits_parseable_json(tmp_path: Path) -> None:
     assert result.exit_code == 0, result.stdout
     parsed = json.loads(result.stdout)
     assert parsed["plan_version"] == 1
-    assert parsed["seed_protocol_version"] == 0
+    # CLI.2 (2026-06-02): seed_protocol_version was bumped 0 -> 4 across
+    # the QA-walks-gen + formula-hash migration window. Pin to current.
+    assert parsed["seed_protocol_version"] == 4
 
 
 # -- --out writes to file --------------------------------------------
@@ -328,14 +339,20 @@ def test_plan_two_invocations_byte_identical(tmp_path: Path) -> None:
 # -- replan stub ------------------------------------------------------
 
 
-def test_replan_errors_with_stub_pointer(tmp_path: Path) -> None:
+def test_replan_errors_with_actionable_message(tmp_path: Path) -> None:
+    """CLI.2 (2026-06-02): replan error message no longer references 'S1
+    stub' / 'slice 7'. It names `decoy plan` as the workaround so a
+    2026-06+ reader gets an actionable next step instead of a dead
+    sprint reference."""
     manifest_path = tmp_path / "manifest.json"
     manifest_path.write_text('{"placeholder": true}', encoding="utf-8")
 
     result = runner.invoke(app, ["replan", "--from", str(manifest_path)])
     assert result.exit_code == 1
-    assert "S1 stub" in result.stderr
-    assert "slice 7" in result.stderr or "plan-as-manifest" in result.stderr
+    assert "not yet implemented" in result.stderr
+    assert "decoy plan" in result.stderr
+    assert "S1 stub" not in result.stderr
+    assert "slice 7" not in result.stderr
 
 
 def test_replan_requires_from_flag() -> None:
