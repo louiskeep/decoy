@@ -3,7 +3,7 @@
 Free developer/CI CLI wrapper for Decoy.
 
 `decoy` is production-usable for local YAML validation, local file runs,
-local STORM/FORECAST workflows, demos, templates, and fixtures. It is not the
+local STORM scans, demos, templates, and fixtures. It is not the
 paid self-hosted platform product: users, RBAC, API keys, schedules, triggers,
 reviews, audit logs, Reporting, and evidence packages live in `decoy-platform`.
 
