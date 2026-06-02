@@ -32,10 +32,20 @@ end to end:
 decoy demo
 ```
 
-Scaffold your first pipeline against your own CSV:
+Scaffold your first pipeline against your own CSV. Two paths:
 
 ```
-decoy init pipeline.yaml --template minimal
+# Column-aware: STORM scans the file, picks a strategy per column, writes
+# the YAML with `# REVIEW:` comments above every auto-inferred entry.
+decoy init customers.csv --out pipeline.yaml
+# read the REVIEW comments + edit anything you disagree with
+decoy validate pipeline.yaml
+decoy run pipeline.yaml
+```
+
+```
+# Template-driven: scaffold from a bundled preset (minimal, hipaa, pci, gdpr).
+decoy init --preset minimal --out pipeline.yaml
 # edit pipeline.yaml: point `sources.people.path` at your CSV
 decoy validate pipeline.yaml
 decoy run pipeline.yaml
@@ -50,7 +60,7 @@ masked output to the path declared under `targets:` in the YAML.
 | Command                  | What it does                                                                  |
 |--------------------------|-------------------------------------------------------------------------------|
 | `decoy demo`             | Run a packaged end-to-end mask on synthetic input. Good first call.           |
-| `decoy init <path>`      | Scaffold a starter `pipeline.yaml` from a template (`minimal`, `gdpr`, ...).  |
+| `decoy init [file]`      | Scaffold a starter `pipeline.yaml`. With a file: column-aware via STORM. Without: prompt for preset (`minimal`, `gdpr`, ...). |
 | `decoy validate <path>`  | Validate a pipeline YAML against the engine schema. Exits non-zero on error.  |
 | `decoy run <path>`       | Execute a pipeline: read sources, mask, write targets.                        |
 | `decoy storm <path>`     | Profile a source file: distributions, PII candidates, cardinality hints.      |
