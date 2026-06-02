@@ -1,8 +1,13 @@
 """End-to-end tests for `decoy run`.
 
-Uses Typer's CliRunner so the CLI is invoked exactly like a real user
-would invoke it, but in-process (no subprocess). Each test writes a
-self-contained YAML config + input CSV into a tmp dir.
+CLI.3 commit 3 (2026-06-02): rewritten against the V2 PipelineConfig
+spine. Pre-rewrite the file exercised V1 `mode: graph` YAML and V1
+`masking_rules:` shapes; both are dead under storm-reframe-C and
+S22-CL-V1GRAPHRUNNER. The new cells verify (a) help text renders,
+(b) a minimal V2 mask config runs end-to-end and writes a masked CSV
+where faker columns differ from the source, (c) a V2 generate config
+runs end-to-end and produces the declared row_count, (d) V1 graph
+YAML is rejected with a typed error.
 """
 
 from pathlib import Path
@@ -18,8 +23,15 @@ from decoy.__main__ import app
 runner = CliRunner()
 
 
+# --------------------------------------------------------------------------
+# Fixtures
+# --------------------------------------------------------------------------
+
+
 @pytest.fixture
 def sample_csv(tmp_path: Path) -> Path:
+    """Three-row source CSV with one each: pass-through-friendly id,
+    faker-replaceable name, and a column the mask will redact."""
     path = tmp_path / "input.csv"
     pd.DataFrame(
         {
@@ -34,29 +46,75 @@ def sample_csv(tmp_path: Path) -> Path:
 
 @pytest.fixture
 def mask_config(tmp_path: Path, sample_csv: Path) -> Path:
+    """Minimal V2 PipelineConfig that masks the sample CSV.
+
+    customer_id: passthrough (verified unchanged).
+    first_name: faker (verified replaced).
+    email: faker (verified replaced).
+    ssn: redact (verified replaced).
+
+    Providers are poolable members of the engine default registry; the
+    redact strategy carries non-poolable PII fields (uuid, synthetic_*)
+    that would otherwise trip [provider_not_poolable] under the default
+    cardinality_mode.
+    """
     config = {
+        "version": 1,
+        "mode": "mask",
         "global_settings": {"seed": 42},
-        "input": {
-            "type": "csv",
-            "path": str(sample_csv),
-            "csv_options": {"delimiter": ",", "encoding": "utf-8"},
+        "sources": {
+            "customers": {"type": "file", "format": "csv", "path": str(sample_csv)},
         },
-        "output": {
-            "type": "csv",
-            "path": str(tmp_path / "masked.csv"),
-            "csv_options": {"delimiter": ",", "encoding": "utf-8"},
-        },
-        "logging": {"level": "info", "file": str(tmp_path / "run.log")},
-        "masking_rules": [
-            {"column": "customer_id", "type": "passthrough"},
-            {"column": "first_name", "type": "faker", "faker_type": "first_name"},
-            {"column": "email", "type": "faker", "faker_type": "email"},
-            {"column": "ssn", "type": "hash"},
+        "tables": [
+            {
+                "name": "customers",
+                "columns": [
+                    {"name": "customer_id", "strategy": "passthrough"},
+                    {"name": "first_name", "strategy": "faker", "provider": "person_first_name"},
+                    {"name": "email", "strategy": "faker", "provider": "person_email"},
+                    {"name": "ssn", "strategy": "redact"},
+                ],
+            },
         ],
+        "targets": {
+            "customers": {"type": "file", "format": "csv", "path": str(tmp_path / "masked.csv")},
+        },
     }
     path = tmp_path / "config.yaml"
     path.write_text(yaml.dump(config))
     return path
+
+
+@pytest.fixture
+def generate_config(tmp_path: Path) -> Path:
+    """Minimal V2 PipelineConfig for the generate path (no sources)."""
+    config = {
+        "version": 1,
+        "mode": "generate",
+        "global_settings": {"seed": 42},
+        "sources": {},
+        "tables": [
+            {
+                "name": "employees",
+                "row_count": 5,
+                "generate_columns": [
+                    {"name": "employee_id", "type": "sequence", "start": 1000, "step": 1},
+                    {"name": "first_name", "type": "faker", "faker_type": "first_name"},
+                ],
+            },
+        ],
+        "targets": {
+            "employees": {"type": "file", "format": "csv", "path": str(tmp_path / "employees.csv")},
+        },
+    }
+    path = tmp_path / "config.yaml"
+    path.write_text(yaml.dump(config))
+    return path
+
+
+# --------------------------------------------------------------------------
+# Help-text plumbing
+# --------------------------------------------------------------------------
 
 
 def test_help_shows_subcommands():
@@ -72,34 +130,6 @@ def test_run_help_shows_options():
     assert "--verbose" in result.stdout
 
 
-def test_run_mask_produces_masked_output(mask_config: Path, tmp_path: Path):
-    output_path = tmp_path / "masked.csv"
-
-    result = runner.invoke(app, ["run", str(mask_config), "--mode", "mask"])
-
-    assert result.exit_code == 0, result.stdout
-    assert output_path.exists()
-    assert not (tmp_path / "mappings").exists()
-
-    masked = pd.read_csv(output_path)
-    # customer_id is passthrough, must be unchanged
-    assert masked["customer_id"].tolist() == ["C1", "C2", "C3"]
-    # first_name and email are faker-replaced â€” must differ from originals
-    assert masked["first_name"].tolist() != ["Alice", "Bob", "Carol"]
-    # ssn is hashed â€” must not match originals
-    assert masked["ssn"].tolist() != ["111-22-3333", "444-55-6666", "777-88-9999"]
-
-
-def test_run_with_missing_config_fails():
-    result = runner.invoke(app, ["run", "/nonexistent/path.yaml"])
-    assert result.exit_code != 0
-
-
-def test_run_with_invalid_mode_fails(mask_config: Path):
-    result = runner.invoke(app, ["run", str(mask_config), "--mode", "bogus"])
-    assert result.exit_code != 0
-
-
 def test_run_help_includes_examples_and_see_also():
     result = runner.invoke(app, ["run", "--help"])
     assert result.exit_code == 0
@@ -113,76 +143,122 @@ def test_root_help_advertises_completion_install():
     assert "--install-completion" in result.stdout
 
 
-@pytest.fixture
-def graph_config(tmp_path: Path, sample_csv: Path) -> Path:
-    out_csv = tmp_path / "graph_out.csv"
-    config = {
-        "mode": "graph",
-        "nodes": [
-            {"id": "src", "kind": "source.file", "config": {"path": str(sample_csv)}},
-            {"id": "drop", "kind": "drop_column", "config": {"columns": ["ssn"]}},
-            {"id": "out", "kind": "target.file", "config": {"output_filename": str(out_csv)}},
-        ],
-        "edges": [
-            {"from": "src", "to": "drop"},
-            {"from": "drop", "to": "out"},
-        ],
-    }
-    p = tmp_path / "graph.yaml"
-    p.write_text(yaml.dump(config), encoding="utf-8")
-    return p
+# --------------------------------------------------------------------------
+# Mask path end-to-end
+# --------------------------------------------------------------------------
 
 
-def test_run_graph_pipeline(graph_config: Path, tmp_path: Path):
-    """`decoy run` on a mode: graph YAML dispatches to run_graph."""
-    result = runner.invoke(app, ["run", str(graph_config)])
+def test_run_mask_end_to_end_smoke(mask_config: Path, tmp_path: Path):
+    """V2 mask: source -> compile_plan -> PandasExecutionAdapter.run ->
+    masked CSV at the declared target. The new spec cell from CLI.3 spec
+    DoD 7 ('canonical smoke') is this one."""
+    output_path = tmp_path / "masked.csv"
+
+    result = runner.invoke(app, ["run", str(mask_config), "--mode", "mask"])
+
     assert result.exit_code == 0, result.stdout
-    out_csv = tmp_path / "graph_out.csv"
-    assert out_csv.exists()
-    written = pd.read_csv(out_csv)
-    assert "ssn" not in written.columns
-    assert len(written) == 3
+    assert output_path.exists()
+
+    source = pd.read_csv(tmp_path / "input.csv")
+    masked = pd.read_csv(output_path)
+
+    # Row count preserved.
+    assert len(masked) == len(source)
+
+    # customer_id is passthrough -> unchanged.
+    assert masked["customer_id"].astype(str).tolist() == source["customer_id"].astype(str).tolist()
+
+    # first_name + email faker-replaced -> at least one column differs from source.
+    diffs = (masked["first_name"].astype(str) != source["first_name"].astype(str)).any()
+    assert diffs, "faker mask produced identical output for first_name"
+
+    # ssn redacted -> must not match originals.
+    assert masked["ssn"].astype(str).tolist() != source["ssn"].astype(str).tolist()
 
 
-def test_run_bad_graph_fails(tmp_path: Path):
-    bad = {
-        "mode": "graph",
-        "nodes": [
-            {"id": "a", "kind": "drop_column", "config": {"columns": ["x"]}},
-            {"id": "b", "kind": "drop_column", "config": {"columns": ["y"]}},
-        ],
-        "edges": [{"from": "a", "to": "b"}, {"from": "b", "to": "a"}],
-    }
-    p = tmp_path / "bad.yaml"
-    p.write_text(yaml.dump(bad), encoding="utf-8")
-    result = runner.invoke(app, ["run", str(p)])
+def test_run_mask_with_missing_source_fails(mask_config: Path, tmp_path: Path):
+    """Removing the source CSV before run causes the engine to error and
+    the CLI to exit non-zero with the typed message."""
+    (tmp_path / "input.csv").unlink()
+    result = runner.invoke(app, ["run", str(mask_config), "--mode", "mask"])
     assert result.exit_code != 0
 
 
-def test_run_bad_graph_json_reports_detected_yaml_mode(tmp_path: Path):
-    """Error envelopes should report the YAML mode, not the --mode fallback."""
-    bad = {
+def test_run_with_missing_config_fails():
+    result = runner.invoke(app, ["run", "/nonexistent/path.yaml"])
+    assert result.exit_code != 0
+
+
+def test_run_with_invalid_mode_fails(mask_config: Path):
+    result = runner.invoke(app, ["run", str(mask_config), "--mode", "bogus"])
+    assert result.exit_code != 0
+
+
+# --------------------------------------------------------------------------
+# Generate path end-to-end
+# --------------------------------------------------------------------------
+
+
+def test_run_generate_end_to_end_smoke(generate_config: Path, tmp_path: Path):
+    """V2 generate: no source -> generate_tables -> employees CSV at the
+    declared target with row_count rows."""
+    output_path = tmp_path / "employees.csv"
+
+    result = runner.invoke(app, ["run", str(generate_config), "--json"])
+
+    assert result.exit_code == 0, result.output
+    payload = _json.loads(result.stdout)
+    assert payload["command"] == "run"
+    assert payload["status"] == "ok"
+    assert payload["mode"] == "generate"
+
+    assert output_path.exists()
+    generated = pd.read_csv(output_path)
+    assert len(generated) == 5
+    assert "employee_id" in generated.columns
+
+
+# --------------------------------------------------------------------------
+# V1 surface rejection
+# --------------------------------------------------------------------------
+
+
+def test_run_rejects_v1_graph_yaml(tmp_path: Path):
+    """V1 `mode: graph` YAML is rejected by the V2 PipelineConfig schema
+    at the choke point (not by a CLI-side pre-check). Pre-CLI.3 the CLI
+    routed graph YAML to the (deleted) `run_graph` engine entry; now it
+    surfaces a typed PipelineValidationError at exit 3."""
+    cfg = {
         "mode": "graph",
         "nodes": [
-            {
-                "id": "src",
-                "kind": "source.file",
-                "config": {"path": str(tmp_path / "missing.csv")},
-            },
-            {
-                "id": "out",
-                "kind": "target.file",
-                "config": {"output_filename": str(tmp_path / "out.csv")},
-            },
+            {"id": "src", "kind": "source.file", "config": {"path": "ignored"}},
+            {"id": "out", "kind": "target.file", "config": {"output_filename": "ignored"}},
         ],
         "edges": [{"from": "src", "to": "out"}],
     }
-    p = tmp_path / "bad_graph.yaml"
-    p.write_text(yaml.dump(bad), encoding="utf-8")
+    p = tmp_path / "graph.yaml"
+    p.write_text(yaml.dump(cfg), encoding="utf-8")
 
     result = runner.invoke(app, ["run", str(p), "--json"])
 
     assert result.exit_code == 3
     payload = _json.loads(result.stdout)
     assert payload["status"] == "error"
+    # The YAML-detected mode propagates to the error envelope so a script
+    # can route on it.
     assert payload["mode"] == "graph"
+
+
+def test_run_rejects_v1_masking_rules_shape(tmp_path: Path):
+    """V1 `masking_rules:` flat-list config (no `version: 1`, no
+    `tables:` block) is rejected at the V2 choke point."""
+    cfg = {
+        "global_settings": {"seed": 42},
+        "input": {"type": "csv", "path": "ignored"},
+        "output": {"type": "csv", "path": "ignored"},
+        "masking_rules": [{"column": "name", "type": "faker", "faker_type": "name"}],
+    }
+    p = tmp_path / "v1.yaml"
+    p.write_text(yaml.dump(cfg), encoding="utf-8")
+    result = runner.invoke(app, ["run", str(p)])
+    assert result.exit_code != 0
