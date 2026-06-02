@@ -1,12 +1,15 @@
 """`decoy demo` -- 30-second end-to-end walkthrough on bundled sample data.
 
-Default flow: a small single-table CSV, scanned (STORM) -> recommended (FORECAST)
--> masked. All artifacts land in `./decoy_demo/`.
+Default flow: a small single-table CSV, scanned (STORM) -> masked via the V2
+PipelineConfig spine. All artifacts land in `./decoy_demo/`. The legacy
+FORECAST recommender step was removed under storm-reframe-C / S22; do not
+re-introduce.
 
-With `--ref`: three related CSVs (customers, orders, payments) with foreign-key
-relationships, masked through three pipelines that each apply `hash` to the
-FK columns. Determinism is what preserves the joins -- not any shared state.
-Same input -> same hash -> joins work across pipelines with no coordination.
+With `--ref`: deferred to a follow-up sprint (V2 multi-table FK-preservation
+demo needs a single PipelineConfig with a `relationships:` block; the V1
+three-pipeline implementation was retired with the V1 graph runner). The
+`--ref` builders still in this module are V1-shape stubs flagged at each
+call site; see the `# V1 SHAPE` comments before re-wiring.
 """
 
 from __future__ import annotations
@@ -18,6 +21,7 @@ from pathlib import Path
 
 import typer
 
+from decoy.cli.exit_codes import EXIT_RUNTIME
 from decoy.ui.card import render_card
 from decoy.ui.output import OutputMode, OutputState, emit_json, setup_output
 from decoy.ui.theme import accent, code, error, hint, success
@@ -67,52 +71,59 @@ def _write_sample_csv(path: Path) -> None:
 
 
 def _build_pipeline_yaml(input_path: Path, output_path: Path) -> str:
-    """CLI.3 commit 2 (2026-06-02): V2 PipelineConfig shape per
-    decoy-engine `decoy_engine.config._pipeline`. Provider names come
-    from the engine's default registry. customer_id rides the
-    deterministic envelope (deterministic + namespace) so a future
-    multi-table demo can re-join on it; deterministic faker output is
-    the V2-equivalent of the V1 'hash for FK join' trick the original
-    demo used.
+    """V2 PipelineConfig shape per decoy-engine `decoy_engine.config._pipeline`.
+
+    Provider names come from the engine's default registry. customer_id
+    rides the deterministic envelope (deterministic + namespace) so a
+    future multi-table demo can re-join on it; deterministic faker
+    output is the V2-equivalent of the V1 'hash for FK join' trick the
+    original demo used.
+
+    CLI QA fix (2026-06-02, F6): build a dict and serialize via
+    yaml.safe_dump rather than f-string templating. Pre-fix a single
+    quote in a path (e.g. --dir "O'Hare_demo") produced un-escaped YAML
+    that yaml.safe_load then rejected with a ScannerError, surfacing as
+    a confusing crash. safe_dump quotes path strings correctly.
     """
-    return f"""\
-version: 1
-mode: mask
-global_settings:
-  seed: 42
-sources:
-  customers:
-    type: file
-    format: csv
-    path: '{input_path.as_posix()}'
-tables:
-  - name: customers
-    columns:
-      - name: customer_id
-        strategy: redact
-      - name: first_name
-        strategy: faker
-        provider: person_first_name
-      - name: last_name
-        strategy: faker
-        provider: person_last_name
-      - name: email
-        strategy: faker
-        provider: person_email
-      - name: ssn
-        strategy: redact
-      - name: dob
-        strategy: redact
-      - name: zip
-        strategy: redact
-      - name: gender
-        strategy: passthrough
-targets:
-  customers:
-    type: file
-    format: csv
-    path: '{output_path.as_posix()}'
-"""
+    import yaml as _yaml
+
+    cfg = {
+        "version": 1,
+        "global_settings": {"seed": 42},
+        "sources": {
+            "customers": {
+                "type": "file",
+                "format": "csv",
+                "path": str(input_path),
+            },
+        },
+        "tables": [
+            {
+                "name": "customers",
+                "columns": [
+                    {"name": "customer_id", "strategy": "redact"},
+                    {"name": "first_name", "strategy": "faker",
+                     "provider": "person_first_name"},
+                    {"name": "last_name", "strategy": "faker",
+                     "provider": "person_last_name"},
+                    {"name": "email", "strategy": "faker",
+                     "provider": "person_email"},
+                    {"name": "ssn", "strategy": "redact"},
+                    {"name": "dob", "strategy": "redact"},
+                    {"name": "zip", "strategy": "redact"},
+                    {"name": "gender", "strategy": "passthrough"},
+                ],
+            },
+        ],
+        "targets": {
+            "customers": {
+                "type": "file",
+                "format": "csv",
+                "path": str(output_path),
+            },
+        },
+    }
+    return _yaml.safe_dump(cfg, default_flow_style=False, sort_keys=False)
 
 
 def _run_single_demo(state: OutputState, out_dir: Path) -> int:
@@ -411,7 +422,28 @@ def _generate_ref_datasets(out_dir: Path, n_rows: int, seed: int = 42) -> tuple[
     return n_rows, n_rows, n_rows
 
 
+# ──────────────────────────────────────────────────────────────────────────
+# V1-SHAPE STUBS for the deferred --ref multi-table demo path.
+#
+# CLI QA fix (2026-06-02, F5): the three `_build_*_yaml` helpers below
+# emit V1 pipeline YAML (`version: '1.0'`, `input:`, `output:`,
+# `masking_rules:`) that the V2 PipelineConfig validator hard-rejects.
+# They are unreachable today (the `--ref` path is deferred to a follow-up
+# sprint), but the functions remain importable. A contributor who wires
+# `--ref` to call them without noticing the V1 shape will get a confusing
+# PipelineValidationError at runtime.
+#
+# DO NOT RE-WIRE these helpers to a live code path without first
+# rewriting their output to V2 PipelineConfig shape (see
+# `src/decoy/templates/minimal.yaml` for the canonical reference) and
+# adding a single shared `relationships:` block so the three tables run
+# in one pipeline. The same caveat applies to `_verify_ref_integrity`
+# below, which reads output files the V1 demo flow would have written.
+# ──────────────────────────────────────────────────────────────────────────
+
+
 def _build_customers_yaml(out_dir: Path) -> str:
+    """V1 SHAPE -- replace with V2 PipelineConfig before wiring to --ref."""
     in_path = (out_dir / "customers.csv").as_posix()
     out_path = (out_dir / "customers_masked.csv").as_posix()
     return f"""\
@@ -469,6 +501,7 @@ masking_rules:
 
 
 def _build_orders_yaml(out_dir: Path) -> str:
+    """V1 SHAPE -- replace with V2 PipelineConfig before wiring to --ref."""
     in_path = (out_dir / "orders.csv").as_posix()
     out_path = (out_dir / "orders_masked.csv").as_posix()
     return f"""\
@@ -511,6 +544,7 @@ masking_rules:
 
 
 def _build_payments_yaml(out_dir: Path) -> str:
+    """V1 SHAPE -- replace with V2 PipelineConfig before wiring to --ref."""
     in_path = (out_dir / "payments.csv").as_posix()
     out_path = (out_dir / "payments_masked.csv").as_posix()
     return f"""\
@@ -552,6 +586,9 @@ masking_rules:
 
 
 def _verify_ref_integrity(out_dir: Path) -> dict:
+    """V1 SHAPE -- reads output files the deferred --ref flow would have
+    written. Replace with a V2-pipeline-aware check before wiring to
+    --ref."""
     """After masking all three tables, confirm the FKs still resolve.
 
     Reads the masked outputs and computes: how many customer_id values in
@@ -697,18 +734,26 @@ def _demo(
             exit_code = _run_ref_demo(state, out_dir, rows)
         else:
             exit_code = _run_single_demo(state, out_dir)
+    except typer.Exit:
+        # CLI QA fix (2026-06-02, F7): preserve inner typer.Exit codes.
+        raise
     except Exception as exc:
+        # CLI QA fix (2026-06-02, F8): truncate the error message at
+        # 500 chars before emitting through --json.
+        error_text = str(exc)
+        if len(error_text) > 500:
+            error_text = error_text[:500] + "..."
         if state.mode is OutputMode.json:
             emit_json(
                 state,
-                {"command": "demo", "status": "error", "error": str(exc)},
+                {"command": "demo", "status": "error", "error": error_text},
             )
         elif state.mode is not OutputMode.quiet:
-            state.err_console.print(error("error:"), str(exc))
+            state.err_console.print(error("error:"), error_text)
             state.err_console.print(" ", hint("hint:"), "rerun with --verbose for the full traceback.")
         if state.verbose:
             state.err_console.print_exception()
-        raise typer.Exit(code=3)
+        raise typer.Exit(code=EXIT_RUNTIME)
 
     if exit_code != 0:
         raise typer.Exit(code=exit_code)

@@ -1,0 +1,113 @@
+# Fresh-install release smoke (OSS.1 commit 3).
+#
+# Builds the `decoy` wheel via hatchling, installs it into a clean
+# Python 3.10 + 3.11 + 3.12 virtualenv, and runs the three canonical
+# CLI cells against the installed wheel: `decoy --version`,
+# `decoy demo --json`, and `decoy run` against the bundled `minimal`
+# template + a tmp CSV.
+#
+# Coverage gap closed: the in-repo `tests/e2e/test_release_smoke.py`
+# runs on the dev checkout (editable install, source tree intact);
+# this workflow runs on the built wheel inside an isolated venv that
+# does not see the source tree. Both are intentionally redundant.
+#
+# Triggers:
+#   - workflow_dispatch: manual button on the Actions page.
+#   - push on tag matching v*: every release candidate runs the gate.
+#   - schedule (weekly): catches PyPI / wheel-resolution drift from
+#     transitive dependencies publishing breaking minor versions.
+#
+# Engine resolution: the `decoy` wheel declares `decoy-engine>=0.1.0`
+# but the engine is not yet on the real PyPI index (the publish
+# pipeline lives in OSS.7). For the dry-run window the workflow
+# installs the engine from the sibling repo's main branch via a
+# git+https VCS spec. Once OSS.7 publishes to TestPyPI / PyPI, this
+# step swaps to a plain `pip install decoy-engine==<pinned>`.
+#
+# OSS matrix: Python only at OSS.1. OS matrix (windows + macos)
+# rides with OSS.7's publish pipeline; resist adding here.
+#
+# Reference: oss-cli/README.md sections 8 (Tier A row OSS.1) +
+# OSS.1 sprint spec section 'Implementation order' commit 3.
+
+name: release-smoke
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - 'v*'
+  schedule:
+    # Weekly Monday 06:00 UTC; cheap (~30s per matrix entry) and
+    # catches transitive-dependency drift before a real release.
+    - cron: '0 6 * * 1'
+
+permissions:
+  contents: read
+
+jobs:
+  fresh-install:
+    name: fresh-install (py${{ matrix.python }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ['3.10', '3.11', '3.12']
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python ${{ matrix.python }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+
+      - name: Install build backend
+        run: pip install --upgrade pip build
+
+      - name: Build wheel
+        run: python -m build --wheel
+
+      - name: Create clean install venv
+        run: python -m venv .smoke
+
+      - name: Install engine from sibling repo (pre-publish window)
+        # The engine has no real PyPI index yet (OSS.7 lands the
+        # publish pipeline). Install from main of the sibling repo.
+        # After OSS.7 publishes, swap to `pip install decoy-engine`.
+        run: |
+          .smoke/bin/pip install --upgrade pip
+          .smoke/bin/pip install "git+https://github.com/louiskeep/decoy-engine@main"
+
+      - name: Install the freshly-built decoy wheel
+        run: .smoke/bin/pip install dist/decoy-*.whl
+
+      - name: decoy --version (smoke 1)
+        run: .smoke/bin/decoy --version
+
+      - name: decoy demo --json (smoke 2)
+        # Demo runs end-to-end against the bundled templates set,
+        # produces a JSON status object on stdout, exits 0 on success.
+        run: .smoke/bin/decoy demo --json
+
+      - name: decoy templates list --json (smoke 3a)
+        # Confirms the bundled templates set is registered + the
+        # listing surfaces no V1 graph template.
+        run: .smoke/bin/decoy templates list --json
+
+      - name: decoy run against the bundled minimal template (smoke 3b)
+        # The canonical run cell: take a tmp CSV in, write a masked
+        # CSV out. Reads the template from `decoy templates show
+        # minimal --raw`, NOT from the repo's `examples/` (those are
+        # repo-only, not wheel-shipped).
+        run: |
+          set -euo pipefail
+          mkdir -p smoke_run
+          printf 'first_name,last_name,email,ssn,account_status\nAda,Lovelace,ada@example.com,000-00-0000,active\n' > smoke_run/input.csv
+          .smoke/bin/decoy templates show minimal --raw > smoke_run/pipeline.yaml
+          # The bundled minimal template writes ./output.csv relative
+          # to the working directory; cd into smoke_run/ so the output
+          # lands alongside the input.
+          cd smoke_run
+          ../.smoke/bin/decoy run pipeline.yaml
+          test -s output.csv

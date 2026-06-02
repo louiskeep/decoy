@@ -38,6 +38,8 @@ from pathlib import Path
 import typer
 import yaml
 
+from decoy.cli.exit_codes import EXIT_USAGE
+
 
 # ----------------------------------------------------------------------
 # decoy plan
@@ -64,6 +66,8 @@ Examples:
 
 The fully-automated path (`decoy plan pipeline.yaml` with no profile
 flag) lands once the profile_source orchestration slice ships.
+
+See also: decoy validate, decoy run.
 """
 
 
@@ -114,14 +118,14 @@ def plan(
             "       --profile <profile.json> to load a pre-computed Profile.",
             err=True,
         )
-        raise typer.Exit(code=1)
+        raise typer.Exit(code=EXIT_USAGE)
 
     if no_profile and profile_path is not None:
         typer.echo(
             "ERROR: --no-profile and --profile are mutually exclusive.",
             err=True,
         )
-        raise typer.Exit(code=1)
+        raise typer.Exit(code=EXIT_USAGE)
 
     config_dict = yaml.safe_load(config.read_text(encoding="utf-8"))
     if not isinstance(config_dict, dict):
@@ -129,7 +133,7 @@ def plan(
             f"ERROR: {config} does not parse to a YAML mapping at the top level.",
             err=True,
         )
-        raise typer.Exit(code=1)
+        raise typer.Exit(code=EXIT_USAGE)
 
     if no_profile:
         # H2 (Dennis slice 4-6 review): --no-profile cannot run the pool-capacity
@@ -148,7 +152,7 @@ def plan(
                 "       or remove the unique cardinality_mode.",
                 err=True,
             )
-            raise typer.Exit(code=1)
+            raise typer.Exit(code=EXIT_USAGE)
 
         profile = _empty_profile_for_no_profile(config_dict, engine_version)
         # H1 (Dennis slice 4-6 review): both fk_plan_ordering AND
@@ -164,7 +168,16 @@ def plan(
             err=True,
         )
     else:
-        assert profile_path is not None  # narrowed by the validation above
+        if profile_path is None:
+            # CLI QA fix (2026-06-02, F10): bare `assert` is stripped by
+            # `python -O` / PYTHONOPTIMIZE=1, leaving the next line to
+            # AttributeError on NoneType.read_text. The mutual-exclusion
+            # check above already prevents this branch when profile_path
+            # is None, so the raise here is documentation of the invariant.
+            raise RuntimeError(
+                "profile_path is None despite the mutual-exclusion check; "
+                "this is a bug in plan.py."
+            )
         try:
             profile = profile_from_json(profile_path.read_text(encoding="utf-8"))
         except (ValueError, KeyError) as exc:
@@ -172,7 +185,7 @@ def plan(
                 f"ERROR: --profile {profile_path} did not parse as a Profile JSON: {exc}",
                 err=True,
             )
-            raise typer.Exit(code=1) from exc
+            raise typer.Exit(code=EXIT_USAGE) from exc
         skipped_checks = ()
 
     try:
@@ -183,7 +196,7 @@ def plan(
         typer.echo(
             f"ERROR: [{exc.code}] {exc.path or '<global>'}: {exc.message}", err=True
         )
-        raise typer.Exit(code=1) from exc
+        raise typer.Exit(code=EXIT_USAGE) from exc
 
     # Layer the checks_skipped onto the result. The compile already
     # populated checks_passed; checks_skipped is the no-profile carveout.
@@ -222,6 +235,8 @@ does not expose a public manifest-read API for the CLI to consume.
 Use `decoy plan <pipeline.yaml>` to compile the plan directly from the
 YAML config instead. Manifest -> plan replay is on the CLI backlog;
 open an issue if you need it.
+
+See also: decoy plan.
 """
 
 
@@ -261,7 +276,7 @@ def replan(
         f"       --source override was: {source}",
         err=True,
     )
-    raise typer.Exit(code=1)
+    raise typer.Exit(code=EXIT_USAGE)
 
 
 REPLAN_EPILOG = _REPLAN_EPILOG
@@ -270,6 +285,16 @@ REPLAN_EPILOG = _REPLAN_EPILOG
 # ----------------------------------------------------------------------
 # Internals
 # ----------------------------------------------------------------------
+
+
+# CLI QA fix (2026-06-02, F3): the --no-profile path needs a deterministic
+# profiled_at timestamp (so re-running `decoy plan --no-profile` produces
+# byte-identical plans). Pre-fix the value was the slice implementation date
+# (2026-05-27), which lied about when the profile was taken and aged badly.
+# The POSIX epoch is the conventional "no real profile" sentinel; downstream
+# consumers that inspect profiled_at can detect "no profile available" by
+# comparing to this constant.
+_NO_PROFILE_SENTINEL_DATE = None  # set inside _empty_profile_for_no_profile to avoid circular import
 
 
 def _empty_profile_for_no_profile(config_dict: dict, engine_version: str):
@@ -281,8 +306,10 @@ def _empty_profile_for_no_profile(config_dict: dict, engine_version: str):
     over empty profile data, and the planner records them in
     checks_skipped via `_attach_checks_skipped`.
 
-    This is intentionally not a public API; the proper path is
-    profile_source orchestration in a future slice.
+    The `profiled_at` field carries the POSIX epoch (1970-01-01) as a
+    "no real profile available" sentinel; downstream consumers should
+    treat this value as "do not trust profile-derived facts" rather
+    than "profile was taken on this date" (CLI QA fix 2026-06-02 F3).
     """
     from datetime import datetime
 
@@ -292,7 +319,7 @@ def _empty_profile_for_no_profile(config_dict: dict, engine_version: str):
         schema_version=1,
         tables=(),
         relationships=(),
-        profiled_at=datetime(2026, 5, 27, 0, 0, 0),
+        profiled_at=datetime(1970, 1, 1, 0, 0, 0),
         decoy_engine_version=engine_version,
         profile_seed=None,
     )

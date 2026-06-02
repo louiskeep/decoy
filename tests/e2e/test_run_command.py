@@ -60,7 +60,6 @@ def mask_config(tmp_path: Path, sample_csv: Path) -> Path:
     """
     config = {
         "version": 1,
-        "mode": "mask",
         "global_settings": {"seed": 42},
         "sources": {
             "customers": {"type": "file", "format": "csv", "path": str(sample_csv)},
@@ -90,7 +89,6 @@ def generate_config(tmp_path: Path) -> Path:
     """Minimal V2 PipelineConfig for the generate path (no sources)."""
     config = {
         "version": 1,
-        "mode": "generate",
         "global_settings": {"seed": 42},
         "sources": {},
         "tables": [
@@ -244,9 +242,13 @@ def test_run_rejects_v1_graph_yaml(tmp_path: Path):
     assert result.exit_code == 3
     payload = _json.loads(result.stdout)
     assert payload["status"] == "error"
-    # The YAML-detected mode propagates to the error envelope so a script
-    # can route on it.
-    assert payload["mode"] == "graph"
+    # FC-1 (2026-06-02): the YAML-detected mode is inferred from the
+    # tables block, not from the (now-rejected) `mode:` field. A V1 graph
+    # config has no V2 `tables:` block, so _detect_mode returns None and
+    # the envelope falls back to the CLI --mode default ("mask"). What we
+    # pin is that "graph" no longer flows through to the envelope -- the
+    # V1 vocabulary is dead.
+    assert payload["mode"] != "graph"
 
 
 def test_run_rejects_v1_masking_rules_shape(tmp_path: Path):

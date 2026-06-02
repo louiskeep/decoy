@@ -6,6 +6,8 @@ get a clear migration message instead of a silent failure.
 
 import sys
 
+from decoy.cli.exit_codes import EXIT_DEPRECATED_SHIM
+
 
 def forge_shim() -> None:
     sys.stderr.write(
@@ -13,4 +15,4 @@ def forge_shim() -> None:
         "Install: pip install decoy\n"
         "Docs:    https://decoy.dev\n"
     )
-    sys.exit(2)
+    sys.exit(EXIT_DEPRECATED_SHIM)

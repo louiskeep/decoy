@@ -14,6 +14,7 @@ from pathlib import Path
 import typer
 
 from decoy.cli.completers import init_presets
+from decoy.cli.exit_codes import EXIT_USAGE
 from decoy.templates import get_template, template_names as _template_names
 from decoy.ui.output import OutputMode, emit_json, setup_output
 from decoy.ui.theme import accent, code, error, hint, success
@@ -147,20 +148,20 @@ def _init(
                     "list every preset with",
                     code("decoy templates list") + ".",
                 )
-        raise typer.Exit(code=1)
+        raise typer.Exit(code=EXIT_USAGE)
 
     if out.exists() and not yes:
         if state.mode is not OutputMode.default:
             state.err_console.print(error("error:"), f"{out} already exists.")
             state.err_console.print(" ", hint("hint:"), "rerun with --yes to overwrite.")
-            raise typer.Exit(code=1)
+            raise typer.Exit(code=EXIT_USAGE)
         size = out.stat().st_size
         state.console.print(
             f"This will overwrite {out} ({size} bytes). Continue?",
         )
         if not typer.confirm("Overwrite?", default=False):
             state.console.print(hint("aborted."))
-            raise typer.Exit(code=1)
+            raise typer.Exit(code=EXIT_USAGE)
 
     if state.mode is OutputMode.json:
         # Non-interactive: produce a scaffold with the chosen (or default) preset.

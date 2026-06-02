@@ -1,114 +1,65 @@
-# Decoy CLI — masking example, exhaustive reference.
+# mask_example -- broader mask pipeline (more transforms than minimal).
 #
-# Demonstrates every available masking_rules transform. Edit
-# input.path / output.path, then:
+# Replace columns of an input CSV with masked values. Edit the source +
+# target paths, then:
+#
 #   decoy validate examples/mask_example.yaml
-#   decoy run      examples/mask_example.yaml
+#   decoy run examples/mask_example.yaml
 #
 # Keyed deterministic masking (recommended for portable output across
-# runs and machines): set DECOY_MASTER_KEY in your env (32-byte hex,
-# generate via `python -c 'import secrets; print(secrets.token_hex(32))'`)
-# and add `key_label:` below, or pass --master-key / --key-label on the
-# command line. Without either, masking falls back to the legacy seeded
-# path (per-input deterministic but not portable).
+# runs and machines): set DECOY_MASTER_KEY in your env and add
+# `key_label:` below, or pass --master-key / --key-label on the CLI.
+#
+# V2 PipelineConfig shape per decoy-engine `decoy_engine.config._pipeline`.
+# Provider names come from the engine's default registry (see
+# `decoy_engine.providers.get_default_registry`).
+# OSS.1 commit 2 (2026-06-02) V2 rewrite: replaces V1 `version: '1.0'`
+# + `input:` / `output:` / `masking_rules:` shape.
 
-version: "1.0"
-mode: mask          # read by `decoy run`; --mode on the CLI is fallback only
-# key_label: "customers_q4"   # uncomment when using --master-key
+version: 1
 
-# Global settings control tool behavior
 global_settings:
-  seed: 42  # Random seed for the legacy seeded path; ignored when keyed.
-  large_file_threshold_gb: 1.0  # Files larger than this will use chunked processing
-  chunk_size: 100000  # Number of rows per chunk when processing large files
+  seed: 42
 
-# Input configuration defines the source data
-input:
-  type: "csv"  # Options: "csv" or "fixed_width"
-  path: "data/input.csv"
-  csv_options:
-    delimiter: ","
-    encoding: "utf-8"
-    header: true  # Headers are required
+sources:
+  customers:
+    type: file
+    format: csv
+    path: ./input.csv
 
-  # Fixed-width file input configuration
-  # type: "fixed_width"
-  # path: "data/input.fixed"
-  # definition_path: "data/input_definition.csv"
-  # fixed_width_options:
-  #   encoding: "utf-8"
-  #   definition_delimiter: ","  # Delimiter used in the definition file
-
-# Output configuration defines where masked data will be saved
-output:
-  type: "csv"  # Options: "csv" or "fixed_width"
-  path: "data/masked_output.csv"
-  csv_options:
-    delimiter: ","
-    encoding: "utf-8"
-    quoting: "minimal"  # Options: "minimal", "all", "nonnumeric", "none"
-
-  # Fixed-width file output configuration
-  # type: "fixed_width"
-  # path: "data/masked_output.fixed"
-  # fixed_width_options:
-  #   encoding: "utf-8"
-
-# Masking rules define what transformations to apply
-masking_rules:
-  # Faker-based masking: replaces with realistic fake data
-  - column: "full_name"
-    type: "faker"
-    faker_type: "name"  # Available types: name, first_name, last_name, email, address, phone_number, ssn, job, word
-
-  - column: "email"
-    type: "faker"
-    faker_type: "email"
-    preserve_domain: true  # Keep original domain names (for emails only)
-
-  # Categorical masking: deterministic selection from an explicit value list
-  - column: "customer_id"
-    type: "categorical"
-    categories: ["bronze", "silver", "gold", "platinum"]
-    weights: [0.45, 0.35, 0.15, 0.05]
-    seed: 123  # Optional override of global seed
-
-  - column: "product_id"
-    type: "hash"
-    algorithm: "sha256"
-    truncate: 12  # Produces stable compact identifiers
-
-  # Redaction masking: replaces with fixed text
-  - column: "ssn"
-    type: "redact"
-    redact_with: "XXX-XX-XXXX"  # Text to use for redaction
-
-  # Shuffle masking: randomly reorders values within a column
-  - column: "salary"
-    type: "shuffle"
-
-  # Hash masking: replaces with deterministic hash
-  - column: "password"
-    type: "hash"
-    seed: 456  # Optional override of global seed
-
-  # Passthrough: leaves values unchanged
-  - column: "department"
-    type: "passthrough"
-
-# Optional referential integrity configuration
-# Ensures related columns are masked consistently
-referential_integrity:
-  - name: "employee_identity" # Configuraton files must use the same name
+tables:
+  - name: customers
     columns:
-      - "employees.FIRST_NAME"
-      - "employees.LAST_NAME"
-      - "employees.SSN"
+      # Faker columns: realistic-looking replacement values from the
+      # engine's default registry.
+      - name: first_name
+        strategy: faker
+        provider: person_first_name
+      - name: last_name
+        strategy: faker
+        provider: person_last_name
+      - name: email
+        strategy: faker
+        provider: person_email
+      - name: phone
+        strategy: faker
+        provider: person_phone
 
-#Referential configurations must have the same name across configuration files
-# referential_integrity:
-#   - name: "employee_identity"
-#     columns:
-#       - "employee_contact.FIRST_NAME"
-#       - "employee_contact.LAST_NAME"
-#       - "employee_contact.SSN"
+      # Redact: literal replacement text for fields that must be blanked.
+      - name: ssn
+        strategy: redact
+
+      # Hash: deterministic; same input -> same output. Use when the
+      # downstream needs to JOIN on the value but not see it.
+      - name: account_number
+        strategy: hash
+
+      # Passthrough: leave the column unchanged. Documents intent.
+      - name: account_status
+        strategy: passthrough
+
+targets:
+  customers:
+    type: file
+    format: csv
+    path: ./masked_output.csv

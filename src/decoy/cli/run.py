@@ -11,7 +11,6 @@ them.
 """
 
 import binascii
-import os
 import time
 from enum import Enum
 from pathlib import Path
@@ -19,6 +18,7 @@ from typing import Any
 
 import typer
 
+from decoy.cli.exit_codes import EXIT_RUNTIME
 from decoy.ui.card import render_card
 from decoy.ui.output import OutputMode, emit_json, setup_output
 from decoy.ui.progress import spinner
@@ -137,7 +137,20 @@ def run(
             raw = _yaml.safe_load(yaml_text)
             config_dict = PipelineConfig.model_validate(raw).model_dump()
 
-            if config_dict.get("mode") == "generate":
+            # FC-1 (2026-06-02): the top-level `mode:` field is gone; infer
+            # the kind from the tables. A config whose every table is
+            # generate-kind routes through generate_tables; anything else
+            # (mask-only or mixed) goes through the mask adapter. Mixed
+            # configs in the CLI today are mask-only effectively (no
+            # platform-style unified `run_pipeline` wired here yet); a
+            # follow-up sprint can swap in the engine's unified entry.
+            tables_list = config_dict.get("tables") or []
+            all_generate = bool(tables_list) and all(
+                isinstance(t, dict) and t.get("generate_columns") and not t.get("columns")
+                for t in tables_list
+            )
+
+            if all_generate:
                 instance_locale = (config_dict.get("global_settings") or {}).get(
                     "default_locale"
                 )
@@ -180,7 +193,21 @@ def run(
                     namespace_registry=ns_registry,
                 )
                 _write_mask_outputs(config_dict, result, config.parent)
+    except typer.Exit:
+        # CLI QA fix (2026-06-02, F7): an inner call site that raises
+        # typer.Exit (e.g. a library that vendored Typer) has already
+        # set its intended exit code. Do not swallow it into the
+        # EXIT_RUNTIME catch-all below.
+        raise
     except Exception as exc:
+        # CLI QA fix (2026-06-02, F8): cap the error message at 500
+        # chars before emitting through --json. Engine exceptions can
+        # quote source-row content verbatim (pandas / pyarrow); without
+        # the truncation a single malformed row's value can land in
+        # downstream log aggregators.
+        error_text = str(exc)
+        if len(error_text) > 500:
+            error_text = error_text[:500] + "..."
         if state.mode is OutputMode.json:
             emit_json(
                 state,
@@ -189,15 +216,15 @@ def run(
                     "status": "error",
                     "config": config_str,
                     "mode": yaml_mode,
-                    "error": str(exc),
+                    "error": error_text,
                 },
             )
         elif state.mode is not OutputMode.quiet:
-            state.err_console.print(error("error:"), str(exc))
+            state.err_console.print(error("error:"), error_text)
             state.err_console.print(" ", hint("hint:"), "rerun with --verbose for the full traceback.")
         if state.verbose:
             state.err_console.print_exception()
-        raise typer.Exit(code=3)
+        raise typer.Exit(code=EXIT_RUNTIME)
 
     elapsed = time.perf_counter() - started
 
@@ -279,21 +306,36 @@ def _detect_key_label(config_path: Path) -> str | None:
 
 
 def _detect_mode(config_path: Path) -> str | None:
-    """Read the top-level ``mode:`` from the YAML, or return None if absent.
+    """Infer mode from the YAML's tables, or return None if not determinable.
 
-    The choke-point validator (`PipelineConfig.model_validate`) rejects
-    any mode other than `mask` or `generate`; this helper exists so the
-    spinner can pre-label the run before validation fires. Returns the
-    raw string; trust the choke-point to reject `graph` / `convert`.
+    FC-1 (2026-06-02) dropped the top-level `mode:` field; the engine now
+    infers per-table kind from `columns` (mask) vs `generate_columns`
+    (generate) presence. This helper picks one label for the spinner / the
+    JSON envelope's `mode` field: returns "generate" iff EVERY table is
+    generate-kind; "mask" iff at least one mask-kind table is present
+    (mixed configs label as "mask" because the mask back-half is the
+    workflow that touches the operator's source data). The choke-point
+    validator still rejects malformed configs.
     """
     try:
         import yaml
 
         cfg = yaml.safe_load(config_path.read_text(encoding="utf-8"))
-        if isinstance(cfg, dict):
-            m = cfg.get("mode")
-            if isinstance(m, str):
-                return m.lower()
+        if not isinstance(cfg, dict):
+            return None
+        tables = cfg.get("tables") or []
+        if not isinstance(tables, list):
+            return None
+        has_mask = any(
+            isinstance(t, dict) and t.get("columns") for t in tables
+        )
+        has_gen = any(
+            isinstance(t, dict) and t.get("generate_columns") for t in tables
+        )
+        if has_mask:
+            return "mask"
+        if has_gen:
+            return "generate"
     except Exception:
         pass
     return None
@@ -427,7 +469,6 @@ def _write_generate_outputs(config_dict: dict, tables: dict, base_dir: Path) -> 
             table.to_pandas().to_csv(path, index=False)
 
 
-run.__doc__ = run.__doc__  # keep docstring; epilog wired by __main__ on registration
-
-
+# The epilog is wired by __main__ at command registration time; the
+# docstring on `run` stays as the help body.
 RUN_EPILOG = _RUN_EPILOG

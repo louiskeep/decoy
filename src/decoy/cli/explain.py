@@ -18,6 +18,7 @@ from rich.console import Group
 from rich.panel import Panel
 from rich.text import Text
 
+from decoy.cli.exit_codes import EXIT_USAGE
 from decoy.ui.output import OutputMode, emit_json, setup_output
 from decoy.ui.table import make_table
 from decoy.ui.theme import accent, code, error, hint, info, success
@@ -112,18 +113,24 @@ _TOPICS: dict[str, _Topic] = {
         name="pipeline",
         summary="The shape of a decoy pipeline YAML.",
         body=(
-            "A flat masking pipeline has these top-level keys:\n\n"
-            "  version            Schema version, currently '1.0'.\n"
-            "  global_settings    seed, large_file_threshold_gb, chunk_size.\n"
-            "  input              type (csv | fixed_width), path, csv_options.\n"
-            "  output             type, path, csv_options. Mirrors `input`.\n"
-            "  logging            level, file. Engine-side log config.\n"
-            "  masking_rules      list of {column, type, ...transform-specific keys}.\n"
-            "  referential_integrity  optional list grouping columns that must mask together.\n"
+            "V2 PipelineConfig shape (current; `decoy validate` accepts these):\n\n"
+            "  version            1 (integer, not '1.0').\n"
+            "  global_settings    seed, default_locale.\n"
+            "  sources            dict[name -> {type, format, path}].\n"
+            "  tables             list of {name, columns: [{name, strategy, ...}]}\n"
+            "                     for mask, or {name, row_count, generate_columns: [...]}\n"
+            "                     for generate.\n"
+            "  targets            dict[name -> {type, format, path}].\n"
+            "  relationships      optional FK relationships across tables.\n"
+            "  namespaces         optional namespace -> declared_by mapping.\n"
             "  key_label          stable namespace string when using --master-key.\n\n"
-            "V2 pipelines use `version: 1` + `sources` / `tables[].columns` / `targets` (see\n"
-            "`decoy templates show minimal`); the V1 shape above is still summarised here for\n"
-            "operators reading legacy YAML.\n\n"
+            "Mode is inferred per-table from `columns` (mask) vs `generate_columns`\n"
+            "(generate); a single pipeline can mix both kinds (FC-1, 2026-06-02).\n\n"
+            "Pick a template to start from: `decoy templates show minimal`.\n\n"
+            "Legacy V1 shape (REJECTED by `decoy validate` since storm-reframe-C,\n"
+            "2026-05-30): `version: '1.0'`, `input:`, `output:`, `masking_rules:`.\n"
+            "Old YAML on disk must be re-authored to the V2 shape above; the\n"
+            "graph builder in decoy-platform's web UI emits V2 directly.\n\n"
             "Validate any pipeline before running it: `decoy validate pipeline.yaml`."
         ),
         see_also=("decoy validate --help", "decoy templates list"),
@@ -204,6 +211,29 @@ _TOPICS: dict[str, _Topic] = {
             "`--evidence-out` feature is explicitly implemented and tested."
         ),
         see_also=("decoy explain keys", "decoy explain yaml"),
+    ),
+    "exit-codes": _Topic(
+        name="exit-codes",
+        summary="The process exit codes every `decoy` command returns.",
+        body=(
+            "Every `decoy` subcommand returns one of four exit codes. Scripts,\n"
+            "Make recipes, and CI pipelines can switch on the integer value.\n\n"
+            "  0   Success. The command did what it said. POSIX convention.\n"
+            "  1   Usage error. The caller's request was wrong: config did not\n"
+            "      validate, a path did not exist, an incompatible flag\n"
+            "      combination was passed. The fix is in the user's input.\n"
+            "  2   Deprecated shim. The legacy `forge` console entry point was\n"
+            "      invoked; the CLI printed a migration hint and exited. The\n"
+            "      fix is to run `decoy ...` instead of `forge ...`.\n"
+            "  3   Runtime error. The CLI itself failed mid-run: the engine\n"
+            "      raised an unexpected error, an output write failed, a\n"
+            "      transient I/O problem happened. The fix is in the CLI or\n"
+            "      engine, not the user's request.\n\n"
+            "Integer values are stable across releases. The named constants\n"
+            "(EXIT_OK / EXIT_USAGE / EXIT_DEPRECATED_SHIM / EXIT_RUNTIME) live\n"
+            "in `decoy.cli.exit_codes` for callers that import them in Python."
+        ),
+        see_also=("decoy --help", "decoy run --help"),
     ),
     "completion": _Topic(
         name="completion",
@@ -359,7 +389,7 @@ def explain(
                     "list every topic with",
                     code("decoy explain") + ".",
                 )
-        raise typer.Exit(code=1)
+        raise typer.Exit(code=EXIT_USAGE)
 
     if state.mode is OutputMode.json:
         emit_json(

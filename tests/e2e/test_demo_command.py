@@ -109,7 +109,10 @@ def test_demo_writes_masked_csv_with_same_row_count_as_sample(tmp_path: Path):
 
 def test_demo_masked_pipeline_yaml_is_v2_shape(tmp_path: Path):
     """The pipeline.yaml the demo writes is a valid V2 PipelineConfig:
-    version: 1, mode: mask, sources/tables/targets blocks."""
+    version: 1, sources/tables/targets blocks. FC-1 (2026-06-02): the
+    top-level `mode:` field is gone; per-table kind is inferred from
+    `columns` vs `generate_columns` presence. The demo's single table
+    declares `columns`, making it mask-kind."""
     import yaml as _yaml
 
     out_dir = tmp_path / "demo"
@@ -117,10 +120,11 @@ def test_demo_masked_pipeline_yaml_is_v2_shape(tmp_path: Path):
     assert result.exit_code == 0
     cfg = _yaml.safe_load((out_dir / "pipeline.yaml").read_text(encoding="utf-8"))
     assert cfg.get("version") == 1
-    assert cfg.get("mode") == "mask"
     assert "sources" in cfg
     assert "tables" in cfg
     assert "targets" in cfg
+    # Per-table kind: demo's single table is mask-kind.
+    assert all(t.get("columns") for t in cfg["tables"])
 
 
 # --------------------------------------------------------------------------
