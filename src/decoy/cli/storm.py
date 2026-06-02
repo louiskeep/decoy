@@ -72,9 +72,9 @@ Examples:
     Sample 50K random rows.
 
   decoy storm scan data.csv --json > scan.json
-    Pipe the full StormProfile JSON for forecast --stdin.
+    Pipe the full StormProfile JSON for downstream tooling.
 
-See also: decoy storm fields, decoy storm show, decoy storm diff, decoy forecast, decoy run.
+See also: decoy storm fields, decoy storm show, decoy storm diff, decoy run.
 """
 
 
@@ -90,7 +90,7 @@ Examples:
   decoy storm fields scan.json --json | jq '.fields[].name'
     Pipe just the matching field names somewhere else.
 
-See also: decoy storm show, decoy forecast.
+See also: decoy storm show.
 """
 
 
@@ -106,7 +106,7 @@ Examples:
   decoy storm scan data.csv --json | decoy storm show - ssn
     Pipe a fresh scan straight in.
 
-See also: decoy storm fields, decoy forecast.
+See also: decoy storm fields.
 """
 
 
@@ -626,7 +626,7 @@ def _show(
 
     next_hint = None
     if scan != "-":
-        next_hint = f"decoy forecast {scan}"
+        next_hint = f"decoy storm fields {scan}"
 
     render_card(
         state,

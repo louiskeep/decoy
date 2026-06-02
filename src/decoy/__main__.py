@@ -10,7 +10,6 @@ import typer
 from decoy import __version__
 from decoy.cli.demo import DEMO_EPILOG, _demo as demo_command
 from decoy.cli.explain import EXPLAIN_EPILOG, explain as explain_command
-from decoy.cli.forecast import FORECAST_EPILOG, forecast as forecast_command
 from decoy.cli.info import INFO_EPILOG, info as info_command
 from decoy.cli.init import INIT_EPILOG, init_command
 from decoy.cli.plan import PLAN_EPILOG, REPLAN_EPILOG, plan as plan_command, replan as replan_command
@@ -28,7 +27,6 @@ Decoy -- data masking and synthetic generation CLI.
 Try one of:
   decoy demo                       30-second end-to-end walkthrough.
   decoy storm scan data.csv        Profile a dataset for PII and risk.
-  decoy forecast scan.json         Recommend a Disguise from a scan.
   decoy run pipeline.yaml          Run a masking or generation pipeline.
   decoy validate pipeline.yaml     Check a YAML pipeline before running.
   decoy init                       Scaffold a starter pipeline interactively.
@@ -75,7 +73,6 @@ app.command(name="demo", epilog=DEMO_EPILOG)(demo_command)
 app.command(name="explain", epilog=EXPLAIN_EPILOG)(explain_command)
 app.command(name="info", epilog=INFO_EPILOG)(info_command)
 app.add_typer(storm_app, name="storm")
-app.command(name="forecast", epilog=FORECAST_EPILOG)(forecast_command)
 app.add_typer(templates_app, name="templates")
 app.command(name="plan", epilog=PLAN_EPILOG)(plan_command)
 app.command(name="replan", epilog=REPLAN_EPILOG)(replan_command)
