@@ -89,11 +89,15 @@ decoy = "decoy.__main__:app"
 forge = "decoy._deprecated:forge_shim"
 
 [tool.hatch.build.targets.wheel]
-# Import package stays `decoy` (Q-OSS-1 RESOLVED).
+# Import package stays `decoy` (Q-OSS-1 RESOLVED). The `packages` walk
+# under src/decoy already pulls in `decoy/templates/`; a `force-include`
+# entry was previously layered on top, which caused hatchling to add
+# `decoy/templates/__init__.py` twice and `python -m build --wheel`
+# to abort with "A second file is being added to the wheel archive".
+# OSS.3 follow-up (2026-06-02): drop the force-include line. Confirmed
+# via local build: dist/decoy_cli-0.1.0-py3-none-any.whl builds clean
+# AND the templates still ship inside the wheel under decoy/templates/.
 packages = ["src/decoy"]
-
-[tool.hatch.build.targets.wheel.force-include]
-"src/decoy/templates" = "decoy/templates"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
