@@ -2,7 +2,7 @@
 
 The CLI ships every topic the user might Google before reaching for
 `--help`: modes, transforms, disguises, output flags, pipeline schema,
-YAML authoring, STORM, FORECAST, master-key flow, and safety boundaries.
+YAML authoring, STORM, master-key flow, and safety boundaries.
 Each topic renders as a styled Panel with a one-line summary, a body,
 and a `See also:` line. Tab completion suggests topic names; unknown
 topics produce a `did you mean?` hint.
@@ -36,17 +36,16 @@ _TOPICS: dict[str, _Topic] = {
         name="modes",
         summary="What `decoy run --mode` does and which mode to pick.",
         body=(
-            "decoy run dispatches one of four modes:\n\n"
+            "decoy run dispatches one of two modes:\n\n"
             "  mask       Replace columns of an input CSV with masked values.\n"
             "             The default. Pick when you have real data and want to share a sanitized copy.\n"
             "  generate   Build a synthetic dataset from scratch.\n"
-            "             Pick when you don't have real data and need realistic-looking rows for testing.\n"
-            "  convert    Re-encode a file (e.g. fixed-width to CSV) without masking values.\n"
-            "             Pick when format is the only change.\n"
-            "  graph      Run a multi-step DAG of nodes (source -> transform -> target).\n"
-            "             Pick when your pipeline doesn't fit a flat list of column rules.\n\n"
+            "             Pick when you don't have real data and need realistic-looking rows for testing.\n\n"
             "Mode is read from the YAML's top-level `mode:` key when present; the --mode flag is\n"
-            "a back-compat hint for legacy YAML that omits it."
+            "a back-compat hint for legacy YAML that omits it.\n\n"
+            "V1 had two additional modes (graph + convert) that were removed under storm-reframe-C\n"
+            "and S22-CL-V1GRAPHRUNNER (2026-05-30). YAML with `mode: graph` or `mode: convert`\n"
+            "is rejected by the V2 PipelineConfig validator with a typed error."
         ),
         see_also=("decoy run --help", "decoy explain pipeline"),
     ),
@@ -82,13 +81,13 @@ _TOPICS: dict[str, _Topic] = {
             "A Disguise is a named set of (column-pattern -> transform) defaults. Two ship today:\n\n"
             "  default   The fallback. Generic name/email/SSN handling.\n"
             "  hipaa     The 18 PHI identifiers from 45 CFR 164.514(b)(2) -- Safe Harbor.\n\n"
-            "Disguises power FORECAST recommendations: given a STORM scan, FORECAST scores each\n"
-            "Disguise against the dataset and proposes the best fit, then drafts a pipeline YAML\n"
-            "applying it. You don't usually pick a Disguise by hand -- you let FORECAST pick.\n\n"
-            "To see what's in a Disguise, run `decoy templates show hipaa` (the pipeline shape) or\n"
-            "browse the engine source -- decoy_engine.disguises."
+            "Pick a Disguise by hand via `decoy templates show hipaa` (gets the pipeline shape\n"
+            "you'd start from) or by browsing the engine source under decoy_engine.disguises.\n\n"
+            "The V1 FORECAST recommender (which scored Disguises against a STORM scan and drafted\n"
+            "a pipeline) was retired under storm-reframe-C (2026-05-30); pick the Disguise by\n"
+            "hand from the templates set for now."
         ),
-        see_also=("decoy forecast --help", "decoy templates show hipaa"),
+        see_also=("decoy templates show hipaa", "decoy explain transforms"),
     ),
     "output": _Topic(
         name="output",
@@ -122,8 +121,9 @@ _TOPICS: dict[str, _Topic] = {
             "  masking_rules      list of {column, type, ...transform-specific keys}.\n"
             "  referential_integrity  optional list grouping columns that must mask together.\n"
             "  key_label          stable namespace string when using --master-key.\n\n"
-            "A graph pipeline (mode: graph) replaces masking_rules with nodes and edges.\n"
-            "See `decoy templates show graph` for the shape.\n\n"
+            "V2 pipelines use `version: 1` + `sources` / `tables[].columns` / `targets` (see\n"
+            "`decoy templates show minimal`); the V1 shape above is still summarised here for\n"
+            "operators reading legacy YAML.\n\n"
             "Validate any pipeline before running it: `decoy validate pipeline.yaml`."
         ),
         see_also=("decoy validate --help", "decoy templates list"),
@@ -138,13 +138,12 @@ _TOPICS: dict[str, _Topic] = {
             "  decoy validate pipeline.yaml\n"
             "  decoy run pipeline.yaml\n\n"
             "Pick one top-level mode:\n"
-            "  mask      input/output plus masking_rules.\n"
-            "  generate  generator_settings plus tables and columns.\n"
-            "  graph     nodes and edges for source -> transform -> target.\n\n"
-            "Common masking rule shape:\n\n"
-            "  - column: email\n"
-            "    type: faker\n"
-            "    faker_type: email\n\n"
+            "  mask      sources + tables + targets (V2 PipelineConfig shape).\n"
+            "  generate  tables with generate_columns + targets.\n\n"
+            "Common V2 column shape (mask):\n\n"
+            "  - name: email\n"
+            "    strategy: faker\n"
+            "    provider: person_email\n\n"
             "Use `key_label:` with DECOY_MASTER_KEY when you need portable deterministic\n"
             "masking across machines. Treat STORM scan JSON, reference\n"
             "files, and real input/output files as sensitive artifacts.\n\n"
@@ -155,7 +154,7 @@ _TOPICS: dict[str, _Topic] = {
     ),
     "storm": _Topic(
         name="storm",
-        summary="Dataset analysis -- scan first, then forecast.",
+        summary="Dataset analysis -- scan a CSV for PII before writing a mask.",
         body=(
             "STORM (Statistical Top-down Risk Mapping) scans a dataset and produces a profile:\n"
             "  - Per-column type, cardinality, null fraction, top values.\n"
@@ -163,24 +162,10 @@ _TOPICS: dict[str, _Topic] = {
             "  - Sentinel-value flags (the 999s, 99/99/9999s, NA-like literals that pollute stats).\n"
             "  - Quasi-identifier groups (sets of columns that uniquely identify a row).\n"
             "  - A re-identification risk score, 0-100.\n\n"
-            "Run it before writing a masking pipeline. The output JSON feeds into `decoy forecast\n"
-            "recommend`, which proposes a Disguise and drafts a pipeline."
+            "Run it before writing a masking pipeline. The output JSON gives you the column-by-column\n"
+            "PII signal the operator uses to pick a Disguise template + tune the mask."
         ),
-        see_also=("decoy storm scan --help", "decoy explain forecast"),
-    ),
-    "forecast": _Topic(
-        name="forecast",
-        summary="Disguise recommendations from a saved STORM profile.",
-        body=(
-            "FORECAST takes a STORM profile (JSON) and produces a ForecastReport:\n"
-            "  - A ranked list of Disguise recommendations with match scores.\n"
-            "  - Per-field mask alternatives for the top Disguise.\n"
-            "  - Risk flags (sentinels, quasi-identifiers) the user should review by hand.\n"
-            "  - A draft pipeline YAML (`forecast_<ts>.pipeline.yaml`) the user can run as-is.\n\n"
-            "FORECAST never reads raw data -- only the statistical summary STORM produced. That\n"
-            "split lets you scan once, recommend many times, share scans without sharing data."
-        ),
-        see_also=("decoy forecast --help", "decoy explain storm"),
+        see_also=("decoy storm scan --help", "decoy templates list"),
     ),
     "keys": _Topic(
         name="keys",
@@ -323,7 +308,7 @@ def explain(
     """Explain a Decoy concept in plain English.
 
     Built-in topics: modes, transforms, disguises, output, pipeline, yaml,
-    storm, forecast, keys, security, completion. Run with no topic to see the
+    storm, keys, security, completion. Run with no topic to see the
     full list.
     """
     state = setup_output(json_, quiet, verbose)

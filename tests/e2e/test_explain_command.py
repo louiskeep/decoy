@@ -86,8 +86,16 @@ def test_explain_quiet_produces_empty_stdout():
 
 
 def test_topic_names_covers_load_bearing_concepts():
-    """Sanity check: the topic set must include the eight named in CLI_UX_GUIDE."""
+    """Sanity check: the topic set must include the load-bearing concepts.
+
+    CLI.4 (2026-06-02): forecast topic dropped (FORECAST retired under
+    storm-reframe-C). The remaining topics cover the V2 surface.
+    """
     names = set(topic_names())
-    expected = {"modes", "transforms", "disguises", "output", "pipeline", "storm", "forecast", "keys"}
+    expected = {"modes", "transforms", "disguises", "output", "pipeline", "storm", "keys"}
     missing = expected - names
     assert not missing, f"missing topics: {missing}"
+    # CLI.1 + CLI.4 (2026-06-02): forecast topic removed; the explain
+    # body across other topics now describes the removal rather than
+    # documenting a deleted command.
+    assert "forecast" not in names
