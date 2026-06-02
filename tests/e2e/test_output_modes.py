@@ -29,21 +29,26 @@ def good_config(tmp_path: Path) -> Path:
     sample = tmp_path / "input.csv"
     pd.DataFrame({"name": ["Alice", "Bob"]}).to_csv(sample, index=False)
 
+    # CLI.3 (2026-06-02): V2 PipelineConfig shape replaces V1 `input:`/
+    # `output:`/`masking_rules:` (rejected by the V2 choke point).
     cfg = {
+        "version": 1,
+        "mode": "mask",
         "global_settings": {"seed": 42},
-        "input": {
-            "type": "csv",
-            "path": str(sample),
-            "csv_options": {"delimiter": ",", "encoding": "utf-8"},
+        "sources": {
+            "people": {"type": "file", "format": "csv", "path": str(sample)},
         },
-        "output": {
-            "type": "csv",
-            "path": str(tmp_path / "out.csv"),
-            "csv_options": {"delimiter": ",", "encoding": "utf-8"},
-        },
-        "masking_rules": [
-            {"column": "name", "type": "faker", "faker_type": "name"},
+        "tables": [
+            {
+                "name": "people",
+                "columns": [
+                    {"name": "name", "strategy": "faker", "provider": "person_name"},
+                ],
+            },
         ],
+        "targets": {
+            "people": {"type": "file", "format": "csv", "path": str(tmp_path / "out.csv")},
+        },
     }
     config_path = tmp_path / "config.yaml"
     config_path.write_text(yaml.dump(cfg))

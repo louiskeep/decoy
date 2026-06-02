@@ -46,13 +46,17 @@ def test_templates_list_json_returns_full_set():
 
 
 def test_templates_show_dumps_raw_yaml_to_stdout():
+    """CLI.3 (2026-06-02): templates rewritten to V2 shape; the body now
+    declares `version: 1` + `tables[].columns` instead of V1 `masking_rules`.
+    """
     result = runner.invoke(app, ["templates", "show", "minimal"])
     assert result.exit_code == 0
-    # Default mode prints raw YAML so it pipes cleanly to a file.
     parsed = yaml.safe_load(result.stdout)
     assert parsed is not None
-    assert "masking_rules" in parsed
-    assert len(parsed["masking_rules"]) >= 3
+    assert parsed.get("version") == 1
+    assert "tables" in parsed
+    assert len(parsed["tables"]) >= 1
+    assert len(parsed["tables"][0]["columns"]) >= 3
 
 
 def test_templates_show_each_bundled_template_parses_as_yaml():
@@ -77,7 +81,9 @@ def test_templates_show_json_envelope():
     payload = _json.loads(result.stdout)
     assert payload["status"] == "ok"
     assert payload["name"] == "hipaa"
-    assert "masking_rules" in payload["body"]
+    # CLI.3 (2026-06-02): V2 body uses `tables:` + `columns:` instead of
+    # V1 `masking_rules:` flat list.
+    assert "tables:" in payload["body"]
 
 
 def test_templates_show_quiet_produces_empty_stdout():

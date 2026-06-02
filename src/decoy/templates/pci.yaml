@@ -2,59 +2,63 @@
 #
 # Covers the cardholder data elements that PCI DSS forbids storing in
 # the clear: PAN, cardholder name, expiration date, CVV/CVC. PAN is
-# replaced with a faker credit-card number to preserve format; CVV is
+# replaced with a synthetic PAN provider to preserve format; CVV is
 # redacted entirely (must never be retained per PCI DSS req 3.2).
-version: '1.0'
+#
+# V2 PipelineConfig shape per decoy-engine `decoy_engine.config._pipeline`.
+# Provider names come from the engine's default registry (see
+# `decoy_engine.providers.get_default_registry`).
+# CLI.3 (2026-06-02) rewrite: replaces V1 `version: '1.0'` +
+# `masking_rules:` shape.
+
+version: 1
+mode: mask
 
 global_settings:
   seed: 42
 
-input:
-  type: csv
-  path: 'data/transactions.csv'
-  csv_options:
-    delimiter: ','
-    encoding: utf-8
+sources:
+  transactions:
+    type: file
+    format: csv
+    path: ./transactions.csv
 
-output:
-  type: csv
-  path: 'data/transactions_masked.csv'
-  csv_options:
-    delimiter: ','
-    encoding: utf-8
+tables:
+  - name: transactions
+    columns:
+      - name: cardholder_name
+        strategy: faker
+        provider: person_name
 
-logging:
-  level: info
-  file: 'decoy_run.log'
+      # Primary Account Number -- format-preserving synthetic PAN.
+      - name: card_number
+        strategy: faker
+        provider: synthetic_pan
 
-masking_rules:
-  - column: cardholder_name
-    type: faker
-    faker_type: name
+      - name: card_expiry
+        strategy: redact
 
-  # Primary Account Number -- format-preserving fake card.
-  - column: card_number
-    type: faker
-    faker_type: credit_card_number
+      # CVV / CVC must be wiped, not pseudonymized -- never retain.
+      - name: cvv
+        strategy: redact
 
-  - column: card_expiry
-    type: faker
-    faker_type: credit_card_expire
+      - name: billing_zip
+        strategy: redact
 
-  # CVV / CVC must be wiped, not pseudonymized -- never retain.
-  - column: cvv
-    type: redact
-    redact_with: 'XXX'
+      - name: email
+        strategy: faker
+        provider: person_email
 
-  - column: billing_zip
-    type: redact
-    keep_chars: 3
+      # Transaction id stays linkable across systems via the deterministic
+      # masking envelope (HKDF-derived).
+      - name: transaction_id
+        strategy: faker
+        provider: uuid
+        deterministic: true
+        namespace: transaction_identity
 
-  - column: email
-    type: faker
-    faker_type: email
-
-  # Transaction id stays linkable across systems via deterministic hash.
-  - column: transaction_id
-    type: hash
-    algorithm: sha256
+targets:
+  transactions:
+    type: file
+    format: csv
+    path: ./transactions_masked.csv

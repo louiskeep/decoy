@@ -23,11 +23,14 @@ class Template:
 # the listing table and the `decoy init` preset prompt.
 _REGISTRY: tuple[tuple[str, str], ...] = (
     ("minimal", "Bare-bones masking: name / email / SSN. Smallest sensible starting point."),
-    ("hipaa", "HIPAA Safe Harbor coverage: 18 PHI identifiers mapped to faker / hash / redact."),
+    ("hipaa", "HIPAA Safe Harbor coverage: 18 PHI identifiers mapped to faker / redact."),
     ("pci", "PCI DSS card-data masking: PAN, CVV, cardholder name, expiration."),
     ("gdpr", "GDPR personal-data masking: name, email, phone, IP address, location."),
     ("generate", "Synthetic-data generation pipeline; no input file required."),
-    ("graph", "Graph-mode pipeline: nodes + edges instead of flat masking_rules."),
+    # CLI.3 (2026-06-02): graph template removed. V1 `mode: graph` was
+    # retired under storm-reframe-C / S22-CL-V1GRAPHRUNNER; the V2 graph
+    # builder UI emits a `version: 1` PipelineConfig from node settings
+    # instead of authoring graph-mode YAML by hand.
 )
 
 

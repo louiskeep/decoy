@@ -76,8 +76,10 @@ def _replace_yaml_path(body: str, key: str, new_path: str) -> str:
 
 
 def _rule_count(body: str) -> int:
-    """Cheap count of `- column:` lines so the JSON envelope can report it."""
-    return sum(1 for line in body.splitlines() if line.strip().startswith("- column:"))
+    """Cheap count of mask/generate column entries so the JSON envelope
+    can report it. CLI.3 (2026-06-02): templates moved from V1 `- column:`
+    to V2 `- name:`; the counter follows."""
+    return sum(1 for line in body.splitlines() if line.strip().startswith("- name:"))
 
 
 def _init(

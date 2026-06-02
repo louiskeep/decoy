@@ -2,98 +2,98 @@
 #
 # Maps the 18 PHI identifiers from 45 CFR 164.514(b)(2) onto sensible
 # default transforms. Tune to your data; some columns may not exist
-# in your CSV (delete the rule), others may need a different transform.
-version: '1.0'
+# in your CSV (delete the entry), others may need a different
+# strategy.
+#
+# V2 PipelineConfig shape per decoy-engine `decoy_engine.config._pipeline`.
+# Provider names come from the engine's default registry (see
+# `decoy_engine.providers.get_default_registry`).
+# CLI.3 (2026-06-02) rewrite: replaces V1 `version: '1.0'` + `input:` +
+# `output:` + `masking_rules:` shape.
+
+version: 1
+mode: mask
 
 global_settings:
   seed: 42
 
-input:
-  type: csv
-  path: 'data/patients.csv'
-  csv_options:
-    delimiter: ','
-    encoding: utf-8
+sources:
+  patients:
+    type: file
+    format: csv
+    path: ./patients.csv
 
-output:
-  type: csv
-  path: 'data/patients_masked.csv'
-  csv_options:
-    delimiter: ','
-    encoding: utf-8
+tables:
+  - name: patients
+    columns:
+      # Names
+      - name: first_name
+        strategy: faker
+        provider: person_first_name
+      - name: last_name
+        strategy: faker
+        provider: person_last_name
 
-logging:
-  level: info
-  file: 'decoy_run.log'
+      # Geographic subdivisions smaller than a state.
+      - name: street
+        strategy: faker
+        provider: address_street
+      - name: city
+        strategy: faker
+        provider: address_city
+      - name: zip
+        strategy: redact
 
-masking_rules:
-  # Names
-  - column: first_name
-    type: faker
-    faker_type: first_name
-  - column: last_name
-    type: faker
-    faker_type: last_name
+      # Dates more specific than a year.
+      - name: dob
+        strategy: faker
+        provider: person_dob
+      - name: admission_date
+        strategy: redact
+      - name: discharge_date
+        strategy: redact
 
-  # Geographic subdivisions smaller than a state -- keep first 3 digits of zip.
-  - column: street
-    type: faker
-    faker_type: street_address
-  - column: city
-    type: faker
-    faker_type: city
-  - column: zip
-    type: redact
-    keep_chars: 3
+      # Telephone, fax, email
+      - name: phone
+        strategy: faker
+        provider: person_phone
+      - name: fax
+        strategy: faker
+        provider: person_phone
+      - name: email
+        strategy: faker
+        provider: person_email
 
-  # Dates more specific than a year (DOB, admission, discharge, death) -- jitter.
-  - column: dob
-    type: date_shift
-    jitter_days: 30
-  - column: admission_date
-    type: date_shift
-    jitter_days: 30
-  - column: discharge_date
-    type: date_shift
-    jitter_days: 30
+      # SSN, MRN, account numbers.
+      - name: ssn
+        strategy: faker
+        provider: synthetic_ssn
+      - name: mrn
+        strategy: faker
+        provider: synthetic_mrn
+      - name: account_number
+        strategy: faker
+        provider: synthetic_account_number
+      - name: license_number
+        strategy: faker
+        provider: synthetic_account_number
 
-  # Telephone, fax, email
-  - column: phone
-    type: faker
-    faker_type: phone_number
-  - column: fax
-    type: faker
-    faker_type: phone_number
-  - column: email
-    type: faker
-    faker_type: email
+      # Vehicle / device IDs
+      - name: vehicle_id
+        strategy: faker
+        provider: uuid
+      - name: device_id
+        strategy: faker
+        provider: uuid
 
-  # SSN, MRN, account numbers, license numbers -- hash for one-way pseudonymity.
-  - column: ssn
-    type: hash
-    algorithm: sha256
-  - column: mrn
-    type: hash
-    algorithm: sha256
-  - column: account_number
-    type: hash
-    algorithm: sha256
-  - column: license_number
-    type: hash
-    algorithm: sha256
+      # URLs and IP addresses
+      - name: url
+        strategy: redact
+      - name: ip_address
+        strategy: redact
 
-  # Vehicle / device IDs
-  - column: vehicle_id
-    type: hash
-    algorithm: sha256
-  - column: device_id
-    type: hash
-    algorithm: sha256
-
-  # URLs and IP addresses
-  - column: url
-    type: faker
-    faker_type: url
-  - column: ip_address
-    type: faker
-    faker_type: ipv4
+targets:
+  patients:
+    type: file
+    format: csv
+    path: ./patients_masked.csv
