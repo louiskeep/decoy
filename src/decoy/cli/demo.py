@@ -728,6 +728,14 @@ def _demo(
     if ref and out_dir == Path("decoy_demo"):
         out_dir = Path("decoy_demo_ref")
     out_dir.mkdir(parents=True, exist_ok=True)
+    # Resolve to absolute up front. Pre-fix the relative `out_dir` (e.g.
+    # `decoy_demo`) flowed into `_build_pipeline_yaml`, which wrote
+    # `decoy_demo/customers.csv` into the pipeline YAML. Then
+    # `_run_v2_mask` re-resolved that relative path against
+    # `pipeline_yaml.parent` (which is `decoy_demo` again), producing
+    # `decoy_demo/decoy_demo/customers.csv` and a FileNotFoundError.
+    # Dennis launch-readiness audit (2026-06-02) BLOCKER finding.
+    out_dir = out_dir.resolve()
 
     try:
         if ref:

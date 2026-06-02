@@ -127,6 +127,48 @@ def test_demo_masked_pipeline_yaml_is_v2_shape(tmp_path: Path):
     assert all(t.get("columns") for t in cfg["tables"])
 
 
+def test_demo_with_relative_out_dir_does_not_double_resolve(tmp_path: Path):
+    """Dennis launch-readiness audit (2026-06-02) BLOCKER regression pin.
+
+    Pre-fix: `decoy demo --dir decoy_demo` left `out_dir` as a relative
+    Path. `_build_pipeline_yaml` wrote `decoy_demo/customers.csv` into
+    the YAML; `_run_v2_mask` then re-resolved that against
+    `pipeline_yaml.parent` (which is `decoy_demo` again), producing
+    `decoy_demo/decoy_demo/customers.csv` and crashing with
+    FileNotFoundError. The README quickstart is `pip install decoy &&
+    decoy demo`; this bug would have killed every first-run experience.
+
+    Fix: `demo` resolves `out_dir` to absolute up front so all derived
+    paths in the YAML are absolute too. This test invokes the demo with
+    a relative `--dir` from a working directory we control via chdir,
+    then asserts the masked output file actually exists at the
+    declared path."""
+    import os
+
+    cwd = os.getcwd()
+    try:
+        os.chdir(tmp_path)
+        # Invoke with a RELATIVE --dir (the default invocation shape).
+        result = runner.invoke(app, ["demo", "--dir", "demo_out", "--quiet"])
+        assert result.exit_code == 0, result.stdout + result.stderr
+        # Expected output file at the relative-to-cwd path. If the
+        # double-resolve regression returns, this path is empty and the
+        # actual file is at demo_out/demo_out/customers_masked.csv.
+        masked = tmp_path / "demo_out" / "customers_masked.csv"
+        assert masked.exists() and masked.stat().st_size > 0, (
+            f"masked output missing at {masked}; the double-resolve "
+            f"regression may have returned"
+        )
+        # And the WRONG path must NOT exist.
+        wrong = tmp_path / "demo_out" / "demo_out" / "customers_masked.csv"
+        assert not wrong.exists(), (
+            f"masked output landed at the double-resolved path "
+            f"{wrong}; demo is re-resolving relative paths twice"
+        )
+    finally:
+        os.chdir(cwd)
+
+
 # --------------------------------------------------------------------------
 # --ref deferral (Q-CLI3-1 Dennis resolution: drop > 0.5d effort)
 # --------------------------------------------------------------------------

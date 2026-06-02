@@ -38,7 +38,6 @@ def _valid_v2_mask_config(tmp_path: Path) -> dict:
     pd.DataFrame({"customer_id": ["1", "2"], "name": ["a", "b"]}).to_csv(src, index=False)
     return {
         "version": 1,
-        "mode": "mask",
         "global_settings": {"seed": 42},
         "sources": {
             "customers": {"type": "file", "format": "csv", "path": str(src)},

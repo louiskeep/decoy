@@ -33,7 +33,6 @@ def good_config(tmp_path: Path) -> Path:
     # `output:`/`masking_rules:` (rejected by the V2 choke point).
     cfg = {
         "version": 1,
-        "mode": "mask",
         "global_settings": {"seed": 42},
         "sources": {
             "people": {"type": "file", "format": "csv", "path": str(sample)},
