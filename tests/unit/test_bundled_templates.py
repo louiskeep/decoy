@@ -63,8 +63,14 @@ def test_generate_template_validates_under_v2():
     template = get_template("generate")
     assert template is not None
     parsed = yaml.safe_load(template.body)
-    assert parsed["mode"] == "generate", "the generate template MUST declare mode: generate"
-    PipelineConfig.model_validate(parsed)
+    # FC-1 (2026-06-02): top-level `mode:` is gone; the generate template
+    # declares its kind by populating every table's `generate_columns`
+    # (and no `columns`). The validator enforces XOR at TableConfig.
+    cfg = PipelineConfig.model_validate(parsed)
+    assert all(t.generate_columns and not t.columns for t in cfg.tables), (
+        "the generate template MUST declare every table as generate-kind "
+        "(generate_columns populated, columns empty)"
+    )
 
 
 def test_every_template_in_registry_has_a_unit_test():

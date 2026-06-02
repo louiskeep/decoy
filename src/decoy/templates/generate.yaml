@@ -12,7 +12,6 @@
 # `generator_settings:` block; V2 uses unified `global_settings`.
 
 version: 1
-mode: generate
 
 global_settings:
   seed: 42

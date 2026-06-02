@@ -59,13 +59,19 @@ def test_bundled_examples_validate_under_v2_pipeline_config(path: Path):
 
 
 @pytest.mark.parametrize("path", _example_paths(), ids=lambda p: p.name)
-def test_bundled_examples_use_supported_modes_only(path: Path):
-    """Each example's `mode` field is one of the supported V2 values.
-    Rejects V1 `mode: graph` (deleted under clean-break) and
-    `mode: convert` (deleted with the CSV-to-Parquet converter)."""
+def test_bundled_examples_per_table_kind_is_well_formed(path: Path):
+    """FC-1 (2026-06-02): the top-level `mode:` field is gone; per-table
+    kind is inferred from `columns` (mask) vs `generate_columns`
+    (generate). Each table must populate exactly one of the two. The
+    validator enforces XOR at TableConfig; this cell pins the bundled
+    examples respect that contract."""
     raw = yaml.safe_load(path.read_text(encoding="utf-8"))
     cfg = PipelineConfig.model_validate(raw)
-    assert cfg.mode in {"mask", "generate"}, (
-        f"{path.name} declares unsupported mode {cfg.mode!r}; "
-        f"only mask + generate ship in V2."
-    )
+    for table in cfg.tables:
+        has_mask = bool(table.columns)
+        has_gen = bool(table.generate_columns)
+        assert has_mask ^ has_gen, (
+            f"{path.name} table {table.name!r} must populate exactly one of "
+            f"`columns` (mask) or `generate_columns` (generate); has_mask="
+            f"{has_mask}, has_gen={has_gen}"
+        )

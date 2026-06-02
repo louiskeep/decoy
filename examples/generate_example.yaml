@@ -16,7 +16,6 @@
 # `global_settings` and `targets`.
 
 version: 1
-mode: generate
 
 global_settings:
   seed: 42

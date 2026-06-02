@@ -17,7 +17,6 @@
 # + `input:` / `output:` / `masking_rules:` shape.
 
 version: 1
-mode: mask
 
 global_settings:
   seed: 42

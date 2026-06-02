@@ -97,6 +97,14 @@ def validate(
         _emit_error(f"YAML parse error: {exc}")
         raise typer.Exit(code=EXIT_USAGE)
 
+    if raw is None:
+        # CLI QA fix (2026-06-02, F9): an empty YAML file gives raw=None;
+        # the type-error branch below reports the unhelpful
+        # "must be a YAML mapping, not NoneType". Give the operator a
+        # clear "file is empty" message instead.
+        _emit_error("Pipeline YAML is empty.")
+        raise typer.Exit(code=EXIT_USAGE)
+
     if not isinstance(raw, dict):
         _emit_error(
             f"Pipeline YAML must be a YAML mapping (object), not {type(raw).__name__}."
