@@ -18,6 +18,7 @@ from pathlib import Path
 
 import typer
 
+from decoy.cli.exit_codes import EXIT_RUNTIME
 from decoy.ui.card import render_card
 from decoy.ui.output import OutputMode, OutputState, emit_json, setup_output
 from decoy.ui.theme import accent, code, error, hint, success
@@ -708,7 +709,7 @@ def _demo(
             state.err_console.print(" ", hint("hint:"), "rerun with --verbose for the full traceback.")
         if state.verbose:
             state.err_console.print_exception()
-        raise typer.Exit(code=3)
+        raise typer.Exit(code=EXIT_RUNTIME)
 
     if exit_code != 0:
         raise typer.Exit(code=exit_code)

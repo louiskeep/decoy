@@ -38,6 +38,8 @@ from pathlib import Path
 import typer
 import yaml
 
+from decoy.cli.exit_codes import EXIT_USAGE
+
 
 # ----------------------------------------------------------------------
 # decoy plan
@@ -114,14 +116,14 @@ def plan(
             "       --profile <profile.json> to load a pre-computed Profile.",
             err=True,
         )
-        raise typer.Exit(code=1)
+        raise typer.Exit(code=EXIT_USAGE)
 
     if no_profile and profile_path is not None:
         typer.echo(
             "ERROR: --no-profile and --profile are mutually exclusive.",
             err=True,
         )
-        raise typer.Exit(code=1)
+        raise typer.Exit(code=EXIT_USAGE)
 
     config_dict = yaml.safe_load(config.read_text(encoding="utf-8"))
     if not isinstance(config_dict, dict):
@@ -129,7 +131,7 @@ def plan(
             f"ERROR: {config} does not parse to a YAML mapping at the top level.",
             err=True,
         )
-        raise typer.Exit(code=1)
+        raise typer.Exit(code=EXIT_USAGE)
 
     if no_profile:
         # H2 (Dennis slice 4-6 review): --no-profile cannot run the pool-capacity
@@ -148,7 +150,7 @@ def plan(
                 "       or remove the unique cardinality_mode.",
                 err=True,
             )
-            raise typer.Exit(code=1)
+            raise typer.Exit(code=EXIT_USAGE)
 
         profile = _empty_profile_for_no_profile(config_dict, engine_version)
         # H1 (Dennis slice 4-6 review): both fk_plan_ordering AND
@@ -172,7 +174,7 @@ def plan(
                 f"ERROR: --profile {profile_path} did not parse as a Profile JSON: {exc}",
                 err=True,
             )
-            raise typer.Exit(code=1) from exc
+            raise typer.Exit(code=EXIT_USAGE) from exc
         skipped_checks = ()
 
     try:
@@ -183,7 +185,7 @@ def plan(
         typer.echo(
             f"ERROR: [{exc.code}] {exc.path or '<global>'}: {exc.message}", err=True
         )
-        raise typer.Exit(code=1) from exc
+        raise typer.Exit(code=EXIT_USAGE) from exc
 
     # Layer the checks_skipped onto the result. The compile already
     # populated checks_passed; checks_skipped is the no-profile carveout.
@@ -261,7 +263,7 @@ def replan(
         f"       --source override was: {source}",
         err=True,
     )
-    raise typer.Exit(code=1)
+    raise typer.Exit(code=EXIT_USAGE)
 
 
 REPLAN_EPILOG = _REPLAN_EPILOG

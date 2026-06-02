@@ -18,6 +18,7 @@ from rich.console import Group
 from rich.panel import Panel
 from rich.text import Text
 
+from decoy.cli.exit_codes import EXIT_USAGE
 from decoy.ui.output import OutputMode, emit_json, setup_output
 from decoy.ui.table import make_table
 from decoy.ui.theme import accent, code, error, hint, info, success
@@ -205,6 +206,29 @@ _TOPICS: dict[str, _Topic] = {
         ),
         see_also=("decoy explain keys", "decoy explain yaml"),
     ),
+    "exit-codes": _Topic(
+        name="exit-codes",
+        summary="The process exit codes every `decoy` command returns.",
+        body=(
+            "Every `decoy` subcommand returns one of four exit codes. Scripts,\n"
+            "Make recipes, and CI pipelines can switch on the integer value.\n\n"
+            "  0   Success. The command did what it said. POSIX convention.\n"
+            "  1   Usage error. The caller's request was wrong: config did not\n"
+            "      validate, a path did not exist, an incompatible flag\n"
+            "      combination was passed. The fix is in the user's input.\n"
+            "  2   Deprecated shim. The legacy `forge` console entry point was\n"
+            "      invoked; the CLI printed a migration hint and exited. The\n"
+            "      fix is to run `decoy ...` instead of `forge ...`.\n"
+            "  3   Runtime error. The CLI itself failed mid-run: the engine\n"
+            "      raised an unexpected error, an output write failed, a\n"
+            "      transient I/O problem happened. The fix is in the CLI or\n"
+            "      engine, not the user's request.\n\n"
+            "Integer values are stable across releases. The named constants\n"
+            "(EXIT_OK / EXIT_USAGE / EXIT_DEPRECATED_SHIM / EXIT_RUNTIME) live\n"
+            "in `decoy.cli.exit_codes` for callers that import them in Python."
+        ),
+        see_also=("decoy --help", "decoy run --help"),
+    ),
     "completion": _Topic(
         name="completion",
         summary="Tab completion -- install, troubleshoot.",
@@ -359,7 +383,7 @@ def explain(
                     "list every topic with",
                     code("decoy explain") + ".",
                 )
-        raise typer.Exit(code=1)
+        raise typer.Exit(code=EXIT_USAGE)
 
     if state.mode is OutputMode.json:
         emit_json(

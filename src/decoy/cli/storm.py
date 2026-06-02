@@ -12,6 +12,7 @@ from pathlib import Path
 
 import typer
 
+from decoy.cli.exit_codes import EXIT_RUNTIME, EXIT_USAGE
 from decoy.ui.card import render_card
 from decoy.ui.output import OutputMode, OutputState, emit_json, setup_output
 from decoy.ui.storm_animation import stormy_multistage
@@ -361,7 +362,7 @@ def _scan(
             state.err_console.print(" ", hint("hint:"), "rerun with --verbose for the full traceback.")
         if state.verbose:
             state.err_console.print_exception()
-        raise typer.Exit(code=3)
+        raise typer.Exit(code=EXIT_RUNTIME)
 
     if state.mode is OutputMode.json:
         if out is not None and str(out) == "-":
@@ -441,7 +442,7 @@ def _fields(
         data = _load_scan_dict(scan)
     except (FileNotFoundError, _json.JSONDecodeError, OSError) as exc:
         _emit_load_error(state, scan, exc, "storm fields")
-        raise typer.Exit(code=1)
+        raise typer.Exit(code=EXIT_USAGE)
 
     fields = data.get("fields", [])
     qi_groups = data.get("quasi_identifier_groups", [])
@@ -538,7 +539,7 @@ def _show(
         data = _load_scan_dict(scan)
     except (FileNotFoundError, _json.JSONDecodeError, OSError) as exc:
         _emit_load_error(state, scan, exc, "storm show")
-        raise typer.Exit(code=1)
+        raise typer.Exit(code=EXIT_USAGE)
 
     fields = data.get("fields", [])
     matched = next((f for f in fields if f.get("name") == field), None)
@@ -571,7 +572,7 @@ def _show(
                     " ", hint("hint:"), "list all fields with",
                     code(f"decoy storm fields {scan}"),
                 )
-        raise typer.Exit(code=1)
+        raise typer.Exit(code=EXIT_USAGE)
 
     qi_groups = data.get("quasi_identifier_groups", [])
     qi_member = [g for g in qi_groups if field in g]
@@ -706,18 +707,18 @@ def _diff(
             state.err_console.print(
                 " ", hint("hint:"), "pipe one scan, pass the other as a path."
             )
-        raise typer.Exit(code=1)
+        raise typer.Exit(code=EXIT_USAGE)
 
     try:
         old_data = _load_scan_dict(old)
     except (FileNotFoundError, _json.JSONDecodeError, OSError) as exc:
         _emit_load_error(state, old, exc, "storm diff")
-        raise typer.Exit(code=1)
+        raise typer.Exit(code=EXIT_USAGE)
     try:
         new_data = _load_scan_dict(new)
     except (FileNotFoundError, _json.JSONDecodeError, OSError) as exc:
         _emit_load_error(state, new, exc, "storm diff")
-        raise typer.Exit(code=1)
+        raise typer.Exit(code=EXIT_USAGE)
 
     old_fields = {
         f.get("name"): f for f in old_data.get("fields", []) if f.get("name")
@@ -814,12 +815,12 @@ def _diff(
             },
         )
         if strict and drift:
-            raise typer.Exit(code=1)
+            raise typer.Exit(code=EXIT_USAGE)
         return
 
     if state.mode is OutputMode.quiet:
         if strict and drift:
-            raise typer.Exit(code=1)
+            raise typer.Exit(code=EXIT_USAGE)
         return
 
     facts: list[tuple[str, str]] = [
@@ -919,7 +920,7 @@ def _diff(
         state.console.print(success("No drift detected."))
 
     if strict and drift:
-        raise typer.Exit(code=1)
+        raise typer.Exit(code=EXIT_USAGE)
 
 
 def _test_command(

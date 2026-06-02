@@ -15,6 +15,7 @@ from difflib import get_close_matches
 
 import typer
 
+from decoy.cli.exit_codes import EXIT_USAGE
 from decoy.templates import get_template, list_templates, template_names
 from decoy.ui.output import OutputMode, emit_json, setup_output
 from decoy.ui.table import make_table
@@ -156,7 +157,7 @@ def _show(
                     "list every template with",
                     code("decoy templates list") + ".",
                 )
-        raise typer.Exit(code=1)
+        raise typer.Exit(code=EXIT_USAGE)
 
     if state.mode is OutputMode.json:
         emit_json(

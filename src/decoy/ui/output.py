@@ -16,6 +16,7 @@ from enum import Enum
 import typer
 from rich.console import Console
 
+from decoy.cli.exit_codes import EXIT_USAGE
 from decoy.ui.theme import DECOY_THEME, error, hint
 
 
@@ -54,12 +55,12 @@ def setup_output(json_: bool, quiet: bool, verbose: bool) -> OutputState:
     if quiet and verbose:
         err_console.print(error("error:"), "--verbose and --quiet are mutually exclusive.")
         err_console.print(" ", hint("hint:"), "pick one -- `-v` for debug logs, `-q` to silence stdout.")
-        raise typer.Exit(code=1)
+        raise typer.Exit(code=EXIT_USAGE)
 
     if json_ and quiet:
         err_console.print(error("error:"), "--json and --quiet are mutually exclusive.")
         err_console.print(" ", hint("hint:"), "use `--json` for structured stdout, `--quiet` for none.")
-        raise typer.Exit(code=1)
+        raise typer.Exit(code=EXIT_USAGE)
 
     if json_:
         mode = OutputMode.json

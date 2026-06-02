@@ -18,6 +18,7 @@ from pathlib import Path
 import typer
 import yaml as _yaml
 
+from decoy.cli.exit_codes import EXIT_USAGE
 from decoy.ui.output import OutputMode, emit_json, setup_output
 from decoy.ui.theme import code, error, hint, success
 
@@ -94,19 +95,19 @@ def validate(
         raw = _yaml.safe_load(config.read_text(encoding="utf-8"))
     except _yaml.YAMLError as exc:
         _emit_error(f"YAML parse error: {exc}")
-        raise typer.Exit(code=1)
+        raise typer.Exit(code=EXIT_USAGE)
 
     if not isinstance(raw, dict):
         _emit_error(
             f"Pipeline YAML must be a YAML mapping (object), not {type(raw).__name__}."
         )
-        raise typer.Exit(code=1)
+        raise typer.Exit(code=EXIT_USAGE)
 
     try:
         PipelineConfig.model_validate(raw)
     except (ValidationError, PipelineValidationError, ConfigError) as exc:
         _emit_error(str(exc))
-        raise typer.Exit(code=1)
+        raise typer.Exit(code=EXIT_USAGE)
 
     if state.mode is OutputMode.json:
         emit_json(
