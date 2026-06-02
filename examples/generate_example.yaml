@@ -1,182 +1,70 @@
-# Decoy CLI — synthetic data generation example.
+# generate_example -- synthetic-data generation pipeline.
+#
+# Produces a CSV from scratch -- no input file required. Useful for
+# building test fixtures, populating dev databases, or seeding a
+# downstream system that needs realistic-looking rows without using
+# real data.
 #
 #   decoy validate examples/generate_example.yaml
-#   decoy run      examples/generate_example.yaml
+#   decoy run examples/generate_example.yaml
 #
-# Generation is opt-in via `mode: generate` below; `decoy run` reads the
-# top-level mode from the YAML.
+# Tune `row_count` and the generate_columns to shape the output.
+#
+# V2 PipelineConfig shape per decoy-engine `decoy_engine.config._pipeline`.
+# OSS.1 commit 2 (2026-06-02) V2 rewrite: replaces V1 `version: '1.0'`
+# + `generator_settings:` + `output:` shape. V2 uses unified
+# `global_settings` and `targets`.
 
-version: "1.0"
+version: 1
 mode: generate
 
-# General settings
-generator_settings:
-  seed: 42  # For deterministic generation
-  output_directory: "data/generated/"
-  chunk_size: 10000  # For processing large datasets
+global_settings:
+  seed: 42
 
-# Tables definitions
+sources: {}
+
 tables:
-  # EMPLOYEES TABLE
-  - name: "employees"
-    output_path: "data/generated/employees.csv"
-    rows: 100
-    columns:
-      - name: "employee_id"
-        type: "sequence"
-        start: 1000
-        prefix: "EMP"
-        pad_length: 6  # Creates IDs like EMP001000, EMP001001, etc.
-
-      - name: "first_name"
-        type: "faker"
-        faker_type: "first_name"
-
-      - name: "last_name"
-        type: "faker"
-        faker_type: "last_name"
-
-      - name: "email"
-        type: "formula"
-        formula_type: "template"
-        formula: "{first_name}.{last_name}@company.com"
-
-      - name: "department"
-        type: "categorical"
-        categories: ["Engineering", "Marketing", "Sales", "HR", "Finance"]
-        weights: [0.3, 0.2, 0.3, 0.1, 0.1]  # Probability weights
-
-      - name: "job_title"
-        type: "faker"
-        faker_type: "job"
-
-      - name: "salary"
-        type: "formula"
-        formula_type: "basic"
-        formula: "round(randint(50000, 120000), -3)"  # Rounds to nearest thousand
-
-      - name: "hire_date"
-        type: "faker"
-        faker_type: "date"
-
-      - name: "manager_id"
-        type: "reference"
-        reference_table: "employees"
-        reference_column: "employee_id"
-        distribution: "weighted"
-        null_probability: 0.15  # Some employees (e.g., CEO) have no manager
-
-      - name: "employee_code"
-        type: "formula"
-        formula_type: "composite"
-        references: ["employee_id", "department"]
-        formula: "{department[:3].upper()}-{employee_id[3:]}"
-
-  # PROJECTS TABLE
-  - name: "projects"
-    output_path: "data/generated/projects.csv"
-    rows: 25
-    columns:
-      - name: "project_id"
-        type: "sequence"
-        start: 101
-        prefix: "PROJ-"
-
-      - name: "project_name"
-        type: "formula"
-        formula_type: "template"
-        formula: "Project {city} {word}"  # Uses Faker's city and word providers
-
-      - name: "start_date"
-        type: "faker"
-        faker_type: "date"
-
-      - name: "end_date"
-        type: "formula"
-        formula_type: "basic"
-        formula: "date_between(start_date='+30d', end_date='+1y').strftime('%Y-%m-%d')"
-
-      - name: "budget"
-        type: "formula"
-        formula_type: "basic"
-        formula: "round(randint(50000, 500000), -3)"  # Rounds to nearest thousand
-
-      - name: "manager_id"
-        type: "reference"
-        reference_table: "employees"
-        reference_column: "employee_id"
-        distribution: "random"
-
-      - name: "status"
-        type: "categorical"
-        categories: ["Planning", "In Progress", "On Hold", "Completed"]
-        weights: [0.2, 0.5, 0.1, 0.2]
-
-      - name: "priority"
-        type: "categorical"
-        categories: ["Low", "Medium", "High", "Critical"]
-        weights: [0.2, 0.5, 0.2, 0.1]
-
-      - name: "project_code"
-        type: "formula"
-        formula_type: "composite"
-        references: ["project_id", "status", "priority"]
-        formula: "{project_id}-{status[:1]}{priority[:1]}"
-
-  # ASSIGNMENTS TABLE
-  - name: "assignments"
-    output_path: "data/generated/assignments.csv"
-    rows: 200
-    columns:
-      - name: "assignment_id"
-        type: "sequence"
-        start: 5000
+  - name: customers
+    row_count: 1000
+    generate_columns:
+      # Sequence: monotonic integers starting at `start` with step `step`.
+      # Useful for primary-key-like ids.
+      - name: customer_id
+        type: sequence
+        start: 10000
         step: 1
 
-      - name: "employee_id"
-        type: "reference"
-        reference_table: "employees"
-        reference_column: "employee_id"
-        distribution: "weighted"  # Some employees may be assigned to multiple projects
+      # Faker: realistic-looking strings via the named faker provider.
+      - name: first_name
+        type: faker
+        faker_type: first_name
+      - name: last_name
+        type: faker
+        faker_type: last_name
+      - name: email
+        type: faker
+        faker_type: email
+      - name: phone
+        type: faker
+        faker_type: phone_number
+      - name: street_address
+        type: faker
+        faker_type: street_address
+      - name: city
+        type: faker
+        faker_type: city
+      - name: state
+        type: faker
+        faker_type: state_abbr
 
-      - name: "project_id"
-        type: "reference"
-        reference_table: "projects"
-        reference_column: "project_id"
-        distribution: "weighted"  # Projects may have multiple assignments
+      # Categorical: pick from an explicit list, optionally weighted.
+      - name: account_tier
+        type: categorical
+        categories: ["bronze", "silver", "gold", "platinum"]
+        weights: [0.50, 0.30, 0.15, 0.05]
 
-      - name: "role"
-        type: "categorical"
-        categories: ["Developer", "Designer", "Tester", "Analyst", "Consultant"]
-        weights: [0.4, 0.2, 0.2, 0.1, 0.1]
-
-      - name: "hours_allocated"
-        type: "formula"
-        formula_type: "basic"
-        formula: "randint(10, 40) * 5"  # Allocated hours in 5-hour increments
-
-      - name: "start_date"
-        type: "reference"
-        reference_table: "projects"
-        reference_column: "start_date"
-        distribution: "sequential"  # Match project start dates
-
-      - name: "assignment_type"
-        type: "categorical"
-        categories: ["Full-time", "Part-time", "Consultant", "Temporary"]
-        weights: [0.6, 0.2, 0.1, 0.1]
-
-      - name: "assignment_code"
-        type: "formula"
-        formula_type: "composite"
-        references: ["assignment_id", "employee_id", "project_id"]
-        formula: "ASG-{assignment_id}-{employee_id[3:]}-{project_id[5:]}"
-
-# Define relationships (only self-references are handled specially in the code)
-relationships:
-  - name: "employee_manager"
-    type: "self_reference"
-    table: "employees"
-    column: "manager_id"
-    reference_column: "employee_id"
-    levels: 3  # Maximum hierarchy levels
+targets:
+  customers:
+    type: file
+    format: csv
+    path: ./customers.csv
