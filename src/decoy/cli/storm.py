@@ -22,7 +22,11 @@ from decoy.ui.theme import code, error, hint, risk_high, risk_med, success
 
 storm_app = typer.Typer(
     name="storm",
-    help="Dataset analysis -- the STORM event. Scan, then mask.",
+    help=(
+        "Dataset analysis -- the STORM event. `analyze` looks at a file "
+        "(pre-run); `integrity` verifies a masked file (post-run). The "
+        "previous `scan` verb is a deprecated alias for `analyze`."
+    ),
     no_args_is_help=True,
 )
 
@@ -63,19 +67,31 @@ _FAKE_FACTS: list[tuple[str, str]] = [
 ]
 
 
-_SCAN_EPILOG = """\
+_ANALYZE_EPILOG = """\
 Examples:
 
-  decoy storm scan data.csv
-    Scan a CSV with default sampling, save scan_<timestamp>.json.
+  decoy storm analyze data.csv
+    Analyze a CSV with default sampling, save scan_<timestamp>.json.
 
-  decoy storm scan data.csv --rows 50000 --strategy random
+  decoy storm analyze data.csv --rows 50000 --strategy random
     Sample 50K random rows.
 
-  decoy storm scan data.csv --json > scan.json
+  decoy storm analyze data.csv --json > scan.json
     Pipe the full StormProfile JSON for downstream tooling.
 
-See also: decoy storm fields, decoy storm show, decoy storm diff, decoy run.
+See also: decoy storm fields, decoy storm show, decoy storm diff,
+  decoy storm integrity, decoy init, decoy run.
+"""
+
+# Kept for the deprecated `decoy storm scan` alias (renamed 2026-06-02
+# under OSS.4a, scheduled removal in 0.2.0). Same body as
+# _ANALYZE_EPILOG but the first example writes the deprecated form so
+# anyone running `decoy storm scan --help` sees the old shape.
+_SCAN_EPILOG = """\
+DEPRECATED: `decoy storm scan` is the old name for `decoy storm analyze`.
+Run `decoy storm analyze --help` for the canonical examples.
+
+Removal target: 0.2.0.
 """
 
 
@@ -91,7 +107,7 @@ Examples:
   decoy storm fields scan.json --json | jq '.fields[].name'
     Pipe just the matching field names somewhere else.
 
-See also: decoy storm show.
+See also: decoy storm analyze, decoy storm show.
 """
 
 
@@ -104,10 +120,10 @@ Examples:
   decoy storm show scan.json email --json
     Same data as a structured JSON envelope.
 
-  decoy storm scan data.csv --json | decoy storm show - ssn
+  decoy storm analyze data.csv --json | decoy storm show - ssn
     Pipe a fresh scan straight in.
 
-See also: decoy storm fields.
+See also: decoy storm analyze, decoy storm fields.
 """
 
 
@@ -124,7 +140,7 @@ Examples:
   decoy storm diff baseline.json new.json --json | jq '.drift'
     Boolean drift flag for scripting.
 
-See also: decoy storm scan, decoy storm fields.
+See also: decoy storm analyze, decoy storm fields.
 """
 
 
@@ -141,7 +157,7 @@ Examples:
   decoy storm test --json
     Skip the animation, emit a fake envelope. For pipeline smoke tests.
 
-See also: decoy storm scan, decoy demo.
+See also: decoy storm analyze, decoy demo.
 """
 
 
@@ -240,7 +256,7 @@ def _emit_load_error(
     if raw_data:
         label = Path(scan).name
         message = f"{label} looks like raw data, not a STORM scan JSON."
-        scan_cmd = f"decoy storm scan {scan}"
+        scan_cmd = f"decoy storm analyze {scan}"
     elif isinstance(exc, FileNotFoundError):
         message = f"could not open {scan}: file not found."
         scan_cmd = None
@@ -271,7 +287,7 @@ def _emit_load_error(
             state.err_console.print(
                 " ", hint("hint:"),
                 "pass the JSON file produced by",
-                code("decoy storm scan"),
+                code("decoy storm analyze"),
             )
 
 
@@ -351,7 +367,7 @@ def _scan(
             emit_json(
                 state,
                 {
-                    "command": "storm scan",
+                    "command": "storm analyze",
                     "status": "error",
                     "source": source_str,
                     "error": str(exc),
@@ -371,7 +387,7 @@ def _scan(
             emit_json(
                 state,
                 {
-                    "command": "storm scan",
+                    "command": "storm analyze",
                     "status": "ok",
                     "source": source_str,
                     "saved": str(out_path) if out_path else None,
@@ -401,7 +417,7 @@ def _scan(
 
     render_card(
         state,
-        command="decoy storm scan",
+        command="decoy storm analyze",
         facts=facts,
         next_hint=next_hint,
         status="ok",
@@ -980,12 +996,41 @@ def _test_command(
         state,
         command="decoy storm test",
         facts=_FAKE_FACTS,
-        next_hint="decoy storm scan path/to/your/data.csv",
+        next_hint="decoy storm analyze path/to/your/data.csv",
         status="ok",
     )
 
 
-storm_app.command(name="scan", epilog=_SCAN_EPILOG)(_scan)
+# Deprecated alias for `decoy storm scan` -> `decoy storm analyze`.
+# OSS.4a (2026-06-02): the verb was renamed because `analyze` is a truer
+# name for what the command does (look at the data, tell the user what's
+# in it). `scan` keeps working for one minor release (removal target:
+# 0.2.0) and emits a stderr warning on every invocation so scripts that
+# pipe-import the JSON output keep working while the world rewrites.
+# Pattern source: kubectl deprecation convention.
+#
+# functools.wraps copies _scan's __wrapped__, __module__, __name__,
+# __qualname__, __doc__, __dict__, __annotations__, and most
+# importantly __signature__ -- Typer introspects __signature__ when
+# building the help body + parameter parser, so the alias renders
+# the SAME --help / parameters as `analyze`.
+import functools as _functools
+
+
+@_functools.wraps(_scan)
+def _scan_deprecated_shim(*args, **kwargs):  # type: ignore[no-untyped-def]
+    sys.stderr.write(
+        "warning: `decoy storm scan` is deprecated; "
+        "use `decoy storm analyze`. "
+        "`scan` will be removed in 0.2.0.\n"
+    )
+    return _scan(*args, **kwargs)
+
+
+# Canonical: `decoy storm analyze` (OSS.4a, 2026-06-02).
+storm_app.command(name="analyze", epilog=_ANALYZE_EPILOG)(_scan)
+# Deprecated alias: `decoy storm scan`. Removal target: 0.2.0.
+storm_app.command(name="scan", epilog=_SCAN_EPILOG)(_scan_deprecated_shim)
 storm_app.command(name="fields", epilog=_FIELDS_EPILOG)(_fields)
 storm_app.command(name="show", epilog=_SHOW_EPILOG)(_show)
 storm_app.command(name="diff", epilog=_DIFF_EPILOG)(_diff)
