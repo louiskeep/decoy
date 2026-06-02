@@ -357,27 +357,33 @@ def _load_sources_from_config(config_dict: dict, base_dir: Path) -> dict:
 
 
 def _write_mask_outputs(config_dict: dict, result, base_dir: Path) -> None:
-    """Write each `targets[].path` from the `ExecutionResult`.
+    """Write each declared target from the V2 ExecutionResult.
+
+    CLI.3 commit 2 (2026-06-02) fix: the V2 ExecutionResult exposes
+    masked tables on `outputs` (dict[table_name -> pa.Table]), not
+    `tables`. The V2 `targets:` block is a dict keyed by table name,
+    not a list of `{table, path}` entries. Pre-fix the CLI silently
+    skipped the writer (no errors, no output file), surfaced by the
+    demo + test_output_modes smoke runs.
 
     The pandas adapter returns masked tables in-memory; the polars
     adapter writes them via its own target-writer. CLI.1 bridges the
     pandas path with this helper. Format inferred from the path
     extension (csv or parquet).
     """
-    targets = config_dict.get("targets") or []
-    if not isinstance(targets, list):
+    targets = config_dict.get("targets") or {}
+    if not isinstance(targets, dict):
         return
-    tables = getattr(result, "tables", None)
-    if not isinstance(tables, dict):
+    outputs = getattr(result, "outputs", None)
+    if not isinstance(outputs, dict):
         return
-    for entry in targets:
+    for table_name, entry in targets.items():
         if not isinstance(entry, dict):
             continue
-        table_name = entry.get("table")
         raw_path = entry.get("path")
-        if not isinstance(table_name, str) or not isinstance(raw_path, str):
+        if not isinstance(raw_path, str):
             continue
-        table = tables.get(table_name)
+        table = outputs.get(table_name)
         if table is None:
             continue
         path = _resolve_path(raw_path, base_dir)
@@ -392,21 +398,20 @@ def _write_mask_outputs(config_dict: dict, result, base_dir: Path) -> None:
 
 
 def _write_generate_outputs(config_dict: dict, tables: dict, base_dir: Path) -> None:
-    """Write each `targets[]` entry from a generate-mode run.
+    """Write each declared target from a generate-mode run.
 
-    `generate_tables` returns `dict[str, pa.Table]`. The CLI writes
-    each table to its declared target path, same format-by-extension
-    rules as `_write_mask_outputs`.
+    `generate_tables` returns `dict[str, pa.Table]`. The V2 `targets:`
+    block is a dict keyed by table name (same shape as mask). CLI.3
+    commit 2 (2026-06-02) fix: pre-fix iterated `targets` as a list.
     """
-    targets = config_dict.get("targets") or []
-    if not isinstance(targets, list):
+    targets = config_dict.get("targets") or {}
+    if not isinstance(targets, dict):
         return
-    for entry in targets:
+    for table_name, entry in targets.items():
         if not isinstance(entry, dict):
             continue
-        table_name = entry.get("table")
         raw_path = entry.get("path")
-        if not isinstance(table_name, str) or not isinstance(raw_path, str):
+        if not isinstance(raw_path, str):
             continue
         table = tables.get(table_name)
         if table is None:

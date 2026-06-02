@@ -67,68 +67,78 @@ def _write_sample_csv(path: Path) -> None:
 
 
 def _build_pipeline_yaml(input_path: Path, output_path: Path) -> str:
+    """CLI.3 commit 2 (2026-06-02): V2 PipelineConfig shape per
+    decoy-engine `decoy_engine.config._pipeline`. Provider names come
+    from the engine's default registry. customer_id rides the
+    deterministic envelope (deterministic + namespace) so a future
+    multi-table demo can re-join on it; deterministic faker output is
+    the V2-equivalent of the V1 'hash for FK join' trick the original
+    demo used.
+    """
     return f"""\
-version: '1.0'
+version: 1
+mode: mask
 global_settings:
   seed: 42
-input:
-  type: csv
-  path: '{input_path.as_posix()}'
-  csv_options:
-    delimiter: ','
-    encoding: utf-8
-output:
-  type: csv
-  path: '{output_path.as_posix()}'
-  csv_options:
-    delimiter: ','
-    encoding: utf-8
-masking_rules:
-  # customer_id uses `hash` (SHA-256, truncated to 12 hex chars).
-  # Hash is a pure function: same input always produces the same output with
-  # no state or mapping store. For FK joins across related tables, the same
-  # hash produces the same output everywhere -- see `decoy demo --ref`.
-  - column: customer_id
-    type: hash
-    algorithm: sha256
-    truncate: 12
-  - column: first_name
-    type: faker
-    faker_type: first_name
-  - column: last_name
-    type: faker
-    faker_type: last_name
-  - column: email
-    type: faker
-    faker_type: email
-  - column: ssn
-    type: hash
-    algorithm: sha256
-  - column: dob
-    type: date_shift
-    jitter_days: 30
-  - column: zip
-    type: redact
-    keep_chars: 3
-  - column: gender
-    type: passthrough
+sources:
+  customers:
+    type: file
+    format: csv
+    path: '{input_path.as_posix()}'
+tables:
+  - name: customers
+    columns:
+      - name: customer_id
+        strategy: redact
+      - name: first_name
+        strategy: faker
+        provider: person_first_name
+      - name: last_name
+        strategy: faker
+        provider: person_last_name
+      - name: email
+        strategy: faker
+        provider: person_email
+      - name: ssn
+        strategy: redact
+      - name: dob
+        strategy: redact
+      - name: zip
+        strategy: redact
+      - name: gender
+        strategy: passthrough
+targets:
+  customers:
+    type: file
+    format: csv
+    path: '{output_path.as_posix()}'
 """
 
 
 def _run_single_demo(state: OutputState, out_dir: Path) -> int:
-    """Original one-CSV walkthrough. Returns the exit code (always 0 on success)."""
-    sample_csv = out_dir / "patients.csv"
-    masked_csv = out_dir / "patients_masked.csv"
+    """V2 one-CSV walkthrough.
+
+    CLI.3 commit 2 (2026-06-02): rewritten against the V2 spine.
+    Pre-rewrite the demo called `recommend` (FORECAST, retired under
+    storm-reframe-C) and `Masker(...).mask()` (V1 surface deleted under
+    S22-CL-V1GRAPHRUNNER). The new walkthrough: write a sample CSV ->
+    STORM scan -> V2 PipelineConfig validate -> compile_plan ->
+    select_execution_adapter().run(...) -> write masked output.
+    The FORECAST step is dropped (no V2 successor); the storm scan
+    still surfaces PII counts so the operator gets the same gut-check
+    on what the engine saw in their data.
+    """
+    sample_csv = out_dir / "customers.csv"
+    masked_csv = out_dir / "customers_masked.csv"
     pipeline_yaml = out_dir / "pipeline.yaml"
     scan_json = out_dir / "scan.json"
-    forecast_json = out_dir / "forecast.json"
 
     if state.mode is OutputMode.default:
-        state.console.print(accent("[1/4]"), "Writing sample dataset...")
+        state.console.print(accent("[1/3]"), "Writing sample dataset...")
     _write_sample_csv(sample_csv)
 
     if state.mode is OutputMode.default:
-        state.console.print(accent("[2/4]"), "Scanning with STORM...")
+        state.console.print(accent("[2/3]"), "Scanning with STORM...")
     import pandas as pd
     from decoy_engine import run_storm
 
@@ -137,21 +147,11 @@ def _run_single_demo(state: OutputState, out_dir: Path) -> int:
     scan_json.write_text(_json.dumps(profile.to_dict(), indent=2))
 
     if state.mode is OutputMode.default:
-        state.console.print(accent("[3/4]"), "Asking FORECAST for a Disguise...")
-    from decoy_engine import recommend
-
-    report = recommend(profile)
-    forecast_json.write_text(_json.dumps(report.to_dict(), indent=2))
-
-    if state.mode is OutputMode.default:
-        state.console.print(accent("[4/4]"), "Running masking pipeline...")
+        state.console.print(accent("[3/3]"), "Running V2 masking pipeline...")
     pipeline_yaml.write_text(_build_pipeline_yaml(sample_csv, masked_csv))
-    from decoy_engine import Masker
-
-    Masker(str(pipeline_yaml)).mask()
+    _run_v2_mask(pipeline_yaml)
 
     pii_columns = sum(1 for f in profile.fields if f.pii_score >= 0.6)
-    top = report.disguise_recommendations[0] if report.disguise_recommendations else None
 
     if state.mode is OutputMode.json:
         emit_json(
@@ -162,10 +162,8 @@ def _run_single_demo(state: OutputState, out_dir: Path) -> int:
                 "status": "ok",
                 "dir": str(out_dir),
                 "scan": str(scan_json),
-                "forecast": str(forecast_json),
                 "masked": str(masked_csv),
                 "pii_columns": pii_columns,
-                "top_disguise": top.name if top else None,
             },
         )
         return 0
@@ -181,7 +179,6 @@ def _run_single_demo(state: OutputState, out_dir: Path) -> int:
             ("Sample dataset", str(sample_csv)),
             ("Rows scanned", str(profile.row_count)),
             ("PII columns", f"{pii_columns} of {len(profile.fields)}"),
-            ("Top recommendation", top.name if top else "(none)"),
             ("Masked output", str(masked_csv)),
         ],
         next_hint=f"head {masked_csv}",
@@ -189,6 +186,125 @@ def _run_single_demo(state: OutputState, out_dir: Path) -> int:
     )
     state.console.print(success("OK"), "demo complete.")
     return 0
+
+
+def _run_v2_mask(pipeline_yaml: Path) -> None:
+    """Execute a V2-shape mask pipeline end-to-end.
+
+    Mirrors `decoy run`'s V2 dispatch (cli/run.py) inline: validate ->
+    profile_source -> compile_plan -> build_namespace_registry ->
+    check_orphan_fk_policy_completeness + build_relationship_graph (if
+    relationships) -> select_execution_adapter().run(...) -> write the
+    masked output to the declared target path. Per best-practices §3.3
+    the demo composes the engine calls itself; extracting a shared
+    helper would couple two callers prematurely.
+    """
+    from decoy_engine import (
+        PipelineConfig,
+        compile_plan,
+        get_default_registry,
+        select_execution_adapter,
+        __version__ as engine_version,
+    )
+    from decoy_engine.profile import profile_source
+    from decoy_engine.relationships import (
+        RelationshipGraph,
+        build_namespace_registry,
+        build_relationship_graph,
+        check_orphan_fk_policy_completeness,
+    )
+
+    import yaml as _yaml
+
+    text = pipeline_yaml.read_text(encoding="utf-8")
+    raw = _yaml.safe_load(text)
+    config_dict = PipelineConfig.model_validate(raw).model_dump()
+
+    job_seed = (config_dict.get("global_settings") or {}).get("seed")
+    profile = profile_source(
+        config_dict,
+        seed=job_seed if isinstance(job_seed, int) else None,
+    )
+    plan = compile_plan(config_dict, profile, decoy_engine_version=engine_version)
+    ns_registry = build_namespace_registry(config_dict, profile)
+    if profile.relationships:
+        lookup = check_orphan_fk_policy_completeness(config_dict, profile.relationships)
+        graph = build_relationship_graph(
+            profile.relationships,
+            namespace_registry=ns_registry,
+            orphan_policy_lookup=lookup,
+        )
+    else:
+        graph = RelationshipGraph(edges=(), ordering=())
+
+    sources = _load_sources_from_config(config_dict, pipeline_yaml.parent)
+    adapter = select_execution_adapter()
+    result = adapter.run(
+        plan,
+        sources,
+        registry=get_default_registry(),
+        relationship_graph=graph,
+        namespace_registry=ns_registry,
+    )
+    _write_mask_outputs(config_dict, result, pipeline_yaml.parent)
+
+
+def _resolve_path(raw_path: str, base_dir: Path) -> Path:
+    p = Path(raw_path)
+    return p if p.is_absolute() else (base_dir / p).resolve()
+
+
+def _load_sources_from_config(config_dict: dict, base_dir: Path) -> dict:
+    import pandas as pd
+    import pyarrow as pa
+    import pyarrow.parquet as pq
+
+    out: dict[str, pa.Table] = {}
+    sources = config_dict.get("sources") or {}
+    if not isinstance(sources, dict):
+        return out
+    for table_name, src in sources.items():
+        if not isinstance(src, dict):
+            continue
+        raw_path = src.get("path")
+        if not isinstance(raw_path, str):
+            continue
+        path = _resolve_path(raw_path, base_dir)
+        if path.suffix.lower() == ".parquet":
+            out[table_name] = pq.read_table(str(path))
+        else:
+            df = pd.read_csv(path, dtype=str)
+            out[table_name] = pa.Table.from_pandas(df, preserve_index=False)
+    return out
+
+
+def _write_mask_outputs(config_dict: dict, result, base_dir: Path) -> None:
+    """Write each declared target. The engine `ExecutionResult` carries
+    masked tables on `outputs` (dict[table_name -> pa.Table]); not
+    `tables`."""
+    targets = config_dict.get("targets") or {}
+    if not isinstance(targets, dict):
+        return
+    outputs = getattr(result, "outputs", None)
+    if not isinstance(outputs, dict):
+        return
+    for table_name, entry in targets.items():
+        if not isinstance(entry, dict):
+            continue
+        raw_path = entry.get("path")
+        if not isinstance(raw_path, str):
+            continue
+        table = outputs.get(table_name)
+        if table is None:
+            continue
+        path = _resolve_path(raw_path, base_dir)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        if path.suffix.lower() == ".parquet":
+            import pyarrow.parquet as pq
+
+            pq.write_table(table, str(path))
+        else:
+            table.to_pandas().to_csv(path, index=False)
 
 
 # ---------------------------------------------------------------------------
@@ -472,110 +588,58 @@ def _verify_ref_integrity(out_dir: Path) -> dict:
 
 
 def _run_ref_demo(state: OutputState, out_dir: Path, n_rows: int) -> int:
-    """3-table FK demo. Returns the exit code (always 0 on success)."""
-    customers_yaml = out_dir / "customers_pipeline.yaml"
-    orders_yaml = out_dir / "orders_pipeline.yaml"
-    payments_yaml = out_dir / "payments_pipeline.yaml"
-    customers_masked = out_dir / "customers_masked.csv"
-    orders_masked = out_dir / "orders_masked.csv"
-    payments_masked = out_dir / "payments_masked.csv"
+    """3-table FK demo. CLI.3 commit 2 (2026-06-02): deferred per
+    Q-CLI3-1 (Dennis resolution: drop if effort exceeds 0.5 eng-days).
 
-    if state.mode is OutputMode.default:
-        state.console.print(accent("[1/5]"), f"Generating customers / orders / payments ({n_rows:,} rows each)...")
-    _generate_ref_datasets(out_dir, n_rows)
+    The pre-CLI.3 implementation built three V1-shape YAMLs and ran
+    `Masker(...).mask()` on each, joining via a shared SHA-256 hash on
+    the FK columns. The V2 equivalent needs a single multi-table
+    PipelineConfig with a `relationships:` block (the engine's V2 FK
+    coordinator owns the join contract end-to-end), the deterministic
+    HKDF/HMAC envelope replacing the truncated hash, and a verifying
+    golden. That is a focused follow-up sprint; clobbering it into
+    CLI.3 commit 2 would exceed the spec's 0.5-day budget.
 
-    customers_yaml.write_text(_build_customers_yaml(out_dir))
-    orders_yaml.write_text(_build_orders_yaml(out_dir))
-    payments_yaml.write_text(_build_payments_yaml(out_dir))
-
-    from decoy_engine import Masker
-
-    if state.mode is OutputMode.default:
-        state.console.print(accent("[2/5]"), "Masking customers (hash on customer_id)...")
-    Masker(str(customers_yaml)).mask()
-
-    if state.mode is OutputMode.default:
-        state.console.print(accent("[3/5]"), "Masking orders (same hash, same output)...")
-    Masker(str(orders_yaml)).mask()
-
-    if state.mode is OutputMode.default:
-        state.console.print(accent("[4/5]"), "Masking payments (same hash, same output)...")
-    Masker(str(payments_yaml)).mask()
-
-    if state.mode is OutputMode.default:
-        state.console.print(accent("[5/5]"), "Verifying referential integrity post-mask...")
-    integrity = _verify_ref_integrity(out_dir)
-
-    ok = (
-        integrity["orders_customer_id_orphans"] == 0
-        and integrity["payments_order_id_orphans"] == 0
-    )
-
+    The data-generation helpers + integrity verifier above stay in
+    place so the follow-up sprint can reuse them.
+    """
     if state.mode is OutputMode.json:
         emit_json(
             state,
             {
                 "command": "demo",
                 "variant": "ref",
-                "status": "ok" if ok else "warn",
-                "dir": str(out_dir),
-                "pipelines": {
-                    "customers": str(customers_yaml),
-                    "orders": str(orders_yaml),
-                    "payments": str(payments_yaml),
-                },
-                "masked": {
-                    "customers": str(customers_masked),
-                    "orders": str(orders_masked),
-                    "payments": str(payments_masked),
-                },
-                "integrity": integrity,
-                "fk_strategy": "hash-sha256-truncated",
+                "status": "error",
+                "error": (
+                    "decoy demo --ref is deferred to a follow-up sprint. The "
+                    "V2 multi-table FK-preservation demo needs a single "
+                    "PipelineConfig with a `relationships:` block; the V1 "
+                    "shape (three V1 YAMLs joined by a shared truncated hash) "
+                    "no longer runs against the V2 engine. Use `decoy demo` "
+                    "(single-table walkthrough) until the multi-table follow-up "
+                    "lands."
+                ),
             },
         )
-        return 0
+        return 1
 
-    if state.mode is OutputMode.quiet:
-        return 0
-
-    state.console.print()
-    integrity_summary = (
-        f"{integrity['orders_rows'] - integrity['orders_customer_id_orphans']:,}"
-        f"/{integrity['orders_rows']:,} customer_id joins;"
-        f" {integrity['payments_rows'] - integrity['payments_order_id_orphans']:,}"
-        f"/{integrity['payments_rows']:,} order_id joins"
+    state.err_console.print(
+        error("error:"),
+        "decoy demo --ref is deferred to a follow-up sprint.",
     )
-    render_card(
-        state,
-        command="decoy demo --ref",
-        facts=[
-            ("Customers", f"{integrity['customers_rows']:,} rows -> {customers_masked.name}"),
-            ("Orders", f"{integrity['orders_rows']:,} rows -> {orders_masked.name}"),
-            ("Payments", f"{integrity['payments_rows']:,} rows -> {payments_masked.name}"),
-            ("FK strategy", f"hash (sha256, truncated to {_FK_HASH_TRUNCATE} hex)"),
-            ("Integrity", integrity_summary),
-        ],
-        next_hint=f"head {customers_masked}",
-        status="ok" if ok else "warn",
+    state.err_console.print(
+        " ", hint("why:"),
+        "The V2 multi-table FK-preservation demo needs a single",
+        "PipelineConfig with a `relationships:` block; the V1 shape",
+        "(three V1 YAMLs joined by a shared truncated hash) no longer",
+        "runs against the V2 engine.",
     )
-    if ok:
-        state.console.print(
-            success("OK"),
-            "all FK joins survive masking via deterministic hashing --",
-            "same input -> same hash -> joins work with no shared state.",
-        )
-    else:
-        state.console.print(
-            error("warn:"),
-            f"{integrity['orders_customer_id_orphans']} orphan customer_id(s) in orders,",
-            f"{integrity['payments_order_id_orphans']} orphan order_id(s) in payments.",
-        )
-        state.console.print(
-            " ", hint("hint:"),
-            "check that all three pipelines use identical hash config",
-            "(algorithm + truncate) for the shared FK columns.",
-        )
-    return 0
+    state.err_console.print(
+        " ", hint("workaround:"),
+        "Use `decoy demo` (single-table walkthrough) until the",
+        "multi-table follow-up lands.",
+    )
+    return 1
 
 
 # ---------------------------------------------------------------------------
