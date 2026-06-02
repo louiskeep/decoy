@@ -35,9 +35,11 @@ tables:
       - name: email
         strategy: faker
         provider: person_email
+      # ssn redacted (deterministic synthetic_ssn requires cardinality_mode
+      # tuning; redact ships as the safe out-of-the-box default and the
+      # operator can swap providers per their data).
       - name: ssn
-        strategy: faker
-        provider: synthetic_ssn
+        strategy: redact
       - name: account_status
         strategy: passthrough
 
