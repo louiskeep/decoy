@@ -27,7 +27,7 @@ _DEMO_EPILOG = """\
 Examples:
 
   decoy demo
-    Run the simple scan -> forecast -> mask walkthrough in ./decoy_demo/.
+    Run the simple scan -> mask walkthrough in ./decoy_demo/.
 
   decoy demo --ref
     Generate 3 related CSVs (customers, orders, payments) with FK
@@ -611,7 +611,7 @@ def _demo(
         False, "--verbose", "-v", help="Enable debug-level CLI logs on stderr."
     ),
 ) -> None:
-    """Walk through scan -> forecast -> mask on a bundled sample dataset.
+    """Walk through scan -> mask on a bundled sample dataset.
 
     Use this on a fresh install to see what Decoy can do end to end without
     needing your own data or pipeline. All output lands in `./decoy_demo/`

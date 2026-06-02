@@ -21,7 +21,7 @@ from decoy.ui.theme import code, error, hint, risk_high, risk_med, success
 
 storm_app = typer.Typer(
     name="storm",
-    help="Dataset analysis -- the STORM event. Scan first, then forecast.",
+    help="Dataset analysis -- the STORM event. Scan, then mask.",
     no_args_is_help=True,
 )
 
@@ -164,7 +164,7 @@ def _load_scan_dict(scan_path: str) -> dict:
 
     Accepts both shapes that `decoy storm scan` produces -- the bare
     `to_dict()` written to disk by default, and the `{"profile": {...}}`
-    envelope from `--json` mode. Mirrors the loader in `decoy.cli.forecast`.
+    envelope from `--json` mode.
     """
     if scan_path == "-":
         raw = sys.stdin.read()
@@ -314,8 +314,8 @@ def _scan(
     Use this when you've been handed a dataset and want to know what's in it
     -- which fields are PII, which look like quasi-identifiers, what
     re-identification risk the dataset carries -- before writing a masking
-    pipeline. Pass the saved scan JSON to `decoy storm fields`,
-    `decoy storm show`, or `decoy forecast`.
+    pipeline. Pass the saved scan JSON to `decoy storm fields` or
+    `decoy storm show`.
     """
     state = setup_output(json_, quiet, verbose)
     source_str = str(source)
