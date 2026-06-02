@@ -172,7 +172,7 @@ _TOPICS: dict[str, _Topic] = {
             "Run it before writing a masking pipeline. The output JSON gives you the column-by-column\n"
             "PII signal the operator uses to pick a Disguise template + tune the mask."
         ),
-        see_also=("decoy storm scan --help", "decoy templates list"),
+        see_also=("decoy storm analyze --help", "decoy templates list"),
     ),
     "keys": _Topic(
         name="keys",

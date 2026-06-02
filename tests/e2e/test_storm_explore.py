@@ -167,7 +167,7 @@ def test_storm_fields_csv_input_emits_scan_first_hint(tmp_path: Path):
     assert "patients.csv" in result.output
     assert "raw data" in result.output
     # The hint includes the literal scan command the user should run.
-    assert "decoy storm scan" in result.output
+    assert "decoy storm analyze" in result.output
 
 
 def test_storm_fields_csv_input_json_emits_error_envelope(tmp_path: Path):
@@ -291,4 +291,4 @@ def test_storm_show_csv_input_emits_scan_first_hint(tmp_path: Path):
     # Error messages land on stderr; use combined output.
     assert "patients.csv" in result.output
     assert "raw data" in result.output
-    assert "decoy storm scan" in result.output
+    assert "decoy storm analyze" in result.output

@@ -44,7 +44,7 @@ Examples:
   decoy demo --json
     Same flow, but emit a JSON summary instead of cards.
 
-See also: decoy storm scan, decoy run.
+See also: decoy storm analyze, decoy run.
 """
 
 

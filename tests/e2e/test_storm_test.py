@@ -31,7 +31,7 @@ def test_storm_test_default_renders_demo_card_quickly():
     # Demo marker so users don't mistake it for a real scan.
     assert "demo (no data scanned)" in result.stdout
     # Next hint points at the real scan command.
-    assert "decoy storm scan" in result.stdout
+    assert "decoy storm analyze" in result.stdout
 
 
 def test_storm_test_seconds_flag_controls_duration():
