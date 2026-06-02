@@ -108,7 +108,7 @@ Set-Location ..
 
 ## Recording the run
 
-After a successful run, append an entry to [`docs/legacy/release-smoke-log.md`](../legacy/release-smoke-log.md) with the date, SHA you tested at, and (if running in CI) the workflow run URL. This is what retires R2: the line of paper that says "we have actually done this."
+After a successful run, append an entry to [`docs/release/smoke-log.md`](smoke-log.md) with the date, SHA you tested at, and (if running in CI) the workflow run URL. This is what retires R2: the line of paper that says "we have actually done this."
 
 ## Failure modes seen in practice
 

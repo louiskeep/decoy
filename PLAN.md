@@ -1,9 +1,11 @@
-# decoy Plan
+# decoy plan
 
-Active planning moved to the central docs hub:
+Short-loop planning for the `decoy` CLI lives privately while the project is in pre-1.0 development; this file exists as a placeholder so contributors know where to look.
 
-- [Master Roadmap](../decoy-platform/docs/ROADMAP.md)
-- [Release Roadmap](../decoy-platform/docs/release/release-roadmap.md)
-- [Audit Remediation Roadmap](../decoy-platform/docs/audit/remediation-roadmap.md)
+Public-facing planning surfaces:
 
-The previous CLI short-loop plan is archived at [../decoy-platform/docs/backlog/v2/cli-plan-legacy.md](../decoy-platform/docs/backlog/v2/cli-plan-legacy.md).
+- [`CHANGELOG.md`](CHANGELOG.md): user-visible changes per release.
+- [GitHub Issues](https://github.com/louiskeep/decoy/issues): bug reports, feature requests, and short-horizon planning discussion.
+- [GitHub Discussions](https://github.com/louiskeep/decoy/discussions) (when enabled): longer-form design conversations.
+
+For contributor onboarding, start with [`CONTRIBUTING.md`](CONTRIBUTING.md) and [`CODEMAP.md`](CODEMAP.md).

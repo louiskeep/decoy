@@ -33,8 +33,11 @@ Only the most recent minor release of `decoy` receives security fixes. Older ver
 - `decoy demo` and `decoy storm` write JSON output that can contain top values, sample sentinels, and detector metadata. These are fine to keep locally but may be sensitive to share; review scan JSON before posting.
 - Custom Faker provider files load at process start with the current user's privileges. Treat the providers directory the same way you would treat any directory of executable Python.
 
-## Where to read more
+## Security posture summary
 
-Central security review: see the platform repo's [Security Architecture](../decoy-platform/docs/security/SECURITY_ARCHITECTURE.md) for trust boundaries, sensitive assets, threat model, key model, and named V1 limits.
+`decoy` runs locally in the user's shell with the user's privileges. There is no server, no inbound network surface, and no telemetry phone-home. The engine library it calls is also local-only.
 
-CLI-specific security notes: [cli-security.md](../decoy-platform/docs/guides/cli-security.md).
+- **Input data and output data stay local** to the machine running the CLI. The CLI does not transmit data anywhere.
+- **Determinism keys.** Pipelines that use deterministic strategies (hash, format-preserving encryption, deterministic Faker) require a master key. Prefer the `DECOY_MASTER_KEY` environment variable; key derivation uses HKDF-SHA256.
+- **Custom providers.** Files passed via `--providers` load at startup and run with the user's privileges. Treat the providers directory the same way you would treat any directory of executable Python.
+- **Pre-1.0 caveat.** The CLI is at version 0.1.0. Exit codes are stable (`decoy explain exit-codes`); other surfaces may change before 1.0.0 ships.
