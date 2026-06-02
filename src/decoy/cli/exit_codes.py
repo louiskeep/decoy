@@ -7,9 +7,17 @@ only by convention. A single typo would silently change the contract; a
 contributor reading the source had no way to learn what each code meant short
 of grepping every call site.
 
-The four values below are the public exit-code contract. Their INTEGER VALUES
+The five values below are the public exit-code contract. Their INTEGER VALUES
 are stable across releases (callers in shell scripts, CI pipelines, and Make
 recipes depend on them). The names may evolve; the integers may not.
+
+OSS.4b (2026-06-02) added EXIT_FINDINGS=4 to support `decoy storm integrity`,
+which has a meaningful 4th state distinct from the existing three: the
+operation ran cleanly, but the data being checked has issues the integrity
+runner flagged. Adding a new constant is a MINOR-eligible additive change per
+docs/release/versioning.md (existing integers 0-3 do not move). Source
+pattern: semgrep's exit-code split (0 pass, 1 findings, 2 error); the analog
+here is 0 clean / 4 findings / 3 runtime crash.
 
 Reference: README "Exit codes" section + `decoy explain exit-codes`.
 """
@@ -37,9 +45,18 @@ an output write failed, a temp file vanished mid-run. The fix is in the CLI
 or engine, not in the user's request. Distinct from EXIT_USAGE so CI
 pipelines can route a runtime crash to a different alert."""
 
+EXIT_FINDINGS: int = 4
+"""The CLI ran cleanly but found data issues. Used by data-validation /
+integrity verbs (`decoy storm integrity` is the first; future verbs that
+audit data rather than execute it will reuse this code). The fix is in the
+data being checked, not in the CLI or the user's invocation. Pattern source:
+semgrep's exit-code split (0 pass, 1 findings, 2 error). Distinct from
+EXIT_USAGE (the user gave bad input) and EXIT_RUNTIME (the CLI crashed)."""
+
 __all__ = [
     "EXIT_OK",
     "EXIT_USAGE",
     "EXIT_DEPRECATED_SHIM",
     "EXIT_RUNTIME",
+    "EXIT_FINDINGS",
 ]

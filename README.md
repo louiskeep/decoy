@@ -62,7 +62,7 @@ any subcommand.
 
 ## Exit codes
 
-`decoy` returns one of these four codes. Scripts, Make recipes, and CI
+`decoy` returns one of these five codes. Scripts, Make recipes, and CI
 pipelines can switch on the integer; the contract is stable across releases.
 
 | Code | Name                   | Meaning                                                                                    |
@@ -71,6 +71,7 @@ pipelines can switch on the integer; the contract is stable across releases.
 | 1    | `EXIT_USAGE`           | Usage error: config did not validate, path did not exist, flag combination was invalid.    |
 | 2    | `EXIT_DEPRECATED_SHIM` | The legacy `forge` console entry point was invoked; migrate to `decoy ...`.                |
 | 3    | `EXIT_RUNTIME`         | The CLI itself failed mid-run (engine error, output write failure, transient I/O problem). |
+| 4    | `EXIT_FINDINGS`        | The CLI ran cleanly but found data issues (e.g. `decoy storm integrity` flagged residual PII or FK preservation failures). The fix is in the data being checked, not in the CLI invocation. |
 
 Constants live in `decoy.cli.exit_codes`. `decoy explain exit-codes` prints
 the same table from the CLI.
