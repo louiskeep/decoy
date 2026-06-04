@@ -42,6 +42,20 @@ def test_storm_analyze_help_includes_examples(tmp_path: Path):
     assert "See also:" in result.stdout
 
 
+def test_storm_fields_non_utf8_scan_prints_clean_error(tmp_path: Path):
+    """QA 2026-06-04 storm-validate-cli F1 (HIGH): a non-UTF-8 scan file must
+    produce a clean usage error, not an unhandled UnicodeDecodeError traceback
+    (which would also corrupt --json output). UnicodeDecodeError is a
+    ValueError, not an OSError, so it is normalised inside _load_scan_dict."""
+    from decoy.cli.exit_codes import EXIT_USAGE
+
+    bad = tmp_path / "bad_scan.json"
+    bad.write_bytes(b"\x80\x81\x82 not valid utf-8")
+    result = runner.invoke(app, ["storm", "fields", str(bad)])
+    assert result.exit_code == EXIT_USAGE, (result.stdout, result.exception)
+    assert not isinstance(result.exception, UnicodeDecodeError)
+
+
 def test_storm_analyze_writes_profile_and_succeeds(sample_csv: Path, tmp_path: Path):
     out_path = tmp_path / "scan.json"
     result = runner.invoke(
