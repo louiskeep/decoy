@@ -85,7 +85,7 @@ def setup_output(json_: bool, quiet: bool, verbose: bool) -> OutputState:
 def emit_json(state: OutputState, payload: dict) -> None:
     """Write a single JSON object to stdout when in --json mode.
 
-    No-op in quiet mode. In default mode this is also a no-op — callers that
+    No-op in quiet mode. In default mode this is also a no-op - callers that
     want human output write through `state.console.print(...)` themselves.
     """
     if state.mode is OutputMode.json:

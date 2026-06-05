@@ -1,6 +1,6 @@
 """Semantic color tokens for the decoy CLI.
 
-Single source of truth for color decisions — every CLI-side print flows
+Single source of truth for color decisions - every CLI-side print flows
 through one of the helpers below, never raw ANSI or raw Rich markup.
 See CLI_UX_GUIDE.md section 5.
 """
