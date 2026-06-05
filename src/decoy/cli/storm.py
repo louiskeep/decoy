@@ -211,10 +211,18 @@ def _load_scan_dict(scan_path: str) -> dict:
     `to_dict()` written to disk by default, and the `{"profile": {...}}`
     envelope from `--json` mode.
     """
-    if scan_path == "-":
-        raw = sys.stdin.read()
-    else:
-        raw = Path(scan_path).read_text(encoding="utf-8")
+    try:
+        if scan_path == "-":
+            raw = sys.stdin.read()
+        else:
+            raw = Path(scan_path).read_text(encoding="utf-8")
+    except UnicodeDecodeError as exc:
+        # UnicodeDecodeError is a ValueError, not an OSError, so the callers
+        # that catch (FileNotFoundError, JSONDecodeError, OSError) would let a
+        # non-UTF-8 scan file crash with a raw traceback and corrupt --json
+        # output. Normalise to OSError so the existing handlers emit a clean
+        # error. (QA 2026-06-04 storm-validate-cli F1.)
+        raise OSError(f"scan file is not valid UTF-8: {exc}") from exc
     data = _json.loads(raw)
     if "profile" in data and "row_count" not in data:
         data = data["profile"]

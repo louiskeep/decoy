@@ -1,4 +1,4 @@
-"""decoy — data masking and synthetic generation CLI.
+"""decoy - data masking and synthetic generation CLI.
 
 The CLI is a thin terminal wrapper around decoy_engine. All data logic
 lives in decoy_engine; this package only handles command parsing,
