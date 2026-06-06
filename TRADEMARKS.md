@@ -7,7 +7,7 @@ TODO(legal): Update this file once any USPTO or international trademark filings 
 
 ## What the source license does and does not grant
 
-The Business Source License 1.1 governs the source code in this repository. Per Section 7 of that license, it **does not** grant any rights to use the Decoy Marks beyond what is required to accurately describe the origin of the software (nominative fair use).
+The Apache License 2.0 governs the source code in this repository. Per Section 6 of that license, it **does not** grant any rights to use the Decoy Marks beyond what is required to accurately describe the origin of the software (nominative fair use).
 
 ## Permitted uses (nominative fair use)
 

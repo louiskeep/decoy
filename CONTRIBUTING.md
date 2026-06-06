@@ -36,7 +36,7 @@ A green local run on Python 3.10, 3.11, and 3.12 is the bar before requesting re
 ## Pull requests
 
 - One topic per PR. Smaller diffs land faster.
-- Use `git commit -s` to sign off (Developer Certificate of Origin). The project is licensed under BUSL-1.1, which auto-converts to Apache-2.0 on the Change Date (2030-05-10). Contributions are accepted under the project license.
+- Use `git commit -s` to sign off (Developer Certificate of Origin). The project is licensed under the Apache License 2.0. Contributions are accepted under the project license.
 - User-visible changes (new command, new flag, exit-code semantics, output format) need a `CHANGELOG.md` entry under `[Unreleased]`.
 - If a change is more than one PR, file an Issue describing the plan first.
 

@@ -19,6 +19,10 @@ version numbers follow the [versioning policy](docs/release/versioning.md).
 
 ### Changed
 
+- License: flipped from BUSL-1.1 to Apache-2.0 (free, OSI-approved open
+  source), matching `decoy-engine`. `LICENSE.md` (BUSL) is replaced by
+  `LICENSE` (Apache) + `NOTICE`. Commercial value lives in the separate
+  `decoy-platform` package under its own commercial license.
 - PyPI distribution name: `decoy` -> `decoy-cli` (Q-OSS-1). Existing
   `pip install decoy` continues to work today (the bare name is still
   reserved, just not pursued as a launch-blocker); future installs

@@ -11,4 +11,4 @@
 ## Contributor checklist
 
 - [ ] I have signed off this commit with `git commit -s` per [CONTRIBUTING.md](../CONTRIBUTING.md) (Developer Certificate of Origin).
-- [ ] I understand that this contribution will be licensed under the Business Source License 1.1 (BUSL-1.1).
+- [ ] I understand that this contribution will be licensed under the Apache License 2.0.

@@ -10,20 +10,14 @@ build-backend = "hatchling.build"
 # engine name (`decoy-engine`) unaffected.
 name = "decoy-cli"
 version = "0.1.0"
-description = "Source-available CLI for data masking and synthetic generation. Wraps the decoy-engine library; runs masking + generate jobs from the terminal or a notebook."
+description = "Free, open-source CLI for data masking and synthetic generation. Wraps the decoy-engine library; runs masking + generate jobs from the terminal or a notebook."
 readme = "README.md"
 requires-python = ">=3.10"
-# OSS.2 (license flip to Apache-2.0) is DEFERRED INDEFINITELY per PO
-# decision 2026-06-02: the CLI + engine are staying private. The
-# Apache-2.0 lock from 2026-06-01 still stands as the intended
-# end-state IF + WHEN the OSS launch resumes; the timing is
-# unscheduled. Until then the CLI carries BUSL-1.1, the commercial
-# platform pairs with it, and the LICENSE.md auto-converts to
-# Apache-2.0 on its Change Date (see LICENSE.md for the exact date).
-# Also: the description = "Free, open-source CLI..." line on the
-# project block above will need rewriting alongside any future flip.
-license = "LicenseRef-BUSL-1.1"
-license-files = ["LICENSE.md"]
+# Apache-2.0 OSS launch (resumed 2026-06-06). The CLI matches the
+# decoy-engine license; the commercial value lives in the separate
+# decoy-platform package under its own commercial license.
+license = "Apache-2.0"
+license-files = ["LICENSE", "NOTICE"]
 authors = [{ name = "louiskeep" }]
 
 # PyPI Trove classifiers. Bare-minimum honest set: the Python versions
@@ -38,7 +32,7 @@ classifiers = [
     "Intended Audience :: Developers",
     "Intended Audience :: System Administrators",
     "Intended Audience :: Information Technology",
-    "License :: Other/Proprietary License",
+    "License :: OSI Approved :: Apache Software License",
     "Operating System :: OS Independent",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3 :: Only",
