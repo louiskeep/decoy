@@ -18,7 +18,7 @@ from typing import Any
 
 import typer
 
-from decoy.cli.exit_codes import EXIT_RUNTIME
+from decoy.cli.exit_codes import EXIT_RUNTIME, EXIT_USAGE
 from decoy.ui.card import render_card
 from decoy.ui.output import OutputMode, emit_json, setup_output
 from decoy.ui.progress import spinner
@@ -46,9 +46,6 @@ See also: decoy validate.
 def run(
     config: Path = typer.Argument(
         ...,
-        exists=True,
-        dir_okay=False,
-        readable=True,
         help="Path to the YAML pipeline config.",
     ),
     mode: Mode = typer.Option(
@@ -107,6 +104,32 @@ def run(
     """
     state = setup_output(json_, quiet, verbose)
     config_str = str(config)
+
+    def _emit_config_error(message: str, fix: str) -> None:
+        if state.mode is OutputMode.json:
+            emit_json(
+                state,
+                {"command": "run", "status": "error", "config": config_str, "error": message},
+            )
+        elif state.mode is not OutputMode.quiet:
+            state.err_console.print(error("error:"), message)
+            state.err_console.print(" ", hint("hint:"), fix)
+
+    # CLI.* DX: give a styled, EXIT_USAGE (1) error for a bad config path
+    # instead of Typer's generic "Path does not exist" message, which also
+    # exited 2 (colliding with the deprecated-shim code).
+    if not config.exists():
+        _emit_config_error(
+            f"Config file not found: {config_str}",
+            "check the path, or run `decoy init <your.csv>` to scaffold a pipeline.",
+        )
+        raise typer.Exit(code=EXIT_USAGE)
+    if config.is_dir():
+        _emit_config_error(
+            f"Expected a YAML file, but {config_str} is a directory.",
+            "point `decoy run` at a .yaml pipeline file.",
+        )
+        raise typer.Exit(code=EXIT_USAGE)
 
     yaml_mode = _detect_mode(config) or mode.value
 

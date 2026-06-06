@@ -994,7 +994,7 @@ def _test_command(
         help="Enable debug-level CLI logs on stderr.",
     ),
 ) -> None:
-    """Preview the `storm scan` UX without scanning any data.
+    """Preview the `storm analyze` UX without scanning any data.
 
     Runs the stormy multistage animation for ~10 seconds (the default), then
     prints a clearly-marked fake summary card. No data is read; nothing is

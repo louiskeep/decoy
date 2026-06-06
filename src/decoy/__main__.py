@@ -26,7 +26,7 @@ Decoy -- data masking and synthetic generation CLI.
 
 Try one of:
   decoy demo                       30-second end-to-end walkthrough.
-  decoy storm scan data.csv        Profile a dataset for PII and risk.
+  decoy storm analyze data.csv     Profile a dataset for PII and risk.
   decoy run pipeline.yaml          Run a masking or generation pipeline.
   decoy validate pipeline.yaml     Check a YAML pipeline before running.
   decoy init                       Scaffold a starter pipeline interactively.

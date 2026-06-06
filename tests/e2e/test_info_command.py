@@ -25,7 +25,7 @@ def test_info_default_renders_banner_with_version_and_quickstart():
     assert result.exit_code == 0
     assert __version__ in result.stdout
     # Quick-start hints surfaced from the banner.
-    assert "decoy storm scan" in result.stdout
+    assert "decoy storm analyze" in result.stdout
     assert "decoy demo" in result.stdout
     assert "decoy templates list" in result.stdout
 

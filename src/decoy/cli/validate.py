@@ -42,9 +42,6 @@ See also: decoy run.
 def validate(
     config: Path = typer.Argument(
         ...,
-        exists=True,
-        dir_okay=False,
-        readable=True,
         help="Path to the YAML pipeline config to validate.",
     ),
     json_: bool = typer.Option(
@@ -90,6 +87,27 @@ def validate(
         elif state.mode is not OutputMode.quiet:
             state.err_console.print(error("error:"), f"Invalid config: {message}")
             state.err_console.print(" ", hint("hint:"), "see `decoy validate --help` for the expected schema.")
+
+    # CLI.* DX: styled, EXIT_USAGE (1) error for a bad path, instead of
+    # Typer's generic "Path does not exist" (which also exited 2).
+    if not config.exists() or config.is_dir():
+        what = "is a directory" if config.is_dir() else "was not found"
+        if state.mode is OutputMode.json:
+            emit_json(
+                state,
+                {
+                    "command": "validate",
+                    "status": "error",
+                    "config": config_str,
+                    "error": f"Config file {what}.",
+                },
+            )
+        elif state.mode is not OutputMode.quiet:
+            state.err_console.print(error("error:"), f"Config file {what}: {config_str}")
+            state.err_console.print(
+                " ", hint("hint:"), "check the path, or run `decoy init <your.csv>` to scaffold a pipeline."
+            )
+        raise typer.Exit(code=EXIT_USAGE)
 
     try:
         raw = _yaml.safe_load(config.read_text(encoding="utf-8"))
