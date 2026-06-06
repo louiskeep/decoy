@@ -111,6 +111,12 @@ def validate(
 
     try:
         raw = _yaml.safe_load(config.read_text(encoding="utf-8"))
+    except OSError as exc:
+        # Removing Typer's readable=True means an existing-but-unreadable file
+        # (e.g. a permission error) reaches here; emit a styled error instead
+        # of letting the OSError escape as a raw traceback.
+        _emit_error(f"the config file could not be read ({exc.strerror or exc}).")
+        raise typer.Exit(code=EXIT_USAGE)
     except _yaml.YAMLError as exc:
         _emit_error(f"YAML parse error: {exc}")
         raise typer.Exit(code=EXIT_USAGE)
