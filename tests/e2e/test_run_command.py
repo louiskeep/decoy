@@ -192,6 +192,34 @@ def test_run_with_invalid_mode_fails(mask_config: Path):
     assert result.exit_code != 0
 
 
+def test_run_summary_names_tables(tmp_path: Path):
+    from decoy.cli.run import _run_summary
+
+    cfg = tmp_path / "p.yaml"
+    cfg.write_text("tables:\n  - name: customers\n  - name: orders\n", encoding="utf-8")
+    label = _run_summary(cfg, "mask")
+    assert "2 tables" in label
+    assert "customers" in label and "orders" in label
+
+
+def test_run_summary_single_table_is_singular(tmp_path: Path):
+    from decoy.cli.run import _run_summary
+
+    cfg = tmp_path / "p.yaml"
+    cfg.write_text("tables:\n  - name: only\n", encoding="utf-8")
+    label = _run_summary(cfg, "mask")
+    assert "1 table " in label and "only" in label
+
+
+def test_run_summary_falls_back_on_bad_yaml(tmp_path: Path):
+    from decoy.cli.run import _run_summary
+
+    cfg = tmp_path / "p.yaml"
+    cfg.write_text(": : not : valid : :\n", encoding="utf-8")
+    # Best-effort label: never raises, returns the plain fallback.
+    assert _run_summary(cfg, "mask") == "Running mask..."
+
+
 # --------------------------------------------------------------------------
 # Generate path end-to-end
 # --------------------------------------------------------------------------

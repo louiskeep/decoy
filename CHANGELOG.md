@@ -10,6 +10,9 @@ version numbers follow the [versioning policy](docs/release/versioning.md).
 
 ### Added
 
+- `decoy run` progress line now names the tables and count (e.g. "Running
+  mask on 3 tables (customers, orders, payments)...") so a long run shows
+  scale and activity instead of a contextless spinner.
 - OSS.3 packaging metadata: PyPI Trove classifiers, keywords, project
   URLs, and the distribution rename to `decoy-cli` (per Q-OSS-1 RESOLVED
   2026-06-01). The import package + console script + the `decoy-engine`

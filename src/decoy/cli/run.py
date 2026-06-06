@@ -43,6 +43,33 @@ See also: decoy validate.
 """
 
 
+def _run_summary(config: Path, yaml_mode: str) -> str:
+    """Build a descriptive spinner label naming the tables being processed.
+
+    A bare "Running mask..." gives no sense of scale on a long run; naming the
+    tables and count tells the operator what is happening and that the process
+    is not frozen. Best-effort: falls back to the plain label on any parse
+    error (the real validation happens inside the run).
+    """
+    try:
+        import yaml as _yaml
+
+        raw = _yaml.safe_load(config.read_text(encoding="utf-8")) or {}
+        names = [
+            t.get("name")
+            for t in (raw.get("tables") or [])
+            if isinstance(t, dict) and t.get("name")
+        ]
+    except Exception:
+        names = []
+    count = len(names)
+    if count == 0:
+        return f"Running {yaml_mode}..."
+    shown = ", ".join(str(n) for n in names[:3]) + (", ..." if count > 3 else "")
+    noun = "table" if count == 1 else "tables"
+    return f"Running {yaml_mode} on {count} {noun} ({shown})..."
+
+
 def run(
     config: Path = typer.Argument(
         ...,
@@ -137,7 +164,7 @@ def run(
 
     started = time.perf_counter()
     try:
-        with spinner(state, f"Running {yaml_mode}..."):
+        with spinner(state, _run_summary(config, yaml_mode)):
             from decoy_engine import (
                 PipelineConfig,
                 compile_plan,
