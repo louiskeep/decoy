@@ -19,6 +19,9 @@ version numbers follow the [versioning policy](docs/release/versioning.md).
 
 ### Changed
 
+- Cloud sources/targets (S3, GCS) moved to an optional `decoy-cli[cloud]`
+  extra; the default install is lean (local CSV/Parquet only). Using a cloud
+  source or target without the extra raises a clear install-the-extra error.
 - License: flipped from BUSL-1.1 to Apache-2.0 (free, OSI-approved open
   source), matching `decoy-engine`. `LICENSE.md` (BUSL) is replaced by
   `LICENSE` (Apache) + `NOTICE`. Commercial value lives in the separate

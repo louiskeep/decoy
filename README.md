@@ -20,6 +20,16 @@ pip install decoy-cli
 This installs the `decoy` console script and pulls in `decoy-engine` as a
 dependency. Python 3.10, 3.11, and 3.12 are supported.
 
+The default install is lean: it covers local files (CSV, Parquet). To read or
+write masked data from cloud object storage (S3 or GCS), add the `cloud` extra:
+
+```
+pip install 'decoy-cli[cloud]'
+```
+
+Without it, a cloud source or target fails with a clear message telling you to
+install the extra.
+
 ## Quickstart
 
 Run the bundled demo (no config, no setup) to see a full mask + report

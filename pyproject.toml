@@ -68,6 +68,14 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+# Cloud object storage (S3 / GCS) sources and targets. Opt in with:
+#   pip install 'decoy-cli[cloud]'
+# Pulls the engine's cloud extra (boto3 + google-cloud-storage). The default
+# install stays lean for the common local-file case; without this extra a
+# cloud source/target raises a clear install-the-extra error.
+cloud = [
+    "decoy-engine[cloud]>=0.1.0",
+]
 dev = [
     "pytest>=7.0.0",
 ]
