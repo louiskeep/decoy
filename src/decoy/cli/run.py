@@ -128,6 +128,17 @@ def run(
         min=1,
         help="Rows per chunk in --chunked mode.",
     ),
+    substrate: str = typer.Option(
+        None,
+        "--substrate",
+        help=(
+            "Execution substrate: pandas or polars. Default keeps each "
+            "path's existing behavior (plain runs resolve DECOY_SUBSTRATE, "
+            "default polars; --chunked runs default pandas). Cross-substrate "
+            "outputs are value-equal; CSV bytes may differ only via Arrow "
+            "type-width drift, which CSV does not carry."
+        ),
+    ),
     key_label: str = typer.Option(
         None,
         "--key-label",
@@ -192,7 +203,9 @@ def run(
             # follow-up sprint can swap in the engine's unified entry.
             tables_list = config_dict.get("tables") or []
             all_generate = bool(tables_list) and all(
-                isinstance(t, dict) and t.get("generate_columns") and not t.get("columns")
+                isinstance(t, dict)
+                and t.get("generate_columns")
+                and not t.get("columns")
                 for t in tables_list
             )
             # Audit H11 (2026-06-12): mixed mask+generate configs used to
@@ -204,7 +217,9 @@ def run(
             any_generate = any(
                 isinstance(t, dict) and t.get("generate_columns") for t in tables_list
             )
-            any_mask = any(isinstance(t, dict) and t.get("columns") for t in tables_list)
+            any_mask = any(
+                isinstance(t, dict) and t.get("columns") for t in tables_list
+            )
             if any_generate and any_mask:
                 raise _MixedConfigError(
                     "config mixes mask tables (columns:) and generate tables "
@@ -224,7 +239,7 @@ def run(
                 )
                 _write_generate_outputs(config_dict, tables, config.parent)
             elif chunked:
-                _run_chunked_mask(config_dict, config.parent, chunk_size)
+                _run_chunked_mask(config_dict, config.parent, chunk_size, substrate)
             else:
                 # mask is the default.
                 job_seed = (config_dict.get("global_settings") or {}).get("seed")
@@ -249,7 +264,7 @@ def run(
                     graph = RelationshipGraph(edges=(), ordering=())
 
                 sources = _load_sources_from_config(config_dict, config.parent)
-                adapter = select_execution_adapter()
+                adapter = select_execution_adapter(substrate=substrate)
                 result = adapter.run(
                     plan,
                     sources,
@@ -276,7 +291,12 @@ def run(
             EXIT_USAGE
             if isinstance(
                 exc,
-                (PlanCompileError, PipelineValidationError, ConfigError, _MixedConfigError),
+                (
+                    PlanCompileError,
+                    PipelineValidationError,
+                    ConfigError,
+                    _MixedConfigError,
+                ),
             )
             else EXIT_RUNTIME
         )
@@ -301,7 +321,9 @@ def run(
             )
         elif state.mode is not OutputMode.quiet:
             state.err_console.print(error("error:"), error_text)
-            state.err_console.print(" ", hint("hint:"), "rerun with --verbose for the full traceback.")
+            state.err_console.print(
+                " ", hint("hint:"), "rerun with --verbose for the full traceback."
+            )
         if state.verbose:
             state.err_console.print_exception()
         raise typer.Exit(code=_exit_code)
@@ -337,7 +359,9 @@ def run(
     )
 
 
-def _build_resolver(master_key_hex: str | None, key_label: str | None, raw_cfg: dict | None, state):
+def _build_resolver(
+    master_key_hex: str | None, key_label: str | None, raw_cfg: dict | None, state
+):
     """Construct the engine-facing ``derive_key`` resolver, or None when no
     master key was supplied. Keeps the legacy seeded fallback default so
     runs without a key behave exactly as before."""
@@ -367,6 +391,7 @@ def _build_resolver(master_key_hex: str | None, key_label: str | None, raw_cfg: 
         )
 
     from decoy_engine import make_key_resolver
+
     return make_key_resolver(master, label)
 
 
@@ -408,7 +433,9 @@ def _detect_mode(raw_cfg: dict | None) -> str | None:
 def _next_hint_for_run(raw_cfg: dict | None, mode: "Mode") -> str | None:
     """Best-effort follow-up hint based on the YAML's output path."""
     try:
-        out = raw_cfg.get("output", {}).get("path") if isinstance(raw_cfg, dict) else None
+        out = (
+            raw_cfg.get("output", {}).get("path") if isinstance(raw_cfg, dict) else None
+        )
         if out:
             return f"head {out}"
     except Exception:
@@ -416,20 +443,31 @@ def _next_hint_for_run(raw_cfg: dict | None, mode: "Mode") -> str | None:
     return None
 
 
-def _run_chunked_mask(config_dict: dict, base_dir: Path, chunk_size: int) -> None:
+def _run_chunked_mask(
+    config_dict: dict, base_dir: Path, chunk_size: int, substrate: str | None = None
+) -> None:
     """WS4 chunked mask path: stream each mask table's CSV source through
     `decoy_engine.run_mask_pipeline_chunked` and append output per chunk.
 
     The engine's `check_chunked_compatibility` rejects anything that is
     not value-keyed (PlanCompileError -> EXIT_USAGE via the H10 typed
     dispatch), so a chunked run that starts is guaranteed byte-identical
-    to a plain run of the same config. CSV sources only in v1."""
+    to a plain run of the same config. CSV sources only in v1.
+
+    `substrate` None keeps the chunked default (pandas, the byte-stable
+    contract this mode shipped with); an explicit value selects the
+    adapter via the engine's `select_execution_adapter`."""
     import pandas as pd
     import pyarrow as pa
 
     from decoy_engine import __version__ as engine_version
     from decoy_engine import run_mask_pipeline_chunked
+    from decoy_engine.execution import select_execution_adapter
     from decoy_engine.plan import PlanCompileError
+
+    adapter = (
+        select_execution_adapter(substrate=substrate) if substrate is not None else None
+    )
 
     sources = config_dict.get("sources") or {}
     targets = config_dict.get("targets") or {}
@@ -456,7 +494,11 @@ def _run_chunked_mask(config_dict: dict, base_dir: Path, chunk_size: int) -> Non
         chunks = (pa.Table.from_pandas(df, preserve_index=False) for df in reader)
         first = True
         for masked in run_mask_pipeline_chunked(
-            config_dict, chunks, table=name, engine_version=engine_version
+            config_dict,
+            chunks,
+            table=name,
+            engine_version=engine_version,
+            adapter=adapter,
         ):
             masked.to_pandas().to_csv(
                 out_path, index=False, header=first, mode="w" if first else "a"
