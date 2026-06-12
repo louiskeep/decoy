@@ -58,13 +58,17 @@ _SAFE = [
 
 
 class TestRunChunked:
-    def test_chunked_output_is_byte_identical_to_plain_run(self, tmp_path: Path) -> None:
+    def test_chunked_output_is_byte_identical_to_plain_run(
+        self, tmp_path: Path
+    ) -> None:
         cfg = _pipeline(tmp_path, _SAFE)
         assert runner.invoke(app, ["run", str(cfg)]).exit_code == 0
         plain = (tmp_path / "out.csv").read_bytes()
         (tmp_path / "out.csv").unlink()
 
-        result = runner.invoke(app, ["run", str(cfg), "--chunked", "--chunk-size", "33"])
+        result = runner.invoke(
+            app, ["run", str(cfg), "--chunked", "--chunk-size", "33"]
+        )
         assert result.exit_code == 0, result.output
         assert (tmp_path / "out.csv").read_bytes() == plain
 
@@ -86,3 +90,82 @@ class TestRunChunked:
         cfg = _pipeline(tmp_path, _SAFE)
         result = runner.invoke(app, ["run", str(cfg), "--chunked", "--chunk-size", "0"])
         assert result.exit_code != 0
+
+    def test_deterministic_faker_chunked_matches_plain_run(
+        self, tmp_path: Path
+    ) -> None:
+        """Deferred follow-up 2: deterministic faker with an explicit
+        pool_size is admitted in chunked mode with byte parity."""
+        columns = [
+            {
+                "name": "email",
+                "strategy": "faker",
+                "provider": "person_email",
+                "deterministic": True,
+                "namespace": "email_ns",
+                "provider_config": {"pool_size": 25},
+            },
+            {"name": "ssn", "strategy": "hash", "namespace": "ssn_ns"},
+        ]
+        cfg = _pipeline(tmp_path, columns)
+        assert runner.invoke(app, ["run", str(cfg)]).exit_code == 0
+        plain = (tmp_path / "out.csv").read_bytes()
+        (tmp_path / "out.csv").unlink()
+
+        result = runner.invoke(
+            app, ["run", str(cfg), "--chunked", "--chunk-size", "33"]
+        )
+        assert result.exit_code == 0, result.output
+        assert (tmp_path / "out.csv").read_bytes() == plain
+
+    def test_polars_substrate_matches_pandas_chunked(self, tmp_path: Path) -> None:
+        """--substrate polars streams through the polars adapter; CSV output
+        equals the pandas-chunked run (string columns carry no Arrow
+        type-width drift into CSV)."""
+        cfg = _pipeline(tmp_path, _SAFE)
+        assert (
+            runner.invoke(
+                app, ["run", str(cfg), "--chunked", "--chunk-size", "33"]
+            ).exit_code
+            == 0
+        )
+        pandas_out = (tmp_path / "out.csv").read_bytes()
+        (tmp_path / "out.csv").unlink()
+
+        result = runner.invoke(
+            app,
+            [
+                "run",
+                str(cfg),
+                "--chunked",
+                "--chunk-size",
+                "33",
+                "--substrate",
+                "polars",
+            ],
+        )
+        assert result.exit_code == 0, result.output
+        assert (tmp_path / "out.csv").read_bytes() == pandas_out
+
+    def test_invalid_substrate_rejected(self, tmp_path: Path) -> None:
+        cfg = _pipeline(tmp_path, _SAFE)
+        result = runner.invoke(
+            app, ["run", str(cfg), "--chunked", "--substrate", "duckdb"]
+        )
+        assert result.exit_code != 0
+        assert "substrate" in result.output.lower()
+
+    def test_faker_without_pool_size_exits_usage(self, tmp_path: Path) -> None:
+        columns = [
+            {
+                "name": "email",
+                "strategy": "faker",
+                "provider": "person_email",
+                "deterministic": True,
+                "namespace": "email_ns",
+            }
+        ]
+        cfg = _pipeline(tmp_path, columns)
+        result = runner.invoke(app, ["run", str(cfg), "--chunked"])
+        assert result.exit_code == EXIT_USAGE
+        assert "pool_size" in result.output

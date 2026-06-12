@@ -46,6 +46,10 @@ class _MixedConfigError(Exception):
     """Mixed mask+generate config; user error (exits EXIT_USAGE)."""
 
 
+class _VaultUsageError(Exception):
+    """--vault on a config that cannot vault; user error (exits EXIT_USAGE)."""
+
+
 def _load_raw_config(config_path: Path) -> dict | None:
     """Single defensive YAML parse for the pre-flight helpers.
 
@@ -116,7 +120,9 @@ def run(
             "Stream the source through the engine chunk-by-chunk (WS4). "
             "For mask configs whose every strategy is value-keyed "
             "(hash, fpe, redact, truncate, text_redact, date_shift, "
-            "bucketize); output is byte-identical to a plain run. "
+            "bucketize), plus faker/categorical when deterministic with "
+            "an explicit pool_size / categories declared in config; "
+            "output is byte-identical to a plain run. "
             "Use for inputs too large for memory."
         ),
     ),
@@ -125,6 +131,28 @@ def run(
         "--chunk-size",
         min=1,
         help="Rows per chunk in --chunked mode.",
+    ),
+    vault: Path = typer.Option(
+        None,
+        "--vault",
+        help=(
+            "Write the token vault (encrypted source-to-masked map for "
+            "vault: true columns) to this path. The vault plus the config "
+            "re-identify every vaulted value: store them separately and "
+            "never alongside the masked output. Needs the engine's vault "
+            "extra (cryptography)."
+        ),
+    ),
+    substrate: str = typer.Option(
+        None,
+        "--substrate",
+        help=(
+            "Execution substrate: pandas or polars. Default keeps each "
+            "path's existing behavior (plain runs resolve DECOY_SUBSTRATE, "
+            "default polars; --chunked runs default pandas). Cross-substrate "
+            "outputs are value-equal; CSV bytes may differ only via Arrow "
+            "type-width drift, which CSV does not carry."
+        ),
     ),
     key_label: str = typer.Option(
         None,
@@ -190,7 +218,9 @@ def run(
             # follow-up sprint can swap in the engine's unified entry.
             tables_list = config_dict.get("tables") or []
             all_generate = bool(tables_list) and all(
-                isinstance(t, dict) and t.get("generate_columns") and not t.get("columns")
+                isinstance(t, dict)
+                and t.get("generate_columns")
+                and not t.get("columns")
                 for t in tables_list
             )
             # Audit H11 (2026-06-12): mixed mask+generate configs used to
@@ -202,7 +232,9 @@ def run(
             any_generate = any(
                 isinstance(t, dict) and t.get("generate_columns") for t in tables_list
             )
-            any_mask = any(isinstance(t, dict) and t.get("columns") for t in tables_list)
+            any_mask = any(
+                isinstance(t, dict) and t.get("columns") for t in tables_list
+            )
             if any_generate and any_mask:
                 raise _MixedConfigError(
                     "config mixes mask tables (columns:) and generate tables "
@@ -210,6 +242,24 @@ def run(
                     "pipelines yet and would silently skip the generate "
                     "tables. Split into two pipeline files."
                 )
+
+            vault_writer = None
+            if vault is not None:
+                from decoy_engine import vault_writer_for_config
+                from decoy_engine.vault import iter_vault_columns
+
+                if all_generate:
+                    raise _VaultUsageError(
+                        "--vault applies to mask runs; generate configs have "
+                        "no source values to vault."
+                    )
+                if not iter_vault_columns(config_dict):
+                    raise _VaultUsageError(
+                        "--vault was passed but no column declares vault: true "
+                        "in this config. Add `vault: true` to the columns whose "
+                        "source values the vault should record."
+                    )
+                vault_writer = vault_writer_for_config(config_dict)
 
             if all_generate:
                 instance_locale = (config_dict.get("global_settings") or {}).get(
@@ -222,7 +272,9 @@ def run(
                 )
                 _write_generate_outputs(config_dict, tables, config.parent)
             elif chunked:
-                _run_chunked_mask(config_dict, config.parent, chunk_size)
+                _run_chunked_mask(
+                    config_dict, config.parent, chunk_size, substrate, vault_writer
+                )
             else:
                 # mask is the default.
                 job_seed = (config_dict.get("global_settings") or {}).get("seed")
@@ -247,7 +299,7 @@ def run(
                     graph = RelationshipGraph(edges=(), ordering=())
 
                 sources = _load_sources_from_config(config_dict, config.parent)
-                adapter = select_execution_adapter()
+                adapter = select_execution_adapter(substrate=substrate)
                 result = adapter.run(
                     plan,
                     sources,
@@ -255,7 +307,15 @@ def run(
                     relationship_graph=graph,
                     namespace_registry=ns_registry,
                 )
+                if vault_writer is not None:
+                    from decoy_engine.vault import collect_vault_entries
+
+                    vault_writer.add(
+                        collect_vault_entries(config_dict, sources, result.outputs)
+                    )
                 _write_mask_outputs(config_dict, result, config.parent)
+            if vault_writer is not None:
+                vault_writer.write(vault)
     except typer.Exit:
         # CLI QA fix (2026-06-02, F7): an inner call site that raises
         # typer.Exit (e.g. a library that vendored Typer) has already
@@ -274,7 +334,13 @@ def run(
             EXIT_USAGE
             if isinstance(
                 exc,
-                (PlanCompileError, PipelineValidationError, ConfigError, _MixedConfigError),
+                (
+                    PlanCompileError,
+                    PipelineValidationError,
+                    ConfigError,
+                    _MixedConfigError,
+                    _VaultUsageError,
+                ),
             )
             else EXIT_RUNTIME
         )
@@ -299,7 +365,9 @@ def run(
             )
         elif state.mode is not OutputMode.quiet:
             state.err_console.print(error("error:"), error_text)
-            state.err_console.print(" ", hint("hint:"), "rerun with --verbose for the full traceback.")
+            state.err_console.print(
+                " ", hint("hint:"), "rerun with --verbose for the full traceback."
+            )
         if state.verbose:
             state.err_console.print_exception()
         raise typer.Exit(code=_exit_code)
@@ -335,7 +403,9 @@ def run(
     )
 
 
-def _build_resolver(master_key_hex: str | None, key_label: str | None, raw_cfg: dict | None, state):
+def _build_resolver(
+    master_key_hex: str | None, key_label: str | None, raw_cfg: dict | None, state
+):
     """Construct the engine-facing ``derive_key`` resolver, or None when no
     master key was supplied. Keeps the legacy seeded fallback default so
     runs without a key behave exactly as before."""
@@ -365,6 +435,7 @@ def _build_resolver(master_key_hex: str | None, key_label: str | None, raw_cfg: 
         )
 
     from decoy_engine import make_key_resolver
+
     return make_key_resolver(master, label)
 
 
@@ -406,7 +477,9 @@ def _detect_mode(raw_cfg: dict | None) -> str | None:
 def _next_hint_for_run(raw_cfg: dict | None, mode: "Mode") -> str | None:
     """Best-effort follow-up hint based on the YAML's output path."""
     try:
-        out = raw_cfg.get("output", {}).get("path") if isinstance(raw_cfg, dict) else None
+        out = (
+            raw_cfg.get("output", {}).get("path") if isinstance(raw_cfg, dict) else None
+        )
         if out:
             return f"head {out}"
     except Exception:
@@ -414,20 +487,40 @@ def _next_hint_for_run(raw_cfg: dict | None, mode: "Mode") -> str | None:
     return None
 
 
-def _run_chunked_mask(config_dict: dict, base_dir: Path, chunk_size: int) -> None:
-    """WS4 chunked mask path: stream each mask table's CSV source through
-    `decoy_engine.run_mask_pipeline_chunked` and append output per chunk.
+def _run_chunked_mask(
+    config_dict: dict,
+    base_dir: Path,
+    chunk_size: int,
+    substrate: str | None = None,
+    vault_writer=None,
+) -> None:
+    """WS4 chunked mask path: stream each mask table's source through
+    `decoy_engine.run_mask_pipeline_chunked`, writing output per chunk.
 
     The engine's `check_chunked_compatibility` rejects anything that is
     not value-keyed (PlanCompileError -> EXIT_USAGE via the H10 typed
     dispatch), so a chunked run that starts is guaranteed byte-identical
-    to a plain run of the same config. CSV sources only in v1."""
-    import pandas as pd
-    import pyarrow as pa
+    to a plain run of the same config for CSV targets. Parquet targets
+    are VALUE-equal to a plain run; their file bytes are stable for a
+    fixed (chunk_size, pyarrow version) but not across chunk sizes,
+    because each chunk writes one row group.
 
+    Formats: CSV and parquet, on either side independently (suffix
+    picks the reader/writer, mirroring the plain path's free mixing).
+    Parquet reads stream via ParquetFile.iter_batches; CSV reads keep
+    the dtype=str contract of the plain path, so a csv -> parquet run
+    produces an all-string schema.
+
+    `substrate` None keeps the chunked default (pandas, the byte-stable
+    contract this mode shipped with); an explicit value selects the
+    adapter via the engine's `select_execution_adapter`."""
     from decoy_engine import __version__ as engine_version
     from decoy_engine import run_mask_pipeline_chunked
-    from decoy_engine.plan import PlanCompileError
+    from decoy_engine.execution import select_execution_adapter
+
+    adapter = (
+        select_execution_adapter(substrate=substrate) if substrate is not None else None
+    )
 
     sources = config_dict.get("sources") or {}
     targets = config_dict.get("targets") or {}
@@ -440,26 +533,70 @@ def _run_chunked_mask(config_dict: dict, base_dir: Path, chunk_size: int) -> Non
         if not isinstance(src_spec, dict) or not isinstance(src_spec.get("path"), str):
             continue
         src_path = _resolve_path(src_spec["path"], base_dir)
-        if src_path.suffix.lower() == ".parquet":
-            raise PlanCompileError(
-                code="chunked_format_unsupported",
-                path=f"sources.{name}",
-                message="--chunked reads CSV sources only in v1; parquet streaming is a follow-up.",
-            )
         if not isinstance(tgt_spec, dict) or not isinstance(tgt_spec.get("path"), str):
             continue
         out_path = _resolve_path(tgt_spec["path"], base_dir)
 
-        reader = pd.read_csv(src_path, dtype=str, chunksize=chunk_size)
-        chunks = (pa.Table.from_pandas(df, preserve_index=False) for df in reader)
-        first = True
-        for masked in run_mask_pipeline_chunked(
-            config_dict, chunks, table=name, engine_version=engine_version
-        ):
-            masked.to_pandas().to_csv(
-                out_path, index=False, header=first, mode="w" if first else "a"
-            )
-            first = False
+        masked_iter = run_mask_pipeline_chunked(
+            config_dict,
+            _iter_source_chunks(src_path, chunk_size),
+            table=name,
+            engine_version=engine_version,
+            adapter=adapter,
+            vault_writer=vault_writer,
+        )
+        _write_chunked_output(masked_iter, out_path, src_path)
+
+
+def _iter_source_chunks(src_path: Path, chunk_size: int):
+    """Yield pa.Tables of at most `chunk_size` rows from a CSV or parquet file.
+
+    Parquet batches can come back SHORTER than chunk_size at row-group
+    boundaries; that is fine and must stay fine -- chunked output is
+    chunking-invariant by the engine's parity contract, so nobody should
+    "fix" the short batches by re-buffering.
+    """
+    import pandas as pd
+    import pyarrow as pa
+
+    if src_path.suffix.lower() == ".parquet":
+        import pyarrow.parquet as pq
+
+        parquet_file = pq.ParquetFile(str(src_path))
+        for batch in parquet_file.iter_batches(batch_size=chunk_size):
+            yield pa.Table.from_batches([batch])
+        return
+    for df in pd.read_csv(src_path, dtype=str, chunksize=chunk_size):
+        yield pa.Table.from_pandas(df, preserve_index=False)
+
+
+def _write_chunked_output(masked_iter, out_path: Path, src_path: Path) -> None:
+    """Stream masked chunks to `out_path`, format picked by its suffix."""
+    if out_path.suffix.lower() == ".parquet":
+        import pyarrow.parquet as pq
+
+        writer = None
+        try:
+            for masked in masked_iter:
+                if writer is None:
+                    writer = pq.ParquetWriter(str(out_path), masked.schema)
+                writer.write_table(masked)
+            if writer is None and src_path.suffix.lower() == ".parquet":
+                # Empty parquet source: emit a valid zero-row file with the
+                # source schema, matching what a plain run writes. (An empty
+                # CSV source writes nothing, same as the CSV target path.)
+                schema = pq.ParquetFile(str(src_path)).schema_arrow
+                writer = pq.ParquetWriter(str(out_path), schema)
+        finally:
+            if writer is not None:
+                writer.close()
+        return
+    first = True
+    for masked in masked_iter:
+        masked.to_pandas().to_csv(
+            out_path, index=False, header=first, mode="w" if first else "a"
+        )
+        first = False
 
 
 def _resolve_path(raw_path: str, base_dir: Path) -> Path:

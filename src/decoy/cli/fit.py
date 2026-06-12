@@ -40,6 +40,11 @@ Examples:
     Capture the (state, tier) contingency table so a statistical column
     can use `condition_on`.
 
+  decoy fit customers.csv --epsilon 1.0
+    Differentially private release: Laplace noise on every snapshot
+    count (OpenDP/SmartNoise histogram mechanism). The budget is per
+    column histogram; incompatible with --joint in v1.
+
 See also: decoy run, decoy validate.
 """
 
@@ -67,6 +72,16 @@ def fit(
         [],
         "--joint",
         help="Column pair 'a,b' whose contingency table to capture (repeatable). Needed for `condition_on`.",
+    ),
+    epsilon: float = typer.Option(
+        None,
+        "--epsilon",
+        help=(
+            "Differentially private release: per-column Laplace noise on "
+            "all snapshot counts; exact quantiles/means are removed. The "
+            "budget is PER COLUMN HISTOGRAM (k columns compose to ~k*epsilon "
+            "total). Incompatible with --joint in v1."
+        ),
     ),
     json_: bool = typer.Option(
         False,
@@ -100,7 +115,12 @@ def fit(
         if state.mode is OutputMode.json:
             emit_json(
                 state,
-                {"command": "fit", "status": "error", "source": str(source), "error": message},
+                {
+                    "command": "fit",
+                    "status": "error",
+                    "source": str(source),
+                    "error": message,
+                },
             )
         elif state.mode is not OutputMode.quiet:
             state.err_console.print(error("error:"), message)
@@ -112,6 +132,14 @@ def fit(
             _emit_error(f"--joint expects 'colA,colB'; got {spec!r}.")
             raise typer.Exit(code=EXIT_USAGE)
         joint_pairs.append((parts[0], parts[1]))
+
+    if epsilon is not None and joint_pairs:
+        _emit_error(
+            "--epsilon with --joint is not supported in v1: releasing "
+            "marginals plus joint tables under one epsilon needs composition "
+            "accounting. Drop --joint or omit --epsilon."
+        )
+        raise typer.Exit(code=EXIT_USAGE)
 
     import pandas as pd
 
@@ -129,6 +157,15 @@ def fit(
         raise typer.Exit(code=EXIT_USAGE)
 
     snapshot = compute_distribution_snapshot(df, joint_columns=joint_pairs or None)
+
+    if epsilon is not None:
+        from decoy_engine.quality.dp import DpError, apply_dp_noise
+
+        try:
+            snapshot = apply_dp_noise(snapshot, epsilon=epsilon)
+        except DpError as exc:
+            _emit_error(f"{exc.code}: {exc.message}")
+            raise typer.Exit(code=EXIT_USAGE)
 
     out_path = output if output is not None else source.with_suffix(".snapshot.json")
     out_path.write_text(json.dumps(snapshot, indent=1), encoding="utf-8")

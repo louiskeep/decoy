@@ -69,8 +69,10 @@ $ decoy run [OPTIONS] CONFIG
 * `-q, --quiet`: Suppress stdout. Errors still go to stderr; exit code carries success.
 * `-v, --verbose`: Enable debug-level CLI logs on stderr.
 * `--master-key TEXT`: 64-char hex master key for keyed deterministic masking. Same key + same --key-label always yield bitwise-identical output across runs and machines. Reads DECOY_MASTER_KEY env var when omitted; without either, masking falls back to the legacy seeded path (per-input deterministic but not portable).  [env var: DECOY_MASTER_KEY]
-* `--chunked`: Stream the source through the engine chunk-by-chunk (WS4). For mask configs whose every strategy is value-keyed (hash, fpe, redact, truncate, text_redact, date_shift, bucketize); output is byte-identical to a plain run. Use for inputs too large for memory.
+* `--chunked`: Stream the source through the engine chunk-by-chunk (WS4). For mask configs whose every strategy is value-keyed (hash, fpe, redact, truncate, text_redact, date_shift, bucketize), plus faker/categorical when deterministic with an explicit pool_size / categories declared in config; output is byte-identical to a plain run. Use for inputs too large for memory.
 * `--chunk-size INTEGER RANGE`: Rows per chunk in --chunked mode.  [default: 100000; x&gt;=1]
+* `--vault PATH`: Write the token vault (encrypted source-to-masked map for vault: true columns) to this path. The vault plus the config re-identify every vaulted value: store them separately and never alongside the masked output. Needs the engine&#x27;s vault extra (cryptography).
+* `--substrate TEXT`: Execution substrate: pandas or polars. Default keeps each path&#x27;s existing behavior (plain runs resolve DECOY_SUBSTRATE, default polars; --chunked runs default pandas). Cross-substrate outputs are value-equal; CSV bytes may differ only via Arrow type-width drift, which CSV does not carry.
 * `--key-label TEXT`: Stable namespace string for the masking key hierarchy. Required when --master-key is set. Pick something durable (e.g. &#x27;customers_q4&#x27;); changing it produces a different masked output. Read from the YAML&#x27;s top-level &#x27;key_label:&#x27; field if not passed on the command line.
 * `--help`: Show this message and exit.
 
@@ -150,6 +152,7 @@ $ decoy unmask [OPTIONS] CONFIG MASKED
 
 * `--table TEXT`: Which config table the masked file belongs to. Required when the config masks more than one table.
 * `-o, --output PATH`: Where to write the recovered CSV. Default: &lt;masked&gt;.unmasked.csv next to the input.
+* `--vault FILE`: Vault file the mask run wrote (decoy run --vault). Recovers one-way columns declared vault: true; decrypts under the config&#x27;s seed.
 * `--json`: Emit a structured JSON result on stdout. Errors still go to stderr.
 * `-q, --quiet`: Suppress stdout. Errors still go to stderr; exit code carries the result.
 * `-v, --verbose`: Enable debug-level CLI logs on stderr.
@@ -169,9 +172,15 @@ Examples:
   decoy unmask pipeline.yaml masked.csv --json
     Emit the per-column reversibility report as JSON.
 
-Only `strategy: fpe` columns are reversible; hash, redact, faker and
-the other one-way strategies are reported irreversible and pass
-through unchanged. The config carries the seed: treat it as a key.
+  decoy unmask pipeline.yaml masked.csv --vault vault.bin
+    Also recover one-way columns the mask run vaulted
+    (decoy run ... --vault vault.bin with vault: true columns).
+
+Only `strategy: fpe` columns reverse from the config alone; hash,
+redact, faker and the other one-way strategies pass through unchanged
+unless the column was vaulted at mask time. The config carries the
+seed: treat it as a key; the vault file is a re-identification map,
+store it separately from the masked output.
 
 See also: decoy run, decoy explain strategies.
 
@@ -201,6 +210,7 @@ $ decoy fit [OPTIONS] SOURCE
 * `-o, --output PATH`: Where to write the snapshot JSON. Default: &lt;source&gt;.snapshot.json.
 * `--parse-dates TEXT`: Column(s) to parse as datetimes (repeatable). CSV carries no dtype, so date columns must be named explicitly.
 * `--joint TEXT`: Column pair &#x27;a,b&#x27; whose contingency table to capture (repeatable). Needed for `condition_on`.
+* `--epsilon FLOAT`: Differentially private release: per-column Laplace noise on all snapshot counts; exact quantiles/means are removed. The budget is PER COLUMN HISTOGRAM (k columns compose to ~k*epsilon total). Incompatible with --joint in v1.
 * `--json`: Emit a structured JSON result on stdout.
 * `-q, --quiet`: Suppress stdout. Exit code carries the result.
 * `-v, --verbose`: Enable debug-level CLI logs on stderr.
@@ -217,6 +227,11 @@ Examples:
   decoy fit customers.csv --joint state,tier
     Capture the (state, tier) contingency table so a statistical column
     can use `condition_on`.
+
+  decoy fit customers.csv --epsilon 1.0
+    Differentially private release: Laplace noise on every snapshot
+    count (OpenDP/SmartNoise histogram mechanism). The budget is per
+    column histogram; incompatible with --joint in v1.
 
 See also: decoy run, decoy validate.
 
