@@ -264,3 +264,48 @@ def test_run_rejects_v1_masking_rules_shape(tmp_path: Path):
     p.write_text(yaml.dump(cfg), encoding="utf-8")
     result = runner.invoke(app, ["run", str(p)])
     assert result.exit_code != 0
+
+
+class TestExitCodeDispatch:
+    """Audit H10 (2026-06-12): run/demo previously collapsed every
+    exception into EXIT_RUNTIME(3), so callers could not distinguish a
+    bad config from an engine crash. Typed engine config errors now exit
+    EXIT_USAGE(1) per the exit_codes.py contract."""
+
+    def test_compile_error_exits_usage(self, tmp_path, sample_csv):
+        # faker on a non-poolable provider compiles to a PlanCompileError
+        # at run's compile_plan step (engine row 11).
+        cfg = {
+            "version": 1,
+            "global_settings": {"seed": 1},
+            "sources": {"t": {"type": "file", "format": "csv", "path": str(sample_csv)}},
+            "tables": [
+                {
+                    "name": "t",
+                    "columns": [{"name": "email", "strategy": "faker", "provider": "uuid"}],
+                }
+            ],
+            "targets": {
+                "t": {"type": "file", "format": "csv", "path": str(tmp_path / "out.csv")}
+            },
+        }
+        config_path = tmp_path / "bad.yaml"
+        config_path.write_text(yaml.safe_dump(cfg), encoding="utf-8")
+        result = runner.invoke(app, ["run", str(config_path)])
+        assert result.exit_code == 1, result.output
+
+    def test_runtime_error_still_exits_runtime(self, tmp_path):
+        # Source file missing -> not a config error -> EXIT_RUNTIME(3).
+        cfg = {
+            "version": 1,
+            "global_settings": {"seed": 1},
+            "sources": {"t": {"type": "file", "format": "csv", "path": str(tmp_path / "nope.csv")}},
+            "tables": [{"name": "t", "columns": [{"name": "a", "strategy": "redact"}]}],
+            "targets": {
+                "t": {"type": "file", "format": "csv", "path": str(tmp_path / "out.csv")}
+            },
+        }
+        config_path = tmp_path / "missing-src.yaml"
+        config_path.write_text(yaml.safe_dump(cfg), encoding="utf-8")
+        result = runner.invoke(app, ["run", str(config_path)])
+        assert result.exit_code == 3, result.output

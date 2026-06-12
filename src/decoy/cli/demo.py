@@ -21,7 +21,7 @@ from pathlib import Path
 
 import typer
 
-from decoy.cli.exit_codes import EXIT_RUNTIME
+from decoy.cli.exit_codes import EXIT_RUNTIME, EXIT_USAGE
 from decoy.ui.card import render_card
 from decoy.ui.output import OutputMode, OutputState, emit_json, setup_output
 from decoy.ui.theme import accent, code, error, hint, success
@@ -746,6 +746,17 @@ def _demo(
         # CLI QA fix (2026-06-02, F7): preserve inner typer.Exit codes.
         raise
     except Exception as exc:
+        # Audit H10 (2026-06-12): dispatch on exception type so scripts
+        # can tell "your config is wrong" (EXIT_USAGE, per the
+        # exit_codes.py contract) from "the run blew up" (EXIT_RUNTIME).
+        from decoy_engine import ConfigError, PipelineValidationError
+        from decoy_engine.plan import PlanCompileError
+
+        _exit_code = (
+            EXIT_USAGE
+            if isinstance(exc, (PlanCompileError, PipelineValidationError, ConfigError))
+            else EXIT_RUNTIME
+        )
         # CLI QA fix (2026-06-02, F8): truncate the error message at
         # 500 chars before emitting through --json.
         error_text = str(exc)
@@ -761,7 +772,7 @@ def _demo(
             state.err_console.print(" ", hint("hint:"), "rerun with --verbose for the full traceback.")
         if state.verbose:
             state.err_console.print_exception()
-        raise typer.Exit(code=EXIT_RUNTIME)
+        raise typer.Exit(code=_exit_code)
 
     if exit_code != 0:
         raise typer.Exit(code=exit_code)

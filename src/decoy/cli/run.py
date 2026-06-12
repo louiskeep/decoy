@@ -18,7 +18,7 @@ from typing import Any
 
 import typer
 
-from decoy.cli.exit_codes import EXIT_RUNTIME
+from decoy.cli.exit_codes import EXIT_RUNTIME, EXIT_USAGE
 from decoy.ui.card import render_card
 from decoy.ui.output import OutputMode, emit_json, setup_output
 from decoy.ui.progress import spinner
@@ -200,6 +200,18 @@ def run(
         # EXIT_RUNTIME catch-all below.
         raise
     except Exception as exc:
+        # Audit H10 (2026-06-12): dispatch on exception type so scripts
+        # can tell "your config is wrong" (EXIT_USAGE, per the
+        # exit_codes.py contract) from "the run blew up" (EXIT_RUNTIME).
+        # Imported lazily to keep the engine import off the help path.
+        from decoy_engine import ConfigError, PipelineValidationError
+        from decoy_engine.plan import PlanCompileError
+
+        _exit_code = (
+            EXIT_USAGE
+            if isinstance(exc, (PlanCompileError, PipelineValidationError, ConfigError))
+            else EXIT_RUNTIME
+        )
         # CLI QA fix (2026-06-02, F8): cap the error message at 500
         # chars before emitting through --json. Engine exceptions can
         # quote source-row content verbatim (pandas / pyarrow); without
@@ -224,7 +236,7 @@ def run(
             state.err_console.print(" ", hint("hint:"), "rerun with --verbose for the full traceback.")
         if state.verbose:
             state.err_console.print_exception()
-        raise typer.Exit(code=EXIT_RUNTIME)
+        raise typer.Exit(code=_exit_code)
 
     elapsed = time.perf_counter() - started
 
