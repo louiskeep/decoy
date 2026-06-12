@@ -7,6 +7,8 @@ Try one of:
   decoy storm analyze data.csv     Profile a dataset for PII and risk.
   decoy run pipeline.yaml          Run a masking or generation pipeline.
   decoy validate pipeline.yaml     Check a YAML pipeline before running.
+  decoy unmask pipeline.yaml masked.csv   Recover fpe columns from a masked file.
+  decoy fit source.csv             Fit a distribution snapshot for statistical generation.
   decoy init                       Scaffold a starter pipeline interactively.
   decoy templates list             Browse bundled pipeline templates.
   decoy explain modes              Plain-English topic help. `explain` lists topics.
@@ -31,6 +33,8 @@ $ decoy [OPTIONS] COMMAND [ARGS]...
 
 * `run`: Run a decoy pipeline from a YAML config.
 * `validate`: Validate a decoy pipeline config without...
+* `unmask`: Recover fpe-masked columns from a masked...
+* `fit`: Fit a distribution-snapshot/v1 artifact...
 * `init`: Scaffold a starter pipeline YAML through a...
 * `demo`: Walk through scan -&gt; mask on a bundled...
 * `explain`: Explain a Decoy concept in plain English.
@@ -65,6 +69,8 @@ $ decoy run [OPTIONS] CONFIG
 * `-q, --quiet`: Suppress stdout. Errors still go to stderr; exit code carries success.
 * `-v, --verbose`: Enable debug-level CLI logs on stderr.
 * `--master-key TEXT`: 64-char hex master key for keyed deterministic masking. Same key + same --key-label always yield bitwise-identical output across runs and machines. Reads DECOY_MASTER_KEY env var when omitted; without either, masking falls back to the legacy seeded path (per-input deterministic but not portable).  [env var: DECOY_MASTER_KEY]
+* `--chunked`: Stream the source through the engine chunk-by-chunk (WS4). For mask configs whose every strategy is value-keyed (hash, fpe, redact, truncate, text_redact, date_shift, bucketize); output is byte-identical to a plain run. Use for inputs too large for memory.
+* `--chunk-size INTEGER RANGE`: Rows per chunk in --chunked mode.  [default: 100000; x&gt;=1]
 * `--key-label TEXT`: Stable namespace string for the masking key hierarchy. Required when --master-key is set. Pick something durable (e.g. &#x27;customers_q4&#x27;); changing it produces a different masked output. Read from the YAML&#x27;s top-level &#x27;key_label:&#x27; field if not passed on the command line.
 * `--help`: Show this message and exit.
 
@@ -117,6 +123,102 @@ Examples:
     Stay silent on success; exit code carries the result.
 
 See also: decoy run.
+
+
+## `decoy unmask`
+
+Recover fpe-masked columns from a masked file using the pipeline config.
+
+Reverses every `strategy: fpe` column (format-preserving encryption is
+a keyed bijection; the key derives from the config&#x27;s seed + namespace).
+Other strategies are one-way and pass through unchanged with an
+`irreversible` report entry. Exits 0 on success, 1 on a config/usage
+error, 3 on a runtime failure.
+
+**Usage**:
+
+```console
+$ decoy unmask [OPTIONS] CONFIG MASKED
+```
+
+**Arguments**:
+
+* `CONFIG`: The pipeline config the mask run used (carries seed + namespaces).  [required]
+* `MASKED`: The masked CSV produced by `decoy run` for one table.  [required]
+
+**Options**:
+
+* `--table TEXT`: Which config table the masked file belongs to. Required when the config masks more than one table.
+* `-o, --output PATH`: Where to write the recovered CSV. Default: &lt;masked&gt;.unmasked.csv next to the input.
+* `--json`: Emit a structured JSON result on stdout. Errors still go to stderr.
+* `-q, --quiet`: Suppress stdout. Errors still go to stderr; exit code carries the result.
+* `-v, --verbose`: Enable debug-level CLI logs on stderr.
+* `--help`: Show this message and exit.
+
+Examples:
+
+  decoy unmask pipeline.yaml masked.csv
+    Recover fpe columns into masked.unmasked.csv.
+
+  decoy unmask pipeline.yaml masked.csv --output recovered.csv
+    Choose the output path.
+
+  decoy unmask pipeline.yaml masked.csv --table accounts
+    Disambiguate when the config masks more than one table.
+
+  decoy unmask pipeline.yaml masked.csv --json
+    Emit the per-column reversibility report as JSON.
+
+Only `strategy: fpe` columns are reversible; hash, redact, faker and
+the other one-way strategies are reported irreversible and pass
+through unchanged. The config carries the seed: treat it as a key.
+
+See also: decoy run, decoy explain strategies.
+
+
+## `decoy fit`
+
+Fit a distribution-snapshot/v1 artifact for statistical generation.
+
+Reads the source CSV, captures per-column distribution shape (numeric
+histograms + quantiles, categorical top-k, datetime year bins) plus
+any requested pairwise contingency tables, and writes the JSON
+artifact `type: statistical` generate columns reference via
+`snapshot_file`. Exits 0 on success, 1 on bad input.
+
+**Usage**:
+
+```console
+$ decoy fit [OPTIONS] SOURCE
+```
+
+**Arguments**:
+
+* `SOURCE`: Source CSV to fit the distribution snapshot from.  [required]
+
+**Options**:
+
+* `-o, --output PATH`: Where to write the snapshot JSON. Default: &lt;source&gt;.snapshot.json.
+* `--parse-dates TEXT`: Column(s) to parse as datetimes (repeatable). CSV carries no dtype, so date columns must be named explicitly.
+* `--joint TEXT`: Column pair &#x27;a,b&#x27; whose contingency table to capture (repeatable). Needed for `condition_on`.
+* `--json`: Emit a structured JSON result on stdout.
+* `-q, --quiet`: Suppress stdout. Exit code carries the result.
+* `-v, --verbose`: Enable debug-level CLI logs on stderr.
+* `--help`: Show this message and exit.
+
+Examples:
+
+  decoy fit customers.csv
+    Write customers.snapshot.json next to the source.
+
+  decoy fit customers.csv --output snapshot.json --parse-dates signup_date
+    Treat signup_date as a datetime column.
+
+  decoy fit customers.csv --joint state,tier
+    Capture the (state, tier) contingency table so a statistical column
+    can use `condition_on`.
+
+See also: decoy run, decoy validate.
 
 
 ## `decoy init`
