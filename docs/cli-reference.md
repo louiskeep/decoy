@@ -84,7 +84,9 @@ See also: decoy validate.
 Validate a decoy pipeline config without running it.
 
 Use this in CI or before a long run to fail fast on a bad YAML. Exits 0
-on a well-formed config, 1 on a parse / schema error.
+on a well-formed config, 1 on a parse / schema error or a config-level
+plan-compile error (unknown provider, non-poolable provider on the
+faker/pool path, missing deterministic namespace).
 
 **Usage**:
 
