@@ -8,9 +8,13 @@ top-level). Both broke import at runtime. The `_is_graph_yaml` helper +
 its branch handled a V1-only `mode: graph` value the V2 schema rejects
 at the model layer; deleted.
 
-The V2 choke point is `decoy_engine.PipelineConfig.model_validate(dict)`.
-Validates as a single typed step; the cli-product-flow.md doc names it
-as the validation contract (line 139).
+The V2 choke point is `decoy_engine.PipelineConfig.model_validate(dict)`
+followed by `decoy_engine.run_config_only_checks(dict)` (audit H5,
+2026-06-12). Schema validation alone green-lit configs that were
+guaranteed to crash at `decoy run` (e.g. `strategy: faker` on a
+non-poolable provider); the config-only checks are the profile-free
+subset of run's plan-compile checks, so validate now rejects exactly
+what run would reject without needing source data.
 """
 
 from pathlib import Path
@@ -68,12 +72,20 @@ def validate(
     """Validate a decoy pipeline config without running it.
 
     Use this in CI or before a long run to fail fast on a bad YAML. Exits 0
-    on a well-formed config, 1 on a parse / schema error.
+    on a well-formed config, 1 on a parse / schema error or a config-level
+    plan-compile error (unknown provider, non-poolable provider on the
+    faker/pool path, missing deterministic namespace).
     """
     state = setup_output(json_, quiet, verbose)
     config_str = str(config)
 
-    from decoy_engine import ConfigError, PipelineConfig, PipelineValidationError
+    from decoy_engine import (
+        ConfigError,
+        PipelineConfig,
+        PipelineValidationError,
+        run_config_only_checks,
+    )
+    from decoy_engine.plan import PlanCompileError
     from pydantic import ValidationError
 
     def _emit_error(message: str) -> None:
@@ -117,10 +129,25 @@ def validate(
         _emit_error(str(exc))
         raise typer.Exit(code=EXIT_USAGE)
 
+    # Audit H5: profile-free plan-compile checks. Strict subset of what
+    # `decoy run` enforces, so a config rejected here was guaranteed to
+    # fail at run; a config accepted here can still fail run's
+    # profile-dependent checks (capacity, null-bearing ints).
+    try:
+        checks_run = run_config_only_checks(raw)
+    except PlanCompileError as exc:
+        _emit_error(f"{exc.code}: {exc.message}")
+        raise typer.Exit(code=EXIT_USAGE)
+
     if state.mode is OutputMode.json:
         emit_json(
             state,
-            {"command": "validate", "status": "ok", "config": config_str},
+            {
+                "command": "validate",
+                "status": "ok",
+                "config": config_str,
+                "checks_run": list(checks_run),
+            },
         )
         return
 
