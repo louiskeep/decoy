@@ -46,6 +46,10 @@ class _MixedConfigError(Exception):
     """Mixed mask+generate config; user error (exits EXIT_USAGE)."""
 
 
+class _VaultUsageError(Exception):
+    """--vault on a config that cannot vault; user error (exits EXIT_USAGE)."""
+
+
 def _load_raw_config(config_path: Path) -> dict | None:
     """Single defensive YAML parse for the pre-flight helpers.
 
@@ -127,6 +131,17 @@ def run(
         "--chunk-size",
         min=1,
         help="Rows per chunk in --chunked mode.",
+    ),
+    vault: Path = typer.Option(
+        None,
+        "--vault",
+        help=(
+            "Write the token vault (encrypted source-to-masked map for "
+            "vault: true columns) to this path. The vault plus the config "
+            "re-identify every vaulted value: store them separately and "
+            "never alongside the masked output. Needs the engine's vault "
+            "extra (cryptography)."
+        ),
     ),
     substrate: str = typer.Option(
         None,
@@ -228,6 +243,24 @@ def run(
                     "tables. Split into two pipeline files."
                 )
 
+            vault_writer = None
+            if vault is not None:
+                from decoy_engine import vault_writer_for_config
+                from decoy_engine.vault import iter_vault_columns
+
+                if all_generate:
+                    raise _VaultUsageError(
+                        "--vault applies to mask runs; generate configs have "
+                        "no source values to vault."
+                    )
+                if not iter_vault_columns(config_dict):
+                    raise _VaultUsageError(
+                        "--vault was passed but no column declares vault: true "
+                        "in this config. Add `vault: true` to the columns whose "
+                        "source values the vault should record."
+                    )
+                vault_writer = vault_writer_for_config(config_dict)
+
             if all_generate:
                 instance_locale = (config_dict.get("global_settings") or {}).get(
                     "default_locale"
@@ -239,7 +272,9 @@ def run(
                 )
                 _write_generate_outputs(config_dict, tables, config.parent)
             elif chunked:
-                _run_chunked_mask(config_dict, config.parent, chunk_size, substrate)
+                _run_chunked_mask(
+                    config_dict, config.parent, chunk_size, substrate, vault_writer
+                )
             else:
                 # mask is the default.
                 job_seed = (config_dict.get("global_settings") or {}).get("seed")
@@ -272,7 +307,15 @@ def run(
                     relationship_graph=graph,
                     namespace_registry=ns_registry,
                 )
+                if vault_writer is not None:
+                    from decoy_engine.vault import collect_vault_entries
+
+                    vault_writer.add(
+                        collect_vault_entries(config_dict, sources, result.outputs)
+                    )
                 _write_mask_outputs(config_dict, result, config.parent)
+            if vault_writer is not None:
+                vault_writer.write(vault)
     except typer.Exit:
         # CLI QA fix (2026-06-02, F7): an inner call site that raises
         # typer.Exit (e.g. a library that vendored Typer) has already
@@ -296,6 +339,7 @@ def run(
                     PipelineValidationError,
                     ConfigError,
                     _MixedConfigError,
+                    _VaultUsageError,
                 ),
             )
             else EXIT_RUNTIME
@@ -444,7 +488,11 @@ def _next_hint_for_run(raw_cfg: dict | None, mode: "Mode") -> str | None:
 
 
 def _run_chunked_mask(
-    config_dict: dict, base_dir: Path, chunk_size: int, substrate: str | None = None
+    config_dict: dict,
+    base_dir: Path,
+    chunk_size: int,
+    substrate: str | None = None,
+    vault_writer=None,
 ) -> None:
     """WS4 chunked mask path: stream each mask table's source through
     `decoy_engine.run_mask_pipeline_chunked`, writing output per chunk.
@@ -495,6 +543,7 @@ def _run_chunked_mask(
             table=name,
             engine_version=engine_version,
             adapter=adapter,
+            vault_writer=vault_writer,
         )
         _write_chunked_output(masked_iter, out_path, src_path)
 

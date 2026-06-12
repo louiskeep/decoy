@@ -39,9 +39,15 @@ Examples:
   decoy unmask pipeline.yaml masked.csv --json
     Emit the per-column reversibility report as JSON.
 
-Only `strategy: fpe` columns are reversible; hash, redact, faker and
-the other one-way strategies are reported irreversible and pass
-through unchanged. The config carries the seed: treat it as a key.
+  decoy unmask pipeline.yaml masked.csv --vault vault.bin
+    Also recover one-way columns the mask run vaulted
+    (decoy run ... --vault vault.bin with vault: true columns).
+
+Only `strategy: fpe` columns reverse from the config alone; hash,
+redact, faker and the other one-way strategies pass through unchanged
+unless the column was vaulted at mask time. The config carries the
+seed: treat it as a key; the vault file is a re-identification map,
+store it separately from the masked output.
 
 See also: decoy run, decoy explain strategies.
 """
@@ -72,6 +78,18 @@ def unmask(
         "--output",
         "-o",
         help="Where to write the recovered CSV. Default: <masked>.unmasked.csv next to the input.",
+    ),
+    vault: Path | None = typer.Option(
+        None,
+        "--vault",
+        exists=True,
+        dir_okay=False,
+        readable=True,
+        help=(
+            "Vault file the mask run wrote (decoy run --vault). Recovers "
+            "one-way columns declared vault: true; decrypts under the "
+            "config's seed."
+        ),
     ),
     json_: bool = typer.Option(
         False,
@@ -123,7 +141,9 @@ def unmask(
         _emit_error(f"YAML parse error: {exc}")
         raise typer.Exit(code=EXIT_USAGE)
     if not isinstance(raw, dict):
-        _emit_error(f"Pipeline YAML must be a YAML mapping (object), not {type(raw).__name__}.")
+        _emit_error(
+            f"Pipeline YAML must be a YAML mapping (object), not {type(raw).__name__}."
+        )
         raise typer.Exit(code=EXIT_USAGE)
 
     mask_tables = [
@@ -164,9 +184,15 @@ def unmask(
         raise typer.Exit(code=EXIT_USAGE)
 
     try:
-        result = unmask_pipeline(raw, {target_table: pa.Table.from_pandas(df, preserve_index=False)})
+        result = unmask_pipeline(
+            raw,
+            {target_table: pa.Table.from_pandas(df, preserve_index=False)},
+            vault_path=str(vault) if vault is not None else None,
+        )
     except (ExecutionError, PlanCompileError, ConfigError) as exc:
-        _emit_error(f"{getattr(exc, 'code', type(exc).__name__)}: {getattr(exc, 'message', exc)}")
+        _emit_error(
+            f"{getattr(exc, 'code', type(exc).__name__)}: {getattr(exc, 'message', exc)}"
+        )
         raise typer.Exit(code=EXIT_USAGE)
     except Exception as exc:  # runtime failure, not a usage problem
         _emit_error(f"unmask failed: {type(exc).__name__}: {exc}"[:500])
@@ -204,14 +230,18 @@ def unmask(
         return
 
     reversed_count = sum(1 for e in entries if e["status"] == "reversed")
-    state.console.print(success("OK"), code(str(out_path)))
-    state.console.print(
+    vault_reversed_count = sum(1 for e in entries if e["status"] == "vault_reversed")
+    summary = (
         f"  {reversed_count} column(s) reversed, "
         f"{sum(1 for e in entries if e['status'] == 'irreversible')} irreversible, "
         f"{sum(1 for e in entries if e['status'] == 'untouched')} untouched."
     )
+    if vault is not None:
+        summary = summary[:-1] + f", {vault_reversed_count} vault-reversed."
+    state.console.print(success("OK"), code(str(out_path)))
+    state.console.print(summary)
     for e in entries:
-        if e["status"] == "reversed" and e["detail"]:
+        if e["status"] in ("reversed", "vault_reversed", "vault_miss") and e["detail"]:
             state.console.print(" ", warn("note:"), f"{e['column']}: {e['detail']}")
 
 
