@@ -16,9 +16,19 @@ version numbers follow the [versioning policy](docs/release/versioning.md).
   dependency are unchanged.
 - This `CHANGELOG.md` itself, plus the `docs/release/versioning.md`
   semver policy doc.
+- **Generated CLI reference** (`docs/cli-reference.md`, produced by
+  `python -m typer decoy.__main__ utils docs`). A
+  `tests/unit/test_cli_surface.py` drift guard fails CI when the command or
+  flag surface changes without the reference being regenerated.
 
 ### Changed
 
+- Help-text accuracy pass: root and `storm test` help no longer reference the
+  old `storm scan` verb (now `storm analyze`); the `templates` help example no
+  longer shows the removed `graph` template; `explain modes` help no longer
+  lists the removed `convert`/`graph` modes; `explain transforms` notes the full
+  12-strategy set instead of claiming "eight"; `CODEMAP.md` drops the removed
+  `forecast` command / `forecast.py`.
 - PyPI distribution name: `decoy` -> `decoy-cli` (Q-OSS-1). Existing
   `pip install decoy` continues to work today (the bare name is still
   reserved, just not pursued as a launch-blocker); future installs

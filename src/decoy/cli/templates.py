@@ -51,8 +51,8 @@ Examples:
   decoy templates show pci > pipeline.yaml
     Save the PCI template directly to a file.
 
-  decoy templates show graph > graph.yaml
-    Save the graph template, then validate it with `decoy validate graph.yaml`.
+  decoy templates show hipaa > pipeline.yaml
+    Save the HIPAA template, then validate it with `decoy validate pipeline.yaml`.
 
 See also: decoy templates list, decoy init.
 """
