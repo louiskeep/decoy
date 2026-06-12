@@ -10,6 +10,14 @@ version numbers follow the [versioning policy](docs/release/versioning.md).
 
 ### Added (capability gaps, 2026-06-12)
 
+- **`decoy run --chunked [--chunk-size N]`** (streaming). Streams each
+  mask table's CSV source through the engine chunk-by-chunk (default
+  100k rows) for inputs too large for memory; output is byte-identical
+  to a plain run. Only value-keyed strategies qualify (hash, fpe,
+  redact, truncate, text_redact, date_shift, bucketize); anything else
+  exits 1 with the engine's typed rejection before any rows process.
+  CSV sources only in v1.
+
 - **`decoy fit` verb** (statistical synthesis). Fits a
   distribution-snapshot/v1 artifact from a source CSV
   (`--parse-dates` for datetime columns, repeatable `--joint a,b` for

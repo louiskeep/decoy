@@ -109,6 +109,23 @@ def run(
             "legacy seeded path (per-input deterministic but not portable)."
         ),
     ),
+    chunked: bool = typer.Option(
+        False,
+        "--chunked",
+        help=(
+            "Stream the source through the engine chunk-by-chunk (WS4). "
+            "For mask configs whose every strategy is value-keyed "
+            "(hash, fpe, redact, truncate, text_redact, date_shift, "
+            "bucketize); output is byte-identical to a plain run. "
+            "Use for inputs too large for memory."
+        ),
+    ),
+    chunk_size: int = typer.Option(
+        100_000,
+        "--chunk-size",
+        min=1,
+        help="Rows per chunk in --chunked mode.",
+    ),
     key_label: str = typer.Option(
         None,
         "--key-label",
@@ -204,6 +221,8 @@ def run(
                     instance_default_locale=instance_locale,
                 )
                 _write_generate_outputs(config_dict, tables, config.parent)
+            elif chunked:
+                _run_chunked_mask(config_dict, config.parent, chunk_size)
             else:
                 # mask is the default.
                 job_seed = (config_dict.get("global_settings") or {}).get("seed")
@@ -393,6 +412,54 @@ def _next_hint_for_run(raw_cfg: dict | None, mode: "Mode") -> str | None:
     except Exception:
         pass
     return None
+
+
+def _run_chunked_mask(config_dict: dict, base_dir: Path, chunk_size: int) -> None:
+    """WS4 chunked mask path: stream each mask table's CSV source through
+    `decoy_engine.run_mask_pipeline_chunked` and append output per chunk.
+
+    The engine's `check_chunked_compatibility` rejects anything that is
+    not value-keyed (PlanCompileError -> EXIT_USAGE via the H10 typed
+    dispatch), so a chunked run that starts is guaranteed byte-identical
+    to a plain run of the same config. CSV sources only in v1."""
+    import pandas as pd
+    import pyarrow as pa
+
+    from decoy_engine import __version__ as engine_version
+    from decoy_engine import run_mask_pipeline_chunked
+    from decoy_engine.plan import PlanCompileError
+
+    sources = config_dict.get("sources") or {}
+    targets = config_dict.get("targets") or {}
+    for table_entry in config_dict.get("tables") or []:
+        if not isinstance(table_entry, dict) or not table_entry.get("columns"):
+            continue
+        name = table_entry.get("name")
+        src_spec = sources.get(name) if isinstance(sources, dict) else None
+        tgt_spec = targets.get(name) if isinstance(targets, dict) else None
+        if not isinstance(src_spec, dict) or not isinstance(src_spec.get("path"), str):
+            continue
+        src_path = _resolve_path(src_spec["path"], base_dir)
+        if src_path.suffix.lower() == ".parquet":
+            raise PlanCompileError(
+                code="chunked_format_unsupported",
+                path=f"sources.{name}",
+                message="--chunked reads CSV sources only in v1; parquet streaming is a follow-up.",
+            )
+        if not isinstance(tgt_spec, dict) or not isinstance(tgt_spec.get("path"), str):
+            continue
+        out_path = _resolve_path(tgt_spec["path"], base_dir)
+
+        reader = pd.read_csv(src_path, dtype=str, chunksize=chunk_size)
+        chunks = (pa.Table.from_pandas(df, preserve_index=False) for df in reader)
+        first = True
+        for masked in run_mask_pipeline_chunked(
+            config_dict, chunks, table=name, engine_version=engine_version
+        ):
+            masked.to_pandas().to_csv(
+                out_path, index=False, header=first, mode="w" if first else "a"
+            )
+            first = False
 
 
 def _resolve_path(raw_path: str, base_dir: Path) -> Path:
