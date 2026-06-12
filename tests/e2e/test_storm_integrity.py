@@ -161,3 +161,47 @@ def test_integrity_quiet_suppresses_stdout(clean_pair: tuple[Path, Path]):
     )
     assert result.exit_code == 0
     assert result.stdout == ""
+
+
+class TestExitFourReachable:
+    """Audit H6/C1 (2026-06-12): with the pre-fix engine, `storm
+    integrity` could never exit 4 in the no-config path -- residual-PII
+    findings capped at 'warning' and real output==source leaks on
+    faker-family strategies classified 'info'. The README's documented
+    contract ('exit 4 on residual PII') is now reachable: a masked file
+    that IS the source must fail."""
+
+    def test_identical_masked_file_exits_findings(self, tmp_path):
+        import pandas as pd
+
+        src = tmp_path / "source.csv"
+        pd.DataFrame(
+            {"email": [f"user{i}@realmail.com" for i in range(50)]}
+        ).to_csv(src, index=False)
+        masked = tmp_path / "masked.csv"
+        masked.write_bytes(src.read_bytes())  # mask "ran" but changed nothing
+
+        result = runner.invoke(
+            app, ["storm", "integrity", str(masked), "--source", str(src), "--json"]
+        )
+        assert result.exit_code == EXIT_FINDINGS, result.output
+        payload = _json.loads(result.output)
+        severities = [f["severity"] for f in payload["report"]["residual_pii"]]
+        assert "fail" in severities
+
+    def test_properly_masked_file_exits_zero(self, tmp_path):
+        import pandas as pd
+
+        src = tmp_path / "source.csv"
+        pd.DataFrame(
+            {"email": [f"user{i}@realmail.com" for i in range(50)]}
+        ).to_csv(src, index=False)
+        masked = tmp_path / "masked.csv"
+        pd.DataFrame(
+            {"email": [f"fake{i}@masked.example" for i in range(50)]}
+        ).to_csv(masked, index=False)
+
+        result = runner.invoke(
+            app, ["storm", "integrity", str(masked), "--source", str(src), "--json"]
+        )
+        assert result.exit_code == 0, result.output
