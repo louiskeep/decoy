@@ -1,15 +1,18 @@
+# x-derived-from-disguise: pci@2026-06-12
 # pci -- PCI DSS card-data masking.
 #
 # Covers the cardholder data elements that PCI DSS forbids storing in
-# the clear: PAN, cardholder name, expiration date, CVV/CVC. PAN is
-# replaced with a synthetic PAN provider to preserve format; CVV is
-# redacted entirely (must never be retained per PCI DSS req 3.2).
+# the clear: PAN, cardholder name, expiration date, CVV/CVC. Strategies
+# are derived from the engine's PCI disguise
+# (decoy_engine/disguises/pci.yaml, version 2026-06-12) -- the canonical
+# legal-correspondence artifact -- and a drift-guard test fails if this
+# template falls out of step with it.
 #
-# V2 PipelineConfig shape per decoy-engine `decoy_engine.config._pipeline`.
-# Provider names come from the engine's default registry (see
-# `decoy_engine.providers.get_default_registry`).
-# CLI.3 (2026-06-02) rewrite: replaces V1 `version: '1.0'` +
-# `masking_rules:` shape.
+# PAN uses format-preserving encryption with Luhn-valid output: the
+# masked number keeps the real PAN's length and digit shape, passes
+# checksum validation in downstream systems, and the same source PAN
+# always maps to the same masked PAN (deterministic join survival).
+# CVV is redacted entirely (must never be retained per PCI DSS req 3.2).
 
 version: 1
 
@@ -29,10 +32,14 @@ tables:
         strategy: faker
         provider: person_name
 
-      # Primary Account Number -- format-preserving synthetic PAN.
+      # Primary Account Number -- format-preserving encryption,
+      # Luhn-valid output.
       - name: card_number
-        strategy: faker
-        provider: synthetic_pan
+        strategy: fpe
+        namespace: pan_identity
+        provider_config:
+          charset: digits
+          validate_luhn: true
 
       - name: card_expiry
         strategy: redact
@@ -41,20 +48,32 @@ tables:
       - name: cvv
         strategy: redact
 
+      # ZIP keeps the first 3 digits (coarse geography for fraud
+      # analytics without a full address).
       - name: billing_zip
-        strategy: redact
+        strategy: truncate
+        provider_config:
+          length: 3
 
       - name: email
         strategy: faker
         provider: person_email
 
-      # Transaction id stays linkable across systems via the deterministic
-      # masking envelope (HKDF-derived).
+      # Transaction id stays linkable across systems: hash is keyed on
+      # derive(job_seed, namespace, value), so the same source id always
+      # maps to the same token. Works for any id format (uuid, int, ...).
       - name: transaction_id
-        strategy: faker
-        provider: uuid
-        deterministic: true
+        strategy: hash
         namespace: transaction_identity
+
+      # Dates more specific than needed for analytics shift by a keyed
+      # offset; same source date -> same shifted date.
+      - name: transaction_date
+        strategy: date_shift
+        namespace: transaction_dates
+        provider_config:
+          min_days: -30
+          max_days: 30
 
 targets:
   transactions:

@@ -1,15 +1,21 @@
+# x-derived-from-disguise: gdpr@2026-06-12
 # gdpr -- GDPR Article 4(1) personal-data masking.
 #
 # Aimed at the categories named in Recital 26 / Art 4(1): name, ID,
 # location, online identifier, plus the special-category data in
-# Art 9 (redact rather than pseudonymize). Tune for your Article 6
-# lawful basis.
+# Art 9 (redact rather than pseudonymize). Strategies are derived from
+# the engine's GDPR disguise (decoy_engine/disguises/gdpr.yaml, version
+# 2026-06-12) -- the canonical legal-correspondence artifact -- and a
+# drift-guard test fails if this template falls out of step with it.
+# Tune for your Article 6 lawful basis.
 #
-# V2 PipelineConfig shape per decoy-engine `decoy_engine.config._pipeline`.
-# Provider names come from the engine's default registry (see
-# `decoy_engine.providers.get_default_registry`).
-# CLI.3 (2026-06-02) rewrite: replaces V1 `version: '1.0'` +
-# `masking_rules:` shape.
+# Identifier coverage notes:
+#   ip_address: the disguise's canonical rule is faker ipv4; no ipv4
+#     provider exists in the default registry, so this template uses
+#     redact, which is strictly safer (documented drift-guard exception).
+#   device_id: pseudonymised per Art 4(5) via keyed hash -- the same
+#     device always maps to the same token, so device-level analytics
+#     survive without exposing the identifier.
 
 version: 1
 
@@ -36,23 +42,26 @@ tables:
         strategy: faker
         provider: person_phone
 
-      # Online identifiers
+      # Online identifiers (see header notes)
       - name: ip_address
         strategy: redact
       - name: user_agent
         strategy: redact
       - name: device_id
-        strategy: faker
-        provider: uuid
+        strategy: hash
+        namespace: device_identity
 
-      # Location
+      # Location. Postal code keeps the first 3 characters (coarse
+      # geography without a household-level identifier).
       - name: country
         strategy: passthrough
       - name: city
         strategy: faker
         provider: address_city
       - name: postal_code
-        strategy: redact
+        strategy: truncate
+        provider_config:
+          length: 3
 
       # National ID / passport -- redact, do not preserve.
       - name: national_id
