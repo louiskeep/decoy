@@ -69,7 +69,15 @@ class TestFit:
     def test_bad_joint_spec_exits_usage(self, tmp_path: Path) -> None:
         src = _source_csv(tmp_path)
         result = runner.invoke(
-            app, ["fit", str(src), "--output", str(tmp_path / "s.json"), "--joint", "only_one"]
+            app,
+            [
+                "fit",
+                str(src),
+                "--output",
+                str(tmp_path / "s.json"),
+                "--joint",
+                "only_one",
+            ],
         )
         assert result.exit_code == EXIT_USAGE
 
@@ -80,11 +88,50 @@ class TestFit:
         assert (tmp_path / "source.snapshot.json").exists()
 
 
+class TestFitEpsilon:
+    def test_epsilon_stamps_dp_metadata_and_removes_moments(
+        self, tmp_path: Path
+    ) -> None:
+        src = _source_csv(tmp_path)
+        out = tmp_path / "snapshot.json"
+        result = runner.invoke(
+            app, ["fit", str(src), "--output", str(out), "--epsilon", "1.0"]
+        )
+        assert result.exit_code == 0, result.output
+        snap = json.loads(out.read_text(encoding="utf-8"))
+        assert snap["dp"] == {
+            "epsilon": 1.0,
+            "mechanism": "laplace",
+            "sensitivity": 1,
+            "adjacency": "add-remove-one-row",
+            "scope": "per-column-histogram",
+        }
+        assert snap["schema_version"] == "distribution-snapshot/v1"
+        assert snap["columns"]["amount"]["stats"]["quantiles"] == {}
+
+    def test_epsilon_with_joint_exits_usage(self, tmp_path: Path) -> None:
+        src = _source_csv(tmp_path)
+        result = runner.invoke(
+            app, ["fit", str(src), "--epsilon", "1.0", "--joint", "state,joined"]
+        )
+        assert result.exit_code == EXIT_USAGE
+        assert "composition" in result.output
+
+    def test_invalid_epsilon_exits_usage(self, tmp_path: Path) -> None:
+        src = _source_csv(tmp_path)
+        result = runner.invoke(app, ["fit", str(src), "--epsilon", "0"])
+        assert result.exit_code == EXIT_USAGE
+        assert "dp_epsilon_invalid" in result.output
+
+
 class TestFitGenerateLoop:
     def test_fit_then_generate(self, tmp_path: Path) -> None:
         src = _source_csv(tmp_path)
         snap_path = tmp_path / "snapshot.json"
-        assert runner.invoke(app, ["fit", str(src), "--output", str(snap_path)]).exit_code == 0
+        assert (
+            runner.invoke(app, ["fit", str(src), "--output", str(snap_path)]).exit_code
+            == 0
+        )
 
         cfg = {
             "version": 1,

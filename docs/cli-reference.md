@@ -210,6 +210,7 @@ $ decoy fit [OPTIONS] SOURCE
 * `-o, --output PATH`: Where to write the snapshot JSON. Default: &lt;source&gt;.snapshot.json.
 * `--parse-dates TEXT`: Column(s) to parse as datetimes (repeatable). CSV carries no dtype, so date columns must be named explicitly.
 * `--joint TEXT`: Column pair &#x27;a,b&#x27; whose contingency table to capture (repeatable). Needed for `condition_on`.
+* `--epsilon FLOAT`: Differentially private release: per-column Laplace noise on all snapshot counts; exact quantiles/means are removed. The budget is PER COLUMN HISTOGRAM (k columns compose to ~k*epsilon total). Incompatible with --joint in v1.
 * `--json`: Emit a structured JSON result on stdout.
 * `-q, --quiet`: Suppress stdout. Exit code carries the result.
 * `-v, --verbose`: Enable debug-level CLI logs on stderr.
@@ -226,6 +227,11 @@ Examples:
   decoy fit customers.csv --joint state,tier
     Capture the (state, tier) contingency table so a statistical column
     can use `condition_on`.
+
+  decoy fit customers.csv --epsilon 1.0
+    Differentially private release: Laplace noise on every snapshot
+    count (OpenDP/SmartNoise histogram mechanism). The budget is per
+    column histogram; incompatible with --joint in v1.
 
 See also: decoy run, decoy validate.
 
