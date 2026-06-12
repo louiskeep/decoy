@@ -9,7 +9,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from importlib import resources
-from typing import Iterator
 
 
 @dataclass(frozen=True)
@@ -23,8 +22,8 @@ class Template:
 # the listing table and the `decoy init` preset prompt.
 _REGISTRY: tuple[tuple[str, str], ...] = (
     ("minimal", "Bare-bones masking: name / email / SSN. Smallest sensible starting point."),
-    ("hipaa", "HIPAA Safe Harbor coverage: 18 PHI identifiers mapped to faker / redact."),
-    ("pci", "PCI DSS card-data masking: PAN, CVV, cardholder name, expiration."),
+    ("hipaa", "HIPAA Safe Harbor: 18 PHI identifier categories via fpe / date_shift / faker / redact, derived from the engine HIPAA disguise."),
+    ("pci", "PCI DSS card-data masking: PAN via Luhn-valid format-preserving encryption, CVV redacted, deterministic transaction ids."),
     ("gdpr", "GDPR personal-data masking: name, email, phone, IP address, location."),
     ("generate", "Synthetic-data generation pipeline; no input file required."),
     # CLI.3 (2026-06-02): graph template removed. V1 `mode: graph` was

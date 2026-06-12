@@ -13,7 +13,7 @@ from rich.text import Text
 
 from decoy import __version__
 from decoy.ui.output import OutputState
-from decoy.ui.theme import accent, code, hint
+from decoy.ui.theme import code
 
 
 _ASCII_LOGO = r"""

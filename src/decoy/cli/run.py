@@ -14,11 +14,10 @@ import binascii
 import time
 from enum import Enum
 from pathlib import Path
-from typing import Any
 
 import typer
 
-from decoy.cli.exit_codes import EXIT_RUNTIME
+from decoy.cli.exit_codes import EXIT_RUNTIME, EXIT_USAGE
 from decoy.ui.card import render_card
 from decoy.ui.output import OutputMode, emit_json, setup_output
 from decoy.ui.progress import spinner
@@ -41,6 +40,29 @@ Examples:
 
 See also: decoy validate.
 """
+
+
+class _MixedConfigError(Exception):
+    """Mixed mask+generate config; user error (exits EXIT_USAGE)."""
+
+
+def _load_raw_config(config_path: Path) -> dict | None:
+    """Single defensive YAML parse for the pre-flight helpers.
+
+    Audit L3 (2026-06-12): the config was read + parsed up to 4x per
+    run (_detect_mode, _detect_key_label, the spinner body, the
+    follow-up hint) -- a perf cliff on large or network-mounted
+    configs. Helpers now share one parse; the spinner body still
+    re-raises real parse errors through its own load so the error
+    path is unchanged.
+    """
+    try:
+        import yaml
+
+        cfg = yaml.safe_load(config_path.read_text(encoding="utf-8"))
+        return cfg if isinstance(cfg, dict) else None
+    except Exception:
+        return None
 
 
 def run(
@@ -108,9 +130,10 @@ def run(
     state = setup_output(json_, quiet, verbose)
     config_str = str(config)
 
-    yaml_mode = _detect_mode(config) or mode.value
+    raw_cfg = _load_raw_config(config)
+    yaml_mode = _detect_mode(raw_cfg) or mode.value
 
-    resolver = _build_resolver(master_key, key_label, config, state)
+    resolver = _build_resolver(master_key, key_label, raw_cfg, state)
 
     started = time.perf_counter()
     try:
@@ -131,10 +154,14 @@ def run(
                 check_orphan_fk_policy_completeness,
             )
 
-            yaml_text = config.read_text(encoding="utf-8")
-            import yaml as _yaml
+            if raw_cfg is not None:
+                raw = raw_cfg
+            else:
+                # The defensive parse failed; re-parse here so the real
+                # YAML error surfaces through the normal error path.
+                import yaml as _yaml
 
-            raw = _yaml.safe_load(yaml_text)
+                raw = _yaml.safe_load(config.read_text(encoding="utf-8"))
             config_dict = PipelineConfig.model_validate(raw).model_dump()
 
             # FC-1 (2026-06-02): the top-level `mode:` field is gone; infer
@@ -149,6 +176,23 @@ def run(
                 isinstance(t, dict) and t.get("generate_columns") and not t.get("columns")
                 for t in tables_list
             )
+            # Audit H11 (2026-06-12): mixed mask+generate configs used to
+            # route through the mask path and SILENTLY DROP every
+            # generate-kind table (exit 0, "status": "ok", no output file
+            # for the generate tables). Until the engine's unified
+            # run_pipeline is wired here, reject mixed configs loudly
+            # instead of delivering partial output.
+            any_generate = any(
+                isinstance(t, dict) and t.get("generate_columns") for t in tables_list
+            )
+            any_mask = any(isinstance(t, dict) and t.get("columns") for t in tables_list)
+            if any_generate and any_mask:
+                raise _MixedConfigError(
+                    "config mixes mask tables (columns:) and generate tables "
+                    "(generate_columns:); `decoy run` does not support mixed "
+                    "pipelines yet and would silently skip the generate "
+                    "tables. Split into two pipeline files."
+                )
 
             if all_generate:
                 instance_locale = (config_dict.get("global_settings") or {}).get(
@@ -200,6 +244,21 @@ def run(
         # EXIT_RUNTIME catch-all below.
         raise
     except Exception as exc:
+        # Audit H10 (2026-06-12): dispatch on exception type so scripts
+        # can tell "your config is wrong" (EXIT_USAGE, per the
+        # exit_codes.py contract) from "the run blew up" (EXIT_RUNTIME).
+        # Imported lazily to keep the engine import off the help path.
+        from decoy_engine import ConfigError, PipelineValidationError
+        from decoy_engine.plan import PlanCompileError
+
+        _exit_code = (
+            EXIT_USAGE
+            if isinstance(
+                exc,
+                (PlanCompileError, PipelineValidationError, ConfigError, _MixedConfigError),
+            )
+            else EXIT_RUNTIME
+        )
         # CLI QA fix (2026-06-02, F8): cap the error message at 500
         # chars before emitting through --json. Engine exceptions can
         # quote source-row content verbatim (pandas / pyarrow); without
@@ -224,7 +283,7 @@ def run(
             state.err_console.print(" ", hint("hint:"), "rerun with --verbose for the full traceback.")
         if state.verbose:
             state.err_console.print_exception()
-        raise typer.Exit(code=EXIT_RUNTIME)
+        raise typer.Exit(code=_exit_code)
 
     elapsed = time.perf_counter() - started
 
@@ -252,12 +311,12 @@ def run(
             ("Mode", yaml_mode),
             ("Elapsed", f"{elapsed:.2f}s"),
         ],
-        next_hint=_next_hint_for_run(config, mode),
+        next_hint=_next_hint_for_run(raw_cfg, mode),
         status="ok",
     )
 
 
-def _build_resolver(master_key_hex: str | None, key_label: str | None, config_path: Path, state):
+def _build_resolver(master_key_hex: str | None, key_label: str | None, raw_cfg: dict | None, state):
     """Construct the engine-facing ``derive_key`` resolver, or None when no
     master key was supplied. Keeps the legacy seeded fallback default so
     runs without a key behave exactly as before."""
@@ -279,7 +338,7 @@ def _build_resolver(master_key_hex: str | None, key_label: str | None, config_pa
             f"--master-key must decode to 32 bytes (got {len(master)})."
         )
 
-    label = key_label or _detect_key_label(config_path)
+    label = key_label or _detect_key_label(raw_cfg)
     if not label:
         raise typer.BadParameter(
             "--master-key requires a --key-label (or top-level 'key_label:' "
@@ -290,22 +349,16 @@ def _build_resolver(master_key_hex: str | None, key_label: str | None, config_pa
     return make_key_resolver(master, label)
 
 
-def _detect_key_label(config_path: Path) -> str | None:
-    """Read the top-level ``key_label:`` from the YAML, or return None."""
-    try:
-        import yaml
-
-        cfg = yaml.safe_load(config_path.read_text(encoding="utf-8"))
-        if isinstance(cfg, dict):
-            label = cfg.get("key_label")
-            if isinstance(label, str) and label.strip():
-                return label.strip()
-    except Exception:
-        pass
+def _detect_key_label(raw_cfg: dict | None) -> str | None:
+    """Read the top-level ``key_label:`` from the parsed YAML, or None."""
+    if isinstance(raw_cfg, dict):
+        label = raw_cfg.get("key_label")
+        if isinstance(label, str) and label.strip():
+            return label.strip()
     return None
 
 
-def _detect_mode(config_path: Path) -> str | None:
+def _detect_mode(raw_cfg: dict | None) -> str | None:
     """Infer mode from the YAML's tables, or return None if not determinable.
 
     FC-1 (2026-06-02) dropped the top-level `mode:` field; the engine now
@@ -317,37 +370,24 @@ def _detect_mode(config_path: Path) -> str | None:
     workflow that touches the operator's source data). The choke-point
     validator still rejects malformed configs.
     """
-    try:
-        import yaml
-
-        cfg = yaml.safe_load(config_path.read_text(encoding="utf-8"))
-        if not isinstance(cfg, dict):
-            return None
-        tables = cfg.get("tables") or []
-        if not isinstance(tables, list):
-            return None
-        has_mask = any(
-            isinstance(t, dict) and t.get("columns") for t in tables
-        )
-        has_gen = any(
-            isinstance(t, dict) and t.get("generate_columns") for t in tables
-        )
-        if has_mask:
-            return "mask"
-        if has_gen:
-            return "generate"
-    except Exception:
-        pass
+    if not isinstance(raw_cfg, dict):
+        return None
+    tables = raw_cfg.get("tables") or []
+    if not isinstance(tables, list):
+        return None
+    has_mask = any(isinstance(t, dict) and t.get("columns") for t in tables)
+    has_gen = any(isinstance(t, dict) and t.get("generate_columns") for t in tables)
+    if has_mask:
+        return "mask"
+    if has_gen:
+        return "generate"
     return None
 
 
-def _next_hint_for_run(config: Path, mode: "Mode") -> str | None:
+def _next_hint_for_run(raw_cfg: dict | None, mode: "Mode") -> str | None:
     """Best-effort follow-up hint based on the YAML's output path."""
     try:
-        import yaml
-
-        cfg = yaml.safe_load(config.read_text(encoding="utf-8")) or {}
-        out = cfg.get("output", {}).get("path") if isinstance(cfg, dict) else None
+        out = raw_cfg.get("output", {}).get("path") if isinstance(raw_cfg, dict) else None
         if out:
             return f"head {out}"
     except Exception:

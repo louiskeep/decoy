@@ -7,7 +7,6 @@ Covers --json / --quiet / --verbose behavior on the existing `run` and
 from __future__ import annotations
 
 import json as _json
-import os
 import re
 from pathlib import Path
 

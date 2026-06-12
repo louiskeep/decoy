@@ -18,6 +18,7 @@ import yaml
 from typer.testing import CliRunner
 
 from decoy import __version__
+from decoy.cli.exit_codes import EXIT_USAGE
 from decoy.__main__ import app
 
 runner = CliRunner()
@@ -208,3 +209,52 @@ def test_validate_emits_json_envelope_on_error(tmp_path: Path):
     assert payload["command"] == "validate"
     assert payload["status"] == "error"
     assert "error" in payload
+
+
+class TestConfigOnlyPlanChecks:
+    """Audit H5 (2026-06-12): validate previously only schema-checked, so
+    configs guaranteed to crash at `decoy run` exited 0 (the broken
+    shipped templates validated green). validate now runs the engine's
+    profile-free plan-compile checks."""
+
+    def _write(self, tmp_path, columns):
+        import yaml as _y
+
+        cfg = {
+            "version": 1,
+            "global_settings": {"seed": 1},
+            "sources": {"t": {"type": "file", "format": "csv", "path": "./t.csv"}},
+            "tables": [{"name": "t", "columns": columns}],
+            "targets": {"t": {"type": "file", "format": "csv", "path": "./t_masked.csv"}},
+        }
+        p = tmp_path / "cfg.yaml"
+        p.write_text(_y.safe_dump(cfg), encoding="utf-8")
+        return p
+
+    def test_faker_on_non_poolable_provider_exits_usage(self, tmp_path):
+        cfg = self._write(
+            tmp_path, [{"name": "device_id", "strategy": "faker", "provider": "uuid"}]
+        )
+        result = runner.invoke(app, ["validate", str(cfg)])
+        assert result.exit_code == EXIT_USAGE
+        assert "non_poolable_provider_with_pool_backend" in result.output
+
+    def test_unknown_provider_exits_usage(self, tmp_path):
+        cfg = self._write(
+            tmp_path, [{"name": "x", "strategy": "faker", "provider": "no_such_provider"}]
+        )
+        result = runner.invoke(app, ["validate", str(cfg)])
+        assert result.exit_code == EXIT_USAGE
+        assert "unknown_provider" in result.output
+
+    def test_clean_config_exits_zero_and_reports_checks(self, tmp_path):
+        import json as _json
+
+        cfg = self._write(
+            tmp_path, [{"name": "email", "strategy": "faker", "provider": "person_email"}]
+        )
+        result = runner.invoke(app, ["validate", str(cfg), "--json"])
+        assert result.exit_code == 0
+        payload = _json.loads(result.output)
+        assert payload["status"] == "ok"
+        assert "non_poolable_provider_with_pool_backend" in payload["checks_run"]

@@ -21,7 +21,7 @@ from rich.text import Text
 from decoy.cli.exit_codes import EXIT_USAGE
 from decoy.ui.output import OutputMode, emit_json, setup_output
 from decoy.ui.table import make_table
-from decoy.ui.theme import accent, code, error, hint, info, success
+from decoy.ui.theme import accent, code, error, hint, info
 
 
 @dataclass(frozen=True)
@@ -52,7 +52,7 @@ _TOPICS: dict[str, _Topic] = {
     ),
     "transforms": _Topic(
         name="transforms",
-        summary="The eight built-in masking transforms.",
+        summary="The most common masking transforms (full set in the strategies reference).",
         body=(
             "Each masking_rule in the YAML names a `type:` from this set:\n\n"
             "  faker        Replace with a realistic fake value of a chosen `faker_type`\n"
@@ -70,6 +70,8 @@ _TOPICS: dict[str, _Topic] = {
             "               for analytics while breaking the exact value.\n"
             "  formula      Compute the value from a Python-like expression and other columns.\n"
             "               Power-user knob; can reference {col1}, {col2}, randint(), etc.\n\n"
+            "Four more advanced strategies exist: bucketize, fpe, text_redact, truncate.\n"
+            "The engine ships 12 mask strategies in total; see the strategies reference.\n\n"
             "Tab completion: `decoy run --help` shows --mode; the engine's transform factory key\n"
             "set is what completes when a future --mask flag is added."
         ),
@@ -269,7 +271,7 @@ _EXPLAIN_EPILOG = """\
 Examples:
 
   decoy explain modes
-    Plain-English description of mask vs generate vs convert vs graph.
+    Plain-English description of mask vs generate.
 
   decoy explain transforms
     The eight built-in masking transforms with one-line descriptions.
