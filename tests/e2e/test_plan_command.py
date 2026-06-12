@@ -78,11 +78,11 @@ def test_plan_no_profile_emits_yaml(tmp_path: Path) -> None:
     result = runner.invoke(app, ["plan", str(config_path), "--no-profile"])
     assert result.exit_code == 0, result.stdout
     assert "plan_version: 1" in result.stdout
-    # CLI.2 (2026-06-02): seed_protocol_version was bumped from 0 to 4
+    # CLI.2 (2026-06-02): seed_protocol_version tracks the engine constant (5 since WS1, 2026-06-12)
     # across the QA-walks-gen + formula-hash migration window; the
     # test's expected literal lagged the engine constant. Pin to the
     # current canonical value.
-    assert "seed_protocol_version: 4" in result.stdout
+    assert "seed_protocol_version: 5" in result.stdout
 
 
 def test_plan_no_profile_records_skipped_checks(tmp_path: Path) -> None:
@@ -191,9 +191,9 @@ def test_plan_json_emits_parseable_json(tmp_path: Path) -> None:
     assert result.exit_code == 0, result.stdout
     parsed = json.loads(result.stdout)
     assert parsed["plan_version"] == 1
-    # CLI.2 (2026-06-02): seed_protocol_version was bumped 0 -> 4 across
+    # CLI.2 (2026-06-02): seed_protocol_version tracks the engine constant (5 since WS1) across
     # the QA-walks-gen + formula-hash migration window. Pin to current.
-    assert parsed["seed_protocol_version"] == 4
+    assert parsed["seed_protocol_version"] == 5
 
 
 # -- --out writes to file --------------------------------------------

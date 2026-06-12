@@ -16,6 +16,7 @@ from decoy.cli.plan import PLAN_EPILOG, REPLAN_EPILOG, plan as plan_command, rep
 from decoy.cli.run import RUN_EPILOG, run as run_command
 from decoy.cli.storm import storm_app
 from decoy.cli.templates import templates_app
+from decoy.cli.unmask import UNMASK_EPILOG, unmask as unmask_command
 from decoy.cli.validate import VALIDATE_EPILOG, validate as validate_command
 
 # Quick-start hints embedded in the root help. Picked up by Typer's
@@ -29,6 +30,7 @@ Try one of:
   decoy storm analyze data.csv     Profile a dataset for PII and risk.
   decoy run pipeline.yaml          Run a masking or generation pipeline.
   decoy validate pipeline.yaml     Check a YAML pipeline before running.
+  decoy unmask pipeline.yaml masked.csv   Recover fpe columns from a masked file.
   decoy init                       Scaffold a starter pipeline interactively.
   decoy templates list             Browse bundled pipeline templates.
   decoy explain modes              Plain-English topic help. `explain` lists topics.
@@ -68,6 +70,7 @@ def _root(
 
 app.command(name="run", epilog=RUN_EPILOG)(run_command)
 app.command(name="validate", epilog=VALIDATE_EPILOG)(validate_command)
+app.command(name="unmask", epilog=UNMASK_EPILOG)(unmask_command)
 app.command(name="init", epilog=INIT_EPILOG)(init_command())
 app.command(name="demo", epilog=DEMO_EPILOG)(demo_command)
 app.command(name="explain", epilog=EXPLAIN_EPILOG)(explain_command)

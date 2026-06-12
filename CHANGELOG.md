@@ -8,6 +8,17 @@ version numbers follow the [versioning policy](docs/release/versioning.md).
 
 ## [Unreleased]
 
+### Added (capability gaps, 2026-06-12)
+
+- **`decoy unmask` verb** (detokenization). Recovers `strategy: fpe`
+  columns from a masked CSV using the same pipeline config the mask run
+  used; the config's seed + per-column namespace re-derive the Feistel
+  key (engine SEED_PROTOCOL_VERSION 5, single key per seed+namespace).
+  One-way strategies (hash, redact, faker, ...) pass through unchanged
+  with an `irreversible` entry in the per-column report (`--json` for
+  the structured form). SECURITY: the config now functions as the
+  decryption key for its fpe columns; handle accordingly.
+
 ### Fixed (audit remediation, 2026-06-12)
 
 Findings from the 2026-06-11 full-codebase audit.

@@ -7,6 +7,7 @@ Try one of:
   decoy storm analyze data.csv     Profile a dataset for PII and risk.
   decoy run pipeline.yaml          Run a masking or generation pipeline.
   decoy validate pipeline.yaml     Check a YAML pipeline before running.
+  decoy unmask pipeline.yaml masked.csv   Recover fpe columns from a masked file.
   decoy init                       Scaffold a starter pipeline interactively.
   decoy templates list             Browse bundled pipeline templates.
   decoy explain modes              Plain-English topic help. `explain` lists topics.
@@ -31,6 +32,7 @@ $ decoy [OPTIONS] COMMAND [ARGS]...
 
 * `run`: Run a decoy pipeline from a YAML config.
 * `validate`: Validate a decoy pipeline config without...
+* `unmask`: Recover fpe-masked columns from a masked...
 * `init`: Scaffold a starter pipeline YAML through a...
 * `demo`: Walk through scan -&gt; mask on a bundled...
 * `explain`: Explain a Decoy concept in plain English.
@@ -117,6 +119,57 @@ Examples:
     Stay silent on success; exit code carries the result.
 
 See also: decoy run.
+
+
+## `decoy unmask`
+
+Recover fpe-masked columns from a masked file using the pipeline config.
+
+Reverses every `strategy: fpe` column (format-preserving encryption is
+a keyed bijection; the key derives from the config&#x27;s seed + namespace).
+Other strategies are one-way and pass through unchanged with an
+`irreversible` report entry. Exits 0 on success, 1 on a config/usage
+error, 3 on a runtime failure.
+
+**Usage**:
+
+```console
+$ decoy unmask [OPTIONS] CONFIG MASKED
+```
+
+**Arguments**:
+
+* `CONFIG`: The pipeline config the mask run used (carries seed + namespaces).  [required]
+* `MASKED`: The masked CSV produced by `decoy run` for one table.  [required]
+
+**Options**:
+
+* `--table TEXT`: Which config table the masked file belongs to. Required when the config masks more than one table.
+* `-o, --output PATH`: Where to write the recovered CSV. Default: &lt;masked&gt;.unmasked.csv next to the input.
+* `--json`: Emit a structured JSON result on stdout. Errors still go to stderr.
+* `-q, --quiet`: Suppress stdout. Errors still go to stderr; exit code carries the result.
+* `-v, --verbose`: Enable debug-level CLI logs on stderr.
+* `--help`: Show this message and exit.
+
+Examples:
+
+  decoy unmask pipeline.yaml masked.csv
+    Recover fpe columns into masked.unmasked.csv.
+
+  decoy unmask pipeline.yaml masked.csv --output recovered.csv
+    Choose the output path.
+
+  decoy unmask pipeline.yaml masked.csv --table accounts
+    Disambiguate when the config masks more than one table.
+
+  decoy unmask pipeline.yaml masked.csv --json
+    Emit the per-column reversibility report as JSON.
+
+Only `strategy: fpe` columns are reversible; hash, redact, faker and
+the other one-way strategies are reported irreversible and pass
+through unchanged. The config carries the seed: treat it as a key.
+
+See also: decoy run, decoy explain strategies.
 
 
 ## `decoy init`
