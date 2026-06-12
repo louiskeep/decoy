@@ -21,7 +21,7 @@ from rich.text import Text
 from decoy.cli.exit_codes import EXIT_USAGE
 from decoy.ui.output import OutputMode, emit_json, setup_output
 from decoy.ui.table import make_table
-from decoy.ui.theme import accent, code, error, hint, info, success
+from decoy.ui.theme import accent, code, error, hint, info
 
 
 @dataclass(frozen=True)

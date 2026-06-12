@@ -8,6 +8,37 @@ version numbers follow the [versioning policy](docs/release/versioning.md).
 
 ## [Unreleased]
 
+### Fixed (audit remediation, 2026-06-12)
+
+Findings from the 2026-06-11 full-codebase audit.
+
+- **hipaa/pci/gdpr templates rewritten and no longer dead-on-arrival**
+  (audit H5 + H12). All three crashed at `decoy run` on any input
+  (faker on the non-poolable uuid provider). Templates are now derived
+  from the engine's dated disguises and carry an
+  `x-derived-from-disguise: <id>@<version>` marker enforced by a
+  drift-guard test: hipaa upgrades ssn/mrn/account/vehicle to
+  format-preserving encryption and dates to keyed date_shift (joins and
+  intervals survive); pci PANs are FPE'd with Luhn-valid output and
+  transaction ids hash-pseudonymised; gdpr device ids
+  hash-pseudonymised per Art 4(5). A new E2E net runs EVERY bundled
+  template against synthesized data on every CI run.
+- **`decoy validate` now runs the engine's config-only plan checks**
+  (audit H5): unknown providers, non-poolable faker providers, and
+  missing deterministic namespaces fail validate with the typed code
+  instead of passing schema-only and crashing at run.
+- **Typed exit codes** (audit H10): engine config errors
+  (PlanCompileError / PipelineValidationError / ConfigError) exit
+  EXIT_USAGE(1) per the documented contract; runtime crashes stay
+  EXIT_RUNTIME(3).
+- **Mixed mask+generate configs rejected** (audit H11): previously they
+  exited 0 while silently writing no output for the generate tables.
+- **`storm integrity` exit 4 is reachable** (engine audit C1/H6): a
+  masked file identical to its source now fails with a residual_pii
+  'fail'; E2E locks both directions.
+- **Config parsed once per `decoy run`** (audit L3; was up to 4 parses).
+- **ruff clean** (audit L4: 13 errors cleared, zero-error gate).
+
 ### Added
 
 - OSS.3 packaging metadata: PyPI Trove classifiers, keywords, project

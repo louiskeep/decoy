@@ -16,7 +16,7 @@ import pytest
 from typer.testing import CliRunner
 
 from decoy.__main__ import app
-from decoy.cli.exit_codes import EXIT_FINDINGS, EXIT_USAGE
+from decoy.cli.exit_codes import EXIT_FINDINGS
 
 runner = CliRunner()
 

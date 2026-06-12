@@ -17,7 +17,7 @@ from __future__ import annotations
 import yaml
 from decoy_engine import PipelineConfig
 
-from decoy.templates import get_template, list_templates, template_names
+from decoy.templates import get_template, template_names
 
 
 def test_no_graph_template_registered():

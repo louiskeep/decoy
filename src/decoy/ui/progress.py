@@ -7,10 +7,9 @@ a TTY. Commands receive an `OutputState` and pass `state.err_console` (or
 
 from __future__ import annotations
 
-from contextlib import contextmanager, nullcontext
+from contextlib import contextmanager
 from typing import Iterator
 
-from rich.console import Console
 from rich.progress import (
     BarColumn,
     Progress,

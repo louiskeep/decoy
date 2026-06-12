@@ -1050,7 +1050,7 @@ def _test_command(
 # importantly __signature__ -- Typer introspects __signature__ when
 # building the help body + parameter parser, so the alias renders
 # the SAME --help / parameters as `analyze`.
-import functools as _functools
+import functools as _functools  # noqa: E402 -- deliberate: alias must build after analyze is defined
 
 
 @_functools.wraps(_scan)
