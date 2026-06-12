@@ -10,6 +10,14 @@ version numbers follow the [versioning policy](docs/release/versioning.md).
 
 ### Added (capability gaps, 2026-06-12)
 
+- **`decoy fit` verb** (statistical synthesis). Fits a
+  distribution-snapshot/v1 artifact from a source CSV
+  (`--parse-dates` for datetime columns, repeatable `--joint a,b` for
+  the contingency tables `condition_on` needs). The snapshot is what
+  `type: statistical` generate columns reference via `snapshot_file`;
+  `decoy validate` now rejects configs whose snapshot artifact is
+  missing or incompatible (engine check row 12).
+
 - **`decoy unmask` verb** (detokenization). Recovers `strategy: fpe`
   columns from a masked CSV using the same pipeline config the mask run
   used; the config's seed + per-column namespace re-derive the Feistel

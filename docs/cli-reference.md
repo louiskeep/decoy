@@ -8,6 +8,7 @@ Try one of:
   decoy run pipeline.yaml          Run a masking or generation pipeline.
   decoy validate pipeline.yaml     Check a YAML pipeline before running.
   decoy unmask pipeline.yaml masked.csv   Recover fpe columns from a masked file.
+  decoy fit source.csv             Fit a distribution snapshot for statistical generation.
   decoy init                       Scaffold a starter pipeline interactively.
   decoy templates list             Browse bundled pipeline templates.
   decoy explain modes              Plain-English topic help. `explain` lists topics.
@@ -33,6 +34,7 @@ $ decoy [OPTIONS] COMMAND [ARGS]...
 * `run`: Run a decoy pipeline from a YAML config.
 * `validate`: Validate a decoy pipeline config without...
 * `unmask`: Recover fpe-masked columns from a masked...
+* `fit`: Fit a distribution-snapshot/v1 artifact...
 * `init`: Scaffold a starter pipeline YAML through a...
 * `demo`: Walk through scan -&gt; mask on a bundled...
 * `explain`: Explain a Decoy concept in plain English.
@@ -170,6 +172,51 @@ the other one-way strategies are reported irreversible and pass
 through unchanged. The config carries the seed: treat it as a key.
 
 See also: decoy run, decoy explain strategies.
+
+
+## `decoy fit`
+
+Fit a distribution-snapshot/v1 artifact for statistical generation.
+
+Reads the source CSV, captures per-column distribution shape (numeric
+histograms + quantiles, categorical top-k, datetime year bins) plus
+any requested pairwise contingency tables, and writes the JSON
+artifact `type: statistical` generate columns reference via
+`snapshot_file`. Exits 0 on success, 1 on bad input.
+
+**Usage**:
+
+```console
+$ decoy fit [OPTIONS] SOURCE
+```
+
+**Arguments**:
+
+* `SOURCE`: Source CSV to fit the distribution snapshot from.  [required]
+
+**Options**:
+
+* `-o, --output PATH`: Where to write the snapshot JSON. Default: &lt;source&gt;.snapshot.json.
+* `--parse-dates TEXT`: Column(s) to parse as datetimes (repeatable). CSV carries no dtype, so date columns must be named explicitly.
+* `--joint TEXT`: Column pair &#x27;a,b&#x27; whose contingency table to capture (repeatable). Needed for `condition_on`.
+* `--json`: Emit a structured JSON result on stdout.
+* `-q, --quiet`: Suppress stdout. Exit code carries the result.
+* `-v, --verbose`: Enable debug-level CLI logs on stderr.
+* `--help`: Show this message and exit.
+
+Examples:
+
+  decoy fit customers.csv
+    Write customers.snapshot.json next to the source.
+
+  decoy fit customers.csv --output snapshot.json --parse-dates signup_date
+    Treat signup_date as a datetime column.
+
+  decoy fit customers.csv --joint state,tier
+    Capture the (state, tier) contingency table so a statistical column
+    can use `condition_on`.
+
+See also: decoy run, decoy validate.
 
 
 ## `decoy init`
