@@ -42,6 +42,10 @@ See also: decoy validate.
 """
 
 
+class _MixedConfigError(Exception):
+    """Mixed mask+generate config; user error (exits EXIT_USAGE)."""
+
+
 def run(
     config: Path = typer.Argument(
         ...,
@@ -148,6 +152,23 @@ def run(
                 isinstance(t, dict) and t.get("generate_columns") and not t.get("columns")
                 for t in tables_list
             )
+            # Audit H11 (2026-06-12): mixed mask+generate configs used to
+            # route through the mask path and SILENTLY DROP every
+            # generate-kind table (exit 0, "status": "ok", no output file
+            # for the generate tables). Until the engine's unified
+            # run_pipeline is wired here, reject mixed configs loudly
+            # instead of delivering partial output.
+            any_generate = any(
+                isinstance(t, dict) and t.get("generate_columns") for t in tables_list
+            )
+            any_mask = any(isinstance(t, dict) and t.get("columns") for t in tables_list)
+            if any_generate and any_mask:
+                raise _MixedConfigError(
+                    "config mixes mask tables (columns:) and generate tables "
+                    "(generate_columns:); `decoy run` does not support mixed "
+                    "pipelines yet and would silently skip the generate "
+                    "tables. Split into two pipeline files."
+                )
 
             if all_generate:
                 instance_locale = (config_dict.get("global_settings") or {}).get(
@@ -208,7 +229,10 @@ def run(
 
         _exit_code = (
             EXIT_USAGE
-            if isinstance(exc, (PlanCompileError, PipelineValidationError, ConfigError))
+            if isinstance(
+                exc,
+                (PlanCompileError, PipelineValidationError, ConfigError, _MixedConfigError),
+            )
             else EXIT_RUNTIME
         )
         # CLI QA fix (2026-06-02, F8): cap the error message at 500

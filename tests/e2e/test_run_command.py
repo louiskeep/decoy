@@ -309,3 +309,38 @@ class TestExitCodeDispatch:
         config_path.write_text(yaml.safe_dump(cfg), encoding="utf-8")
         result = runner.invoke(app, ["run", str(config_path)])
         assert result.exit_code == 3, result.output
+
+
+class TestMixedConfigRejected:
+    """Audit H11 (2026-06-12): a config mixing mask tables and generate
+    tables routed through the mask path, exited 0 with mode 'mask', and
+    SILENTLY DROPPED every generate table (no output file). Until the
+    unified run_pipeline is wired, mixed configs are rejected loudly."""
+
+    def test_mixed_config_exits_usage_with_clear_message(self, tmp_path, sample_csv):
+        cfg = {
+            "version": 1,
+            "global_settings": {"seed": 1},
+            "sources": {"t": {"type": "file", "format": "csv", "path": str(sample_csv)}},
+            "tables": [
+                {"name": "t", "columns": [{"name": "email", "strategy": "redact"}]},
+                {
+                    "name": "synth",
+                    "generate_columns": [
+                        {"name": "id", "type": "sequence", "start": 1, "step": 1}
+                    ],
+                    "row_count": 5,
+                },
+            ],
+            "targets": {
+                "t": {"type": "file", "format": "csv", "path": str(tmp_path / "t.csv")},
+                "synth": {"type": "file", "format": "csv", "path": str(tmp_path / "s.csv")},
+            },
+        }
+        config_path = tmp_path / "mixed.yaml"
+        config_path.write_text(yaml.safe_dump(cfg), encoding="utf-8")
+        result = runner.invoke(app, ["run", str(config_path)])
+        assert result.exit_code == 1, result.output
+        assert "mixed" in result.output.lower() or "Split into two" in result.output
+        # And crucially: nothing silently half-written + exit 0.
+        assert not (tmp_path / "s.csv").exists()
