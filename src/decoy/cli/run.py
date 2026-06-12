@@ -446,24 +446,29 @@ def _next_hint_for_run(raw_cfg: dict | None, mode: "Mode") -> str | None:
 def _run_chunked_mask(
     config_dict: dict, base_dir: Path, chunk_size: int, substrate: str | None = None
 ) -> None:
-    """WS4 chunked mask path: stream each mask table's CSV source through
-    `decoy_engine.run_mask_pipeline_chunked` and append output per chunk.
+    """WS4 chunked mask path: stream each mask table's source through
+    `decoy_engine.run_mask_pipeline_chunked`, writing output per chunk.
 
     The engine's `check_chunked_compatibility` rejects anything that is
     not value-keyed (PlanCompileError -> EXIT_USAGE via the H10 typed
     dispatch), so a chunked run that starts is guaranteed byte-identical
-    to a plain run of the same config. CSV sources only in v1.
+    to a plain run of the same config for CSV targets. Parquet targets
+    are VALUE-equal to a plain run; their file bytes are stable for a
+    fixed (chunk_size, pyarrow version) but not across chunk sizes,
+    because each chunk writes one row group.
+
+    Formats: CSV and parquet, on either side independently (suffix
+    picks the reader/writer, mirroring the plain path's free mixing).
+    Parquet reads stream via ParquetFile.iter_batches; CSV reads keep
+    the dtype=str contract of the plain path, so a csv -> parquet run
+    produces an all-string schema.
 
     `substrate` None keeps the chunked default (pandas, the byte-stable
     contract this mode shipped with); an explicit value selects the
     adapter via the engine's `select_execution_adapter`."""
-    import pandas as pd
-    import pyarrow as pa
-
     from decoy_engine import __version__ as engine_version
     from decoy_engine import run_mask_pipeline_chunked
     from decoy_engine.execution import select_execution_adapter
-    from decoy_engine.plan import PlanCompileError
 
     adapter = (
         select_execution_adapter(substrate=substrate) if substrate is not None else None
@@ -480,30 +485,69 @@ def _run_chunked_mask(
         if not isinstance(src_spec, dict) or not isinstance(src_spec.get("path"), str):
             continue
         src_path = _resolve_path(src_spec["path"], base_dir)
-        if src_path.suffix.lower() == ".parquet":
-            raise PlanCompileError(
-                code="chunked_format_unsupported",
-                path=f"sources.{name}",
-                message="--chunked reads CSV sources only in v1; parquet streaming is a follow-up.",
-            )
         if not isinstance(tgt_spec, dict) or not isinstance(tgt_spec.get("path"), str):
             continue
         out_path = _resolve_path(tgt_spec["path"], base_dir)
 
-        reader = pd.read_csv(src_path, dtype=str, chunksize=chunk_size)
-        chunks = (pa.Table.from_pandas(df, preserve_index=False) for df in reader)
-        first = True
-        for masked in run_mask_pipeline_chunked(
+        masked_iter = run_mask_pipeline_chunked(
             config_dict,
-            chunks,
+            _iter_source_chunks(src_path, chunk_size),
             table=name,
             engine_version=engine_version,
             adapter=adapter,
-        ):
-            masked.to_pandas().to_csv(
-                out_path, index=False, header=first, mode="w" if first else "a"
-            )
-            first = False
+        )
+        _write_chunked_output(masked_iter, out_path, src_path)
+
+
+def _iter_source_chunks(src_path: Path, chunk_size: int):
+    """Yield pa.Tables of at most `chunk_size` rows from a CSV or parquet file.
+
+    Parquet batches can come back SHORTER than chunk_size at row-group
+    boundaries; that is fine and must stay fine -- chunked output is
+    chunking-invariant by the engine's parity contract, so nobody should
+    "fix" the short batches by re-buffering.
+    """
+    import pandas as pd
+    import pyarrow as pa
+
+    if src_path.suffix.lower() == ".parquet":
+        import pyarrow.parquet as pq
+
+        parquet_file = pq.ParquetFile(str(src_path))
+        for batch in parquet_file.iter_batches(batch_size=chunk_size):
+            yield pa.Table.from_batches([batch])
+        return
+    for df in pd.read_csv(src_path, dtype=str, chunksize=chunk_size):
+        yield pa.Table.from_pandas(df, preserve_index=False)
+
+
+def _write_chunked_output(masked_iter, out_path: Path, src_path: Path) -> None:
+    """Stream masked chunks to `out_path`, format picked by its suffix."""
+    if out_path.suffix.lower() == ".parquet":
+        import pyarrow.parquet as pq
+
+        writer = None
+        try:
+            for masked in masked_iter:
+                if writer is None:
+                    writer = pq.ParquetWriter(str(out_path), masked.schema)
+                writer.write_table(masked)
+            if writer is None and src_path.suffix.lower() == ".parquet":
+                # Empty parquet source: emit a valid zero-row file with the
+                # source schema, matching what a plain run writes. (An empty
+                # CSV source writes nothing, same as the CSV target path.)
+                schema = pq.ParquetFile(str(src_path)).schema_arrow
+                writer = pq.ParquetWriter(str(out_path), schema)
+        finally:
+            if writer is not None:
+                writer.close()
+        return
+    first = True
+    for masked in masked_iter:
+        masked.to_pandas().to_csv(
+            out_path, index=False, header=first, mode="w" if first else "a"
+        )
+        first = False
 
 
 def _resolve_path(raw_path: str, base_dir: Path) -> Path:
