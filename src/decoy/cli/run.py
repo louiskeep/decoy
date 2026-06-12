@@ -116,7 +116,9 @@ def run(
             "Stream the source through the engine chunk-by-chunk (WS4). "
             "For mask configs whose every strategy is value-keyed "
             "(hash, fpe, redact, truncate, text_redact, date_shift, "
-            "bucketize); output is byte-identical to a plain run. "
+            "bucketize), plus faker/categorical when deterministic with "
+            "an explicit pool_size / categories declared in config; "
+            "output is byte-identical to a plain run. "
             "Use for inputs too large for memory."
         ),
     ),

@@ -86,3 +86,41 @@ class TestRunChunked:
         cfg = _pipeline(tmp_path, _SAFE)
         result = runner.invoke(app, ["run", str(cfg), "--chunked", "--chunk-size", "0"])
         assert result.exit_code != 0
+
+    def test_deterministic_faker_chunked_matches_plain_run(self, tmp_path: Path) -> None:
+        """Deferred follow-up 2: deterministic faker with an explicit
+        pool_size is admitted in chunked mode with byte parity."""
+        columns = [
+            {
+                "name": "email",
+                "strategy": "faker",
+                "provider": "person_email",
+                "deterministic": True,
+                "namespace": "email_ns",
+                "provider_config": {"pool_size": 25},
+            },
+            {"name": "ssn", "strategy": "hash", "namespace": "ssn_ns"},
+        ]
+        cfg = _pipeline(tmp_path, columns)
+        assert runner.invoke(app, ["run", str(cfg)]).exit_code == 0
+        plain = (tmp_path / "out.csv").read_bytes()
+        (tmp_path / "out.csv").unlink()
+
+        result = runner.invoke(app, ["run", str(cfg), "--chunked", "--chunk-size", "33"])
+        assert result.exit_code == 0, result.output
+        assert (tmp_path / "out.csv").read_bytes() == plain
+
+    def test_faker_without_pool_size_exits_usage(self, tmp_path: Path) -> None:
+        columns = [
+            {
+                "name": "email",
+                "strategy": "faker",
+                "provider": "person_email",
+                "deterministic": True,
+                "namespace": "email_ns",
+            }
+        ]
+        cfg = _pipeline(tmp_path, columns)
+        result = runner.invoke(app, ["run", str(cfg), "--chunked"])
+        assert result.exit_code == EXIT_USAGE
+        assert "pool_size" in result.output
