@@ -24,7 +24,7 @@ import typer
 from decoy.cli.exit_codes import EXIT_RUNTIME, EXIT_USAGE
 from decoy.ui.card import render_card
 from decoy.ui.output import OutputMode, OutputState, emit_json, setup_output
-from decoy.ui.theme import accent, code, error, hint, success
+from decoy.ui.theme import accent, error, hint, success
 
 
 _DEMO_EPILOG = """\
