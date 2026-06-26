@@ -238,18 +238,20 @@ _TOPICS: dict[str, _Topic] = {
     ),
     "substrate": _Topic(
         name="substrate",
-        summary="Pick the pandas or polars execution engine with `decoy run --substrate`.",
+        summary="Pick the pandas or polars execution engine for `--chunked` runs.",
         body=(
-            "Decoy runs on one of two dataframe substrates:\n\n"
-            "  polars   Faster and lighter on memory; the default for plain runs.\n"
-            "  pandas   The default for --chunked runs (the byte-stable contract that\n"
+            "Decoy supports two dataframe substrates:\n\n"
+            "  pandas   The only substrate for plain (non-chunked) runs. Plain runs\n"
+            "           go through the engine's unified run_pipeline (V2 path), which\n"
+            "           uses the internal PandasExecutionAdapter. --substrate is ignored.\n\n"
+            "  polars   Available for --chunked runs via --substrate polars.\n"
+            "           pandas is the --chunked default (the byte-stable contract that\n"
             "           mode shipped with).\n\n"
-            "Override the default per run:\n\n"
-            "  decoy run pipeline.yaml --substrate polars\n\n"
+            "To select polars for a chunked run:\n\n"
+            "  decoy run pipeline.yaml --chunked --substrate polars\n\n"
             "Outputs are value-equal across substrates. CSV bytes are identical; only\n"
-            "Arrow type-width metadata can differ, which CSV does not carry. Without\n"
-            "the flag, plain runs read DECOY_SUBSTRATE (default polars) and chunked\n"
-            "runs use pandas."
+            "Arrow type-width metadata can differ, which CSV does not carry.\n"
+            "(See: decoy explain chunked for when to use --chunked.)"
         ),
         see_also=("decoy run --help", "decoy explain chunked"),
     ),

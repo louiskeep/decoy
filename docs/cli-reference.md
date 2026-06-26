@@ -73,7 +73,7 @@ $ decoy run [OPTIONS] CONFIG
 * `--chunked`: Stream the source through the engine chunk-by-chunk, for inputs too large to load whole. Works for mask configs whose every strategy is value-keyed (hash, fpe, redact, truncate, text_redact, date_shift, bucketize), plus faker/categorical when deterministic with an explicit pool_size / categories declared in config; output is byte-identical to a plain run. Sources/targets may be CSV or Parquet. See: decoy explain chunked.
 * `--chunk-size INTEGER RANGE`: Rows per chunk in --chunked mode.  [default: 100000; x&gt;=1]
 * `--vault PATH`: Write the token vault (encrypted source-to-masked map for vault: true columns) to this path. The vault plus the config re-identify every vaulted value: store them separately and never alongside the masked output. Needs the engine&#x27;s vault extra (cryptography).
-* `--substrate TEXT`: Execution substrate: pandas or polars. Default keeps each path&#x27;s existing behavior (plain runs resolve DECOY_SUBSTRATE, default polars; --chunked runs default pandas). Cross-substrate outputs are value-equal; CSV bytes may differ only via Arrow type-width drift, which CSV does not carry.
+* `--substrate TEXT`: Execution substrate for --chunked runs: pandas (default) or polars. Non-chunked (plain) runs always use the engine&#x27;s pandas adapter (the V2 unified run_pipeline path) and ignore this flag. Cross-substrate outputs are value-equal; CSV bytes may differ only via Arrow type-width drift, which CSV does not carry.
 * `--key-label TEXT`: Stable namespace string for the masking key hierarchy. Required when --master-key is set. Pick something durable (e.g. &#x27;customers_q4&#x27;); changing it produces a different masked output. Read from the YAML&#x27;s top-level &#x27;key_label:&#x27; field if not passed on the command line.
 * `--help`: Show this message and exit.
 
@@ -93,8 +93,10 @@ Examples:
     Write an encrypted token vault for columns marked `vault: true`, so
     they can be recovered later with `decoy unmask`. (See: decoy explain vault.)
 
-  decoy run pipeline.yaml --substrate polars
-    Force the pandas or polars execution engine. (See: decoy explain substrate.)
+  decoy run pipeline.yaml --chunked --substrate polars
+    Stream with polars instead of the chunked-path pandas default.
+    (--substrate only affects --chunked runs; plain runs always use pandas.
+    See: decoy explain substrate.)
 
 See also: decoy validate, decoy explain chunked, decoy explain vault.
 

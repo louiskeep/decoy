@@ -132,7 +132,8 @@ class TestMixedConfigSuccess:
         config_path = tmp_path / "mixed.yaml"
         config_path.write_text(yaml.safe_dump(cfg), encoding="utf-8")
 
-        runner.invoke(app, ["run", str(config_path)])
+        result = runner.invoke(app, ["run", str(config_path)])
+        assert result.exit_code == 0, result.output
 
         assert (tmp_path / "customers_out.csv").exists(), "generate target file not written"
 
@@ -142,7 +143,8 @@ class TestMixedConfigSuccess:
         config_path = tmp_path / "mixed.yaml"
         config_path.write_text(yaml.safe_dump(cfg), encoding="utf-8")
 
-        runner.invoke(app, ["run", str(config_path)])
+        result = runner.invoke(app, ["run", str(config_path)])
+        assert result.exit_code == 0, result.output
 
         assert (tmp_path / "orders_out.csv").exists(), "mask target file not written"
 
@@ -152,7 +154,8 @@ class TestMixedConfigSuccess:
         config_path = tmp_path / "mixed.yaml"
         config_path.write_text(yaml.safe_dump(cfg), encoding="utf-8")
 
-        runner.invoke(app, ["run", str(config_path)])
+        result = runner.invoke(app, ["run", str(config_path)])
+        assert result.exit_code == 0, result.output
 
         customers_df = pd.read_csv(tmp_path / "customers_out.csv", dtype=str)
         assert len(customers_df) == 5, f"expected 5 generated rows; got {len(customers_df)}"
@@ -163,7 +166,8 @@ class TestMixedConfigSuccess:
         config_path = tmp_path / "mixed.yaml"
         config_path.write_text(yaml.safe_dump(cfg), encoding="utf-8")
 
-        runner.invoke(app, ["run", str(config_path)])
+        result = runner.invoke(app, ["run", str(config_path)])
+        assert result.exit_code == 0, result.output
 
         orders_df = pd.read_csv(tmp_path / "orders_out.csv", dtype=str)
         assert len(orders_df) == 3, f"expected 3 masked rows; got {len(orders_df)}"
@@ -257,4 +261,128 @@ class TestChunkedGenerateGuard:
         assert result.exit_code == 1, f"expected exit 1 (usage); got {result.exit_code}\n{result.output}"
         assert "chunked" in result.output.lower() or "generate" in result.output.lower(), (
             f"error message should mention chunked or generate; got: {result.output}"
+        )
+
+
+# --------------------------------------------------------------------------
+# Vault round-trip for mixed configs
+# --------------------------------------------------------------------------
+
+
+def _mixed_vault_cfg(tmp_path: Path, orders_csv: Path) -> dict:
+    """Mixed config: generate parent (customers) + mask child (orders) where
+    a mask column has vault: true.
+
+    Uses hash strategy on order_id with vault: true so the vault records
+    the source->masked mapping and unmask can recover it.
+    """
+    return {
+        "version": 1,
+        "global_settings": {"seed": 42},
+        "sources": {
+            "orders": {"type": "file", "format": "csv", "path": str(orders_csv)},
+        },
+        "tables": [
+            {
+                "name": "customers",
+                "row_count": 5,
+                "generate_columns": [
+                    {"name": "customer_id", "type": "sequence", "start": 1, "step": 1}
+                ],
+            },
+            {
+                "name": "orders",
+                "columns": [
+                    {
+                        "name": "order_id",
+                        "strategy": "hash",
+                        "namespace": "order_id_ns",
+                        "vault": True,
+                    },
+                    {"name": "customer_id", "strategy": "passthrough"},
+                    {"name": "amount", "strategy": "passthrough"},
+                ],
+            },
+        ],
+        "relationships": [
+            {
+                "parent": {"table": "customers", "columns": ["customer_id"]},
+                "children": [{"table": "orders", "columns": ["customer_id"]}],
+                "orphan_policy": "preserve",
+                "namespace": "customer_orders",
+            }
+        ],
+        "targets": {
+            "customers": {
+                "type": "file",
+                "format": "csv",
+                "path": str(tmp_path / "customers_vault_out.csv"),
+            },
+            "orders": {
+                "type": "file",
+                "format": "csv",
+                "path": str(tmp_path / "orders_vault_out.csv"),
+            },
+        },
+    }
+
+
+class TestMixedConfigVaultRoundTrip:
+    """Vault write + unmask recovery on a mixed mask+generate config."""
+
+    def test_mixed_vault_run_exits_zero_and_writes_vault(self, tmp_path, orders_csv):
+        """A mixed config with vault: true on a mask column must exit 0 and
+        produce a non-empty vault file."""
+        pytest.importorskip("cryptography")
+        cfg = _mixed_vault_cfg(tmp_path, orders_csv)
+        config_path = tmp_path / "mixed_vault.yaml"
+        config_path.write_text(yaml.safe_dump(cfg), encoding="utf-8")
+        vault_path = tmp_path / "mixed_vault.bin"
+
+        result = runner.invoke(app, ["run", str(config_path), "--vault", str(vault_path)])
+
+        assert result.exit_code == 0, result.output
+        assert vault_path.exists(), "vault file was not written"
+        assert vault_path.stat().st_size > 0, "vault file is empty"
+
+    def test_mixed_vault_unmask_recovers_vaulted_column(self, tmp_path, orders_csv):
+        """After a mixed vault run, decoy unmask must recover the vaulted order_id
+        values from the vault file."""
+        pytest.importorskip("cryptography")
+        cfg = _mixed_vault_cfg(tmp_path, orders_csv)
+        config_path = tmp_path / "mixed_vault.yaml"
+        config_path.write_text(yaml.safe_dump(cfg), encoding="utf-8")
+        vault_path = tmp_path / "mixed_vault.bin"
+
+        run_result = runner.invoke(
+            app, ["run", str(config_path), "--vault", str(vault_path)]
+        )
+        assert run_result.exit_code == 0, run_result.output
+        assert vault_path.exists() and vault_path.stat().st_size > 0
+
+        # Verify the order_id column was actually masked (hash != passthrough)
+        masked_orders = pd.read_csv(tmp_path / "orders_vault_out.csv", dtype=str)
+        assert masked_orders["order_id"].tolist() != ["O1", "O2", "O3"], (
+            "order_id should be hashed, not passed through"
+        )
+
+        # Run unmask and verify recovery
+        recovered_path = tmp_path / "orders_recovered.csv"
+        unmask_result = runner.invoke(
+            app,
+            [
+                "unmask",
+                str(config_path),
+                str(tmp_path / "orders_vault_out.csv"),
+                "--vault",
+                str(vault_path),
+                "--output",
+                str(recovered_path),
+            ],
+        )
+        assert unmask_result.exit_code == 0, unmask_result.output
+
+        recovered = pd.read_csv(recovered_path, dtype=str)
+        assert recovered["order_id"].tolist() == ["O1", "O2", "O3"], (
+            f"unmask did not recover original order_id values; got {recovered['order_id'].tolist()}"
         )

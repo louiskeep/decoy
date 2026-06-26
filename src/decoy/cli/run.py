@@ -1,13 +1,14 @@
 """`decoy run` -- execute a masking or synthetic-generation pipeline.
 
-CLI.1 commit 3 (2026-06-01): rewired against the V2 engine spine
-(`PipelineConfig` -> `compile_plan` -> `select_execution_adapter` ->
-`generate_tables`). The V1 graph runner + `Masker` + `DataGenerator`
-imports were deleted in storm-reframe-C / S22; this module imported
-them. The V2 spine accepts two modes (`mask`, `generate`); `graph`
-and `convert` are V1-only and have no engine. The choke-point
-validator rejects them with a typed error before this module sees
-them.
+CLI.1 commit 3 (2026-06-01): rewired against the V2 engine spine.
+Non-chunked runs (the default) go through `run_pipeline`, the engine's
+unified entry point that profiles, compiles, and executes mask + generate
+tables in one call, using the engine's internal `PandasExecutionAdapter`.
+`--chunked` is a separate streaming path (`run_mask_pipeline_chunked`),
+mask-only, which still supports substrate selection via
+`select_execution_adapter`. `graph` and `convert` are V1-only and have
+no engine; the choke-point validator rejects them with a typed error
+before this module sees them.
 """
 
 import binascii
@@ -46,8 +47,10 @@ Examples:
     Write an encrypted token vault for columns marked `vault: true`, so
     they can be recovered later with `decoy unmask`. (See: decoy explain vault.)
 
-  decoy run pipeline.yaml --substrate polars
-    Force the pandas or polars execution engine. (See: decoy explain substrate.)
+  decoy run pipeline.yaml --chunked --substrate polars
+    Stream with polars instead of the chunked-path pandas default.
+    (--substrate only affects --chunked runs; plain runs always use pandas.
+    See: decoy explain substrate.)
 
 See also: decoy validate, decoy explain chunked, decoy explain vault.
 """
@@ -158,11 +161,11 @@ def run(
         None,
         "--substrate",
         help=(
-            "Execution substrate: pandas or polars. Default keeps each "
-            "path's existing behavior (plain runs resolve DECOY_SUBSTRATE, "
-            "default polars; --chunked runs default pandas). Cross-substrate "
-            "outputs are value-equal; CSV bytes may differ only via Arrow "
-            "type-width drift, which CSV does not carry."
+            "Execution substrate for --chunked runs: pandas (default) or polars. "
+            "Non-chunked (plain) runs always use the engine's pandas adapter "
+            "(the V2 unified run_pipeline path) and ignore this flag. "
+            "Cross-substrate outputs are value-equal; CSV bytes may differ only "
+            "via Arrow type-width drift, which CSV does not carry."
         ),
     ),
     key_label: str = typer.Option(
