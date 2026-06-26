@@ -18,8 +18,10 @@ from __future__ import annotations
 from functools import lru_cache
 
 
-# Transform IDs are static -- one entry per transform shipped by the engine.
-# Keep this list in sync with `decoy_engine.transforms.factory` if a new one ships.
+# Transform IDs are static -- one entry per mask strategy shipped by the engine.
+# Keep this list in sync with `decoy_engine.execution._strategies.SCALAR_HANDLERS`
+# if a new one ships. (composite/orphan are generation/FK handlers, not column
+# `strategy:` values, so they are intentionally absent.)
 TRANSFORM_IDS: tuple[str, ...] = (
     "faker",
     "hash",
@@ -29,6 +31,11 @@ TRANSFORM_IDS: tuple[str, ...] = (
     "passthrough",
     "date_shift",
     "formula",
+    "bucketize",
+    "fpe",
+    "text_redact",
+    "truncate",
+    "nested",
 )
 
 

@@ -13,6 +13,15 @@ def test_transform_ids_returns_known_set():
     assert len(ids) >= 8
 
 
+def test_transform_ids_includes_advanced_strategies():
+    """The completer must offer the advanced mask strategies too -- the list
+    drifted to only the 8 common ones while the engine ships 13 scalar
+    handlers (decoy_engine.execution._strategies.SCALAR_HANDLERS)."""
+    ids = set(completers.transform_ids())
+    for strategy in ("bucketize", "fpe", "text_redact", "truncate", "nested"):
+        assert strategy in ids, f"completer missing mask strategy: {strategy}"
+
+
 def test_disguise_ids_includes_default_and_hipaa():
     ids = completers.disguise_ids()
     # The engine ships at least these two bundles in the bones-only Disguises set.

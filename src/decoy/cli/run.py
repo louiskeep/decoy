@@ -38,7 +38,18 @@ Examples:
   decoy run pipeline.yaml --json
     Suppress chrome and emit a structured result for scripting.
 
-See also: decoy validate.
+  decoy run pipeline.yaml --chunked --chunk-size 100000
+    Stream a large source through the engine instead of loading it whole.
+    (See: decoy explain chunked.)
+
+  decoy run pipeline.yaml --vault vault.bin
+    Write an encrypted token vault for columns marked `vault: true`, so
+    they can be recovered later with `decoy unmask`. (See: decoy explain vault.)
+
+  decoy run pipeline.yaml --substrate polars
+    Force the pandas or polars execution engine. (See: decoy explain substrate.)
+
+See also: decoy validate, decoy explain chunked, decoy explain vault.
 """
 
 
@@ -117,13 +128,13 @@ def run(
         False,
         "--chunked",
         help=(
-            "Stream the source through the engine chunk-by-chunk (WS4). "
-            "For mask configs whose every strategy is value-keyed "
-            "(hash, fpe, redact, truncate, text_redact, date_shift, "
-            "bucketize), plus faker/categorical when deterministic with "
-            "an explicit pool_size / categories declared in config; "
-            "output is byte-identical to a plain run. "
-            "Use for inputs too large for memory."
+            "Stream the source through the engine chunk-by-chunk, for inputs "
+            "too large to load whole. Works for mask configs whose every "
+            "strategy is value-keyed (hash, fpe, redact, truncate, "
+            "text_redact, date_shift, bucketize), plus faker/categorical "
+            "when deterministic with an explicit pool_size / categories "
+            "declared in config; output is byte-identical to a plain run. "
+            "Sources/targets may be CSV or Parquet. See: decoy explain chunked."
         ),
     ),
     chunk_size: int = typer.Option(

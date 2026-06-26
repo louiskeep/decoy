@@ -69,7 +69,7 @@ $ decoy run [OPTIONS] CONFIG
 * `-q, --quiet`: Suppress stdout. Errors still go to stderr; exit code carries success.
 * `-v, --verbose`: Enable debug-level CLI logs on stderr.
 * `--master-key TEXT`: 64-char hex master key for keyed deterministic masking. Same key + same --key-label always yield bitwise-identical output across runs and machines. Reads DECOY_MASTER_KEY env var when omitted; without either, masking falls back to the legacy seeded path (per-input deterministic but not portable).  [env var: DECOY_MASTER_KEY]
-* `--chunked`: Stream the source through the engine chunk-by-chunk (WS4). For mask configs whose every strategy is value-keyed (hash, fpe, redact, truncate, text_redact, date_shift, bucketize), plus faker/categorical when deterministic with an explicit pool_size / categories declared in config; output is byte-identical to a plain run. Use for inputs too large for memory.
+* `--chunked`: Stream the source through the engine chunk-by-chunk, for inputs too large to load whole. Works for mask configs whose every strategy is value-keyed (hash, fpe, redact, truncate, text_redact, date_shift, bucketize), plus faker/categorical when deterministic with an explicit pool_size / categories declared in config; output is byte-identical to a plain run. Sources/targets may be CSV or Parquet. See: decoy explain chunked.
 * `--chunk-size INTEGER RANGE`: Rows per chunk in --chunked mode.  [default: 100000; x&gt;=1]
 * `--vault PATH`: Write the token vault (encrypted source-to-masked map for vault: true columns) to this path. The vault plus the config re-identify every vaulted value: store them separately and never alongside the masked output. Needs the engine&#x27;s vault extra (cryptography).
 * `--substrate TEXT`: Execution substrate: pandas or polars. Default keeps each path&#x27;s existing behavior (plain runs resolve DECOY_SUBSTRATE, default polars; --chunked runs default pandas). Cross-substrate outputs are value-equal; CSV bytes may differ only via Arrow type-width drift, which CSV does not carry.
@@ -84,7 +84,18 @@ Examples:
   decoy run pipeline.yaml --json
     Suppress chrome and emit a structured result for scripting.
 
-See also: decoy validate.
+  decoy run pipeline.yaml --chunked --chunk-size 100000
+    Stream a large source through the engine instead of loading it whole.
+    (See: decoy explain chunked.)
+
+  decoy run pipeline.yaml --vault vault.bin
+    Write an encrypted token vault for columns marked `vault: true`, so
+    they can be recovered later with `decoy unmask`. (See: decoy explain vault.)
+
+  decoy run pipeline.yaml --substrate polars
+    Force the pandas or polars execution engine. (See: decoy explain substrate.)
+
+See also: decoy validate, decoy explain chunked, decoy explain vault.
 
 
 ## `decoy validate`
@@ -233,7 +244,7 @@ Examples:
     count (OpenDP/SmartNoise histogram mechanism). The budget is per
     column histogram; incompatible with --joint in v1.
 
-See also: decoy run, decoy validate.
+See also: decoy run, decoy validate, decoy explain differential-privacy.
 
 
 ## `decoy init`
@@ -292,10 +303,9 @@ Use this on a fresh install to see what Decoy can do end to end without
 needing your own data or pipeline. All output lands in `./decoy_demo/`
 (override with `--dir`).
 
-Pass `--ref` to run the referential-integrity variant instead: three
-related CSVs (customers, orders, payments) with foreign-key columns,
-masked through three pipelines that hash the FK columns identically.
-Determinism is what preserves the joins -- no shared state needed.
+The `--ref` referential-integrity variant (three related CSVs masked
+with joinable FK columns) is deferred to a follow-up sprint and
+currently exits with a usage error; use the default single-table flow.
 
 **Usage**:
 
@@ -318,16 +328,11 @@ Examples:
   decoy demo
     Run the simple scan -> mask walkthrough in ./decoy_demo/.
 
-  decoy demo --ref
-    Generate 3 related CSVs (customers, orders, payments) with FK
-    relationships and mask all three with deterministic hashing.
-    FK joins survive masking without any shared state. ~1000 rows each.
-
-  decoy demo --ref --rows 5000 --dir my_demo
-    Same, but 5K rows per dataset and a custom output directory.
-
   decoy demo --json
     Same flow, but emit a JSON summary instead of cards.
+
+Note: `decoy demo --ref` (the 3-table FK variant) is deferred to a follow-up
+sprint and currently exits with a usage error.
 
 See also: decoy storm analyze, decoy run.
 
@@ -337,8 +342,8 @@ See also: decoy storm analyze, decoy run.
 Explain a Decoy concept in plain English.
 
 Built-in topics: modes, transforms, disguises, output, pipeline, yaml,
-storm, keys, security, completion. Run with no topic to see the
-full list.
+storm, keys, vault, chunked, substrate, differential-privacy, security,
+completion. Run with no topic to see the full list.
 
 **Usage**:
 
@@ -363,7 +368,7 @@ Examples:
     Plain-English description of mask vs generate.
 
   decoy explain transforms
-    The eight built-in masking transforms with one-line descriptions.
+    The built-in masking transforms with one-line descriptions.
 
   decoy explain
     No topic -- list every topic with its summary.
