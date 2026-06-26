@@ -196,6 +196,37 @@ clean `EXIT_USAGE` error, not a stack trace.
 
 ---
 
+### Task 5: Cross-version unmask guard (formerly deferred #2 — engine gate now cleared)
+
+**Why now:** the engine landed F13 (`decoy-vault/v2`, commit `ca49ed0`): the vault stamps `seed_protocol_version`
+in its header and `load_vault`/`unmask_pipeline` raise a typed `VaultError(code="vault_protocol_version_mismatch")`
+on a cross-version vault. VERIFIED: `VaultError` is NOT a `DecoyError`/`ExecutionError` subclass, so the CLI's
+current `except (ExecutionError, PlanCompileError, ConfigError)` in `unmask.py` MISSES it — a cross-version vault
+falls through to the generic `except Exception` → EXIT_RUNTIME(3) with an unhelpful message and no migration hint.
+
+**Files:**
+- Modify: `src/decoy/cli/unmask.py` — import `VaultError` from `decoy_engine`; add `except VaultError as exc:`
+  BEFORE the generic `except Exception` (currently ~line 197). Map it to **EXIT_USAGE**; when
+  `getattr(exc, "code", None) == "vault_protocol_version_mismatch"`, include a re-mask migration hint
+  ("the vault was written under a different engine protocol version; re-mask under the current engine, or use
+  the engine version that wrote it"). Other `VaultError` codes → EXIT_USAGE with `code: message`.
+- Test: `tests/e2e/test_unmask_command.py` (extend; or the existing unmask vault test file).
+
+**Interfaces — Consumes:** `decoy_engine.VaultError` (`.code`, `.message`).
+
+- [ ] **Step 1 — failing test.** Monkeypatch `decoy_engine.unmask_pipeline` (or the symbol the CLI imports) to
+  raise `VaultError(code="vault_protocol_version_mismatch", message=...)`; invoke `["unmask", cfg, masked,
+  "--vault", vaultpath]`; assert exit code == EXIT_USAGE (1, NOT 3) and the stderr/JSON error mentions the
+  version mismatch + a re-mask hint. (Monkeypatch is the right level: the CLI's job is to MAP the typed error;
+  the engine owns detecting the mismatch.) Optionally also a `--json` envelope assertion.
+- [ ] **Step 2 — run, verify fail** (currently the generic catch returns EXIT_RUNTIME(3), so the EXIT_USAGE
+  assertion fails).
+- [ ] **Step 3 — implement** the `except VaultError` clause + hint.
+- [ ] **Step 4 — gates.** `.venv/bin/python -m pytest tests/e2e/test_unmask_command.py -q`, then full
+  `.venv/bin/python -m pytest -q` (no help/flag change → reference regen should be a no-op, but run it to be
+  safe), `.venv/bin/ruff check src/decoy tests`.
+- [ ] **Step 5 — commit** (`feat(cli): map cross-version vault mismatch to a clean usage error in unmask`).
+
 ## Deferred — engine-gated (spec only, no buildable tasks here)
 
 These stay tracked behind the engine remediation track (E1–E6 in the platform sprint ledger). Author a
