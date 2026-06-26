@@ -39,6 +39,7 @@ $ decoy [OPTIONS] COMMAND [ARGS]...
 * `demo`: Walk through scan -&gt; mask on a bundled...
 * `explain`: Explain a Decoy concept in plain English.
 * `info`: Print the Decoy CLI banner with...
+* `schema`: Print the PipelineConfig JSON Schema to...
 * `plan`: Compile a pipeline config into a versioned...
 * `replan`: Re-compile a plan from a job manifest.
 * `storm`: Dataset analysis -- the STORM event.
@@ -402,6 +403,38 @@ Examples:
     Emit version + counts of bundled topics and templates as JSON.
 
 See also: decoy --help, decoy explain, decoy templates list.
+
+
+## `decoy schema`
+
+Print the PipelineConfig JSON Schema to stdout.
+
+**Usage**:
+
+```console
+$ decoy schema [OPTIONS]
+```
+
+**Options**:
+
+* `-o, --output PATH`: Write the schema to this file instead of stdout.
+* `--json`: Wrap the schema in a {command, status, schema} JSON envelope.
+* `-q, --quiet`: Suppress stdout. Errors still go to stderr.
+* `-v, --verbose`: Enable debug-level CLI logs on stderr.
+* `--help`: Show this message and exit.
+
+Examples:
+
+  decoy schema
+    Print the PipelineConfig JSON Schema to stdout.
+
+  decoy schema -o decoy.schema.json
+    Write the schema to a file (for editor / IDE integration).
+
+  decoy schema --json
+    Wrap the schema in the standard {command, status, schema} envelope.
+
+See also: decoy validate, decoy templates list.
 
 
 ## `decoy plan`
