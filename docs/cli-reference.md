@@ -43,6 +43,7 @@ $ decoy [OPTIONS] COMMAND [ARGS]...
 * `plan`: Compile a pipeline config into a versioned...
 * `storm`: Dataset analysis -- the STORM event.
 * `templates`: Browse and dump bundled starter pipeline...
+* `vault`: Vault inspection utilities.
 
 ## `decoy run`
 
@@ -900,3 +901,66 @@ Examples:
     Save the HIPAA template, then validate it with `decoy validate pipeline.yaml`.
 
 See also: decoy templates list, decoy init.
+
+
+## `decoy vault`
+
+Vault inspection utilities. `info` summarises a vault without full decode.
+
+**Usage**:
+
+```console
+$ decoy vault [OPTIONS] COMMAND [ARGS]...
+```
+
+**Options**:
+
+* `--help`: Show this message and exit.
+
+**Commands**:
+
+* `info`: Inspect a vault file: report entry count,...
+
+### `decoy vault info`
+
+Inspect a vault file: report entry count, namespaces, and dropped-ambiguous count.
+
+Opens the vault using the seed derived from the pipeline config. A
+mismatched seed (wrong config) exits 1 with a clear error message.
+Exits 0 on success, 1 on a config/vault/usage error.
+
+**Usage**:
+
+```console
+$ decoy vault info [OPTIONS] VAULT
+```
+
+**Arguments**:
+
+* `VAULT`: The vault file written by `decoy run --vault`.  [required]
+
+**Options**:
+
+* `--config FILE`: The pipeline config the mask run used (must carry the same seed as the run that wrote the vault).  [required]
+* `--json`: Emit a structured JSON result on stdout. Errors still go to stderr.
+* `-q, --quiet`: Suppress stdout. Errors still go to stderr; exit code carries the result.
+* `-v, --verbose`: Enable debug-level CLI logs on stderr.
+* `--help`: Show this message and exit.
+
+Examples:
+
+  decoy vault info vault.bin --config pipeline.yaml
+    Show entry count, namespaces, and ambiguous-dropped count.
+
+  decoy vault info vault.bin --config pipeline.yaml --json
+    Same data as a JSON envelope for scripting.
+
+  decoy vault info vault.bin --config pipeline.yaml --quiet
+    Silent mode; exit code 0 = vault opened successfully.
+
+The vault is encrypted under a key derived from the config's seed. The
+config passed to --config must be the SAME config (or at least the same
+global_settings.seed) used by the `decoy run --vault` call that wrote
+the vault, otherwise the decrypt will fail and the command exits 1.
+
+See also: decoy run --vault, decoy unmask --vault.

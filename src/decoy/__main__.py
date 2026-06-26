@@ -18,6 +18,7 @@ from decoy.cli.run import RUN_EPILOG, run as run_command
 from decoy.cli.schema import SCHEMA_EPILOG, schema as schema_command
 from decoy.cli.storm import storm_app
 from decoy.cli.templates import templates_app
+from decoy.cli.vault import vault_app
 from decoy.cli.unmask import UNMASK_EPILOG, unmask as unmask_command
 from decoy.cli.validate import VALIDATE_EPILOG, validate as validate_command
 
@@ -82,6 +83,7 @@ app.command(name="info", epilog=INFO_EPILOG)(info_command)
 app.command(name="schema", epilog=SCHEMA_EPILOG)(schema_command)
 app.add_typer(storm_app, name="storm")
 app.add_typer(templates_app, name="templates")
+app.add_typer(vault_app, name="vault")
 app.command(name="plan", epilog=PLAN_EPILOG)(plan_command)
 
 
