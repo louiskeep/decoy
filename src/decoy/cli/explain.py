@@ -42,8 +42,11 @@ _TOPICS: dict[str, _Topic] = {
             "             The default. Pick when you have real data and want to share a sanitized copy.\n"
             "  generate   Build a synthetic dataset from scratch.\n"
             "             Pick when you don't have real data and need realistic-looking rows for testing.\n\n"
-            "Mode is read from the YAML's top-level `mode:` key when present; the --mode flag is\n"
-            "a back-compat hint for legacy YAML that omits it.\n\n"
+            "Mode is inferred per-table from the YAML: a table with `columns:` is a\n"
+            "mask table, one with `generate_columns:` is a generate table (FC-1,\n"
+            "2026-06-02; the old top-level `mode:` key was removed). The --mode flag is\n"
+            "now only a label for progress/JSON output; it does not override what the\n"
+            "tables declare.\n\n"
             "V1 had two additional modes (graph + convert) that were removed under storm-reframe-C\n"
             "and S22-CL-V1GRAPHRUNNER (2026-05-30). YAML with `mode: graph` or `mode: convert`\n"
             "is rejected by the V2 PipelineConfig validator with a typed error."
@@ -70,8 +73,8 @@ _TOPICS: dict[str, _Topic] = {
             "               for analytics while breaking the exact value.\n"
             "  formula      Compute the value from a Python-like expression and other columns.\n"
             "               Power-user knob; can reference {col1}, {col2}, randint(), etc.\n\n"
-            "Four more advanced strategies exist: bucketize, fpe, text_redact, truncate.\n"
-            "The engine ships 12 mask strategies in total; see the strategies reference.\n\n"
+            "Five more advanced strategies exist: bucketize, fpe, text_redact, truncate, nested.\n"
+            "The engine ships 13 mask strategies in total; see the strategies reference.\n\n"
             "Tab completion: `decoy run --help` shows --mode; the engine's transform factory key\n"
             "set is what completes when a future --mask flag is added."
         ),
@@ -195,6 +198,83 @@ _TOPICS: dict[str, _Topic] = {
         ),
         see_also=("decoy run --help",),
     ),
+    "vault": _Topic(
+        name="vault",
+        summary="Reversible masking -- write an encrypted token vault with `decoy run --vault`.",
+        body=(
+            "Most masking is one-way. To recover original values later, mark the\n"
+            "columns you need reversible with `vault: true` in the YAML and pass a\n"
+            "vault path on the run:\n\n"
+            "  decoy run pipeline.yaml --vault vault.bin\n\n"
+            "The vault is an encrypted source-to-masked map for the vaulted columns.\n"
+            "Recover the originals with:\n\n"
+            "  decoy unmask masked.csv --vault vault.bin --table customers -o recovered.csv\n\n"
+            "The vault key is derived from the run's seed, so unmask needs the SAME\n"
+            "config (seed + namespace) that produced it. Store the vault separately\n"
+            "from the masked output and treat it as sensitive -- together they\n"
+            "re-identify every vaulted value. Needs the engine's vault extra\n"
+            "(cryptography). FPE columns are reversible on their own and do not use\n"
+            "the vault."
+        ),
+        see_also=("decoy run --help", "decoy unmask --help", "decoy explain keys"),
+    ),
+    "chunked": _Topic(
+        name="chunked",
+        summary="Stream large inputs through `decoy run --chunked` without loading them whole.",
+        body=(
+            "By default a run loads the whole source into memory. For inputs too\n"
+            "large to fit, stream them chunk-by-chunk:\n\n"
+            "  decoy run pipeline.yaml --chunked --chunk-size 100000\n\n"
+            "Chunked output is byte-identical to a plain run for CSV targets. Only\n"
+            "value-keyed strategies qualify -- ones whose output depends only on the\n"
+            "input value, not on the rest of the column: hash, fpe, redact, truncate,\n"
+            "text_redact, date_shift, bucketize (plus faker/categorical when the\n"
+            "config declares an explicit pool). Anything that needs the whole column\n"
+            "(e.g. shuffle) is rejected with a usage error.\n\n"
+            "Sources and targets may be CSV or Parquet independently; the file suffix\n"
+            "picks the reader and writer."
+        ),
+        see_also=("decoy run --help", "decoy explain substrate"),
+    ),
+    "substrate": _Topic(
+        name="substrate",
+        summary="Pick the pandas or polars execution engine for `--chunked` runs.",
+        body=(
+            "Decoy supports two dataframe substrates:\n\n"
+            "  pandas   The only substrate for plain (non-chunked) runs. Plain runs\n"
+            "           go through the engine's unified run_pipeline (V2 path), which\n"
+            "           uses the internal PandasExecutionAdapter. --substrate and the\n"
+            "           DECOY_SUBSTRATE env var are only consulted for --chunked runs;\n"
+            "           setting either on a plain run emits a warning to stderr.\n\n"
+            "  polars   Available for --chunked runs via --substrate polars or by\n"
+            "           setting DECOY_SUBSTRATE=polars in the environment.\n"
+            "           pandas is the --chunked default (the byte-stable contract that\n"
+            "           mode shipped with).\n\n"
+            "To select polars for a chunked run:\n\n"
+            "  decoy run pipeline.yaml --chunked --substrate polars\n\n"
+            "Outputs are value-equal across substrates. CSV bytes are identical; only\n"
+            "Arrow type-width metadata can differ, which CSV does not carry.\n"
+            "(See: decoy explain chunked for when to use --chunked.)"
+        ),
+        see_also=("decoy run --help", "decoy explain chunked"),
+    ),
+    "differential-privacy": _Topic(
+        name="differential-privacy",
+        summary="Add formal privacy noise to a fitted snapshot with `decoy fit --epsilon`.",
+        body=(
+            "`decoy fit` captures a distribution snapshot that `type: statistical`\n"
+            "generate columns sample from. With --epsilon, that snapshot is released\n"
+            "under differential privacy:\n\n"
+            "  decoy fit customers.csv --epsilon 1.0 --output snapshot.json\n\n"
+            "Laplace noise (the OpenDP/SmartNoise histogram mechanism) is added to\n"
+            "every snapshot count and exact quantiles/means are dropped. Lower epsilon\n"
+            "= more privacy and more noise. The budget is PER COLUMN HISTOGRAM, so k\n"
+            "columns compose to about k*epsilon overall. Incompatible with --joint in\n"
+            "v1 (releasing marginals plus joint tables under one budget needs\n"
+            "composition accounting)."
+        ),
+        see_also=("decoy fit --help", "decoy run --help"),
+    ),
     "security": _Topic(
         name="security",
         summary="What the CLI can expose and how to keep local artifacts safe.",
@@ -274,7 +354,7 @@ Examples:
     Plain-English description of mask vs generate.
 
   decoy explain transforms
-    The eight built-in masking transforms with one-line descriptions.
+    The built-in masking transforms with one-line descriptions.
 
   decoy explain
     No topic -- list every topic with its summary.
@@ -346,8 +426,8 @@ def explain(
     """Explain a Decoy concept in plain English.
 
     Built-in topics: modes, transforms, disguises, output, pipeline, yaml,
-    storm, keys, security, completion. Run with no topic to see the
-    full list.
+    storm, keys, vault, chunked, substrate, differential-privacy, security,
+    completion. Run with no topic to see the full list.
     """
     state = setup_output(json_, quiet, verbose)
 

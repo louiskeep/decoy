@@ -99,3 +99,24 @@ def test_topic_names_covers_load_bearing_concepts():
     # body across other topics now describes the removal rather than
     # documenting a deleted command.
     assert "forecast" not in names
+
+
+def test_modes_topic_describes_per_table_inference_not_top_level_key():
+    """Regression: the `modes` topic claimed mode is read from a top-level
+    `mode:` YAML key, which FC-1 (2026-06-02) removed. It must describe
+    per-table inference (columns vs generate_columns) instead, matching the
+    engine and the `pipeline` topic."""
+    from decoy.cli.explain import _TOPICS
+
+    body = _TOPICS["modes"].body
+    assert "inferred per-table" in body
+    # The stale claim must not return.
+    assert "read from the YAML's top-level `mode:` key when present" not in body
+
+
+def test_feature_topics_are_documented():
+    """The recently-shipped run features + DP must each have an explain
+    topic so they are discoverable from `decoy explain`."""
+    names = set(topic_names())
+    for t in ("vault", "chunked", "substrate", "differential-privacy"):
+        assert t in names, f"missing explain topic: {t}"

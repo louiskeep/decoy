@@ -1,9 +1,9 @@
-"""End-to-end tests for `decoy plan` and `decoy replan`.
+"""End-to-end tests for `decoy plan`.
 
 Covers: --no-profile path, --profile path, --json, --out, mutually-
 exclusive flag rejection, the deferred fully-automatic path's clear
-error, replan stub error, and the integration with the planner's five
-S1 plan-compile checks.
+error, and the integration with the planner's five S1 plan-compile
+checks.
 """
 
 from __future__ import annotations
@@ -56,18 +56,6 @@ def test_plan_help_includes_examples() -> None:
     assert "Examples:" in result.stdout
 
 
-def test_replan_help_documents_not_yet_implemented() -> None:
-    """CLI.2 (2026-06-02): replan help no longer references the dead 'S1 stub'
-    + 'slice 7' framing. It names `decoy plan` as the workaround instead."""
-    result = runner.invoke(app, ["replan", "--help"])
-    assert result.exit_code == 0
-    assert "Not yet implemented" in result.stdout or "not yet implemented" in result.stdout
-    assert "decoy plan" in result.stdout
-    assert "--from" in result.stdout
-    assert "S1 stub" not in result.stdout
-    assert "slice 7" not in result.stdout
-
-
 # -- --no-profile happy path -----------------------------------------
 
 
@@ -78,11 +66,8 @@ def test_plan_no_profile_emits_yaml(tmp_path: Path) -> None:
     result = runner.invoke(app, ["plan", str(config_path), "--no-profile"])
     assert result.exit_code == 0, result.stdout
     assert "plan_version: 1" in result.stdout
-    # CLI.2 (2026-06-02): seed_protocol_version tracks the engine constant (5 since WS1, 2026-06-12)
-    # across the QA-walks-gen + formula-hash migration window; the
-    # test's expected literal lagged the engine constant. Pin to the
-    # current canonical value.
-    assert "seed_protocol_version: 5" in result.stdout
+    # seed_protocol_version tracks the engine constant (6 after v6 determinism bump).
+    assert "seed_protocol_version: 6" in result.stdout
 
 
 def test_plan_no_profile_records_skipped_checks(tmp_path: Path) -> None:
@@ -191,9 +176,8 @@ def test_plan_json_emits_parseable_json(tmp_path: Path) -> None:
     assert result.exit_code == 0, result.stdout
     parsed = json.loads(result.stdout)
     assert parsed["plan_version"] == 1
-    # CLI.2 (2026-06-02): seed_protocol_version tracks the engine constant (5 since WS1) across
-    # the QA-walks-gen + formula-hash migration window. Pin to current.
-    assert parsed["seed_protocol_version"] == 5
+    # seed_protocol_version tracks the engine constant (6 after v6 determinism bump).
+    assert parsed["seed_protocol_version"] == 6
 
 
 # -- --out writes to file --------------------------------------------
@@ -336,26 +320,11 @@ def test_plan_two_invocations_byte_identical(tmp_path: Path) -> None:
     assert result1.stdout == result2.stdout
 
 
-# -- replan stub ------------------------------------------------------
+# -- replan removed ---------------------------------------------------
 
 
-def test_replan_errors_with_actionable_message(tmp_path: Path) -> None:
-    """CLI.2 (2026-06-02): replan error message no longer references 'S1
-    stub' / 'slice 7'. It names `decoy plan` as the workaround so a
-    2026-06+ reader gets an actionable next step instead of a dead
-    sprint reference."""
-    manifest_path = tmp_path / "manifest.json"
-    manifest_path.write_text('{"placeholder": true}', encoding="utf-8")
-
-    result = runner.invoke(app, ["replan", "--from", str(manifest_path)])
-    assert result.exit_code == 1
-    assert "not yet implemented" in result.stderr
-    assert "decoy plan" in result.stderr
-    assert "S1 stub" not in result.stderr
-    assert "slice 7" not in result.stderr
-
-
-def test_replan_requires_from_flag() -> None:
-    result = runner.invoke(app, ["replan"])
-    # Typer's missing-required-option behavior: exit 2 with usage message.
+def test_replan_command_is_gone() -> None:
+    """Regression: `replan` was removed; the command must no longer exist."""
+    result = runner.invoke(app, ["replan", "--help"])
     assert result.exit_code != 0
+    assert "No such command" in result.output

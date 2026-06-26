@@ -311,13 +311,13 @@ class TestExitCodeDispatch:
         assert result.exit_code == 3, result.output
 
 
-class TestMixedConfigRejected:
-    """Audit H11 (2026-06-12): a config mixing mask tables and generate
-    tables routed through the mask path, exited 0 with mode 'mask', and
-    SILENTLY DROPPED every generate table (no output file). Until the
-    unified run_pipeline is wired, mixed configs are rejected loudly."""
+class TestMixedConfigSuccess:
+    """FC-1 (2026-06-26): run_pipeline is now wired, so mixed mask+generate
+    configs succeed. Full FK-join preservation tests live in
+    tests/e2e/test_run_mixed.py; this cell is a smoke check that the old
+    rejection is gone and both targets are written."""
 
-    def test_mixed_config_exits_usage_with_clear_message(self, tmp_path, sample_csv):
+    def test_mixed_config_exits_zero_and_writes_both_targets(self, tmp_path, sample_csv):
         cfg = {
             "version": 1,
             "global_settings": {"seed": 1},
@@ -340,7 +340,54 @@ class TestMixedConfigRejected:
         config_path = tmp_path / "mixed.yaml"
         config_path.write_text(yaml.safe_dump(cfg), encoding="utf-8")
         result = runner.invoke(app, ["run", str(config_path)])
-        assert result.exit_code == 1, result.output
-        assert "mixed" in result.output.lower() or "Split into two" in result.output
-        # And crucially: nothing silently half-written + exit 0.
-        assert not (tmp_path / "s.csv").exists()
+        assert result.exit_code == 0, result.output
+        assert (tmp_path / "t.csv").exists(), "mask target not written"
+        assert (tmp_path / "s.csv").exists(), "generate target not written"
+
+
+class TestSubstrateWarning:
+    """FIX A: --substrate on a plain (non-chunked) run warns; chunked does not."""
+
+    def _hash_pipeline(self, tmp_path: Path) -> Path:
+        """Minimal mask config using hash (chunked-compatible) for substrate tests."""
+        import pandas as pd
+
+        src = tmp_path / "in.csv"
+        pd.DataFrame({"email": [f"u{i}@x.com" for i in range(5)]}).to_csv(
+            src, index=False
+        )
+        cfg = {
+            "version": 1,
+            "global_settings": {"seed": 42},
+            "sources": {"t": {"type": "file", "format": "csv", "path": str(src)}},
+            "tables": [{"name": "t", "columns": [{"name": "email", "strategy": "hash", "namespace": "ns"}]}],
+            "targets": {"t": {"type": "file", "format": "csv", "path": str(tmp_path / "out.csv")}},
+        }
+        p = tmp_path / "p.yaml"
+        p.write_text(yaml.safe_dump(cfg), encoding="utf-8")
+        return p
+
+    def test_plain_run_substrate_exits_zero_and_warns(self, tmp_path: Path) -> None:
+        """Non-chunked run with --substrate polars exits 0 and emits warning to stderr."""
+        cfg = self._hash_pipeline(tmp_path)
+        result = runner.invoke(app, ["run", str(cfg), "--substrate", "polars"])
+        assert result.exit_code == 0, result.output
+        assert "warning" in result.stderr.lower()
+        assert "substrate" in result.stderr.lower()
+        assert "chunked" in result.stderr.lower()
+
+    def test_plain_run_substrate_quiet_suppresses_warning(self, tmp_path: Path) -> None:
+        """--quiet suppresses the substrate warning."""
+        cfg = self._hash_pipeline(tmp_path)
+        result = runner.invoke(app, ["run", str(cfg), "--substrate", "polars", "--quiet"])
+        assert result.exit_code == 0, result.output
+        assert "substrate" not in result.stderr.lower()
+
+    def test_chunked_run_substrate_does_not_warn(self, tmp_path: Path) -> None:
+        """--chunked + --substrate is the documented usage; no warning emitted."""
+        cfg = self._hash_pipeline(tmp_path)
+        result = runner.invoke(
+            app, ["run", str(cfg), "--chunked", "--chunk-size", "3", "--substrate", "polars"]
+        )
+        assert result.exit_code == 0, result.output
+        assert "substrate" not in result.stderr.lower()

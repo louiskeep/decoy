@@ -45,7 +45,7 @@ Examples:
     count (OpenDP/SmartNoise histogram mechanism). The budget is per
     column histogram; incompatible with --joint in v1.
 
-See also: decoy run, decoy validate.
+See also: decoy run, decoy validate, decoy explain differential-privacy.
 """
 
 

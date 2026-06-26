@@ -39,8 +39,8 @@ $ decoy [OPTIONS] COMMAND [ARGS]...
 * `demo`: Walk through scan -&gt; mask on a bundled...
 * `explain`: Explain a Decoy concept in plain English.
 * `info`: Print the Decoy CLI banner with...
+* `schema`: Print the PipelineConfig JSON Schema to...
 * `plan`: Compile a pipeline config into a versioned...
-* `replan`: Re-compile a plan from a job manifest.
 * `storm`: Dataset analysis -- the STORM event.
 * `templates`: Browse and dump bundled starter pipeline...
 
@@ -69,10 +69,10 @@ $ decoy run [OPTIONS] CONFIG
 * `-q, --quiet`: Suppress stdout. Errors still go to stderr; exit code carries success.
 * `-v, --verbose`: Enable debug-level CLI logs on stderr.
 * `--master-key TEXT`: 64-char hex master key for keyed deterministic masking. Same key + same --key-label always yield bitwise-identical output across runs and machines. Reads DECOY_MASTER_KEY env var when omitted; without either, masking falls back to the legacy seeded path (per-input deterministic but not portable).  [env var: DECOY_MASTER_KEY]
-* `--chunked`: Stream the source through the engine chunk-by-chunk (WS4). For mask configs whose every strategy is value-keyed (hash, fpe, redact, truncate, text_redact, date_shift, bucketize), plus faker/categorical when deterministic with an explicit pool_size / categories declared in config; output is byte-identical to a plain run. Use for inputs too large for memory.
+* `--chunked`: Stream the source through the engine chunk-by-chunk, for inputs too large to load whole. Works for mask configs whose every strategy is value-keyed (hash, fpe, redact, truncate, text_redact, date_shift, bucketize), plus faker/categorical when deterministic with an explicit pool_size / categories declared in config; output is byte-identical to a plain run. Sources/targets may be CSV or Parquet. See: decoy explain chunked.
 * `--chunk-size INTEGER RANGE`: Rows per chunk in --chunked mode.  [default: 100000; x&gt;=1]
 * `--vault PATH`: Write the token vault (encrypted source-to-masked map for vault: true columns) to this path. The vault plus the config re-identify every vaulted value: store them separately and never alongside the masked output. Needs the engine&#x27;s vault extra (cryptography).
-* `--substrate TEXT`: Execution substrate: pandas or polars. Default keeps each path&#x27;s existing behavior (plain runs resolve DECOY_SUBSTRATE, default polars; --chunked runs default pandas). Cross-substrate outputs are value-equal; CSV bytes may differ only via Arrow type-width drift, which CSV does not carry.
+* `--substrate TEXT`: Execution substrate for --chunked runs: pandas (default) or polars. Non-chunked (plain) runs always use the engine&#x27;s pandas adapter (the V2 unified run_pipeline path); this flag and the DECOY_SUBSTRATE env var are only consulted for --chunked runs. Setting either on a plain run emits a warning to stderr and is otherwise ignored. Cross-substrate outputs are value-equal; CSV bytes may differ only via Arrow type-width drift, which CSV does not carry.  [env var: DECOY_SUBSTRATE]
 * `--key-label TEXT`: Stable namespace string for the masking key hierarchy. Required when --master-key is set. Pick something durable (e.g. &#x27;customers_q4&#x27;); changing it produces a different masked output. Read from the YAML&#x27;s top-level &#x27;key_label:&#x27; field if not passed on the command line.
 * `--help`: Show this message and exit.
 
@@ -84,7 +84,20 @@ Examples:
   decoy run pipeline.yaml --json
     Suppress chrome and emit a structured result for scripting.
 
-See also: decoy validate.
+  decoy run pipeline.yaml --chunked --chunk-size 100000
+    Stream a large source through the engine instead of loading it whole.
+    (See: decoy explain chunked.)
+
+  decoy run pipeline.yaml --vault vault.bin
+    Write an encrypted token vault for columns marked `vault: true`, so
+    they can be recovered later with `decoy unmask`. (See: decoy explain vault.)
+
+  decoy run pipeline.yaml --chunked --substrate polars
+    Stream with polars instead of the chunked-path pandas default.
+    (--substrate only affects --chunked runs; plain runs always use pandas.
+    See: decoy explain substrate.)
+
+See also: decoy validate, decoy explain chunked, decoy explain vault.
 
 
 ## `decoy validate`
@@ -233,7 +246,7 @@ Examples:
     count (OpenDP/SmartNoise histogram mechanism). The budget is per
     column histogram; incompatible with --joint in v1.
 
-See also: decoy run, decoy validate.
+See also: decoy run, decoy validate, decoy explain differential-privacy.
 
 
 ## `decoy init`
@@ -292,10 +305,9 @@ Use this on a fresh install to see what Decoy can do end to end without
 needing your own data or pipeline. All output lands in `./decoy_demo/`
 (override with `--dir`).
 
-Pass `--ref` to run the referential-integrity variant instead: three
-related CSVs (customers, orders, payments) with foreign-key columns,
-masked through three pipelines that hash the FK columns identically.
-Determinism is what preserves the joins -- no shared state needed.
+The `--ref` referential-integrity variant (three related CSVs masked
+with joinable FK columns) is deferred to a follow-up sprint and
+currently exits with a usage error; use the default single-table flow.
 
 **Usage**:
 
@@ -318,16 +330,11 @@ Examples:
   decoy demo
     Run the simple scan -> mask walkthrough in ./decoy_demo/.
 
-  decoy demo --ref
-    Generate 3 related CSVs (customers, orders, payments) with FK
-    relationships and mask all three with deterministic hashing.
-    FK joins survive masking without any shared state. ~1000 rows each.
-
-  decoy demo --ref --rows 5000 --dir my_demo
-    Same, but 5K rows per dataset and a custom output directory.
-
   decoy demo --json
     Same flow, but emit a JSON summary instead of cards.
+
+Note: `decoy demo --ref` (the 3-table FK variant) is deferred to a follow-up
+sprint and currently exits with a usage error.
 
 See also: decoy storm analyze, decoy run.
 
@@ -337,8 +344,8 @@ See also: decoy storm analyze, decoy run.
 Explain a Decoy concept in plain English.
 
 Built-in topics: modes, transforms, disguises, output, pipeline, yaml,
-storm, keys, security, completion. Run with no topic to see the
-full list.
+storm, keys, vault, chunked, substrate, differential-privacy, security,
+completion. Run with no topic to see the full list.
 
 **Usage**:
 
@@ -363,7 +370,7 @@ Examples:
     Plain-English description of mask vs generate.
 
   decoy explain transforms
-    The eight built-in masking transforms with one-line descriptions.
+    The built-in masking transforms with one-line descriptions.
 
   decoy explain
     No topic -- list every topic with its summary.
@@ -397,6 +404,38 @@ Examples:
     Emit version + counts of bundled topics and templates as JSON.
 
 See also: decoy --help, decoy explain, decoy templates list.
+
+
+## `decoy schema`
+
+Print the PipelineConfig JSON Schema to stdout.
+
+**Usage**:
+
+```console
+$ decoy schema [OPTIONS]
+```
+
+**Options**:
+
+* `-o, --output PATH`: Write the schema to this file instead of stdout.
+* `--json`: Wrap the schema in a {command, status, schema} JSON envelope.
+* `-q, --quiet`: Suppress stdout. Errors still go to stderr.
+* `-v, --verbose`: Enable debug-level CLI logs on stderr.
+* `--help`: Show this message and exit.
+
+Examples:
+
+  decoy schema
+    Print the PipelineConfig JSON Schema to stdout.
+
+  decoy schema -o decoy.schema.json
+    Write the schema to a file (for editor / IDE integration).
+
+  decoy schema --json
+    Wrap the schema in the standard {command, status, schema} envelope.
+
+See also: decoy validate, decoy templates list.
 
 
 ## `decoy plan`
@@ -442,39 +481,6 @@ The fully-automated path (`decoy plan pipeline.yaml` with no profile
 flag) lands once the profile_source orchestration slice ships.
 
 See also: decoy validate, decoy run.
-
-
-## `decoy replan`
-
-Re-compile a plan from a job manifest. Not yet implemented.
-
-The engine has no public manifest-read API today (verified in
-CLI.2 audit, 2026-06-02); the manifest is a platform-side artifact
-at api/jobs/v2_runner.py. Use `decoy plan &lt;pipeline.yaml&gt;` to
-compile from the YAML config instead.
-
-**Usage**:
-
-```console
-$ decoy replan [OPTIONS]
-```
-
-**Options**:
-
-* `--from FILE`: Path to a job manifest JSON to re-compile from.  [required]
-* `--source PATH`: (Optional) Override source data path; re-profile against this and re-compile.
-* `--help`: Show this message and exit.
-
-`decoy replan --from <manifest.json>` re-compiles the plan from a job
-manifest. Not yet implemented: the manifest format is currently a
-platform-only artifact written by api/jobs/v2_runner.py; the engine
-does not expose a public manifest-read API for the CLI to consume.
-
-Use `decoy plan <pipeline.yaml>` to compile the plan directly from the
-YAML config instead. Manifest -> plan replay is on the CLI backlog;
-open an issue if you need it.
-
-See also: decoy plan.
 
 
 ## `decoy storm`

@@ -1,13 +1,14 @@
 """`decoy run` -- execute a masking or synthetic-generation pipeline.
 
-CLI.1 commit 3 (2026-06-01): rewired against the V2 engine spine
-(`PipelineConfig` -> `compile_plan` -> `select_execution_adapter` ->
-`generate_tables`). The V1 graph runner + `Masker` + `DataGenerator`
-imports were deleted in storm-reframe-C / S22; this module imported
-them. The V2 spine accepts two modes (`mask`, `generate`); `graph`
-and `convert` are V1-only and have no engine. The choke-point
-validator rejects them with a typed error before this module sees
-them.
+CLI.1 commit 3 (2026-06-01): rewired against the V2 engine spine.
+Non-chunked runs (the default) go through `run_pipeline`, the engine's
+unified entry point that profiles, compiles, and executes mask + generate
+tables in one call, using the engine's internal `PandasExecutionAdapter`.
+`--chunked` is a separate streaming path (`run_mask_pipeline_chunked`),
+mask-only, which still supports substrate selection via
+`select_execution_adapter`. `graph` and `convert` are V1-only and have
+no engine; the choke-point validator rejects them with a typed error
+before this module sees them.
 """
 
 import binascii
@@ -21,7 +22,7 @@ from decoy.cli.exit_codes import EXIT_RUNTIME, EXIT_USAGE
 from decoy.ui.card import render_card
 from decoy.ui.output import OutputMode, emit_json, setup_output
 from decoy.ui.progress import spinner
-from decoy.ui.theme import error, hint
+from decoy.ui.theme import error, hint, warn
 
 
 class Mode(str, Enum):
@@ -38,16 +39,29 @@ Examples:
   decoy run pipeline.yaml --json
     Suppress chrome and emit a structured result for scripting.
 
-See also: decoy validate.
+  decoy run pipeline.yaml --chunked --chunk-size 100000
+    Stream a large source through the engine instead of loading it whole.
+    (See: decoy explain chunked.)
+
+  decoy run pipeline.yaml --vault vault.bin
+    Write an encrypted token vault for columns marked `vault: true`, so
+    they can be recovered later with `decoy unmask`. (See: decoy explain vault.)
+
+  decoy run pipeline.yaml --chunked --substrate polars
+    Stream with polars instead of the chunked-path pandas default.
+    (--substrate only affects --chunked runs; plain runs always use pandas.
+    See: decoy explain substrate.)
+
+See also: decoy validate, decoy explain chunked, decoy explain vault.
 """
-
-
-class _MixedConfigError(Exception):
-    """Mixed mask+generate config; user error (exits EXIT_USAGE)."""
 
 
 class _VaultUsageError(Exception):
     """--vault on a config that cannot vault; user error (exits EXIT_USAGE)."""
+
+
+class _ChunkedGenerateError(Exception):
+    """--chunked with a generate-table config; user error (exits EXIT_USAGE)."""
 
 
 def _load_raw_config(config_path: Path) -> dict | None:
@@ -117,13 +131,13 @@ def run(
         False,
         "--chunked",
         help=(
-            "Stream the source through the engine chunk-by-chunk (WS4). "
-            "For mask configs whose every strategy is value-keyed "
-            "(hash, fpe, redact, truncate, text_redact, date_shift, "
-            "bucketize), plus faker/categorical when deterministic with "
-            "an explicit pool_size / categories declared in config; "
-            "output is byte-identical to a plain run. "
-            "Use for inputs too large for memory."
+            "Stream the source through the engine chunk-by-chunk, for inputs "
+            "too large to load whole. Works for mask configs whose every "
+            "strategy is value-keyed (hash, fpe, redact, truncate, "
+            "text_redact, date_shift, bucketize), plus faker/categorical "
+            "when deterministic with an explicit pool_size / categories "
+            "declared in config; output is byte-identical to a plain run. "
+            "Sources/targets may be CSV or Parquet. See: decoy explain chunked."
         ),
     ),
     chunk_size: int = typer.Option(
@@ -146,12 +160,15 @@ def run(
     substrate: str = typer.Option(
         None,
         "--substrate",
+        envvar="DECOY_SUBSTRATE",
         help=(
-            "Execution substrate: pandas or polars. Default keeps each "
-            "path's existing behavior (plain runs resolve DECOY_SUBSTRATE, "
-            "default polars; --chunked runs default pandas). Cross-substrate "
-            "outputs are value-equal; CSV bytes may differ only via Arrow "
-            "type-width drift, which CSV does not carry."
+            "Execution substrate for --chunked runs: pandas (default) or polars. "
+            "Non-chunked (plain) runs always use the engine's pandas adapter "
+            "(the V2 unified run_pipeline path); this flag and the DECOY_SUBSTRATE "
+            "env var are only consulted for --chunked runs. Setting either on a "
+            "plain run emits a warning to stderr and is otherwise ignored. "
+            "Cross-substrate outputs are value-equal; CSV bytes may differ only "
+            "via Arrow type-width drift, which CSV does not carry."
         ),
     ),
     key_label: str = typer.Option(
@@ -180,23 +197,24 @@ def run(
 
     resolver = _build_resolver(master_key, key_label, raw_cfg, state)
 
+    # Warn when --substrate (or DECOY_SUBSTRATE) is set on a non-chunked run.
+    # The flag is only consulted on the --chunked path; plain runs hardcode
+    # the engine's PandasExecutionAdapter. Warning to stderr only; do not
+    # suppress in --json mode (json goes to stdout); suppress in --quiet.
+    if substrate is not None and not chunked and state.mode is not OutputMode.quiet:
+        state.err_console.print(
+            warn("warning:"),
+            "--substrate is only consulted for --chunked runs; "
+            "this plain run uses the engine's pandas adapter.",
+        )
+
     started = time.perf_counter()
     try:
         with spinner(state, f"Running {yaml_mode}..."):
             from decoy_engine import (
                 PipelineConfig,
-                compile_plan,
-                generate_tables,
-                get_default_registry,
-                select_execution_adapter,
+                run_pipeline,
                 __version__ as engine_version,
-            )
-            from decoy_engine.profile import profile_source
-            from decoy_engine.relationships import (
-                RelationshipGraph,
-                build_namespace_registry,
-                build_relationship_graph,
-                check_orphan_fk_policy_completeness,
             )
 
             if raw_cfg is not None:
@@ -209,38 +227,25 @@ def run(
                 raw = _yaml.safe_load(config.read_text(encoding="utf-8"))
             config_dict = PipelineConfig.model_validate(raw).model_dump()
 
-            # FC-1 (2026-06-02): the top-level `mode:` field is gone; infer
-            # the kind from the tables. A config whose every table is
-            # generate-kind routes through generate_tables; anything else
-            # (mask-only or mixed) goes through the mask adapter. Mixed
-            # configs in the CLI today are mask-only effectively (no
-            # platform-style unified `run_pipeline` wired here yet); a
-            # follow-up sprint can swap in the engine's unified entry.
+            # FC-1 (2026-06-26): run_pipeline is now wired as the single
+            # non-chunked entry for all config shapes (mask-only, generate-
+            # only, and mixed). The engine handles profiling, planning, the
+            # FK graph, and sequencing (generate first, then mask with
+            # generate outputs merged into sources). The old split between
+            # `generate_tables` and `PandasExecutionAdapter.run` is removed.
             tables_list = config_dict.get("tables") or []
-            all_generate = bool(tables_list) and all(
-                isinstance(t, dict)
-                and t.get("generate_columns")
-                and not t.get("columns")
-                for t in tables_list
-            )
-            # Audit H11 (2026-06-12): mixed mask+generate configs used to
-            # route through the mask path and SILENTLY DROP every
-            # generate-kind table (exit 0, "status": "ok", no output file
-            # for the generate tables). Until the engine's unified
-            # run_pipeline is wired here, reject mixed configs loudly
-            # instead of delivering partial output.
             any_generate = any(
                 isinstance(t, dict) and t.get("generate_columns") for t in tables_list
             )
-            any_mask = any(
-                isinstance(t, dict) and t.get("columns") for t in tables_list
-            )
-            if any_generate and any_mask:
-                raise _MixedConfigError(
-                    "config mixes mask tables (columns:) and generate tables "
-                    "(generate_columns:); `decoy run` does not support mixed "
-                    "pipelines yet and would silently skip the generate "
-                    "tables. Split into two pipeline files."
+
+            # Chunked mask streaming is mask-only. Reject loudly when the
+            # config has any generate-kind table so the operator gets a clear
+            # message instead of silently skipping those tables.
+            if chunked and any_generate:
+                raise _ChunkedGenerateError(
+                    "--chunked is only supported for mask-only configs; "
+                    "this config includes generate tables (generate_columns:). "
+                    "Run without --chunked to execute a mixed or generate pipeline."
                 )
 
             vault_writer = None
@@ -248,11 +253,6 @@ def run(
                 from decoy_engine import vault_writer_for_config
                 from decoy_engine.vault import iter_vault_columns
 
-                if all_generate:
-                    raise _VaultUsageError(
-                        "--vault applies to mask runs; generate configs have "
-                        "no source values to vault."
-                    )
                 if not iter_vault_columns(config_dict):
                     raise _VaultUsageError(
                         "--vault was passed but no column declares vault: true "
@@ -261,58 +261,23 @@ def run(
                     )
                 vault_writer = vault_writer_for_config(config_dict)
 
-            if all_generate:
-                instance_locale = (config_dict.get("global_settings") or {}).get(
-                    "default_locale"
-                )
-                tables = generate_tables(
-                    config_dict,
-                    derive_key=resolver,
-                    instance_default_locale=instance_locale,
-                )
-                _write_generate_outputs(config_dict, tables, config.parent)
-            elif chunked:
+            if chunked:
                 _run_chunked_mask(
                     config_dict, config.parent, chunk_size, substrate, vault_writer
                 )
             else:
-                # mask is the default.
-                job_seed = (config_dict.get("global_settings") or {}).get("seed")
-                profile = profile_source(
-                    config_dict,
-                    seed=job_seed if isinstance(job_seed, int) else None,
-                )
-                plan = compile_plan(
-                    config_dict, profile, decoy_engine_version=engine_version
-                )
-                ns_registry = build_namespace_registry(config_dict, profile)
-                if profile.relationships:
-                    lookup = check_orphan_fk_policy_completeness(
-                        config_dict, profile.relationships
-                    )
-                    graph = build_relationship_graph(
-                        profile.relationships,
-                        namespace_registry=ns_registry,
-                        orphan_policy_lookup=lookup,
-                    )
-                else:
-                    graph = RelationshipGraph(edges=(), ordering=())
-
                 sources = _load_sources_from_config(config_dict, config.parent)
-                adapter = select_execution_adapter(substrate=substrate)
-                result = adapter.run(
-                    plan,
-                    sources,
-                    registry=get_default_registry(),
-                    relationship_graph=graph,
-                    namespace_registry=ns_registry,
+                instance_locale = (config_dict.get("global_settings") or {}).get(
+                    "default_locale"
                 )
-                if vault_writer is not None:
-                    from decoy_engine.vault import collect_vault_entries
-
-                    vault_writer.add(
-                        collect_vault_entries(config_dict, sources, result.outputs)
-                    )
+                result = run_pipeline(
+                    config_dict,
+                    sources,
+                    engine_version=engine_version,
+                    derive_key=resolver,
+                    instance_default_locale=instance_locale,
+                    vault_writer=vault_writer,
+                )
                 _write_mask_outputs(config_dict, result, config.parent)
             if vault_writer is not None:
                 vault_writer.write(vault)
@@ -338,7 +303,7 @@ def run(
                     PlanCompileError,
                     PipelineValidationError,
                     ConfigError,
-                    _MixedConfigError,
+                    _ChunkedGenerateError,
                     _VaultUsageError,
                 ),
             )
@@ -670,36 +635,6 @@ def _write_mask_outputs(config_dict: dict, result, base_dir: Path) -> None:
         if not isinstance(raw_path, str):
             continue
         table = outputs.get(table_name)
-        if table is None:
-            continue
-        path = _resolve_path(raw_path, base_dir)
-        path.parent.mkdir(parents=True, exist_ok=True)
-        suffix = path.suffix.lower()
-        if suffix == ".parquet":
-            import pyarrow.parquet as pq
-
-            pq.write_table(table, str(path))
-        else:
-            table.to_pandas().to_csv(path, index=False)
-
-
-def _write_generate_outputs(config_dict: dict, tables: dict, base_dir: Path) -> None:
-    """Write each declared target from a generate-mode run.
-
-    `generate_tables` returns `dict[str, pa.Table]`. The V2 `targets:`
-    block is a dict keyed by table name (same shape as mask). CLI.3
-    commit 2 (2026-06-02) fix: pre-fix iterated `targets` as a list.
-    """
-    targets = config_dict.get("targets") or {}
-    if not isinstance(targets, dict):
-        return
-    for table_name, entry in targets.items():
-        if not isinstance(entry, dict):
-            continue
-        raw_path = entry.get("path")
-        if not isinstance(raw_path, str):
-            continue
-        table = tables.get(table_name)
         if table is None:
             continue
         path = _resolve_path(raw_path, base_dir)

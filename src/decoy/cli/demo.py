@@ -5,11 +5,12 @@ PipelineConfig spine. All artifacts land in `./decoy_demo/`. The legacy
 FORECAST recommender step was removed under storm-reframe-C / S22; do not
 re-introduce.
 
-With `--ref`: deferred to a follow-up sprint (V2 multi-table FK-preservation
-demo needs a single PipelineConfig with a `relationships:` block; the V1
-three-pipeline implementation was retired with the V1 graph runner). The
-`--ref` builders still in this module are V1-shape stubs flagged at each
-call site; see the `# V1 SHAPE` comments before re-wiring.
+With `--ref`: deferred to a follow-up sprint and currently exits with a usage
+error. The V2 multi-table FK-preservation demo needs a single PipelineConfig
+with a `relationships:` block; the V1 three-pipeline implementation was retired
+with the V1 graph runner. `_generate_ref_datasets` (the FK-skewed CSV builder)
+is kept for that follow-up to reuse; the V1-shape YAML builders were deleted
+(they emitted configs the V2 validator rejects).
 """
 
 from __future__ import annotations
@@ -33,16 +34,11 @@ Examples:
   decoy demo
     Run the simple scan -> mask walkthrough in ./decoy_demo/.
 
-  decoy demo --ref
-    Generate 3 related CSVs (customers, orders, payments) with FK
-    relationships and mask all three with deterministic hashing.
-    FK joins survive masking without any shared state. ~1000 rows each.
-
-  decoy demo --ref --rows 5000 --dir my_demo
-    Same, but 5K rows per dataset and a custom output directory.
-
   decoy demo --json
     Same flow, but emit a JSON summary instead of cards.
+
+Note: `decoy demo --ref` (the 3-table FK variant) is deferred to a follow-up
+sprint and currently exits with a usage error.
 
 See also: decoy storm analyze, decoy run.
 """
@@ -422,208 +418,6 @@ def _generate_ref_datasets(out_dir: Path, n_rows: int, seed: int = 42) -> tuple[
     return n_rows, n_rows, n_rows
 
 
-# ──────────────────────────────────────────────────────────────────────────
-# V1-SHAPE STUBS for the deferred --ref multi-table demo path.
-#
-# CLI QA fix (2026-06-02, F5): the three `_build_*_yaml` helpers below
-# emit V1 pipeline YAML (`version: '1.0'`, `input:`, `output:`,
-# `masking_rules:`) that the V2 PipelineConfig validator hard-rejects.
-# They are unreachable today (the `--ref` path is deferred to a follow-up
-# sprint), but the functions remain importable. A contributor who wires
-# `--ref` to call them without noticing the V1 shape will get a confusing
-# PipelineValidationError at runtime.
-#
-# DO NOT RE-WIRE these helpers to a live code path without first
-# rewriting their output to V2 PipelineConfig shape (see
-# `src/decoy/templates/minimal.yaml` for the canonical reference) and
-# adding a single shared `relationships:` block so the three tables run
-# in one pipeline. The same caveat applies to `_verify_ref_integrity`
-# below, which reads output files the V1 demo flow would have written.
-# ──────────────────────────────────────────────────────────────────────────
-
-
-def _build_customers_yaml(out_dir: Path) -> str:
-    """V1 SHAPE -- replace with V2 PipelineConfig before wiring to --ref."""
-    in_path = (out_dir / "customers.csv").as_posix()
-    out_path = (out_dir / "customers_masked.csv").as_posix()
-    return f"""\
-# customers pipeline -- the PK source for the FK relationships.
-#
-# customer_id uses `hash` (SHA-256, truncated to {_FK_HASH_TRUNCATE} hex chars).
-# Hash is a pure function: same input always produces the same output, with
-# no local state and no coordination between pipelines. Every
-# pipeline that hashes the same customer_id produces the same hex string,
-# so FK joins survive masking automatically -- that's the whole story.
-version: '1.0'
-global_settings:
-  seed: 42
-input:
-  type: csv
-  path: '{in_path}'
-  csv_options:
-    delimiter: ','
-    encoding: utf-8
-output:
-  type: csv
-  path: '{out_path}'
-  csv_options:
-    delimiter: ','
-    encoding: utf-8
-masking_rules:
-  - column: customer_id
-    type: hash
-    algorithm: sha256
-    truncate: {_FK_HASH_TRUNCATE}
-  - column: first_name
-    type: faker
-    faker_type: first_name
-  - column: last_name
-    type: faker
-    faker_type: last_name
-  - column: email
-    type: faker
-    faker_type: email
-  - column: ssn
-    type: hash
-    algorithm: sha256  # full 64-char hash for the canonical PII column
-  - column: dob
-    type: date_shift
-    jitter_days: 30
-  - column: zip
-    type: redact
-    keep_chars: 3
-  - column: phone
-    type: faker
-    faker_type: phone_number
-  - column: gender
-    type: passthrough
-"""
-
-
-def _build_orders_yaml(out_dir: Path) -> str:
-    """V1 SHAPE -- replace with V2 PipelineConfig before wiring to --ref."""
-    in_path = (out_dir / "orders.csv").as_posix()
-    out_path = (out_dir / "orders_masked.csv").as_posix()
-    return f"""\
-# orders pipeline -- customer_id uses the SAME hash config as the customers
-# pipeline. No shared state needed: hash is deterministic, so the masked
-# customer_id in orders matches the masked customer_id in customers row by
-# row, joining cleanly.
-version: '1.0'
-global_settings:
-  seed: 42
-input:
-  type: csv
-  path: '{in_path}'
-  csv_options:
-    delimiter: ','
-    encoding: utf-8
-output:
-  type: csv
-  path: '{out_path}'
-  csv_options:
-    delimiter: ','
-    encoding: utf-8
-masking_rules:
-  - column: order_id
-    type: hash
-    algorithm: sha256
-    truncate: {_FK_HASH_TRUNCATE}
-  - column: customer_id  # same hash config as customers_pipeline.yaml -> joinable
-    type: hash
-    algorithm: sha256
-    truncate: {_FK_HASH_TRUNCATE}
-  - column: amount
-    type: passthrough
-  - column: order_date
-    type: date_shift
-    jitter_days: 30
-  - column: status
-    type: passthrough
-"""
-
-
-def _build_payments_yaml(out_dir: Path) -> str:
-    """V1 SHAPE -- replace with V2 PipelineConfig before wiring to --ref."""
-    in_path = (out_dir / "payments.csv").as_posix()
-    out_path = (out_dir / "payments_masked.csv").as_posix()
-    return f"""\
-# payments pipeline -- order_id uses the SAME hash config as the orders
-# pipeline. Determinism preserves the order_id join the same way customer_id
-# is preserved between customers and orders.
-version: '1.0'
-global_settings:
-  seed: 42
-input:
-  type: csv
-  path: '{in_path}'
-  csv_options:
-    delimiter: ','
-    encoding: utf-8
-output:
-  type: csv
-  path: '{out_path}'
-  csv_options:
-    delimiter: ','
-    encoding: utf-8
-masking_rules:
-  - column: payment_id
-    type: hash
-    algorithm: sha256
-    truncate: {_FK_HASH_TRUNCATE}
-  - column: order_id  # same hash config as orders_pipeline.yaml -> joinable
-    type: hash
-    algorithm: sha256
-    truncate: {_FK_HASH_TRUNCATE}
-  - column: amount
-    type: passthrough
-  - column: method
-    type: passthrough
-  - column: paid_at
-    type: date_shift
-    jitter_days: 7
-"""
-
-
-def _verify_ref_integrity(out_dir: Path) -> dict:
-    """V1 SHAPE -- reads output files the deferred --ref flow would have
-    written. Replace with a V2-pipeline-aware check before wiring to
-    --ref."""
-    """After masking all three tables, confirm the FKs still resolve.
-
-    Reads the masked outputs and computes: how many customer_id values in
-    masked_orders DON'T appear in masked_customers (should be 0), and how
-    many order_id values in masked_payments DON'T appear in masked_orders
-    (should be 0). Both are zero whenever the same deterministic transform
-    is applied to the same FK column across the related pipelines.
-    """
-    import pandas as pd
-
-    cust = pd.read_csv(out_dir / "customers_masked.csv")
-    ord_ = pd.read_csv(out_dir / "orders_masked.csv")
-    pay = pd.read_csv(out_dir / "payments_masked.csv")
-
-    cust_ids = set(cust["customer_id"].astype(str))
-    ord_ids = set(ord_["order_id"].astype(str))
-
-    orders_customer_orphans = sorted(
-        set(ord_["customer_id"].astype(str)) - cust_ids
-    )
-    payments_order_orphans = sorted(
-        set(pay["order_id"].astype(str)) - ord_ids
-    )
-
-    return {
-        "customers_rows": int(len(cust)),
-        "orders_rows": int(len(ord_)),
-        "payments_rows": int(len(pay)),
-        "orders_customer_id_orphans": len(orders_customer_orphans),
-        "payments_order_id_orphans": len(payments_order_orphans),
-        "orders_customer_id_orphan_examples": orders_customer_orphans[:5],
-        "payments_order_id_orphan_examples": payments_order_orphans[:5],
-    }
-
-
 def _run_ref_demo(state: OutputState, out_dir: Path, n_rows: int) -> int:
     """3-table FK demo. CLI.3 commit 2 (2026-06-02): deferred per
     Q-CLI3-1 (Dennis resolution: drop if effort exceeds 0.5 eng-days).
@@ -637,8 +431,10 @@ def _run_ref_demo(state: OutputState, out_dir: Path, n_rows: int) -> int:
     golden. That is a focused follow-up sprint; clobbering it into
     CLI.3 commit 2 would exceed the spec's 0.5-day budget.
 
-    The data-generation helpers + integrity verifier above stay in
-    place so the follow-up sprint can reuse them.
+    The `_generate_ref_datasets` helper above stays in place so the
+    follow-up sprint can reuse it; the V1-shape YAML builders and the
+    integrity verifier were deleted (they emitted/read V1 artifacts the
+    V2 engine no longer produces).
     """
     if state.mode is OutputMode.json:
         emit_json(
@@ -718,10 +514,9 @@ def _demo(
     needing your own data or pipeline. All output lands in `./decoy_demo/`
     (override with `--dir`).
 
-    Pass `--ref` to run the referential-integrity variant instead: three
-    related CSVs (customers, orders, payments) with foreign-key columns,
-    masked through three pipelines that hash the FK columns identically.
-    Determinism is what preserves the joins -- no shared state needed.
+    The `--ref` referential-integrity variant (three related CSVs masked
+    with joinable FK columns) is deferred to a follow-up sprint and
+    currently exits with a usage error; use the default single-table flow.
     """
     state = setup_output(json_, quiet, verbose)
 
