@@ -343,3 +343,51 @@ class TestMixedConfigSuccess:
         assert result.exit_code == 0, result.output
         assert (tmp_path / "t.csv").exists(), "mask target not written"
         assert (tmp_path / "s.csv").exists(), "generate target not written"
+
+
+class TestSubstrateWarning:
+    """FIX A: --substrate on a plain (non-chunked) run warns; chunked does not."""
+
+    def _hash_pipeline(self, tmp_path: Path) -> Path:
+        """Minimal mask config using hash (chunked-compatible) for substrate tests."""
+        import pandas as pd
+
+        src = tmp_path / "in.csv"
+        pd.DataFrame({"email": [f"u{i}@x.com" for i in range(5)]}).to_csv(
+            src, index=False
+        )
+        cfg = {
+            "version": 1,
+            "global_settings": {"seed": 42},
+            "sources": {"t": {"type": "file", "format": "csv", "path": str(src)}},
+            "tables": [{"name": "t", "columns": [{"name": "email", "strategy": "hash", "namespace": "ns"}]}],
+            "targets": {"t": {"type": "file", "format": "csv", "path": str(tmp_path / "out.csv")}},
+        }
+        p = tmp_path / "p.yaml"
+        p.write_text(yaml.safe_dump(cfg), encoding="utf-8")
+        return p
+
+    def test_plain_run_substrate_exits_zero_and_warns(self, tmp_path: Path) -> None:
+        """Non-chunked run with --substrate polars exits 0 and emits warning to stderr."""
+        cfg = self._hash_pipeline(tmp_path)
+        result = runner.invoke(app, ["run", str(cfg), "--substrate", "polars"])
+        assert result.exit_code == 0, result.output
+        assert "warning" in result.stderr.lower()
+        assert "substrate" in result.stderr.lower()
+        assert "chunked" in result.stderr.lower()
+
+    def test_plain_run_substrate_quiet_suppresses_warning(self, tmp_path: Path) -> None:
+        """--quiet suppresses the substrate warning."""
+        cfg = self._hash_pipeline(tmp_path)
+        result = runner.invoke(app, ["run", str(cfg), "--substrate", "polars", "--quiet"])
+        assert result.exit_code == 0, result.output
+        assert "substrate" not in result.stderr.lower()
+
+    def test_chunked_run_substrate_does_not_warn(self, tmp_path: Path) -> None:
+        """--chunked + --substrate is the documented usage; no warning emitted."""
+        cfg = self._hash_pipeline(tmp_path)
+        result = runner.invoke(
+            app, ["run", str(cfg), "--chunked", "--chunk-size", "3", "--substrate", "polars"]
+        )
+        assert result.exit_code == 0, result.output
+        assert "substrate" not in result.stderr.lower()

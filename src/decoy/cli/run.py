@@ -22,7 +22,7 @@ from decoy.cli.exit_codes import EXIT_RUNTIME, EXIT_USAGE
 from decoy.ui.card import render_card
 from decoy.ui.output import OutputMode, emit_json, setup_output
 from decoy.ui.progress import spinner
-from decoy.ui.theme import error, hint
+from decoy.ui.theme import error, hint, warn
 
 
 class Mode(str, Enum):
@@ -160,10 +160,13 @@ def run(
     substrate: str = typer.Option(
         None,
         "--substrate",
+        envvar="DECOY_SUBSTRATE",
         help=(
             "Execution substrate for --chunked runs: pandas (default) or polars. "
             "Non-chunked (plain) runs always use the engine's pandas adapter "
-            "(the V2 unified run_pipeline path) and ignore this flag. "
+            "(the V2 unified run_pipeline path); this flag and the DECOY_SUBSTRATE "
+            "env var are only consulted for --chunked runs. Setting either on a "
+            "plain run emits a warning to stderr and is otherwise ignored. "
             "Cross-substrate outputs are value-equal; CSV bytes may differ only "
             "via Arrow type-width drift, which CSV does not carry."
         ),
@@ -193,6 +196,17 @@ def run(
     yaml_mode = _detect_mode(raw_cfg) or mode.value
 
     resolver = _build_resolver(master_key, key_label, raw_cfg, state)
+
+    # Warn when --substrate (or DECOY_SUBSTRATE) is set on a non-chunked run.
+    # The flag is only consulted on the --chunked path; plain runs hardcode
+    # the engine's PandasExecutionAdapter. Warning to stderr only; do not
+    # suppress in --json mode (json goes to stdout); suppress in --quiet.
+    if substrate is not None and not chunked and state.mode is not OutputMode.quiet:
+        state.err_console.print(
+            warn("warning:"),
+            "--substrate is only consulted for --chunked runs; "
+            "this plain run uses the engine's pandas adapter.",
+        )
 
     started = time.perf_counter()
     try:

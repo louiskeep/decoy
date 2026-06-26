@@ -57,3 +57,27 @@ def test_schema_help_includes_examples():
     assert result.exit_code == 0
     assert "Examples:" in result.stdout
     assert "decoy schema" in result.stdout
+
+
+def test_schema_output_file_with_json_writes_envelope(tmp_path: Path):
+    """FIX B: --output and --json compose -- the file receives the envelope."""
+    out = tmp_path / "s.json"
+    result = runner.invoke(app, ["schema", "-o", str(out), "--json"])
+    assert result.exit_code == 0
+    assert out.exists()
+    parsed = _json.loads(out.read_text())
+    assert parsed["command"] == "schema"
+    assert parsed["status"] == "ok"
+    assert "schema" in parsed
+    inner = parsed["schema"]
+    assert "properties" in inner or "$defs" in inner
+
+
+def test_schema_output_file_without_json_writes_raw_schema(tmp_path: Path):
+    """FIX B: --output without --json writes the raw schema (no envelope keys)."""
+    out = tmp_path / "s.json"
+    result = runner.invoke(app, ["schema", "-o", str(out)])
+    assert result.exit_code == 0
+    parsed = _json.loads(out.read_text())
+    assert "command" not in parsed
+    assert "properties" in parsed or "$defs" in parsed
