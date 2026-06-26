@@ -172,7 +172,7 @@ def unmask(
     import pandas as pd
     import pyarrow as pa
 
-    from decoy_engine import unmask_pipeline
+    from decoy_engine import VaultError, unmask_pipeline
     from decoy_engine.errors import ConfigError
     from decoy_engine.execution import ExecutionError
     from decoy_engine.plan import PlanCompileError
@@ -193,6 +193,23 @@ def unmask(
         _emit_error(
             f"{getattr(exc, 'code', type(exc).__name__)}: {getattr(exc, 'message', exc)}"
         )
+        raise typer.Exit(code=EXIT_USAGE)
+    except VaultError as exc:
+        # A bad or mismatched vault is an input problem, not a CLI crash.
+        if getattr(exc, "code", None) == "vault_protocol_version_mismatch":
+            _emit_error(
+                f"{exc.code}: {exc.message}",
+                hint_text=(
+                    "the vault was written under a different engine protocol version; "
+                    "re-mask under the current engine, or unmask with the engine "
+                    "version that wrote the vault."
+                ),
+            )
+        else:
+            _emit_error(
+                f"{getattr(exc, 'code', type(exc).__name__)}: "
+                f"{getattr(exc, 'message', exc)}"
+            )
         raise typer.Exit(code=EXIT_USAGE)
     except Exception as exc:  # runtime failure, not a usage problem
         _emit_error(f"unmask failed: {type(exc).__name__}: {exc}"[:500])

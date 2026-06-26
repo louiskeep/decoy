@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from unittest.mock import patch
 
 import pandas as pd
 import yaml
@@ -190,3 +191,151 @@ class TestUnmaskErrors:
             ["unmask", str(cfg_path), str(tmp_path / "masked.csv"), "--table", "nope"],
         )
         assert result.exit_code == EXIT_USAGE
+
+
+class TestUnmaskVaultError:
+    """The CLI must map typed VaultError to EXIT_USAGE, not EXIT_RUNTIME."""
+
+    def _minimal_setup(self, tmp_path: Path) -> tuple[Path, Path, Path]:
+        """Return (cfg_path, masked_path, vault_path) with minimum valid inputs."""
+        src = tmp_path / "accounts.csv"
+        pd.DataFrame({"ssn": ["123-45-6789"]}).to_csv(src, index=False)
+        cfg = {
+            "version": 1,
+            "global_settings": {"seed": 42},
+            "sources": {"accounts": {"type": "file", "format": "csv", "path": str(src)}},
+            "tables": [
+                {
+                    "name": "accounts",
+                    "columns": [
+                        {
+                            "name": "ssn",
+                            "strategy": "fpe",
+                            "namespace": "ssn_identity",
+                            "provider_config": {"charset": "digits"},
+                        }
+                    ],
+                }
+            ],
+            "targets": {
+                "accounts": {
+                    "type": "file",
+                    "format": "csv",
+                    "path": str(tmp_path / "masked.csv"),
+                }
+            },
+        }
+        cfg_path = tmp_path / "pipeline.yaml"
+        cfg_path.write_text(yaml.safe_dump(cfg), encoding="utf-8")
+
+        masked = tmp_path / "masked.csv"
+        masked.write_text("ssn\n999-00-1234\n", encoding="utf-8")
+
+        # dummy vault file -- just needs to exist for Typer's exists=True check
+        vault_path = tmp_path / "vault.bin"
+        vault_path.write_bytes(b"dummy")
+
+        return cfg_path, masked, vault_path
+
+    def test_vault_protocol_version_mismatch_exits_usage(
+        self, tmp_path: Path
+    ) -> None:
+        from decoy_engine import VaultError
+
+        cfg_path, masked, vault_path = self._minimal_setup(tmp_path)
+
+        def _raise(*_args: object, **_kwargs: object) -> None:
+            raise VaultError(
+                code="vault_protocol_version_mismatch",
+                message="vault seed_protocol_version=5 does not match engine version=6",
+            )
+
+        with patch("decoy_engine.unmask_pipeline", side_effect=_raise):
+            result = runner.invoke(
+                app,
+                [
+                    "unmask",
+                    str(cfg_path),
+                    str(masked),
+                    "--vault",
+                    str(vault_path),
+                ],
+            )
+
+        assert result.exit_code == EXIT_USAGE, (
+            f"Expected EXIT_USAGE ({EXIT_USAGE}), got {result.exit_code}. "
+            f"output={result.output!r}"
+        )
+        combined = (result.output or "") + (result.stderr if hasattr(result, "stderr") else "")
+        assert "version" in combined.lower() or "mismatch" in combined.lower(), (
+            f"Expected version/mismatch wording in output, got: {combined!r}"
+        )
+        assert "re-mask" in combined.lower() or "engine" in combined.lower(), (
+            f"Expected migration hint in output, got: {combined!r}"
+        )
+
+    def test_vault_protocol_version_mismatch_json_exits_usage(
+        self, tmp_path: Path
+    ) -> None:
+        from decoy_engine import VaultError
+
+        cfg_path, masked, vault_path = self._minimal_setup(tmp_path)
+
+        def _raise(*_args: object, **_kwargs: object) -> None:
+            raise VaultError(
+                code="vault_protocol_version_mismatch",
+                message="vault seed_protocol_version=5 does not match engine version=6",
+            )
+
+        with patch("decoy_engine.unmask_pipeline", side_effect=_raise):
+            result = runner.invoke(
+                app,
+                [
+                    "unmask",
+                    str(cfg_path),
+                    str(masked),
+                    "--vault",
+                    str(vault_path),
+                    "--json",
+                ],
+            )
+
+        assert result.exit_code == EXIT_USAGE, (
+            f"Expected EXIT_USAGE ({EXIT_USAGE}), got {result.exit_code}. "
+            f"output={result.output!r}"
+        )
+        payload = json.loads(result.output)
+        assert payload["status"] == "error"
+        assert "version" in payload["error"].lower() or "mismatch" in payload["error"].lower(), (
+            f"Expected version/mismatch in JSON error, got: {payload['error']!r}"
+        )
+
+    def test_other_vault_error_code_exits_usage(
+        self, tmp_path: Path
+    ) -> None:
+        from decoy_engine import VaultError
+
+        cfg_path, masked, vault_path = self._minimal_setup(tmp_path)
+
+        def _raise(*_args: object, **_kwargs: object) -> None:
+            raise VaultError(
+                code="vault_decrypt_failed",
+                message="AEAD decryption failed; wrong seed or corrupted vault",
+            )
+
+        with patch("decoy_engine.unmask_pipeline", side_effect=_raise):
+            result = runner.invoke(
+                app,
+                [
+                    "unmask",
+                    str(cfg_path),
+                    str(masked),
+                    "--vault",
+                    str(vault_path),
+                ],
+            )
+
+        assert result.exit_code == EXIT_USAGE, (
+            f"Expected EXIT_USAGE ({EXIT_USAGE}) for vault_decrypt_failed, "
+            f"got {result.exit_code}. output={result.output!r}"
+        )
