@@ -41,7 +41,6 @@ $ decoy [OPTIONS] COMMAND [ARGS]...
 * `info`: Print the Decoy CLI banner with...
 * `schema`: Print the PipelineConfig JSON Schema to...
 * `plan`: Compile a pipeline config into a versioned...
-* `replan`: Re-compile a plan from a job manifest.
 * `storm`: Dataset analysis -- the STORM event.
 * `templates`: Browse and dump bundled starter pipeline...
 
@@ -482,39 +481,6 @@ The fully-automated path (`decoy plan pipeline.yaml` with no profile
 flag) lands once the profile_source orchestration slice ships.
 
 See also: decoy validate, decoy run.
-
-
-## `decoy replan`
-
-Re-compile a plan from a job manifest. Not yet implemented.
-
-The engine has no public manifest-read API today (verified in
-CLI.2 audit, 2026-06-02); the manifest is a platform-side artifact
-at api/jobs/v2_runner.py. Use `decoy plan &lt;pipeline.yaml&gt;` to
-compile from the YAML config instead.
-
-**Usage**:
-
-```console
-$ decoy replan [OPTIONS]
-```
-
-**Options**:
-
-* `--from FILE`: Path to a job manifest JSON to re-compile from.  [required]
-* `--source PATH`: (Optional) Override source data path; re-profile against this and re-compile.
-* `--help`: Show this message and exit.
-
-`decoy replan --from <manifest.json>` re-compiles the plan from a job
-manifest. Not yet implemented: the manifest format is currently a
-platform-only artifact written by api/jobs/v2_runner.py; the engine
-does not expose a public manifest-read API for the CLI to consume.
-
-Use `decoy plan <pipeline.yaml>` to compile the plan directly from the
-YAML config instead. Manifest -> plan replay is on the CLI backlog;
-open an issue if you need it.
-
-See also: decoy plan.
 
 
 ## `decoy storm`

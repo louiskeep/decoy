@@ -1,17 +1,11 @@
-"""`decoy plan` and `decoy replan` -- compile pipeline configs into a versioned plan artifact.
+"""`decoy plan` -- compile pipeline configs into a versioned plan artifact.
 
-S1 spec §3 (decoy plan CLI subcommand) + §4 (decoy replan stub).
+S1 spec §3 (decoy plan CLI subcommand).
 
 `decoy plan <config.yaml>`:
   Compile the pipeline config into a Plan (per `decoy_engine.plan.compile_plan`)
   and print as YAML to stdout. Exit 0 on success; exit 1 with the typed error
   on stderr if any of the five S1 plan-compile checks fires.
-
-`decoy replan --from <manifest>`:
-  Re-compile the plan from a job manifest. Not yet implemented: the
-  manifest is a platform-side artifact (api/jobs/v2_runner.py) and the
-  engine does not yet expose a public manifest-read API. The command
-  errors with a pointer to `decoy plan` as the workaround.
 
 Scope cut (honest about what's not yet implemented):
 
@@ -219,67 +213,6 @@ def plan(
 
 
 PLAN_EPILOG = _PLAN_EPILOG
-
-
-# ----------------------------------------------------------------------
-# decoy replan
-# ----------------------------------------------------------------------
-
-
-_REPLAN_EPILOG = """\
-`decoy replan --from <manifest.json>` re-compiles the plan from a job
-manifest. Not yet implemented: the manifest format is currently a
-platform-only artifact written by api/jobs/v2_runner.py; the engine
-does not expose a public manifest-read API for the CLI to consume.
-
-Use `decoy plan <pipeline.yaml>` to compile the plan directly from the
-YAML config instead. Manifest -> plan replay is on the CLI backlog;
-open an issue if you need it.
-
-See also: decoy plan.
-"""
-
-
-def replan(
-    from_manifest: Path = typer.Option(
-        ...,
-        "--from",
-        exists=True,
-        dir_okay=False,
-        readable=True,
-        help="Path to a job manifest JSON to re-compile from.",
-    ),
-    source: Path | None = typer.Option(
-        None,
-        "--source",
-        help="(Optional) Override source data path; re-profile against this and re-compile.",
-    ),
-) -> None:
-    """Re-compile a plan from a job manifest. Not yet implemented.
-
-    The engine has no public manifest-read API today (verified in
-    CLI.2 audit, 2026-06-02); the manifest is a platform-side artifact
-    at api/jobs/v2_runner.py. Use `decoy plan <pipeline.yaml>` to
-    compile from the YAML config instead.
-    """
-    typer.echo(
-        "ERROR: decoy replan is not yet implemented.\n"
-        "       Replan reads a job manifest and re-compiles the plan. The\n"
-        "       manifest is currently a platform-only artifact written by\n"
-        "       api/jobs/v2_runner.py; the engine does not expose a public\n"
-        "       manifest-read API the CLI can consume.\n"
-        "       \n"
-        "       Use `decoy plan <pipeline.yaml>` to compile directly from\n"
-        "       the YAML config instead. Open an issue if you need\n"
-        "       manifest-driven replan.\n"
-        f"       Manifest path was: {from_manifest}\n"
-        f"       --source override was: {source}",
-        err=True,
-    )
-    raise typer.Exit(code=EXIT_USAGE)
-
-
-REPLAN_EPILOG = _REPLAN_EPILOG
 
 
 # ----------------------------------------------------------------------

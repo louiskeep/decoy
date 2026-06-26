@@ -13,7 +13,7 @@ from decoy.cli.explain import EXPLAIN_EPILOG, explain as explain_command
 from decoy.cli.fit import FIT_EPILOG, fit as fit_command
 from decoy.cli.info import INFO_EPILOG, info as info_command
 from decoy.cli.init import INIT_EPILOG, init_command
-from decoy.cli.plan import PLAN_EPILOG, REPLAN_EPILOG, plan as plan_command, replan as replan_command
+from decoy.cli.plan import PLAN_EPILOG, plan as plan_command
 from decoy.cli.run import RUN_EPILOG, run as run_command
 from decoy.cli.schema import SCHEMA_EPILOG, schema as schema_command
 from decoy.cli.storm import storm_app
@@ -83,7 +83,6 @@ app.command(name="schema", epilog=SCHEMA_EPILOG)(schema_command)
 app.add_typer(storm_app, name="storm")
 app.add_typer(templates_app, name="templates")
 app.command(name="plan", epilog=PLAN_EPILOG)(plan_command)
-app.command(name="replan", epilog=REPLAN_EPILOG)(replan_command)
 
 
 if __name__ == "__main__":
