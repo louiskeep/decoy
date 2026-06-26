@@ -311,13 +311,13 @@ class TestExitCodeDispatch:
         assert result.exit_code == 3, result.output
 
 
-class TestMixedConfigRejected:
-    """Audit H11 (2026-06-12): a config mixing mask tables and generate
-    tables routed through the mask path, exited 0 with mode 'mask', and
-    SILENTLY DROPPED every generate table (no output file). Until the
-    unified run_pipeline is wired, mixed configs are rejected loudly."""
+class TestMixedConfigSuccess:
+    """FC-1 (2026-06-26): run_pipeline is now wired, so mixed mask+generate
+    configs succeed. Full FK-join preservation tests live in
+    tests/e2e/test_run_mixed.py; this cell is a smoke check that the old
+    rejection is gone and both targets are written."""
 
-    def test_mixed_config_exits_usage_with_clear_message(self, tmp_path, sample_csv):
+    def test_mixed_config_exits_zero_and_writes_both_targets(self, tmp_path, sample_csv):
         cfg = {
             "version": 1,
             "global_settings": {"seed": 1},
@@ -340,7 +340,6 @@ class TestMixedConfigRejected:
         config_path = tmp_path / "mixed.yaml"
         config_path.write_text(yaml.safe_dump(cfg), encoding="utf-8")
         result = runner.invoke(app, ["run", str(config_path)])
-        assert result.exit_code == 1, result.output
-        assert "mixed" in result.output.lower() or "Split into two" in result.output
-        # And crucially: nothing silently half-written + exit 0.
-        assert not (tmp_path / "s.csv").exists()
+        assert result.exit_code == 0, result.output
+        assert (tmp_path / "t.csv").exists(), "mask target not written"
+        assert (tmp_path / "s.csv").exists(), "generate target not written"
