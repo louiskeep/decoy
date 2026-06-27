@@ -214,6 +214,8 @@ def run(
             from decoy_engine import (
                 PipelineConfig,
                 run_pipeline,
+            )
+            from decoy_engine import (
                 __version__ as engine_version,
             )
 

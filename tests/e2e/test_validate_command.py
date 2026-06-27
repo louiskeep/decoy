@@ -18,8 +18,8 @@ import yaml
 from typer.testing import CliRunner
 
 from decoy import __version__
-from decoy.cli.exit_codes import EXIT_USAGE
 from decoy.__main__ import app
+from decoy.cli.exit_codes import EXIT_USAGE
 
 runner = CliRunner()
 

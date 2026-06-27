@@ -10,9 +10,9 @@ runs end-to-end and produces the declared row_count, (d) V1 graph
 YAML is rejected with a typed error.
 """
 
+import json as _json
 from pathlib import Path
 
-import json as _json
 import pandas as pd
 import pytest
 import yaml

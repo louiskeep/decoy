@@ -108,3 +108,43 @@ packages = ["src/decoy"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["src"]
+
+# ── Ruff lint + format baseline ─────────────────────────────────────────────
+# Mirrors the engine's config (decoy-engine/pyproject.toml [tool.ruff]) but
+# with a narrower select: the CLI is a thin Typer wrapper with no data-plane
+# logic, so the heavy security (S) and naming (N) rulesets are excluded to
+# keep the gate focused and violation-free from day one.
+# B008 is suppressed globally because Typer's canonical idiom is to supply
+# typer.Option/Argument as argument defaults; raising B008 on every command
+# handler would require non-idiomatic workarounds.
+# format --check is intentionally NOT in the CI gate (45 files would reformat
+# on first run; land a separate formatting commit before enabling it).
+
+[tool.ruff]
+target-version = "py310"
+line-length = 100
+src = ["src", "tests"]
+exclude = [".pytest_cache", "__pycache__", "logs", "docs/_build"]
+
+[tool.ruff.lint]
+# Focused selection: core pyflakes/pycodestyle (E/F), import order (I),
+# bugbear (B), and Ruff-native rules (RUF, which catches ambiguous unicode
+# including em-dashes per the no-em-dash repo rule).
+select = ["E", "F", "I", "B", "RUF"]
+ignore = [
+    "E501",   # line-too-long: owned by ruff format; not gated here yet
+    "B008",   # typer.Option/Argument in defaults: idiomatic Typer pattern
+    "B904",   # raise-without-from: cosmetic; high-volume; fix as touched
+    "B905",   # zip-without-strict: noise in test assertions
+    "RUF012", # mutable-class-default: false positives on dataclass-like defaults
+    "RUF013", # implicit-Optional: cleanup as touched; high-volume
+]
+
+[tool.ruff.lint.per-file-ignores]
+# Tests can use assert and have lower naming / style bars.
+"tests/**" = ["S101", "S105", "S106", "S108", "B017"]
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+line-ending = "auto"

@@ -293,8 +293,8 @@ def _infer_strategy_for_column(field_stats) -> Inference:
 
 
 __all__ = [
-    "Inference",
-    "_INFERENCE_TABLE",
     "_FALLBACK",
+    "_INFERENCE_TABLE",
+    "Inference",
     "_infer_strategy_for_column",
 ]

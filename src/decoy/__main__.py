@@ -8,19 +8,28 @@ through `if __name__ == "__main__":`.
 import typer
 
 from decoy import __version__
-from decoy.cli.demo import DEMO_EPILOG, _demo as demo_command
-from decoy.cli.explain import EXPLAIN_EPILOG, explain as explain_command
-from decoy.cli.fit import FIT_EPILOG, fit as fit_command
-from decoy.cli.info import INFO_EPILOG, info as info_command
+from decoy.cli.demo import DEMO_EPILOG
+from decoy.cli.demo import _demo as demo_command
+from decoy.cli.explain import EXPLAIN_EPILOG
+from decoy.cli.explain import explain as explain_command
+from decoy.cli.fit import FIT_EPILOG
+from decoy.cli.fit import fit as fit_command
+from decoy.cli.info import INFO_EPILOG
+from decoy.cli.info import info as info_command
 from decoy.cli.init import INIT_EPILOG, init_command
-from decoy.cli.plan import PLAN_EPILOG, plan as plan_command
-from decoy.cli.run import RUN_EPILOG, run as run_command
-from decoy.cli.schema import SCHEMA_EPILOG, schema as schema_command
+from decoy.cli.plan import PLAN_EPILOG
+from decoy.cli.plan import plan as plan_command
+from decoy.cli.run import RUN_EPILOG
+from decoy.cli.run import run as run_command
+from decoy.cli.schema import SCHEMA_EPILOG
+from decoy.cli.schema import schema as schema_command
 from decoy.cli.storm import storm_app
 from decoy.cli.templates import templates_app
+from decoy.cli.unmask import UNMASK_EPILOG
+from decoy.cli.unmask import unmask as unmask_command
+from decoy.cli.validate import VALIDATE_EPILOG
+from decoy.cli.validate import validate as validate_command
 from decoy.cli.vault import vault_app
-from decoy.cli.unmask import UNMASK_EPILOG, unmask as unmask_command
-from decoy.cli.validate import VALIDATE_EPILOG, validate as validate_command
 
 # Quick-start hints embedded in the root help. Picked up by Typer's
 # default formatter; the `decoy info` command renders the same idea

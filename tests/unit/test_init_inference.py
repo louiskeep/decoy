@@ -25,11 +25,10 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 
-
 from decoy.cli._init_inference import (
-    Inference,
     _FALLBACK,
     _INFERENCE_TABLE,
+    Inference,
     _infer_strategy_for_column,
 )
 from decoy.cli.init import (

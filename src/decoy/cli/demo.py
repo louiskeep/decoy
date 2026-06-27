@@ -27,7 +27,6 @@ from decoy.ui.card import render_card
 from decoy.ui.output import OutputMode, OutputState, emit_json, setup_output
 from decoy.ui.theme import accent, error, hint, success
 
-
 _DEMO_EPILOG = """\
 Examples:
 
@@ -206,11 +205,14 @@ def _run_v2_mask(pipeline_yaml: Path) -> None:
     the demo composes the engine calls itself; extracting a shared
     helper would couple two callers prematurely.
     """
+    import yaml as _yaml
     from decoy_engine import (
         PipelineConfig,
         compile_plan,
         get_default_registry,
         select_execution_adapter,
+    )
+    from decoy_engine import (
         __version__ as engine_version,
     )
     from decoy_engine.profile import profile_source
@@ -220,8 +222,6 @@ def _run_v2_mask(pipeline_yaml: Path) -> None:
         build_relationship_graph,
         check_orphan_fk_policy_completeness,
     )
-
-    import yaml as _yaml
 
     text = pipeline_yaml.read_text(encoding="utf-8")
     raw = _yaml.safe_load(text)

@@ -21,7 +21,6 @@ from decoy.ui.output import OutputMode, emit_json, setup_output
 from decoy.ui.table import make_table
 from decoy.ui.theme import accent, code, error, hint
 
-
 templates_app = typer.Typer(
     name="templates",
     help="Browse and dump bundled starter pipeline templates.",

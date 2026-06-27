@@ -9,7 +9,6 @@ from typer.testing import CliRunner
 from decoy.__main__ import app
 from decoy.cli.explain import topic_names
 
-
 runner = CliRunner()
 
 

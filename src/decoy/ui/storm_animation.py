@@ -21,7 +21,6 @@ from rich.live import Live
 from decoy.ui.output import OutputMode, OutputState
 from decoy.ui.theme import accent, hint, success, warn
 
-
 # Cumulus silhouette -- two puffs, flat-ish base. Stays put across all
 # frames so only the rain/lightning beneath it changes (the eye locks onto
 # the cloud and reads the rain as motion).

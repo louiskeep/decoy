@@ -26,7 +26,6 @@ from decoy.cli.exit_codes import EXIT_USAGE
 from decoy.ui.output import OutputMode, emit_json, setup_output
 from decoy.ui.theme import code, error, success
 
-
 _FIT_EPILOG = """\
 Examples:
 
@@ -142,7 +141,6 @@ def fit(
         raise typer.Exit(code=EXIT_USAGE)
 
     import pandas as pd
-
     from decoy_engine.quality.snapshot import compute_distribution_snapshot
 
     try:

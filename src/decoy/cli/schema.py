@@ -16,7 +16,6 @@ import typer
 
 from decoy.ui.output import OutputMode, emit_json, setup_output
 
-
 _SCHEMA_EPILOG = """\
 Examples:
 

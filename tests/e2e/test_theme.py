@@ -10,7 +10,6 @@ from rich.text import Text
 
 from decoy.ui import theme
 
-
 SECTION_5_TOKENS = (
     "success",
     "error",

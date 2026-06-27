@@ -54,9 +54,9 @@ semgrep's exit-code split (0 pass, 1 findings, 2 error). Distinct from
 EXIT_USAGE (the user gave bad input) and EXIT_RUNTIME (the CLI crashed)."""
 
 __all__ = [
-    "EXIT_OK",
-    "EXIT_USAGE",
     "EXIT_DEPRECATED_SHIM",
-    "EXIT_RUNTIME",
     "EXIT_FINDINGS",
+    "EXIT_OK",
+    "EXIT_RUNTIME",
+    "EXIT_USAGE",
 ]
