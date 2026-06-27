@@ -8,10 +8,10 @@ from rich.console import Console
 
 from decoy.ui.output import OutputMode, OutputState
 from decoy.ui.storm_animation import (
-    CLOUD_FRAMES,
-    RUNNING_FRAMES,
     _CLOUD_LINES,
     _RAIN_FRAMES_RAW,
+    CLOUD_FRAMES,
+    RUNNING_FRAMES,
     _StormyHandle,
     stormy_multistage,
 )

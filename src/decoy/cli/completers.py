@@ -17,7 +17,6 @@ from __future__ import annotations
 
 from functools import lru_cache
 
-
 # Transform IDs are static -- one entry per mask strategy shipped by the engine.
 # Keep this list in sync with `decoy_engine.execution._strategies.SCALAR_HANDLERS`
 # if a new one ships. (composite/orphan are generation/FK handlers, not column
@@ -67,9 +66,8 @@ def _faker_provider_ids_cached() -> tuple[str, ...]:
     masked the ImportError + completers returned (), so the
     --faker-type tab-completer was a no-op everywhere."""
     try:
-        from faker import Faker
-
         from decoy_engine.internal.faker_setup import get_faker_providers
+        from faker import Faker
 
         return tuple(sorted(get_faker_providers(Faker()).keys()))
     except Exception:

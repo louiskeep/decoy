@@ -21,10 +21,9 @@ import re
 
 import pytest
 import yaml
+from decoy_engine.disguises import load_disguises
 
 from decoy.templates import get_template
-
-from decoy_engine.disguises import load_disguises
 
 _MARKER = re.compile(r"^# x-derived-from-disguise: ([a-z0-9_]+)@(\d{4}-\d{2}-\d{2})$")
 

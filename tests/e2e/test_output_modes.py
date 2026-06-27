@@ -18,7 +18,6 @@ from typer.testing import CliRunner
 from decoy.__main__ import app
 from decoy.ui.output import _make_console
 
-
 runner = CliRunner()
 ANSI_RE = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
 

@@ -23,7 +23,6 @@ from decoy.cli.exit_codes import EXIT_RUNTIME, EXIT_USAGE
 from decoy.ui.output import OutputMode, emit_json, setup_output
 from decoy.ui.theme import code, error, hint, success, warn
 
-
 _UNMASK_EPILOG = """\
 Examples:
 
@@ -171,7 +170,6 @@ def unmask(
 
     import pandas as pd
     import pyarrow as pa
-
     from decoy_engine import VaultError, unmask_pipeline
     from decoy_engine.errors import ConfigError
     from decoy_engine.execution import ExecutionError

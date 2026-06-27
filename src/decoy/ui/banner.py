@@ -15,7 +15,6 @@ from decoy import __version__
 from decoy.ui.output import OutputState
 from decoy.ui.theme import code
 
-
 _ASCII_LOGO = r"""
  ____
 |  _ \ ___  ___ ___  _   _

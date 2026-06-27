@@ -19,7 +19,6 @@ from decoy.ui.storm_animation import stormy_multistage
 from decoy.ui.table import make_table
 from decoy.ui.theme import code, error, hint, risk_high, risk_med, success
 
-
 storm_app = typer.Typer(
     name="storm",
     help=(

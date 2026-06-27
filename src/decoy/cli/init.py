@@ -25,10 +25,10 @@ import typer
 from decoy.cli._init_inference import Inference, _infer_strategy_for_column
 from decoy.cli.completers import init_presets
 from decoy.cli.exit_codes import EXIT_RUNTIME, EXIT_USAGE
-from decoy.templates import get_template, template_names as _template_names
+from decoy.templates import get_template
+from decoy.templates import template_names as _template_names
 from decoy.ui.output import OutputMode, emit_json, setup_output
 from decoy.ui.theme import accent, code, error, hint, success
-
 
 _INIT_EPILOG = """\
 Examples:

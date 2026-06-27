@@ -13,7 +13,6 @@ from rich.text import Text
 from decoy.ui.output import OutputMode, OutputState
 from decoy.ui.theme import code, error, hint, success, warn
 
-
 _STATUS_GLYPHS = {
     "ok": ("v", "success"),
     "warn": ("!", "warn"),

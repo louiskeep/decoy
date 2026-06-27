@@ -10,7 +10,6 @@ from typer.testing import CliRunner
 from decoy.__main__ import app
 from decoy.templates import template_names
 
-
 runner = CliRunner()
 
 

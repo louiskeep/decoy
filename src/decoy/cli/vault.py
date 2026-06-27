@@ -23,7 +23,6 @@ from decoy.cli.exit_codes import EXIT_USAGE
 from decoy.ui.output import OutputMode, emit_json, setup_output
 from decoy.ui.theme import code, error, hint, success
 
-
 vault_app = typer.Typer(
     name="vault",
     help="Vault inspection utilities. `info` summarises a vault without full decode.",
@@ -125,7 +124,7 @@ def _info(
         )
         raise typer.Exit(code=EXIT_USAGE)
 
-    from decoy_engine import VaultError, load_vault, job_seed_for_config
+    from decoy_engine import VaultError, job_seed_for_config, load_vault
     from decoy_engine.plan import PlanCompileError
 
     # Derive the job seed from the config (fails cleanly for bool/float seeds).

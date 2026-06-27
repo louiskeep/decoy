@@ -14,7 +14,6 @@ from decoy import __version__
 from decoy.ui.banner import render_banner
 from decoy.ui.output import OutputMode, emit_json, setup_output
 
-
 _INFO_EPILOG = """\
 Examples:
 

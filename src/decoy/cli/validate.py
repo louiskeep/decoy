@@ -26,7 +26,6 @@ from decoy.cli.exit_codes import EXIT_USAGE
 from decoy.ui.output import OutputMode, emit_json, setup_output
 from decoy.ui.theme import code, error, hint, success
 
-
 _VALIDATE_EPILOG = """\
 Examples:
 
