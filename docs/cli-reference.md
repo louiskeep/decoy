@@ -42,11 +42,16 @@ $ decoy [OPTIONS] COMMAND [ARGS]...
 * `info`: Print the Decoy CLI banner with...
 * `schema`: Print the PipelineConfig JSON Schema to...
 * `plan`: Compile a pipeline config into a versioned...
+* `doctor`: Check engine and dependency health.
 * `storm`: Dataset analysis -- the STORM event.
 * `templates`: Browse and dump bundled starter pipeline...
 * `vault`: Vault inspection utilities.
 * `evidence`: Show and verify local run evidence manifests.
 * `report`: Render, summarize, and compare local...
+* `strategies`: Enumerate and inspect the engine&#x27;s...
+* `providers`: Enumerate and inspect the engine&#x27;s...
+* `checksums`: List the engine&#x27;s registered checksum...
+* `validators`: List the engine&#x27;s registered job-level...
 
 ## `decoy run`
 
@@ -554,6 +559,41 @@ The fully-automated path (`decoy plan pipeline.yaml` with no profile
 flag) lands once the profile_source orchestration slice ships.
 
 See also: decoy validate, decoy run.
+
+
+## `decoy doctor`
+
+Check engine and dependency health.
+
+Exits 0 when all hard requirements are present. Exits non-zero when a
+hard requirement is missing. Soft-requirement absences produce warnings
+but do not change the exit code.
+
+**Usage**:
+
+```console
+$ decoy doctor [OPTIONS]
+```
+
+**Options**:
+
+* `--json`: Emit a JSON health report instead of a table.
+* `-q, --quiet`: Suppress stdout. Errors still go to stderr.
+* `-v, --verbose`: Enable debug-level CLI logs on stderr.
+* `--help`: Show this message and exit.
+
+Examples:
+
+  decoy doctor
+    Run all environment health checks and print a report.
+
+  decoy doctor --json
+    Same data as JSON for CI or support tooling.
+
+  decoy doctor --quiet
+    Silent mode; exit code 0 = healthy, non-zero = hard requirement missing.
+
+See also: decoy --version, decoy info.
 
 
 ## `decoy storm`
@@ -1357,3 +1397,253 @@ Scope: MANIFEST-vs-MANIFEST only. Data-level compare (source.csv vs masked.csv)
 is deferred to SP-18b/19.
 
 See also: decoy report summarize, decoy evidence verify.
+
+
+## `decoy strategies`
+
+Enumerate and inspect the engine&#x27;s registered mask strategies.
+
+**Usage**:
+
+```console
+$ decoy strategies [OPTIONS] COMMAND [ARGS]...
+```
+
+**Options**:
+
+* `--help`: Show this message and exit.
+
+**Commands**:
+
+* `list`: List every registered mask strategy in the...
+* `inspect`: Show details for one registered mask...
+
+### `decoy strategies list`
+
+List every registered mask strategy in the engine.
+
+**Usage**:
+
+```console
+$ decoy strategies list [OPTIONS]
+```
+
+**Options**:
+
+* `--json`: Emit a JSON list of registered strategies instead of a table.
+* `-q, --quiet`: Suppress stdout. Errors still go to stderr.
+* `-v, --verbose`: Enable debug-level CLI logs on stderr.
+* `--help`: Show this message and exit.
+
+Examples:
+
+  decoy strategies list
+    Print every registered mask strategy with its class name.
+
+  decoy strategies list --json
+    Same data as JSON for CI or support tooling.
+
+See also: decoy strategies inspect, decoy providers list.
+
+
+### `decoy strategies inspect`
+
+Show details for one registered mask strategy.
+
+**Usage**:
+
+```console
+$ decoy strategies inspect [OPTIONS] NAME
+```
+
+**Arguments**:
+
+* `NAME`: Strategy name to inspect.  [required]
+
+**Options**:
+
+* `--json`: Emit a JSON record instead of a panel.
+* `-q, --quiet`: Suppress stdout. Errors still go to stderr.
+* `-v, --verbose`: Enable debug-level CLI logs on stderr.
+* `--help`: Show this message and exit.
+
+Examples:
+
+  decoy strategies inspect fpe
+    Show parameters and behavior for the FPE strategy.
+
+  decoy strategies inspect geo_generalize --json
+    Same data as JSON.
+
+See also: decoy strategies list.
+
+
+## `decoy providers`
+
+Enumerate and inspect the engine&#x27;s registered generation providers.
+
+**Usage**:
+
+```console
+$ decoy providers [OPTIONS] COMMAND [ARGS]...
+```
+
+**Options**:
+
+* `--help`: Show this message and exit.
+
+**Commands**:
+
+* `list`: List every registered generation provider...
+* `inspect`: Show capability details for one registered...
+
+### `decoy providers list`
+
+List every registered generation provider in the engine.
+
+**Usage**:
+
+```console
+$ decoy providers list [OPTIONS]
+```
+
+**Options**:
+
+* `--json`: Emit a JSON list of registered providers instead of a table.
+* `-q, --quiet`: Suppress stdout. Errors still go to stderr.
+* `-v, --verbose`: Enable debug-level CLI logs on stderr.
+* `--help`: Show this message and exit.
+
+Examples:
+
+  decoy providers list
+    Print every registered provider with backend type and poolable flag.
+
+  decoy providers list --json
+    Same data as JSON.
+
+See also: decoy providers inspect, decoy strategies list.
+
+
+### `decoy providers inspect`
+
+Show capability details for one registered provider.
+
+**Usage**:
+
+```console
+$ decoy providers inspect [OPTIONS] NAME
+```
+
+**Arguments**:
+
+* `NAME`: Provider name to inspect.  [required]
+
+**Options**:
+
+* `--json`: Emit a JSON record instead of a panel.
+* `-q, --quiet`: Suppress stdout. Errors still go to stderr.
+* `-v, --verbose`: Enable debug-level CLI logs on stderr.
+* `--help`: Show this message and exit.
+
+Examples:
+
+  decoy providers inspect person_name
+    Show capability matrix for the person_name provider.
+
+  decoy providers inspect synthetic_ssn --json
+    Same data as JSON.
+
+See also: decoy providers list.
+
+
+## `decoy checksums`
+
+List the engine&#x27;s registered checksum schemes (SP-04).
+
+**Usage**:
+
+```console
+$ decoy checksums [OPTIONS] COMMAND [ARGS]...
+```
+
+**Options**:
+
+* `--help`: Show this message and exit.
+
+**Commands**:
+
+* `list`: List every registered checksum scheme in...
+
+### `decoy checksums list`
+
+List every registered checksum scheme in the engine (SP-04).
+
+**Usage**:
+
+```console
+$ decoy checksums list [OPTIONS]
+```
+
+**Options**:
+
+* `--json`: Emit a JSON list of checksum scheme names.
+* `-q, --quiet`: Suppress stdout. Errors still go to stderr.
+* `-v, --verbose`: Enable debug-level CLI logs on stderr.
+* `--help`: Show this message and exit.
+
+Examples:
+
+  decoy checksums list
+    Print every registered checksum scheme.
+
+  decoy checksums list --json
+    Same data as JSON.
+
+See also: decoy validators list.
+
+
+## `decoy validators`
+
+List the engine&#x27;s registered job-level validators (SP-05).
+
+**Usage**:
+
+```console
+$ decoy validators [OPTIONS] COMMAND [ARGS]...
+```
+
+**Options**:
+
+* `--help`: Show this message and exit.
+
+**Commands**:
+
+* `list`: List every registered job-level validator...
+
+### `decoy validators list`
+
+List every registered job-level validator in the engine (SP-05).
+
+**Usage**:
+
+```console
+$ decoy validators list [OPTIONS]
+```
+
+**Options**:
+
+* `--json`: Emit a JSON list of validator names.
+* `-q, --quiet`: Suppress stdout. Errors still go to stderr.
+* `-v, --verbose`: Enable debug-level CLI logs on stderr.
+* `--help`: Show this message and exit.
+
+Examples:
+
+  decoy validators list
+    Print every registered job-level validator.
+
+  decoy validators list --json
+    Same data as JSON.
+
+See also: decoy checksums list.
