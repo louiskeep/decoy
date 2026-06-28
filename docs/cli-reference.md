@@ -33,6 +33,7 @@ $ decoy [OPTIONS] COMMAND [ARGS]...
 
 * `run`: Run a decoy pipeline from a YAML config.
 * `validate`: Validate a decoy pipeline config without...
+* `preflight`: Local pre-run readiness checks for a...
 * `unmask`: Recover fpe-masked columns from a masked...
 * `fit`: Fit a distribution-snapshot/v1 artifact...
 * `init`: Scaffold a starter pipeline YAML through a...
@@ -44,6 +45,7 @@ $ decoy [OPTIONS] COMMAND [ARGS]...
 * `storm`: Dataset analysis -- the STORM event.
 * `templates`: Browse and dump bundled starter pipeline...
 * `vault`: Vault inspection utilities.
+* `evidence`: Show and verify local run evidence manifests.
 
 ## `decoy run`
 
@@ -75,6 +77,7 @@ $ decoy run [OPTIONS] CONFIG
 * `--vault PATH`: Write the token vault (encrypted source-to-masked map for vault: true columns) to this path. The vault plus the config re-identify every vaulted value: store them separately and never alongside the masked output. Needs the engine&#x27;s vault extra (cryptography).
 * `--substrate TEXT`: Execution substrate for --chunked runs: pandas (default) or polars. Non-chunked (plain) runs always use the engine&#x27;s pandas adapter (the V2 unified run_pipeline path); this flag and the DECOY_SUBSTRATE env var are only consulted for --chunked runs. Setting either on a plain run emits a warning to stderr and is otherwise ignored. Cross-substrate outputs are value-equal; CSV bytes may differ only via Arrow type-width drift, which CSV does not carry.  [env var: DECOY_SUBSTRATE]
 * `--key-label TEXT`: Stable namespace string for the masking key hierarchy. Required when --master-key is set. Pick something durable (e.g. &#x27;customers_q4&#x27;); changing it produces a different masked output. Read from the YAML&#x27;s top-level &#x27;key_label:&#x27; field if not passed on the command line.
+* `--evidence-out PATH`: Write a local evidence manifest (JSON) to this path after a successful run. The manifest records pipeline hash, input/output file fingerprints, row counts, and run metadata. It does NOT contain raw data values. Use `decoy evidence verify` to check the manifest against current files. See: decoy explain evidence (when available).
 * `--help`: Show this message and exit.
 
 Examples:
@@ -146,6 +149,67 @@ Examples:
     Exit non-zero if any advisory warning fires (e.g. output target exists).
 
 See also: decoy run.
+
+
+## `decoy preflight`
+
+Local pre-run readiness checks for a pipeline config.
+
+Checks file existence, file readability, YAML syntax, and schema
+validity. Reports findings as pass/warn/fail with structured output
+available via --json.
+
+This is a LOCAL check only. It does NOT check platform server-side
+conditions, engine run-time constraints, data quality, vault access,
+secrets availability, or network connectivity. Use `decoy validate`
+for pure schema-only checks; use this command when you want to confirm
+source files are present before starting a run.
+
+**Usage**:
+
+```console
+$ decoy preflight [OPTIONS] CONFIG
+```
+
+**Arguments**:
+
+* `CONFIG`: Path to the YAML pipeline config to check.  [required]
+
+**Options**:
+
+* `--local`: Explicit local mode (all checks are local by default; this flag makes the intent explicit in scripts).
+* `--json`: Emit a structured JSON result on stdout.
+* `-q, --quiet`: Suppress stdout. Errors still go to stderr; exit code carries the result.
+* `-v, --verbose`: Enable debug-level CLI logs on stderr.
+* `--fail-on-warning`: Exit non-zero when any advisory warning fires.
+* `--help`: Show this message and exit.
+
+Examples:
+
+  decoy preflight pipeline.yaml
+    Run local readiness checks: YAML validity, schema, and source file existence.
+
+  decoy preflight pipeline.yaml --local
+    Same as above (--local is the explicit form; all checks are local by default).
+
+  decoy preflight pipeline.yaml --json
+    Emit a structured JSON result with per-check findings.
+
+  decoy preflight pipeline.yaml --fail-on-warning
+    Exit non-zero when advisory warnings fire (e.g. output already exists).
+
+What preflight checks:
+  - YAML syntax and schema (same as `decoy validate`)
+  - Source file existence and readability
+  - Target overwrite risk (advisory warning)
+
+What preflight does NOT check:
+  - Platform server-side conditions (secrets, RBAC, schedules, network targets)
+  - Engine run-time constraints (capacity, row counts, provider limits)
+  - Data validity or masking quality
+  - Vault or secrets accessibility
+
+See also: decoy validate, decoy run, decoy evidence verify.
 
 
 ## `decoy unmask`
@@ -995,3 +1059,124 @@ global_settings.seed) used by the `decoy run --vault` call that wrote
 the vault, otherwise the decrypt will fail and the command exits 1.
 
 See also: decoy run --vault, decoy unmask --vault.
+
+
+## `decoy evidence`
+
+Show and verify local run evidence manifests. `show` renders a manifest; `verify` checks file fingerprints for drift.
+
+**Usage**:
+
+```console
+$ decoy evidence [OPTIONS] COMMAND [ARGS]...
+```
+
+**Options**:
+
+* `--help`: Show this message and exit.
+
+**Commands**:
+
+* `show`: Render a local evidence manifest in...
+* `verify`: Verify a local evidence manifest&#x27;s...
+
+### `decoy evidence show`
+
+Render a local evidence manifest in human-readable form.
+
+Shows pipeline hash, input/output fingerprints, run metadata,
+masking strategies, and manifest self-consistency status. Read-only:
+this command never modifies files and never exposes raw data values
+(the manifest itself does not contain them).
+
+Use `decoy evidence verify` to check whether the recorded fingerprints
+still match the current on-disk files.
+
+**Usage**:
+
+```console
+$ decoy evidence show [OPTIONS] EVIDENCE_FILE
+```
+
+**Arguments**:
+
+* `EVIDENCE_FILE`: Path to a local evidence manifest JSON (produced by decoy run --evidence-out).  [required]
+
+**Options**:
+
+* `--json`: Emit the manifest as structured JSON instead of a human-readable card.
+* `-q, --quiet`: Suppress stdout. Errors still go to stderr.
+* `-v, --verbose`: Enable debug-level CLI logs on stderr.
+* `--help`: Show this message and exit.
+
+Examples:
+
+  decoy evidence show evidence.json
+    Render the evidence manifest in a human-readable card.
+
+  decoy evidence show evidence.json --json
+    Emit the manifest as structured JSON (suitable for scripting).
+
+What evidence show does NOT do:
+  - It does not verify fingerprints against current files.
+  - Use `decoy evidence verify` to check for drift or tamper.
+
+See also: decoy evidence verify, decoy run --evidence-out.
+
+
+### `decoy evidence verify`
+
+Verify a local evidence manifest&#x27;s fingerprints against current files.
+
+Re-hashes the pipeline config, input files, and output files and
+compares against the SHA-256 fingerprints recorded in the manifest.
+Also checks manifest_hash to detect edits to the manifest file itself.
+
+Exits 0 when all fingerprints match (no drift, no tamper). Exits
+non-zero (EXIT_FINDINGS) when any fingerprint has changed.
+
+What this DOES prove: the files look the same as when the run
+completed. What this does NOT prove: correctness of the output,
+platform audit compliance, or that the run actually occurred.
+
+**Usage**:
+
+```console
+$ decoy evidence verify [OPTIONS] EVIDENCE_FILE
+```
+
+**Arguments**:
+
+* `EVIDENCE_FILE`: Path to a local evidence manifest JSON.  [required]
+
+**Options**:
+
+* `--json`: Emit a structured JSON result instead of human-readable output.
+* `-q, --quiet`: Suppress stdout. Exit code carries the result.
+* `-v, --verbose`: Enable debug-level CLI logs on stderr.
+* `--help`: Show this message and exit.
+
+Examples:
+
+  decoy evidence verify evidence.json
+    Check all fingerprints (pipeline, inputs, outputs, manifest integrity).
+    Exits 0 when all match; non-zero when any changed.
+
+  decoy evidence verify evidence.json --json
+    Emit a structured JSON result with the list of issues found.
+
+What verify checks:
+  - manifest_hash: detects edits to the manifest JSON file.
+  - pipeline_fingerprint: detects changes to pipeline.yaml.
+  - input_fingerprints: detects changes to source data files.
+  - output_fingerprints: detects changes to masked/generated output files.
+
+What verify does NOT check:
+  - Whether the output was produced by the declared pipeline.
+  - Data correctness or masking quality.
+  - Platform audit logs, RBAC, or schedule history.
+  - Network, vault, or secrets accessibility.
+
+Exit codes: 0 clean; 4 fingerprint drift or tamper detected; 1 bad input.
+
+See also: decoy evidence show, decoy run --evidence-out.

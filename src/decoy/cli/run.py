@@ -12,12 +12,14 @@ before this module sees them.
 """
 
 import binascii
+import json as _json
 import time
 from enum import Enum
 from pathlib import Path
 
 import typer
 
+from decoy import __version__ as _cli_version
 from decoy.cli.exit_codes import EXIT_RUNTIME, EXIT_USAGE
 from decoy.ui.card import render_card
 from decoy.ui.output import OutputMode, emit_json, setup_output
@@ -182,6 +184,18 @@ def run(
             "field if not passed on the command line."
         ),
     ),
+    evidence_out: Path = typer.Option(
+        None,
+        "--evidence-out",
+        help=(
+            "Write a local evidence manifest (JSON) to this path after a "
+            "successful run. The manifest records pipeline hash, input/output "
+            "file fingerprints, row counts, and run metadata. It does NOT "
+            "contain raw data values. Use `decoy evidence verify` to check "
+            "the manifest against current files. "
+            "See: decoy explain evidence (when available)."
+        ),
+    ),
 ) -> None:
     """Run a decoy pipeline from a YAML config.
 
@@ -208,6 +222,11 @@ def run(
             "this plain run uses the engine's pandas adapter.",
         )
 
+    # Sentinels for evidence manifest building (set on successful plain run).
+    _ev_config_dict: dict | None = None
+    _ev_engine_version: str | None = None
+    _ev_row_counts: dict | None = None
+
     started = time.perf_counter()
     try:
         with spinner(state, f"Running {yaml_mode}..."):
@@ -228,6 +247,8 @@ def run(
 
                 raw = _yaml.safe_load(config.read_text(encoding="utf-8"))
             config_dict = PipelineConfig.model_validate(raw).model_dump()
+            _ev_config_dict = config_dict
+            _ev_engine_version = engine_version
 
             # FC-1 (2026-06-26): run_pipeline is now wired as the single
             # non-chunked entry for all config shapes (mask-only, generate-
@@ -281,6 +302,10 @@ def run(
                     vault_writer=vault_writer,
                 )
                 _write_mask_outputs(config_dict, result, config.parent)
+                if evidence_out is not None:
+                    _ev_row_counts = {
+                        name: len(tbl) for name, tbl in result.outputs.items()
+                    }
             if vault_writer is not None:
                 vault_writer.write(vault)
     except typer.Exit:
@@ -340,6 +365,29 @@ def run(
         raise typer.Exit(code=_exit_code)
 
     elapsed = time.perf_counter() - started
+
+    # Write evidence manifest if --evidence-out was given and we have the data.
+    # Only available for non-chunked plain runs (chunked path does not return
+    # an ExecutionResult, so row counts are not available).
+    if evidence_out is not None and _ev_config_dict is not None:
+        from decoy.cli.evidence import build_manifest
+
+        _label = key_label or _detect_key_label(raw_cfg)
+        manifest = build_manifest(
+            pipeline_path=config,
+            config_dict=_ev_config_dict,
+            run_result={"row_counts": _ev_row_counts or {}},
+            cli_version=_cli_version,
+            engine_version=_ev_engine_version or "unknown",
+            key_label=_label,
+        )
+        evidence_out.write_text(_json.dumps(manifest, indent=2), encoding="utf-8")
+        if state.mode is not OutputMode.json and state.mode is not OutputMode.quiet:
+            from decoy.ui.theme import success as _success
+
+            state.console.print(
+                _success("Evidence:"), str(evidence_out)
+            )
 
     if state.mode is OutputMode.json:
         emit_json(
