@@ -8,6 +8,14 @@ through `if __name__ == "__main__":`.
 import typer
 
 from decoy import __version__
+from decoy.cli.cockpit import (
+    DOCTOR_EPILOG,
+    checksums_app,
+    doctor,
+    providers_app,
+    strategies_app,
+    validators_app,
+)
 from decoy.cli.demo import DEMO_EPILOG
 from decoy.cli.demo import _demo as demo_command
 from decoy.cli.evidence import evidence_app
@@ -101,6 +109,11 @@ app.add_typer(vault_app, name="vault")
 app.add_typer(evidence_app, name="evidence")
 app.add_typer(report_app, name="report")
 app.command(name="plan", epilog=PLAN_EPILOG)(plan_command)
+app.add_typer(strategies_app, name="strategies")
+app.add_typer(providers_app, name="providers")
+app.add_typer(checksums_app, name="checksums")
+app.add_typer(validators_app, name="validators")
+app.command(name="doctor", epilog=DOCTOR_EPILOG)(doctor)
 
 
 if __name__ == "__main__":
