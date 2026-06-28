@@ -1,8 +1,8 @@
 """`decoy evidence` -- show and verify local run evidence manifests (SP-17).
 
 Local evidence manifests are produced by `decoy run --evidence-out <path>` and
-contain fingerprints (SHA-256 hashes) of the pipeline config, input files, and
-output files at the time of the run. They also include a self-consistency hash
+contain fingerprints of the pipeline config, input files, and output files at
+the time of the run. They also include a self-consistency fingerprint
 (`manifest_hash`) that covers the entire manifest body.
 
 What evidence show/verify check
@@ -12,11 +12,11 @@ What evidence show/verify check
                       itself never contains them).
 
 `evidence verify` -- Reads the manifest then re-hashes the current files to
-                      detect drift or tampering:
-                        - pipeline_fingerprint: SHA-256 of pipeline.yaml
-                        - input_fingerprints: SHA-256 of each source file
-                        - output_fingerprints: SHA-256 of each target file
-                        - manifest_hash: SHA-256 of the manifest body itself
+                      detect drift (accidental file changes):
+                        - pipeline_fingerprint: sha256:<hex> of pipeline.yaml
+                        - input_fingerprints: sha256:<hex> of each source file
+                        - output_fingerprints: sha256:<hex> of each target file
+                        - manifest_hash: sha256:<hex> of the manifest body itself
                       Exits non-zero and reports which fingerprints changed.
 
 What evidence verify does NOT check
@@ -27,11 +27,23 @@ What evidence verify does NOT check
 * Data correctness or masking quality.
 * Network, vault, or secrets accessibility.
 
+Integrity limit
+---------------
+``manifest_hash`` is an UNKEYED SHA-256 integrity check. It detects
+accidental change and drift; it does NOT detect a motivated tamperer who
+can edit the manifest and recompute the hash (no secret key = no
+authenticity). Cryptographic authenticity (keyed signing) is platform R4
+territory. This limit mirrors the note at
+decoy-platform/api/evidence/hashing.py (verify_manifest_hash docstring).
+
 This is explicitly a LOCAL evidence facility. It proves "these files look the
 same as when the run completed." It is not a replacement for platform-managed
 audit history.
 
-Evidence manifest schema version: "1"
+Interop note: the producer/schema markers make this manifest routable by a
+future platform importer; no import adapter exists today (that is R4+ work).
+
+Evidence manifest schema version: "cli-local-1"
 """
 
 from __future__ import annotations
@@ -58,7 +70,19 @@ evidence_app = typer.Typer(
     no_args_is_help=True,
 )
 
-_SCHEMA_VERSION = "1"
+_SCHEMA_VERSION = "cli-local-1"
+
+# Fields stripped before computing manifest_hash. Mirrors the platform's
+# _MANIFEST_HASH_STRIP_FIELDS (api/evidence/hashing.py) so adding a
+# signature field later does not silently break the hash.
+_MANIFEST_HASH_STRIP_FIELDS: frozenset[str] = frozenset(
+    {
+        "manifest_hash",
+        "signature",
+        "signature_alg",
+        "signature_key_id",
+    }
+)
 
 # ---------------------------------------------------------------------------
 # Core helpers
@@ -66,10 +90,13 @@ _SCHEMA_VERSION = "1"
 
 
 def hash_file(path: Path) -> str:
-    """Return the SHA-256 hex digest of the file at `path`.
+    """Return the SHA-256 fingerprint of the file at `path` as ``sha256:<hex>``.
 
     Reads in 64 KiB chunks so it works on large files without loading all
     into memory. Standard Python stdlib hashlib; no external dependency.
+
+    Returns a ``sha256:<hex>`` prefixed string (71 chars total) matching
+    the fingerprint form used by decoy-platform/api/evidence/hashing.py.
     """
     h = hashlib.sha256()
     with path.open("rb") as fh:
@@ -78,18 +105,23 @@ def hash_file(path: Path) -> str:
             if not chunk:
                 break
             h.update(chunk)
-    return h.hexdigest()
+    return f"sha256:{h.hexdigest()}"
 
 
 def compute_manifest_hash(manifest: dict[str, Any]) -> str:
-    """Compute SHA-256 over the manifest body (all fields except manifest_hash).
+    """Compute SHA-256 over the manifest body, returning ``sha256:<hex>``.
 
-    The canonical form is JSON with sorted keys and no extra whitespace.
+    Strips the four reserved fields (``manifest_hash``, ``signature``,
+    ``signature_alg``, ``signature_key_id``) before hashing, matching the
+    platform's field-strip set so a future signature field does not silently
+    break the hash. Rejects non-finite floats (NaN, Infinity) per the R3.1
+    canonical-JSON rule -- they do not round-trip JSON.
+
     This lets `evidence verify` detect edits to the manifest file itself.
     """
-    body = {k: v for k, v in manifest.items() if k != "manifest_hash"}
-    canonical = _json.dumps(body, sort_keys=True, separators=(",", ":"))
-    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+    body = {k: v for k, v in manifest.items() if k not in _MANIFEST_HASH_STRIP_FIELDS}
+    canonical = _json.dumps(body, sort_keys=True, separators=(",", ":"), allow_nan=False)
+    return f"sha256:{hashlib.sha256(canonical.encode('utf-8')).hexdigest()}"
 
 
 def build_manifest(
@@ -101,17 +133,32 @@ def build_manifest(
     engine_version: str,
     key_label: str | None = None,
     warnings: list[str] | None = None,
+    timings: Any = None,
+    engine_warnings: Any = None,
 ) -> dict[str, Any]:
     """Build an evidence manifest dict for a completed local run.
 
     The manifest records:
-      - versions, run metadata, pipeline hash
-      - per-table input and output file fingerprints (SHA-256 + size)
+      - versions, run metadata, pipeline fingerprint
+      - per-table input and output file fingerprints (sha256:<hex> + size)
+      - per-table row timings and engine quality warnings
       - per-column strategy summary (no raw values)
-      - a manifest_hash that covers all of the above
+      - a manifest_hash covering all of the above
 
     Raw row values, secrets, plaintext key material, and PII samples are
     NEVER included. The spec for this invariant is the `no_raw_values` test.
+
+    Fingerprint form: ``sha256:<hex>`` with a ``fingerprint_method`` field,
+    matching decoy-platform/api/evidence/hashing.py's output_file_hash form.
+
+    Schema: ``cli-local-1`` -- a namespace distinct from the platform's
+    ``r3.x`` series so a manifest reader can route by producer + version.
+    The ``producer`` field is ``"decoy-cli"``. A platform import adapter is
+    future work (R4+); interop is not guaranteed beyond the routing markers.
+
+    Failed-run artifacts are explicitly out of scope for CLI-local manifests;
+    the platform handles error artifacts server-side. This function is only
+    called on the success path.
     """
     pipeline_fingerprint = hash_file(pipeline_path)
 
@@ -128,13 +175,15 @@ def build_manifest(
         if src_path.exists():
             input_fingerprints[table_name] = {
                 "path": str(src_path),
-                "sha256": hash_file(src_path),
+                "fingerprint": hash_file(src_path),
+                "fingerprint_method": "full",
                 "size_bytes": src_path.stat().st_size,
             }
         else:
             input_fingerprints[table_name] = {
                 "path": str(src_path),
-                "sha256": None,
+                "fingerprint": None,
+                "fingerprint_method": None,
                 "size_bytes": None,
             }
 
@@ -151,18 +200,50 @@ def build_manifest(
         if tgt_path.exists():
             output_fingerprints[table_name] = {
                 "path": str(tgt_path),
-                "sha256": hash_file(tgt_path),
+                "fingerprint": hash_file(tgt_path),
+                "fingerprint_method": "full",
                 "size_bytes": tgt_path.stat().st_size,
             }
         else:
             output_fingerprints[table_name] = {
                 "path": str(tgt_path),
-                "sha256": None,
+                "fingerprint": None,
+                "fingerprint_method": None,
                 "size_bytes": None,
             }
 
     # --- Row counts ---
     row_counts = (run_result or {}).get("row_counts") or {}
+
+    # --- Timings: serialize StrategyTimingRecord objects to dicts ---
+    timings_out: list[dict[str, Any]] = []
+    for t in timings or ():
+        if hasattr(t, "strategy_type"):
+            timings_out.append(
+                {
+                    "strategy_type": t.strategy_type,
+                    "column": t.column,
+                    "elapsed_ms": t.elapsed_ms,
+                    "peak_memory_delta_kb": t.peak_memory_delta_kb,
+                }
+            )
+        elif isinstance(t, dict):
+            timings_out.append(t)
+
+    # --- Warnings: merge CLI warnings + engine QualityWarning objects ---
+    warnings_out: list[Any] = list(warnings or [])
+    for w in engine_warnings or ():
+        if hasattr(w, "code"):
+            warnings_out.append(
+                {
+                    "code": w.code,
+                    "provider": w.provider,
+                    "column": w.column,
+                    "detail": dict(w.detail) if w.detail else {},
+                }
+            )
+        elif isinstance(w, (str, dict)):
+            warnings_out.append(w)
 
     # --- Strategy summary (no raw values) ---
     tables = config_dict.get("tables") or []
@@ -194,6 +275,7 @@ def build_manifest(
 
     manifest: dict[str, Any] = {
         "schema_version": _SCHEMA_VERSION,
+        "producer": "decoy-cli",
         "run_id": str(uuid4()),
         "run_timestamp": datetime.now(tz=timezone.utc).isoformat(),
         "cli_version": cli_version,
@@ -204,7 +286,8 @@ def build_manifest(
         "output_fingerprints": output_fingerprints,
         "row_counts": row_counts,
         "key_label": key_label,
-        "warnings": warnings or [],
+        "warnings": warnings_out,
+        "timings": timings_out,
         "strategies": strategies,
         "manifest_hash": "",  # placeholder; filled below
     }
@@ -216,7 +299,13 @@ def verify_manifest(manifest: dict[str, Any]) -> list[str]:
     """Verify a manifest's fingerprints against the current on-disk state.
 
     Returns a list of issue strings. Empty list = clean (all fingerprints
-    match, manifest_hash is valid). Non-empty = drift or tamper detected.
+    match, manifest_hash is valid). Non-empty = fingerprint mismatch or
+    drift detected.
+
+    Integrity limit: manifest_hash is an UNKEYED SHA-256 check. It detects
+    accidental drift; it does NOT detect a motivated tamperer who can edit
+    the manifest and recompute the hash. This function is useful for catching
+    unintended file changes, not adversarial edits.
 
     What is checked:
     * manifest_hash: re-computed and compared (detects manifest edits).
@@ -236,10 +325,10 @@ def verify_manifest(manifest: dict[str, Any]) -> list[str]:
     if recorded_hash != computed_hash:
         issues.append(
             f"manifest integrity: manifest_hash mismatch "
-            f"(recorded {recorded_hash[:12]}..., computed {computed_hash[:12]}...); "
+            f"(recorded {recorded_hash[:16]}..., computed {computed_hash[:16]}...); "
             "manifest file may have been edited"
         )
-        # If the manifest itself is tampered we still proceed so that all
+        # If the manifest itself changed we still proceed so that all
         # other issues are surfaced in one pass.
 
     # --- Pipeline fingerprint ---
@@ -254,7 +343,7 @@ def verify_manifest(manifest: dict[str, Any]) -> list[str]:
             if current_pf != recorded_pf:
                 issues.append(
                     f"pipeline fingerprint changed: {pipeline_path_str} "
-                    f"(recorded {recorded_pf[:12]}..., current {current_pf[:12]}...)"
+                    f"(recorded {recorded_pf[:16]}..., current {current_pf[:16]}...)"
                 )
 
     # --- Input fingerprints ---
@@ -262,18 +351,18 @@ def verify_manifest(manifest: dict[str, Any]) -> list[str]:
         if not isinstance(info, dict):
             continue
         path_str = info.get("path")
-        recorded_sha = info.get("sha256")
-        if not path_str or not recorded_sha:
+        recorded_fp = info.get("fingerprint")
+        if not path_str or not recorded_fp:
             continue
         p = Path(path_str)
         if not p.exists():
             issues.append(f"input missing: {path_str} (table {table_name!r}) not found")
             continue
-        current_sha = hash_file(p)
-        if current_sha != recorded_sha:
+        current_fp = hash_file(p)
+        if current_fp != recorded_fp:
             issues.append(
                 f"input fingerprint changed: {path_str} (table {table_name!r}) "
-                f"(recorded {recorded_sha[:12]}..., current {current_sha[:12]}...)"
+                f"(recorded {recorded_fp[:16]}..., current {current_fp[:16]}...)"
             )
 
     # --- Output fingerprints ---
@@ -281,18 +370,18 @@ def verify_manifest(manifest: dict[str, Any]) -> list[str]:
         if not isinstance(info, dict):
             continue
         path_str = info.get("path")
-        recorded_sha = info.get("sha256")
-        if not path_str or not recorded_sha:
+        recorded_fp = info.get("fingerprint")
+        if not path_str or not recorded_fp:
             continue
         p = Path(path_str)
         if not p.exists():
             issues.append(f"output missing: {path_str} (table {table_name!r}) not found")
             continue
-        current_sha = hash_file(p)
-        if current_sha != recorded_sha:
+        current_fp = hash_file(p)
+        if current_fp != recorded_fp:
             issues.append(
                 f"output fingerprint changed: {path_str} (table {table_name!r}) "
-                f"(recorded {recorded_sha[:12]}..., current {current_sha[:12]}...)"
+                f"(recorded {recorded_fp[:16]}..., current {current_fp[:16]}...)"
             )
 
     return issues
@@ -314,7 +403,11 @@ Examples:
 
 What evidence show does NOT do:
   - It does not verify fingerprints against current files.
-  - Use `decoy evidence verify` to check for drift or tamper.
+  - Use `decoy evidence verify` to check for drift (accidental file changes).
+
+Integrity note: manifest_hash is an UNKEYED SHA-256 fingerprint. It detects
+accidental drift; it does NOT detect a motivated tamperer who can edit the
+manifest and recompute the hash. Keyed signing is platform R4 territory.
 
 See also: decoy evidence verify, decoy run --evidence-out.
 """
@@ -341,13 +434,18 @@ def _show(
 ) -> None:
     """Render a local evidence manifest in human-readable form.
 
-    Shows pipeline hash, input/output fingerprints, run metadata,
+    Shows pipeline fingerprint, input/output fingerprints, run metadata,
     masking strategies, and manifest self-consistency status. Read-only:
     this command never modifies files and never exposes raw data values
     (the manifest itself does not contain them).
 
     Use `decoy evidence verify` to check whether the recorded fingerprints
     still match the current on-disk files.
+
+    What this does NOT prove: manifest_hash is an UNKEYED SHA-256 check.
+    It detects accidental drift; it does NOT detect a motivated tamperer who
+    can edit the manifest and recompute the hash. Keyed signing is platform
+    R4 territory.
     """
     state = setup_output(json_, quiet, verbose)
 
@@ -358,7 +456,9 @@ def _show(
         elif state.mode is not OutputMode.quiet:
             state.err_console.print(error("error:"), msg)
             state.err_console.print(
-                " ", hint("hint:"), "produce an evidence file with",
+                " ",
+                hint("hint:"),
+                "produce an evidence file with",
                 code("decoy run pipeline.yaml --evidence-out evidence.json"),
             )
         raise typer.Exit(code=EXIT_USAGE)
@@ -418,19 +518,22 @@ def _render_manifest_card(state: Any, manifest: dict[str, Any], evidence_file: P
     pipeline_fp = manifest.get("pipeline_fingerprint") or ""
     key_label = manifest.get("key_label") or "(none)"
     warnings_list = manifest.get("warnings") or []
-    hash_status = "ok" if hash_ok else "MISMATCH (manifest may be edited)"
+    timings_list = manifest.get("timings") or []
+    hash_status = "ok (unkeyed integrity check)" if hash_ok else "MISMATCH (manifest may be edited)"
 
     facts: list[tuple[str, str]] = [
         ("Schema version", schema_v),
+        ("Producer", manifest.get("producer", "?")),
         ("Run ID", run_id[:16] + "..." if len(run_id) > 16 else run_id),
         ("Run timestamp", run_ts),
         ("CLI version", cli_v),
         ("Engine version", eng_v),
         ("Pipeline", pipeline_path),
-        ("Pipeline fingerprint", pipeline_fp[:16] + "..." if pipeline_fp else "(none)"),
+        ("Pipeline fingerprint", pipeline_fp[:23] + "..." if pipeline_fp else "(none)"),
         ("Key label", key_label),
         ("Manifest hash", hash_status),
         ("Warnings", str(len(warnings_list))),
+        ("Timings recorded", str(len(timings_list))),
     ]
 
     render_card(
@@ -444,25 +547,41 @@ def _render_manifest_card(state: Any, manifest: dict[str, Any], evidence_file: P
     # Input fingerprints table
     input_fps = manifest.get("input_fingerprints") or {}
     if input_fps:
-        t = make_table("Table", "Path", "SHA-256 (prefix)", "Size", title="Input fingerprints")
+        t = make_table(
+            "Table",
+            "Path",
+            "Fingerprint (prefix)",
+            "Method",
+            "Size",
+            title="Input fingerprints",
+        )
         for tname, info in input_fps.items():
             if not isinstance(info, dict):
                 continue
-            sha = (info.get("sha256") or "")[:16] + "..."
+            fp = (info.get("fingerprint") or "")[:23] + "..."
+            method = info.get("fingerprint_method") or "?"
             size = str(info.get("size_bytes") or "?")
-            t.add_row(tname, info.get("path", "?"), sha, size)
+            t.add_row(tname, info.get("path", "?"), fp, method, size)
         state.console.print(t)
 
     # Output fingerprints table
     output_fps = manifest.get("output_fingerprints") or {}
     if output_fps:
-        t = make_table("Table", "Path", "SHA-256 (prefix)", "Size", title="Output fingerprints")
+        t = make_table(
+            "Table",
+            "Path",
+            "Fingerprint (prefix)",
+            "Method",
+            "Size",
+            title="Output fingerprints",
+        )
         for tname, info in output_fps.items():
             if not isinstance(info, dict):
                 continue
-            sha = (info.get("sha256") or "")[:16] + "..."
+            fp = (info.get("fingerprint") or "")[:23] + "..."
+            method = info.get("fingerprint_method") or "?"
             size = str(info.get("size_bytes") or "?")
-            t.add_row(tname, info.get("path", "?"), sha, size)
+            t.add_row(tname, info.get("path", "?"), fp, method, size)
         state.console.print(t)
 
     # Strategies table
@@ -511,7 +630,11 @@ What verify does NOT check:
   - Platform audit logs, RBAC, or schedule history.
   - Network, vault, or secrets accessibility.
 
-Exit codes: 0 clean; 4 fingerprint drift or tamper detected; 1 bad input.
+Integrity limit: manifest_hash is an UNKEYED SHA-256 check. It detects
+accidental drift; it does NOT detect a motivated tamperer who can edit the
+manifest and recompute the hash. Keyed signing is platform R4 territory.
+
+Exit codes: 0 clean; 4 fingerprint drift detected; 1 bad input.
 
 See also: decoy evidence show, decoy run --evidence-out.
 """
@@ -539,15 +662,20 @@ def _verify(
     """Verify a local evidence manifest's fingerprints against current files.
 
     Re-hashes the pipeline config, input files, and output files and
-    compares against the SHA-256 fingerprints recorded in the manifest.
-    Also checks manifest_hash to detect edits to the manifest file itself.
+    compares against the fingerprints recorded in the manifest. Also checks
+    manifest_hash to detect edits to the manifest file itself.
 
-    Exits 0 when all fingerprints match (no drift, no tamper). Exits
-    non-zero (EXIT_FINDINGS) when any fingerprint has changed.
+    Exits 0 when all fingerprints match (no drift). Exits non-zero
+    (EXIT_FINDINGS) when any fingerprint has changed.
 
     What this DOES prove: the files look the same as when the run
     completed. What this does NOT prove: correctness of the output,
     platform audit compliance, or that the run actually occurred.
+
+    Integrity limit: manifest_hash is an UNKEYED SHA-256 check. It detects
+    accidental drift (file changes since the run), NOT a motivated tamperer
+    who can edit the manifest and recompute the hash. Keyed signing (R4) is
+    required for adversarial authenticity guarantees.
     """
     state = setup_output(json_, quiet, verbose)
 
@@ -556,7 +684,7 @@ def _verify(
         if state.mode is OutputMode.json:
             emit_json(
                 state,
-                {"command": "evidence verify", "status": "error", "error": msg}
+                {"command": "evidence verify", "status": "error", "error": msg},
             )
         elif state.mode is not OutputMode.quiet:
             state.err_console.print(error("error:"), msg)
@@ -586,7 +714,7 @@ def _verify(
             state,
             {
                 "command": "evidence verify",
-                "status": "ok" if not issues else "tamper",
+                "status": "ok" if not issues else "fingerprint_mismatch",
                 "evidence_file": str(evidence_file),
                 "issues": issues,
                 "issue_count": len(issues),
@@ -609,7 +737,7 @@ def _verify(
         return
 
     state.err_console.print(
-        error("TAMPER DETECTED:"),
+        error("INTEGRITY CHECK FAILED: fingerprint mismatch"),
         f"{len(issues)} fingerprint(s) changed in {evidence_file.name}",
     )
     for issue in issues:
@@ -619,6 +747,12 @@ def _verify(
         hint("hint:"),
         "files may have changed since the evidence was recorded, "
         "or the manifest file may have been edited.",
+    )
+    state.err_console.print(
+        " ",
+        hint("note:"),
+        "manifest_hash is an UNKEYED SHA-256 check; it detects accidental "
+        "drift, not adversarial edits. Keyed signing is platform R4 territory.",
     )
     raise typer.Exit(code=EXIT_FINDINGS)
 

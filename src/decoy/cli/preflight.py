@@ -29,8 +29,10 @@ here is a local file/source/schema readiness gate. The spec (cli-first-
 capability-guide.md lines 99-100) is explicit: frame this as FILE / SOURCE /
 SCHEMA checks. Platform preflight is a different product.
 
-SP-16 validate path is reused for steps 1-3 above so that both commands
-stay in sync on what "structurally valid" means.
+The same engine primitives (PipelineConfig.model_validate,
+run_config_only_checks) are used for steps 1-3; this keeps both commands
+in sync on what "structurally valid" means without literally reusing the
+validate command's code path.
 """
 
 from __future__ import annotations
@@ -106,13 +108,19 @@ class _PreflightAccumulator:
     checks: list[_CheckResult] = field(default_factory=list)
 
     def add_pass(self, name: str, message: str, location: str | None = None) -> None:
-        self.checks.append(_CheckResult(name=name, status="pass", message=message, location=location))
+        self.checks.append(
+            _CheckResult(name=name, status="pass", message=message, location=location)
+        )
 
     def add_warn(self, name: str, message: str, location: str | None = None) -> None:
-        self.checks.append(_CheckResult(name=name, status="warn", message=message, location=location))
+        self.checks.append(
+            _CheckResult(name=name, status="warn", message=message, location=location)
+        )
 
     def add_fail(self, name: str, message: str, location: str | None = None) -> None:
-        self.checks.append(_CheckResult(name=name, status="fail", message=message, location=location))
+        self.checks.append(
+            _CheckResult(name=name, status="fail", message=message, location=location)
+        )
 
     @property
     def has_failures(self) -> bool:
@@ -415,7 +423,8 @@ def _emit_preflight_result(
 
     if acc.has_failures:
         state.err_console.print(
-            error("FAIL"), code(config_str),
+            error("FAIL"),
+            code(config_str),
             hint("- fix the errors above, then rerun."),
         )
         return

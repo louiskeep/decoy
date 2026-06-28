@@ -1084,13 +1084,18 @@ $ decoy evidence [OPTIONS] COMMAND [ARGS]...
 
 Render a local evidence manifest in human-readable form.
 
-Shows pipeline hash, input/output fingerprints, run metadata,
+Shows pipeline fingerprint, input/output fingerprints, run metadata,
 masking strategies, and manifest self-consistency status. Read-only:
 this command never modifies files and never exposes raw data values
 (the manifest itself does not contain them).
 
 Use `decoy evidence verify` to check whether the recorded fingerprints
 still match the current on-disk files.
+
+What this does NOT prove: manifest_hash is an UNKEYED SHA-256 check.
+It detects accidental drift; it does NOT detect a motivated tamperer who
+can edit the manifest and recompute the hash. Keyed signing is platform
+R4 territory.
 
 **Usage**:
 
@@ -1119,7 +1124,11 @@ Examples:
 
 What evidence show does NOT do:
   - It does not verify fingerprints against current files.
-  - Use `decoy evidence verify` to check for drift or tamper.
+  - Use `decoy evidence verify` to check for drift (accidental file changes).
+
+Integrity note: manifest_hash is an UNKEYED SHA-256 fingerprint. It detects
+accidental drift; it does NOT detect a motivated tamperer who can edit the
+manifest and recompute the hash. Keyed signing is platform R4 territory.
 
 See also: decoy evidence verify, decoy run --evidence-out.
 
@@ -1129,15 +1138,20 @@ See also: decoy evidence verify, decoy run --evidence-out.
 Verify a local evidence manifest&#x27;s fingerprints against current files.
 
 Re-hashes the pipeline config, input files, and output files and
-compares against the SHA-256 fingerprints recorded in the manifest.
-Also checks manifest_hash to detect edits to the manifest file itself.
+compares against the fingerprints recorded in the manifest. Also checks
+manifest_hash to detect edits to the manifest file itself.
 
-Exits 0 when all fingerprints match (no drift, no tamper). Exits
-non-zero (EXIT_FINDINGS) when any fingerprint has changed.
+Exits 0 when all fingerprints match (no drift). Exits non-zero
+(EXIT_FINDINGS) when any fingerprint has changed.
 
 What this DOES prove: the files look the same as when the run
 completed. What this does NOT prove: correctness of the output,
 platform audit compliance, or that the run actually occurred.
+
+Integrity limit: manifest_hash is an UNKEYED SHA-256 check. It detects
+accidental drift (file changes since the run), NOT a motivated tamperer
+who can edit the manifest and recompute the hash. Keyed signing (R4) is
+required for adversarial authenticity guarantees.
 
 **Usage**:
 
@@ -1177,6 +1191,10 @@ What verify does NOT check:
   - Platform audit logs, RBAC, or schedule history.
   - Network, vault, or secrets accessibility.
 
-Exit codes: 0 clean; 4 fingerprint drift or tamper detected; 1 bad input.
+Integrity limit: manifest_hash is an UNKEYED SHA-256 check. It detects
+accidental drift; it does NOT detect a motivated tamperer who can edit the
+manifest and recompute the hash. Keyed signing is platform R4 territory.
+
+Exit codes: 0 clean; 4 fingerprint drift detected; 1 bad input.
 
 See also: decoy evidence show, decoy run --evidence-out.
