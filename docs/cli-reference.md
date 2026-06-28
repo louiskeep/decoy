@@ -46,6 +46,7 @@ $ decoy [OPTIONS] COMMAND [ARGS]...
 * `templates`: Browse and dump bundled starter pipeline...
 * `vault`: Vault inspection utilities.
 * `evidence`: Show and verify local run evidence manifests.
+* `report`: Render, summarize, and compare local...
 
 ## `decoy run`
 
@@ -1198,3 +1199,161 @@ manifest and recompute the hash. Keyed signing is platform R4 territory.
 Exit codes: 0 clean; 4 fingerprint drift detected; 1 bad input.
 
 See also: decoy evidence show, decoy run --evidence-out.
+
+
+## `decoy report`
+
+Render, summarize, and compare local evidence manifests. Operates on evidence JSON files produced by `decoy run --evidence-out`.
+
+**Usage**:
+
+```console
+$ decoy report [OPTIONS] COMMAND [ARGS]...
+```
+
+**Options**:
+
+* `--help`: Show this message and exit.
+
+**Commands**:
+
+* `render`: Render an evidence manifest to an HTML or...
+* `summarize`: Print a concise terminal summary of a...
+* `compare`: Compare two evidence manifests and report...
+
+### `decoy report render`
+
+Render an evidence manifest to an HTML or Markdown report file.
+
+The report is built from the manifest only (evidence-safe). Raw row
+values, PII, and STORM profile internals are never included.
+
+HTML output is self-contained and offline-capable (no CDN/external JS).
+Markdown output is plain text.
+
+**Usage**:
+
+```console
+$ decoy report render [OPTIONS] EVIDENCE_FILE
+```
+
+**Arguments**:
+
+* `EVIDENCE_FILE`: Path to a local evidence manifest JSON (produced by decoy run --evidence-out).  [required]
+
+**Options**:
+
+* `--out PATH`: Output file path (e.g. report.html or report.md).  [required]
+* `--format TEXT`: Output format: &#x27;html&#x27; (default) or &#x27;markdown&#x27;.  [default: html]
+* `-q, --quiet`: Suppress stdout. Errors still go to stderr.
+* `-v, --verbose`: Enable debug-level CLI logs on stderr.
+* `--help`: Show this message and exit.
+
+Examples:
+
+  decoy report render evidence.json --out report.html
+    Render the manifest as a self-contained offline HTML report.
+
+  decoy report render evidence.json --format markdown --out report.md
+    Render the manifest as a plain Markdown report.
+
+What the report includes:
+  Run summary, pipeline identity (fingerprint), input/output fingerprints,
+  row counts, masking strategies (names only), node timings, and warnings.
+
+What the report intentionally excludes:
+  Raw row values, PII samples, STORM profile internals, diagnostic values.
+  The evidence manifest records strategy names and fingerprints only; the
+  report renders that safe subset.
+
+See also: decoy report summarize, decoy report compare, decoy evidence show.
+
+
+### `decoy report summarize`
+
+Print a concise terminal summary of a local evidence manifest.
+
+Renders key fields from the manifest in a Rich card: run metadata,
+pipeline fingerprint, input/output counts, row counts, and warnings.
+Read-only; never modifies files.
+
+**Usage**:
+
+```console
+$ decoy report summarize [OPTIONS] EVIDENCE_FILE
+```
+
+**Arguments**:
+
+* `EVIDENCE_FILE`: Path to a local evidence manifest JSON.  [required]
+
+**Options**:
+
+* `-q, --quiet`: Suppress stdout. Errors still go to stderr.
+* `-v, --verbose`: Enable debug-level CLI logs on stderr.
+* `--help`: Show this message and exit.
+
+Examples:
+
+  decoy report summarize evidence.json
+    Print a concise summary of the evidence manifest to the terminal.
+
+What summarize shows:
+  Run ID, timestamp, CLI/engine versions, pipeline fingerprint (prefix),
+  input/output fingerprint counts, row counts per table, and warning count.
+
+See also: decoy report render, decoy evidence show.
+
+
+### `decoy report compare`
+
+Compare two evidence manifests and report what changed between runs.
+
+Detects changes in pipeline fingerprint, per-table input/output
+fingerprints, row counts, and warnings. MANIFEST-vs-MANIFEST only --
+does not read source/output CSV data files.
+
+Exits 0 in both change and no-change cases. Use --json for scripting.
+
+**Usage**:
+
+```console
+$ decoy report compare [OPTIONS] OLD_EVIDENCE NEW_EVIDENCE
+```
+
+**Arguments**:
+
+* `OLD_EVIDENCE`: Path to the older evidence manifest JSON.  [required]
+* `NEW_EVIDENCE`: Path to the newer evidence manifest JSON.  [required]
+
+**Options**:
+
+* `--json`: Emit structured JSON instead of human-readable output.
+* `-q, --quiet`: Suppress stdout. Errors still go to stderr.
+* `-v, --verbose`: Enable debug-level CLI logs on stderr.
+* `--help`: Show this message and exit.
+
+Examples:
+
+  decoy report compare old-evidence.json new-evidence.json
+    Compare two evidence manifests and show which fingerprints changed,
+    row-count deltas, and warnings added or removed.
+
+  decoy report compare old-evidence.json new-evidence.json --json
+    Emit structured JSON suitable for scripting.
+
+What compare checks:
+  - Pipeline fingerprint change.
+  - Per-table input fingerprint changes (added/removed/changed).
+  - Per-table output fingerprint changes (added/removed/changed).
+  - Row count deltas per table.
+  - Warnings added or removed.
+
+What compare does NOT check:
+  - Data correctness or masking quality.
+  - Platform audit logs or schedule history.
+
+Scope: MANIFEST-vs-MANIFEST only. Data-level compare (source.csv vs masked.csv)
+is deferred to SP-18b/19.
+
+See also: decoy report summarize, decoy evidence verify.
