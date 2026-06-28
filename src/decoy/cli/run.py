@@ -190,8 +190,9 @@ def run(
         help=(
             "Write a local evidence manifest (JSON) to this path after a "
             "successful run. The manifest records pipeline hash, input/output "
-            "file fingerprints, row counts, and run metadata. It does NOT "
-            "contain raw data values. Use `decoy evidence verify` to check "
+            "file fingerprints, run metadata, and row counts/timings/warnings "
+            "where available (these are omitted for --chunked runs). It does "
+            "NOT contain raw data values. Use `decoy evidence verify` to check "
             "the manifest against current files. "
             "See: decoy explain evidence (when available)."
         ),
@@ -364,9 +365,10 @@ def run(
 
     elapsed = time.perf_counter() - started
 
-    # Write evidence manifest if --evidence-out was given and we have the data.
-    # Only available for non-chunked plain runs (chunked path does not return
-    # an ExecutionResult, so row counts are not available).
+    # Write evidence manifest if --evidence-out was given. Written for BOTH
+    # plain and chunked runs: the input/output fingerprints (the drift-detection
+    # core) are always populated. Chunked runs return no ExecutionResult, so
+    # row_counts/timings/warnings are empty for them (documented in the flag help).
     if evidence_out is not None and _ev_config_dict is not None:
         from decoy.cli.evidence import build_manifest
 

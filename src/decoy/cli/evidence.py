@@ -120,7 +120,16 @@ def compute_manifest_hash(manifest: dict[str, Any]) -> str:
     This lets `evidence verify` detect edits to the manifest file itself.
     """
     body = {k: v for k, v in manifest.items() if k not in _MANIFEST_HASH_STRIP_FIELDS}
-    canonical = _json.dumps(body, sort_keys=True, separators=(",", ":"), allow_nan=False)
+    # ensure_ascii=False mirrors the platform canonical_json rule (api/evidence/
+    # hashing.py) byte-for-byte, so a future R4 import adapter sees identical
+    # manifest_hash bytes for non-ASCII content (unicode column names/paths).
+    canonical = _json.dumps(
+        body,
+        sort_keys=True,
+        separators=(",", ":"),
+        allow_nan=False,
+        ensure_ascii=False,
+    )
     return f"sha256:{hashlib.sha256(canonical.encode('utf-8')).hexdigest()}"
 
 
