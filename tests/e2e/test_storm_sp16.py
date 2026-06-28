@@ -265,3 +265,114 @@ def test_storm_analyze_parquet_extension_auto_detects(parquet_fixture: Path, tmp
     assert result.exit_code == 0, f"exit={result.exit_code}\n{result.output}"
     payload = _json.loads(out.read_text())
     assert payload["row_count"] == 3
+
+
+# ---------------------------------------------------------------------------
+# C-series: malformed layout -> EXIT 1 (usage) with actionable message
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def fwf_data(tmp_path: Path) -> Path:
+    """A minimal fixed-width data file for malformed-layout tests."""
+    path = tmp_path / "data.fwf"
+    path.write_text("M001Alice     alice@example.com   \n", encoding="utf-8")
+    return path
+
+
+def test_malformed_layout_missing_width_exits_usage(fwf_data: Path, tmp_path: Path):
+    """C1: A layout column missing 'width' must exit 1 (usage) with an actionable message.
+
+    'width' is required for fixed-width parsing; a missing key must name the
+    offending column and key, not bubble up a raw KeyError.
+    """
+    layout_path = tmp_path / "layout_no_width.yaml"
+    layout_path.write_text(
+        yaml.dump({"columns": [{"name": "member_id", "start": 0}]}),
+        encoding="utf-8",
+    )
+    result = runner.invoke(
+        app,
+        ["storm", "analyze", str(fwf_data), "--layout", str(layout_path)],
+    )
+    assert result.exit_code == 1, (
+        f"Expected exit 1 (usage) for missing 'width', got {result.exit_code}.\n{result.output}"
+    )
+    combined = result.output + (str(result.exception) if result.exception else "")
+    assert "width" in combined.lower(), (
+        f"Expected 'width' named in error. Got: {combined}"
+    )
+    assert "column" in combined.lower(), (
+        f"Expected 'column' referenced in error. Got: {combined}"
+    )
+
+
+def test_malformed_layout_non_int_width_exits_usage(fwf_data: Path, tmp_path: Path):
+    """C2: A layout column with width: 'abc' must exit 1 (usage) with an actionable message.
+
+    Non-integer 'width' must produce a clean error, not a raw ValueError from int().
+    """
+    layout_path = tmp_path / "layout_bad_width.yaml"
+    layout_path.write_text(
+        yaml.dump({"columns": [{"name": "member_id", "start": 0, "width": "abc"}]}),
+        encoding="utf-8",
+    )
+    result = runner.invoke(
+        app,
+        ["storm", "analyze", str(fwf_data), "--layout", str(layout_path)],
+    )
+    assert result.exit_code == 1, (
+        f"Expected exit 1 (usage) for non-integer 'width', got {result.exit_code}.\n{result.output}"
+    )
+    combined = result.output + (str(result.exception) if result.exception else "")
+    assert "width" in combined.lower(), (
+        f"Expected 'width' named in error. Got: {combined}"
+    )
+    assert "integer" in combined.lower() or "int" in combined.lower(), (
+        f"Expected 'integer'/'int' hint in error. Got: {combined}"
+    )
+
+
+def test_malformed_layout_columns_is_string_exits_usage(fwf_data: Path, tmp_path: Path):
+    """C3: columns: 'id,name' (a string) must exit 1 (usage) with an actionable message.
+
+    Passing a scalar instead of a list for 'columns' must name the problem and
+    expected type, not surface a raw 'string indices must be integers' traceback.
+    """
+    layout_path = tmp_path / "layout_columns_str.yaml"
+    layout_path.write_text(
+        yaml.dump({"columns": "id,name"}),
+        encoding="utf-8",
+    )
+    result = runner.invoke(
+        app,
+        ["storm", "analyze", str(fwf_data), "--layout", str(layout_path)],
+    )
+    assert result.exit_code == 1, (
+        f"Expected exit 1 (usage) for columns as string, got {result.exit_code}.\n{result.output}"
+    )
+    combined = result.output + (str(result.exception) if result.exception else "")
+    assert "columns" in combined.lower() or "list" in combined.lower(), (
+        f"Expected 'columns' or 'list' in error. Got: {combined}"
+    )
+
+
+def test_malformed_layout_empty_file_exits_usage(fwf_data: Path, tmp_path: Path):
+    """C4: An empty/garbage layout file must exit 1 (usage) with an actionable message.
+
+    An empty YAML file parses as None; the validator must catch this and give a
+    clear directive rather than surfacing an AttributeError.
+    """
+    layout_path = tmp_path / "layout_empty.yaml"
+    layout_path.write_text("", encoding="utf-8")
+    result = runner.invoke(
+        app,
+        ["storm", "analyze", str(fwf_data), "--layout", str(layout_path)],
+    )
+    assert result.exit_code == 1, (
+        f"Expected exit 1 (usage) for empty layout, got {result.exit_code}.\n{result.output}"
+    )
+    combined = result.output + (str(result.exception) if result.exception else "")
+    assert any(
+        kw in combined.lower() for kw in ("columns", "mapping", "layout")
+    ), f"Expected actionable keyword in error. Got: {combined}"

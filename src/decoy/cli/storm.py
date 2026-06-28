@@ -262,7 +262,52 @@ def _parse_layout(layout_path: Path) -> list[dict]:
             f"Layout file {layout_path.name} must be a mapping with a 'columns' key. "
             "Each column must have 'name', 'start', and 'width'."
         )
-    return list(data["columns"])
+
+    columns = data["columns"]
+    if not isinstance(columns, list):
+        raise ValueError(
+            f"Layout file {layout_path.name}: 'columns' must be a list of column dicts, "
+            f"got {type(columns).__name__}. Each column needs a string 'name' and integer 'start'/'width'."
+        )
+
+    for i, col in enumerate(columns):
+        if not isinstance(col, dict):
+            raise ValueError(
+                f"layout column {i}: expected a dict, got {type(col).__name__} - "
+                "each column needs a string 'name' and integer 'start'/'width'."
+            )
+        name = col.get("name")
+        if not isinstance(name, str) or not name.strip():
+            raise ValueError(
+                f"layout column {i} ({name!r}): missing or empty 'name' - "
+                "each column needs a string 'name' and integer 'start'/'width'."
+            )
+        for key in ("start", "width"):
+            val = col.get(key)
+            if val is None:
+                raise ValueError(
+                    f"layout column {i} ({name!r}): missing '{key}' - "
+                    "each column needs a string 'name' and integer 'start'/'width'."
+                )
+            try:
+                int_val = int(val)
+            except (TypeError, ValueError):
+                raise ValueError(
+                    f"layout column {i} ({name!r}): '{key}' must be an integer, got {val!r} - "
+                    "each column needs a string 'name' and integer 'start'/'width'."
+                )
+            if key == "start" and int_val < 0:
+                raise ValueError(
+                    f"layout column {i} ({name!r}): 'start' must be >= 0, got {int_val} - "
+                    "each column needs a string 'name' and integer 'start'/'width'."
+                )
+            if key == "width" and int_val <= 0:
+                raise ValueError(
+                    f"layout column {i} ({name!r}): 'width' must be > 0, got {int_val} - "
+                    "each column needs a string 'name' and integer 'start'/'width'."
+                )
+
+    return list(columns)
 
 
 def _load_csv_with_sampling(path: Path, rows: int | None, strategy: SampleStrategy):
