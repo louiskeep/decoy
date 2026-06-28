@@ -22,6 +22,7 @@ from decoy.cli.plan import PLAN_EPILOG
 from decoy.cli.plan import plan as plan_command
 from decoy.cli.preflight import PREFLIGHT_EPILOG
 from decoy.cli.preflight import preflight as preflight_command
+from decoy.cli.report import report_app
 from decoy.cli.run import RUN_EPILOG
 from decoy.cli.run import run as run_command
 from decoy.cli.schema import SCHEMA_EPILOG
@@ -98,6 +99,7 @@ app.add_typer(storm_app, name="storm")
 app.add_typer(templates_app, name="templates")
 app.add_typer(vault_app, name="vault")
 app.add_typer(evidence_app, name="evidence")
+app.add_typer(report_app, name="report")
 app.command(name="plan", epilog=PLAN_EPILOG)(plan_command)
 
 
