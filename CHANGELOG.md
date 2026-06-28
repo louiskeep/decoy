@@ -8,6 +8,33 @@ version numbers follow the [versioning policy](docs/release/versioning.md).
 
 ## [Unreleased]
 
+### Added (SP-16 CLI foundation, 2026-06-28)
+
+- **`decoy validate --fail-on-warning`**: exits non-zero (code 2) when any
+  advisory warning fires. Enables CI gates that treat warnings as blocking.
+  Current warnings: output target file already exists (overwrite advisory).
+
+- **`decoy validate --json` multi-message output**: the JSON envelope now
+  includes a `messages` list with ALL validation messages
+  (`severity`/`code`/`message`/`location`), not just the first error string.
+  Pydantic `ValidationError` with multiple field failures now surfaces all of
+  them at once. Backward-compatible: the top-level `error` string key is
+  preserved for error responses.
+
+- **`decoy storm analyze --format parquet|fixed-width|delimited`**: explicit
+  format selector for the STORM analyzer. Format is also inferred from file
+  extension (`.parquet`/`.pq` -> parquet; `.fwf`/`.dat`/`.fixed`/`.fw` ->
+  fixed-width; everything else -> delimited/CSV).
+
+- **`decoy storm analyze` Parquet support**: `.parquet` files are now read via
+  `pd.read_parquet` (pyarrow is a core engine dependency). Sampling
+  strategies (`--rows`, `--strategy`) apply after load.
+
+- **`decoy storm analyze --layout <layout.yaml>`**: fixed-width input support
+  behind an explicit layout spec (column name + start offset + width). Layout
+  can be YAML or JSON. Fixed-width without `--layout` fails closed with a
+  clear, actionable error -- column boundaries are ambiguous without a spec.
+
 ### Added (capability gaps, 2026-06-12)
 
 - **`decoy run --chunked [--chunk-size N]`** (streaming). Streams each

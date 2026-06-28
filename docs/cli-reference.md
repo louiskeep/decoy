@@ -110,6 +110,9 @@ on a well-formed config, 1 on a parse / schema error or a config-level
 plan-compile error (unknown provider, non-poolable provider on the
 faker/pool path, missing deterministic namespace).
 
+With --fail-on-warning, also exits non-zero when advisory warnings fire
+(e.g. an output file already exists and would be overwritten on run).
+
 **Usage**:
 
 ```console
@@ -125,6 +128,7 @@ $ decoy validate [OPTIONS] CONFIG
 * `--json`: Emit a structured JSON result on stdout. Errors still go to stderr.
 * `-q, --quiet`: Suppress stdout. Errors still go to stderr; exit code carries the result.
 * `-v, --verbose`: Enable debug-level CLI logs on stderr.
+* `--fail-on-warning`: Exit non-zero if any advisory warning fires (e.g. output target exists). Enables CI gates that treat warnings as blocking.
 * `--help`: Show this message and exit.
 
 Examples:
@@ -133,10 +137,13 @@ Examples:
     Print OK on stdout when the config parses.
 
   decoy validate pipeline.yaml --json
-    Emit a JSON status object for scripting.
+    Emit a structured JSON result (multi-message) for scripting.
 
   decoy validate pipeline.yaml --quiet
     Stay silent on success; exit code carries the result.
+
+  decoy validate pipeline.yaml --fail-on-warning
+    Exit non-zero if any advisory warning fires (e.g. output target exists).
 
 See also: decoy run.
 
@@ -518,6 +525,11 @@ re-identification risk the dataset carries -- before writing a masking
 pipeline. Pass the saved scan JSON to `decoy storm fields` or
 `decoy storm show`.
 
+Supported formats: delimited (CSV/TSV, default), parquet, and fixed-width.
+Fixed-width input requires an explicit --layout spec (column boundaries
+are ambiguous without one). Format is inferred from the file extension
+when --format is not supplied.
+
 **Usage**:
 
 ```console
@@ -526,7 +538,7 @@ $ decoy storm analyze [OPTIONS] SOURCE
 
 **Arguments**:
 
-* `SOURCE`: Path to a CSV file to scan.  [required]
+* `SOURCE`: Path to a file to scan (CSV, Parquet, or fixed-width).  [required]
 
 **Options**:
 
@@ -536,6 +548,8 @@ $ decoy storm analyze [OPTIONS] SOURCE
 * `--json`: Emit the full StormProfile JSON to stdout. No card.
 * `-q, --quiet`: Suppress stdout. Errors still go to stderr.
 * `-v, --verbose`: Enable debug-level CLI logs on stderr.
+* `--format [delimited|parquet|fixed-width]`: Input format: delimited (CSV/TSV), parquet, or fixed-width. Default: inferred from file extension. fixed-width always requires --layout.
+* `--layout PATH`: Layout spec (YAML or JSON) for fixed-width input. Required when format is fixed-width. Each column needs &#x27;name&#x27;, &#x27;start&#x27; (0-indexed), and &#x27;width&#x27;.
 * `--help`: Show this message and exit.
 
 Examples:
@@ -548,6 +562,16 @@ Examples:
 
   decoy storm analyze data.csv --json > scan.json
     Pipe the full StormProfile JSON for downstream tooling.
+
+  decoy storm analyze data.parquet
+    Analyze a Parquet file (format inferred from extension).
+
+  decoy storm analyze data.parquet --format parquet
+    Same, with explicit format flag.
+
+  decoy storm analyze records.fwf --layout layout.yaml
+    Analyze a fixed-width file using an explicit column layout.
+    Layout YAML: columns: [{name: id, start: 0, width: 5}, ...]
 
 See also: decoy storm fields, decoy storm show, decoy storm diff,
   decoy storm integrity, decoy init, decoy run.
@@ -563,6 +587,11 @@ re-identification risk the dataset carries -- before writing a masking
 pipeline. Pass the saved scan JSON to `decoy storm fields` or
 `decoy storm show`.
 
+Supported formats: delimited (CSV/TSV, default), parquet, and fixed-width.
+Fixed-width input requires an explicit --layout spec (column boundaries
+are ambiguous without one). Format is inferred from the file extension
+when --format is not supplied.
+
 **Usage**:
 
 ```console
@@ -571,7 +600,7 @@ $ decoy storm scan [OPTIONS] SOURCE
 
 **Arguments**:
 
-* `SOURCE`: Path to a CSV file to scan.  [required]
+* `SOURCE`: Path to a file to scan (CSV, Parquet, or fixed-width).  [required]
 
 **Options**:
 
@@ -581,6 +610,8 @@ $ decoy storm scan [OPTIONS] SOURCE
 * `--json`: Emit the full StormProfile JSON to stdout. No card.
 * `-q, --quiet`: Suppress stdout. Errors still go to stderr.
 * `-v, --verbose`: Enable debug-level CLI logs on stderr.
+* `--format [delimited|parquet|fixed-width]`: Input format: delimited (CSV/TSV), parquet, or fixed-width. Default: inferred from file extension. fixed-width always requires --layout.
+* `--layout PATH`: Layout spec (YAML or JSON) for fixed-width input. Required when format is fixed-width. Each column needs &#x27;name&#x27;, &#x27;start&#x27; (0-indexed), and &#x27;width&#x27;.
 * `--help`: Show this message and exit.
 
 DEPRECATED: `decoy storm scan` is the old name for `decoy storm analyze`.
