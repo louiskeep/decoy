@@ -286,10 +286,9 @@ def test_report_render_html_no_external_cdn(tmp_path: Path) -> None:
     out_path = tmp_path / "report.html"
     runner.invoke(app, ["report", "render", str(evidence_path), "--out", str(out_path)])
 
-    if out_path.exists():
-        content = out_path.read_text(encoding="utf-8")
-        assert "http://" not in content
-        assert "https://" not in content
+    content = out_path.read_text(encoding="utf-8")
+    assert "http://" not in content
+    assert "https://" not in content
 
 
 def test_report_render_html_no_external_script(tmp_path: Path) -> None:
@@ -298,9 +297,8 @@ def test_report_render_html_no_external_script(tmp_path: Path) -> None:
     out_path = tmp_path / "report.html"
     runner.invoke(app, ["report", "render", str(evidence_path), "--out", str(out_path)])
 
-    if out_path.exists():
-        content = out_path.read_text(encoding="utf-8").lower()
-        assert "<script src" not in content
+    content = out_path.read_text(encoding="utf-8").lower()
+    assert "<script src" not in content
 
 
 # ---------------------------------------------------------------------------

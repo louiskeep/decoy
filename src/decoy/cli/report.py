@@ -120,13 +120,6 @@ def _esc(value: Any) -> str:
     return _html_mod.escape(str(value) if value is not None else "")
 
 
-def _fp_short(fp: str | None) -> str:
-    """Return a shortened fingerprint for display (prefix + ellipsis)."""
-    if not fp:
-        return "(none)"
-    return fp[:23] + "..."
-
-
 def render_html(manifest: dict[str, Any]) -> str:
     """Render a manifest dict to a self-contained, offline HTML report.
 
