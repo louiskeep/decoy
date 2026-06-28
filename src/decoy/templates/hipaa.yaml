@@ -1,11 +1,11 @@
-# x-derived-from-disguise: hipaa@2026-06-12
+# x-derived-from-disguise: hipaa@2026-06-28
 # hipaa -- HIPAA Safe Harbor coverage.
 #
 # Maps the 18 PHI identifier categories from 45 CFR 164.514(b)(2)
 # (lettered A-R) onto the 21 columns below; one category can span
 # several columns. Strategies are derived from the engine's HIPAA
 # Safe-Harbor disguise (decoy_engine/disguises/hipaa.yaml, version
-# 2026-06-12) -- the canonical legal-correspondence artifact -- and a
+# 2026-06-28) -- the canonical legal-correspondence artifact -- and a
 # drift-guard test fails if this template falls out of step with it.
 #
 # Identifier coverage notes:
@@ -47,9 +47,11 @@ tables:
         strategy: faker
         provider: person_last_name
 
-      # B: Geographic subdivisions smaller than a state. ZIP keeps the
-      # first 3 digits (Safe Harbor allows the initial three digits for
-      # populous units).
+      # B: Geographic subdivisions smaller than a state. ZIP uses the
+      # HIPAA Safe Harbor cascade (45 CFR 164.514(b)(2)(i)(B)): zip5 ->
+      # zip3 (skipping HHS-restricted prefixes where population < 20000)
+      # -> state -> suppress. k_threshold: 20000 matches the Safe Harbor
+      # population floor. SP-11 replaced the prior truncate(3) strategy.
       - name: street
         strategy: faker
         provider: address_street
@@ -57,9 +59,11 @@ tables:
         strategy: faker
         provider: address_city
       - name: zip
-        strategy: truncate
+        strategy: geo_generalize
         provider_config:
-          length: 3
+          type: zip
+          cascade: [zip5, zip3, state, suppress]
+          k_threshold: 20000
 
       # C: Dates more specific than a year. A shared namespace keeps the
       # same source date shifting by the same offset across columns, so

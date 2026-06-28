@@ -43,6 +43,30 @@ class PiiLevel(str, Enum):
     none = "none"
 
 
+class InputFormat(str, Enum):
+    """Explicit input format selector for `storm analyze`.
+
+    When omitted, format is inferred from the file extension:
+    - .parquet        -> parquet
+    - .fwf / .dat / .fixed / .fw -> fixed-width (requires --layout)
+    - anything else   -> delimited (CSV/TSV)
+
+    Fixed-width ALWAYS requires --layout regardless of how the format is
+    selected (extension or --format flag). Column boundaries are ambiguous
+    without an explicit spec; guessing produces silently wrong profiles.
+    """
+
+    delimited = "delimited"
+    parquet = "parquet"
+    fixed_width = "fixed-width"
+
+
+# File extensions that map to fixed-width format (require --layout).
+_FIXED_WIDTH_EXTENSIONS: frozenset[str] = frozenset({".fwf", ".dat", ".fixed", ".fw"})
+# File extensions that map to parquet format.
+_PARQUET_EXTENSIONS: frozenset[str] = frozenset({".parquet", ".pq"})
+
+
 _BUCKET_RANK: dict[str, int] = {"none": 0, "low": 1, "med": 2, "high": 3}
 
 # Suffixes that almost certainly mean "this is raw data, not a saved scan."
@@ -77,6 +101,16 @@ Examples:
 
   decoy storm analyze data.csv --json > scan.json
     Pipe the full StormProfile JSON for downstream tooling.
+
+  decoy storm analyze data.parquet
+    Analyze a Parquet file (format inferred from extension).
+
+  decoy storm analyze data.parquet --format parquet
+    Same, with explicit format flag.
+
+  decoy storm analyze records.fwf --layout layout.yaml
+    Analyze a fixed-width file using an explicit column layout.
+    Layout YAML: columns: [{name: id, start: 0, width: 5}, ...]
 
 See also: decoy storm fields, decoy storm show, decoy storm diff,
   decoy storm integrity, decoy init, decoy run.
@@ -188,6 +222,94 @@ See also: decoy storm analyze, decoy demo.
 """
 
 
+def _infer_format(path: Path) -> InputFormat:
+    """Infer InputFormat from the file extension.
+
+    Returns fixed_width for known fixed-width extensions, parquet for
+    parquet extensions, and delimited for everything else (CSV/TSV).
+    """
+    suffix = path.suffix.lower()
+    if suffix in _PARQUET_EXTENSIONS:
+        return InputFormat.parquet
+    if suffix in _FIXED_WIDTH_EXTENSIONS:
+        return InputFormat.fixed_width
+    return InputFormat.delimited
+
+
+def _parse_layout(layout_path: Path) -> list[dict]:
+    """Load a layout spec from a YAML or JSON file.
+
+    Expected shape (YAML or JSON):
+        columns:
+          - name: field_name
+            start: 0      # 0-indexed start position (inclusive)
+            width: 10     # column width in characters
+
+    Returns the `columns` list.
+    """
+    import json as _json_mod
+
+    import yaml as _yaml
+
+    text = layout_path.read_text(encoding="utf-8")
+    try:
+        data = _yaml.safe_load(text)
+    except Exception:
+        data = _json_mod.loads(text)
+
+    if not isinstance(data, dict) or "columns" not in data:
+        raise ValueError(
+            f"Layout file {layout_path.name} must be a mapping with a 'columns' key. "
+            "Each column must have 'name', 'start', and 'width'."
+        )
+
+    columns = data["columns"]
+    if not isinstance(columns, list):
+        raise ValueError(
+            f"Layout file {layout_path.name}: 'columns' must be a list of column dicts, "
+            f"got {type(columns).__name__}. Each column needs a string 'name' and integer 'start'/'width'."
+        )
+
+    for i, col in enumerate(columns):
+        if not isinstance(col, dict):
+            raise ValueError(
+                f"layout column {i}: expected a dict, got {type(col).__name__} - "
+                "each column needs a string 'name' and integer 'start'/'width'."
+            )
+        name = col.get("name")
+        if not isinstance(name, str) or not name.strip():
+            raise ValueError(
+                f"layout column {i} ({name!r}): missing or empty 'name' - "
+                "each column needs a string 'name' and integer 'start'/'width'."
+            )
+        for key in ("start", "width"):
+            val = col.get(key)
+            if val is None:
+                raise ValueError(
+                    f"layout column {i} ({name!r}): missing '{key}' - "
+                    "each column needs a string 'name' and integer 'start'/'width'."
+                )
+            try:
+                int_val = int(val)
+            except (TypeError, ValueError):
+                raise ValueError(
+                    f"layout column {i} ({name!r}): '{key}' must be an integer, got {val!r} - "
+                    "each column needs a string 'name' and integer 'start'/'width'."
+                )
+            if key == "start" and int_val < 0:
+                raise ValueError(
+                    f"layout column {i} ({name!r}): 'start' must be >= 0, got {int_val} - "
+                    "each column needs a string 'name' and integer 'start'/'width'."
+                )
+            if key == "width" and int_val <= 0:
+                raise ValueError(
+                    f"layout column {i} ({name!r}): 'width' must be > 0, got {int_val} - "
+                    "each column needs a string 'name' and integer 'start'/'width'."
+                )
+
+    return list(columns)
+
+
 def _load_csv_with_sampling(path: Path, rows: int | None, strategy: SampleStrategy):
     import pandas as pd
 
@@ -201,6 +323,76 @@ def _load_csv_with_sampling(path: Path, rows: int | None, strategy: SampleStrate
             return df
         return df.sample(n=rows, random_state=42).reset_index(drop=True)
     return pd.read_csv(path)
+
+
+def _load_parquet_with_sampling(path: Path, rows: int | None, strategy: SampleStrategy):
+    """Load a Parquet file into a DataFrame, respecting the row cap and strategy.
+
+    pyarrow is a core decoy-engine dependency so it is always available.
+    For Parquet, 'head' and 'random' sampling work on the in-memory DataFrame
+    after loading. Future optimization could use pyarrow row groups for head.
+    """
+    import pandas as pd
+
+    df = pd.read_parquet(path)
+    if rows is None or strategy is SampleStrategy.full or len(df) <= rows:
+        return df
+    if strategy is SampleStrategy.head:
+        return df.head(rows)
+    if strategy is SampleStrategy.random:
+        return df.sample(n=rows, random_state=42).reset_index(drop=True)
+    return df
+
+
+def _load_fixed_width_with_sampling(
+    path: Path,
+    layout: list[dict],
+    rows: int | None,
+    strategy: SampleStrategy,
+):
+    """Load a fixed-width file into a DataFrame using an explicit layout spec.
+
+    Layout must be a list of dicts with 'name', 'start', and 'width' keys.
+    Maps to pandas read_fwf colspecs=(list of (start, start+width)) tuples.
+    """
+    import pandas as pd
+
+    names = [col["name"] for col in layout]
+    colspecs = [(int(col["start"]), int(col["start"]) + int(col["width"])) for col in layout]
+
+    if strategy is SampleStrategy.full or rows is None:
+        return pd.read_fwf(path, colspecs=colspecs, names=names, header=None)
+
+    if strategy is SampleStrategy.head:
+        return pd.read_fwf(path, colspecs=colspecs, names=names, header=None, nrows=rows)
+
+    # random: load all then sample
+    df = pd.read_fwf(path, colspecs=colspecs, names=names, header=None)
+    if len(df) <= rows:
+        return df
+    return df.sample(n=rows, random_state=42).reset_index(drop=True)
+
+
+def _load_data(
+    path: Path,
+    fmt: InputFormat,
+    layout: list[dict] | None,
+    rows: int | None,
+    strategy: SampleStrategy,
+):
+    """Format-dispatching loader for all supported input formats."""
+    if fmt is InputFormat.parquet:
+        return _load_parquet_with_sampling(path, rows, strategy)
+    if fmt is InputFormat.fixed_width:
+        if not layout:
+            raise ValueError(
+                f"Fixed-width input requires --layout: column boundaries in {path.name} "
+                "are ambiguous without an explicit layout spec. "
+                "Run: decoy storm analyze <file> --layout <layout.yaml>"
+            )
+        return _load_fixed_width_with_sampling(path, layout, rows, strategy)
+    # Default: delimited (CSV/TSV)
+    return _load_csv_with_sampling(path, rows, strategy)
 
 
 def _load_scan_dict(scan_path: str) -> dict:
@@ -332,7 +524,7 @@ def _scan(
         exists=True,
         dir_okay=False,
         readable=True,
-        help="Path to a CSV file to scan.",
+        help="Path to a file to scan (CSV, Parquet, or fixed-width).",
     ),
     rows: int | None = typer.Option(
         None,
@@ -360,6 +552,25 @@ def _scan(
     verbose: bool = typer.Option(
         False, "--verbose", "-v", help="Enable debug-level CLI logs on stderr."
     ),
+    fmt: InputFormat | None = typer.Option(
+        None,
+        "--format",
+        help=(
+            "Input format: delimited (CSV/TSV), parquet, or fixed-width. "
+            "Default: inferred from file extension. "
+            "fixed-width always requires --layout."
+        ),
+    ),
+    layout: Path | None = typer.Option(
+        None,
+        "--layout",
+        exists=False,  # checked manually to give a cleaner error message
+        help=(
+            "Layout spec (YAML or JSON) for fixed-width input. "
+            "Required when format is fixed-width. "
+            "Each column needs 'name', 'start' (0-indexed), and 'width'."
+        ),
+    ),
 ) -> None:
     """Scan a dataset and produce a STORM profile.
 
@@ -368,15 +579,76 @@ def _scan(
     re-identification risk the dataset carries -- before writing a masking
     pipeline. Pass the saved scan JSON to `decoy storm fields` or
     `decoy storm show`.
+
+    Supported formats: delimited (CSV/TSV, default), parquet, and fixed-width.
+    Fixed-width input requires an explicit --layout spec (column boundaries
+    are ambiguous without one). Format is inferred from the file extension
+    when --format is not supplied.
     """
     state = setup_output(json_, quiet, verbose)
     source_str = str(source)
+
+    # Resolve the effective format (explicit flag overrides extension detection).
+    effective_fmt: InputFormat = fmt if fmt is not None else _infer_format(source)
+
+    # Fail closed early: fixed-width without a layout is always an error.
+    if effective_fmt is InputFormat.fixed_width and layout is None:
+        msg = (
+            f"Fixed-width input requires --layout: column boundaries in {source.name} "
+            "are ambiguous without an explicit layout spec. "
+            "Run: decoy storm analyze <file> --layout <layout.yaml>"
+        )
+        if state.mode is OutputMode.json:
+            emit_json(
+                state,
+                {
+                    "command": "storm analyze",
+                    "status": "error",
+                    "source": source_str,
+                    "error": msg,
+                },
+            )
+        elif state.mode is not OutputMode.quiet:
+            state.err_console.print(error("error:"), msg)
+            state.err_console.print(
+                " ",
+                hint("hint:"),
+                "provide a layout file:",
+                code(f"decoy storm analyze {source.name} --layout layout.yaml"),
+            )
+        raise typer.Exit(code=EXIT_USAGE)
+
+    # Load layout spec if needed.
+    layout_columns: list[dict] | None = None
+    if layout is not None:
+        if not layout.exists():
+            msg = f"Layout file not found: {layout}"
+            if state.mode is OutputMode.json:
+                emit_json(
+                    state,
+                    {"command": "storm analyze", "status": "error", "source": source_str, "error": msg},
+                )
+            elif state.mode is not OutputMode.quiet:
+                state.err_console.print(error("error:"), msg)
+            raise typer.Exit(code=EXIT_USAGE)
+        try:
+            layout_columns = _parse_layout(layout)
+        except Exception as exc:
+            msg = f"Could not parse layout file {layout.name}: {exc}"
+            if state.mode is OutputMode.json:
+                emit_json(
+                    state,
+                    {"command": "storm analyze", "status": "error", "source": source_str, "error": msg},
+                )
+            elif state.mode is not OutputMode.quiet:
+                state.err_console.print(error("error:"), msg)
+            raise typer.Exit(code=EXIT_USAGE)
 
     try:
         from decoy_engine import run_storm
 
         with stormy_multistage(state, ["Load source", "Profile columns", "Save profile"]) as ms:
-            df = _load_csv_with_sampling(source, rows, strategy)
+            df = _load_data(source, effective_fmt, layout_columns, rows, strategy)
             ms.complete()
             profile = run_storm(
                 df,
