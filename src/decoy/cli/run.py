@@ -12,12 +12,14 @@ before this module sees them.
 """
 
 import binascii
+import json as _json
 import time
 from enum import Enum
 from pathlib import Path
 
 import typer
 
+from decoy import __version__ as _cli_version
 from decoy.cli.exit_codes import EXIT_RUNTIME, EXIT_USAGE
 from decoy.ui.card import render_card
 from decoy.ui.output import OutputMode, emit_json, setup_output
@@ -182,6 +184,19 @@ def run(
             "field if not passed on the command line."
         ),
     ),
+    evidence_out: Path = typer.Option(
+        None,
+        "--evidence-out",
+        help=(
+            "Write a local evidence manifest (JSON) to this path after a "
+            "successful run. The manifest records pipeline hash, input/output "
+            "file fingerprints, run metadata, and row counts/timings/warnings "
+            "where available (these are omitted for --chunked runs). It does "
+            "NOT contain raw data values. Use `decoy evidence verify` to check "
+            "the manifest against current files. "
+            "See: decoy explain evidence (when available)."
+        ),
+    ),
 ) -> None:
     """Run a decoy pipeline from a YAML config.
 
@@ -208,6 +223,13 @@ def run(
             "this plain run uses the engine's pandas adapter.",
         )
 
+    # Sentinels for evidence manifest building (set on successful plain run).
+    _ev_config_dict: dict | None = None
+    _ev_engine_version: str | None = None
+    _ev_row_counts: dict | None = None
+    _ev_timings: tuple = ()
+    _ev_engine_warnings: tuple = ()
+
     started = time.perf_counter()
     try:
         with spinner(state, f"Running {yaml_mode}..."):
@@ -228,6 +250,8 @@ def run(
 
                 raw = _yaml.safe_load(config.read_text(encoding="utf-8"))
             config_dict = PipelineConfig.model_validate(raw).model_dump()
+            _ev_config_dict = config_dict
+            _ev_engine_version = engine_version
 
             # FC-1 (2026-06-26): run_pipeline is now wired as the single
             # non-chunked entry for all config shapes (mask-only, generate-
@@ -264,14 +288,10 @@ def run(
                 vault_writer = vault_writer_for_config(config_dict)
 
             if chunked:
-                _run_chunked_mask(
-                    config_dict, config.parent, chunk_size, substrate, vault_writer
-                )
+                _run_chunked_mask(config_dict, config.parent, chunk_size, substrate, vault_writer)
             else:
                 sources = _load_sources_from_config(config_dict, config.parent)
-                instance_locale = (config_dict.get("global_settings") or {}).get(
-                    "default_locale"
-                )
+                instance_locale = (config_dict.get("global_settings") or {}).get("default_locale")
                 result = run_pipeline(
                     config_dict,
                     sources,
@@ -281,6 +301,10 @@ def run(
                     vault_writer=vault_writer,
                 )
                 _write_mask_outputs(config_dict, result, config.parent)
+                if evidence_out is not None:
+                    _ev_row_counts = {name: len(tbl) for name, tbl in result.outputs.items()}
+                _ev_timings = result.timings
+                _ev_engine_warnings = result.warnings
             if vault_writer is not None:
                 vault_writer.write(vault)
     except typer.Exit:
@@ -341,6 +365,30 @@ def run(
 
     elapsed = time.perf_counter() - started
 
+    # Write evidence manifest if --evidence-out was given. Written for BOTH
+    # plain and chunked runs: the input/output fingerprints (the drift-detection
+    # core) are always populated. Chunked runs return no ExecutionResult, so
+    # row_counts/timings/warnings are empty for them (documented in the flag help).
+    if evidence_out is not None and _ev_config_dict is not None:
+        from decoy.cli.evidence import build_manifest
+
+        _label = key_label or _detect_key_label(raw_cfg)
+        manifest = build_manifest(
+            pipeline_path=config,
+            config_dict=_ev_config_dict,
+            run_result={"row_counts": _ev_row_counts or {}},
+            cli_version=_cli_version,
+            engine_version=_ev_engine_version or "unknown",
+            key_label=_label,
+            timings=_ev_timings,
+            engine_warnings=_ev_engine_warnings,
+        )
+        evidence_out.write_text(_json.dumps(manifest, indent=2), encoding="utf-8")
+        if state.mode is not OutputMode.json and state.mode is not OutputMode.quiet:
+            from decoy.ui.theme import success as _success
+
+            state.console.print(_success("Evidence:"), str(evidence_out))
+
     if state.mode is OutputMode.json:
         emit_json(
             state,
@@ -370,9 +418,7 @@ def run(
     )
 
 
-def _build_resolver(
-    master_key_hex: str | None, key_label: str | None, raw_cfg: dict | None, state
-):
+def _build_resolver(master_key_hex: str | None, key_label: str | None, raw_cfg: dict | None, state):
     """Construct the engine-facing ``derive_key`` resolver, or None when no
     master key was supplied. Keeps the legacy seeded fallback default so
     runs without a key behave exactly as before."""
@@ -390,9 +436,7 @@ def _build_resolver(
             "python -c 'import secrets; print(secrets.token_hex(32))'"
         )
     if len(master) != 32:
-        raise typer.BadParameter(
-            f"--master-key must decode to 32 bytes (got {len(master)})."
-        )
+        raise typer.BadParameter(f"--master-key must decode to 32 bytes (got {len(master)}).")
 
     label = key_label or _detect_key_label(raw_cfg)
     if not label:
@@ -444,9 +488,7 @@ def _detect_mode(raw_cfg: dict | None) -> str | None:
 def _next_hint_for_run(raw_cfg: dict | None, mode: "Mode") -> str | None:
     """Best-effort follow-up hint based on the YAML's output path."""
     try:
-        out = (
-            raw_cfg.get("output", {}).get("path") if isinstance(raw_cfg, dict) else None
-        )
+        out = raw_cfg.get("output", {}).get("path") if isinstance(raw_cfg, dict) else None
         if out:
             return f"head {out}"
     except Exception:
@@ -485,9 +527,7 @@ def _run_chunked_mask(
     from decoy_engine import run_mask_pipeline_chunked
     from decoy_engine.execution import select_execution_adapter
 
-    adapter = (
-        select_execution_adapter(substrate=substrate) if substrate is not None else None
-    )
+    adapter = select_execution_adapter(substrate=substrate) if substrate is not None else None
 
     sources = config_dict.get("sources") or {}
     targets = config_dict.get("targets") or {}
@@ -560,9 +600,7 @@ def _write_chunked_output(masked_iter, out_path: Path, src_path: Path) -> None:
         return
     first = True
     for masked in masked_iter:
-        masked.to_pandas().to_csv(
-            out_path, index=False, header=first, mode="w" if first else "a"
-        )
+        masked.to_pandas().to_csv(out_path, index=False, header=first, mode="w" if first else "a")
         first = False
 
 

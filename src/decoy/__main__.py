@@ -10,6 +10,7 @@ import typer
 from decoy import __version__
 from decoy.cli.demo import DEMO_EPILOG
 from decoy.cli.demo import _demo as demo_command
+from decoy.cli.evidence import evidence_app
 from decoy.cli.explain import EXPLAIN_EPILOG
 from decoy.cli.explain import explain as explain_command
 from decoy.cli.fit import FIT_EPILOG
@@ -19,6 +20,8 @@ from decoy.cli.info import info as info_command
 from decoy.cli.init import INIT_EPILOG, init_command
 from decoy.cli.plan import PLAN_EPILOG
 from decoy.cli.plan import plan as plan_command
+from decoy.cli.preflight import PREFLIGHT_EPILOG
+from decoy.cli.preflight import preflight as preflight_command
 from decoy.cli.run import RUN_EPILOG
 from decoy.cli.run import run as run_command
 from decoy.cli.schema import SCHEMA_EPILOG
@@ -83,6 +86,7 @@ def _root(
 
 app.command(name="run", epilog=RUN_EPILOG)(run_command)
 app.command(name="validate", epilog=VALIDATE_EPILOG)(validate_command)
+app.command(name="preflight", epilog=PREFLIGHT_EPILOG)(preflight_command)
 app.command(name="unmask", epilog=UNMASK_EPILOG)(unmask_command)
 app.command(name="fit", epilog=FIT_EPILOG)(fit_command)
 app.command(name="init", epilog=INIT_EPILOG)(init_command())
@@ -93,6 +97,7 @@ app.command(name="schema", epilog=SCHEMA_EPILOG)(schema_command)
 app.add_typer(storm_app, name="storm")
 app.add_typer(templates_app, name="templates")
 app.add_typer(vault_app, name="vault")
+app.add_typer(evidence_app, name="evidence")
 app.command(name="plan", epilog=PLAN_EPILOG)(plan_command)
 
 
