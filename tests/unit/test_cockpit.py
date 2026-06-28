@@ -226,7 +226,9 @@ def test_validators_list_contains_known_members():
     result = runner.invoke(app, ["validators", "list", "--json"])
     payload = _json.loads(result.stdout)
     cli_names = set(payload["validators"])
-    assert "no_orphan_children" in cli_names, "no_orphan_children must be in validators list (SP-05)"
+    assert "no_orphan_children" in cli_names, (
+        "no_orphan_children must be in validators list (SP-05)"
+    )
     assert "fk_intact" in cli_names, "fk_intact must be in validators list"
     assert "luhn" in cli_names, "luhn must be in validators list"
 
@@ -274,6 +276,33 @@ def test_doctor_json_python_version_is_present():
 def test_doctor_quiet_exits_0():
     result = runner.invoke(app, ["doctor", "--quiet"])
     assert result.exit_code == 0
+
+
+def test_doctor_hard_req_missing_exits_nonzero(monkeypatch):
+    """doctor MUST fail loudly (non-zero exit) when a hard requirement is absent.
+
+    This is doctor's load-bearing honesty guarantee. We point _HARD_REQS at a
+    package that genuinely cannot import (real failure, not a mocked one) and
+    assert the non-zero exit + fail status across all three output modes.
+    """
+    from decoy.cli import cockpit
+
+    monkeypatch.setattr(cockpit, "_HARD_REQS", ["decoy_engine_definitely_missing_xyz"])
+
+    # default (human) mode
+    result = runner.invoke(app, ["doctor"])
+    assert result.exit_code == cockpit.EXIT_RUNTIME
+
+    # --json mode: fail status + the missing pkg surfaced in hard_failed
+    result = runner.invoke(app, ["doctor", "--json"])
+    assert result.exit_code == cockpit.EXIT_RUNTIME
+    payload = _json.loads(result.stdout)
+    assert payload["status"] == "fail"
+    assert "decoy_engine_definitely_missing_xyz" in payload["hard_failed"]
+
+    # --quiet mode
+    result = runner.invoke(app, ["doctor", "--quiet"])
+    assert result.exit_code == cockpit.EXIT_RUNTIME
 
 
 # ---------------------------------------------------------------------------
