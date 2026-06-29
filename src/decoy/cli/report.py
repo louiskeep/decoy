@@ -36,7 +36,7 @@ from typing import Any
 
 import typer
 
-from decoy.cli.exit_codes import EXIT_USAGE
+from decoy.cli.exit_codes import EXIT_RUNTIME, EXIT_USAGE
 from decoy.ui.output import OutputMode, OutputState, emit_json, setup_output
 from decoy.ui.theme import code, error, hint, info, success, warn
 
@@ -971,15 +971,642 @@ def _fp_short(fp: str | None) -> str:
 
 
 # ---------------------------------------------------------------------------
-# Command registration
+# Data-level diff helper: compare_data
+# ---------------------------------------------------------------------------
+
+
+def _column_profile(df: "Any") -> dict[str, dict[str, Any]]:
+    """Build a per-column summary profile from a pandas DataFrame.
+
+    Returns a dict keyed by column name with:
+      - dtype_kind: pandas dtype kind char ('i', 'f', 'u', 'O', 'M', 'b', ...)
+      - null_count: int
+      - unique_count: int
+
+    Methodology: pandas.Series.nunique() and .isnull().sum() for column-level
+    null/cardinality counts. No novel statistical method is used.
+
+    EVIDENCE-SAFE: aggregate counts only -- no raw cell values are returned.
+    """
+    profile: dict[str, dict[str, Any]] = {}
+    for col in df.columns:
+        series = df[col]
+        kind = series.dtype.kind
+        null_count = int(series.isnull().sum())
+        unique_count = int(series.nunique(dropna=True))
+        profile[col] = {
+            "dtype_kind": kind,
+            "null_count": null_count,
+            "unique_count": unique_count,
+        }
+    return profile
+
+
+def compare_data(
+    output_fps_a: dict[str, Any],
+    output_fps_b: dict[str, Any],
+) -> dict[str, Any]:
+    """Compare output data files from two runs at the data level.
+
+    Accepts the `output_fingerprints` dicts from two evidence manifests.
+    Each dict is keyed by table name and has a `path` field pointing to
+    the output file (CSV or Parquet).
+
+    Returns a structured dict with:
+      any_data_change  bool
+      table_deltas     list of per-table dicts with:
+        table             str
+        row_count_a       int or None
+        row_count_b       int or None
+        row_count_delta   int or None
+        columns_added     list[str] -- columns in B but not A
+        columns_removed   list[str] -- columns in A but not B
+        column_deltas     list of per-column dicts with:
+          column          str
+          null_count_delta  int or None
+          unique_count_delta int or None
+          dtype_kind_a    str or None
+          dtype_kind_b    str or None
+          dtype_changed   bool
+      missing_files      list[str] -- paths that could not be found
+
+    Methodology: pandas.Series.nunique() and .isnull().sum() for column-level
+    null/cardinality counts. No novel statistical method is used.
+    References: pandas v2.x docs.
+
+    EVIDENCE-SAFE: reports aggregate counts only. Raw row/cell values are
+    never included in the output.
+    """
+    try:
+        import pandas as pd
+    except ImportError as _err:
+        raise RuntimeError(
+            "pandas is required for data-level diff. "
+            "Install with: pip install pandas"
+        ) from _err
+
+    # Determine which tables appear in both sets.
+    tables_a = set(output_fps_a)
+    tables_b = set(output_fps_b)
+    all_tables = sorted(tables_a | tables_b)
+
+    table_deltas: list[dict[str, Any]] = []
+    missing_files: list[str] = []
+    any_data_change = False
+
+    for table in all_tables:
+        fp_a = output_fps_a.get(table) or {}
+        fp_b = output_fps_b.get(table) or {}
+        path_a_str = fp_a.get("path") if isinstance(fp_a, dict) else None
+        path_b_str = fp_b.get("path") if isinstance(fp_b, dict) else None
+
+        if not path_a_str or not path_b_str:
+            # Table only in one run -- treat as a change
+            any_data_change = True
+            table_deltas.append(
+                {
+                    "table": table,
+                    "row_count_a": None,
+                    "row_count_b": None,
+                    "row_count_delta": None,
+                    "columns_added": [],
+                    "columns_removed": [],
+                    "column_deltas": [],
+                    "note": "table only exists in one run",
+                }
+            )
+            continue
+
+        from pathlib import Path as _Path
+
+        path_a = _Path(path_a_str)
+        path_b = _Path(path_b_str)
+
+        if not path_a.exists():
+            missing_files.append(path_a_str)
+        if not path_b.exists():
+            missing_files.append(path_b_str)
+
+        if missing_files:
+            # Report missing but don't continue loading
+            continue
+
+        # Load data (CSV or Parquet by extension)
+        def _load(p: "_Path") -> "pd.DataFrame":
+            suffix = p.suffix.lower()
+            if suffix == ".parquet":
+                try:
+                    return pd.read_parquet(str(p))
+                except ImportError as _ie:
+                    raise RuntimeError(
+                        f"A Parquet reader (pyarrow or fastparquet) is required "
+                        f"to read '{p.name}'. "
+                        "Install with: pip install pyarrow"
+                    ) from _ie
+            return pd.read_csv(str(p), dtype=str)
+
+        df_a = _load(path_a)
+        df_b = _load(path_b)
+
+        rows_a = len(df_a)
+        rows_b = len(df_b)
+        row_delta = rows_b - rows_a
+
+        cols_a = set(df_a.columns)
+        cols_b = set(df_b.columns)
+        columns_added = sorted(cols_b - cols_a)
+        columns_removed = sorted(cols_a - cols_b)
+        common_cols = sorted(cols_a & cols_b)
+
+        profile_a = _column_profile(df_a)
+        profile_b = _column_profile(df_b)
+
+        column_deltas: list[dict[str, Any]] = []
+        for col in common_cols:
+            pa = profile_a.get(col, {})
+            pb = profile_b.get(col, {})
+            nc_a = pa.get("null_count")
+            nc_b = pb.get("null_count")
+            uc_a = pa.get("unique_count")
+            uc_b = pb.get("unique_count")
+            dk_a = pa.get("dtype_kind")
+            dk_b = pb.get("dtype_kind")
+            dtype_changed = dk_a != dk_b
+
+            nc_delta = (nc_b - nc_a) if (nc_a is not None and nc_b is not None) else None
+            uc_delta = (uc_b - uc_a) if (uc_a is not None and uc_b is not None) else None
+
+            has_col_change = bool(
+                dtype_changed
+                or (nc_delta is not None and nc_delta != 0)
+                or (uc_delta is not None and uc_delta != 0)
+            )
+            if has_col_change:
+                column_deltas.append(
+                    {
+                        "column": col,
+                        "dtype_kind_a": dk_a,
+                        "dtype_kind_b": dk_b,
+                        "dtype_changed": dtype_changed,
+                        "null_count_delta": nc_delta,
+                        "unique_count_delta": uc_delta,
+                    }
+                )
+
+        table_changed = bool(
+            row_delta != 0 or columns_added or columns_removed or column_deltas
+        )
+        if table_changed:
+            any_data_change = True
+
+        table_deltas.append(
+            {
+                "table": table,
+                "row_count_a": rows_a,
+                "row_count_b": rows_b,
+                "row_count_delta": row_delta,
+                "columns_added": columns_added,
+                "columns_removed": columns_removed,
+                "column_deltas": column_deltas,
+            }
+        )
+
+    return {
+        "any_data_change": any_data_change,
+        "table_deltas": table_deltas,
+        "missing_files": missing_files,
+    }
+
+
+# ---------------------------------------------------------------------------
+# CLI: report show <run-id>
+# ---------------------------------------------------------------------------
+
+_SHOW_EPILOG = """\
+Examples:
+
+  decoy report show <run-id>
+    Resolve the run from the catalog and print a summary of its evidence.
+
+  decoy report show <run-id> --format html --out report.html
+    Write a full HTML report for the run's evidence.
+
+  decoy report show <run-id> --json
+    Emit the raw evidence manifest as structured JSON.
+
+Resolution path:
+  catalog run entry id -> metadata.evidence_path -> load manifest -> render.
+
+Requirements:
+  - A .decoy/ workspace must exist (run `decoy project init`).
+  - The run entry must have an evidence_path (run with `--evidence-out`).
+
+LOCAL ONLY: reads from the local DuckDB catalog and local evidence files.
+
+See also: decoy jobs list, decoy report summarize, decoy report render.
+"""
+
+
+def _show(
+    run_id: str = typer.Argument(
+        ...,
+        help="Run catalog id (or prefix, min 4 chars) from `decoy jobs list`.",
+    ),
+    format_: str = typer.Option(
+        None,
+        "--format",
+        help=(
+            "Output format when --out is given: 'html' or 'markdown'. "
+            "Without --out, prints a terminal summary."
+        ),
+    ),
+    out: Path | None = typer.Option(
+        None,
+        "--out",
+        help="Write the report to this file path (requires --format).",
+    ),
+    json_: bool = typer.Option(False, "--json", help="Emit the evidence manifest as JSON."),
+    quiet: bool = typer.Option(False, "--quiet", "-q", help="Suppress stdout."),
+    verbose: bool = typer.Option(False, "--verbose", "-v", help="Enable debug-level logs."),
+    workspace: str | None = typer.Option(
+        None,
+        "--workspace",
+        help="Workspace root (default: search upward from cwd). Overrides DECOY_WORKSPACE_ROOT.",
+    ),
+) -> None:
+    """Render the evidence report for a cataloged local run.
+
+    Resolves the run from the catalog, loads its evidence manifest, and
+    renders it using the same format as `decoy report summarize` (terminal)
+    or `decoy report render` (file output with --format and --out).
+
+    Requires the run to have been started with `decoy run --evidence-out`.
+    LOCAL ONLY: does not connect to the platform server.
+    """
+    from decoy.cli.catalog import _catalog_db, _require_workspace
+    from decoy.cli.jobs import _entry_to_run_dict, _lookup_run
+    from decoy.ui.theme import code, error, success, warn
+
+    state = setup_output(json_, quiet, verbose)
+    root = _require_workspace(workspace, "report show", state)
+
+    with _catalog_db(root, "report show", state) as conn:
+        entry = _lookup_run(run_id, conn, "report show", state)
+
+    run = _entry_to_run_dict(entry)
+    evidence_path_str = run.get("evidence_path")
+
+    if not evidence_path_str:
+        msg = (
+            f"Run {run_id!r} has no evidence path. "
+            "Re-run with `decoy run pipeline.yaml --evidence-out evidence.json` "
+            "to capture evidence, then register the run."
+        )
+        if state.mode is OutputMode.json:
+            emit_json(state, {"command": "report show", "status": "error", "error": msg})
+        elif state.mode is not OutputMode.quiet:
+            state.err_console.print(error("error:"), msg)
+        raise typer.Exit(code=EXIT_USAGE)
+
+    evidence_file = Path(evidence_path_str)
+    manifest = _load_manifest(evidence_file, state, "report show")
+
+    # --json: emit the full manifest
+    if state.mode is OutputMode.json:
+        emit_json(
+            state,
+            {
+                "command": "report show",
+                "status": "ok",
+                "run_id": run["id"],
+                "evidence_path": evidence_path_str,
+                "manifest": manifest,
+            },
+        )
+        return
+
+    if state.mode is OutputMode.quiet:
+        return
+
+    # --format + --out: write file report
+    if out is not None:
+        fmt = (format_ or "html").lower().strip()
+        if fmt not in ("html", "markdown", "md"):
+            state.err_console.print(
+                error("error:"),
+                f"unknown format {format_!r}; use 'html' or 'markdown'.",
+            )
+            raise typer.Exit(code=EXIT_USAGE)
+        if fmt in ("markdown", "md"):
+            content = render_markdown(manifest)
+        else:
+            content = render_html(manifest)
+        try:
+            out.write_text(content, encoding="utf-8")
+        except OSError as exc:
+            state.err_console.print(error("error:"), f"could not write {out}: {exc}")
+            raise typer.Exit(code=EXIT_USAGE)
+        fmt_label = "Markdown" if fmt in ("markdown", "md") else "HTML"
+        state.console.print(success("ok"), f"{fmt_label} report written to", code(str(out)))
+        return
+
+    # Default: terminal summary (like report summarize)
+    from decoy.ui.card import render_card
+    from decoy.ui.table import make_table
+
+    run_ts = manifest.get("run_timestamp", "?")
+    cli_v = manifest.get("cli_version", "?")
+    eng_v = manifest.get("engine_version", "?")
+    schema_v = manifest.get("schema_version", "?")
+    producer = manifest.get("producer", "?")
+    pipeline_fp = manifest.get("pipeline_fingerprint") or ""
+    warnings_list = manifest.get("warnings") or []
+    input_fps = manifest.get("input_fingerprints") or {}
+    output_fps = manifest.get("output_fingerprints") or {}
+    row_counts: dict[str, Any] = manifest.get("row_counts") or {}
+    manifest_run_id = manifest.get("run_id", "?")
+
+    fp_display = (pipeline_fp[:23] + "...") if len(pipeline_fp) > 23 else pipeline_fp
+
+    facts: list[tuple[str, str]] = [
+        ("Catalog run id", (run["id"][:16] + "...") if len(run["id"]) > 16 else run["id"]),
+        ("Schema version", schema_v),
+        ("Producer", producer),
+        ("Run ID", (manifest_run_id[:16] + "...") if len(manifest_run_id) > 16 else manifest_run_id),
+        ("Run timestamp", run_ts),
+        ("CLI version", cli_v),
+        ("Engine version", eng_v),
+        ("Pipeline fingerprint", fp_display or "(none)"),
+        ("Input tables", str(len(input_fps))),
+        ("Output tables", str(len(output_fps))),
+        ("Warnings", str(len(warnings_list))),
+    ]
+
+    render_card(
+        state,
+        command="decoy report show",
+        facts=facts,
+        next_hint=f"decoy report show {run_id} --format html --out report.html",
+        status="warn" if warnings_list else "ok",
+    )
+
+    if row_counts:
+        t = make_table("Table", "Rows", title="Row counts")
+        for tname, count in row_counts.items():
+            t.add_row(str(tname), str(count))
+        state.console.print(t)
+
+    if warnings_list:
+        state.err_console.print(
+            warn("warning:"),
+            f"{len(warnings_list)} warning(s) in manifest -- "
+            "run `decoy evidence show` for details.",
+        )
+
+
+# ---------------------------------------------------------------------------
+# CLI: report diff <run-id-a> <run-id-b>
+# ---------------------------------------------------------------------------
+
+_DIFF_EPILOG = """\
+Examples:
+
+  decoy report diff <run-id-a> <run-id-b>
+    Compare the output data files of two local runs at the data level.
+
+  decoy report diff <run-id-a> <run-id-b> --json
+    Emit structured JSON with per-table row-count and column-level deltas.
+
+What diff compares:
+  - Row counts per table (from actual data files)
+  - Schema: columns added/removed/type-changed between runs
+  - Per column: null-count delta, unique-count delta
+
+What diff does NOT compare:
+  - Raw row or cell values (never -- evidence-safe by design)
+  - Platform-managed state, audit logs, or remote job history
+  - Pipeline config changes (use `decoy report compare` for manifest-level diff)
+
+Scope and limitations:
+  - Requires both runs to have evidence files (`decoy run --evidence-out`).
+  - Requires the output files referenced in the evidence manifests to still
+    exist at their recorded paths.
+  - Compares aggregate counts only -- not a full row-by-row diff.
+
+Methodology: pandas.Series.nunique() / .isnull().sum() for column-level
+counts (pandas v2.x). No novel statistical method is used.
+
+See also: decoy report compare (manifest-level), decoy jobs list.
+"""
+
+
+def _diff(
+    run_id_a: str = typer.Argument(
+        ...,
+        help="Catalog run id (or prefix) for the first run.",
+    ),
+    run_id_b: str = typer.Argument(
+        ...,
+        help="Catalog run id (or prefix) for the second run.",
+    ),
+    json_: bool = typer.Option(False, "--json", help="Emit structured JSON."),
+    quiet: bool = typer.Option(False, "--quiet", "-q", help="Suppress stdout."),
+    verbose: bool = typer.Option(False, "--verbose", "-v", help="Enable debug-level logs."),
+    workspace: str | None = typer.Option(
+        None,
+        "--workspace",
+        help="Workspace root (default: search upward from cwd). Overrides DECOY_WORKSPACE_ROOT.",
+    ),
+) -> None:
+    """Compare output data files from two local runs at the data level.
+
+    Resolves both run ids from the catalog, loads their evidence manifests,
+    reads the output data files referenced in the manifests, and compares:
+      - Per-table row counts
+      - Schema (columns added/removed/type-changed)
+      - Per-column null-count and unique-count deltas
+
+    EVIDENCE-SAFE: only aggregate counts are reported -- no raw values.
+    See `decoy report compare` for manifest-level (fingerprint) comparison.
+    LOCAL ONLY: does not connect to the platform server.
+    """
+    from decoy.cli.catalog import _catalog_db, _require_workspace
+    from decoy.cli.jobs import _entry_to_run_dict, _lookup_run
+    from decoy.ui.table import make_table
+    from decoy.ui.theme import code, error, hint, success, warn
+
+    state = setup_output(json_, quiet, verbose)
+    root = _require_workspace(workspace, "report diff", state)
+
+    with _catalog_db(root, "report diff", state) as conn:
+        entry_a = _lookup_run(run_id_a, conn, "report diff", state)
+        entry_b = _lookup_run(run_id_b, conn, "report diff", state)
+
+    run_a = _entry_to_run_dict(entry_a)
+    run_b = _entry_to_run_dict(entry_b)
+
+    # Require evidence paths for both runs
+    def _get_evidence(run: dict[str, Any], label: str) -> dict[str, Any]:
+        ev_path = run.get("evidence_path")
+        if not ev_path:
+            msg = (
+                f"Run {label!r} has no evidence path. "
+                "Re-run with `decoy run --evidence-out evidence.json` to capture evidence."
+            )
+            if state.mode is OutputMode.json:
+                emit_json(state, {"command": "report diff", "status": "error", "error": msg})
+            elif state.mode is not OutputMode.quiet:
+                state.err_console.print(error("error:"), msg)
+            raise typer.Exit(code=EXIT_USAGE)
+        manifest = _load_manifest(Path(ev_path), state, "report diff")
+        return manifest
+
+    manifest_a = _get_evidence(run_a, run_id_a)
+    manifest_b = _get_evidence(run_b, run_id_b)
+
+    out_fps_a: dict[str, Any] = manifest_a.get("output_fingerprints") or {}
+    out_fps_b: dict[str, Any] = manifest_b.get("output_fingerprints") or {}
+
+    # Perform data-level comparison
+    try:
+        diff_result = compare_data(out_fps_a, out_fps_b)
+    except RuntimeError as _dep_err:
+        _msg = str(_dep_err)
+        if state.mode is OutputMode.json:
+            emit_json(state, {"command": "report diff", "status": "error", "error": _msg})
+        elif state.mode is not OutputMode.quiet:
+            state.err_console.print(error("error:"), _msg)
+        raise typer.Exit(code=EXIT_RUNTIME)
+
+    # Handle missing files
+    if diff_result["missing_files"]:
+        msg = (
+            "Output files are missing and cannot be compared: "
+            + ", ".join(diff_result["missing_files"])
+        )
+        if state.mode is OutputMode.json:
+            emit_json(state, {"command": "report diff", "status": "error", "error": msg})
+        elif state.mode is not OutputMode.quiet:
+            state.err_console.print(error("error:"), msg)
+            state.err_console.print(
+                " ",
+                hint("note:"),
+                "Output files may have been moved or deleted after the run completed.",
+            )
+        raise typer.Exit(code=EXIT_USAGE)
+
+    if state.mode is OutputMode.json:
+        payload: dict[str, Any] = {
+            "command": "report diff",
+            "status": "ok",
+            "run_id_a": run_a["id"],
+            "run_id_b": run_b["id"],
+            "any_data_change": diff_result["any_data_change"],
+            "table_deltas": diff_result["table_deltas"],
+            "scope": (
+                "data-level aggregate counts only; raw values not included. "
+                "LOCAL ONLY -- does not reflect platform state."
+            ),
+        }
+        emit_json(state, payload)
+        return
+
+    if state.mode is OutputMode.quiet:
+        return
+
+    any_change = diff_result["any_data_change"]
+    if not any_change:
+        state.console.print(
+            success("ok"),
+            "no data changes detected between the two runs.",
+        )
+        state.console.print(
+            " ",
+            hint("note:"),
+            "row counts, schema, and column-level stats are identical.",
+        )
+        state.console.print(
+            " ",
+            hint("scope:"),
+            "aggregate counts only; raw values not included.",
+        )
+        return
+
+    state.console.print(
+        warn("data changes detected"),
+        "between",
+        code(run_id_a[:8] + "..."),
+        "and",
+        code(run_id_b[:8] + "..."),
+    )
+    state.console.print("")
+
+    for td in diff_result["table_deltas"]:
+        tname = td["table"]
+        row_delta = td.get("row_count_delta")
+        added = td.get("columns_added") or []
+        removed = td.get("columns_removed") or []
+        col_deltas = td.get("column_deltas") or []
+
+        if (
+            (row_delta is not None and row_delta != 0)
+            or added
+            or removed
+            or col_deltas
+        ):
+            state.console.print(warn(f"table: {tname}"))
+            if row_delta is not None and row_delta != 0:
+                sign = "+" if row_delta > 0 else ""
+                state.console.print(
+                    " ",
+                    hint("row count:"),
+                    code(str(td.get("row_count_a"))),
+                    "->",
+                    code(str(td.get("row_count_b"))),
+                    hint(f"({sign}{row_delta})"),
+                )
+            if added:
+                state.console.print(
+                    " ", hint("columns added:"), code(", ".join(added))
+                )
+            if removed:
+                state.console.print(
+                    " ", hint("columns removed:"), code(", ".join(removed))
+                )
+            if col_deltas:
+                t = make_table(
+                    "Column", "Null Count Delta", "Unique Count Delta", "Dtype Changed",
+                    title=f"{tname} column deltas"
+                )
+                for cd in col_deltas:
+                    nc_d = str(cd.get("null_count_delta", ""))
+                    uc_d = str(cd.get("unique_count_delta", ""))
+                    dtype_ch = "yes" if cd.get("dtype_changed") else "no"
+                    t.add_row(cd["column"], nc_d, uc_d, dtype_ch)
+                state.console.print(t)
+
+    state.console.print("")
+    state.console.print(
+        " ",
+        hint("scope:"),
+        "aggregate counts only; raw values not included. "
+        "Use `decoy report compare` for manifest-level fingerprint comparison.",
+    )
+
+
+# ---------------------------------------------------------------------------
+# Command registration (continued)
 # ---------------------------------------------------------------------------
 
 report_app.command(name="render", epilog=_RENDER_EPILOG)(_render)
 report_app.command(name="summarize", epilog=_SUMMARIZE_EPILOG)(_summarize)
 report_app.command(name="compare", epilog=_COMPARE_EPILOG)(_compare)
+report_app.command(name="show", epilog=_SHOW_EPILOG)(_show)
+report_app.command(name="diff", epilog=_DIFF_EPILOG)(_diff)
 
 # Public exports
 __all__ = [
+    "compare_data",
     "compare_manifests",
     "render_html",
     "render_markdown",

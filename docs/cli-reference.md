@@ -15,6 +15,9 @@ Try one of:
   decoy info                       Branded splash + quick-start hints.
   decoy project init               Create a local .decoy/ workspace (local only).
   decoy catalog list               List the local metadata catalog entries.
+  decoy jobs list                  List local run history from the DuckDB catalog.
+  decoy report show &lt;run-id&gt;       Render the evidence report for a cataloged run.
+  decoy report diff &lt;id-a&gt; &lt;id-b&gt;  Data-level compare between two local runs.
 
 Run `decoy --install-completion` to enable shell tab completion.
 
@@ -56,6 +59,7 @@ $ decoy [OPTIONS] COMMAND [ARGS]...
 * `validators`: List the engine&#x27;s registered job-level...
 * `project`: Manage a local .decoy/ workspace.
 * `catalog`: LOCAL metadata catalog for datasets, runs,...
+* `jobs`: LOCAL run history from the DuckDB catalog.
 
 ## `decoy run`
 
@@ -1264,6 +1268,8 @@ $ decoy report [OPTIONS] COMMAND [ARGS]...
 * `render`: Render an evidence manifest to an HTML or...
 * `summarize`: Print a concise terminal summary of a...
 * `compare`: Compare two evidence manifests and report...
+* `show`: Render the evidence report for a cataloged...
+* `diff`: Compare output data files from two local...
 
 ### `decoy report render`
 
@@ -1401,6 +1407,123 @@ Scope: MANIFEST-vs-MANIFEST only. Data-level compare (source.csv vs masked.csv)
 is deferred to SP-18b/19.
 
 See also: decoy report summarize, decoy evidence verify.
+
+
+### `decoy report show`
+
+Render the evidence report for a cataloged local run.
+
+Resolves the run from the catalog, loads its evidence manifest, and
+renders it using the same format as `decoy report summarize` (terminal)
+or `decoy report render` (file output with --format and --out).
+
+Requires the run to have been started with `decoy run --evidence-out`.
+LOCAL ONLY: does not connect to the platform server.
+
+**Usage**:
+
+```console
+$ decoy report show [OPTIONS] RUN_ID
+```
+
+**Arguments**:
+
+* `RUN_ID`: Run catalog id (or prefix, min 4 chars) from `decoy jobs list`.  [required]
+
+**Options**:
+
+* `--format TEXT`: Output format when --out is given: &#x27;html&#x27; or &#x27;markdown&#x27;. Without --out, prints a terminal summary.
+* `--out PATH`: Write the report to this file path (requires --format).
+* `--json`: Emit the evidence manifest as JSON.
+* `-q, --quiet`: Suppress stdout.
+* `-v, --verbose`: Enable debug-level logs.
+* `--workspace TEXT`: Workspace root (default: search upward from cwd). Overrides DECOY_WORKSPACE_ROOT.
+* `--help`: Show this message and exit.
+
+Examples:
+
+  decoy report show <run-id>
+    Resolve the run from the catalog and print a summary of its evidence.
+
+  decoy report show <run-id> --format html --out report.html
+    Write a full HTML report for the run's evidence.
+
+  decoy report show <run-id> --json
+    Emit the raw evidence manifest as structured JSON.
+
+Resolution path:
+  catalog run entry id -> metadata.evidence_path -> load manifest -> render.
+
+Requirements:
+  - A .decoy/ workspace must exist (run `decoy project init`).
+  - The run entry must have an evidence_path (run with `--evidence-out`).
+
+LOCAL ONLY: reads from the local DuckDB catalog and local evidence files.
+
+See also: decoy jobs list, decoy report summarize, decoy report render.
+
+
+### `decoy report diff`
+
+Compare output data files from two local runs at the data level.
+
+Resolves both run ids from the catalog, loads their evidence manifests,
+reads the output data files referenced in the manifests, and compares:
+  - Per-table row counts
+  - Schema (columns added/removed/type-changed)
+  - Per-column null-count and unique-count deltas
+
+EVIDENCE-SAFE: only aggregate counts are reported -- no raw values.
+See `decoy report compare` for manifest-level (fingerprint) comparison.
+LOCAL ONLY: does not connect to the platform server.
+
+**Usage**:
+
+```console
+$ decoy report diff [OPTIONS] RUN_ID_A RUN_ID_B
+```
+
+**Arguments**:
+
+* `RUN_ID_A`: Catalog run id (or prefix) for the first run.  [required]
+* `RUN_ID_B`: Catalog run id (or prefix) for the second run.  [required]
+
+**Options**:
+
+* `--json`: Emit structured JSON.
+* `-q, --quiet`: Suppress stdout.
+* `-v, --verbose`: Enable debug-level logs.
+* `--workspace TEXT`: Workspace root (default: search upward from cwd). Overrides DECOY_WORKSPACE_ROOT.
+* `--help`: Show this message and exit.
+
+Examples:
+
+  decoy report diff <run-id-a> <run-id-b>
+    Compare the output data files of two local runs at the data level.
+
+  decoy report diff <run-id-a> <run-id-b> --json
+    Emit structured JSON with per-table row-count and column-level deltas.
+
+What diff compares:
+  - Row counts per table (from actual data files)
+  - Schema: columns added/removed/type-changed between runs
+  - Per column: null-count delta, unique-count delta
+
+What diff does NOT compare:
+  - Raw row or cell values (never -- evidence-safe by design)
+  - Platform-managed state, audit logs, or remote job history
+  - Pipeline config changes (use `decoy report compare` for manifest-level diff)
+
+Scope and limitations:
+  - Requires both runs to have evidence files (`decoy run --evidence-out`).
+  - Requires the output files referenced in the evidence manifests to still
+    exist at their recorded paths.
+  - Compares aggregate counts only -- not a full row-by-row diff.
+
+Methodology: pandas.Series.nunique() / .isnull().sum() for column-level
+counts (pandas v2.x). No novel statistical method is used.
+
+See also: decoy report compare (manifest-level), decoy jobs list.
 
 
 ## `decoy strategies`
@@ -1944,3 +2067,160 @@ Examples:
     Show entry from an explicit workspace location.
 
 See also: decoy catalog list, decoy catalog add.
+
+
+## `decoy jobs`
+
+LOCAL run history from the DuckDB catalog. Shows runs recorded by `decoy run` when a .decoy/ workspace exists. LOCAL ONLY -- does not connect to the platform server or reflect remote job state. Use `decoy project init` to create a workspace before using jobs commands.
+
+**Usage**:
+
+```console
+$ decoy jobs [OPTIONS] COMMAND [ARGS]...
+```
+
+**Options**:
+
+* `--help`: Show this message and exit.
+
+**Commands**:
+
+* `list`: List local runs from the catalog,...
+* `show`: Show full metadata for a local run entry.
+* `watch`: Show status of a local run (always...
+
+### `decoy jobs list`
+
+List local runs from the catalog, most-recent first.
+
+Runs are recorded by `decoy run` when a .decoy/ workspace exists. Entries
+have entry_type=&#x27;run&#x27; in the DuckDB catalog.
+
+LOCAL ONLY: does not connect to the platform server or reflect remote state.
+
+**Usage**:
+
+```console
+$ decoy jobs list [OPTIONS]
+```
+
+**Options**:
+
+* `--workspace TEXT`: Workspace root (default: search upward from cwd). Overrides DECOY_WORKSPACE_ROOT.
+* `--json`: Emit structured JSON on stdout.
+* `-q, --quiet`: Suppress stdout.
+* `-v, --verbose`: Enable debug-level logs.
+* `--help`: Show this message and exit.
+
+Examples:
+
+  decoy jobs list
+    List local runs from the catalog (most-recent first). Searches upward
+    from cwd for .decoy/.
+
+  decoy jobs list --json
+    Emit structured JSON with a `runs` array.
+
+  decoy jobs list --workspace /path/to/project
+    List runs for an explicit workspace.
+
+LOCAL ONLY: shows runs recorded by `decoy run` in this local workspace.
+No platform job history, schedules, or remote state is included.
+Use `decoy project init` to create a workspace if you haven't already.
+
+See also: decoy jobs show, decoy jobs watch, decoy project init.
+
+
+### `decoy jobs show`
+
+Show full metadata for a local run entry.
+
+The run id can be the full UUID or a prefix (at least 4 characters).
+Use `decoy jobs list` to see all run ids.
+
+LOCAL ONLY: reads from the local DuckDB catalog. Does not connect to
+the platform server.
+
+**Usage**:
+
+```console
+$ decoy jobs show [OPTIONS] RUN_ID
+```
+
+**Arguments**:
+
+* `RUN_ID`: Run catalog id (or prefix, min 4 chars).  [required]
+
+**Options**:
+
+* `--json`: Emit structured JSON on stdout.
+* `-q, --quiet`: Suppress stdout.
+* `-v, --verbose`: Enable debug-level logs.
+* `--workspace TEXT`: Workspace root (default: search upward from cwd). Overrides DECOY_WORKSPACE_ROOT.
+* `--help`: Show this message and exit.
+
+Examples:
+
+  decoy jobs show <run-id>
+    Show full metadata for a local run (prefix match supported).
+
+  decoy jobs show <run-id> --json
+    Emit structured JSON for the run.
+
+LOCAL ONLY: shows local run metadata from the DuckDB catalog.
+
+See also: decoy jobs list, decoy report show <run-id>.
+
+
+### `decoy jobs watch`
+
+Show status of a local run (always complete -- local runs are synchronous).
+
+LOCAL CLI RUNS ARE SYNCHRONOUS. A run entry only appears in the catalog
+after `decoy run` has already finished. This command shows the recorded
+completed status.
+
+For live progress during a run, use `decoy run pipeline.yaml` in the
+foreground -- the spinner shows progress. Remote platform job watching
+is `decoy platform jobs watch` (SP-20, gated).
+
+**Usage**:
+
+```console
+$ decoy jobs watch [OPTIONS] RUN_ID
+```
+
+**Arguments**:
+
+* `RUN_ID`: Run catalog id (or prefix, min 4 chars).  [required]
+
+**Options**:
+
+* `--json`: Emit structured JSON on stdout.
+* `-q, --quiet`: Suppress stdout.
+* `-v, --verbose`: Enable debug-level logs.
+* `--workspace TEXT`: Workspace root (default: search upward from cwd). Overrides DECOY_WORKSPACE_ROOT.
+* `--help`: Show this message and exit.
+
+Examples:
+
+  decoy jobs watch <run-id>
+    Show the status of a local run. If the run is complete, prints its status.
+
+Honesty note -- local CLI runs are SYNCHRONOUS:
+  `decoy run` blocks until the run is done before returning. A run entry is
+  only written to the catalog AFTER the run finishes, so every run in the
+  catalog is already complete by the time you can `watch` it.
+
+  This command shows the recorded completed status. It does NOT stream live
+  progress for an in-progress run, because local CLI runs have no background
+  mechanism that would allow that.
+
+  Remote live job watching (platform jobs running asynchronously) is planned
+  under `decoy platform jobs watch` (SP-20, gated behind platform auth).
+
+  To watch a run while it is happening, run it in the foreground:
+    decoy run pipeline.yaml
+  The spinner shows live progress.
+
+See also: decoy jobs list, decoy jobs show, decoy run.
