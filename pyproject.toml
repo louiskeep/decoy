@@ -71,6 +71,7 @@ dependencies = [
     "decoy-engine>=0.1.0",
     "typer>=0.9",
     "rich>=13.0",
+    "duckdb>=0.9",
 ]
 
 [project.optional-dependencies]

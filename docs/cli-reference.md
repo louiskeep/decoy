@@ -13,6 +13,8 @@ Try one of:
   decoy templates list             Browse bundled pipeline templates.
   decoy explain modes              Plain-English topic help. `explain` lists topics.
   decoy info                       Branded splash + quick-start hints.
+  decoy project init               Create a local .decoy/ workspace (local only).
+  decoy catalog list               List the local metadata catalog entries.
 
 Run `decoy --install-completion` to enable shell tab completion.
 
@@ -52,6 +54,8 @@ $ decoy [OPTIONS] COMMAND [ARGS]...
 * `providers`: Enumerate and inspect the engine&#x27;s...
 * `checksums`: List the engine&#x27;s registered checksum...
 * `validators`: List the engine&#x27;s registered job-level...
+* `project`: Manage a local .decoy/ workspace.
+* `catalog`: LOCAL metadata catalog for datasets, runs,...
 
 ## `decoy run`
 
@@ -1647,3 +1651,296 @@ Examples:
     Same data as JSON.
 
 See also: decoy checksums list.
+
+
+## `decoy project`
+
+Manage a local .decoy/ workspace. LOCAL ONLY -- does not sync with the platform server, track remote state, or replace RBAC, audit logs, or managed operations. Use `project init` to create a workspace; `project show` to inspect it.
+
+**Usage**:
+
+```console
+$ decoy project [OPTIONS] COMMAND [ARGS]...
+```
+
+**Options**:
+
+* `--help`: Show this message and exit.
+
+**Commands**:
+
+* `init`: Create a local .decoy/ workspace in the...
+* `show`: Print the resolved .decoy/ workspace config.
+
+### `decoy project init`
+
+Create a local .decoy/ workspace in the current directory.
+
+The workspace is a LOCAL convenience area for derived Decoy artifacts
+(scan records, run metadata, evidence manifests, rendered reports). It
+does NOT sync with the platform server, track remote state, or replace
+RBAC, audit logs, or managed platform operations.
+
+Running `project init` a second time in an existing workspace is safe
+(idempotent): it will not overwrite existing config or artifacts.
+
+Deleting .decoy/ removes derived Decoy artifacts only. It never deletes
+your source data files.
+
+**Usage**:
+
+```console
+$ decoy project init [OPTIONS]
+```
+
+**Options**:
+
+* `--workspace TEXT`: Directory to create the .decoy/ workspace in. Defaults to the current working directory. Can also be set via the DECOY_WORKSPACE_ROOT environment variable.
+* `--json`: Emit a structured JSON result on stdout.
+* `-q, --quiet`: Suppress stdout. Errors still go to stderr.
+* `-v, --verbose`: Enable debug-level CLI logs on stderr.
+* `--help`: Show this message and exit.
+
+Examples:
+
+  decoy project init
+    Create a .decoy/ workspace in the current directory.
+
+  decoy project init --workspace /path/to/project
+    Create a .decoy/ workspace at an explicit location.
+
+  decoy project init --json
+    Emit a structured JSON result.
+
+What init creates:
+  .decoy/workspace.json     -- workspace config (version, defaults)
+  .decoy/catalog.duckdb     -- created lazily by `decoy catalog` commands
+  .decoy/scans/             -- STORM scan artifacts (local; may be sensitive)
+  .decoy/runs/              -- run record metadata
+  .decoy/evidence/          -- evidence manifests from local runs
+  .decoy/reports/           -- rendered report artifacts
+
+What this does NOT do:
+  - It does NOT create a platform project, register a workspace server-side,
+    or require a platform login.
+  - Deleting .decoy/ removes derived Decoy artifacts; it never deletes
+    your source data.
+
+See also: decoy project show, decoy catalog list.
+
+
+### `decoy project show`
+
+Print the resolved .decoy/ workspace config.
+
+Searches upward from the current directory for a .decoy/ workspace,
+mirroring how git discovers .git/. Use --workspace to point at an
+explicit location.
+
+This is a read-only command. It does not modify the workspace or
+contact the platform.
+
+**Usage**:
+
+```console
+$ decoy project show [OPTIONS]
+```
+
+**Options**:
+
+* `--workspace TEXT`: Workspace root to show. Defaults to upward discovery from cwd. Can also be set via DECOY_WORKSPACE_ROOT.
+* `--json`: Emit structured JSON instead of a human-readable card.
+* `-q, --quiet`: Suppress stdout. Errors still go to stderr.
+* `-v, --verbose`: Enable debug-level CLI logs on stderr.
+* `--help`: Show this message and exit.
+
+Examples:
+
+  decoy project show
+    Print the workspace config. Searches upward from cwd for .decoy/.
+
+  decoy project show --workspace /path/to/project
+    Show config for an explicit workspace location.
+
+  decoy project show --json
+    Emit a structured JSON result.
+
+What show displays:
+  - Workspace root path and .decoy/ location.
+  - Config defaults (source_dir, output_dir, recipe_dir).
+  - Created-at timestamp and workspace version.
+  - Presence of catalog.duckdb and artifact subdirectories.
+
+Upward discovery:
+  Commands search upward from the current directory to find .decoy/,
+  mirroring how git discovers .git/. Use --workspace to override.
+
+See also: decoy project init, decoy catalog list.
+
+
+## `decoy catalog`
+
+LOCAL metadata catalog for datasets, runs, and evidence. Backed by DuckDB at .decoy/catalog.duckdb inside the project workspace. LOCAL ONLY -- does not sync with the platform server or track remote state. Use `decoy project init` to create a workspace before using catalog commands.
+
+**Usage**:
+
+```console
+$ decoy catalog [OPTIONS] COMMAND [ARGS]...
+```
+
+**Options**:
+
+* `--help`: Show this message and exit.
+
+**Commands**:
+
+* `list`: List all entries in the local metadata...
+* `add`: Register an artifact path in the local...
+* `show`: Show the full details of a catalog entry.
+
+### `decoy catalog list`
+
+List all entries in the local metadata catalog.
+
+The catalog is backed by DuckDB at .decoy/catalog.duckdb. Entries are
+added with `decoy catalog add`. This command is read-only.
+
+LOCAL ONLY: the catalog does not sync with the platform server. For
+platform-managed job history and file registries, use the Web UI.
+
+**Usage**:
+
+```console
+$ decoy catalog list [OPTIONS]
+```
+
+**Options**:
+
+* `--workspace TEXT`: Workspace root (default: search upward from cwd). Overrides DECOY_WORKSPACE_ROOT.
+* `--json`: Emit structured JSON on stdout.
+* `-q, --quiet`: Suppress stdout.
+* `-v, --verbose`: Enable debug-level logs.
+* `--help`: Show this message and exit.
+
+Examples:
+
+  decoy catalog list
+    List all catalog entries. Searches upward from cwd for .decoy/.
+
+  decoy catalog list --json
+    Emit a structured JSON result with the entries array.
+
+  decoy catalog list --workspace /path/to/project
+    List entries for an explicit workspace location.
+
+What catalog stores:
+  - Dataset registrations (file path, name, format, type).
+  - No raw source data or PII values are stored.
+  - sensitivity_class tags whether each entry is evidence-safe,
+    redacted-shareable, or full-sensitive.
+
+See also: decoy catalog add, decoy catalog show, decoy project init.
+
+
+### `decoy catalog add`
+
+Register an artifact path in the local metadata catalog.
+
+Records the path, entry type, name, timestamp, and sensitivity class in
+the DuckDB catalog at .decoy/catalog.duckdb. Raw source data is NOT
+copied into DuckDB -- only metadata is stored.
+
+Use --sensitivity to tag entries: evidence-safe (default, manifests and
+summaries), redacted-shareable (profiles with raw values removed), or
+full-sensitive (local diagnostics that may contain sensitive values like
+full STORM profiles).
+
+LOCAL ONLY: catalog entries are not synced with the platform server.
+
+**Usage**:
+
+```console
+$ decoy catalog add [OPTIONS] PATH
+```
+
+**Arguments**:
+
+* `PATH`: Path to the artifact (file or directory) to register in the catalog.  [required]
+
+**Options**:
+
+* `--name TEXT`: Name for this entry (default: file stem of the path).
+* `--type TEXT`: Entry type: dataset, run, evidence, scan, report (default: dataset).  [default: dataset]
+* `--sensitivity TEXT`: Sensitivity class: evidence-safe (default), redacted-shareable, full-sensitive. Use full-sensitive for raw STORM profiles that may contain sensitive values.  [default: evidence-safe]
+* `--json`: Emit structured JSON on stdout.
+* `-q, --quiet`: Suppress stdout.
+* `-v, --verbose`: Enable debug-level logs.
+* `--workspace TEXT`: Workspace root (default: search upward from cwd). Overrides DECOY_WORKSPACE_ROOT.
+* `--help`: Show this message and exit.
+
+Examples:
+
+  decoy catalog add ./data/customers.csv
+    Register a dataset file in the catalog.
+
+  decoy catalog add ./data/customers.csv --name customers_v2
+    Override the default name (file stem).
+
+  decoy catalog add ./data/customers.csv --type dataset --json
+    Specify entry type and emit structured JSON with the new entry id.
+
+  decoy catalog add ./data/customers.csv --sensitivity full-sensitive
+    Tag the entry as a sensitive local artifact (e.g. a full STORM profile).
+
+Sensitivity classes:
+  evidence-safe        -- manifest/summary data excluding raw values (default).
+  redacted-shareable   -- profile or summary with raw values removed.
+  full-sensitive       -- local diagnostic that may contain sensitive values.
+
+What catalog add does NOT do:
+  - It does NOT copy raw source data into DuckDB.
+  - It does NOT sync the registration with the platform server.
+  - It does NOT scan or profile the file (use `decoy storm scan` for that).
+
+See also: decoy catalog list, decoy catalog show, decoy storm scan.
+
+
+### `decoy catalog show`
+
+Show the full details of a catalog entry.
+
+The entry id can be the full UUID or a prefix (at least 4 characters).
+Use `decoy catalog list` to see all entry ids.
+
+LOCAL ONLY: the catalog does not sync with the platform server.
+
+**Usage**:
+
+```console
+$ decoy catalog show [OPTIONS] ENTRY_ID
+```
+
+**Arguments**:
+
+* `ENTRY_ID`: Entry id (or id prefix) to show.  [required]
+
+**Options**:
+
+* `--json`: Emit structured JSON on stdout.
+* `-q, --quiet`: Suppress stdout.
+* `-v, --verbose`: Enable debug-level logs.
+* `--workspace TEXT`: Workspace root (default: search upward from cwd). Overrides DECOY_WORKSPACE_ROOT.
+* `--help`: Show this message and exit.
+
+Examples:
+
+  decoy catalog show <id>
+    Show the full entry for a given id (prefix match supported).
+
+  decoy catalog show <id> --json
+    Emit structured JSON for the entry.
+
+  decoy catalog show <id> --workspace /path/to/project
+    Show entry from an explicit workspace location.
+
+See also: decoy catalog list, decoy catalog add.

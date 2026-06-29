@@ -15,3 +15,4 @@ data/
 decoy_demo/
 decoy_demo/
 test_demo_dir/
+.decoy/
