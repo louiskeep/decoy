@@ -8,6 +8,7 @@ through `if __name__ == "__main__":`.
 import typer
 
 from decoy import __version__
+from decoy.cli.catalog import catalog_app
 from decoy.cli.cockpit import (
     DOCTOR_EPILOG,
     checksums_app,
@@ -30,6 +31,7 @@ from decoy.cli.plan import PLAN_EPILOG
 from decoy.cli.plan import plan as plan_command
 from decoy.cli.preflight import PREFLIGHT_EPILOG
 from decoy.cli.preflight import preflight as preflight_command
+from decoy.cli.project import project_app
 from decoy.cli.report import report_app
 from decoy.cli.run import RUN_EPILOG
 from decoy.cli.run import run as run_command
@@ -60,6 +62,8 @@ Try one of:
   decoy templates list             Browse bundled pipeline templates.
   decoy explain modes              Plain-English topic help. `explain` lists topics.
   decoy info                       Branded splash + quick-start hints.
+  decoy project init               Create a local .decoy/ workspace (local only).
+  decoy catalog list               List the local metadata catalog entries.
 
 Run `decoy --install-completion` to enable shell tab completion.
 """
@@ -114,6 +118,8 @@ app.add_typer(providers_app, name="providers")
 app.add_typer(checksums_app, name="checksums")
 app.add_typer(validators_app, name="validators")
 app.command(name="doctor", epilog=DOCTOR_EPILOG)(doctor)
+app.add_typer(project_app, name="project")
+app.add_typer(catalog_app, name="catalog")
 
 
 if __name__ == "__main__":
