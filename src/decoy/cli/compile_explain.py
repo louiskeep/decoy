@@ -40,7 +40,7 @@ Examples:
     Compile a recipe and show pass/fail for all compile checks.
 
   decoy compile pipeline.yaml --explain
-    Compile a recipe and show per-column resolved strategy, params, and rationale.
+    Compile a recipe and show per-column declared strategy, params, and rationale.
 
   decoy compile pipeline.yaml --explain --json
     Same as --explain but as structured JSON for scripting or CI.

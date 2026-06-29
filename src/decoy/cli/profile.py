@@ -63,7 +63,7 @@ Examples:
 
   decoy profile data.parquet
     Profile a Parquet file (format inferred from extension).
-    Reads the first 10 000 rows by default.
+    Profiles the first 10 000 rows by default; the full file is loaded first.
 
 HONESTY: PII candidates are SUGGESTIONS based on STORM pattern matching.
 They are NOT authoritative classifications. The user reviews each flagged field

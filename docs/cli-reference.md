@@ -642,7 +642,7 @@ Examples:
     Compile a recipe and show pass/fail for all compile checks.
 
   decoy compile pipeline.yaml --explain
-    Compile a recipe and show per-column resolved strategy, params, and rationale.
+    Compile a recipe and show per-column declared strategy, params, and rationale.
 
   decoy compile pipeline.yaml --explain --json
     Same as --explain but as structured JSON for scripting or CI.
@@ -704,7 +704,7 @@ Examples:
 
   decoy profile data.parquet
     Profile a Parquet file (format inferred from extension).
-    Reads the first 10 000 rows by default.
+    Profiles the first 10 000 rows by default; the full file is loaded first.
 
 HONESTY: PII candidates are SUGGESTIONS based on STORM pattern matching.
 They are NOT authoritative classifications. The user reviews each flagged field
