@@ -36,7 +36,7 @@ from typing import Any
 
 import typer
 
-from decoy.cli.exit_codes import EXIT_USAGE
+from decoy.cli.exit_codes import EXIT_RUNTIME, EXIT_USAGE
 from decoy.ui.output import OutputMode, OutputState, emit_json, setup_output
 from decoy.ui.theme import code, error, hint, info, success, warn
 
@@ -971,15 +971,6 @@ def _fp_short(fp: str | None) -> str:
 
 
 # ---------------------------------------------------------------------------
-# Command registration
-# ---------------------------------------------------------------------------
-
-report_app.command(name="render", epilog=_RENDER_EPILOG)(_render)
-report_app.command(name="summarize", epilog=_SUMMARIZE_EPILOG)(_summarize)
-report_app.command(name="compare", epilog=_COMPARE_EPILOG)(_compare)
-
-
-# ---------------------------------------------------------------------------
 # Data-level diff helper: compare_data
 # ---------------------------------------------------------------------------
 
@@ -991,13 +982,11 @@ def _column_profile(df: "Any") -> dict[str, dict[str, Any]]:
       - dtype_kind: pandas dtype kind char ('i', 'f', 'u', 'O', 'M', 'b', ...)
       - null_count: int
       - unique_count: int
-      - For numeric (kind in 'ifu'): min, max, mean (via pandas describe())
 
-    Methodology: pandas.DataFrame.describe() for numeric summary; pandas
-    Series.nunique() and .isnull().sum() for column-level null/cardinality.
-    No novel statistical method is used.
+    Methodology: pandas.Series.nunique() and .isnull().sum() for column-level
+    null/cardinality counts. No novel statistical method is used.
 
-    EVIDENCE-SAFE: summary statistics only -- no raw cell values are returned.
+    EVIDENCE-SAFE: aggregate counts only -- no raw cell values are returned.
     """
     profile: dict[str, dict[str, Any]] = {}
     for col in df.columns:
@@ -1005,18 +994,11 @@ def _column_profile(df: "Any") -> dict[str, dict[str, Any]]:
         kind = series.dtype.kind
         null_count = int(series.isnull().sum())
         unique_count = int(series.nunique(dropna=True))
-        col_info: dict[str, Any] = {
+        profile[col] = {
             "dtype_kind": kind,
             "null_count": null_count,
             "unique_count": unique_count,
         }
-        if kind in ("i", "f", "u"):
-            # numeric: get min/max/mean from describe()
-            desc = series.describe()
-            col_info["min"] = float(desc.get("min", float("nan")))
-            col_info["max"] = float(desc.get("max", float("nan")))
-            col_info["mean"] = float(desc.get("mean", float("nan")))
-        profile[col] = col_info
     return profile
 
 
@@ -1046,27 +1028,22 @@ def compare_data(
           dtype_kind_a    str or None
           dtype_kind_b    str or None
           dtype_changed   bool
-          min_delta       float or None  (numeric only)
-          max_delta       float or None  (numeric only)
-          mean_delta      float or None  (numeric only)
       missing_files      list[str] -- paths that could not be found
 
-    Methodology: pandas.DataFrame.describe() for numeric summary stats;
-    pandas.Series.nunique() and .isnull().sum() for null/cardinality.
-    No novel statistical method is used. References: pandas v2.x docs.
+    Methodology: pandas.Series.nunique() and .isnull().sum() for column-level
+    null/cardinality counts. No novel statistical method is used.
+    References: pandas v2.x docs.
 
-    EVIDENCE-SAFE: reports summary statistics only. Raw row/cell values are
+    EVIDENCE-SAFE: reports aggregate counts only. Raw row/cell values are
     never included in the output.
     """
-    import math
-
     try:
         import pandas as pd
-    except ImportError:
+    except ImportError as _err:
         raise RuntimeError(
             "pandas is required for data-level diff. "
             "Install with: pip install pandas"
-        )
+        ) from _err
 
     # Determine which tables appear in both sets.
     tables_a = set(output_fps_a)
@@ -1152,36 +1129,10 @@ def compare_data(
             nc_delta = (nc_b - nc_a) if (nc_a is not None and nc_b is not None) else None
             uc_delta = (uc_b - uc_a) if (uc_a is not None and uc_b is not None) else None
 
-            min_delta: float | None = None
-            max_delta: float | None = None
-            mean_delta: float | None = None
-            if dk_a in ("i", "f", "u") and dk_b in ("i", "f", "u"):
-                min_a = pa.get("min")
-                min_b = pb.get("min")
-                max_a = pa.get("max")
-                max_b = pb.get("max")
-                mean_a = pa.get("mean")
-                mean_b = pb.get("mean")
-                if min_a is not None and min_b is not None:
-                    min_delta = min_b - min_a
-                    if math.isnan(min_delta):
-                        min_delta = None
-                if max_a is not None and max_b is not None:
-                    max_delta = max_b - max_a
-                    if math.isnan(max_delta):
-                        max_delta = None
-                if mean_a is not None and mean_b is not None:
-                    mean_delta = mean_b - mean_a
-                    if math.isnan(mean_delta):
-                        mean_delta = None
-
             has_col_change = bool(
                 dtype_changed
                 or (nc_delta is not None and nc_delta != 0)
                 or (uc_delta is not None and uc_delta != 0)
-                or (min_delta is not None and min_delta != 0.0)
-                or (max_delta is not None and max_delta != 0.0)
-                or (mean_delta is not None and mean_delta != 0.0)
             )
             if has_col_change:
                 column_deltas.append(
@@ -1192,9 +1143,6 @@ def compare_data(
                         "dtype_changed": dtype_changed,
                         "null_count_delta": nc_delta,
                         "unique_count_delta": uc_delta,
-                        "min_delta": min_delta,
-                        "max_delta": max_delta,
-                        "mean_delta": mean_delta,
                     }
                 )
 
@@ -1426,7 +1374,6 @@ What diff compares:
   - Row counts per table (from actual data files)
   - Schema: columns added/removed/type-changed between runs
   - Per column: null-count delta, unique-count delta
-  - For numeric columns: min/max/mean delta (pandas.describe())
 
 What diff does NOT compare:
   - Raw row or cell values (never -- evidence-safe by design)
@@ -1437,11 +1384,10 @@ Scope and limitations:
   - Requires both runs to have evidence files (`decoy run --evidence-out`).
   - Requires the output files referenced in the evidence manifests to still
     exist at their recorded paths.
-  - Compares summary statistics only -- not a full row-by-row diff.
+  - Compares aggregate counts only -- not a full row-by-row diff.
 
-Methodology: pandas.DataFrame.describe() for numeric summary; pandas
-Series.nunique() / .isnull().sum() for column-level deltas (pandas v2.x).
-No novel statistical method is used.
+Methodology: pandas.Series.nunique() / .isnull().sum() for column-level
+counts (pandas v2.x). No novel statistical method is used.
 
 See also: decoy report compare (manifest-level), decoy jobs list.
 """
@@ -1471,9 +1417,9 @@ def _diff(
     reads the output data files referenced in the manifests, and compares:
       - Per-table row counts
       - Schema (columns added/removed/type-changed)
-      - Per-column null-count, unique-count, and numeric min/max/mean deltas
+      - Per-column null-count and unique-count deltas
 
-    EVIDENCE-SAFE: only summary statistics are reported -- no raw values.
+    EVIDENCE-SAFE: only aggregate counts are reported -- no raw values.
     See `decoy report compare` for manifest-level (fingerprint) comparison.
     LOCAL ONLY: does not connect to the platform server.
     """
@@ -1515,7 +1461,15 @@ def _diff(
     out_fps_b: dict[str, Any] = manifest_b.get("output_fingerprints") or {}
 
     # Perform data-level comparison
-    diff_result = compare_data(out_fps_a, out_fps_b)
+    try:
+        diff_result = compare_data(out_fps_a, out_fps_b)
+    except RuntimeError as _dep_err:
+        _msg = str(_dep_err)
+        if state.mode is OutputMode.json:
+            emit_json(state, {"command": "report diff", "status": "error", "error": _msg})
+        elif state.mode is not OutputMode.quiet:
+            state.err_console.print(error("error:"), _msg)
+        raise typer.Exit(code=EXIT_RUNTIME)
 
     # Handle missing files
     if diff_result["missing_files"]:
@@ -1543,8 +1497,7 @@ def _diff(
             "any_data_change": diff_result["any_data_change"],
             "table_deltas": diff_result["table_deltas"],
             "scope": (
-                "data-level summary statistics only; raw values not included. "
-                "Methodology: pandas.DataFrame.describe() (pandas v2.x). "
+                "data-level aggregate counts only; raw values not included. "
                 "LOCAL ONLY -- does not reflect platform state."
             ),
         }

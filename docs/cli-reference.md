@@ -1471,9 +1471,9 @@ Resolves both run ids from the catalog, loads their evidence manifests,
 reads the output data files referenced in the manifests, and compares:
   - Per-table row counts
   - Schema (columns added/removed/type-changed)
-  - Per-column null-count, unique-count, and numeric min/max/mean deltas
+  - Per-column null-count and unique-count deltas
 
-EVIDENCE-SAFE: only summary statistics are reported -- no raw values.
+EVIDENCE-SAFE: only aggregate counts are reported -- no raw values.
 See `decoy report compare` for manifest-level (fingerprint) comparison.
 LOCAL ONLY: does not connect to the platform server.
 
@@ -1508,7 +1508,6 @@ What diff compares:
   - Row counts per table (from actual data files)
   - Schema: columns added/removed/type-changed between runs
   - Per column: null-count delta, unique-count delta
-  - For numeric columns: min/max/mean delta (pandas.describe())
 
 What diff does NOT compare:
   - Raw row or cell values (never -- evidence-safe by design)
@@ -1519,11 +1518,10 @@ Scope and limitations:
   - Requires both runs to have evidence files (`decoy run --evidence-out`).
   - Requires the output files referenced in the evidence manifests to still
     exist at their recorded paths.
-  - Compares summary statistics only -- not a full row-by-row diff.
+  - Compares aggregate counts only -- not a full row-by-row diff.
 
-Methodology: pandas.DataFrame.describe() for numeric summary; pandas
-Series.nunique() / .isnull().sum() for column-level deltas (pandas v2.x).
-No novel statistical method is used.
+Methodology: pandas.Series.nunique() / .isnull().sum() for column-level
+counts (pandas v2.x). No novel statistical method is used.
 
 See also: decoy report compare (manifest-level), decoy jobs list.
 
