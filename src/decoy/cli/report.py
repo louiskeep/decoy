@@ -1095,7 +1095,14 @@ def compare_data(
         def _load(p: "_Path") -> "pd.DataFrame":
             suffix = p.suffix.lower()
             if suffix == ".parquet":
-                return pd.read_parquet(str(p))
+                try:
+                    return pd.read_parquet(str(p))
+                except ImportError as _ie:
+                    raise RuntimeError(
+                        f"A Parquet reader (pyarrow or fastparquet) is required "
+                        f"to read '{p.name}'. "
+                        "Install with: pip install pyarrow"
+                    ) from _ie
             return pd.read_csv(str(p), dtype=str)
 
         df_a = _load(path_a)
@@ -1521,7 +1528,7 @@ def _diff(
         state.console.print(
             " ",
             hint("scope:"),
-            "data-level summary statistics only; raw values not included.",
+            "aggregate counts only; raw values not included.",
         )
         return
 
@@ -1582,7 +1589,7 @@ def _diff(
     state.console.print(
         " ",
         hint("scope:"),
-        "data-level summary statistics only; raw values not included. "
+        "aggregate counts only; raw values not included. "
         "Use `decoy report compare` for manifest-level fingerprint comparison.",
     )
 
