@@ -5,6 +5,8 @@ Decoy -- data masking and synthetic generation CLI.
 Try one of:
   decoy demo                       30-second end-to-end walkthrough.
   decoy storm analyze data.csv     Profile a dataset for PII and risk.
+  decoy profile data.csv           Dataset shape, field stats, PII candidates (suggestions).
+  decoy compile pipeline.yaml --explain  Explain per-column strategy and compile decisions.
   decoy run pipeline.yaml          Run a masking or generation pipeline.
   decoy validate pipeline.yaml     Check a YAML pipeline before running.
   decoy unmask pipeline.yaml masked.csv   Recover fpe columns from a masked file.
@@ -48,6 +50,8 @@ $ decoy [OPTIONS] COMMAND [ARGS]...
 * `schema`: Print the PipelineConfig JSON Schema to...
 * `plan`: Compile a pipeline config into a versioned...
 * `doctor`: Check engine and dependency health.
+* `compile`: Compile a pipeline config and run...
+* `profile`: Profile a source dataset: shape, field...
 * `storm`: Dataset analysis -- the STORM event.
 * `templates`: Browse and dump bundled starter pipeline...
 * `vault`: Vault inspection utilities.
@@ -602,6 +606,106 @@ Examples:
     Silent mode; exit code 0 = healthy, non-zero = hard requirement missing.
 
 See also: decoy --version, decoy info.
+
+
+## `decoy compile`
+
+Compile a pipeline config and run plan-compile checks.
+
+Use --explain to see per-column strategy, params, and rationale for each
+compile decision. Without --explain, shows a compact pass/fail summary.
+
+HONESTY: compile explains what is in the config and what the compiler
+verified. It does not guarantee correctness, PII coverage, or safety.
+
+**Usage**:
+
+```console
+$ decoy compile [OPTIONS] CONFIG
+```
+
+**Arguments**:
+
+* `CONFIG`: Path to the pipeline YAML config to compile.  [required]
+
+**Options**:
+
+* `--explain`: Explain the compiled plan: per-column resolved strategy, params, execution order, and rationale. Without this flag, only the compile pass/fail summary is shown.
+* `--json`: Emit structured JSON instead of the styled table output.
+* `-q, --quiet`: Suppress stdout. Exit code carries success or failure.
+* `-v, --verbose`: Enable debug-level CLI logs on stderr.
+* `--help`: Show this message and exit.
+
+Examples:
+
+  decoy compile pipeline.yaml
+    Compile a recipe and show pass/fail for all compile checks.
+
+  decoy compile pipeline.yaml --explain
+    Compile a recipe and show per-column resolved strategy, params, and rationale.
+
+  decoy compile pipeline.yaml --explain --json
+    Same as --explain but as structured JSON for scripting or CI.
+
+  decoy compile pipeline.yaml --explain --quiet
+    Silent compile; exit code 0 = all checks passed.
+
+HONESTY: compile --explain explains decisions declared in the config and what the
+compiler verified. It does not guarantee the strategy is correct for the data,
+that all PII is covered, or that the output is safe to share.
+
+See also: decoy validate, decoy plan, decoy storm analyze.
+
+
+## `decoy profile`
+
+Profile a source dataset: shape, field stats, PII candidates (as suggestions).
+
+Runs STORM detection on the source file. PII candidates are surfaced as
+SUGGESTIONS for review -- never as authoritative auto-classifications.
+No raw cell values appear in any output mode.
+
+**Usage**:
+
+```console
+$ decoy profile [OPTIONS] SOURCE
+```
+
+**Arguments**:
+
+* `SOURCE`: Path to the source CSV or Parquet file to profile.  [required]
+
+**Options**:
+
+* `--show-fields`: Show per-field detail: dtype, null_rate, distinct_count, PII candidate flag.
+* `--rows INTEGER`: Maximum rows to sample. Use 0 for full scan.  [default: 10000]
+* `--json`: Emit structured JSON instead of the styled table output.
+* `-q, --quiet`: Suppress stdout. Exit code carries success or failure.
+* `-v, --verbose`: Enable debug-level CLI logs on stderr.
+* `--help`: Show this message and exit.
+
+Examples:
+
+  decoy profile data.csv
+    Profile a CSV: row count, field count, PII candidates (as suggestions).
+
+  decoy profile data.csv --show-fields
+    Per-field detail: dtype, null_rate, distinct_count, PII candidate flag.
+
+  decoy profile data.csv --show-fields --json
+    Same as --show-fields but as structured JSON for scripting.
+
+  decoy profile data.parquet
+    Profile a Parquet file (format inferred from extension).
+
+HONESTY: PII candidates are SUGGESTIONS based on STORM pattern matching.
+They are NOT authoritative classifications. The user reviews each flagged field
+and decides what masking to apply. Decoy never auto-classifies PII.
+
+No raw cell values appear in the output. Field stats include dtype, null_rate,
+distinct_count only.
+
+See also: decoy storm analyze, decoy explain storm, decoy validate.
 
 
 ## `decoy storm`

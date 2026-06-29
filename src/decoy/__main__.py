@@ -17,6 +17,8 @@ from decoy.cli.cockpit import (
     strategies_app,
     validators_app,
 )
+from decoy.cli.compile_explain import COMPILE_EPILOG
+from decoy.cli.compile_explain import compile as compile_command
 from decoy.cli.demo import DEMO_EPILOG
 from decoy.cli.demo import _demo as demo_command
 from decoy.cli.evidence import evidence_app
@@ -32,6 +34,8 @@ from decoy.cli.plan import PLAN_EPILOG
 from decoy.cli.plan import plan as plan_command
 from decoy.cli.preflight import PREFLIGHT_EPILOG
 from decoy.cli.preflight import preflight as preflight_command
+from decoy.cli.profile import PROFILE_EPILOG
+from decoy.cli.profile import profile as profile_command
 from decoy.cli.project import project_app
 from decoy.cli.report import report_app
 from decoy.cli.run import RUN_EPILOG
@@ -55,6 +59,8 @@ Decoy -- data masking and synthetic generation CLI.
 Try one of:
   decoy demo                       30-second end-to-end walkthrough.
   decoy storm analyze data.csv     Profile a dataset for PII and risk.
+  decoy profile data.csv           Dataset shape, field stats, PII candidates (suggestions).
+  decoy compile pipeline.yaml --explain  Explain per-column strategy and compile decisions.
   decoy run pipeline.yaml          Run a masking or generation pipeline.
   decoy validate pipeline.yaml     Check a YAML pipeline before running.
   decoy unmask pipeline.yaml masked.csv   Recover fpe columns from a masked file.
@@ -125,6 +131,8 @@ app.command(name="doctor", epilog=DOCTOR_EPILOG)(doctor)
 app.add_typer(project_app, name="project")
 app.add_typer(catalog_app, name="catalog")
 app.add_typer(jobs_app, name="jobs")
+app.command(name="compile", epilog=COMPILE_EPILOG)(compile_command)
+app.command(name="profile", epilog=PROFILE_EPILOG)(profile_command)
 
 
 if __name__ == "__main__":
