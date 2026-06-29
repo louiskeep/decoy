@@ -300,3 +300,94 @@ def test_profile_negative_control_sentinel_present_in_csv(sentinel_csv: Path) ->
     content = sentinel_csv.read_text(encoding="utf-8")
     assert _SENTINEL_EMAIL in content, "Setup error: email sentinel not written to CSV."
     assert _SENTINEL_SSN in content, "Setup error: SSN sentinel not written to CSV."
+
+
+# ---------------------------------------------------------------------------
+# --rows: real row bounding (HIGH-1)
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def large_csv(tmp_path: Path) -> Path:
+    """CSV with 200 rows -- more than the --rows 50 limit used in tests below."""
+    df = pd.DataFrame(
+        {
+            "id": list(range(200)),
+            "value": [f"val_{i}" for i in range(200)],
+        }
+    )
+    path = tmp_path / "large.csv"
+    df.to_csv(path, index=False)
+    return path
+
+
+def test_profile_rows_limits_row_count_in_json(large_csv: Path) -> None:
+    """--rows N must result in a row_count of at most N in the profile output.
+
+    Proves --rows is REAL: a 200-row file profiled with --rows 50 must
+    report row_count ~50, not 200.
+    """
+    result = runner.invoke(app, ["profile", str(large_csv), "--rows", "50", "--json"])
+    assert result.exit_code == 0, result.output
+    payload = _json.loads(result.stdout)
+    assert payload["row_count"] <= 50, (
+        f"--rows 50 on a 200-row file reported row_count={payload['row_count']}. "
+        "--rows must bound the profile to at most N rows."
+    )
+
+
+def test_profile_rows_0_full_scan_in_json(large_csv: Path) -> None:
+    """--rows 0 must produce a full scan (row_count == 200)."""
+    result = runner.invoke(app, ["profile", str(large_csv), "--rows", "0", "--json"])
+    assert result.exit_code == 0, result.output
+    payload = _json.loads(result.stdout)
+    assert payload["row_count"] == 200, (
+        f"--rows 0 (full scan) on a 200-row file reported row_count={payload['row_count']}. "
+        "--rows 0 must profile every row."
+    )
+
+
+def test_profile_default_rows_limits_row_count(large_csv: Path) -> None:
+    """Default --rows 10000 must NOT silently scan everything when rows > 10000.
+
+    Here the file only has 200 rows (< default 10000), so this confirms the
+    default produces a full result -- both paths behave correctly.
+    """
+    result = runner.invoke(app, ["profile", str(large_csv), "--json"])
+    assert result.exit_code == 0, result.output
+    payload = _json.loads(result.stdout)
+    # 200 <= 10000 so the full 200 rows are profiled
+    assert payload["row_count"] == 200, (
+        f"Default --rows should scan all 200 rows of a small file. "
+        f"Got row_count={payload['row_count']}."
+    )
+
+
+# ---------------------------------------------------------------------------
+# dtype inference for CSV (MEDIUM-1)
+# ---------------------------------------------------------------------------
+
+
+def test_profile_numeric_column_reports_numeric_type(sample_csv: Path) -> None:
+    """CSV numeric columns must report an integer/float type, not 'string'.
+
+    The 'score' column in sample_csv has integer values [1, 2, 3, 4, 5].
+    With proper dtype inference (no dtype=str override), STORM must report
+    inferred_type as 'integer', NOT 'string'.
+    """
+    result = runner.invoke(app, ["profile", str(sample_csv), "--show-fields", "--json"])
+    assert result.exit_code == 0, result.output
+    payload = _json.loads(result.stdout)
+
+    score_field = next((f for f in payload.get("fields", []) if f["name"] == "score"), None)
+    assert score_field is not None, "Expected 'score' field in profile output."
+
+    dtype = score_field.get("dtype", "")
+    assert dtype not in ("string", "object", "str"), (
+        f"CSV column 'score' (integer values 1-5) reported dtype={dtype!r}. "
+        "Profile must infer real dtypes -- not force 'string' for all CSV columns."
+    )
+    assert dtype in ("integer", "float", "int64", "int32", "numeric"), (
+        f"CSV column 'score' reported unexpected dtype={dtype!r}. "
+        "Expected an integer/float/numeric type."
+    )

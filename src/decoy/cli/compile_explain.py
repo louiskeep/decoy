@@ -4,7 +4,7 @@ the resulting plan.
 Without --explain: compile the config, run the five S1 plan-compile checks, and
 report pass/fail. Exit 0 when all checks pass; exit EXIT_USAGE on a compile error.
 
-With --explain: same compilation, then render per-column resolved strategy and
+With --explain: same compilation, then render per-column declared strategy and
 params, the table execution order, and the rationale for each decision.
 
 HONESTY: this command explains the decisions that were explicitly declared in the
@@ -55,12 +55,13 @@ that all PII is covered, or that the output is safe to share.
 See also: decoy validate, decoy plan, decoy storm analyze.
 """
 
-# Rationale template: all strategies come from explicit user declarations in the
+# Rationale templates: strategies come from explicit user declarations in the
 # config. The engine does NOT auto-assign strategies (the old FORECAST recommender
 # was retired under storm-reframe-C, 2026-05-30). The compile checks then VERIFY
 # the declared config (provider exists, namespaces consistent, etc.) but do not
 # change any decisions.
 _RATIONALE_DECLARED = "declared in pipeline config"
+_RATIONALE_NONE = "no strategy declared"
 
 
 def compile(
@@ -75,7 +76,7 @@ def compile(
         False,
         "--explain",
         help=(
-            "Explain the compiled plan: per-column resolved strategy, params, "
+            "Explain the compiled plan: per-column declared strategy, params, "
             "execution order, and rationale. Without this flag, only the compile "
             "pass/fail summary is shown."
         ),
@@ -240,9 +241,10 @@ def _extract_tables_info(raw: dict) -> list[dict]:
     Each column has: name, strategy, provider, cardinality_mode, deterministic,
     vault, rationale.
 
-    The rationale is always 'declared in pipeline config' -- Decoy does not
-    auto-assign strategies. The compile checks VERIFY declarations but do not
-    generate them.
+    The rationale distinguishes columns that have an explicit strategy declared
+    ('declared in pipeline config') from columns with no strategy ('no strategy
+    declared').  Decoy does not auto-assign strategies; the compile checks VERIFY
+    declarations but do not generate them.
     """
     tables = raw.get("tables") or []
     result = []
@@ -255,16 +257,18 @@ def _extract_tables_info(raw: dict) -> list[dict]:
         for col in columns:
             if not isinstance(col, dict):
                 continue
+            strategy = col.get("strategy") or "none"
+            rationale = _RATIONALE_DECLARED if strategy != "none" else _RATIONALE_NONE
             col_records.append(
                 {
                     "name": col.get("name", "?"),
-                    "strategy": col.get("strategy") or "none",
+                    "strategy": strategy,
                     "provider": col.get("provider"),
                     "cardinality_mode": col.get("cardinality_mode"),
                     "deterministic": col.get("deterministic", False),
                     "vault": col.get("vault", False),
                     "coherent_with": col.get("coherent_with") or [],
-                    "rationale": _RATIONALE_DECLARED,
+                    "rationale": rationale,
                 }
             )
         result.append({"name": tname, "columns": col_records})

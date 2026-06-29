@@ -266,3 +266,65 @@ def test_compile_explain_json_quiet_mode(tmp_path: Path) -> None:
     result = runner.invoke(app, ["compile", str(config_path), "--explain", "--quiet"])
     assert result.exit_code == 0
     assert result.stdout == ""
+
+
+# ---------------------------------------------------------------------------
+# LOW-3: rationale distinguishes declared vs undeclared strategies
+# ---------------------------------------------------------------------------
+
+
+def _config_with_undeclared_column() -> dict:
+    """Config with one column that has no strategy declared (strategy omitted)."""
+    return {
+        "version": 1,
+        "global_settings": {"seed": 42},
+        "sources": {
+            "customers": {"type": "file", "format": "csv", "path": "/tmp/x.csv"}
+        },
+        "tables": [
+            {
+                "name": "customers",
+                "columns": [
+                    {"name": "email", "strategy": "faker", "provider": "person_email"},
+                    # no strategy declared -- rationale must say so
+                    {"name": "internal_id"},
+                ],
+            }
+        ],
+        "targets": {
+            "customers": {"type": "file", "format": "csv", "path": "/tmp/y.csv"}
+        },
+    }
+
+
+def test_compile_explain_undeclared_column_rationale(tmp_path: Path) -> None:
+    """Columns with no declared strategy must report 'no strategy declared'.
+
+    A column that omits 'strategy' gets strategy='none'. The rationale must
+    honestly say 'no strategy declared' -- NOT 'declared in pipeline config'
+    (which would be false: nothing was declared for that column).
+    """
+    config_path = tmp_path / "pipeline.yaml"
+    _write_yaml(config_path, _config_with_undeclared_column())
+    result = runner.invoke(app, ["compile", str(config_path), "--explain", "--json"])
+    assert result.exit_code == 0, result.output
+    payload = _json.loads(result.stdout)
+
+    cols = payload["tables"][0]["columns"]
+    email_col = next(c for c in cols if c["name"] == "email")
+    id_col = next(c for c in cols if c["name"] == "internal_id")
+
+    # Declared column: rationale must mention 'config'
+    assert "config" in email_col["rationale"].lower(), (
+        f"email (strategy=faker) rationale must mention 'config'. Got: {email_col['rationale']!r}"
+    )
+
+    # Undeclared column: rationale must say 'no strategy declared', NOT 'config'
+    assert "no strategy declared" in id_col["rationale"].lower(), (
+        f"internal_id (no strategy) rationale must say 'no strategy declared'. "
+        f"Got: {id_col['rationale']!r}"
+    )
+    assert "pipeline config" not in id_col["rationale"].lower(), (
+        f"internal_id (no strategy) must not say 'declared in pipeline config'. "
+        f"Got: {id_col['rationale']!r}"
+    )

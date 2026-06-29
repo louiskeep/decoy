@@ -47,6 +47,13 @@ Examples:
 
   decoy profile data.csv
     Profile a CSV: row count, field count, PII candidates (as suggestions).
+    Reads the first 10 000 rows by default (--rows 0 for full scan).
+
+  decoy profile data.csv --rows 0
+    Full scan: profile every row in the file.
+
+  decoy profile data.csv --rows 50000
+    Profile the first 50 000 rows only.
 
   decoy profile data.csv --show-fields
     Per-field detail: dtype, null_rate, distinct_count, PII candidate flag.
@@ -56,6 +63,7 @@ Examples:
 
   decoy profile data.parquet
     Profile a Parquet file (format inferred from extension).
+    Reads the first 10 000 rows by default.
 
 HONESTY: PII candidates are SUGGESTIONS based on STORM pattern matching.
 They are NOT authoritative classifications. The user reviews each flagged field
@@ -84,7 +92,10 @@ def profile(
     rows: int = typer.Option(
         10_000,
         "--rows",
-        help="Maximum rows to sample. Use 0 for full scan.",
+        help=(
+            "Limit profiling to the first N rows (CSV) or first N rows after loading (Parquet). "
+            "Use 0 for a full scan of the whole file. Default: 10000."
+        ),
     ),
     json_: bool = typer.Option(
         False,
@@ -107,16 +118,25 @@ def profile(
     state = setup_output(json_, quiet, verbose)
 
     # Load the source file into a pandas DataFrame.
+    # For profiling we infer dtypes naturally (no dtype=str override) so the
+    # engine can report accurate inferred_type values (integer/float vs string).
+    # --rows N bounds the read itself so the full file is not materialized.
     try:
         import pandas as pd
 
         suffix = source.suffix.lower()
         if suffix in (".parquet", ".pq"):
             df = pd.read_parquet(str(source))
+            if rows > 0:
+                df = df.head(rows)
         else:
-            df = pd.read_csv(str(source), dtype=str)
+            # nrows=None means "read everything" -- only pass it when rows > 0.
+            read_kwargs: dict = {}
+            if rows > 0:
+                read_kwargs["nrows"] = rows
+            df = pd.read_csv(str(source), **read_kwargs)
     except Exception as exc:
-        msg = f"could not read {source}: {exc}"
+        msg = f"could not read {source}: {type(exc).__name__}"
         if state.mode is OutputMode.json:
             emit_json(
                 state,
@@ -127,18 +147,31 @@ def profile(
         raise typer.Exit(code=EXIT_USAGE)
 
     # Run STORM to profile the dataset.
+    # sample_strategy="head" signals bounded mode to the engine (any non-"full"
+    # value enables the engine-side sampling guard).  When rows==0 use "full".
     try:
         from decoy_engine import run_storm
 
-        sample_cap = rows if rows > 0 else None
-        storm_profile = run_storm(
-            df,
-            source_label=source.name,
-            sample_strategy="full",
-            sample_row_cap=sample_cap,
-        )
+        if rows > 0:
+            # df is already bounded to `rows` rows via nrows= / head().
+            # Pass the same cap so the StormProfile records the intent.
+            storm_profile = run_storm(
+                df,
+                source_label=source.name,
+                sample_strategy="head",
+                sample_row_cap=rows,
+            )
+        else:
+            storm_profile = run_storm(
+                df,
+                source_label=source.name,
+                sample_strategy="full",
+                sample_row_cap=None,
+            )
     except Exception as exc:
-        msg = f"profile failed: {exc}"
+        # Do NOT interpolate str(exc) -- engine parse errors can embed raw cell
+        # data in their messages.  Report only the exception class name.
+        msg = f"profile failed: {type(exc).__name__}"
         if state.mode is OutputMode.json:
             emit_json(
                 state,
@@ -147,6 +180,9 @@ def profile(
         elif state.mode is not OutputMode.quiet:
             state.err_console.print(error("error:"), msg)
         if state.verbose:
+            state.err_console.print(
+                hint("(--verbose: traceback below; diagnostic output may contain row data)")
+            )
             state.err_console.print_exception()
         raise typer.Exit(code=EXIT_RUNTIME)
 
