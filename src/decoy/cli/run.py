@@ -389,6 +389,18 @@ def run(
 
             state.console.print(_success("Evidence:"), str(evidence_out))
 
+    # Record the run in the local catalog when a workspace is found upward from
+    # cwd. Silent on failure -- catalog errors never kill the run itself.
+    # entry_type='run' so `decoy jobs list` can filter to run entries.
+    _record_run_to_catalog(
+        config_path=str(config),
+        mode=yaml_mode,
+        elapsed_s=round(elapsed, 3),
+        cli_version=_cli_version,
+        engine_version=_ev_engine_version or "unknown",
+        evidence_path=str(evidence_out) if evidence_out is not None else None,
+    )
+
     if state.mode is OutputMode.json:
         emit_json(
             state,
@@ -686,6 +698,87 @@ def _write_mask_outputs(config_dict: dict, result, base_dir: Path) -> None:
             pq.write_table(table, str(path))
         else:
             table.to_pandas().to_csv(path, index=False)
+
+
+def _record_run_to_catalog(
+    *,
+    config_path: str,
+    mode: str,
+    elapsed_s: float,
+    cli_version: str,
+    engine_version: str,
+    evidence_path: str | None,
+) -> None:
+    """Record a completed local run in the workspace catalog (SP-18b).
+
+    Silently skipped when:
+      - No .decoy/ workspace is found upward from cwd.
+      - The catalog write fails for any reason.
+
+    The catalog entry uses entry_type='run' so `decoy jobs list` can filter
+    to run entries. The evidence_path (if present) is stored in metadata so
+    `decoy report show <run-id>` can locate the evidence manifest.
+
+    This is a best-effort convenience record. It must never cause the run
+    itself to fail.
+    """
+    import json as _j
+    from datetime import datetime, timezone
+    from pathlib import Path as _Path
+    from uuid import uuid4
+
+    try:
+        from decoy.cli.catalog import _open_catalog
+        from decoy.cli.project import _dotdecoy, _resolve_workspace
+
+        root = _resolve_workspace(None)
+        if root is None:
+            return
+        ws_json = _dotdecoy(root) / "workspace.json"
+        if not ws_json.exists():
+            return
+
+        run_id = str(uuid4())
+        entry_id = str(uuid4())
+        now = datetime.now(tz=timezone.utc).isoformat()
+        name = _Path(config_path).stem
+
+        meta = {
+            "run_id": run_id,
+            "status": "ok",
+            "mode": mode,
+            "elapsed_s": elapsed_s,
+            "config_path": config_path,
+            "engine_version": engine_version,
+            "cli_version": cli_version,
+            "run_timestamp": now,
+        }
+        if evidence_path is not None:
+            meta["evidence_path"] = evidence_path
+
+        conn = _open_catalog(root)
+        try:
+            conn.execute(
+                """
+                INSERT INTO entries
+                    (id, entry_type, name, path, recorded_at, metadata, sensitivity_class)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                """,
+                [
+                    entry_id,
+                    "run",
+                    name,
+                    evidence_path or config_path,
+                    now,
+                    _j.dumps(meta),
+                    "evidence-safe",
+                ],
+            )
+        finally:
+            conn.close()
+    except Exception:
+        # Never propagate -- catalog recording is best-effort.
+        pass
 
 
 # The epilog is wired by __main__ at command registration time; the

@@ -27,6 +27,7 @@ from decoy.cli.fit import fit as fit_command
 from decoy.cli.info import INFO_EPILOG
 from decoy.cli.info import info as info_command
 from decoy.cli.init import INIT_EPILOG, init_command
+from decoy.cli.jobs import jobs_app
 from decoy.cli.plan import PLAN_EPILOG
 from decoy.cli.plan import plan as plan_command
 from decoy.cli.preflight import PREFLIGHT_EPILOG
@@ -64,6 +65,9 @@ Try one of:
   decoy info                       Branded splash + quick-start hints.
   decoy project init               Create a local .decoy/ workspace (local only).
   decoy catalog list               List the local metadata catalog entries.
+  decoy jobs list                  List local run history from the DuckDB catalog.
+  decoy report show <run-id>       Render the evidence report for a cataloged run.
+  decoy report diff <id-a> <id-b>  Data-level compare between two local runs.
 
 Run `decoy --install-completion` to enable shell tab completion.
 """
@@ -120,6 +124,7 @@ app.add_typer(validators_app, name="validators")
 app.command(name="doctor", epilog=DOCTOR_EPILOG)(doctor)
 app.add_typer(project_app, name="project")
 app.add_typer(catalog_app, name="catalog")
+app.add_typer(jobs_app, name="jobs")
 
 
 if __name__ == "__main__":
