@@ -630,7 +630,7 @@ $ decoy compile [OPTIONS] CONFIG
 
 **Options**:
 
-* `--explain`: Explain the compiled plan: per-column resolved strategy, params, execution order, and rationale. Without this flag, only the compile pass/fail summary is shown.
+* `--explain`: Explain the compiled plan: per-column declared strategy, params, execution order, and rationale. Without this flag, only the compile pass/fail summary is shown.
 * `--json`: Emit structured JSON instead of the styled table output.
 * `-q, --quiet`: Suppress stdout. Exit code carries success or failure.
 * `-v, --verbose`: Enable debug-level CLI logs on stderr.
@@ -678,7 +678,7 @@ $ decoy profile [OPTIONS] SOURCE
 **Options**:
 
 * `--show-fields`: Show per-field detail: dtype, null_rate, distinct_count, PII candidate flag.
-* `--rows INTEGER`: Maximum rows to sample. Use 0 for full scan.  [default: 10000]
+* `--rows INTEGER`: Limit profiling to the first N rows (CSV) or first N rows after loading (Parquet). Use 0 for a full scan of the whole file. Default: 10000.  [default: 10000]
 * `--json`: Emit structured JSON instead of the styled table output.
 * `-q, --quiet`: Suppress stdout. Exit code carries success or failure.
 * `-v, --verbose`: Enable debug-level CLI logs on stderr.
@@ -688,6 +688,13 @@ Examples:
 
   decoy profile data.csv
     Profile a CSV: row count, field count, PII candidates (as suggestions).
+    Reads the first 10 000 rows by default (--rows 0 for full scan).
+
+  decoy profile data.csv --rows 0
+    Full scan: profile every row in the file.
+
+  decoy profile data.csv --rows 50000
+    Profile the first 50 000 rows only.
 
   decoy profile data.csv --show-fields
     Per-field detail: dtype, null_rate, distinct_count, PII candidate flag.
@@ -697,6 +704,7 @@ Examples:
 
   decoy profile data.parquet
     Profile a Parquet file (format inferred from extension).
+    Reads the first 10 000 rows by default.
 
 HONESTY: PII candidates are SUGGESTIONS based on STORM pattern matching.
 They are NOT authoritative classifications. The user reviews each flagged field
