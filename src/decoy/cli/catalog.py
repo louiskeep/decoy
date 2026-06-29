@@ -10,7 +10,7 @@ What the catalog stores (honest framing)
 - Metadata is stored as JSON in DuckDB; raw source data is never copied in.
 - A sensitivity_class field tags each entry: 'evidence-safe', 'full-sensitive',
   or 'redacted-shareable'. This follows the artifact-safety taxonomy from the
-  cli-first-capability-guide.md spec.
+  cli-first-capability-guide.md spec (platform repo).
 
 What the catalog does NOT do
 ------------------------------
@@ -46,6 +46,7 @@ first catalog sprint").
 from __future__ import annotations
 
 import json as _json
+from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -53,7 +54,7 @@ from uuid import uuid4
 
 import typer
 
-from decoy.cli.exit_codes import EXIT_USAGE
+from decoy.cli.exit_codes import EXIT_RUNTIME, EXIT_USAGE
 from decoy.cli.project import _dotdecoy, _resolve_workspace
 from decoy.ui.output import OutputMode, emit_json, setup_output
 from decoy.ui.theme import code, error, hint, success
@@ -141,6 +142,44 @@ def _row_to_dict(row: tuple) -> dict[str, Any]:
         "metadata": _json.loads(metadata) if metadata else {},
         "sensitivity_class": sensitivity_class,
     }
+
+
+def _emit_runtime_error(command: str, state: Any, detail: str) -> None:
+    """Emit a catalog database error in the appropriate output mode."""
+    msg = f"Catalog database error: {detail}"
+    if state.mode is OutputMode.json:
+        emit_json(state, {"command": command, "status": "error", "error": msg})
+    elif state.mode is not OutputMode.quiet:
+        state.err_console.print(error("error:"), msg)
+
+
+@contextmanager
+def _catalog_db(workspace_root: Path, command: str, state: Any):
+    """Open the catalog DuckDB connection, yield it, close on exit.
+
+    Wraps duckdb.connect and execute failures: a locked or corrupt catalog.duckdb
+    emits EXIT_RUNTIME (not a raw traceback), matching the documented exit-code
+    contract for runtime failures vs. user-input failures (EXIT_USAGE).
+    """
+    conn = None
+    try:
+        conn = _open_catalog(workspace_root)
+    except Exception as exc:
+        _emit_runtime_error(command, state, str(exc))
+        raise typer.Exit(code=EXIT_RUNTIME)
+    try:
+        yield conn
+    except typer.Exit:
+        raise
+    except Exception as exc:
+        _emit_runtime_error(command, state, str(exc))
+        raise typer.Exit(code=EXIT_RUNTIME)
+    finally:
+        if conn is not None:
+            try:
+                conn.close()
+            except Exception:
+                pass
 
 
 # ---------------------------------------------------------------------------
@@ -238,14 +277,11 @@ def _list(
     state = setup_output(json_, quiet, verbose)
     root = _require_workspace(workspace, "catalog list", state)
 
-    conn = _open_catalog(root)
-    try:
+    with _catalog_db(root, "catalog list", state) as conn:
         rows = conn.execute(
             "SELECT id, entry_type, name, path, recorded_at, metadata, sensitivity_class "
             "FROM entries ORDER BY recorded_at DESC"
         ).fetchall()
-    finally:
-        conn.close()
 
     entries = [_row_to_dict(r) for r in rows]
 
@@ -409,8 +445,7 @@ def _add(
     entry_id = str(uuid4())
     recorded_at = datetime.now(tz=timezone.utc).isoformat()
 
-    conn = _open_catalog(root)
-    try:
+    with _catalog_db(root, "catalog add", state) as conn:
         conn.execute(
             """
             INSERT INTO entries (id, entry_type, name, path, recorded_at, metadata, sensitivity_class)
@@ -426,8 +461,6 @@ def _add(
                 sensitivity,
             ],
         )
-    finally:
-        conn.close()
 
     if state.mode is OutputMode.json:
         emit_json(
@@ -508,16 +541,22 @@ def _show(
     state = setup_output(json_, quiet, verbose)
     root = _require_workspace(workspace, "catalog show", state)
 
-    conn = _open_catalog(root)
-    try:
+    # Enforce minimum prefix length so the docstring claim is true.
+    if len(entry_id) < 4:
+        msg = "Entry id prefix must be at least 4 characters."
+        if state.mode is OutputMode.json:
+            emit_json(state, {"command": "catalog show", "status": "error", "error": msg})
+        elif state.mode is not OutputMode.quiet:
+            state.err_console.print(error("error:"), msg)
+        raise typer.Exit(code=EXIT_USAGE)
+
+    with _catalog_db(root, "catalog show", state) as conn:
         # Support prefix matching (like git's short-sha lookup).
         rows = conn.execute(
             "SELECT id, entry_type, name, path, recorded_at, metadata, sensitivity_class "
             "FROM entries WHERE id = ? OR id LIKE ?",
             [entry_id, entry_id + "%"],
         ).fetchall()
-    finally:
-        conn.close()
 
     if not rows:
         msg = f"No catalog entry found for id {entry_id!r}."

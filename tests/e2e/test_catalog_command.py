@@ -11,6 +11,7 @@ Assertions:
 L1. `catalog list` inside a workspace exits 0 (empty table is fine).
 L2. `catalog list` outside a workspace exits non-zero with a clear error.
 L3. `catalog list --json` emits structured JSON with a "entries" list.
+L4. `catalog list` from a nested subdirectory resolves workspace via upward discovery.
 
 A1. `catalog add` with a path exits 0 and records an entry.
 A2. `catalog add --json` emits structured JSON with status ok and the entry id.
@@ -21,6 +22,7 @@ A5. `catalog --help` states the catalog is local-only.
 W1. `catalog show <id>` exits 0 and shows the entry details.
 W2. `catalog show <id> --json` exits 0 with structured JSON.
 W3. `catalog show <id>` for a missing id exits non-zero with a clear error.
+W4. `catalog show` with a prefix shorter than 4 chars exits non-zero (enforced).
 
 D1. DuckDB file is created at `.decoy/catalog.duckdb` after the first catalog command.
 D2. Round-trip: add -> list -> show produces consistent data.
@@ -87,6 +89,25 @@ def test_catalog_list_json_output(tmp_path: Path):
     assert data["command"] == "catalog list"
     assert "entries" in data
     assert isinstance(data["entries"], list)
+
+
+def test_catalog_list_upward_discovery(tmp_path: Path, monkeypatch):
+    """catalog list from a nested subdir resolves workspace via upward discovery.
+
+    This test MUST FAIL if find_workspace is broken (returns None): the command
+    would exit non-zero because no workspace is found.
+    """
+    _init_workspace(tmp_path)
+    subdir = tmp_path / "nested" / "deep"
+    subdir.mkdir(parents=True)
+    monkeypatch.chdir(subdir)
+    # Invoke WITHOUT --workspace: discovery must walk up from subdir to tmp_path
+    result = runner.invoke(
+        app, ["catalog", "list"], catch_exceptions=False
+    )
+    assert result.exit_code == 0, (
+        f"Catalog upward discovery failed from {subdir}: exit={result.exit_code}\n{result.output}"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -220,6 +241,19 @@ def test_catalog_show_missing_id_exits_nonzero(tmp_path: Path):
         catch_exceptions=False,
     )
     assert result.exit_code != 0
+
+
+def test_catalog_show_short_prefix_exits_nonzero(tmp_path: Path):
+    """catalog show with a prefix shorter than 4 chars exits non-zero (enforced)."""
+    _init_workspace(tmp_path)
+    # "ab" is 2 chars -- below the 4-char minimum stated in the docstring
+    result = runner.invoke(
+        app,
+        ["catalog", "show", "ab", "--workspace", str(tmp_path)],
+        catch_exceptions=False,
+    )
+    assert result.exit_code != 0
+    assert "at least 4" in result.output.lower() or "4 characters" in result.output.lower()
 
 
 # ---------------------------------------------------------------------------
