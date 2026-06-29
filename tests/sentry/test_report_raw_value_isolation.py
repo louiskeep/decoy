@@ -26,13 +26,25 @@ UNIQUE SENTINEL value (a distinctive string and a distinctive numeric
 outlier), runs compare_data on them, and asserts neither sentinel appears
 anywhere in json.dumps(result).
 
-This test is the guard that would have caught the min/max/mean leak (where
-`max_delta` could equal a run B raw max when run A's max was 0). After the
-min/max/mean removal only aggregate counts are returned -- this sentry
-enforces that invariant in perpetuity.
+Two lanes -- each with a distinct scope:
 
-If this test fails it means compare_data has re-introduced a path that
-surfaces raw cell values -- which would break the evidence-safe contract.
+  String sentry (CSV -- always runs, no optional dependency required):
+  Guards that raw string cell values (potential PII) never appear in the
+  compare_data result. The function returns only aggregate counts
+  (null_count, unique_count, dtype_kind deltas), so there is no code path
+  that could surface a string cell into the result dict. This is the
+  always-on guard for that invariant.
+
+  Numeric sentry (Parquet -- requires pyarrow; skipped in no-extras lane):
+  Guards the zero-baseline min/max leak: when run A's column max is 0, the
+  old max_delta computation (max_b - max_a) equalled the raw max of run B,
+  surfacing the actual cell value. The test seeds df_a = [0, 0, 0] and
+  df_b = [0, 0, SENTINEL] where SENTINEL is a nine-digit outlier. Under the
+  old code max_delta == SENTINEL. Under the current code only
+  unique_count_delta=1 is returned -- the sentinel never appears.
+
+If either test fails it means compare_data has re-introduced a path that
+surfaces raw cell values -- breaking the evidence-safe contract.
 """
 
 from __future__ import annotations
@@ -159,16 +171,24 @@ _NUMERIC_SENTINEL = 9_999_777_111  # extremely large -- cannot match any aggrega
 
 
 def test_compare_data_does_not_leak_raw_string_values(tmp_path: Path) -> None:
-    """compare_data must not surface any raw cell value in its result.
+    """compare_data must not surface any raw string cell value in its result.
 
     Writes two CSV files each containing a unique sentinel string in a data
     column. Runs compare_data on them and asserts the sentinel never appears
     in the JSON-serialised result.
 
-    This is the guard that would have caught the min/max/mean leak: when run
-    A's column extreme was 0, max_delta == run B's raw max (the subtraction
-    surfaced the actual value). After the min/max/mean removal only aggregate
-    counts are returned -- this sentry enforces that invariant.
+    Lane: CSV -- always runs; no optional dependency required.
+
+    What this guards: string cell values (potential PII) must never appear in
+    compare_data's output. The function returns only aggregate counts
+    (null_count, unique_count, dtype_kind deltas) -- there is no code path
+    that could surface a string cell value into the result dict.
+
+    Note: the original min/max/mean leak was specific to numeric columns (the
+    zero-baseline case where max_delta equalled the raw max of run B). String
+    columns never had min/max/mean computed, so this test does not cover that
+    bug directly -- the numeric sentry below is the targeted guard for it.
+    This test provides complementary always-on coverage for the string lane.
     """
     # File A: sentinel in one row
     csv_a = tmp_path / "out_a.csv"
@@ -197,13 +217,26 @@ def test_compare_data_does_not_leak_raw_string_values(tmp_path: Path) -> None:
 
 
 def test_compare_data_does_not_leak_raw_numeric_values(tmp_path: Path) -> None:
-    """compare_data must not surface raw numeric cell values.
+    """compare_data must not surface raw numeric values via the zero-baseline path.
 
-    Writes two Parquet files each containing a column with a distinctive
-    numeric outlier. Asserts the outlier never appears in the serialised
-    result. This is the direct test of the min/max/mean removal: the outlier
-    was the value that would have been emitted as max_delta (or max itself)
-    before the fix.
+    This is the targeted guard for the min/max/mean leak that was fixed in
+    SP-18b: when run A's column max is 0, the old max_delta computation
+    (max_b - max_a) equalled the raw max of run B, surfacing the actual cell
+    value. The fix removes min/max/mean entirely; only aggregate counts are
+    returned.
+
+    Lane: Parquet -- requires pyarrow; skipped in no-extras lane. The CSV
+    always-on lane is covered by test_compare_data_does_not_leak_raw_string_values.
+
+    Data (zero-baseline condition):
+      df_a = {"amount": [0, 0, 0]}            -- max=0, unique=1
+      df_b = {"amount": [0, 0, SENTINEL]}     -- max=SENTINEL, unique=2
+
+    Under old code: max_delta = SENTINEL - 0 = SENTINEL (raw value in result).
+    Under current code: unique_count_delta=1 (no raw value in result).
+
+    If this test fails it means compare_data has re-introduced a path that
+    emits raw numeric values -- breaking the evidence-safe contract.
     """
     try:
         import pandas as pd
@@ -214,9 +247,11 @@ def test_compare_data_does_not_leak_raw_numeric_values(tmp_path: Path) -> None:
 
         pytest.skip("pandas/pyarrow not installed -- skipping numeric sentry")
 
-    # Build two DataFrames with the outlier in column 'amount'
-    df_a = pd.DataFrame({"amount": [1, 2, _NUMERIC_SENTINEL]})
-    df_b = pd.DataFrame({"amount": [1, 2, _NUMERIC_SENTINEL + 1]})
+    # Zero-baseline condition: run A max=0, run B max=SENTINEL.
+    # Under old code max_delta == SENTINEL (raw leak). Under current code
+    # only unique_count_delta=1 is emitted.
+    df_a = pd.DataFrame({"amount": [0, 0, 0]})
+    df_b = pd.DataFrame({"amount": [0, 0, _NUMERIC_SENTINEL]})
 
     parquet_a = tmp_path / "out_a.parquet"
     parquet_b = tmp_path / "out_b.parquet"
@@ -231,12 +266,9 @@ def test_compare_data_does_not_leak_raw_numeric_values(tmp_path: Path) -> None:
 
     assert str(_NUMERIC_SENTINEL) not in serialised, (
         f"compare_data leaked the numeric sentinel '{_NUMERIC_SENTINEL}' into its "
-        "result. The diff path must return only aggregate counts -- never raw "
-        "cell values (min, max, mean, or derived deltas thereof)."
-    )
-    assert str(_NUMERIC_SENTINEL + 1) not in serialised, (
-        f"compare_data leaked a raw numeric value '{_NUMERIC_SENTINEL + 1}' into "
-        "its result."
+        "result. The diff path must return only aggregate counts (row_count, "
+        "null_count, unique_count, dtype_kind) -- never raw cell values "
+        "(min, max, mean, or derived deltas thereof)."
     )
 
 
