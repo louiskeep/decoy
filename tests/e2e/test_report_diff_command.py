@@ -7,16 +7,15 @@ from two runs (via their evidence manifests) and reports:
   - Row count deltas
   - Schema changes (columns added/removed/type-changed)
   - Per-column: null-count delta, unique-count delta
-  - For numeric columns: min/max/mean delta (via pandas.DataFrame.describe())
 
 What `report diff` is NOT:
   - It is NOT `report compare` (manifest-vs-manifest, SP-18, already built).
-  - It does NOT expose raw row values -- only summary statistics.
+  - It does NOT expose raw row values or numeric min/max/mean -- only aggregate
+    counts (row-count, null-count, unique-count, dtype changes).
   - It does NOT require or imply platform connectivity (LOCAL ONLY).
 
-Methodology: column profiling follows pandas.DataFrame.describe() (pandas v2.x)
-and pandas.Series.nunique() / .isnull().sum() for column-level deltas.
-No novel statistical method is used.
+Methodology: pandas.Series.nunique() / .isnull().sum() for column-level counts
+(pandas v2.x). No novel statistical method is used.
 
 Assertions:
 
@@ -24,7 +23,7 @@ D1. `report diff <id-a> <id-b>` with identical output files reports no data
     change (any_data_change=False).
 D2. `report diff <id-a> <id-b>` with different row counts shows the delta.
 D3. `report diff <id-a> <id-b>` with different column values shows column-level
-    deltas (null-count or unique-count or numeric stat delta).
+    deltas (null-count or unique-count delta).
 D4. `report diff <id-a> <id-b> --json` emits structured JSON with data delta
     fields.
 D5. `report diff` for a run-id whose evidence has no output paths exits
@@ -35,6 +34,9 @@ D7. `report diff` for runs whose output files no longer exist exits non-zero
 D8. `report diff` --json for identical outputs has `any_data_change` = False
     (tested via unit-level data to give real teeth).
 D9. `report diff` --json for different outputs has `any_data_change` = True.
+D10. `report diff` --json output contains NO min_delta/max_delta/mean_delta keys
+    (these were removed -- privacy/honesty guard).
+D11. `report diff` (human-readable, no --json) renders a column-deltas table.
 """
 
 from __future__ import annotations
@@ -422,3 +424,75 @@ def test_report_diff_different_shows_data_change(tmp_path: Path) -> None:
     assert result.exit_code == 0
     data = _json.loads(result.stdout)
     assert data["any_data_change"] is True
+
+
+# ---------------------------------------------------------------------------
+# D10: --json output contains NO min/max/mean delta keys
+# ---------------------------------------------------------------------------
+
+
+def test_report_diff_json_has_no_min_max_mean(tmp_path: Path) -> None:
+    """report diff --json must not emit min_delta, max_delta, or mean_delta.
+
+    These were removed (privacy/honesty: the subtraction could surface raw
+    values when one run's extreme is zero). Any column-level dict in
+    column_deltas must only contain aggregate counts.
+    """
+    _init_workspace(tmp_path)
+    # Use a CSV with a numeric column so a prior implementation would compute
+    # min/max/mean deltas -- we assert they are absent after the removal.
+    csv_a = "id,score\n1,10\n2,20\n3,30\n"
+    csv_b = "id,score\n1,10\n2,20\n3,30\n4,40\n"  # extra row changes row count
+
+    ev_a, _ = _write_evidence_for_output(tmp_path, "_a", csv_a, row_count=3)
+    ev_b, _ = _write_evidence_for_output(tmp_path, "_b", csv_b, row_count=4)
+    id_a = _seed_run_entry(tmp_path, name="run_a", evidence_path=str(ev_a))
+    id_b = _seed_run_entry(tmp_path, name="run_b", evidence_path=str(ev_b))
+
+    result = runner.invoke(
+        app,
+        ["report", "diff", id_a, id_b, "--json", "--workspace", str(tmp_path)],
+        catch_exceptions=False,
+    )
+    assert result.exit_code == 0
+    raw_json = result.stdout
+
+    # The forbidden keys must not appear anywhere in the serialised output,
+    # not just at the top level (they lived inside column_deltas dicts).
+    assert "min_delta" not in raw_json, "min_delta must not appear in report diff output"
+    assert "max_delta" not in raw_json, "max_delta must not appear in report diff output"
+    assert "mean_delta" not in raw_json, "mean_delta must not appear in report diff output"
+
+
+# ---------------------------------------------------------------------------
+# D11: human-readable (non --json) renders column-deltas table
+# ---------------------------------------------------------------------------
+
+
+def test_report_diff_human_readable_renders_column_table(tmp_path: Path) -> None:
+    """report diff (no --json) renders a column-deltas table when columns differ.
+
+    Run A has 2 unique emails; Run B has 1 (duplicate). The terminal output
+    must show the email column's delta in a table.
+    """
+    _init_workspace(tmp_path)
+
+    csv_a = "email\nA@B.com\nC@D.com\n"
+    csv_b = "email\nA@B.com\nA@B.com\n"  # unique_count drops to 1
+
+    ev_a, _ = _write_evidence_for_output(tmp_path, "_a", csv_a, row_count=2)
+    ev_b, _ = _write_evidence_for_output(tmp_path, "_b", csv_b, row_count=2)
+    id_a = _seed_run_entry(tmp_path, name="run_a", evidence_path=str(ev_a))
+    id_b = _seed_run_entry(tmp_path, name="run_b", evidence_path=str(ev_b))
+
+    result = runner.invoke(
+        app,
+        ["report", "diff", id_a, id_b, "--workspace", str(tmp_path)],
+        catch_exceptions=False,
+    )
+    assert result.exit_code == 0
+    output = result.output
+    # The column name must appear in the rendered table
+    assert "email" in output
+    # The diff must mention a change was detected
+    assert "data changes detected" in output.lower() or "column" in output.lower()
