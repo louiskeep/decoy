@@ -20,6 +20,7 @@ S2. `project show --json` exits 0 with structured JSON (status ok, workspace_roo
 S3. `project show` from a subdirectory discovers `.decoy/` in the parent (upward discovery).
 S4. `project show` outside any workspace exits non-zero with a clear error.
 S5. `project show --json` outside any workspace exits non-zero with JSON error.
+S6. `project show` with no `.decoy/` dir emits "No .decoy/ workspace found", not a misleading message.
 """
 
 from __future__ import annotations
@@ -40,12 +41,11 @@ runner = CliRunner()
 
 def test_project_init_creates_dotdecoy(tmp_path: Path):
     """project init exits 0 and creates a .decoy/ directory."""
-    runner.invoke(app, ["project", "init"], catch_exceptions=False,
-                  env={"HOME": str(tmp_path)})
-    # Run from tmp_path so .decoy/ lands there
-    result2 = runner.invoke(app, ["project", "init"],
-                            catch_exceptions=False, input=None,
-                            env={"HOME": str(tmp_path), "DECOY_WORKSPACE_ROOT": str(tmp_path)})
+    # Both invocations use --workspace so .decoy/ lands in tmp_path, not the repo root.
+    runner.invoke(app, ["project", "init", "--workspace", str(tmp_path)],
+                  catch_exceptions=False)
+    result2 = runner.invoke(app, ["project", "init", "--workspace", str(tmp_path)],
+                            catch_exceptions=False)
     assert result2.exit_code == 0
     assert (tmp_path / ".decoy").is_dir()
 
@@ -113,6 +113,8 @@ def test_project_init_subcommand_help_honest_framing():
     assert result.exit_code == 0
     output = result.output.lower()
     assert "local" in output
+    assert "does not sync" in output
+    assert "platform" in output
 
 
 # ---------------------------------------------------------------------------
@@ -150,20 +152,30 @@ def test_project_show_json(tmp_path: Path):
     assert "config" in data
 
 
-def test_project_show_upward_discovery(tmp_path: Path):
-    """project show from a subdirectory discovers .decoy/ in the parent."""
+def test_project_show_upward_discovery(tmp_path: Path, monkeypatch):
+    """project show from a subdirectory genuinely exercises find_workspace upward walk.
+
+    This test MUST FAIL if find_workspace is broken (returns None): the command
+    would exit non-zero and the exit_code assertion would fail.
+    """
     # Init workspace at tmp_path
     runner.invoke(
         app, ["project", "init", "--workspace", str(tmp_path)], catch_exceptions=False
     )
-    # Create a deep subdirectory
+    # Create a deep subdirectory (3 levels) that has no .decoy/ of its own
     subdir = tmp_path / "data" / "subdir"
     subdir.mkdir(parents=True)
-    # project show with --workspace pointing to parent should work
+    # chdir into the nested dir -- find_workspace() must walk up to tmp_path
+    monkeypatch.chdir(subdir)
+    # Invoke WITHOUT --workspace: discovery must walk up from subdir to tmp_path
     result = runner.invoke(
-        app, ["project", "show", "--workspace", str(tmp_path)], catch_exceptions=False
+        app, ["project", "show"], catch_exceptions=False
     )
-    assert result.exit_code == 0
+    assert result.exit_code == 0, (
+        f"Upward discovery failed from {subdir}: exit={result.exit_code}\n{result.output}"
+    )
+    # The workspace root (tmp_path) must appear in the output
+    assert str(tmp_path) in result.output
 
 
 def test_project_show_no_workspace_exits_nonzero(tmp_path: Path):
@@ -188,3 +200,19 @@ def test_project_show_no_workspace_json_error(tmp_path: Path):
     data = _json.loads(result.stdout)
     assert data["status"] == "error"
     assert data["command"] == "project show"
+
+
+def test_project_show_no_dotdecoy_dir_correct_message(tmp_path: Path):
+    """project show with no .decoy/ dir emits 'No .decoy/ workspace found', not 'workspace.json is missing'."""
+    empty = tmp_path / "no_ws"
+    empty.mkdir()
+    result = runner.invoke(
+        app, ["project", "show", "--workspace", str(empty)], catch_exceptions=False
+    )
+    assert result.exit_code != 0
+    combined = result.output
+    # Must say "No .decoy/" -- NOT misleadingly say "workspace.json is missing"
+    assert "no .decoy/" in combined.lower(), f"Expected 'No .decoy/' in output:\n{combined}"
+    assert "workspace.json is missing" not in combined, (
+        f"Misleading 'workspace.json is missing' shown when .decoy/ does not exist:\n{combined}"
+    )
