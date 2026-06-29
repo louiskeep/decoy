@@ -399,6 +399,7 @@ def run(
         cli_version=_cli_version,
         engine_version=_ev_engine_version or "unknown",
         evidence_path=str(evidence_out) if evidence_out is not None else None,
+        verbose=state.verbose,
     )
 
     if state.mode is OutputMode.json:
@@ -708,6 +709,7 @@ def _record_run_to_catalog(
     cli_version: str,
     engine_version: str,
     evidence_path: str | None,
+    verbose: bool = False,
 ) -> None:
     """Record a completed local run in the workspace catalog (SP-18b).
 
@@ -720,9 +722,11 @@ def _record_run_to_catalog(
     `decoy report show <run-id>` can locate the evidence manifest.
 
     This is a best-effort convenience record. It must never cause the run
-    itself to fail.
+    itself to fail. Pass verbose=True to emit a stderr breadcrumb on failure
+    so catalog issues are visible when debugging.
     """
     import json as _j
+    import sys as _sys
     from datetime import datetime, timezone
     from pathlib import Path as _Path
     from uuid import uuid4
@@ -776,9 +780,14 @@ def _record_run_to_catalog(
             )
         finally:
             conn.close()
-    except Exception:
+    except Exception as _exc:
         # Never propagate -- catalog recording is best-effort.
-        pass
+        if verbose:
+            print(
+                f"[decoy] warning: catalog write failed (run will not appear in "
+                f"`decoy jobs list`): {_exc}",
+                file=_sys.stderr,
+            )
 
 
 # The epilog is wired by __main__ at command registration time; the
