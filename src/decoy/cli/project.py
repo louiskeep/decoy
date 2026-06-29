@@ -347,7 +347,26 @@ def _show(
     dotdecoy = _dotdecoy(root)
     ws_json_path = dotdecoy / "workspace.json"
 
-    # If .decoy/ exists but workspace.json does not, it's an incomplete workspace.
+    # Branch on whether .decoy/ exists at all vs. exists but is incomplete.
+    if not dotdecoy.is_dir():
+        msg = (
+            "No .decoy/ workspace found. "
+            "Run `decoy project init` in your project directory first."
+        )
+        if state.mode is OutputMode.json:
+            emit_json(state, {"command": "project show", "status": "error", "error": msg})
+        elif state.mode is not OutputMode.quiet:
+            state.err_console.print(error("error:"), msg)
+            state.err_console.print(
+                " ",
+                hint("hint:"),
+                "run",
+                code("decoy project init"),
+                "to create a workspace in the current directory.",
+            )
+        raise typer.Exit(code=EXIT_USAGE)
+
+    # .decoy/ dir exists but workspace.json is missing -- incomplete init.
     if not ws_json_path.exists():
         msg = f".decoy/ found at {dotdecoy} but workspace.json is missing. Run `decoy project init`."
         if state.mode is OutputMode.json:
