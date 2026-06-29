@@ -166,6 +166,10 @@ def test_project_show_upward_discovery(tmp_path: Path, monkeypatch):
     subdir = tmp_path / "data" / "subdir"
     subdir.mkdir(parents=True)
     # chdir into the nested dir -- find_workspace() must walk up to tmp_path
+    # Ensure upward discovery (find_workspace) is genuinely exercised: an
+    # ambient DECOY_WORKSPACE_ROOT would short-circuit the cwd walk and make
+    # this test silently vacuous.
+    monkeypatch.delenv("DECOY_WORKSPACE_ROOT", raising=False)
     monkeypatch.chdir(subdir)
     # Invoke WITHOUT --workspace: discovery must walk up from subdir to tmp_path
     result = runner.invoke(

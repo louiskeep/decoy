@@ -100,6 +100,10 @@ def test_catalog_list_upward_discovery(tmp_path: Path, monkeypatch):
     _init_workspace(tmp_path)
     subdir = tmp_path / "nested" / "deep"
     subdir.mkdir(parents=True)
+    # Ensure upward discovery (find_workspace) is genuinely exercised: an
+    # ambient DECOY_WORKSPACE_ROOT would short-circuit the cwd walk and make
+    # this test silently vacuous.
+    monkeypatch.delenv("DECOY_WORKSPACE_ROOT", raising=False)
     monkeypatch.chdir(subdir)
     # Invoke WITHOUT --workspace: discovery must walk up from subdir to tmp_path
     result = runner.invoke(
