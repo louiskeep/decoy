@@ -1,12 +1,21 @@
-# x-derived-from-disguise: hipaa@2026-06-28
+# x-derived-from-disguise: hipaa@2026-06-29
 # hipaa -- HIPAA Safe Harbor coverage.
 #
 # Maps the 18 PHI identifier categories from 45 CFR 164.514(b)(2)
 # (lettered A-R) onto the 21 columns below; one category can span
 # several columns. Strategies are derived from the engine's HIPAA
 # Safe-Harbor disguise (decoy_engine/disguises/hipaa.yaml, version
-# 2026-06-28) -- the canonical legal-correspondence artifact -- and a
+# 2026-06-29) -- the canonical legal-correspondence artifact -- and a
 # drift-guard test fails if this template falls out of step with it.
+#
+# 2026-06-29 re-derivation (#15): the disguise widened the MRN FPE
+# charset alphanum -> ALPHANUM (commit 2effc47, a passthrough-leak
+# fix). FPE's preserve_separators mode passes through any character
+# outside the configured charset unchanged; charset=alphanum (0-9+a-z,
+# no uppercase) let uppercase letters in institution-specific MRN
+# formats (e.g. "MRN12345A") through in the clear. This template's mrn
+# column had drifted onto the stale lowercase charset and inherited the
+# same under-masking defect; it is fixed below to match the disguise.
 #
 # Identifier coverage notes:
 #   Q (full-face photographs): covered as photo path/URL COLUMNS only
@@ -106,12 +115,15 @@ tables:
         provider_config:
           charset: digits
 
-      # H: Medical record numbers
+      # H: Medical record numbers. charset: ALPHANUM (0-9+A-Z+a-z), not
+      # alphanum, so uppercase letters in institution-specific MRN
+      # formats are permuted rather than passed through in the clear
+      # (FPE passthrough-leak fix, matches disguise 2026-06-29).
       - name: mrn
         strategy: fpe
         namespace: mrn_identity
         provider_config:
-          charset: alphanum
+          charset: ALPHANUM
 
       # I: Health-plan beneficiary IDs
       - name: health_plan_id
