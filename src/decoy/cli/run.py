@@ -409,6 +409,14 @@ def run(
         if len(error_text) > 500:
             error_text = error_text[:500] + "..."
 
+        # PII egress guard (dennis sprint-5 BLOCKER): the raw engine error
+        # can quote source-row cell values verbatim (see the comment above),
+        # so it MUST NOT ride into an outbound notification, which is POSTed
+        # to a third-party webhook / Slack / email. Only the exception TYPE
+        # name goes on the wire; the raw error_text stays on local stdout /
+        # stderr and the --json envelope below where the operator already
+        # sees it. Redaction by construction, mirroring the platform's
+        # facts-only alert rule (dispatcher.py:137-142).
         notify_results = _dispatch_run_notifications(
             notify_channels,
             notify_on=notify_on.value,
@@ -417,7 +425,7 @@ def run(
             row_count=None,
             started_at=_run_started_at,
             finished_at=datetime.now(timezone.utc),
-            error_summary=error_text,
+            error_summary=type(exc).__name__,
             state=state,
         )
 

@@ -349,7 +349,7 @@ Examples:
   decoy init --yes
     Skip confirmation when overwriting an existing file.
 
-See also: decoy validate, decoy run, decoy storm analyze, decoy templates list.
+See also: decoy validate config, decoy run, decoy storm analyze, decoy templates list.
 
 
 ## `decoy demo`
@@ -832,6 +832,11 @@ Exit codes: 0 pass (or warn without --fail-on-warning); 4 EXIT_FINDINGS
 when the policy verdict is fail, or warn with --fail-on-warning set;
 1 EXIT_USAGE for bad input (missing columns, unreadable CSV, bad flags).
 
+Note: the sibling `validate config --fail-on-warning` exits 2 for its
+warnings (config well-formedness), while this command exits 4 for its
+warnings (data-fidelity findings). The two subcommands intentionally use
+different warning exit codes for their different domains.
+
 See also: decoy validate config, decoy fit, decoy run.
 
 
@@ -1273,7 +1278,7 @@ Examples:
     Save the PCI template directly to a file.
 
   decoy templates show hipaa > pipeline.yaml
-    Save the HIPAA template, then validate it with `decoy validate pipeline.yaml`.
+    Save the HIPAA template, then validate it with `decoy validate config pipeline.yaml`.
 
 See also: decoy templates list, decoy init.
 

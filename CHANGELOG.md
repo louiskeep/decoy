@@ -8,14 +8,48 @@ version numbers follow the [versioning policy](docs/release/versioning.md).
 
 ## [Unreleased]
 
+### Added (Sprint 5 CLI closure, 2026-07-04)
+
+- **`decoy validate distribution <source> <output>`**: recompute distribution
+  fidelity between a pre-mask/pre-generate source CSV and its post-run output.
+  A thin CLI surface over the engine's `compute_quality_report` +
+  `apply_quality_policy` (no CLI-side metric). Flags: `--joint a,b`
+  (repeatable), `--generate` (drops the row-parity expectation), `--config`
+  (names each column's strategy so intentional loss is not flagged as
+  accidental drift), `--policy` / `--mode` / `--min-grade` / `--min-score`,
+  `--report-out`. A `fail` policy verdict exits `EXIT_FINDINGS` (4), matching
+  `decoy storm integrity`'s data-audit exit-code contract.
+
+- **`decoy run --notify <kind:target>`** (repeatable) + **`--notify-on
+  {success,failure,always}`**: send a best-effort notification after a run
+  reaches its terminal state. Channels: `webhook` (HMAC-signed when
+  `DECOY_NOTIFY_WEBHOOK_SECRET` is set), `slack` (incoming webhook), `email`
+  (`DECOY_NOTIFY_SMTP_HOST/_PORT/_USER/_PASS/_FROM`). Targets and secrets are
+  flags/env only, never persisted to `.decoy/workspace.json`. A channel
+  failure never changes the run's exit code. Payloads carry facts only
+  (status, row count, config path, timings); the raw engine error is NEVER
+  put on the wire (only the exception type name), so a failed run cannot
+  egress source-row values to a third-party channel.
+
+### Changed (Sprint 5 CLI closure, 2026-07-04)
+
+- **`decoy validate` is now a command group**: `decoy validate <cfg>` becomes
+  **`decoy validate config <cfg>`** (the config schema check is unchanged; it
+  moved under the `config` subcommand so `distribution` can sit beside it).
+  Pre-GA hard-delete break: no back-compat shim. Note: `validate config
+  --fail-on-warning` exits `2` (its long-standing code) while `validate
+  distribution --fail-on-warning` exits `EXIT_FINDINGS` (4); the two
+  subcommands intentionally use different warning exit codes for their
+  different domains (config well-formedness vs. data-fidelity findings).
+
 ### Added (SP-16 CLI foundation, 2026-06-28)
 
-- **`decoy validate --fail-on-warning`**: exits non-zero (code 2) when any
-  advisory warning fires. Enables CI gates that treat warnings as blocking.
+- **`decoy validate config --fail-on-warning`**: exits non-zero (code 2) when
+  any advisory warning fires. Enables CI gates that treat warnings as blocking.
   Current warnings: output target file already exists (overwrite advisory).
 
-- **`decoy validate --json` multi-message output**: the JSON envelope now
-  includes a `messages` list with ALL validation messages
+- **`decoy validate config --json` multi-message output**: the JSON envelope
+  now includes a `messages` list with ALL validation messages
   (`severity`/`code`/`message`/`location`), not just the first error string.
   Pydantic `ValidationError` with multiple field failures now surfaces all of
   them at once. Backward-compatible: the top-level `error` string key is
@@ -50,7 +84,7 @@ version numbers follow the [versioning policy](docs/release/versioning.md).
   (`--parse-dates` for datetime columns, repeatable `--joint a,b` for
   the contingency tables `condition_on` needs). The snapshot is what
   `type: statistical` generate columns reference via `snapshot_file`;
-  `decoy validate` now rejects configs whose snapshot artifact is
+  `decoy validate config` now rejects configs whose snapshot artifact is
   missing or incompatible (engine check row 12).
 
 - **`decoy unmask` verb** (detokenization). Recovers `strategy: fpe`
@@ -77,7 +111,7 @@ Findings from the 2026-06-11 full-codebase audit.
   transaction ids hash-pseudonymised; gdpr device ids
   hash-pseudonymised per Art 4(5). A new E2E net runs EVERY bundled
   template against synthesized data on every CI run.
-- **`decoy validate` now runs the engine's config-only plan checks**
+- **`decoy validate config` now runs the engine's config-only plan checks**
   (audit H5): unknown providers, non-poolable faker providers, and
   missing deterministic namespaces fail validate with the typed code
   instead of passing schema-only and crashing at run.

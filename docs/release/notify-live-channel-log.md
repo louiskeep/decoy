@@ -23,7 +23,10 @@ Prerequisites:
   available for this run.
 - A real SMTP relay (a personal/dev SMTP account, or a local
   `python -m smtpd` / MailHog-style catcher for a dry run without sending
-  real mail).
+  real mail). `send_email` negotiates STARTTLS only when the server
+  advertises it, so plaintext local catchers work for the dry run. For a
+  real relay, use a STARTTLS-capable submission port (587). Implicit-TLS
+  (port 465) is not supported in v1; point at 587 instead.
 
 Steps:
 
@@ -42,6 +45,25 @@ decoy run pipeline.yaml \
   --notify-on always \
   --json
 ```
+
+Local email dry-run (no real relay, no real mail sent):
+
+```bash
+# Terminal 1: a plaintext debug catcher on 127.0.0.1:1025 (prints
+# received messages to stdout). aiosmtpd ships a debug server; on older
+# Pythons `python -m smtpd -n -c DebuggingServer localhost:1025` also works.
+python -m aiosmtpd -n -l 127.0.0.1:1025
+
+# Terminal 2:
+export DECOY_NOTIFY_SMTP_HOST=127.0.0.1
+export DECOY_NOTIFY_SMTP_PORT=1025
+export DECOY_NOTIFY_SMTP_FROM=you@example.com
+# no USER/PASS, no STARTTLS -- send_email skips both when unsupported
+decoy run pipeline.yaml --notify email:ops@example.com --notify-on always --json
+```
+
+The catcher in terminal 1 prints the received message; the `--json`
+envelope shows `{"kind": "email", "delivered": true, ...}`.
 
 Confirm:
 - The Slack channel behind the incoming-webhook received one message

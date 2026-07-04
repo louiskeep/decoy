@@ -177,9 +177,14 @@ def build_run_event(
 
     Facts only (mirrors `_outcome_facts`, `dispatcher.py:129-150`): never
     source or output cell values, never a secret. `error_summary`, when
-    given, is folded into the `detail` string exactly like the platform's
-    `make_job_failed_event` (`dispatcher.py:101-126`) -- it is not carried
-    as its own raw field.
+    given, is folded VERBATIM into the outbound `detail` string, exactly
+    like the platform's `make_job_failed_event` (`dispatcher.py:101-126`).
+    Because `detail` is POSTed to third-party channels, the caller MUST
+    pass an already-redacted, non-PII summary here (e.g. the exception
+    TYPE name), NOT a raw engine error string -- engine exceptions can
+    quote source-row cell values verbatim. `decoy run`'s failure path
+    passes `type(exc).__name__` for exactly this reason (sprint-5 BLOCKER
+    remediation); the raw error stays on local stdout / stderr only.
     """
     if occurred_at is None:
         occurred_at = datetime.now(timezone.utc)
@@ -327,11 +332,19 @@ def send_email(
 ) -> tuple[bool, str | None]:
     """Send a plain-text email via stdlib smtplib.
 
-    A fresh implementation (STARTTLS + optional login), NOT a port of the
-    platform's broken `_send_email` call site (see module docstring).
-    Mirrors `api/auth/email.py`'s send pattern, which is correct in
-    isolation. Returns (delivered, detail); "email not configured" is a
-    best-effort failure, not a run failure (D3).
+    A fresh implementation (best-effort STARTTLS + optional login), NOT a
+    port of the platform's broken `_send_email` call site (see module
+    docstring). Mirrors `api/auth/email.py`'s send pattern, which is
+    correct in isolation. Returns (delivered, detail); "email not
+    configured" is a best-effort failure, not a run failure (D3).
+
+    STARTTLS is opportunistic: it is negotiated only when the server
+    advertises the `STARTTLS` extension (checked via `has_extn` after
+    EHLO). This keeps the channel working against local dry-run catchers
+    (`python -m smtpd`, MailHog) and other relays that do not offer
+    STARTTLS, instead of failing unconditionally on `server.starttls()`.
+    Implicit-TLS (port 465) relays are out of scope for v1; use a
+    STARTTLS-capable submission port (587) for encrypted delivery.
     """
     if smtp is None or not smtp.configured:
         return False, "email not configured (set DECOY_NOTIFY_SMTP_HOST / DECOY_NOTIFY_SMTP_FROM)"
@@ -353,7 +366,10 @@ def send_email(
 
     try:
         with smtplib.SMTP(smtp.host, smtp.port, timeout=10) as server:
-            server.starttls()
+            server.ehlo()
+            if server.has_extn("starttls"):
+                server.starttls()
+                server.ehlo()
             if smtp.user and smtp.password:
                 server.login(smtp.user, smtp.password)
             server.send_message(msg)

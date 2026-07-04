@@ -51,7 +51,7 @@ Examples:
     Save the PCI template directly to a file.
 
   decoy templates show hipaa > pipeline.yaml
-    Save the HIPAA template, then validate it with `decoy validate pipeline.yaml`.
+    Save the HIPAA template, then validate it with `decoy validate config pipeline.yaml`.
 
 See also: decoy templates list, decoy init.
 """

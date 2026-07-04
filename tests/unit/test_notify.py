@@ -397,7 +397,7 @@ def test_send_email_not_configured_is_best_effort_failure():
     assert "not configured" in detail
 
 
-def test_send_email_sends_via_smtp():
+def test_send_email_sends_via_smtp_with_starttls_when_supported():
     sent: dict = {}
 
     class _FakeSmtp:
@@ -410,6 +410,12 @@ def test_send_email_sends_via_smtp():
 
         def __exit__(self, *a):
             return False
+
+        def ehlo(self):
+            sent["ehlo"] = sent.get("ehlo", 0) + 1
+
+        def has_extn(self, name):
+            return name.lower() == "starttls"
 
         def starttls(self):
             sent["starttls"] = True
@@ -432,6 +438,45 @@ def test_send_email_sends_via_smtp():
     assert delivered is True
     assert sent["starttls"] is True
     assert sent["login"] == ("u", "p")
+    assert sent["message"]["To"] == "ops@example.com"
+
+
+def test_send_email_skips_starttls_when_server_does_not_support_it():
+    """LOW-2 regression: a relay/dry-run catcher that does not advertise
+    STARTTLS (python -m smtpd, MailHog) must still receive the message,
+    not fail on an unconditional server.starttls()."""
+    sent: dict = {}
+
+    class _FakeSmtpNoTls:
+        def __init__(self, host, port, timeout=None):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+        def ehlo(self):
+            pass
+
+        def has_extn(self, name):
+            return False  # no STARTTLS advertised
+
+        def starttls(self):
+            raise AssertionError("starttls must NOT be called when unsupported")
+
+        def send_message(self, msg):
+            sent["message"] = msg
+
+    smtp_cfg = SmtpConfig(host="localhost", port=1025, from_addr="from@example.com")
+    event = build_run_event(
+        status="success", config_path="pipeline.yaml", row_count=1, started_at=None, finished_at=None
+    )
+    with mock.patch("smtplib.SMTP", _FakeSmtpNoTls):
+        delivered, _detail = send_email("ops@example.com", event, smtp=smtp_cfg)
+
+    assert delivered is True
     assert sent["message"]["To"] == "ops@example.com"
 
 

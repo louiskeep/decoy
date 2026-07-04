@@ -3,7 +3,7 @@
 # A single-table mask: takes a CSV in, writes a masked CSV out. Edit the
 # source + target paths, then:
 #
-#   decoy validate pipeline.yaml && decoy run pipeline.yaml
+#   decoy validate config pipeline.yaml && decoy run pipeline.yaml
 #
 # V2 PipelineConfig shape per decoy-engine `decoy_engine.config._pipeline`.
 # Provider names come from the engine's default registry (see
