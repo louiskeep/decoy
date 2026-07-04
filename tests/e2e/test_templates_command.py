@@ -103,5 +103,5 @@ def test_templates_pipe_to_file_then_validate(tmp_path):
         assert result.exit_code == 0
         out = tmp_path / f"{name}.yaml"
         out.write_text(result.stdout, encoding="utf-8")
-        validated = runner.invoke(app, ["validate", str(out)])
+        validated = runner.invoke(app, ["validate", "config", str(out)])
         assert validated.exit_code == 0, f"{name} failed validate: {validated.output}"

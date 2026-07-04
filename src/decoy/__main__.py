@@ -46,8 +46,7 @@ from decoy.cli.storm import storm_app
 from decoy.cli.templates import templates_app
 from decoy.cli.unmask import UNMASK_EPILOG
 from decoy.cli.unmask import unmask as unmask_command
-from decoy.cli.validate import VALIDATE_EPILOG
-from decoy.cli.validate import validate as validate_command
+from decoy.cli.validate import validate_app
 from decoy.cli.vault import vault_app
 
 # Quick-start hints embedded in the root help. Picked up by Typer's
@@ -62,7 +61,7 @@ Try one of:
   decoy profile data.csv           Dataset shape, field stats, PII candidates (suggestions).
   decoy compile pipeline.yaml --explain  Explain per-column strategy and compile decisions.
   decoy run pipeline.yaml          Run a masking or generation pipeline.
-  decoy validate pipeline.yaml     Check a YAML pipeline before running.
+  decoy validate config pipeline.yaml  Check a YAML pipeline before running.
   decoy unmask pipeline.yaml masked.csv   Recover fpe columns from a masked file.
   decoy fit source.csv             Fit a distribution snapshot for statistical generation.
   decoy init                       Scaffold a starter pipeline interactively.
@@ -108,7 +107,7 @@ def _root(
 
 
 app.command(name="run", epilog=RUN_EPILOG)(run_command)
-app.command(name="validate", epilog=VALIDATE_EPILOG)(validate_command)
+app.add_typer(validate_app, name="validate")
 app.command(name="preflight", epilog=PREFLIGHT_EPILOG)(preflight_command)
 app.command(name="unmask", epilog=UNMASK_EPILOG)(unmask_command)
 app.command(name="fit", epilog=FIT_EPILOG)(fit_command)

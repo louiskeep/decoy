@@ -8,7 +8,7 @@ Try one of:
   decoy profile data.csv           Dataset shape, field stats, PII candidates (suggestions).
   decoy compile pipeline.yaml --explain  Explain per-column strategy and compile decisions.
   decoy run pipeline.yaml          Run a masking or generation pipeline.
-  decoy validate pipeline.yaml     Check a YAML pipeline before running.
+  decoy validate config pipeline.yaml  Check a YAML pipeline before running.
   decoy unmask pipeline.yaml masked.csv   Recover fpe columns from a masked file.
   decoy fit source.csv             Fit a distribution snapshot for statistical generation.
   decoy init                       Scaffold a starter pipeline interactively.
@@ -39,7 +39,6 @@ $ decoy [OPTIONS] COMMAND [ARGS]...
 **Commands**:
 
 * `run`: Run a decoy pipeline from a YAML config.
-* `validate`: Validate a decoy pipeline config without...
 * `preflight`: Local pre-run readiness checks for a...
 * `unmask`: Recover fpe-masked columns from a masked...
 * `fit`: Fit a distribution-snapshot/v1 artifact...
@@ -52,6 +51,7 @@ $ decoy [OPTIONS] COMMAND [ARGS]...
 * `doctor`: Check engine and dependency health.
 * `compile`: Compile a pipeline config and run...
 * `profile`: Profile a source dataset: shape, field...
+* `validate`: Validate a pipeline config (`config`) or...
 * `storm`: Dataset analysis -- the STORM event.
 * `templates`: Browse and dump bundled starter pipeline...
 * `vault`: Vault inspection utilities.
@@ -96,6 +96,8 @@ $ decoy run [OPTIONS] CONFIG
 * `--substrate TEXT`: Execution substrate for --chunked runs: pandas (default) or polars. Non-chunked (plain) runs always use the engine&#x27;s pandas adapter (the V2 unified run_pipeline path); this flag and the DECOY_SUBSTRATE env var are only consulted for --chunked runs. Setting either on a plain run emits a warning to stderr and is otherwise ignored. Cross-substrate outputs are value-equal; CSV bytes may differ only via Arrow type-width drift, which CSV does not carry.  [env var: DECOY_SUBSTRATE]
 * `--key-label TEXT`: Stable namespace string for the masking key hierarchy. Required when --master-key is set. Pick something durable (e.g. &#x27;customers_q4&#x27;); changing it produces a different masked output. Read from the YAML&#x27;s top-level &#x27;key_label:&#x27; field if not passed on the command line.
 * `--evidence-out PATH`: Write a local evidence manifest (JSON) to this path after a successful run. The manifest records pipeline hash, input/output file fingerprints, run metadata, and row counts/timings/warnings where available (these are omitted for --chunked runs). It does NOT contain raw data values. Use `decoy evidence verify` to check the manifest against current files. See: decoy explain evidence (when available).
+* `--notify TEXT`: Notify a channel after the run reaches its terminal state. Repeatable. Spec is &#x27;kind:target&#x27;: webhook:&lt;url&gt;, slack:&lt;url&gt;, email:&lt;address&gt;. Best-effort: a channel failure never changes the run&#x27;s exit code. Webhook signing key from DECOY_NOTIFY_WEBHOOK_SECRET (unsigned if unset); SMTP from DECOY_NOTIFY_SMTP_HOST/_PORT/_USER/_PASS/_FROM. Nothing is persisted to .decoy/workspace.json -- targets and secrets are flags/env only, never written to disk.
+* `--notify-on [success|failure|always]`: Which terminal outcome(s) to notify on: success, failure, or always.  [default: always]
 * `--help`: Show this message and exit.
 
 Examples:
@@ -119,54 +121,17 @@ Examples:
     (--substrate only affects --chunked runs; plain runs always use pandas.
     See: decoy explain substrate.)
 
-See also: decoy validate, decoy explain chunked, decoy explain vault.
+  decoy run pipeline.yaml --notify webhook:https://hooks.example.com/x
+    Notify a webhook after the run reaches its terminal state. Repeatable;
+    kind in webhook/slack/email. Best-effort: a channel failure never
+    changes the run's exit code. Webhook signing key from
+    DECOY_NOTIFY_WEBHOOK_SECRET; SMTP from DECOY_NOTIFY_SMTP_HOST/_PORT/
+    _USER/_PASS/_FROM. Nothing is persisted to .decoy/workspace.json.
 
+  decoy run pipeline.yaml --notify slack:https://hooks.slack.com/services/x --notify-on failure
+    Only notify on a failed run.
 
-## `decoy validate`
-
-Validate a decoy pipeline config without running it.
-
-Use this in CI or before a long run to fail fast on a bad YAML. Exits 0
-on a well-formed config, 1 on a parse / schema error or a config-level
-plan-compile error (unknown provider, non-poolable provider on the
-faker/pool path, missing deterministic namespace).
-
-With --fail-on-warning, also exits non-zero when advisory warnings fire
-(e.g. an output file already exists and would be overwritten on run).
-
-**Usage**:
-
-```console
-$ decoy validate [OPTIONS] CONFIG
-```
-
-**Arguments**:
-
-* `CONFIG`: Path to the YAML pipeline config to validate.  [required]
-
-**Options**:
-
-* `--json`: Emit a structured JSON result on stdout. Errors still go to stderr.
-* `-q, --quiet`: Suppress stdout. Errors still go to stderr; exit code carries the result.
-* `-v, --verbose`: Enable debug-level CLI logs on stderr.
-* `--fail-on-warning`: Exit non-zero if any advisory warning fires (e.g. output target exists). Enables CI gates that treat warnings as blocking.
-* `--help`: Show this message and exit.
-
-Examples:
-
-  decoy validate pipeline.yaml
-    Print OK on stdout when the config parses.
-
-  decoy validate pipeline.yaml --json
-    Emit a structured JSON result (multi-message) for scripting.
-
-  decoy validate pipeline.yaml --quiet
-    Stay silent on success; exit code carries the result.
-
-  decoy validate pipeline.yaml --fail-on-warning
-    Exit non-zero if any advisory warning fires (e.g. output target exists).
-
-See also: decoy run.
+See also: decoy validate config, decoy validate distribution, decoy explain chunked, decoy explain vault.
 
 
 ## `decoy preflight`
@@ -714,6 +679,160 @@ No raw cell values appear in the output. Field stats include dtype, null_rate,
 distinct_count only.
 
 See also: decoy storm analyze, decoy explain storm, decoy validate.
+
+
+## `decoy validate`
+
+Validate a pipeline config (`config`) or check distribution fidelity between a source and an output (`distribution`).
+
+**Usage**:
+
+```console
+$ decoy validate [OPTIONS] COMMAND [ARGS]...
+```
+
+**Options**:
+
+* `--help`: Show this message and exit.
+
+Examples:
+
+  decoy validate config pipeline.yaml
+    Check a YAML pipeline config before running it.
+
+  decoy validate distribution source.csv output.csv
+    Recompute distribution fidelity between a pre-mask source and its
+    masked output.
+
+See also: decoy run, decoy fit.
+
+
+**Commands**:
+
+* `config`: Validate a decoy pipeline config without...
+* `distribution`: Recompute distribution fidelity between a...
+
+### `decoy validate config`
+
+Validate a decoy pipeline config without running it.
+
+Use this in CI or before a long run to fail fast on a bad YAML. Exits 0
+on a well-formed config, 1 on a parse / schema error or a config-level
+plan-compile error (unknown provider, non-poolable provider on the
+faker/pool path, missing deterministic namespace).
+
+With --fail-on-warning, also exits non-zero when advisory warnings fire
+(e.g. an output file already exists and would be overwritten on run).
+
+**Usage**:
+
+```console
+$ decoy validate config [OPTIONS] CONFIG
+```
+
+**Arguments**:
+
+* `CONFIG`: Path to the YAML pipeline config to validate.  [required]
+
+**Options**:
+
+* `--json`: Emit a structured JSON result on stdout. Errors still go to stderr.
+* `-q, --quiet`: Suppress stdout. Errors still go to stderr; exit code carries the result.
+* `-v, --verbose`: Enable debug-level CLI logs on stderr.
+* `--fail-on-warning`: Exit non-zero if any advisory warning fires (e.g. output target exists). Enables CI gates that treat warnings as blocking.
+* `--help`: Show this message and exit.
+
+Examples:
+
+  decoy validate config pipeline.yaml
+    Print OK on stdout when the config parses.
+
+  decoy validate config pipeline.yaml --json
+    Emit a structured JSON result (multi-message) for scripting.
+
+  decoy validate config pipeline.yaml --quiet
+    Stay silent on success; exit code carries the result.
+
+  decoy validate config pipeline.yaml --fail-on-warning
+    Exit non-zero if any advisory warning fires (e.g. output target exists).
+
+See also: decoy run, decoy validate distribution.
+
+
+### `decoy validate distribution`
+
+Recompute distribution fidelity between a source and an output CSV.
+
+Wraps `decoy_engine.quality.compute_quality_report` +
+`apply_quality_policy` (report.py:97, policy.py:142): the engine owns
+every metric and the letter grade; this command computes no fidelity
+number itself. Reads both CSVs fresh on every invocation (pure,
+repeatable) -- the CLI&#x27;s local evidence manifest records file
+fingerprints but not the raw frames, so recomputing from the two files
+is the only honest source for this number (BF1).
+
+Exit codes: 0 when the policy verdict is &#x27;pass&#x27; (or &#x27;warn&#x27; without
+--fail-on-warning); EXIT_FINDINGS (4) when the verdict is &#x27;fail&#x27;, or
+&#x27;warn&#x27; with --fail-on-warning set. This mirrors `decoy storm
+integrity`&#x27;s exit-code contract -- a data-audit verb that reports
+findings, not a run that crashed -- rather than EXIT_RUNTIME (reserved
+for the CLI/engine blowing up unexpectedly).
+
+**Usage**:
+
+```console
+$ decoy validate distribution [OPTIONS] SOURCE OUTPUT
+```
+
+**Arguments**:
+
+* `SOURCE`: Pre-mask / pre-generate source CSV (ground truth).  [required]
+* `OUTPUT`: Post-mask / post-generate output CSV to check.  [required]
+
+**Options**:
+
+* `--joint TEXT`: Column pair &#x27;a,b&#x27; to also score jointly (repeatable).
+* `--generate`: Output is synthetic generation, not masking: row counts may legitimately differ (sets expect_row_parity=False). Default assumes masking (row parity expected).
+* `--config FILE`: Pipeline YAML naming each column&#x27;s strategy, so intentional loss (hash, bucketize, faker, ...) is not flagged as accidental drift. Without it, per-column policy checks run on defaults only.
+* `--policy FILE`: A quality-policy config (YAML or JSON: mode / thresholds / strategy_expectations) overriding --mode / --min-grade / --min-score.
+* `--mode TEXT`: report (record only, verdict always pass) | warn (violations promote verdict to warn) | fail (violations promote verdict to fail). Ignored when --policy sets its own mode.  [default: report]
+* `--min-grade TEXT`: Shorthand: minimum letter grade (A/B/C/D) the overall score must reach.
+* `--min-score FLOAT`: Shorthand: minimum overall_score in [0, 1].
+* `--fail-on-warning`: Also exit non-zero (EXIT_FINDINGS) when the policy verdict is &#x27;warn&#x27;.
+* `--report-out PATH`: Write the full quality-report/v1 + policy JSON to this path.
+* `--json`: Emit the full quality-report/v1 + policy result as JSON.
+* `-q, --quiet`: Suppress stdout. Exit code carries the result.
+* `-v, --verbose`: Enable debug-level CLI logs on stderr.
+* `--help`: Show this message and exit.
+
+Examples:
+
+  decoy validate distribution source.csv output.csv
+    Recompute distribution fidelity between a pre-mask source and its
+    masked output. Report mode (record only): always exits 0.
+
+  decoy validate distribution source.csv output.csv --config pipeline.yaml
+    Pass the pipeline config so intentional loss (hash, bucketize, ...)
+    is not flagged as accidental drift.
+
+  decoy validate distribution source.csv synthetic.csv --generate
+    Row counts are expected to differ (synthetic generation, not masking).
+
+  decoy validate distribution source.csv output.csv --mode fail --min-grade B
+    Exit non-zero (EXIT_FINDINGS) when the overall grade falls below B.
+
+  decoy validate distribution source.csv output.csv --joint state,tier --json
+    Include a (state, tier) joint fidelity score; emit the full
+    quality-report/v1 + policy JSON.
+
+  decoy validate distribution source.csv output.csv --report-out report.json
+    Also write the full report + policy verdict to disk.
+
+Exit codes: 0 pass (or warn without --fail-on-warning); 4 EXIT_FINDINGS
+when the policy verdict is fail, or warn with --fail-on-warning set;
+1 EXIT_USAGE for bad input (missing columns, unreadable CSV, bad flags).
+
+See also: decoy validate config, decoy fit, decoy run.
 
 
 ## `decoy storm`

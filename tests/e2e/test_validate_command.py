@@ -99,7 +99,7 @@ def test_validate_passes_for_valid_v2_config(tmp_path: Path):
     config_path = tmp_path / "config.yaml"
     config_path.write_text(yaml.dump(_valid_v2_mask_config(tmp_path)))
 
-    result = runner.invoke(app, ["validate", str(config_path)])
+    result = runner.invoke(app, ["validate", "config", str(config_path)])
     assert result.exit_code == 0, result.output
     assert "OK" in result.stdout
 
@@ -122,7 +122,7 @@ def test_validate_rejects_graph_mode_yaml(tmp_path: Path):
     p = tmp_path / "graph.yaml"
     p.write_text(yaml.dump(cfg), encoding="utf-8")
 
-    result = runner.invoke(app, ["validate", str(p)])
+    result = runner.invoke(app, ["validate", "config", str(p)])
     assert result.exit_code == 1, result.output
 
 
@@ -140,7 +140,7 @@ def test_validate_rejects_v1_mask_config(tmp_path: Path):
     p = tmp_path / "v1.yaml"
     p.write_text(yaml.dump(config), encoding="utf-8")
 
-    result = runner.invoke(app, ["validate", str(p)])
+    result = runner.invoke(app, ["validate", "config", str(p)])
     assert result.exit_code == 1
 
 
@@ -151,7 +151,7 @@ def test_validate_fails_for_invalid_v2_config(tmp_path: Path):
     config_path = tmp_path / "config.yaml"
     config_path.write_text(yaml.dump(config))
 
-    result = runner.invoke(app, ["validate", str(config_path)])
+    result = runner.invoke(app, ["validate", "config", str(config_path)])
     assert result.exit_code == 1
     assert "Invalid" in result.output or "Invalid" in result.stdout
 
@@ -160,7 +160,7 @@ def test_validate_fails_for_unparseable_yaml(tmp_path: Path):
     p = tmp_path / "bad.yaml"
     p.write_text("{ unbalanced: [oops", encoding="utf-8")
 
-    result = runner.invoke(app, ["validate", str(p)])
+    result = runner.invoke(app, ["validate", "config", str(p)])
     assert result.exit_code == 1
 
 
@@ -169,12 +169,12 @@ def test_validate_fails_for_non_mapping_yaml(tmp_path: Path):
     p = tmp_path / "scalar.yaml"
     p.write_text("just_a_string\n", encoding="utf-8")
 
-    result = runner.invoke(app, ["validate", str(p)])
+    result = runner.invoke(app, ["validate", "config", str(p)])
     assert result.exit_code == 1
 
 
 def test_validate_fails_for_missing_file():
-    result = runner.invoke(app, ["validate", "/nonexistent/path.yaml"])
+    result = runner.invoke(app, ["validate", "config", "/nonexistent/path.yaml"])
     assert result.exit_code != 0
 
 
@@ -187,7 +187,7 @@ def test_validate_emits_json_envelope_on_success(tmp_path: Path):
     config_path = tmp_path / "config.yaml"
     config_path.write_text(yaml.dump(_valid_v2_mask_config(tmp_path)))
 
-    result = runner.invoke(app, ["validate", str(config_path), "--json"])
+    result = runner.invoke(app, ["validate", "config", str(config_path), "--json"])
     assert result.exit_code == 0, result.output
     import json
 
@@ -201,7 +201,7 @@ def test_validate_emits_json_envelope_on_error(tmp_path: Path):
     p = tmp_path / "graph.yaml"
     p.write_text(yaml.dump(cfg), encoding="utf-8")
 
-    result = runner.invoke(app, ["validate", str(p), "--json"])
+    result = runner.invoke(app, ["validate", "config", str(p), "--json"])
     assert result.exit_code == 1
     import json
 
@@ -235,7 +235,7 @@ class TestConfigOnlyPlanChecks:
         cfg = self._write(
             tmp_path, [{"name": "device_id", "strategy": "faker", "provider": "uuid"}]
         )
-        result = runner.invoke(app, ["validate", str(cfg)])
+        result = runner.invoke(app, ["validate", "config", str(cfg)])
         assert result.exit_code == EXIT_USAGE
         assert "non_poolable_provider_with_pool_backend" in result.output
 
@@ -243,7 +243,7 @@ class TestConfigOnlyPlanChecks:
         cfg = self._write(
             tmp_path, [{"name": "x", "strategy": "faker", "provider": "no_such_provider"}]
         )
-        result = runner.invoke(app, ["validate", str(cfg)])
+        result = runner.invoke(app, ["validate", "config", str(cfg)])
         assert result.exit_code == EXIT_USAGE
         assert "unknown_provider" in result.output
 
@@ -253,7 +253,7 @@ class TestConfigOnlyPlanChecks:
         cfg = self._write(
             tmp_path, [{"name": "email", "strategy": "faker", "provider": "person_email"}]
         )
-        result = runner.invoke(app, ["validate", str(cfg), "--json"])
+        result = runner.invoke(app, ["validate", "config", str(cfg), "--json"])
         assert result.exit_code == 0
         payload = _json.loads(result.output)
         assert payload["status"] == "ok"
