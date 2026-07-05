@@ -5,7 +5,7 @@
 # downstream system that needs realistic-looking rows without using
 # real data.
 #
-#   decoy validate examples/generate_example.yaml
+#   decoy validate config examples/generate_example.yaml
 #   decoy run examples/generate_example.yaml
 #
 # Tune `row_count` and the generate_columns to shape the output.

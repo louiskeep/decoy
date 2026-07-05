@@ -136,9 +136,9 @@ _TOPICS: dict[str, _Topic] = {
             "2026-05-30): `version: '1.0'`, `input:`, `output:`, `masking_rules:`.\n"
             "Old YAML on disk must be re-authored to the V2 shape above; the\n"
             "graph builder in decoy-platform's web UI emits V2 directly.\n\n"
-            "Validate any pipeline before running it: `decoy validate pipeline.yaml`."
+            "Validate any pipeline before running it: `decoy validate config pipeline.yaml`."
         ),
-        see_also=("decoy validate --help", "decoy templates list"),
+        see_also=("decoy validate config --help", "decoy templates list"),
     ),
     "yaml": _Topic(
         name="yaml",
@@ -147,7 +147,7 @@ _TOPICS: dict[str, _Topic] = {
             "Start from a template, edit paths, validate, then run on a small fixture:\n\n"
             "  decoy templates list\n"
             "  decoy templates show minimal > pipeline.yaml\n"
-            "  decoy validate pipeline.yaml\n"
+            "  decoy validate config pipeline.yaml\n"
             "  decoy run pipeline.yaml\n\n"
             "Pick one top-level mode:\n"
             "  mask      sources + tables + targets (V2 PipelineConfig shape).\n"
@@ -162,7 +162,7 @@ _TOPICS: dict[str, _Topic] = {
             "Full guide in the docs hub:\n"
             "  decoy-platform/docs/guides/cli-yaml-workflows.md"
         ),
-        see_also=("decoy explain pipeline", "decoy templates list", "decoy validate --help"),
+        see_also=("decoy explain pipeline", "decoy templates list", "decoy validate config --help"),
     ),
     "storm": _Topic(
         name="storm",

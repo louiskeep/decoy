@@ -166,7 +166,7 @@ class TestFitGenerateLoop:
         cfg_path = tmp_path / "gen.yaml"
         cfg_path.write_text(yaml.safe_dump(cfg), encoding="utf-8")
 
-        assert runner.invoke(app, ["validate", str(cfg_path)]).exit_code == 0
+        assert runner.invoke(app, ["validate", "config", str(cfg_path)]).exit_code == 0
         result = runner.invoke(app, ["run", str(cfg_path)])
         assert result.exit_code == 0, result.output
         out = pd.read_csv(tmp_path / "synthetic.csv")
@@ -201,6 +201,6 @@ class TestFitGenerateLoop:
         }
         cfg_path = tmp_path / "gen.yaml"
         cfg_path.write_text(yaml.safe_dump(cfg), encoding="utf-8")
-        result = runner.invoke(app, ["validate", str(cfg_path)])
+        result = runner.invoke(app, ["validate", "config", str(cfg_path)])
         assert result.exit_code == EXIT_USAGE
         assert "statistical_snapshot_unreadable" in result.output

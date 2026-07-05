@@ -230,7 +230,7 @@ def _compile_error(state, config: Path, exc: Exception) -> None:
     elif state.mode is not OutputMode.quiet:
         state.err_console.print(error("error:"), msg)
         state.err_console.print(
-            " ", hint("hint:"), "run", code("decoy validate <config>"), "for full validation."
+            " ", hint("hint:"), "run", code("decoy validate config <config>"), "for full validation."
         )
 
 

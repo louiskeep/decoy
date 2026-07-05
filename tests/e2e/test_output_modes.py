@@ -64,7 +64,7 @@ def bad_config(tmp_path: Path) -> Path:
 
 
 def test_validate_json_success_emits_one_object_to_stdout(good_config: Path):
-    result = runner.invoke(app, ["validate", str(good_config), "--json"])
+    result = runner.invoke(app, ["validate", "config", str(good_config), "--json"])
     assert result.exit_code == 0
     payload = _json.loads(result.stdout)
     assert payload["command"] == "validate"
@@ -73,7 +73,7 @@ def test_validate_json_success_emits_one_object_to_stdout(good_config: Path):
 
 
 def test_validate_json_failure_emits_error_object_and_exits_nonzero(bad_config: Path):
-    result = runner.invoke(app, ["validate", str(bad_config), "--json"])
+    result = runner.invoke(app, ["validate", "config", str(bad_config), "--json"])
     assert result.exit_code == 1
     payload = _json.loads(result.stdout)
     assert payload["command"] == "validate"
@@ -85,13 +85,13 @@ def test_validate_json_failure_emits_error_object_and_exits_nonzero(bad_config: 
 
 
 def test_validate_quiet_success_produces_empty_stdout(good_config: Path):
-    result = runner.invoke(app, ["validate", str(good_config), "--quiet"])
+    result = runner.invoke(app, ["validate", "config", str(good_config), "--quiet"])
     assert result.exit_code == 0
     assert result.stdout == ""
 
 
 def test_validate_quiet_failure_still_exits_nonzero_with_empty_stdout(bad_config: Path):
-    result = runner.invoke(app, ["validate", str(bad_config), "--quiet"])
+    result = runner.invoke(app, ["validate", "config", str(bad_config), "--quiet"])
     assert result.exit_code == 1
     assert result.stdout == ""
 
@@ -101,7 +101,7 @@ def test_validate_quiet_failure_still_exits_nonzero_with_empty_stdout(bad_config
 
 def test_verbose_plus_quiet_is_a_user_error(good_config: Path):
     result = runner.invoke(
-        app, ["validate", str(good_config), "--verbose", "--quiet"]
+        app, ["validate", "config", str(good_config), "--verbose", "--quiet"]
     )
     assert result.exit_code == 1
     assert "mutually exclusive" in result.stderr
@@ -109,7 +109,7 @@ def test_verbose_plus_quiet_is_a_user_error(good_config: Path):
 
 def test_json_plus_quiet_is_a_user_error(good_config: Path):
     result = runner.invoke(
-        app, ["validate", str(good_config), "--json", "--quiet"]
+        app, ["validate", "config", str(good_config), "--json", "--quiet"]
     )
     assert result.exit_code == 1
     assert "mutually exclusive" in result.stderr
@@ -119,7 +119,7 @@ def test_json_plus_quiet_is_a_user_error(good_config: Path):
 
 
 def test_validate_error_has_cause_and_hint(bad_config: Path):
-    result = runner.invoke(app, ["validate", str(bad_config)])
+    result = runner.invoke(app, ["validate", "config", str(bad_config)])
     assert result.exit_code == 1
     # Cause line + hint line per CLI_UX_GUIDE.md section 9.
     assert "error:" in result.stderr.lower()

@@ -39,7 +39,7 @@ Scaffold your first pipeline against your own CSV. Two paths:
 # the YAML with `# REVIEW:` comments above every auto-inferred entry.
 decoy init customers.csv --out pipeline.yaml
 # read the REVIEW comments + edit anything you disagree with
-decoy validate pipeline.yaml
+decoy validate config pipeline.yaml
 decoy run pipeline.yaml
 ```
 
@@ -47,25 +47,28 @@ decoy run pipeline.yaml
 # Template-driven: scaffold from a bundled preset (minimal, hipaa, pci, gdpr).
 decoy init --preset minimal --out pipeline.yaml
 # edit pipeline.yaml: point `sources.people.path` at your CSV
-decoy validate pipeline.yaml
+decoy validate config pipeline.yaml
 decoy run pipeline.yaml
 ```
 
-`decoy validate` checks the YAML against the engine's pipeline schema
-without touching your data. `decoy run` runs the pipeline and writes the
-masked output to the path declared under `targets:` in the YAML.
+`decoy validate config` checks the YAML against the engine's pipeline
+schema without touching your data. `decoy validate distribution` recomputes
+distribution fidelity between a source and an output CSV after a run.
+`decoy run` runs the pipeline and writes the masked output to the path
+declared under `targets:` in the YAML.
 
 ## Common commands
 
-| Command                  | What it does                                                                  |
-|--------------------------|-------------------------------------------------------------------------------|
-| `decoy demo`             | Run a packaged end-to-end mask on synthetic input. Good first call.           |
-| `decoy init [file]`      | Scaffold a starter `pipeline.yaml`. With a file: column-aware via STORM. Without: prompt for preset (`minimal`, `gdpr`, ...). |
-| `decoy validate <path>`  | Validate a pipeline YAML against the engine schema. Exits non-zero on error.  |
-| `decoy run <path>`       | Execute a pipeline: read sources, mask, write targets.                        |
-| `decoy storm <path>`     | Profile a source file: distributions, PII candidates, cardinality hints.      |
-| `decoy templates`        | List the bundled pipeline templates.                                          |
-| `decoy explain <topic>`  | In-CLI reference (exit codes, providers, strategies).                         |
+| Command                          | What it does                                                                  |
+|-----------------------------------|-------------------------------------------------------------------------------|
+| `decoy demo`                     | Run a packaged end-to-end mask on synthetic input. Good first call.           |
+| `decoy init [file]`              | Scaffold a starter `pipeline.yaml`. With a file: column-aware via STORM. Without: prompt for preset (`minimal`, `gdpr`, ...). |
+| `decoy validate config <path>`   | Validate a pipeline YAML against the engine schema. Exits non-zero on error.  |
+| `decoy validate distribution <source> <output>` | Recompute distribution fidelity between a source and an output CSV. |
+| `decoy run <path>`               | Execute a pipeline: read sources, mask, write targets.                        |
+| `decoy storm <path>`             | Profile a source file: distributions, PII candidates, cardinality hints.      |
+| `decoy templates`                | List the bundled pipeline templates.                                         |
+| `decoy explain <topic>`          | In-CLI reference (exit codes, providers, strategies).                         |
 
 Run `decoy --help` for the full surface, or `decoy <command> --help` for
 any subcommand.

@@ -111,7 +111,7 @@ class TestEveryTemplateValidatesAndRuns:
     def test_mask_template_validate_then_run(self, name: str, tmp_path: Path):
         config_path, out_path, _cfg = _materialize(name, tmp_path)
 
-        validate = runner.invoke(app, ["validate", str(config_path)])
+        validate = runner.invoke(app, ["validate", "config", str(config_path)])
         assert validate.exit_code == 0, f"{name}: validate failed:\n{validate.output}"
 
         run = runner.invoke(app, ["run", str(config_path)])
@@ -129,7 +129,7 @@ class TestEveryTemplateValidatesAndRuns:
         config_path = tmp_path / "generate.yaml"
         config_path.write_text(yaml.safe_dump(cfg), encoding="utf-8")
 
-        validate = runner.invoke(app, ["validate", str(config_path)])
+        validate = runner.invoke(app, ["validate", "config", str(config_path)])
         assert validate.exit_code == 0, f"generate: validate failed:\n{validate.output}"
         run = runner.invoke(app, ["run", str(config_path)])
         assert run.exit_code == 0, f"generate: run failed:\n{run.output}"

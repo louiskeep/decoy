@@ -84,7 +84,7 @@ def test_validate_fail_on_warning_exits_nonzero_when_target_exists(tmp_path: Pat
     # Pre-create the target so the overwrite-advisory warning fires.
     (tmp_path / "out.csv").write_text("id\n1\n", encoding="utf-8")
 
-    result = runner.invoke(app, ["validate", str(p), "--fail-on-warning"])
+    result = runner.invoke(app, ["validate", "config", str(p), "--fail-on-warning"])
     assert result.exit_code != 0, (
         "--fail-on-warning should exit non-zero when an output target already exists "
         f"(got exit {result.exit_code}). output: {result.output}"
@@ -104,7 +104,7 @@ def test_validate_fail_on_warning_exits_zero_when_no_warnings(tmp_path: Path):
     _cfg, p = _valid_v2_mask_config(tmp_path)
     # Do NOT pre-create out.csv -- no warnings should fire.
 
-    result = runner.invoke(app, ["validate", str(p), "--fail-on-warning"])
+    result = runner.invoke(app, ["validate", "config", str(p), "--fail-on-warning"])
     assert result.exit_code == 0, (
         "--fail-on-warning should exit 0 on a clean config with no warnings "
         f"(got exit {result.exit_code}). output: {result.output}"
@@ -120,7 +120,7 @@ def test_validate_json_emits_messages_list_on_success(tmp_path: Path):
     """A3: --json on a clean config emits a `messages` list in the envelope."""
     _cfg, p = _valid_v2_mask_config(tmp_path)
 
-    result = runner.invoke(app, ["validate", str(p), "--json"])
+    result = runner.invoke(app, ["validate", "config", str(p), "--json"])
     assert result.exit_code == 0, result.output
     payload = _json.loads(result.stdout)
     assert "messages" in payload, f"Expected 'messages' key in JSON envelope. Got: {list(payload.keys())}"
@@ -132,7 +132,7 @@ def test_validate_json_messages_include_warnings_when_target_exists(tmp_path: Pa
     _cfg, p = _valid_v2_mask_config(tmp_path)
     (tmp_path / "out.csv").write_text("id\n1\n", encoding="utf-8")
 
-    result = runner.invoke(app, ["validate", str(p), "--json"])
+    result = runner.invoke(app, ["validate", "config", str(p), "--json"])
     # Config is valid -> exit 0, but messages may include warnings
     payload = _json.loads(result.stdout)
     assert "messages" in payload
@@ -151,7 +151,7 @@ def test_validate_json_messages_each_have_required_fields(tmp_path: Path):
     _cfg, p = _valid_v2_mask_config(tmp_path)
     (tmp_path / "out.csv").write_text("id\n", encoding="utf-8")
 
-    result = runner.invoke(app, ["validate", str(p), "--json"])
+    result = runner.invoke(app, ["validate", "config", str(p), "--json"])
     payload = _json.loads(result.stdout)
     for msg in payload.get("messages", []):
         assert "severity" in msg, f"Message missing 'severity': {msg}"
@@ -183,7 +183,7 @@ def test_validate_json_emits_multiple_errors_for_invalid_config(tmp_path: Path):
     p = tmp_path / "bad.yaml"
     p.write_text(yaml.dump(bad_cfg), encoding="utf-8")
 
-    result = runner.invoke(app, ["validate", str(p), "--json"])
+    result = runner.invoke(app, ["validate", "config", str(p), "--json"])
     assert result.exit_code != 0
     payload = _json.loads(result.stdout)
     assert "messages" in payload
@@ -202,7 +202,7 @@ def test_validate_json_emits_multiple_errors_for_invalid_config(tmp_path: Path):
 def test_validate_human_readable_still_works_with_new_flags(tmp_path: Path):
     """A5: default (non-JSON) output still shows OK on a clean config."""
     _cfg, p = _valid_v2_mask_config(tmp_path)
-    result = runner.invoke(app, ["validate", str(p)])
+    result = runner.invoke(app, ["validate", "config", str(p)])
     assert result.exit_code == 0
     assert "OK" in result.stdout
 
@@ -212,7 +212,7 @@ def test_validate_human_readable_shows_warning_hint_when_target_exists(tmp_path:
     _cfg, p = _valid_v2_mask_config(tmp_path)
     (tmp_path / "out.csv").write_text("id\n", encoding="utf-8")
 
-    result = runner.invoke(app, ["validate", str(p)])
+    result = runner.invoke(app, ["validate", "config", str(p)])
     # Should still exit 0 (warnings are not errors)
     assert result.exit_code == 0
     # Warning text should appear somewhere in combined output
@@ -230,7 +230,7 @@ def test_validate_json_messages_key_present_on_success_no_warnings(tmp_path: Pat
     """A6: `messages` is present even when there are no warnings -- empty list."""
     _cfg, p = _valid_v2_mask_config(tmp_path)
     # Ensure no pre-existing output file
-    result = runner.invoke(app, ["validate", str(p), "--json"])
+    result = runner.invoke(app, ["validate", "config", str(p), "--json"])
     payload = _json.loads(result.stdout)
     assert "messages" in payload
     assert payload["messages"] == []
@@ -240,6 +240,6 @@ def test_validate_json_messages_key_present_on_success_no_warnings(tmp_path: Pat
 def test_validate_flag_is_recognized(tmp_path: Path, extra_flag: str):
     """Flag smoke: --fail-on-warning is accepted by the CLI (no 'unrecognized option' error)."""
     _cfg, p = _valid_v2_mask_config(tmp_path)
-    result = runner.invoke(app, ["validate", str(p), extra_flag])
+    result = runner.invoke(app, ["validate", "config", str(p), extra_flag])
     assert "No such option" not in result.output
     assert "Error: No such option" not in result.output

@@ -3,7 +3,7 @@
 # Replace columns of an input CSV with masked values. Edit the source +
 # target paths, then:
 #
-#   decoy validate examples/mask_example.yaml
+#   decoy validate config examples/mask_example.yaml
 #   decoy run examples/mask_example.yaml
 #
 # Keyed deterministic masking (recommended for portable output across

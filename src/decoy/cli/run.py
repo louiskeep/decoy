@@ -13,7 +13,9 @@ before this module sees them.
 
 import binascii
 import json as _json
+import os
 import time
+from datetime import datetime, timezone
 from enum import Enum
 from pathlib import Path
 
@@ -30,6 +32,12 @@ from decoy.ui.theme import error, hint, warn
 class Mode(str, Enum):
     mask = "mask"
     generate = "generate"
+
+
+class NotifyOn(str, Enum):
+    success = "success"
+    failure = "failure"
+    always = "always"
 
 
 _RUN_EPILOG = """\
@@ -54,7 +62,17 @@ Examples:
     (--substrate only affects --chunked runs; plain runs always use pandas.
     See: decoy explain substrate.)
 
-See also: decoy validate, decoy explain chunked, decoy explain vault.
+  decoy run pipeline.yaml --notify webhook:https://hooks.example.com/x
+    Notify a webhook after the run reaches its terminal state. Repeatable;
+    kind in webhook/slack/email. Best-effort: a channel failure never
+    changes the run's exit code. Webhook signing key from
+    DECOY_NOTIFY_WEBHOOK_SECRET; SMTP from DECOY_NOTIFY_SMTP_HOST/_PORT/
+    _USER/_PASS/_FROM. Nothing is persisted to .decoy/workspace.json.
+
+  decoy run pipeline.yaml --notify slack:https://hooks.slack.com/services/x --notify-on failure
+    Only notify on a failed run.
+
+See also: decoy validate config, decoy validate distribution, decoy explain chunked, decoy explain vault.
 """
 
 
@@ -197,6 +215,26 @@ def run(
             "See: decoy explain evidence (when available)."
         ),
     ),
+    notify: list[str] = typer.Option(
+        [],
+        "--notify",
+        help=(
+            "Notify a channel after the run reaches its terminal state. "
+            "Repeatable. Spec is 'kind:target': webhook:<url>, slack:<url>, "
+            "email:<address>. Best-effort: a channel failure never changes "
+            "the run's exit code. Webhook signing key from "
+            "DECOY_NOTIFY_WEBHOOK_SECRET (unsigned if unset); SMTP from "
+            "DECOY_NOTIFY_SMTP_HOST/_PORT/_USER/_PASS/_FROM. Nothing is "
+            "persisted to .decoy/workspace.json -- targets and secrets are "
+            "flags/env only, never written to disk."
+        ),
+    ),
+    notify_on: NotifyOn = typer.Option(
+        NotifyOn.always,
+        "--notify-on",
+        help="Which terminal outcome(s) to notify on: success, failure, or always.",
+        case_sensitive=False,
+    ),
 ) -> None:
     """Run a decoy pipeline from a YAML config.
 
@@ -206,6 +244,27 @@ def run(
     """
     state = setup_output(json_, quiet, verbose)
     config_str = str(config)
+
+    # Parse --notify specs BEFORE the run (D3): a bad spec is a usage error
+    # the user can fix, never a run failure. Notification is a side effect
+    # appended after the run reaches its terminal state; it must never
+    # change what the run itself does.
+    notify_channels = []
+    if notify:
+        from decoy.notify import NotifySpecError, parse_notify_spec
+
+        try:
+            notify_channels = [parse_notify_spec(spec) for spec in notify]
+        except NotifySpecError as exc:
+            msg = str(exc)
+            if state.mode is OutputMode.json:
+                emit_json(
+                    state,
+                    {"command": "run", "status": "error", "config": config_str, "error": msg},
+                )
+            elif state.mode is not OutputMode.quiet:
+                state.err_console.print(error("error:"), msg)
+            raise typer.Exit(code=EXIT_USAGE)
 
     raw_cfg = _load_raw_config(config)
     yaml_mode = _detect_mode(raw_cfg) or mode.value
@@ -229,7 +288,12 @@ def run(
     _ev_row_counts: dict | None = None
     _ev_timings: tuple = ()
     _ev_engine_warnings: tuple = ()
+    # Row count for the --notify event; unconditional (unlike _ev_row_counts,
+    # which only fills for --evidence-out). None for --chunked runs (no
+    # ExecutionResult to count).
+    _notify_row_count: int | None = None
 
+    _run_started_at = datetime.now(timezone.utc)
     started = time.perf_counter()
     try:
         with spinner(state, f"Running {yaml_mode}..."):
@@ -305,6 +369,7 @@ def run(
                     _ev_row_counts = {name: len(tbl) for name, tbl in result.outputs.items()}
                 _ev_timings = result.timings
                 _ev_engine_warnings = result.warnings
+                _notify_row_count = sum(len(tbl) for tbl in result.outputs.values())
             if vault_writer is not None:
                 vault_writer.write(vault)
     except typer.Exit:
@@ -343,17 +408,38 @@ def run(
         error_text = str(exc)
         if len(error_text) > 500:
             error_text = error_text[:500] + "..."
+
+        # PII egress guard (dennis sprint-5 BLOCKER): the raw engine error
+        # can quote source-row cell values verbatim (see the comment above),
+        # so it MUST NOT ride into an outbound notification, which is POSTed
+        # to a third-party webhook / Slack / email. Only the exception TYPE
+        # name goes on the wire; the raw error_text stays on local stdout /
+        # stderr and the --json envelope below where the operator already
+        # sees it. Redaction by construction, mirroring the platform's
+        # facts-only alert rule (dispatcher.py:137-142).
+        notify_results = _dispatch_run_notifications(
+            notify_channels,
+            notify_on=notify_on.value,
+            status="failure",
+            config_path=config_str,
+            row_count=None,
+            started_at=_run_started_at,
+            finished_at=datetime.now(timezone.utc),
+            error_summary=type(exc).__name__,
+            state=state,
+        )
+
         if state.mode is OutputMode.json:
-            emit_json(
-                state,
-                {
-                    "command": "run",
-                    "status": "error",
-                    "config": config_str,
-                    "mode": yaml_mode,
-                    "error": error_text,
-                },
-            )
+            payload = {
+                "command": "run",
+                "status": "error",
+                "config": config_str,
+                "mode": yaml_mode,
+                "error": error_text,
+            }
+            if notify_channels:
+                payload["notify"] = notify_results
+            emit_json(state, payload)
         elif state.mode is not OutputMode.quiet:
             state.err_console.print(error("error:"), error_text)
             state.err_console.print(
@@ -402,30 +488,47 @@ def run(
         verbose=state.verbose,
     )
 
+    notify_results = _dispatch_run_notifications(
+        notify_channels,
+        notify_on=notify_on.value,
+        status="success",
+        config_path=config_str,
+        row_count=_notify_row_count,
+        started_at=_run_started_at,
+        finished_at=datetime.now(timezone.utc),
+        error_summary=None,
+        state=state,
+    )
+
     if state.mode is OutputMode.json:
-        emit_json(
-            state,
-            {
-                "command": "run",
-                "status": "ok",
-                "config": config_str,
-                "mode": yaml_mode,
-                "elapsed_s": round(elapsed, 3),
-            },
-        )
+        payload = {
+            "command": "run",
+            "status": "ok",
+            "config": config_str,
+            "mode": yaml_mode,
+            "elapsed_s": round(elapsed, 3),
+        }
+        if notify_channels:
+            payload["notify"] = notify_results
+        emit_json(state, payload)
         return
 
     if state.mode is OutputMode.quiet:
         return
 
+    facts = [
+        ("Pipeline", config.name),
+        ("Mode", yaml_mode),
+        ("Elapsed", f"{elapsed:.2f}s"),
+    ]
+    if notify_channels:
+        delivered = sum(1 for r in notify_results if r["delivered"])
+        facts.append(("Notify", f"{delivered}/{len(notify_results)} delivered"))
+
     render_card(
         state,
         command="decoy run",
-        facts=[
-            ("Pipeline", config.name),
-            ("Mode", yaml_mode),
-            ("Elapsed", f"{elapsed:.2f}s"),
-        ],
+        facts=facts,
         next_hint=_next_hint_for_run(raw_cfg, mode),
         status="ok",
     )
@@ -788,6 +891,72 @@ def _record_run_to_catalog(
                 f"`decoy jobs list`): {_exc}",
                 file=_sys.stderr,
             )
+
+
+def _dispatch_run_notifications(
+    channels: list,
+    *,
+    notify_on: str,
+    status: str,
+    config_path: str,
+    row_count: int | None,
+    started_at,
+    finished_at,
+    error_summary: str | None,
+    state,
+) -> list[dict]:
+    """Best-effort post-run notification fan-out (N3).
+
+    Called AFTER the run reaches its terminal state (both the success tail
+    and the failure tail call this). Never raises and never changes the
+    run's own exit code: a channel failure only logs a stderr warning and
+    is reflected in the returned per-channel results (D2 -- "alerting must
+    never take a job down", mirrors dispatcher.py:14-17). Returns `[]`
+    when no --notify channels were configured, or when --notify-on filters
+    out this outcome.
+    """
+    if not channels:
+        return []
+
+    from decoy.notify import SmtpConfig, build_run_event, dispatch, should_notify
+
+    if not should_notify(notify_on, status):
+        return []
+
+    try:
+        event = build_run_event(
+            status=status,
+            config_path=config_path,
+            row_count=row_count,
+            started_at=started_at,
+            finished_at=finished_at,
+            error_summary=error_summary,
+        )
+        webhook_secret = os.environ.get("DECOY_NOTIFY_WEBHOOK_SECRET")
+        smtp = SmtpConfig(
+            host=os.environ.get("DECOY_NOTIFY_SMTP_HOST", ""),
+            port=int(os.environ.get("DECOY_NOTIFY_SMTP_PORT") or 587),
+            user=os.environ.get("DECOY_NOTIFY_SMTP_USER") or None,
+            password=os.environ.get("DECOY_NOTIFY_SMTP_PASS") or None,
+            from_addr=os.environ.get("DECOY_NOTIFY_SMTP_FROM") or None,
+        )
+        results = dispatch(event, channels, webhook_secret=webhook_secret, smtp=smtp)
+        if state.mode is not OutputMode.quiet:
+            for r in results:
+                if not r.delivered:
+                    detail = f": {r.detail}" if r.detail else "."
+                    state.err_console.print(
+                        warn("warning:"),
+                        f"notify {r.kind} to {r.target_host} did not deliver{detail}",
+                    )
+        return [
+            {"kind": r.kind, "delivered": r.delivered, "target_host": r.target_host}
+            for r in results
+        ]
+    except Exception as exc:  # notify must never take the run down (D2)
+        if state.mode is not OutputMode.quiet:
+            state.err_console.print(warn("warning:"), f"notify dispatch failed: {exc}")
+        return []
 
 
 # The epilog is wired by __main__ at command registration time; the

@@ -105,7 +105,7 @@ def test_init_validate_then_run_smoke(csv_with_pii: Path, tmp_path: Path):
     assert str(csv_with_pii) in body or csv_with_pii.name in body
 
     # `decoy validate` exits 0 against the scaffolded YAML.
-    validate_result = runner.invoke(app, ["validate", str(out), "--quiet"])
+    validate_result = runner.invoke(app, ["validate", "config", str(out), "--quiet"])
     assert validate_result.exit_code == 0, (
         validate_result.stdout + validate_result.stderr
     )
