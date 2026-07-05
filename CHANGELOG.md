@@ -8,6 +8,23 @@ version numbers follow the [versioning policy](docs/release/versioning.md).
 
 ## [Unreleased]
 
+### Fixed (#15, 2026-07-04)
+
+- **HIPAA template disguise-version drift (under-masking regression)**:
+  the bundled `hipaa` template's `mrn` column still used FPE
+  `charset: alphanum` after the engine's HIPAA disguise widened it to
+  `ALPHANUM` (2026-06-29, passthrough-leak fix: FPE's
+  `preserve_separators` mode passes characters outside the configured
+  charset through unchanged, so lowercase-only `alphanum` let uppercase
+  letters in institution-specific MRN formats, e.g. `MRN12345A`, leak
+  in the clear). The template was never re-derived against the new
+  disguise version, so the CLI's default HIPAA scaffold shipped the
+  same under-masking defect. Fixed by widening the template's `mrn`
+  charset to `ALPHANUM` and bumping its `x-derived-from-disguise`
+  pin to `hipaa@2026-06-29`. The `test_template_disguise_drift.py`
+  guard (`test_pinned_version_matches_live_disguise` +
+  `test_every_mapped_column_matches_its_disguise_rule`) now passes.
+
 ### Added (SP-16 CLI foundation, 2026-06-28)
 
 - **`decoy validate --fail-on-warning`**: exits non-zero (code 2) when any
