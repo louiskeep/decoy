@@ -8,6 +8,7 @@ Try one of:
   decoy profile data.csv           Dataset shape, field stats, PII candidates (suggestions).
   decoy compile pipeline.yaml --explain  Explain per-column strategy and compile decisions.
   decoy run pipeline.yaml          Run a masking or generation pipeline.
+  decoy subset pipeline.yaml --dry-run   Preview a FK-aware referential subset.
   decoy validate pipeline.yaml     Check a YAML pipeline before running.
   decoy unmask pipeline.yaml masked.csv   Recover fpe columns from a masked file.
   decoy fit source.csv             Fit a distribution snapshot for statistical generation.
@@ -52,6 +53,7 @@ $ decoy [OPTIONS] COMMAND [ARGS]...
 * `doctor`: Check engine and dependency health.
 * `compile`: Compile a pipeline config and run...
 * `profile`: Profile a source dataset: shape, field...
+* `subset`: Cut a referentially-complete FK-aware...
 * `storm`: Dataset analysis -- the STORM event.
 * `templates`: Browse and dump bundled starter pipeline...
 * `vault`: Vault inspection utilities.
@@ -714,6 +716,71 @@ No raw cell values appear in the output. Field stats include dtype, null_rate,
 distinct_count only.
 
 See also: decoy storm analyze, decoy explain storm, decoy validate.
+
+
+## `decoy subset`
+
+Cut a referentially-complete FK-aware subset of a relational dataset.
+
+Seeds a subset of root-table rows (per the config&#x27;s `subset.seeds:`
+block) and pulls every row needed to keep foreign keys intact: children
+of a surviving parent (downward) and, by default, every parent of a
+surviving child (upward -- prevents dangling FKs). Runs a fail-closed
+preflight first (Parquet-only, schema/type checks, source-orphan scan)
+and a budget check before any output is written.
+
+`--dry-run` computes the same estimate and writes nothing; use it to see
+the projected row counts before committing to a real run.
+
+**Usage**:
+
+```console
+$ decoy subset [OPTIONS] CONFIG
+```
+
+**Arguments**:
+
+* `CONFIG`: Path to the YAML pipeline config (must declare a subset: block).  [required]
+
+**Options**:
+
+* `--out PATH`: Output directory for the filtered Parquet + subset-manifest.json. Required unless --dry-run. Must not already exist as a non-empty directory.
+* `--dry-run`: Compute the projected per-table row counts and print them WITHOUT materializing anything. No Parquet is written, no output_dir is created or touched. Use this before every real run.
+* `--json`: Emit a structured JSON result on stdout.
+* `-q, --quiet`: Suppress stdout. Errors still go to stderr; exit code carries the result.
+* `-v, --verbose`: Enable debug-level CLI logs on stderr.
+* `--help`: Show this message and exit.
+
+Examples:
+
+  decoy subset pipeline.yaml --dry-run
+    Compute and print the projected per-table row counts WITHOUT writing
+    anything. Runs the full preflight + closure estimate. Always do this
+    before a real run on data you have not subsetted before.
+
+  decoy subset pipeline.yaml --out subset_out/
+    Run the subset for real: write filtered Parquet per table plus
+    subset-manifest.json into subset_out/. subset_out/ must not already
+    exist (or must be empty).
+
+  decoy subset pipeline.yaml --out subset_out/ --json
+    Same as above, structured JSON result on stdout.
+
+The pipeline YAML must declare a `subset:` block (seeds + optional budget /
+edge_directions / allow_dangling) alongside its `relationships:` block --
+the same config surface `decoy run` reads. See `decoy schema` for the full
+shape.
+
+What this command checks before touching any data:
+  - Every subsetted/relationship table's source is Parquet (subsetting does
+    not run on CSV; the error names the offending table).
+  - Every relationship edge's key columns exist, are type-compatible, and
+    are not a half-declared composite.
+  - Source-level FK orphans, per each relationship's orphan_policy.
+  - The fan-out budget (max_total_rows / max_table_seed_multiple), BEFORE
+    any output directory is created.
+
+See also: decoy run, decoy validate, decoy preflight.
 
 
 ## `decoy storm`
