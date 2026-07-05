@@ -43,6 +43,8 @@ from decoy.cli.run import run as run_command
 from decoy.cli.schema import SCHEMA_EPILOG
 from decoy.cli.schema import schema as schema_command
 from decoy.cli.storm import storm_app
+from decoy.cli.subset import SUBSET_EPILOG
+from decoy.cli.subset import subset as subset_command
 from decoy.cli.templates import templates_app
 from decoy.cli.unmask import UNMASK_EPILOG
 from decoy.cli.unmask import unmask as unmask_command
@@ -61,6 +63,7 @@ Try one of:
   decoy profile data.csv           Dataset shape, field stats, PII candidates (suggestions).
   decoy compile pipeline.yaml --explain  Explain per-column strategy and compile decisions.
   decoy run pipeline.yaml          Run a masking or generation pipeline.
+  decoy subset pipeline.yaml --dry-run   Preview a FK-aware referential subset.
   decoy validate config pipeline.yaml  Check a YAML pipeline before running.
   decoy unmask pipeline.yaml masked.csv   Recover fpe columns from a masked file.
   decoy fit source.csv             Fit a distribution snapshot for statistical generation.
@@ -132,6 +135,7 @@ app.add_typer(catalog_app, name="catalog")
 app.add_typer(jobs_app, name="jobs")
 app.command(name="compile", epilog=COMPILE_EPILOG)(compile_command)
 app.command(name="profile", epilog=PROFILE_EPILOG)(profile_command)
+app.command(name="subset", epilog=SUBSET_EPILOG)(subset_command)
 
 
 if __name__ == "__main__":
