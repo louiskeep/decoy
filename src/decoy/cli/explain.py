@@ -157,8 +157,10 @@ _TOPICS: dict[str, _Topic] = {
             "    strategy: faker\n"
             "    provider: person_email\n\n"
             "Use `key_label:` with DECOY_MASTER_KEY when you need portable deterministic\n"
-            "masking across machines. Treat STORM scan JSON, reference\n"
-            "files, and real input/output files as sensitive artifacts.\n\n"
+            "synthetic generation across machines (generate_columns:). For portable keyed\n"
+            "MASKING, set `global_settings.mask_secret_ref` instead -- see `decoy explain keys`.\n"
+            "Treat STORM scan JSON, reference files, and real input/output files as\n"
+            "sensitive artifacts.\n\n"
             "Full guide in the docs hub:\n"
             "  decoy-platform/docs/guides/cli-yaml-workflows.md"
         ),
@@ -181,20 +183,32 @@ _TOPICS: dict[str, _Topic] = {
     ),
     "keys": _Topic(
         name="keys",
-        summary="Keyed deterministic masking with --master-key.",
+        summary="Two separate key mechanisms: --master-key for generation, mask_secret_ref for masking.",
         body=(
-            "By default, masking is per-input deterministic: same value -> same masked output\n"
-            "within one run, but the output relation is not portable across machines or pipelines.\n\n"
-            "With --master-key (32-byte hex) plus a --key-label, the engine derives masking keys\n"
-            "from the master/label pair, so:\n"
-            "  - Same key + same label -> bitwise-identical masked output, anywhere, anytime.\n"
-            "  - Same key + different label -> different output (label is the namespace).\n\n"
-            "Generate a key:\n"
-            "  python -c 'import secrets; print(secrets.token_hex(32))'\n\n"
-            "Pass it via the --master-key flag, the DECOY_MASTER_KEY env var, or both. The label\n"
-            "can be passed via --key-label or set as `key_label:` at the top of the pipeline YAML.\n"
-            "Pick a stable label that won't change ('customers_q4_2026'); changing it produces\n"
-            "different masked output."
+            "Decoy has two independent keyed-determinism mechanisms. They do not share a\n"
+            "secret and setting one has no effect on the other.\n\n"
+            "1) SYNTHETIC GENERATION (generate_columns:) -- `--master-key` / `--key-label`\n"
+            "   By default, generation is per-input deterministic: same seed -> same\n"
+            "   generated output within one run, but not portable across machines.\n"
+            "   With --master-key (32-byte hex) plus a --key-label, the engine derives\n"
+            "   generation keys from the master/label pair, so:\n"
+            "     - Same key + same label -> bitwise-identical generated output, anywhere.\n"
+            "     - Same key + different label -> different output (label is the namespace).\n"
+            "   Generate a key:\n"
+            "     python -c 'import secrets; print(secrets.token_hex(32))'\n"
+            "   Pass it via --master-key, the DECOY_MASTER_KEY env var, or both. The label\n"
+            "   can be passed via --key-label or set as `key_label:` in the pipeline YAML.\n\n"
+            "2) MASKING (mask: strategies) -- `global_settings.mask_secret_ref` in the YAML\n"
+            "   --master-key does NOT affect masking. Keyed masking strategies (fpe, hash,\n"
+            "   date_shift, and others) are keyed off a secret referenced from the pipeline\n"
+            "   YAML, never a CLI flag:\n"
+            "     global_settings:\n"
+            "       mask_secret_ref: \"env:DECOY_MASK_SECRET\"   # or \"file:/path/to/secret\"\n"
+            "   The ref points at a >=32-byte secret (hex or base64); the CLI reads it from\n"
+            "   the referenced env var or file at run time and never logs or serializes it.\n"
+            "   Without mask_secret_ref, keyed masking strategies still run but are not\n"
+            "   portable across machines/pipelines (fail-closed at GA if no key resolves\n"
+            "   for a config that needs one)."
         ),
         see_also=("decoy run --help",),
     ),
@@ -285,7 +299,8 @@ _TOPICS: dict[str, _Topic] = {
             "Keep these artifacts private:\n"
             "  - Raw input files and masked/generated outputs.\n"
             "  - STORM scan JSON, because it can contain sensitive aggregates and top values.\n"
-            "  - Master keys and key labels.\n"
+            "  - Master keys and key labels (generation) and mask_secret_ref secrets\n"
+            "    (masking) -- see `decoy explain keys`.\n"
             "  - Reference files and categorical policy values.\n\n"
             "Prefer DECOY_MASTER_KEY over --master-key so the raw key is less likely to\n"
             "land in shell history. Do not commit scan JSON, real data, or keys.\n\n"

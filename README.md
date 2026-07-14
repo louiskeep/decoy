@@ -66,8 +66,8 @@ declared under `targets:` in the YAML.
 | `decoy validate config <path>`   | Validate a pipeline YAML against the engine schema. Exits non-zero on error.  |
 | `decoy validate distribution <source> <output>` | Recompute distribution fidelity between a source and an output CSV. |
 | `decoy run <path>`               | Execute a pipeline: read sources, mask, write targets.                        |
-| `decoy storm <path>`             | Profile a source file: distributions, PII candidates, cardinality hints.      |
-| `decoy templates`                | List the bundled pipeline templates.                                         |
+| `decoy storm analyze <path>`     | Profile a source file: distributions, PII candidates, cardinality hints.      |
+| `decoy templates list`           | List the bundled pipeline templates.                                         |
 | `decoy explain <topic>`          | In-CLI reference (exit codes, providers, strategies).                         |
 
 Run `decoy --help` for the full surface, or `decoy <command> --help` for

@@ -140,11 +140,17 @@ def run(
         "--master-key",
         envvar="DECOY_MASTER_KEY",
         help=(
-            "64-char hex master key for keyed deterministic masking. "
-            "Same key + same --key-label always yield bitwise-identical "
-            "output across runs and machines. Reads DECOY_MASTER_KEY env "
-            "var when omitted; without either, masking falls back to the "
-            "legacy seeded path (per-input deterministic but not portable)."
+            "64-char hex master key for keyed deterministic SYNTHETIC "
+            "GENERATION only (generate_columns:). Same key + same "
+            "--key-label always yield bitwise-identical generated output "
+            "across runs and machines. Reads DECOY_MASTER_KEY env var when "
+            "omitted; without either, generation falls back to the legacy "
+            "seeded path (per-input deterministic but not portable). "
+            "This flag does NOT affect masking -- masking's keyed "
+            "determinism is configured separately via the pipeline YAML's "
+            "'global_settings.mask_secret_ref' (e.g. 'env:DECOY_MASK_SECRET' "
+            "or 'file:/path/to/secret'), never a CLI flag or env var read "
+            "here. See: decoy explain keys."
         ),
     ),
     chunked: bool = typer.Option(
@@ -195,10 +201,11 @@ def run(
         None,
         "--key-label",
         help=(
-            "Stable namespace string for the masking key hierarchy. "
-            "Required when --master-key is set. Pick something durable "
-            "(e.g. 'customers_q4'); changing it produces a different "
-            "masked output. Read from the YAML's top-level 'key_label:' "
+            "Stable namespace string for the --master-key generation key "
+            "hierarchy (synthetic generation only, not masking). Required "
+            "when --master-key is set. Pick something durable "
+            "(e.g. 'customers_q4'); changing it produces different "
+            "generated output. Read from the YAML's top-level 'key_label:' "
             "field if not passed on the command line."
         ),
     ),

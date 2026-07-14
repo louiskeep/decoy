@@ -6,7 +6,8 @@ directory. If no workspace is initialized, no history is recorded.
 
 LOCAL ONLY. This command does not connect to the platform server, reflect
 remote job state, or track platform-managed schedules or audit logs.
-Remote job operations belong under `decoy platform jobs` (SP-20, gated).
+There is no `decoy platform` command group -- remote job monitoring is a
+platform-service concern (see the platform web UI / API), not this CLI.
 
 Watch honesty note
 -------------------
@@ -313,8 +314,8 @@ Honesty note -- local CLI runs are SYNCHRONOUS:
   progress for an in-progress run, because local CLI runs have no background
   mechanism that would allow that.
 
-  Remote live job watching (platform jobs running asynchronously) is planned
-  under `decoy platform jobs watch` (SP-20, gated behind platform auth).
+  There is no `decoy platform` command group. Remote/async job monitoring
+  is a platform-service concern, outside this CLI's local-only scope.
 
   To watch a run while it is happening, run it in the foreground:
     decoy run pipeline.yaml
@@ -346,8 +347,8 @@ def _watch(
     completed status.
 
     For live progress during a run, use `decoy run pipeline.yaml` in the
-    foreground -- the spinner shows progress. Remote platform job watching
-    is `decoy platform jobs watch` (SP-20, gated).
+    foreground -- the spinner shows progress. There is no `decoy platform`
+    command group; remote job monitoring is a platform-service concern.
     """
     state = setup_output(json_, quiet, verbose)
     root = _require_workspace(workspace, "jobs watch", state)
@@ -369,7 +370,8 @@ def _watch(
                 "already_complete": True,
                 "note": (
                     "Local CLI runs are synchronous. This run is already complete. "
-                    "Remote platform job watching is `decoy platform jobs watch` (SP-20)."
+                    "There is no `decoy platform` command group; remote job "
+                    "monitoring is a platform-service concern."
                 ),
                 "run": run,
             },
