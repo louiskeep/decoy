@@ -6,9 +6,13 @@
 #   decoy validate config examples/mask_example.yaml
 #   decoy run examples/mask_example.yaml
 #
-# Keyed deterministic masking (recommended for portable output across
-# runs and machines): set DECOY_MASTER_KEY in your env and add
-# `key_label:` below, or pass --master-key / --key-label on the CLI.
+# Keyed deterministic masking (recommended for portable, re-identification-
+# safe output across runs and machines): point `global_settings.mask_secret_ref`
+# below at a >=32-byte secret via `env:NAME` or `file:/PATH`, or pass the
+# equivalent `--mask-secret env:NAME` flag on the CLI. This is the MASKING key.
+# (`--master-key` / `--key-label` are a SEPARATE, generation-only mechanism for
+# generate_columns: pipelines; they do not affect masking. See
+# `decoy explain keys`.)
 #
 # V2 PipelineConfig shape per decoy-engine `decoy_engine.config._pipeline`.
 # Provider names come from the engine's default registry (see
@@ -20,6 +24,10 @@ version: 1
 
 global_settings:
   seed: 42
+  # Uncomment to key the deterministic masking strategies (hash, fpe, ...)
+  # off a real secret instead of the public job_seed. The value is a
+  # REFERENCE, never the raw secret:
+  # mask_secret_ref: "env:DECOY_MASK_SECRET"   # or "file:/path/to/secret"
 
 sources:
   customers:

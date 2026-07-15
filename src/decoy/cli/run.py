@@ -678,10 +678,15 @@ def _build_resolver(master_key_hex: str | None, key_label: str | None, raw_cfg: 
 
     ``raw_cfg`` is accepted (and unused) for call-site symmetry with the
     other pre-flight helpers that share the one parsed YAML dict; it used
-    to feed a top-level YAML ``key_label:`` reader, removed because
-    PipelineConfig's ``extra="forbid"`` rejects that field before a run
-    with one could ever reach this function -- ``--key-label`` is the only
-    live source (doc/config mismatch fix, see `decoy explain keys`).
+    to feed a top-level YAML ``key_label:`` reader. This function runs
+    early (the run() body calls it ~L307), BEFORE ``PipelineConfig
+    .model_validate`` (~L371), so that reader could observe a top-level
+    ``key_label:`` value -- but model_validate then runs on the same raw
+    dict and PipelineConfig's ``extra="forbid"`` rejects the unknown field,
+    so a config carrying it could never reach a successful run regardless
+    of what the reader returned. The reader was therefore dead and
+    misleading; it is removed. ``--key-label`` is the only live source
+    (doc/config mismatch fix, see `decoy explain keys`).
     """
     if not master_key_hex:
         return None

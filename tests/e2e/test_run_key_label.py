@@ -77,26 +77,44 @@ class TestTopLevelYamlKeyLabelIsRejected:
             "a rejected config must not produce output"
         )
 
-    def test_top_level_key_label_fails_even_with_master_key(self, tmp_path: Path) -> None:
-        """Even when --master-key + top-level YAML key_label are both
-        present (the exact shape the old docs recommended), the run still
-        fails: PipelineConfig.model_validate rejects the raw config
-        regardless of what the CLI did with the value beforehand."""
+    def test_top_level_key_label_rejected_by_schema_even_with_valid_flags(
+        self, tmp_path: Path
+    ) -> None:
+        """Pass BOTH --master-key AND --key-label so the resolver builds
+        cleanly and the run reaches `PipelineConfig.model_validate` -- that
+        is what actually exercises the `extra="forbid"` schema rejection of
+        the top-level YAML `key_label:`.
+
+        (Contrast with a --master-key-only run, which fails earlier in
+        `_build_resolver` for a MISSING --key-label and never reaches the
+        schema -- so it would not prove the mechanism claimed here.)"""
         cfg = _generate_pipeline(tmp_path, top_level_key_label="customers_q4")
         master_key = secrets.token_hex(32)
-        result = runner.invoke(app, ["run", str(cfg), "--master-key", master_key])
+        result = runner.invoke(
+            app,
+            ["run", str(cfg), "--master-key", master_key, "--key-label", "flag_label"],
+        )
 
+        # The resolver built fine (both flags valid); the failure is the
+        # schema rejecting the unknown top-level key. Pydantic's message
+        # names the offending field and the extra_forbidden rule.
         assert result.exit_code != 0
+        assert "key_label" in result.output
+        assert "forbid" in result.output.lower() or "not permitted" in result.output.lower()
         assert not (tmp_path / "employees.csv").exists()
 
     def test_top_level_key_label_error_does_not_claim_yaml_support(
         self, tmp_path: Path
     ) -> None:
         """Regression guard for the doc/config mismatch itself: no CLI-owned
-        message may claim a top-level YAML key_label: works."""
+        message may claim a top-level YAML key_label: works. Uses both flags
+        so the run reaches (and is rejected by) the schema."""
         cfg = _generate_pipeline(tmp_path, top_level_key_label="customers_q4")
         master_key = secrets.token_hex(32)
-        result = runner.invoke(app, ["run", str(cfg), "--master-key", master_key])
+        result = runner.invoke(
+            app,
+            ["run", str(cfg), "--master-key", master_key, "--key-label", "flag_label"],
+        )
 
         assert "top-level" not in result.output
         assert "'key_label:'" not in result.output
