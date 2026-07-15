@@ -15,6 +15,9 @@ flag must not break).
 from __future__ import annotations
 
 import secrets
+import sys
+from contextlib import contextmanager
+from importlib.abc import MetaPathFinder
 from pathlib import Path
 
 import pandas as pd
@@ -29,6 +32,55 @@ runner = CliRunner()
 # Two distinct >=32-byte secrets (hex-encoded per keyprovider's decode rule).
 _SECRET_A = secrets.token_hex(32)
 _SECRET_B = secrets.token_hex(32)
+
+_KEYPROVIDER_MOD = "decoy_engine.keyprovider"
+
+
+class _BlockKeyprovider(MetaPathFinder):
+    """Meta-path finder that makes `import decoy_engine.keyprovider` raise, to
+    simulate a pre-DE-02 engine that has no keyprovider module. Returns None
+    for every other module so normal imports are untouched."""
+
+    def find_spec(self, fullname, path, target=None):
+        if fullname == _KEYPROVIDER_MOD:
+            raise ModuleNotFoundError(f"No module named {_KEYPROVIDER_MOD!r}", name=fullname)
+        return None
+
+
+@contextmanager
+def _simulate_pre_de02_engine():
+    """Make a FRESH `import decoy_engine.keyprovider` raise, to model a
+    pre-DE-02 engine -- while leaving the already-loaded engine intact.
+
+    Subtlety: the whole engine module-level chain imports keyprovider
+    (decoy_engine/__init__ -> ... -> execution/_sequential), so we first force
+    `import decoy_engine` to guarantee that entire graph is cached. Only THEN
+    do we evict `decoy_engine.keyprovider` from sys.modules and install a
+    raising finder. That makes the block SURGICAL: cached engine modules keep
+    their bound names and keep working, and only a fresh runtime import of
+    keyprovider (the CLI's fail-closed probe) hits the finder. Without the
+    warm-up, evicting keyprovider would cascade and break the engine's own
+    import for an unrelated reason, and the test would pass for the wrong
+    reason regardless of pytest ordering.
+
+    Both the finder and the sys.modules entry are restored in the finally so
+    nothing leaks into other tests. Dennis verified the guard manually with
+    this same meta_path block.
+    """
+    import decoy_engine  # noqa: F401 -- force the full module-level chain to cache
+
+    finder = _BlockKeyprovider()
+    saved = sys.modules.pop(_KEYPROVIDER_MOD, None)
+    sys.meta_path.insert(0, finder)
+    try:
+        yield
+    finally:
+        try:
+            sys.meta_path.remove(finder)
+        except ValueError:
+            pass
+        if saved is not None:
+            sys.modules[_KEYPROVIDER_MOD] = saved
 
 
 def _mask_pipeline(tmp_path: Path, *, mask_secret_ref: str | None = None, rows: int = 50) -> Path:
@@ -409,3 +461,82 @@ class TestMaskSecretChunked:
         assert r_unkeyed.exit_code == 0, r_unkeyed.output
         unkeyed_out = (tmp_path / "chunked_unkeyed" / "out.csv").read_bytes()
         assert unkeyed_out != chunked_out
+
+
+class TestPreDE02EngineGuard:
+    """Lock in the fail-closed engine-capability probe: when a mask secret is
+    configured but the installed engine has no `decoy_engine.keyprovider`
+    (a pre-DE-02 engine), the run is REFUSED before any masking, rather than
+    silently emitting UNKEYED output. Security-relevant guard against silent
+    fail-open. Both the plain and --chunked routes share the same up-front
+    probe, so both are covered."""
+
+    @staticmethod
+    def _assert_refused_by_guard(result, out_csv: Path) -> None:
+        """The result must be the GUARD's clean refusal, not an incidental
+        crash. The guard emits its distinctive message and exits EXIT_USAGE;
+        an engine crash under the block would emit nothing and exit RUNTIME.
+        Asserting the message text is what makes this test FAIL if the probe is
+        removed (a crash produces empty output, so 'keyprovider' is absent)."""
+        assert result.exit_code == EXIT_USAGE, (
+            f"expected the guard's EXIT_USAGE ({EXIT_USAGE}); got {result.exit_code}. "
+            f"output={result.output!r}"
+        )
+        assert "keyprovider" in result.output and "UNKEYED" in result.output, (
+            "expected the fail-closed guard's message (mentions the missing "
+            f"keyprovider + UNKEYED output); got: {result.output!r}"
+        )
+        # Refused BEFORE masking -> no output artifact leaked.
+        assert not out_csv.exists(), "the run must be refused before writing any (unkeyed) output"
+
+    def test_plain_run_refused_when_keyprovider_absent(self, tmp_path: Path) -> None:
+        cfg = _mask_pipeline(tmp_path, mask_secret_ref="env:DECOY_MASK_SECRET")
+        with _simulate_pre_de02_engine():
+            result = runner.invoke(
+                app,
+                ["run", str(cfg)],  # YAML carries the ref; no flag needed
+                env={"DECOY_MASK_SECRET": _SECRET_A},
+            )
+        self._assert_refused_by_guard(result, tmp_path / "out.csv")
+
+    def test_chunked_run_refused_when_keyprovider_absent(self, tmp_path: Path) -> None:
+        cfg = _mask_pipeline(tmp_path, mask_secret_ref="env:DECOY_MASK_SECRET")
+        with _simulate_pre_de02_engine():
+            result = runner.invoke(
+                app,
+                ["run", str(cfg), "--chunked", "--chunk-size", "37"],
+                env={"DECOY_MASK_SECRET": _SECRET_A},
+            )
+        self._assert_refused_by_guard(result, tmp_path / "out.csv")
+
+    def test_flag_ref_also_refused_when_keyprovider_absent(self, tmp_path: Path) -> None:
+        """The probe fires for a --mask-secret flag ref, not just a YAML ref."""
+        cfg = _mask_pipeline(tmp_path)
+        with _simulate_pre_de02_engine():
+            result = runner.invoke(
+                app,
+                ["run", str(cfg), "--mask-secret", "env:DECOY_MASK_SECRET"],
+                env={"DECOY_MASK_SECRET": _SECRET_A},
+            )
+        self._assert_refused_by_guard(result, tmp_path / "out.csv")
+
+    def test_probe_inert_without_secret_run_succeeds(self, tmp_path: Path) -> None:
+        """The guard must not over-fire: with NO mask secret configured, the
+        `if effective_ref:` gate is False, so the keyprovider probe is never
+        attempted and a plain unkeyed run succeeds.
+
+        This runs WITHOUT the pre-DE-02 block on purpose: the engine itself
+        does a legitimate lazy `import decoy_engine.keyprovider` inside
+        run_pipeline (execution/_pipeline.py), so blocking the module would
+        break the run for a reason unrelated to the CLI guard. The point here
+        is only that the guard leaves a no-secret run alone -- the guard is
+        purely gated on a configured ref, which the refused tests above
+        exercise. (Broader no-secret success coverage: TestMaskSecretKeyedOutput
+        unkeyed runs, tests/e2e/test_run_command.py.)"""
+        cfg = _mask_pipeline(tmp_path)  # no mask_secret_ref, no flag
+        result = runner.invoke(app, ["run", str(cfg)], env={})
+        assert result.exit_code == 0, (
+            f"an unkeyed run must not be blocked by the mask-secret probe; "
+            f"got {result.exit_code}. output={result.output!r}"
+        )
+        assert (tmp_path / "out.csv").exists()
