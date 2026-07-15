@@ -68,18 +68,19 @@ keywords = [
 ]
 
 dependencies = [
-    # Floor bumped 0.1.0 -> 0.3.0 for DE-02 (KeyProvider / keyed-mask
+    # Floor bumped 0.1.0 -> 0.3.0 -> 0.4.0 for DE-02 (KeyProvider / keyed-mask
     # secrets). `--mask-secret` and `global_settings.mask_secret_ref` require
     # the engine's `decoy_engine.keyprovider` module (the resolver + the typed
     # MaskSecretError gate); a pre-DE-02 engine would silently ignore a mask
-    # secret and emit UNKEYED output. 0.3.0 is the version on engine main that
-    # carries keyprovider. NOTE: DE-02 landed in the engine's [Unreleased]
-    # section without its own version bump, so this floor is necessary but not
-    # by itself sufficient -- `decoy run` also runs a fail-closed runtime probe
-    # (import decoy_engine.keyprovider) whenever a mask secret is configured,
-    # so an engine that satisfies the pin but lacks keyprovider is refused
-    # rather than allowed to leak an unkeyed artifact.
-    "decoy-engine>=0.3.0",
+    # secret and emit UNKEYED output. DE-02 first shipped in the engine's
+    # [Unreleased] section (0.3.0 carried keyprovider without its own bump);
+    # engine 0.4.0 is DE-02's release marker, so a >=0.4.0 floor now *guarantees*
+    # keyprovider is present rather than merely being necessary-but-not-sufficient.
+    # `decoy run` still runs a fail-closed runtime probe (import
+    # decoy_engine.keyprovider) whenever a mask secret is configured -- with the
+    # 0.4.0 floor this is defense-in-depth (a source install pinned off a stale
+    # ref) rather than the load-bearing guard it was under the 0.3.0 floor.
+    "decoy-engine>=0.4.0",
     "typer>=0.9",
     "rich>=13.0",
     "duckdb>=0.9",
