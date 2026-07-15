@@ -178,24 +178,51 @@ def test_emit_column_yaml_faker_shape():
     assert "provider: person_email" in body
 
 
-def test_emit_column_yaml_date_shift_carries_default_params():
-    """date_shift entries get default `range_days: 30` so the rendered
-    YAML is runnable without extra user edits."""
+def test_emit_column_yaml_date_shift_carries_default_provider_config():
+    """date_shift entries get default `provider_config.min_days/max_days`
+    (the real keys `_strategies/_date_shift.py` reads) so the rendered
+    YAML is runnable without extra user edits. `params` is not a
+    ColumnConfig field (extra="forbid"), so it must never appear."""
     body = _emit_column_yaml(
         "birth_date",
         Inference(strategy="date_shift", review="x"),
     )
     assert "strategy: date_shift" in body
-    assert "range_days: 30" in body
+    assert "provider_config:" in body
+    assert "min_days: -365" in body
+    assert "max_days: 365" in body
+    assert "params:" not in body
 
 
-def test_emit_column_yaml_truncate_carries_default_params():
-    """truncate entries get default `keep: 3` (HIPAA Safe Harbor for ZIP)."""
+def test_emit_column_yaml_truncate_carries_default_provider_config():
+    """truncate entries get default `provider_config.length: 3` (HIPAA Safe
+    Harbor for ZIP). `keep` is a head/tail direction flag in the engine
+    (_strategies/_truncate.py), not a character count, so the scaffold
+    must not emit `keep: 3`."""
     body = _emit_column_yaml(
         "zip",
         Inference(strategy="truncate", review="x"),
     )
-    assert "keep: 3" in body
+    assert "provider_config:" in body
+    assert "length: 3" in body
+    assert "params:" not in body
+
+
+def test_emit_column_yaml_fpe_has_no_config_block():
+    """fpe needs no per-column config -- the Feistel key is derived from a
+    fixed label + (job_seed, namespace), not a per-column `key_label`
+    (FPE_KEY_LABEL, execution/_strategies/_fpe.py). The old scaffold used
+    to emit a phantom `params: {key_label: default}` block; ColumnConfig
+    has no `params` field (extra="forbid") so that entry always failed
+    PipelineConfig.model_validate."""
+    body = _emit_column_yaml(
+        "card_number",
+        Inference(strategy="fpe", review="x"),
+    )
+    assert "strategy: fpe" in body
+    assert "params:" not in body
+    assert "provider_config:" not in body
+    assert "key_label" not in body
 
 
 def test_yaml_body_parses_through_pipeline_config(tmp_path: Path):

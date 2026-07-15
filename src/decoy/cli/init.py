@@ -170,9 +170,16 @@ def _wrap_review_comment(review: str, indent: str) -> str:
 def _emit_column_yaml(name: str, inference: Inference, indent: str = "      ") -> str:
     """Emit one column block: REVIEW comment + `- name: ...` body.
 
-    The shape matches V2 PipelineConfig (decoy_engine.config._pipeline):
+    The shape matches engine `ColumnConfig` (decoy_engine.config._tables):
     columns under tables[].columns carry name + strategy + (provider for
-    faker) + (params for date_shift / truncate / fpe).
+    faker) + (provider_config for date_shift / truncate -- ColumnConfig has
+    no `params` field; extra="forbid" rejects one). date_shift reads
+    provider_config['min_days'] / ['max_days'] (_strategies/_date_shift.py);
+    truncate reads provider_config['length'] (_strategies/_truncate.py --
+    'keep' there is a 'head'/'tail' direction flag, not a character count).
+    fpe needs no per-column config at all: the Feistel key comes from a
+    fixed label + (job_seed, namespace), not a per-column key_label
+    (FPE_KEY_LABEL, execution/_strategies/_fpe.py).
     """
     lines = [_wrap_review_comment(inference.review, indent)]
     lines.append(f"{indent}- name: {name}")
@@ -181,14 +188,14 @@ def _emit_column_yaml(name: str, inference: Inference, indent: str = "      ") -
     if inference.strategy == "faker" and inference.provider:
         lines.append(f"{body_indent}provider: {inference.provider}")
     elif inference.strategy == "date_shift":
-        lines.append(f"{body_indent}params:")
-        lines.append(f"{body_indent}  range_days: 30")
+        lines.append(f"{body_indent}provider_config:")
+        lines.append(f"{body_indent}  min_days: -365")
+        lines.append(f"{body_indent}  max_days: 365")
     elif inference.strategy == "truncate":
-        lines.append(f"{body_indent}params:")
-        lines.append(f"{body_indent}  keep: 3")
-    elif inference.strategy == "fpe":
-        lines.append(f"{body_indent}params:")
-        lines.append(f"{body_indent}  key_label: default")
+        lines.append(f"{body_indent}provider_config:")
+        lines.append(f"{body_indent}  length: 3")
+    # fpe: REVIEW comment above already explains it; no config block --
+    # the FPE key is derived automatically, not read from column config.
     if inference.deterministic:
         lines.append(f"{body_indent}deterministic: true")
     return "\n".join(lines)
