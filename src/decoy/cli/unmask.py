@@ -244,34 +244,70 @@ def unmask(
     if state.mode is OutputMode.quiet:
         return
 
-    reversed_count = sum(1 for e in entries if e["status"] == "reversed")
-    # DE-02: `reversed_unverified` is a distinct outcome, not a sub-case of
-    # `reversed` -- folding it in would silently claim an authenticated round
-    # trip for a column decrypted under the non-secret job_seed fallback.
-    # Report it as its own line item so the count and the warning below both
-    # surface it.
-    reversed_unverified_count = sum(
-        1 for e in entries if e["status"] == "reversed_unverified"
+    # `table_missing` is a pseudo-entry (column "*") for a CONFIGURED TABLE
+    # absent from this single-file input (engine unmask.py ~L247), not a
+    # column of the file we processed. Split it out so it is never counted
+    # as a "column(s)"; it gets its own clause below.
+    table_missing = [e for e in entries if e["status"] == "table_missing"]
+    column_entries = [e for e in entries if e["status"] != "table_missing"]
+
+    # Complete census: every present-column status the engine can emit
+    # (enumerated from decoy_engine/unmask.py), so the counts always sum to
+    # the number of real columns and no status can silently vanish. Keeping
+    # all six -- not just the ones a given run happens to hit -- is what makes
+    # the arithmetic honest if a previously-unreachable status starts firing.
+    _CENSUS_STATUSES = (
+        "reversed",
+        "reversed_unverified",
+        "vault_reversed",
+        "vault_miss",
+        "irreversible",
+        "untouched",
     )
-    vault_reversed_count = sum(1 for e in entries if e["status"] == "vault_reversed")
+    counts = {
+        status: sum(1 for e in column_entries if e["status"] == status)
+        for status in _CENSUS_STATUSES
+    }
     summary = (
-        f"  {reversed_count} column(s) reversed, "
-        f"{sum(1 for e in entries if e['status'] == 'irreversible')} irreversible, "
-        f"{sum(1 for e in entries if e['status'] == 'untouched')} untouched."
+        f"  {counts['reversed']} column(s) reversed, "
+        f"{counts['irreversible']} irreversible, "
+        f"{counts['untouched']} untouched."
     )
-    if reversed_unverified_count:
-        summary = summary[:-1] + f", {reversed_unverified_count} reversed (unverified)."
-    if vault is not None:
-        summary = summary[:-1] + f", {vault_reversed_count} vault-reversed."
+    # Surface each secondary bucket whenever it is non-empty, independent of
+    # --vault: `vault_miss` arises precisely when a vault could NOT reverse a
+    # requested column, and `reversed_unverified` when fpe reversed under the
+    # non-secret job_seed fallback -- both are genuine per-column outcomes an
+    # operator must see, not artifacts of whether a vault was passed.
+    if counts["reversed_unverified"]:
+        summary = summary[:-1] + f", {counts['reversed_unverified']} reversed (unverified)."
+    if counts["vault_reversed"]:
+        summary = summary[:-1] + f", {counts['vault_reversed']} vault-reversed."
+    if counts["vault_miss"]:
+        summary = summary[:-1] + f", {counts['vault_miss']} vault-miss."
+    # Absent configured tables are their own clause so real columns and
+    # missing tables are never conflated in one count.
+    if table_missing:
+        summary = summary[:-1] + (
+            f", {len(table_missing)} configured table(s) not in this input."
+        )
     state.console.print(success("OK"), code(str(out_path)))
     state.console.print(summary)
     for e in entries:
         if (
             e["status"]
-            in ("reversed", "reversed_unverified", "vault_reversed", "vault_miss")
+            in (
+                "reversed",
+                "reversed_unverified",
+                "vault_reversed",
+                "vault_miss",
+                "table_missing",
+            )
             and e["detail"]
         ):
-            state.console.print(" ", warn("note:"), f"{e['column']}: {e['detail']}")
+            # table_missing carries column "*"; name the table instead so the
+            # note identifies which configured table was absent.
+            label = e["column"] if e["column"] != "*" else e["table"]
+            state.console.print(" ", warn("note:"), f"{label}: {e['detail']}")
 
 
 UNMASK_EPILOG = _UNMASK_EPILOG

@@ -8,21 +8,32 @@ version numbers follow the [versioning policy](docs/release/versioning.md).
 
 ## [Unreleased]
 
-### Fixed (`decoy unmask` console summary hides unverified reversals, 2026-07-15)
+### Fixed (`decoy unmask` console summary is now a complete census, 2026-07-15)
 
-- **`decoy unmask`'s human-readable summary (non-`--json`) no longer hides
-  `reversed_unverified` columns.** FPE columns reversed under the non-secret
-  `job_seed` fallback (no `mask_secret_ref` supplied at mask time) come back
-  from the engine with status `reversed_unverified`, distinct from an
-  authenticated `reversed`. The console summary previously counted neither
-  status for that column NOR printed its detail note -- e.g. a masked PAN
-  that was in fact decrypted back to plaintext showed as
-  `"0 column(s) reversed, 3 irreversible, 0 untouched."` (the column simply
-  vanished from every bucket) and the "FPE is unauthenticated -- a wrong key
-  yields plausible but WRONG plaintext" warning never printed. The summary
-  now appends a `, N reversed (unverified)` term when present, and the
-  authentication caveat prints as a `note:` like the other reversible
-  statuses. `--json` output was already complete and is unchanged.
+- **`decoy unmask`'s human-readable summary (non-`--json`) now accounts for
+  every column, so its counts can no longer silently lie.** Previously the
+  summary tallied only `reversed` / `irreversible` / `untouched` (plus
+  `vault_reversed` when a `--vault` was passed), so three genuine per-column
+  outcomes the engine emits vanished from the arithmetic entirely:
+  - `reversed_unverified` -- an FPE column reversed under the non-secret
+    `job_seed` fallback (no `mask_secret_ref` at mask time). A masked PAN that
+    was in fact decrypted back to plaintext used to show as
+    `"0 column(s) reversed, 3 irreversible, 0 untouched."` -- the column
+    dropped out of every bucket and the "FPE is unauthenticated -- a wrong key
+    yields plausible but WRONG plaintext" caveat never printed.
+  - `vault_miss` -- a vaulted column the supplied vault could not reverse (the
+    note printed but the count stayed at zero, so the totals did not add up).
+  - `table_missing` -- other configured tables when a multi-table config is
+    unmasked one file at a time; these were neither counted nor noted.
+
+  The summary is now a complete census: the six present-column statuses
+  (`reversed`, `reversed_unverified`, `vault_reversed`, `vault_miss`,
+  `irreversible`, `untouched`) always sum to the number of real columns, each
+  non-empty secondary bucket is surfaced (`, N reversed (unverified)`,
+  `, N vault-reversed`, `, N vault-miss`), and absent tables are reported in
+  their own clause (`, N configured table(s) not in this input`) rather than
+  miscounted as columns. Every reversible/miss/absent status also prints its
+  detail as a `note:`. `--json` output was already complete and is unchanged.
 
 ### Fixed (`decoy init` scaffold runnability + config exit codes, 2026-07-15)
 

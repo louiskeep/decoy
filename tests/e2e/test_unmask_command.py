@@ -9,6 +9,7 @@ other one-way columns stay as-is and are reported irreversible.
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 from unittest.mock import patch
 
@@ -21,6 +22,86 @@ from decoy.__main__ import app
 from decoy.cli.exit_codes import EXIT_USAGE
 
 runner = CliRunner()
+
+
+def _flatten(output: str) -> str:
+    """Collapse all whitespace (incl. Rich line-wraps) to single spaces, so
+    substring/regex matches on the summary don't depend on terminal width."""
+    return " ".join(output.split())
+
+
+# One regex per surfaced bucket. Each label is distinctive enough that it
+# never collides with a note's detail text, so parsing the flattened output
+# recovers the exact number the summary DISPLAYED for that bucket.
+_BUCKET_PATTERNS = {
+    "reversed": r"(\d+) column\(s\) reversed",
+    "reversed_unverified": r"(\d+) reversed \(unverified\)",
+    "vault_reversed": r"(\d+) vault-reversed",
+    "vault_miss": r"(\d+) vault-miss",
+    "irreversible": r"(\d+) irreversible",
+    "untouched": r"(\d+) untouched",
+    "table_missing": r"(\d+) configured table\(s\) not in this input",
+}
+
+# The six statuses a PRESENT column can carry, enumerated from
+# decoy_engine/unmask.py (reversed | reversed_unverified | vault_reversed |
+# vault_miss | irreversible | untouched). `table_missing` is deliberately
+# excluded: it is a pseudo-entry for an absent configured table, not a column.
+_COLUMN_BUCKETS = (
+    "reversed",
+    "reversed_unverified",
+    "vault_reversed",
+    "vault_miss",
+    "irreversible",
+    "untouched",
+)
+
+
+def _displayed_counts(output: str) -> dict[str, int]:
+    """Parse the numbers the console summary actually showed, defaulting an
+    un-surfaced bucket to 0 (its clause is omitted only when the count is 0)."""
+    flat = _flatten(output)
+    counts: dict[str, int] = {}
+    for name, pattern in _BUCKET_PATTERNS.items():
+        m = re.search(pattern, flat)
+        counts[name] = int(m.group(1)) if m else 0
+    return counts
+
+
+def _assert_census_complete(config: Path, masked: Path, out: Path, *args: str) -> str:
+    """Drive `decoy unmask` twice (JSON for ground truth, plain for display)
+    and assert the summary is a COMPLETE census: every real column entry
+    falls into exactly one surfaced bucket, and absent tables are reported
+    apart from columns. Returns the plain output for further assertions.
+
+    This is the class-level invariant -- it fails if ANY status silently
+    vanishes from the arithmetic, not just the one that prompted the fix.
+    """
+    json_res = runner.invoke(
+        app, ["unmask", str(config), str(masked), "-o", str(out), *args, "--json"]
+    )
+    assert json_res.exit_code == 0, json_res.output
+    entries = json.loads(json_res.output)["columns"]
+    real = [e for e in entries if e["status"] != "table_missing"]
+    missing = [e for e in entries if e["status"] == "table_missing"]
+
+    plain_res = runner.invoke(
+        app, ["unmask", str(config), str(masked), "-o", str(out), *args]
+    )
+    assert plain_res.exit_code == 0, plain_res.output
+    counts = _displayed_counts(plain_res.output)
+
+    displayed_columns = sum(counts[b] for b in _COLUMN_BUCKETS)
+    assert displayed_columns == len(real), (
+        f"census incomplete: summary accounts for {displayed_columns} column(s) "
+        f"but the engine returned {len(real)} real column entr(ies). "
+        f"counts={counts} statuses={[e['status'] for e in real]}"
+    )
+    assert counts["table_missing"] == len(missing), (
+        f"table_missing miscount: displayed {counts['table_missing']}, "
+        f"engine returned {len(missing)}"
+    )
+    return plain_res.output
 
 
 def _pipeline(tmp_path: Path, *, seed: int = 42) -> Path:
@@ -399,25 +480,161 @@ class TestUnmaskConsoleSurfacesReversedUnverified:
             ["unmask", str(out_cfg), str(masked), "--output", str(out)],
         )
         assert unmask_result.exit_code == 0, unmask_result.output
-        stdout = unmask_result.output
+        # Rich wraps the summary across physical lines under a narrow width
+        # (the CliRunner default is 80), so collapse ALL whitespace before
+        # matching -- a substring check on a single physical line would give a
+        # false pass/fail purely from the terminal width.
+        flat = _flatten(unmask_result.output)
 
-        # (a) the fpe column must be reflected in the counts -- pre-fix, the
-        # summary line was the bare "0 column(s) reversed, 0 irreversible,
-        # 0 untouched." with no fourth term, silently dropping the one PAN
-        # column from every bucket (0 + 0 + 0 != 1). Post-fix a fourth term
-        # accounts for it.
-        summary_line = next(
-            line for line in stdout.splitlines() if "column(s) reversed" in line
+        # Pin the EXACT contract, not just "some 4th term exists": ordinary
+        # `reversed` MUST stay 0 (this fpe reversal is NOT authenticated), and
+        # the unverified reversal MUST be its own count of 1. A future impl
+        # that wrongly folds unverified into `reversed` fails both halves.
+        assert "0 column(s) reversed" in flat, flat
+        assert "1 reversed (unverified)" in flat, flat
+        # The authentication caveat must reach the console, not just --json.
+        assert "wrong plaintext" in flat.lower() or "unauthenticated" in flat.lower(), (
+            f"missing authentication warning note: {flat!r}"
         )
-        assert summary_line.rstrip().endswith("."), summary_line
-        assert summary_line.count(",") >= 3, (
-            f"expected a 4th (unverified) term in the summary, got: {summary_line!r}"
+
+
+def _multitable_cfg(tmp_path: Path) -> tuple[Path, Path]:
+    """A two-table mask config where only `accounts` is present in the input.
+    `accounts.card` is fpe (reverses under the job_seed fallback ->
+    reversed_unverified); `orders` is configured but never masked to a file,
+    so unmasking the accounts file alone yields a `table_missing` pseudo-entry
+    for orders. Returns (config_path, masked_accounts_path)."""
+    src = tmp_path / "acc.csv"
+    pd.DataFrame(
+        {"card": ["4111111111111111", "4012888888881881", "5500005555555559"]}
+    ).to_csv(src, index=False)
+    masked = tmp_path / "acc.masked.csv"
+    cfg = {
+        "version": 1,
+        "global_settings": {"seed": 42},
+        "sources": {"accounts": {"type": "file", "format": "csv", "path": str(src)}},
+        "tables": [
+            {
+                "name": "accounts",
+                "columns": [
+                    {
+                        "name": "card",
+                        "strategy": "fpe",
+                        "namespace": "pan_ns",
+                        "provider_config": {"charset": "digits"},
+                    }
+                ],
+            },
+            {
+                "name": "orders",
+                "columns": [
+                    {
+                        "name": "order_id",
+                        "strategy": "fpe",
+                        "namespace": "ord_ns",
+                        "provider_config": {"charset": "digits"},
+                    }
+                ],
+            },
+        ],
+        "targets": {
+            "accounts": {"type": "file", "format": "csv", "path": str(masked)}
+        },
+    }
+    cfg_path = tmp_path / "pipeline.yaml"
+    cfg_path.write_text(yaml.safe_dump(cfg), encoding="utf-8")
+    result = runner.invoke(app, ["run", str(cfg_path)])
+    assert result.exit_code == 0, result.output
+    assert masked.exists()
+    return cfg_path, masked
+
+
+class TestUnmaskSummaryIsCompleteCensus:
+    """Class-level guard (dennis + Codex two-model gate): the human summary
+    must be a COMPLETE census -- every real column entry lands in exactly one
+    surfaced bucket, and absent tables are reported apart from columns. The
+    original fix closed only `reversed_unverified`; `vault_miss` and
+    `table_missing` were still un-surfaced, so the arithmetic still lied.
+    """
+
+    def test_census_invariant_holds_with_reversed_unverified_and_table_missing(
+        self, tmp_path: Path
+    ) -> None:
+        cfg_path, masked = _multitable_cfg(tmp_path)
+        out = tmp_path / "recovered.csv"
+        plain = _assert_census_complete(
+            cfg_path, masked, out, "--table", "accounts"
         )
-        # (b) the unverified reversal is called out distinctly.
-        assert "unverified" in stdout.lower(), (
-            f"missing 'unverified' in console summary: {stdout!r}"
+        flat = _flatten(plain)
+        # The absent table is surfaced as its OWN clause, never counted as a
+        # column, and its note names the table (not the "*" placeholder).
+        assert "0 column(s) reversed" in flat, flat
+        assert "1 reversed (unverified)" in flat, flat
+        assert "1 configured table(s) not in this input" in flat, flat
+        assert "note: orders:" in flat, flat
+
+    def test_vault_miss_is_counted_and_census_holds(self, tmp_path: Path) -> None:
+        # vault_miss arises when a vault is present but reverses NO value of a
+        # requested column. Build two vaults under the SAME seed from DIFFERENT
+        # data, then unmask dataset-1's output with dataset-2's vault: the seed
+        # matches (so no key-mismatch error) but no masked value is a key in it.
+        def _cfg(src: Path, out: Path) -> dict:
+            return {
+                "version": 1,
+                "global_settings": {"seed": 42},
+                "sources": {
+                    "accounts": {"type": "file", "format": "csv", "path": str(src)}
+                },
+                "tables": [
+                    {
+                        "name": "accounts",
+                        "columns": [
+                            {
+                                "name": "email",
+                                "strategy": "hash",
+                                "namespace": "email_ns",
+                                "vault": True,
+                            }
+                        ],
+                    }
+                ],
+                "targets": {
+                    "accounts": {"type": "file", "format": "csv", "path": str(out)}
+                },
+            }
+
+        src1 = tmp_path / "in1.csv"
+        pd.DataFrame({"email": [f"user{i}@x.com" for i in range(10)]}).to_csv(
+            src1, index=False
         )
-        # (c) the authentication warning detail must print, not be hidden.
+        out1 = tmp_path / "out1.csv"
+        cfg1 = tmp_path / "cfg1.yaml"
+        cfg1.write_text(yaml.safe_dump(_cfg(src1, out1)), encoding="utf-8")
+        vault_a = tmp_path / "vaultA.bin"
         assert (
-            "wrong plaintext" in stdout.lower() or "unauthenticated" in stdout.lower()
-        ), f"missing authentication warning note: {stdout!r}"
+            runner.invoke(app, ["run", str(cfg1), "--vault", str(vault_a)]).exit_code
+            == 0
+        )
+
+        src2 = tmp_path / "in2.csv"
+        pd.DataFrame({"email": [f"alt{i}@x.com" for i in range(10)]}).to_csv(
+            src2, index=False
+        )
+        out2 = tmp_path / "out2.csv"
+        cfg2 = tmp_path / "cfg2.yaml"
+        cfg2.write_text(yaml.safe_dump(_cfg(src2, out2)), encoding="utf-8")
+        vault_b = tmp_path / "vaultB.bin"
+        assert (
+            runner.invoke(app, ["run", str(cfg2), "--vault", str(vault_b)]).exit_code
+            == 0
+        )
+
+        out = tmp_path / "recovered.csv"
+        plain = _assert_census_complete(
+            cfg1, out1, out, "--vault", str(vault_b)
+        )
+        flat = _flatten(plain)
+        # The vault_miss column is counted (not dropped to nowhere) and noted.
+        assert "1 vault-miss" in flat, flat
+        assert "0 column(s) reversed" in flat, flat
+        assert "note: email:" in flat, flat
