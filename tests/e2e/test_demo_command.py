@@ -35,14 +35,18 @@ def test_demo_help_includes_examples():
     assert "See also:" in result.stdout
 
 
-def test_demo_help_documents_ref_flag():
-    """--ref flag stays on the surface even though the body is deferred,
-    so a user who tries it gets the typed deferral message instead of
-    'unknown flag'."""
+def test_demo_help_hides_undeliverable_ref_flag():
+    """--ref (and its --rows coupling) is NOT advertised in --help: the
+    3-table FK body is unimplemented and unconditionally errors, so
+    advertising it as a real option is a doc-truth bug (it previously
+    errored on every call). The flag stays wired (hidden=True) so an
+    operator who already knows about it -- or finds it in the source --
+    still gets the typed deferral message instead of 'unknown flag'; see
+    test_demo_ref_exits_with_deferral_message below."""
     result = runner.invoke(app, ["demo", "--help"])
     assert result.exit_code == 0
-    assert "--ref" in result.stdout
-    assert "--rows" in result.stdout
+    assert "--ref" not in result.stdout
+    assert "--rows" not in result.stdout
 
 
 # --------------------------------------------------------------------------

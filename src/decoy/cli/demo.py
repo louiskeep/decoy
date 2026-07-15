@@ -36,9 +36,6 @@ Examples:
   decoy demo --json
     Same flow, but emit a JSON summary instead of cards.
 
-Note: `decoy demo --ref` (the 3-table FK variant) is deferred to a follow-up
-sprint and currently exits with a usage error.
-
 See also: decoy storm analyze, decoy run.
 """
 
@@ -490,6 +487,7 @@ def _demo(
         False,
         "--ref",
         help="Run the 3-table referential-integrity variant (customers + orders + payments).",
+        hidden=True,
     ),
     rows: int = typer.Option(
         1000,
@@ -497,6 +495,7 @@ def _demo(
         help="Rows per dataset when --ref is set. Default 1000.",
         min=10,
         max=100_000,
+        hidden=True,
     ),
     json_: bool = typer.Option(
         False, "--json", help="Emit a JSON summary instead of cards."
@@ -513,10 +512,6 @@ def _demo(
     Use this on a fresh install to see what Decoy can do end to end without
     needing your own data or pipeline. All output lands in `./decoy_demo/`
     (override with `--dir`).
-
-    The `--ref` referential-integrity variant (three related CSVs masked
-    with joinable FK columns) is deferred to a follow-up sprint and
-    currently exits with a usage error; use the default single-table flow.
     """
     state = setup_output(json_, quiet, verbose)
 

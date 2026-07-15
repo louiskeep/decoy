@@ -26,7 +26,7 @@ Installable Typer/Rich CLI that wraps `decoy-engine` for local validation, runs,
 
 | Path | What Lives Here |
 |---|---|
-| `src/decoy/cli/` | `run`, `validate`, `plan`, `replan`, `storm`, `init`, `demo`, `explain`, `info`, `templates` commands |
+| `src/decoy/cli/` | `run`, `validate`, `plan`, `storm`, `init`, `demo`, `explain`, `info`, `templates` commands |
 | `src/decoy/ui/` | Theme, output state, progress, tables, cards |
 | `src/decoy/templates/` | Packaged YAML templates |
 | `examples/` | Example YAML configs |
@@ -44,7 +44,7 @@ Installable Typer/Rich CLI that wraps `decoy-engine` for local validation, runs,
 | Run command | `src/decoy/cli/run.py` |
 | Validate command | `src/decoy/cli/validate.py` |
 | STORM command | `src/decoy/cli/storm.py` |
-| Plan / replan commands | `src/decoy/cli/plan.py` |
+| Plan command | `src/decoy/cli/plan.py` |
 | Output formatting | `src/decoy/ui/` |
 | Templates | `src/decoy/templates/` |
 | CLI examples | `examples/` |

@@ -110,7 +110,11 @@ class TestUnmaskRoundTrip:
         assert payload["command"] == "unmask"
         assert payload["status"] == "ok"
         by_col = {c["column"]: c for c in payload["columns"]}
-        assert by_col["ssn"]["status"] == "reversed"
+        # DE-02: this round-trip configures no mask_secret_ref, so the FPE
+        # reversal runs under the job_seed fallback and the engine reports it
+        # as `reversed_unverified` (recovered, but not cryptographically
+        # authenticated) rather than `reversed`.
+        assert by_col["ssn"]["status"] == "reversed_unverified"
         assert by_col["email"]["status"] == "irreversible"
 
     def test_default_output_path(self, tmp_path: Path) -> None:

@@ -91,12 +91,12 @@ $ decoy run [OPTIONS] CONFIG
 * `--json`: Emit a structured JSON result on stdout. Progress goes to stderr.
 * `-q, --quiet`: Suppress stdout. Errors still go to stderr; exit code carries success.
 * `-v, --verbose`: Enable debug-level CLI logs on stderr.
-* `--master-key TEXT`: 64-char hex master key for keyed deterministic masking. Same key + same --key-label always yield bitwise-identical output across runs and machines. Reads DECOY_MASTER_KEY env var when omitted; without either, masking falls back to the legacy seeded path (per-input deterministic but not portable).  [env var: DECOY_MASTER_KEY]
+* `--master-key TEXT`: 64-char hex master key for keyed deterministic SYNTHETIC GENERATION only (generate_columns:). Same key + same --key-label always yield bitwise-identical generated output across runs and machines. Reads DECOY_MASTER_KEY env var when omitted; without either, generation falls back to the legacy seeded path (per-input deterministic but not portable). This flag does NOT affect masking -- masking&#x27;s keyed determinism is configured separately via the pipeline YAML&#x27;s &#x27;global_settings.mask_secret_ref&#x27; (e.g. &#x27;env:DECOY_MASK_SECRET&#x27; or &#x27;file:/path/to/secret&#x27;), never a CLI flag or env var read here. See: decoy explain keys.  [env var: DECOY_MASTER_KEY]
 * `--chunked`: Stream the source through the engine chunk-by-chunk, for inputs too large to load whole. Works for mask configs whose every strategy is value-keyed (hash, fpe, redact, truncate, text_redact, date_shift, bucketize), plus faker/categorical when deterministic with an explicit pool_size / categories declared in config; output is byte-identical to a plain run. Sources/targets may be CSV or Parquet. See: decoy explain chunked.
 * `--chunk-size INTEGER RANGE`: Rows per chunk in --chunked mode.  [default: 100000; x&gt;=1]
 * `--vault PATH`: Write the token vault (encrypted source-to-masked map for vault: true columns) to this path. The vault plus the config re-identify every vaulted value: store them separately and never alongside the masked output. Needs the engine&#x27;s vault extra (cryptography).
 * `--substrate TEXT`: Execution substrate for --chunked runs: pandas (default) or polars. Non-chunked (plain) runs always use the engine&#x27;s pandas adapter (the V2 unified run_pipeline path); this flag and the DECOY_SUBSTRATE env var are only consulted for --chunked runs. Setting either on a plain run emits a warning to stderr and is otherwise ignored. Cross-substrate outputs are value-equal; CSV bytes may differ only via Arrow type-width drift, which CSV does not carry.  [env var: DECOY_SUBSTRATE]
-* `--key-label TEXT`: Stable namespace string for the masking key hierarchy. Required when --master-key is set. Pick something durable (e.g. &#x27;customers_q4&#x27;); changing it produces a different masked output. Read from the YAML&#x27;s top-level &#x27;key_label:&#x27; field if not passed on the command line.
+* `--key-label TEXT`: Stable namespace string for the --master-key generation key hierarchy (synthetic generation only, not masking). Required when --master-key is set. Pick something durable (e.g. &#x27;customers_q4&#x27;); changing it produces different generated output. Read from the YAML&#x27;s top-level &#x27;key_label:&#x27; field if not passed on the command line.
 * `--evidence-out PATH`: Write a local evidence manifest (JSON) to this path after a successful run. The manifest records pipeline hash, input/output file fingerprints, run metadata, and row counts/timings/warnings where available (these are omitted for --chunked runs). It does NOT contain raw data values. Use `decoy evidence verify` to check the manifest against current files. See: decoy explain evidence (when available).
 * `--notify TEXT`: Notify a channel after the run reaches its terminal state. Repeatable. Spec is &#x27;kind:target&#x27;: webhook:&lt;url&gt;, slack:&lt;url&gt;, email:&lt;address&gt;. Best-effort: a channel failure never changes the run&#x27;s exit code. Webhook signing key from DECOY_NOTIFY_WEBHOOK_SECRET (unsigned if unset); SMTP from DECOY_NOTIFY_SMTP_HOST/_PORT/_USER/_PASS/_FROM. Nothing is persisted to .decoy/workspace.json -- targets and secrets are flags/env only, never written to disk.
 * `--notify-on [success|failure|always]`: Which terminal outcome(s) to notify on: success, failure, or always.  [default: always]
@@ -362,10 +362,6 @@ Use this on a fresh install to see what Decoy can do end to end without
 needing your own data or pipeline. All output lands in `./decoy_demo/`
 (override with `--dir`).
 
-The `--ref` referential-integrity variant (three related CSVs masked
-with joinable FK columns) is deferred to a follow-up sprint and
-currently exits with a usage error; use the default single-table flow.
-
 **Usage**:
 
 ```console
@@ -375,8 +371,6 @@ $ decoy demo [OPTIONS]
 **Options**:
 
 * `--dir PATH`: Where to drop the demo artifacts.  [default: decoy_demo]
-* `--ref`: Run the 3-table referential-integrity variant (customers + orders + payments).
-* `--rows INTEGER RANGE`: Rows per dataset when --ref is set. Default 1000.  [default: 1000; 10&lt;=x&lt;=100000]
 * `--json`: Emit a JSON summary instead of cards.
 * `-q, --quiet`: Suppress stdout. Errors still go to stderr.
 * `-v, --verbose`: Enable debug-level CLI logs on stderr.
@@ -389,9 +383,6 @@ Examples:
 
   decoy demo --json
     Same flow, but emit a JSON summary instead of cards.
-
-Note: `decoy demo --ref` (the 3-table FK variant) is deferred to a follow-up
-sprint and currently exits with a usage error.
 
 See also: decoy storm analyze, decoy run.
 
@@ -2484,8 +2475,8 @@ after `decoy run` has already finished. This command shows the recorded
 completed status.
 
 For live progress during a run, use `decoy run pipeline.yaml` in the
-foreground -- the spinner shows progress. Remote platform job watching
-is `decoy platform jobs watch` (SP-20, gated).
+foreground -- the spinner shows progress. There is no `decoy platform`
+command group; remote job monitoring is a platform-service concern.
 
 **Usage**:
 
@@ -2519,8 +2510,8 @@ Honesty note -- local CLI runs are SYNCHRONOUS:
   progress for an in-progress run, because local CLI runs have no background
   mechanism that would allow that.
 
-  Remote live job watching (platform jobs running asynchronously) is planned
-  under `decoy platform jobs watch` (SP-20, gated behind platform auth).
+  There is no `decoy platform` command group. Remote/async job monitoring
+  is a platform-service concern, outside this CLI's local-only scope.
 
   To watch a run while it is happening, run it in the foreground:
     decoy run pipeline.yaml
