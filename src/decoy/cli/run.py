@@ -84,6 +84,10 @@ class _ChunkedGenerateError(Exception):
     """--chunked with a generate-table config; user error (exits EXIT_USAGE)."""
 
 
+class _MaskSecretUsageError(Exception):
+    """--mask-secret AND YAML mask_secret_ref both set; user error (exits EXIT_USAGE)."""
+
+
 def _load_raw_config(config_path: Path) -> dict | None:
     """Single defensive YAML parse for the pre-flight helpers.
 
@@ -147,10 +151,22 @@ def run(
             "omitted; without either, generation falls back to the legacy "
             "seeded path (per-input deterministic but not portable). "
             "This flag does NOT affect masking -- masking's keyed "
-            "determinism is configured separately via the pipeline YAML's "
-            "'global_settings.mask_secret_ref' (e.g. 'env:DECOY_MASK_SECRET' "
-            "or 'file:/path/to/secret'), never a CLI flag or env var read "
-            "here. See: decoy explain keys."
+            "determinism is configured separately via '--mask-secret' (or "
+            "the pipeline YAML's 'global_settings.mask_secret_ref'), never "
+            "this flag or its env var. See: decoy explain keys."
+        ),
+    ),
+    mask_secret: str = typer.Option(
+        None,
+        "--mask-secret",
+        envvar="DECOY_MASK_SECRET",
+        help=(
+            "env:NAME or file:/PATH pointing at a >=32-byte mask secret for "
+            "keyed masking (mask: strategies -- fpe, hash, date_shift, and "
+            "others). Independent of --master-key (which is generation-only). "
+            "Sets 'global_settings.mask_secret_ref' for this run; an error if "
+            "the YAML already sets it. Reads DECOY_MASK_SECRET env var when "
+            "omitted. See: decoy explain keys."
         ),
     ),
     chunked: bool = typer.Option(
@@ -321,6 +337,25 @@ def run(
 
                 raw = _yaml.safe_load(config.read_text(encoding="utf-8"))
             config_dict = PipelineConfig.model_validate(raw).model_dump()
+
+            # DE-02 Option B (2026-07-15): --mask-secret sets the same
+            # `global_settings.mask_secret_ref` slot the YAML can set directly.
+            # It feeds run_pipeline's fail-closed KeyProvider resolution AND
+            # the --chunked path (both read mask_secret_ref off this same
+            # config dict -- _pipeline.py / _chunked.py); one injection point
+            # covers both routes. Never silently override a YAML-configured
+            # ref -- one secret source per run, chosen explicitly.
+            if mask_secret:
+                existing_ref = (config_dict.get("global_settings") or {}).get("mask_secret_ref")
+                if existing_ref:
+                    raise _MaskSecretUsageError(
+                        "--mask-secret was passed but the YAML already sets "
+                        "global_settings.mask_secret_ref. Set the masking "
+                        "secret in exactly one place: drop --mask-secret, or "
+                        "remove mask_secret_ref from the config."
+                    )
+                config_dict.setdefault("global_settings", {})["mask_secret_ref"] = mask_secret
+
             _ev_config_dict = config_dict
             _ev_engine_version = engine_version
 
@@ -391,6 +426,7 @@ def run(
         # exit_codes.py contract) from "the run blew up" (EXIT_RUNTIME).
         # Imported lazily to keep the engine import off the help path.
         from decoy_engine import ConfigError, PipelineValidationError
+        from decoy_engine.keyprovider import MaskSecretError
         from decoy_engine.plan import PlanCompileError
 
         _exit_code = (
@@ -403,6 +439,13 @@ def run(
                     ConfigError,
                     _ChunkedGenerateError,
                     _VaultUsageError,
+                    _MaskSecretUsageError,
+                    # DE-02: a bad/missing/weak --mask-secret ref (or YAML
+                    # mask_secret_ref) resolves to MaskSecretError (and its
+                    # subclasses MissingMaskSecret / WeakMaskSecret /
+                    # KeyedStrategyRequiresSecret) -- the operator's config is
+                    # wrong, not a runtime crash.
+                    MaskSecretError,
                 ),
             )
             else EXIT_RUNTIME

@@ -183,7 +183,7 @@ _TOPICS: dict[str, _Topic] = {
     ),
     "keys": _Topic(
         name="keys",
-        summary="Two separate key mechanisms: --master-key for generation, mask_secret_ref for masking.",
+        summary="Two separate key mechanisms: --master-key for generation, --mask-secret/mask_secret_ref for masking.",
         body=(
             "Decoy has two independent keyed-determinism mechanisms. They do not share a\n"
             "secret and setting one has no effect on the other.\n\n"
@@ -198,17 +198,24 @@ _TOPICS: dict[str, _Topic] = {
             "     python -c 'import secrets; print(secrets.token_hex(32))'\n"
             "   Pass it via --master-key, the DECOY_MASTER_KEY env var, or both. The label\n"
             "   can be passed via --key-label or set as `key_label:` in the pipeline YAML.\n\n"
-            "2) MASKING (mask: strategies) -- `global_settings.mask_secret_ref` in the YAML\n"
+            "2) MASKING (mask: strategies) -- `--mask-secret` or `global_settings.mask_secret_ref`\n"
             "   --master-key does NOT affect masking. Keyed masking strategies (fpe, hash,\n"
-            "   date_shift, and others) are keyed off a secret referenced from the pipeline\n"
-            "   YAML, never a CLI flag:\n"
+            "   date_shift, and others) are keyed off a secret referenced two ways -- pick\n"
+            "   ONE (setting both is a usage error):\n"
+            "     decoy run pipeline.yaml --mask-secret env:DECOY_MASK_SECRET\n"
+            "   or in the YAML:\n"
             "     global_settings:\n"
             "       mask_secret_ref: \"env:DECOY_MASK_SECRET\"   # or \"file:/path/to/secret\"\n"
+            "   --mask-secret also reads the DECOY_MASK_SECRET env var when omitted, same as\n"
+            "   --master-key/DECOY_MASTER_KEY above -- but it is a completely separate secret;\n"
+            "   the two flags are independent and setting one has no effect on the other.\n"
             "   The ref points at a >=32-byte secret (hex or base64); the CLI reads it from\n"
             "   the referenced env var or file at run time and never logs or serializes it.\n"
-            "   Without mask_secret_ref, keyed masking strategies still run but are not\n"
-            "   portable across machines/pipelines (fail-closed at GA if no key resolves\n"
-            "   for a config that needs one)."
+            "   Pre-GA: without a mask secret, keyed masking strategies still run (keyed off\n"
+            "   the 8-byte job_seed) but are not portable across machines/pipelines. AT GA:\n"
+            "   a keyed masking strategy with no resolved mask secret is REJECTED outright\n"
+            "   (fail-closed) rather than silently falling back to job_seed -- see\n"
+            "   `decoy_engine.release.is_pre_ga()`. Configure a real mask secret before then."
         ),
         see_also=("decoy run --help",),
     ),
