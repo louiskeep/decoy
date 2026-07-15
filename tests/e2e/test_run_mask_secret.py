@@ -482,6 +482,62 @@ class TestMaskSecretWrongTypeYaml:
         assert str(secret_int) not in result.output
         assert not (tmp_path / "out.csv").exists()
 
+    def test_non_dict_global_settings_refused_and_redacted(self, tmp_path: Path) -> None:
+        """A `global_settings` that is itself a NON-DICT (e.g. a YAML list) is
+        malformed AND could smuggle a `mask_secret_ref` value nested where the
+        dict-path check (`_raw_gs.get("mask_secret_ref")`) can't see it --
+        Pydantic's `ValidationError` would then echo that nested value in its
+        `input_value` field, disclosing it. `run.py`'s pre-Pydantic guard
+        (`if _raw_gs is not None and not isinstance(_raw_gs, dict)`) rejects
+        this shape with a redacted `_MaskSecretUsageError` before
+        `PipelineConfig.model_validate` ever sees it -- so this must exit
+        EXIT_USAGE(1), NOT EXIT_RUNTIME(3), and the secret must never appear
+        in `result.output` (stdout+stderr combined, which CliRunner captures)."""
+        src = tmp_path / "accounts.csv"
+        pd.DataFrame({"ssn": [f"{i:09d}" for i in range(5)]}).to_csv(src, index=False)
+        # global_settings is a YAML LIST (not a mapping), with the secret
+        # smuggled inside a nested dict item.
+        raw_cfg = {
+            "version": 1,
+            "global_settings": [{"mask_secret_ref": [_SECRET_MARKER]}],
+            "sources": {"accounts": {"type": "file", "format": "csv", "path": str(src)}},
+            "tables": [
+                {
+                    "name": "accounts",
+                    "columns": [
+                        {
+                            "name": "ssn",
+                            "strategy": "fpe",
+                            "namespace": "ssn_identity",
+                            "provider_config": {"charset": "digits"},
+                        },
+                    ],
+                }
+            ],
+            "targets": {
+                "accounts": {
+                    "type": "file",
+                    "format": "csv",
+                    "path": str(tmp_path / "out.csv"),
+                }
+            },
+        }
+        cfg = tmp_path / "pipeline.yaml"
+        cfg.write_text(yaml.safe_dump(raw_cfg), encoding="utf-8")
+
+        result = runner.invoke(app, ["run", str(cfg)])
+        assert result.exit_code == EXIT_USAGE, (
+            f"non-dict global_settings must be EXIT_USAGE ({EXIT_USAGE}), not "
+            f"EXIT_RUNTIME; got {result.exit_code}. output={result.output!r}"
+        )
+        assert _SECRET_MARKER not in result.output, (
+            f"the secret nested inside non-dict global_settings leaked into "
+            f"output: {result.output!r}"
+        )
+        assert not (tmp_path / "out.csv").exists(), (
+            "no output must be written on a refused run"
+        )
+
 
 class TestMaskSecretYamlWorkflow:
     """The canonical documented workflow -- YAML sets

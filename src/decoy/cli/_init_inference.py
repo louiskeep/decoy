@@ -99,16 +99,20 @@ _INFERENCE_TABLE: dict[str, Inference] = {
     "iso_date": Inference(
         strategy="date_shift",
         review=(
-            "STORM detected ISO-format dates. date_shift jitters each date by "
-            "+/- N days while preserving order. Default jitter is 30 days; "
-            "tune via params.range_days."
+            "STORM detected ISO-format dates. date_shift shifts each date by "
+            "an independent per-value offset in [min_days, max_days] (same "
+            "source value always gets the same shift, but shifts are NOT "
+            "globally order-preserving across rows). Defaults are "
+            "min_days: -365 / max_days: 365; tune via provider_config."
         ),
     ),
     "us_date": Inference(
         strategy="date_shift",
         review=(
-            "STORM detected US-format dates. date_shift jitters each date by "
-            "+/- N days while preserving order."
+            "STORM detected US-format dates. date_shift shifts each date by "
+            "an independent per-value offset in [min_days, max_days] (not "
+            "order-preserving across rows). Defaults are -365/+365 days; "
+            "tune via provider_config."
         ),
     ),
     "us_zip": Inference(
@@ -161,7 +165,10 @@ _INFERENCE_TABLE: dict[str, Inference] = {
         strategy="fpe",
         review=(
             "STORM detected payment card numbers (PAN). fpe (format-preserving "
-            "encryption) keeps Luhn-valid shape; review key_label before running."
+            "encryption) with charset: digits + validate_luhn: true keeps the "
+            "masked output Luhn-valid, matching the bundled PCI template. The "
+            "FPE key itself is derived automatically per job/namespace -- no "
+            "key config needed -- but a namespace IS required (see below)."
         ),
     ),
     "cvv": Inference(

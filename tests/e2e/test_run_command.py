@@ -224,8 +224,12 @@ def test_run_generate_end_to_end_smoke(generate_config: Path, tmp_path: Path):
 def test_run_rejects_v1_graph_yaml(tmp_path: Path):
     """V1 `mode: graph` YAML is rejected by the V2 PipelineConfig schema
     at the choke point (not by a CLI-side pre-check). Pre-CLI.3 the CLI
-    routed graph YAML to the (deleted) `run_graph` engine entry; now it
-    surfaces a typed PipelineValidationError at exit 3."""
+    routed graph YAML to the (deleted) `run_graph` engine entry; now the V1
+    vocabulary (`mode`/`nodes`/`edges`) is unknown under PipelineConfig's
+    extra="forbid", so model_validate raises a Pydantic ValidationError.
+    That is malformed user config, so it exits EXIT_USAGE(1) -- not the
+    EXIT_RUNTIME(3) catch-all it fell through to before ValidationError was
+    classified."""
     cfg = {
         "mode": "graph",
         "nodes": [
@@ -239,7 +243,7 @@ def test_run_rejects_v1_graph_yaml(tmp_path: Path):
 
     result = runner.invoke(app, ["run", str(p), "--json"])
 
-    assert result.exit_code == 3
+    assert result.exit_code == 1
     payload = _json.loads(result.stdout)
     assert payload["status"] == "error"
     # FC-1 (2026-06-02): the YAML-detected mode is inferred from the
@@ -290,6 +294,35 @@ class TestExitCodeDispatch:
             },
         }
         config_path = tmp_path / "bad.yaml"
+        config_path.write_text(yaml.safe_dump(cfg), encoding="utf-8")
+        result = runner.invoke(app, ["run", str(config_path)])
+        assert result.exit_code == 1, result.output
+
+    def test_pydantic_validation_error_exits_usage(self, tmp_path, sample_csv):
+        # A structurally-invalid config (unknown key under a column, rejected
+        # by ColumnConfig's extra="forbid") raises a raw Pydantic
+        # ValidationError from PipelineConfig.model_validate -- the user's YAML
+        # is malformed, so it must exit EXIT_USAGE(1), not the EXIT_RUNTIME(3)
+        # catch-all. This is the failure mode a stale `params:` block hits.
+        cfg = {
+            "version": 1,
+            "global_settings": {"seed": 1},
+            "sources": {"t": {"type": "file", "format": "csv", "path": str(sample_csv)}},
+            "tables": [
+                {
+                    "name": "t",
+                    "columns": [
+                        # `params` is not a ColumnConfig field; extra="forbid"
+                        # rejects it at model_validate.
+                        {"name": "email", "strategy": "truncate", "params": {"keep": 3}}
+                    ],
+                }
+            ],
+            "targets": {
+                "t": {"type": "file", "format": "csv", "path": str(tmp_path / "out.csv")}
+            },
+        }
+        config_path = tmp_path / "unknown-key.yaml"
         config_path.write_text(yaml.safe_dump(cfg), encoding="utf-8")
         result = runner.invoke(app, ["run", str(config_path)])
         assert result.exit_code == 1, result.output
