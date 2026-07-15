@@ -107,6 +107,16 @@ def test_engine_dependency_pinned() -> None:
     assert len(engine_deps) == 1, (
         f"expected exactly one decoy-engine dep, got {engine_deps}"
     )
-    assert ">=" in engine_deps[0], (
-        f"decoy-engine dep {engine_deps[0]!r} has no version floor"
+    # Assert the exact minimum, not merely that *a* floor exists -- a bare
+    # `>=` check would let a silent downgrade (e.g. `decoy-engine>=0.1.0`)
+    # slip through. 0.4.0 is DE-02's release marker: the first engine version
+    # guaranteed to carry `decoy_engine.keyprovider` (see the pin rationale in
+    # pyproject.toml). Bump this in lockstep when the floor legitimately rises.
+    from packaging.requirements import Requirement
+
+    req = Requirement(engine_deps[0])
+    floors = [s for s in req.specifier if s.operator in (">=", "==")]
+    assert [str(s) for s in floors] == [">=0.4.0"], (
+        f"decoy-engine floor must be exactly >=0.4.0 (DE-02 keyprovider "
+        f"marker); got specifier {str(req.specifier)!r}"
     )

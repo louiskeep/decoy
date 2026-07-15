@@ -603,6 +603,12 @@ class TestPreDE02EngineGuard:
             "expected the fail-closed guard's message (mentions the missing "
             f"keyprovider + UNKEYED output); got: {result.output!r}"
         )
+        # Lock the remediation floor to DE-02's release marker so the guard's
+        # advice cannot silently drift below the pyproject floor.
+        assert "decoy-engine>=0.4.0" in result.output, (
+            "guard should point operators at the DE-02 floor (decoy-engine>=0.4.0); "
+            f"got: {result.output!r}"
+        )
         # Refused BEFORE masking -> no output artifact leaked.
         assert not out_csv.exists(), "the run must be refused before writing any (unkeyed) output"
 

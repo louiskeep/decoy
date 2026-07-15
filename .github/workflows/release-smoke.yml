@@ -17,7 +17,7 @@
 #   - schedule (weekly): catches PyPI / wheel-resolution drift from
 #     transitive dependencies publishing breaking minor versions.
 #
-# Engine resolution: the `decoy` wheel declares `decoy-engine>=0.1.0`
+# Engine resolution: the `decoy` wheel declares `decoy-engine>=0.4.0`
 # but the engine is not yet on the real PyPI index (the publish
 # pipeline lives in OSS.7). For the dry-run window the workflow
 # installs the engine from the sibling repo's main branch via a

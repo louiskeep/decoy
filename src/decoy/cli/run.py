@@ -418,9 +418,10 @@ def run(
                 # A mask_secret_ref is only honored by a DE-02 engine; a
                 # pre-DE-02 engine has no `keyprovider` module and would
                 # SILENTLY IGNORE the ref, emitting job-seed-keyed output
-                # (fail-open). The pyproject floor (decoy-engine>=0.3.0) is the
-                # first line of defense, but 0.3.0 predates DE-02's merge, so a
-                # runtime probe is required to actually close the hole: refuse
+                # (fail-open). The pyproject floor (decoy-engine>=0.4.0, DE-02's
+                # release marker) is the first line of defense; this runtime
+                # probe is defense-in-depth against a broken or forced install
+                # that satisfies the resolver but lacks keyprovider -- refuse
                 # the run rather than leak an unkeyed artifact.
                 try:
                     import decoy_engine.keyprovider  # noqa: F401
@@ -430,7 +431,7 @@ def run(
                         "--mask-secret) but the installed decoy-engine is too "
                         "old to honor it -- it has no DE-02 keyprovider, so it "
                         "would silently emit UNKEYED output. Upgrade to "
-                        "decoy-engine>=0.3.0 (with DE-02). See: decoy explain keys."
+                        "decoy-engine>=0.4.0 (with DE-02). See: decoy explain keys."
                     ) from exc
 
             _ev_config_dict = config_dict

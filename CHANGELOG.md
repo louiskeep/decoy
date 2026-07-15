@@ -19,10 +19,12 @@ version numbers follow the [versioning policy](docs/release/versioning.md).
   since the ref it carries already indirects through the environment).
   Passing both `--mask-secret` and a YAML `mask_secret_ref`, or an empty /
   malformed ref, is a usage error (`EXIT_USAGE`), never a silent unkeyed run.
-- **Engine floor raised to `decoy-engine>=0.3.0`** for the DE-02 keyprovider
-  module. A configured mask secret is additionally guarded at run time: if the
-  installed engine lacks `decoy_engine.keyprovider`, `decoy run` refuses the
-  run rather than let the engine silently emit UNKEYED output.
+- **Engine floor raised to `decoy-engine>=0.4.0`** (DE-02's release marker) for
+  the DE-02 keyprovider module. The floor now guarantees `decoy_engine.keyprovider`
+  is present; a configured mask secret is additionally guarded at run time as
+  defense-in-depth: if a broken or forced install lacks `decoy_engine.keyprovider`,
+  `decoy run` refuses the run rather than let the engine silently emit UNKEYED
+  output.
 
 ### Fixed (DE-02 keyed-masking CLI surface, 2026-07-15)
 
