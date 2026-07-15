@@ -251,6 +251,27 @@ class TestMaskSecretUsageErrors:
         )
         assert "mask_secret_ref" in result.output
 
+    def test_empty_ref_exits_usage(self, tmp_path: Path) -> None:
+        """`--mask-secret ''` (explicit empty) must be a usage error, never a
+        silent fall-through to an unkeyed (job_seed) run. Regression guard for
+        the truthiness fail-open."""
+        cfg = _mask_pipeline(tmp_path)
+        result = runner.invoke(app, ["run", str(cfg), "--mask-secret", ""])
+        assert result.exit_code == EXIT_USAGE, (
+            f"expected EXIT_USAGE ({EXIT_USAGE}), got {result.exit_code}. output={result.output!r}"
+        )
+        # The masked output must NOT have been written as an unkeyed run.
+        assert not (tmp_path / "out.csv").exists(), "empty --mask-secret must not produce output"
+
+    def test_malformed_ref_exits_usage(self, tmp_path: Path) -> None:
+        """A ref that is neither env: nor file: (e.g. a raw secret pasted as
+        the value) is a usage error before the engine ever sees it."""
+        cfg = _mask_pipeline(tmp_path)
+        result = runner.invoke(app, ["run", str(cfg), "--mask-secret", "not-a-ref-shape"])
+        assert result.exit_code == EXIT_USAGE, (
+            f"expected EXIT_USAGE ({EXIT_USAGE}), got {result.exit_code}. output={result.output!r}"
+        )
+
     def test_missing_env_var_exits_usage(self, tmp_path: Path) -> None:
         cfg = _mask_pipeline(tmp_path)
         result = runner.invoke(
@@ -291,6 +312,55 @@ class TestMaskSecretUsageErrors:
         assert result.exit_code == EXIT_USAGE
         payload = json.loads(result.output)
         assert payload["status"] == "error"
+
+
+class TestMaskSecretYamlWorkflow:
+    """The canonical documented workflow -- YAML sets
+    `mask_secret_ref: "env:DECOY_MASK_SECRET"`, the secret is exported, and NO
+    CLI flag is passed -- must work. This is the exact path that regressed when
+    `--mask-secret` carried `envvar="DECOY_MASK_SECRET"` (Typer absorbed the
+    exported secret as the flag value and tripped the both-set guard)."""
+
+    def test_yaml_ref_with_exported_secret_no_flag_exits_zero(self, tmp_path: Path) -> None:
+        (tmp_path / "keyed").mkdir()
+        (tmp_path / "unkeyed").mkdir()
+        keyed_cfg = _mask_pipeline(tmp_path / "keyed", mask_secret_ref="env:DECOY_MASK_SECRET")
+        result = runner.invoke(
+            app,
+            ["run", str(keyed_cfg)],  # NO --mask-secret flag
+            env={"DECOY_MASK_SECRET": _SECRET_A},
+        )
+        assert result.exit_code == 0, (
+            "documented no-flag workflow (YAML mask_secret_ref + exported secret) "
+            f"must exit 0; got {result.exit_code}. output={result.output!r}"
+        )
+        keyed_out = (tmp_path / "keyed" / "out.csv").read_bytes()
+
+        # And it must actually be keyed (differs from an unkeyed run).
+        unkeyed_cfg = _mask_pipeline(tmp_path / "unkeyed")
+        assert runner.invoke(app, ["run", str(unkeyed_cfg)]).exit_code == 0
+        unkeyed_out = (tmp_path / "unkeyed" / "out.csv").read_bytes()
+        assert keyed_out != unkeyed_out
+
+    def test_exported_env_var_is_not_absorbed_as_flag_value(self, tmp_path: Path) -> None:
+        """With `--mask-secret`'s envvar removed, exporting DECOY_MASK_SECRET
+        (no flag, no YAML ref) must have ZERO effect on the run -- the raw
+        secret is not silently absorbed as the flag value and turned into a
+        (malformed) mask_secret_ref."""
+        (tmp_path / "with_env").mkdir()
+        (tmp_path / "no_env").mkdir()
+        cfg_with_env = _mask_pipeline(tmp_path / "with_env")
+        cfg_no_env = _mask_pipeline(tmp_path / "no_env")
+
+        r_env = runner.invoke(app, ["run", str(cfg_with_env)], env={"DECOY_MASK_SECRET": _SECRET_A})
+        assert r_env.exit_code == 0, r_env.output
+        r_noenv = runner.invoke(app, ["run", str(cfg_no_env)], env={})
+        assert r_noenv.exit_code == 0, r_noenv.output
+
+        # Byte-identical: the exported env var had no effect (not absorbed).
+        assert (tmp_path / "with_env" / "out.csv").read_bytes() == (
+            tmp_path / "no_env" / "out.csv"
+        ).read_bytes()
 
 
 class TestMaskSecretChunked:

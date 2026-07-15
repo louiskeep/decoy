@@ -159,14 +159,16 @@ def run(
     mask_secret: str = typer.Option(
         None,
         "--mask-secret",
-        envvar="DECOY_MASK_SECRET",
         help=(
             "env:NAME or file:/PATH pointing at a >=32-byte mask secret for "
             "keyed masking (mask: strategies -- fpe, hash, date_shift, and "
             "others). Independent of --master-key (which is generation-only). "
             "Sets 'global_settings.mask_secret_ref' for this run; an error if "
-            "the YAML already sets it. Reads DECOY_MASK_SECRET env var when "
-            "omitted. See: decoy explain keys."
+            "the YAML already sets it. Explicit flag only -- it deliberately "
+            "has NO env var, because the ref it carries (e.g. "
+            "'env:DECOY_MASK_SECRET') already indirects through the "
+            "environment; a second env layer would absorb the raw exported "
+            "secret as this flag's value. See: decoy explain keys."
         ),
     ),
     chunked: bool = typer.Option(
@@ -345,7 +347,19 @@ def run(
             # config dict -- _pipeline.py / _chunked.py); one injection point
             # covers both routes. Never silently override a YAML-configured
             # ref -- one secret source per run, chosen explicitly.
-            if mask_secret:
+            #
+            # `is not None`, NOT truthiness: an explicit `--mask-secret ''`
+            # must be a usage error, never a silent fall-through to an unkeyed
+            # (job_seed) run. The flag has no env var, so None here means
+            # "flag absent".
+            if mask_secret is not None:
+                if not mask_secret.startswith(("env:", "file:")):
+                    raise _MaskSecretUsageError(
+                        "--mask-secret must be an 'env:NAME' or 'file:/PATH' "
+                        f"reference to a >=32-byte secret; got {mask_secret!r}. "
+                        "It is a REFERENCE, never the raw secret. "
+                        "See: decoy explain keys."
+                    )
                 existing_ref = (config_dict.get("global_settings") or {}).get("mask_secret_ref")
                 if existing_ref:
                     raise _MaskSecretUsageError(
@@ -355,6 +369,28 @@ def run(
                         "remove mask_secret_ref from the config."
                     )
                 config_dict.setdefault("global_settings", {})["mask_secret_ref"] = mask_secret
+
+            # Fail-closed engine-capability guard (DE-02). A mask_secret_ref
+            # (from --mask-secret OR the YAML) is only honored by a DE-02
+            # engine; a pre-DE-02 engine has no `keyprovider` module and would
+            # SILENTLY IGNORE the ref, emitting job-seed-keyed output
+            # (fail-open). The pyproject floor (decoy-engine>=0.3.0) is the
+            # first line of defense, but 0.3.0 predates DE-02's merge, so a
+            # runtime probe is required to actually close the hole: if a ref is
+            # configured but the installed engine cannot resolve it, refuse the
+            # run rather than leak an unkeyed artifact.
+            effective_ref = (config_dict.get("global_settings") or {}).get("mask_secret_ref")
+            if effective_ref:
+                try:
+                    import decoy_engine.keyprovider  # noqa: F401
+                except ImportError as exc:
+                    raise _MaskSecretUsageError(
+                        "a mask secret is configured (mask_secret_ref / "
+                        "--mask-secret) but the installed decoy-engine is too "
+                        "old to honor it -- it has no DE-02 keyprovider, so it "
+                        "would silently emit UNKEYED output. Upgrade to "
+                        "decoy-engine>=0.3.0 (with DE-02). See: decoy explain keys."
+                    ) from exc
 
             _ev_config_dict = config_dict
             _ev_engine_version = engine_version
@@ -426,8 +462,19 @@ def run(
         # exit_codes.py contract) from "the run blew up" (EXIT_RUNTIME).
         # Imported lazily to keep the engine import off the help path.
         from decoy_engine import ConfigError, PipelineValidationError
-        from decoy_engine.keyprovider import MaskSecretError
         from decoy_engine.plan import PlanCompileError
+
+        # DE-02: MaskSecretError lives in the engine's `keyprovider` module,
+        # which a pre-DE-02 engine lacks. Import defensively so a missing
+        # module never crashes the error handler itself (it would mask the
+        # real exception). `()` makes the isinstance check below a harmless
+        # no-op when the class is unavailable.
+        try:
+            from decoy_engine.keyprovider import MaskSecretError as _MaskSecretError
+
+            _mask_secret_error_types: tuple = (_MaskSecretError,)
+        except ImportError:
+            _mask_secret_error_types = ()
 
         _exit_code = (
             EXIT_USAGE
@@ -445,7 +492,7 @@ def run(
                     # subclasses MissingMaskSecret / WeakMaskSecret /
                     # KeyedStrategyRequiresSecret) -- the operator's config is
                     # wrong, not a runtime crash.
-                    MaskSecretError,
+                    *_mask_secret_error_types,
                 ),
             )
             else EXIT_RUNTIME
