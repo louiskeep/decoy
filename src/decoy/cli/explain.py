@@ -183,7 +183,7 @@ _TOPICS: dict[str, _Topic] = {
     ),
     "keys": _Topic(
         name="keys",
-        summary="Two separate key mechanisms: --master-key for generation, mask_secret_ref for masking.",
+        summary="Two separate key mechanisms: --master-key for generation, --mask-secret/mask_secret_ref for masking.",
         body=(
             "Decoy has two independent keyed-determinism mechanisms. They do not share a\n"
             "secret and setting one has no effect on the other.\n\n"
@@ -198,17 +198,30 @@ _TOPICS: dict[str, _Topic] = {
             "     python -c 'import secrets; print(secrets.token_hex(32))'\n"
             "   Pass it via --master-key, the DECOY_MASTER_KEY env var, or both. The label\n"
             "   can be passed via --key-label or set as `key_label:` in the pipeline YAML.\n\n"
-            "2) MASKING (mask: strategies) -- `global_settings.mask_secret_ref` in the YAML\n"
+            "2) MASKING (mask: strategies) -- `--mask-secret` or `global_settings.mask_secret_ref`\n"
             "   --master-key does NOT affect masking. Keyed masking strategies (fpe, hash,\n"
-            "   date_shift, and others) are keyed off a secret referenced from the pipeline\n"
-            "   YAML, never a CLI flag:\n"
+            "   date_shift, and others) are keyed off a secret referenced two ways -- pick\n"
+            "   ONE (setting both is a usage error):\n"
+            "     decoy run pipeline.yaml --mask-secret env:DECOY_MASK_SECRET\n"
+            "   or in the YAML:\n"
             "     global_settings:\n"
-            "       mask_secret_ref: \"env:DECOY_MASK_SECRET\"   # or \"file:/path/to/secret\"\n"
-            "   The ref points at a >=32-byte secret (hex or base64); the CLI reads it from\n"
-            "   the referenced env var or file at run time and never logs or serializes it.\n"
-            "   Without mask_secret_ref, keyed masking strategies still run but are not\n"
-            "   portable across machines/pipelines (fail-closed at GA if no key resolves\n"
-            "   for a config that needs one)."
+            '       mask_secret_ref: "env:DECOY_MASK_SECRET"   # or "file:/path/to/secret"\n'
+            "   --mask-secret is an explicit flag only -- unlike --master-key it has NO env\n"
+            "   var, because the ref it carries already indirects through the environment\n"
+            "   (a second env layer would swallow the raw exported secret as the flag value).\n"
+            "   It is a completely separate secret from --master-key; the two are independent\n"
+            "   and setting one has no effect on the other.\n"
+            "   The ref points at a >=32-byte secret (hex or base64); the ENGINE resolves it\n"
+            "   from the referenced env var or file at run time and never logs or serializes\n"
+            "   the raw secret.\n"
+            "   Pre-GA: without a mask secret, keyed masking strategies still run, keyed off\n"
+            "   the 8-byte job_seed. The job_seed IS deterministic across machines, so the\n"
+            "   output is reproducible -- but the job_seed is PUBLIC (not a confidentiality\n"
+            "   secret), so unkeyed masking is NOT re-identification-safe: anyone with the\n"
+            "   config can reproduce the mapping. AT GA: a keyed masking strategy with no\n"
+            "   resolved mask secret is REJECTED outright (fail-closed) rather than silently\n"
+            "   falling back to job_seed -- see `decoy_engine.release.is_pre_ga()`. Configure\n"
+            "   a real mask secret before then."
         ),
         see_also=("decoy run --help",),
     ),
@@ -453,9 +466,7 @@ def explain(
                 {
                     "command": "explain",
                     "status": "ok",
-                    "topics": [
-                        {"name": t.name, "summary": t.summary} for t in _TOPICS.values()
-                    ],
+                    "topics": [{"name": t.name, "summary": t.summary} for t in _TOPICS.values()],
                 },
             )
             return
@@ -482,9 +493,7 @@ def explain(
         elif state.mode is not OutputMode.quiet:
             state.err_console.print(error("error:"), f"unknown topic {topic!r}.")
             if guess:
-                state.err_console.print(
-                    " ", hint("hint:"), "did you mean", code(guess[0]) + "?"
-                )
+                state.err_console.print(" ", hint("hint:"), "did you mean", code(guess[0]) + "?")
             else:
                 state.err_console.print(
                     " ",

@@ -8,6 +8,34 @@ version numbers follow the [versioning policy](docs/release/versioning.md).
 
 ## [Unreleased]
 
+### Added (DE-02 keyed-masking CLI surface, 2026-07-15)
+
+- **`decoy run --mask-secret <ref>`**: a first-class flag for keyed masking.
+  It sets `global_settings.mask_secret_ref` for the run, feeding the engine's
+  DE-02 KeyProvider (the `env:NAME` / `file:/PATH` reference to a >=32-byte
+  secret) on both the plain and `--chunked` paths. Independent of
+  `--master-key`, which stays generation-only -- the two are separate secrets
+  and neither affects the other. Explicit flag only (deliberately no env var,
+  since the ref it carries already indirects through the environment).
+  Passing both `--mask-secret` and a YAML `mask_secret_ref`, or an empty /
+  malformed ref, is a usage error (`EXIT_USAGE`), never a silent unkeyed run.
+- **Engine floor raised to `decoy-engine>=0.3.0`** for the DE-02 keyprovider
+  module. A configured mask secret is additionally guarded at run time: if the
+  installed engine lacks `decoy_engine.keyprovider`, `decoy run` refuses the
+  run rather than let the engine silently emit UNKEYED output.
+
+### Fixed (DE-02 keyed-masking CLI surface, 2026-07-15)
+
+- A bad / missing / weak mask-secret reference (engine `MaskSecretError` and
+  its subclasses) now exits `EXIT_USAGE` (the operator's config is wrong)
+  instead of `EXIT_RUNTIME`.
+- `decoy explain keys` documents `--mask-secret`, corrects the resolver owner
+  (the ENGINE resolves the ref, not the CLI), clarifies that an unkeyed
+  (job_seed) masking run is reproducible but NOT re-identification-safe
+  (the job seed is public, not a confidentiality key), and notes the GA
+  fail-closed behavior (a keyed strategy with no resolved secret is rejected
+  at GA, per `decoy_engine.release.is_pre_ga()`).
+
 ### Added (Sprint 5 CLI closure, 2026-07-04)
 
 - **`decoy validate distribution <source> <output>`**: recompute distribution

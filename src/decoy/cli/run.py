@@ -84,6 +84,20 @@ class _ChunkedGenerateError(Exception):
     """--chunked with a generate-table config; user error (exits EXIT_USAGE)."""
 
 
+class _MaskSecretUsageError(Exception):
+    """--mask-secret AND YAML mask_secret_ref both set; user error (exits EXIT_USAGE)."""
+
+
+# DE-02: the ONE place that decides whether a mask_secret_ref value is
+# well-formed. A valid ref is a non-empty `env:NAME` / `file:/PATH` string; a
+# non-str (list/int/dict), empty string, or wrong-prefix string is invalid.
+# Shared by the raw pre-check (before Pydantic) and the merged effective-ref
+# guard so the two can never diverge. Callers ALWAYS raise a redacted error --
+# they never echo the value, which may be a raw secret.
+def _is_valid_mask_secret_ref(value: object) -> bool:
+    return isinstance(value, str) and value.startswith(("env:", "file:"))
+
+
 def _load_raw_config(config_path: Path) -> dict | None:
     """Single defensive YAML parse for the pre-flight helpers.
 
@@ -147,10 +161,24 @@ def run(
             "omitted; without either, generation falls back to the legacy "
             "seeded path (per-input deterministic but not portable). "
             "This flag does NOT affect masking -- masking's keyed "
-            "determinism is configured separately via the pipeline YAML's "
-            "'global_settings.mask_secret_ref' (e.g. 'env:DECOY_MASK_SECRET' "
-            "or 'file:/path/to/secret'), never a CLI flag or env var read "
-            "here. See: decoy explain keys."
+            "determinism is configured separately via '--mask-secret' (or "
+            "the pipeline YAML's 'global_settings.mask_secret_ref'), never "
+            "this flag or its env var. See: decoy explain keys."
+        ),
+    ),
+    mask_secret: str = typer.Option(
+        None,
+        "--mask-secret",
+        help=(
+            "env:NAME or file:/PATH pointing at a >=32-byte mask secret for "
+            "keyed masking (mask: strategies -- fpe, hash, date_shift, and "
+            "others). Independent of --master-key (which is generation-only). "
+            "Sets 'global_settings.mask_secret_ref' for this run; an error if "
+            "the YAML already sets it. Explicit flag only -- it deliberately "
+            "has NO env var, because the ref it carries (e.g. "
+            "'env:DECOY_MASK_SECRET') already indirects through the "
+            "environment; a second env layer would absorb the raw exported "
+            "secret as this flag's value. See: decoy explain keys."
         ),
     ),
     chunked: bool = typer.Option(
@@ -320,7 +348,91 @@ def run(
                 import yaml as _yaml
 
                 raw = _yaml.safe_load(config.read_text(encoding="utf-8"))
+
+            # DE-02 secret-disclosure ROOT guard: validate the RAW YAML
+            # `mask_secret_ref` BEFORE PipelineConfig.model_validate(raw). A
+            # wrong-type value (list/int/dict/...) would otherwise raise a
+            # Pydantic ValidationError whose message echoes `input_value` --
+            # i.e. the secret -- and that error is not classified EXIT_USAGE, so
+            # it would exit 3 and print the secret via str(exc). Catching it
+            # here with a redacted usage error means no mask_secret_ref value
+            # (string or not) ever reaches Pydantic's diagnostics. YAML-only:
+            # the --mask-secret flag is always a str from Typer.
+            _raw_gs = raw.get("global_settings") if isinstance(raw, dict) else None
+            _raw_ref = _raw_gs.get("mask_secret_ref") if isinstance(_raw_gs, dict) else None
+            if _raw_ref is not None and not _is_valid_mask_secret_ref(_raw_ref):
+                raise _MaskSecretUsageError(
+                    "Invalid global_settings.mask_secret_ref: expected an "
+                    "'env:NAME' or 'file:/PATH' reference to a >=32-byte secret. "
+                    "It is a REFERENCE, never the raw secret. "
+                    "See: decoy explain keys."
+                )
+
             config_dict = PipelineConfig.model_validate(raw).model_dump()
+
+            # DE-02 Option B (2026-07-15): --mask-secret sets the same
+            # `global_settings.mask_secret_ref` slot the YAML can set directly.
+            # It feeds run_pipeline's fail-closed KeyProvider resolution AND
+            # the --chunked path (both read mask_secret_ref off this same
+            # config dict -- _pipeline.py / _chunked.py); one injection point
+            # covers both routes.
+            #
+            # Both-set check uses PRESENCE (`is not None`), not truthiness: a
+            # YAML `mask_secret_ref: ""` is still a configured slot, so the flag
+            # must not silently override it -- one secret source per run, chosen
+            # explicitly. The flag itself has no env var, so `mask_secret is
+            # None` here means "flag absent".
+            if mask_secret is not None:
+                existing_ref = (config_dict.get("global_settings") or {}).get("mask_secret_ref")
+                if existing_ref is not None:
+                    raise _MaskSecretUsageError(
+                        "--mask-secret was passed but the YAML already sets "
+                        "global_settings.mask_secret_ref. Set the masking "
+                        "secret in exactly one place: drop --mask-secret, or "
+                        "remove mask_secret_ref from the config."
+                    )
+                config_dict.setdefault("global_settings", {})["mask_secret_ref"] = mask_secret
+
+            # Validate + fail-closed guard on the EFFECTIVE ref (whether it came
+            # from --mask-secret or the YAML). Keyed off PRESENCE, not
+            # truthiness: a configured-but-empty `mask_secret_ref: ""` is a user
+            # error, NOT a silent fall-through to an unkeyed (job_seed) run --
+            # the engine's resolvers treat empty as no-secret, so truthiness
+            # here would let an empty ref emit UNKEYED output pre-GA. A present
+            # ref must be a well-formed `env:`/`file:` reference.
+            #
+            # Never echo the ref VALUE in any error (it may be a raw secret a
+            # user pasted by mistake): the message states the expected format
+            # only. This also keeps the value out of the --json error payload,
+            # which is built from `str(exc)`.
+            effective_ref = (config_dict.get("global_settings") or {}).get("mask_secret_ref")
+            if effective_ref is not None:
+                if not _is_valid_mask_secret_ref(effective_ref):
+                    raise _MaskSecretUsageError(
+                        "Invalid mask secret: expected an 'env:NAME' or "
+                        "'file:/PATH' reference to a >=32-byte secret (from "
+                        "--mask-secret or global_settings.mask_secret_ref). It "
+                        "is a REFERENCE, never the raw secret. "
+                        "See: decoy explain keys."
+                    )
+                # A mask_secret_ref is only honored by a DE-02 engine; a
+                # pre-DE-02 engine has no `keyprovider` module and would
+                # SILENTLY IGNORE the ref, emitting job-seed-keyed output
+                # (fail-open). The pyproject floor (decoy-engine>=0.3.0) is the
+                # first line of defense, but 0.3.0 predates DE-02's merge, so a
+                # runtime probe is required to actually close the hole: refuse
+                # the run rather than leak an unkeyed artifact.
+                try:
+                    import decoy_engine.keyprovider  # noqa: F401
+                except ImportError as exc:
+                    raise _MaskSecretUsageError(
+                        "a mask secret is configured (mask_secret_ref / "
+                        "--mask-secret) but the installed decoy-engine is too "
+                        "old to honor it -- it has no DE-02 keyprovider, so it "
+                        "would silently emit UNKEYED output. Upgrade to "
+                        "decoy-engine>=0.3.0 (with DE-02). See: decoy explain keys."
+                    ) from exc
+
             _ev_config_dict = config_dict
             _ev_engine_version = engine_version
 
@@ -393,6 +505,18 @@ def run(
         from decoy_engine import ConfigError, PipelineValidationError
         from decoy_engine.plan import PlanCompileError
 
+        # DE-02: MaskSecretError lives in the engine's `keyprovider` module,
+        # which a pre-DE-02 engine lacks. Import defensively so a missing
+        # module never crashes the error handler itself (it would mask the
+        # real exception). `()` makes the isinstance check below a harmless
+        # no-op when the class is unavailable.
+        try:
+            from decoy_engine.keyprovider import MaskSecretError as _MaskSecretError
+
+            _mask_secret_error_types: tuple = (_MaskSecretError,)
+        except ImportError:
+            _mask_secret_error_types = ()
+
         _exit_code = (
             EXIT_USAGE
             if isinstance(
@@ -403,6 +527,13 @@ def run(
                     ConfigError,
                     _ChunkedGenerateError,
                     _VaultUsageError,
+                    _MaskSecretUsageError,
+                    # DE-02: a bad/missing/weak --mask-secret ref (or YAML
+                    # mask_secret_ref) resolves to MaskSecretError (and its
+                    # subclasses MissingMaskSecret / WeakMaskSecret /
+                    # KeyedStrategyRequiresSecret) -- the operator's config is
+                    # wrong, not a runtime crash.
+                    *_mask_secret_error_types,
                 ),
             )
             else EXIT_RUNTIME
