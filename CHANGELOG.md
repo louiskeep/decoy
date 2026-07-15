@@ -8,6 +8,22 @@ version numbers follow the [versioning policy](docs/release/versioning.md).
 
 ## [Unreleased]
 
+### Fixed (`decoy unmask` console summary hides unverified reversals, 2026-07-15)
+
+- **`decoy unmask`'s human-readable summary (non-`--json`) no longer hides
+  `reversed_unverified` columns.** FPE columns reversed under the non-secret
+  `job_seed` fallback (no `mask_secret_ref` supplied at mask time) come back
+  from the engine with status `reversed_unverified`, distinct from an
+  authenticated `reversed`. The console summary previously counted neither
+  status for that column NOR printed its detail note -- e.g. a masked PAN
+  that was in fact decrypted back to plaintext showed as
+  `"0 column(s) reversed, 3 irreversible, 0 untouched."` (the column simply
+  vanished from every bucket) and the "FPE is unauthenticated -- a wrong key
+  yields plausible but WRONG plaintext" warning never printed. The summary
+  now appends a `, N reversed (unverified)` term when present, and the
+  authentication caveat prints as a `note:` like the other reversible
+  statuses. `--json` output was already complete and is unchanged.
+
 ### Fixed (`decoy init` scaffold runnability + config exit codes, 2026-07-15)
 
 - **`decoy init <file>` now scaffolds configs that actually run.** The

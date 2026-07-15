@@ -13,6 +13,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 import pandas as pd
+import pytest
 import yaml
 from typer.testing import CliRunner
 
@@ -343,3 +344,80 @@ class TestUnmaskVaultError:
             f"Expected EXIT_USAGE ({EXIT_USAGE}) for vault_decrypt_failed, "
             f"got {result.exit_code}. output={result.output!r}"
         )
+
+
+@pytest.fixture
+def csv_with_pan(tmp_path: Path) -> Path:
+    """Luhn-valid PAN column -- `decoy init` scaffolds it to `strategy: fpe`
+    (`_INFERENCE_TABLE` -> pan detector), matching the shape of
+    `csv_with_date_zip_pan_id` in test_init_command.py."""
+    csv = tmp_path / "accounts.csv"
+    pd.DataFrame(
+        {
+            "card_number": [
+                "4111111111111111",
+                "4012888888881881",
+                "5500005555555559",
+                "4000000000000002",
+            ],
+        }
+    ).to_csv(csv, index=False)
+    return csv
+
+
+class TestUnmaskConsoleSurfacesReversedUnverified:
+    """Real-world reproduction: `decoy init` scaffolds an fpe column for a
+    PAN, `decoy run` with no mask secret masks it under the non-secret
+    job_seed fallback, and `decoy unmask` decrypts it back with status
+    `reversed_unverified`. Before the fix, the console summary counted only
+    `reversed`/`irreversible`/`untouched` and printed a `note:` only for
+    `("reversed", "vault_reversed", "vault_miss")` -- so a `reversed_
+    unverified` column was invisible: not counted (summary said "0 column(s)
+    reversed" despite a PAN having been decrypted) and its "may be WRONG
+    plaintext" authentication caveat was never printed. Only `--json`
+    surfaced it correctly.
+    """
+
+    def test_console_summary_reports_reversed_unverified_and_warning(
+        self, csv_with_pan: Path, tmp_path: Path
+    ) -> None:
+        out_cfg = tmp_path / "pipeline.yaml"
+        init_result = runner.invoke(
+            app, ["init", str(csv_with_pan), "--out", str(out_cfg), "--quiet"]
+        )
+        assert init_result.exit_code == 0, init_result.output
+
+        run_result = runner.invoke(app, ["run", str(out_cfg)])
+        assert run_result.exit_code == 0, run_result.output
+
+        masked = tmp_path / "accounts.masked.csv"
+        assert masked.exists(), "decoy run did not write the scaffolded output path"
+
+        out = tmp_path / "recovered.csv"
+        unmask_result = runner.invoke(
+            app,
+            ["unmask", str(out_cfg), str(masked), "--output", str(out)],
+        )
+        assert unmask_result.exit_code == 0, unmask_result.output
+        stdout = unmask_result.output
+
+        # (a) the fpe column must be reflected in the counts -- pre-fix, the
+        # summary line was the bare "0 column(s) reversed, 0 irreversible,
+        # 0 untouched." with no fourth term, silently dropping the one PAN
+        # column from every bucket (0 + 0 + 0 != 1). Post-fix a fourth term
+        # accounts for it.
+        summary_line = next(
+            line for line in stdout.splitlines() if "column(s) reversed" in line
+        )
+        assert summary_line.rstrip().endswith("."), summary_line
+        assert summary_line.count(",") >= 3, (
+            f"expected a 4th (unverified) term in the summary, got: {summary_line!r}"
+        )
+        # (b) the unverified reversal is called out distinctly.
+        assert "unverified" in stdout.lower(), (
+            f"missing 'unverified' in console summary: {stdout!r}"
+        )
+        # (c) the authentication warning detail must print, not be hidden.
+        assert (
+            "wrong plaintext" in stdout.lower() or "unauthenticated" in stdout.lower()
+        ), f"missing authentication warning note: {stdout!r}"

@@ -245,18 +245,32 @@ def unmask(
         return
 
     reversed_count = sum(1 for e in entries if e["status"] == "reversed")
+    # DE-02: `reversed_unverified` is a distinct outcome, not a sub-case of
+    # `reversed` -- folding it in would silently claim an authenticated round
+    # trip for a column decrypted under the non-secret job_seed fallback.
+    # Report it as its own line item so the count and the warning below both
+    # surface it.
+    reversed_unverified_count = sum(
+        1 for e in entries if e["status"] == "reversed_unverified"
+    )
     vault_reversed_count = sum(1 for e in entries if e["status"] == "vault_reversed")
     summary = (
         f"  {reversed_count} column(s) reversed, "
         f"{sum(1 for e in entries if e['status'] == 'irreversible')} irreversible, "
         f"{sum(1 for e in entries if e['status'] == 'untouched')} untouched."
     )
+    if reversed_unverified_count:
+        summary = summary[:-1] + f", {reversed_unverified_count} reversed (unverified)."
     if vault is not None:
         summary = summary[:-1] + f", {vault_reversed_count} vault-reversed."
     state.console.print(success("OK"), code(str(out_path)))
     state.console.print(summary)
     for e in entries:
-        if e["status"] in ("reversed", "vault_reversed", "vault_miss") and e["detail"]:
+        if (
+            e["status"]
+            in ("reversed", "reversed_unverified", "vault_reversed", "vault_miss")
+            and e["detail"]
+        ):
             state.console.print(" ", warn("note:"), f"{e['column']}: {e['detail']}")
 
 
