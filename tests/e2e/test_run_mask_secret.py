@@ -14,6 +14,7 @@ flag must not break).
 
 from __future__ import annotations
 
+import json
 import secrets
 import sys
 from contextlib import contextmanager
@@ -315,6 +316,24 @@ class TestMaskSecretUsageErrors:
         # The masked output must NOT have been written as an unkeyed run.
         assert not (tmp_path / "out.csv").exists(), "empty --mask-secret must not produce output"
 
+    def test_empty_yaml_ref_exits_usage_no_output(self, tmp_path: Path) -> None:
+        """A configured-but-empty YAML `mask_secret_ref: ""` (no flag) on a
+        keyed strategy must be a usage error, NOT a silent unkeyed run.
+
+        Regression for the presence-vs-truthiness fail-open: the engine's
+        resolvers treat "" as no-secret, so a truthiness gate would let the run
+        emit UNKEYED output pre-GA (exit 0, out.csv written). The CLI must key
+        off PRESENCE and reject the empty ref before any masking."""
+        cfg = _mask_pipeline(tmp_path, mask_secret_ref="")  # empty YAML ref, no flag
+        result = runner.invoke(app, ["run", str(cfg)])
+        assert result.exit_code == EXIT_USAGE, (
+            f"empty YAML mask_secret_ref must be refused with EXIT_USAGE ({EXIT_USAGE}); "
+            f"got {result.exit_code}. output={result.output!r}"
+        )
+        assert not (tmp_path / "out.csv").exists(), (
+            "an empty mask_secret_ref must not fall through to an unkeyed run"
+        )
+
     def test_malformed_ref_exits_usage(self, tmp_path: Path) -> None:
         """A ref that is neither env: nor file: (e.g. a raw secret pasted as
         the value) is a usage error before the engine ever sees it."""
@@ -323,6 +342,35 @@ class TestMaskSecretUsageErrors:
         assert result.exit_code == EXIT_USAGE, (
             f"expected EXIT_USAGE ({EXIT_USAGE}), got {result.exit_code}. output={result.output!r}"
         )
+
+    def test_malformed_ref_does_not_disclose_secret_value(self, tmp_path: Path) -> None:
+        """If a user passes a RAW secret as --mask-secret (malformed, since it
+        lacks env:/file:), the error must NOT echo the value anywhere -- not on
+        stdout/stderr, not in the --json error payload. It may be a real secret."""
+        raw_secret = secrets.token_hex(32)  # 64 hex chars, no env:/file: prefix
+        cfg = _mask_pipeline(tmp_path)
+
+        result = runner.invoke(app, ["run", str(cfg), "--mask-secret", raw_secret])
+        assert result.exit_code == EXIT_USAGE, (
+            f"expected EXIT_USAGE ({EXIT_USAGE}), got {result.exit_code}. output={result.output!r}"
+        )
+        assert raw_secret not in result.output, (
+            "the raw --mask-secret value must never appear in CLI output"
+        )
+
+        # Same guarantee through the machine-readable --json envelope.
+        (tmp_path / "json_run").mkdir(exist_ok=True)
+        cfg_json = _mask_pipeline(tmp_path / "json_run")
+        result_json = runner.invoke(
+            app, ["run", str(cfg_json), "--mask-secret", raw_secret, "--json"]
+        )
+        assert result_json.exit_code == EXIT_USAGE
+        assert raw_secret not in result_json.output, (
+            "the raw --mask-secret value must never appear in the --json payload"
+        )
+        payload = json.loads(result_json.output)
+        assert payload["status"] == "error"
+        assert raw_secret not in payload["error"]
 
     def test_missing_env_var_exits_usage(self, tmp_path: Path) -> None:
         cfg = _mask_pipeline(tmp_path)
@@ -347,8 +395,6 @@ class TestMaskSecretUsageErrors:
         )
 
     def test_json_mode_reports_usage_error(self, tmp_path: Path) -> None:
-        import json
-
         cfg = _mask_pipeline(tmp_path)
         result = runner.invoke(
             app,

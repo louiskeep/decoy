@@ -345,23 +345,16 @@ def run(
             # It feeds run_pipeline's fail-closed KeyProvider resolution AND
             # the --chunked path (both read mask_secret_ref off this same
             # config dict -- _pipeline.py / _chunked.py); one injection point
-            # covers both routes. Never silently override a YAML-configured
-            # ref -- one secret source per run, chosen explicitly.
+            # covers both routes.
             #
-            # `is not None`, NOT truthiness: an explicit `--mask-secret ''`
-            # must be a usage error, never a silent fall-through to an unkeyed
-            # (job_seed) run. The flag has no env var, so None here means
-            # "flag absent".
+            # Both-set check uses PRESENCE (`is not None`), not truthiness: a
+            # YAML `mask_secret_ref: ""` is still a configured slot, so the flag
+            # must not silently override it -- one secret source per run, chosen
+            # explicitly. The flag itself has no env var, so `mask_secret is
+            # None` here means "flag absent".
             if mask_secret is not None:
-                if not mask_secret.startswith(("env:", "file:")):
-                    raise _MaskSecretUsageError(
-                        "--mask-secret must be an 'env:NAME' or 'file:/PATH' "
-                        f"reference to a >=32-byte secret; got {mask_secret!r}. "
-                        "It is a REFERENCE, never the raw secret. "
-                        "See: decoy explain keys."
-                    )
                 existing_ref = (config_dict.get("global_settings") or {}).get("mask_secret_ref")
-                if existing_ref:
+                if existing_ref is not None:
                     raise _MaskSecretUsageError(
                         "--mask-secret was passed but the YAML already sets "
                         "global_settings.mask_secret_ref. Set the masking "
@@ -370,17 +363,35 @@ def run(
                     )
                 config_dict.setdefault("global_settings", {})["mask_secret_ref"] = mask_secret
 
-            # Fail-closed engine-capability guard (DE-02). A mask_secret_ref
-            # (from --mask-secret OR the YAML) is only honored by a DE-02
-            # engine; a pre-DE-02 engine has no `keyprovider` module and would
-            # SILENTLY IGNORE the ref, emitting job-seed-keyed output
-            # (fail-open). The pyproject floor (decoy-engine>=0.3.0) is the
-            # first line of defense, but 0.3.0 predates DE-02's merge, so a
-            # runtime probe is required to actually close the hole: if a ref is
-            # configured but the installed engine cannot resolve it, refuse the
-            # run rather than leak an unkeyed artifact.
+            # Validate + fail-closed guard on the EFFECTIVE ref (whether it came
+            # from --mask-secret or the YAML). Keyed off PRESENCE, not
+            # truthiness: a configured-but-empty `mask_secret_ref: ""` is a user
+            # error, NOT a silent fall-through to an unkeyed (job_seed) run --
+            # the engine's resolvers treat empty as no-secret, so truthiness
+            # here would let an empty ref emit UNKEYED output pre-GA. A present
+            # ref must be a well-formed `env:`/`file:` reference.
+            #
+            # Never echo the ref VALUE in any error (it may be a raw secret a
+            # user pasted by mistake): the message states the expected format
+            # only. This also keeps the value out of the --json error payload,
+            # which is built from `str(exc)`.
             effective_ref = (config_dict.get("global_settings") or {}).get("mask_secret_ref")
-            if effective_ref:
+            if effective_ref is not None:
+                if not effective_ref or not effective_ref.startswith(("env:", "file:")):
+                    raise _MaskSecretUsageError(
+                        "Invalid mask secret: expected an 'env:NAME' or "
+                        "'file:/PATH' reference to a >=32-byte secret (from "
+                        "--mask-secret or global_settings.mask_secret_ref). It "
+                        "is a REFERENCE, never the raw secret. "
+                        "See: decoy explain keys."
+                    )
+                # A mask_secret_ref is only honored by a DE-02 engine; a
+                # pre-DE-02 engine has no `keyprovider` module and would
+                # SILENTLY IGNORE the ref, emitting job-seed-keyed output
+                # (fail-open). The pyproject floor (decoy-engine>=0.3.0) is the
+                # first line of defense, but 0.3.0 predates DE-02's merge, so a
+                # runtime probe is required to actually close the hole: refuse
+                # the run rather than leak an unkeyed artifact.
                 try:
                     import decoy_engine.keyprovider  # noqa: F401
                 except ImportError as exc:
