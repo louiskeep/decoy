@@ -165,8 +165,10 @@ _INFERENCE_TABLE: dict[str, Inference] = {
         strategy="fpe",
         review=(
             "STORM detected payment card numbers (PAN). fpe (format-preserving "
-            "encryption) keeps Luhn-valid shape; no per-column key config "
-            "needed -- the FPE key is derived automatically per job/namespace."
+            "encryption) with charset: digits + validate_luhn: true keeps the "
+            "masked output Luhn-valid, matching the bundled PCI template. The "
+            "FPE key itself is derived automatically per job/namespace -- no "
+            "key config needed -- but a namespace IS required (see below)."
         ),
     ),
     "cvv": Inference(

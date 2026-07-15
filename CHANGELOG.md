@@ -8,6 +8,28 @@ version numbers follow the [versioning policy](docs/release/versioning.md).
 
 ## [Unreleased]
 
+### Fixed (`decoy init` scaffold runnability + config exit codes, 2026-07-15)
+
+- **`decoy init <file>` now scaffolds configs that actually run.** The
+  column-aware scaffolder emits real `provider_config:` keys instead of a
+  phantom `params:` block (which `ColumnConfig`'s `extra="forbid"` always
+  rejected), AND now emits the `namespace:` field that `hash`, `fpe`, and
+  `date_shift` require at runtime (`ColumnConfig.namespace` defaults to
+  `None` with no compile-time check, so a missing namespace used to pass
+  `decoy validate config` and only fail at `decoy run` with exit 3). `fpe`
+  scaffolds for PAN/credit-card columns now also set
+  `provider_config: {charset: digits, validate_luhn: true}` so masked PANs
+  stay Luhn-valid, matching the bundled PCI template.
+- **A malformed pipeline config now exits `EXIT_USAGE` (1), not
+  `EXIT_RUNTIME` (3).** `decoy run` catches `PipelineConfig.model_validate`'s
+  `ValidationError` narrowly at the validation call site and reclassifies it
+  as a usage error -- the operator's YAML is wrong, not an engine crash.
+- **A non-dict `global_settings` (e.g. a YAML list) is now rejected before
+  schema validation**, with a redacted message, instead of reaching
+  `PipelineConfig.model_validate` -- which would otherwise echo any value
+  nested inside it (including a smuggled `mask_secret_ref`) via Pydantic's
+  `input_value` diagnostics.
+
 ### Added (DE-02 keyed-masking CLI surface, 2026-07-15)
 
 - **`decoy run --mask-secret <ref>`**: a first-class flag for keyed masking.
