@@ -505,6 +505,7 @@ def run(
         # Imported lazily to keep the engine import off the help path.
         from decoy_engine import ConfigError, PipelineValidationError
         from decoy_engine.plan import PlanCompileError
+        from pydantic import ValidationError as _PydanticValidationError
 
         # DE-02: MaskSecretError lives in the engine's `keyprovider` module,
         # which a pre-DE-02 engine lacks. Import defensively so a missing
@@ -529,6 +530,16 @@ def run(
                     _ChunkedGenerateError,
                     _VaultUsageError,
                     _MaskSecretUsageError,
+                    # A raw Pydantic ValidationError from
+                    # PipelineConfig.model_validate(raw) (~L371) means the YAML
+                    # is structurally wrong (unknown key under extra="forbid",
+                    # wrong-typed field, missing required field) -- the user's
+                    # config is bad, not a runtime crash. The secret-disclosure
+                    # ROOT guard (~L363) already intercepts a bad mask_secret_ref
+                    # BEFORE model_validate, so no secret value reaches Pydantic
+                    # diagnostics here; the F8 message cap (below) bounds the
+                    # rest.
+                    _PydanticValidationError,
                     # DE-02: a bad/missing/weak --mask-secret ref (or YAML
                     # mask_secret_ref) resolves to MaskSecretError (and its
                     # subclasses MissingMaskSecret / WeakMaskSecret /

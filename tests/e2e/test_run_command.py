@@ -294,6 +294,35 @@ class TestExitCodeDispatch:
         result = runner.invoke(app, ["run", str(config_path)])
         assert result.exit_code == 1, result.output
 
+    def test_pydantic_validation_error_exits_usage(self, tmp_path, sample_csv):
+        # A structurally-invalid config (unknown key under a column, rejected
+        # by ColumnConfig's extra="forbid") raises a raw Pydantic
+        # ValidationError from PipelineConfig.model_validate -- the user's YAML
+        # is malformed, so it must exit EXIT_USAGE(1), not the EXIT_RUNTIME(3)
+        # catch-all. This is the failure mode a stale `params:` block hits.
+        cfg = {
+            "version": 1,
+            "global_settings": {"seed": 1},
+            "sources": {"t": {"type": "file", "format": "csv", "path": str(sample_csv)}},
+            "tables": [
+                {
+                    "name": "t",
+                    "columns": [
+                        # `params` is not a ColumnConfig field; extra="forbid"
+                        # rejects it at model_validate.
+                        {"name": "email", "strategy": "truncate", "params": {"keep": 3}}
+                    ],
+                }
+            ],
+            "targets": {
+                "t": {"type": "file", "format": "csv", "path": str(tmp_path / "out.csv")}
+            },
+        }
+        config_path = tmp_path / "unknown-key.yaml"
+        config_path.write_text(yaml.safe_dump(cfg), encoding="utf-8")
+        result = runner.invoke(app, ["run", str(config_path)])
+        assert result.exit_code == 1, result.output
+
     def test_runtime_error_still_exits_runtime(self, tmp_path):
         # Source file missing -> not a config error -> EXIT_RUNTIME(3).
         cfg = {
