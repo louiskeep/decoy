@@ -224,8 +224,12 @@ def test_run_generate_end_to_end_smoke(generate_config: Path, tmp_path: Path):
 def test_run_rejects_v1_graph_yaml(tmp_path: Path):
     """V1 `mode: graph` YAML is rejected by the V2 PipelineConfig schema
     at the choke point (not by a CLI-side pre-check). Pre-CLI.3 the CLI
-    routed graph YAML to the (deleted) `run_graph` engine entry; now it
-    surfaces a typed PipelineValidationError at exit 3."""
+    routed graph YAML to the (deleted) `run_graph` engine entry; now the V1
+    vocabulary (`mode`/`nodes`/`edges`) is unknown under PipelineConfig's
+    extra="forbid", so model_validate raises a Pydantic ValidationError.
+    That is malformed user config, so it exits EXIT_USAGE(1) -- not the
+    EXIT_RUNTIME(3) catch-all it fell through to before ValidationError was
+    classified."""
     cfg = {
         "mode": "graph",
         "nodes": [
@@ -239,7 +243,7 @@ def test_run_rejects_v1_graph_yaml(tmp_path: Path):
 
     result = runner.invoke(app, ["run", str(p), "--json"])
 
-    assert result.exit_code == 3
+    assert result.exit_code == 1
     payload = _json.loads(result.stdout)
     assert payload["status"] == "error"
     # FC-1 (2026-06-02): the YAML-detected mode is inferred from the
