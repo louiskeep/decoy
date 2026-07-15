@@ -88,6 +88,16 @@ class _MaskSecretUsageError(Exception):
     """--mask-secret AND YAML mask_secret_ref both set; user error (exits EXIT_USAGE)."""
 
 
+# DE-02: the ONE place that decides whether a mask_secret_ref value is
+# well-formed. A valid ref is a non-empty `env:NAME` / `file:/PATH` string; a
+# non-str (list/int/dict), empty string, or wrong-prefix string is invalid.
+# Shared by the raw pre-check (before Pydantic) and the merged effective-ref
+# guard so the two can never diverge. Callers ALWAYS raise a redacted error --
+# they never echo the value, which may be a raw secret.
+def _is_valid_mask_secret_ref(value: object) -> bool:
+    return isinstance(value, str) and value.startswith(("env:", "file:"))
+
+
 def _load_raw_config(config_path: Path) -> dict | None:
     """Single defensive YAML parse for the pre-flight helpers.
 
@@ -338,6 +348,26 @@ def run(
                 import yaml as _yaml
 
                 raw = _yaml.safe_load(config.read_text(encoding="utf-8"))
+
+            # DE-02 secret-disclosure ROOT guard: validate the RAW YAML
+            # `mask_secret_ref` BEFORE PipelineConfig.model_validate(raw). A
+            # wrong-type value (list/int/dict/...) would otherwise raise a
+            # Pydantic ValidationError whose message echoes `input_value` --
+            # i.e. the secret -- and that error is not classified EXIT_USAGE, so
+            # it would exit 3 and print the secret via str(exc). Catching it
+            # here with a redacted usage error means no mask_secret_ref value
+            # (string or not) ever reaches Pydantic's diagnostics. YAML-only:
+            # the --mask-secret flag is always a str from Typer.
+            _raw_gs = raw.get("global_settings") if isinstance(raw, dict) else None
+            _raw_ref = _raw_gs.get("mask_secret_ref") if isinstance(_raw_gs, dict) else None
+            if _raw_ref is not None and not _is_valid_mask_secret_ref(_raw_ref):
+                raise _MaskSecretUsageError(
+                    "Invalid global_settings.mask_secret_ref: expected an "
+                    "'env:NAME' or 'file:/PATH' reference to a >=32-byte secret. "
+                    "It is a REFERENCE, never the raw secret. "
+                    "See: decoy explain keys."
+                )
+
             config_dict = PipelineConfig.model_validate(raw).model_dump()
 
             # DE-02 Option B (2026-07-15): --mask-secret sets the same
@@ -377,7 +407,7 @@ def run(
             # which is built from `str(exc)`.
             effective_ref = (config_dict.get("global_settings") or {}).get("mask_secret_ref")
             if effective_ref is not None:
-                if not effective_ref or not effective_ref.startswith(("env:", "file:")):
+                if not _is_valid_mask_secret_ref(effective_ref):
                     raise _MaskSecretUsageError(
                         "Invalid mask secret: expected an 'env:NAME' or "
                         "'file:/PATH' reference to a >=32-byte secret (from "

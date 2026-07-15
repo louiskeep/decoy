@@ -412,6 +412,77 @@ class TestMaskSecretUsageErrors:
         assert payload["status"] == "error"
 
 
+# A 32-byte marker that stands in for real secret material pasted into the
+# YAML as the WRONG type. If the pre-Pydantic guard is missing, Pydantic's
+# ValidationError echoes this via `input_value`, disclosing it.
+_SECRET_MARKER = "S3CRET_MATERIAL_0123456789ABCDEF"
+
+
+class TestMaskSecretWrongTypeYaml:
+    """A wrong-type YAML `mask_secret_ref` must NOT reach Pydantic (whose error
+    echoes the offending value = the secret). The CLI pre-validates the raw ref
+    before model_validate and refuses with a redacted usage error. Root fix for
+    the whole non-str class, not just the list case."""
+
+    @staticmethod
+    def _assert_refused_and_redacted(result, marker: str, out_csv: Path) -> None:
+        assert result.exit_code == EXIT_USAGE, (
+            f"wrong-type mask_secret_ref must be EXIT_USAGE ({EXIT_USAGE}); "
+            f"got {result.exit_code}. output={result.output!r}"
+        )
+        assert marker not in result.output, (
+            f"the secret marker leaked into output: {result.output!r}"
+        )
+        assert not out_csv.exists(), "no output must be written on a refused run"
+
+    def test_list_ref_plain_refused_and_redacted(self, tmp_path: Path) -> None:
+        cfg = _mask_pipeline(tmp_path, mask_secret_ref=[_SECRET_MARKER])
+        result = runner.invoke(app, ["run", str(cfg)])
+        self._assert_refused_and_redacted(result, _SECRET_MARKER, tmp_path / "out.csv")
+
+    def test_list_ref_json_refused_and_redacted(self, tmp_path: Path) -> None:
+        cfg = _mask_pipeline(tmp_path, mask_secret_ref=[_SECRET_MARKER])
+        result = runner.invoke(app, ["run", str(cfg), "--json"])
+        assert result.exit_code == EXIT_USAGE
+        assert _SECRET_MARKER not in result.output, "secret marker leaked into --json output"
+        payload = json.loads(result.output)
+        assert payload["status"] == "error"
+        assert _SECRET_MARKER not in payload["error"], (
+            "secret marker leaked into --json error field"
+        )
+        assert not (tmp_path / "out.csv").exists()
+
+    def test_list_ref_verbose_refused_and_redacted(self, tmp_path: Path) -> None:
+        cfg = _mask_pipeline(tmp_path, mask_secret_ref=[_SECRET_MARKER])
+        result = runner.invoke(app, ["run", str(cfg), "--verbose"])
+        # --verbose prints a traceback; the marker must still be nowhere in it.
+        self._assert_refused_and_redacted(result, _SECRET_MARKER, tmp_path / "out.csv")
+
+    def test_list_ref_chunked_refused_and_redacted(self, tmp_path: Path) -> None:
+        cfg = _mask_pipeline(tmp_path, mask_secret_ref=[_SECRET_MARKER])
+        result = runner.invoke(app, ["run", str(cfg), "--chunked", "--chunk-size", "17"])
+        self._assert_refused_and_redacted(result, _SECRET_MARKER, tmp_path / "out.csv")
+
+    def test_int_scalar_ref_refused_and_redacted(self, tmp_path: Path) -> None:
+        """A non-string scalar (int) mask_secret_ref is also refused, redacted."""
+        secret_int = 1234567890123456789
+        cfg = _mask_pipeline(tmp_path, mask_secret_ref=secret_int)
+        result = runner.invoke(app, ["run", str(cfg)])
+        assert result.exit_code == EXIT_USAGE, (
+            f"expected EXIT_USAGE ({EXIT_USAGE}), got {result.exit_code}. output={result.output!r}"
+        )
+        assert str(secret_int) not in result.output, "the int secret value leaked into output"
+        assert not (tmp_path / "out.csv").exists()
+
+    def test_int_scalar_ref_chunked_refused_and_redacted(self, tmp_path: Path) -> None:
+        secret_int = 1234567890123456789
+        cfg = _mask_pipeline(tmp_path, mask_secret_ref=secret_int)
+        result = runner.invoke(app, ["run", str(cfg), "--chunked", "--chunk-size", "17"])
+        assert result.exit_code == EXIT_USAGE
+        assert str(secret_int) not in result.output
+        assert not (tmp_path / "out.csv").exists()
+
+
 class TestMaskSecretYamlWorkflow:
     """The canonical documented workflow -- YAML sets
     `mask_secret_ref: "env:DECOY_MASK_SECRET"`, the secret is exported, and NO
