@@ -102,11 +102,11 @@ def _load_raw_config(config_path: Path) -> dict | None:
     """Single defensive YAML parse for the pre-flight helpers.
 
     Audit L3 (2026-06-12): the config was read + parsed up to 4x per
-    run (_detect_mode, _detect_key_label, the spinner body, the
-    follow-up hint) -- a perf cliff on large or network-mounted
-    configs. Helpers now share one parse; the spinner body still
-    re-raises real parse errors through its own load so the error
-    path is unchanged.
+    run (_detect_mode, the spinner body, the follow-up hint, and a
+    since-removed key_label reader) -- a perf cliff on large or
+    network-mounted configs. Helpers now share one parse; the spinner
+    body still re-raises real parse errors through its own load so
+    the error path is unchanged.
     """
     try:
         import yaml
@@ -233,8 +233,8 @@ def run(
             "hierarchy (synthetic generation only, not masking). Required "
             "when --master-key is set. Pick something durable "
             "(e.g. 'customers_q4'); changing it produces different "
-            "generated output. Read from the YAML's top-level 'key_label:' "
-            "field if not passed on the command line."
+            "generated output. CLI flag only -- PipelineConfig forbids "
+            "unknown top-level keys, so there is no YAML equivalent."
         ),
     ),
     evidence_out: Path = typer.Option(
@@ -596,14 +596,13 @@ def run(
     if evidence_out is not None and _ev_config_dict is not None:
         from decoy.cli.evidence import build_manifest
 
-        _label = key_label or _detect_key_label(raw_cfg)
         manifest = build_manifest(
             pipeline_path=config,
             config_dict=_ev_config_dict,
             run_result={"row_counts": _ev_row_counts or {}},
             cli_version=_cli_version,
             engine_version=_ev_engine_version or "unknown",
-            key_label=_label,
+            key_label=key_label,
             timings=_ev_timings,
             engine_warnings=_ev_engine_warnings,
         )
@@ -675,7 +674,15 @@ def run(
 def _build_resolver(master_key_hex: str | None, key_label: str | None, raw_cfg: dict | None, state):
     """Construct the engine-facing ``derive_key`` resolver, or None when no
     master key was supplied. Keeps the legacy seeded fallback default so
-    runs without a key behave exactly as before."""
+    runs without a key behave exactly as before.
+
+    ``raw_cfg`` is accepted (and unused) for call-site symmetry with the
+    other pre-flight helpers that share the one parsed YAML dict; it used
+    to feed a top-level YAML ``key_label:`` reader, removed because
+    PipelineConfig's ``extra="forbid"`` rejects that field before a run
+    with one could ever reach this function -- ``--key-label`` is the only
+    live source (doc/config mismatch fix, see `decoy explain keys`).
+    """
     if not master_key_hex:
         return None
 
@@ -692,25 +699,15 @@ def _build_resolver(master_key_hex: str | None, key_label: str | None, raw_cfg: 
     if len(master) != 32:
         raise typer.BadParameter(f"--master-key must decode to 32 bytes (got {len(master)}).")
 
-    label = key_label or _detect_key_label(raw_cfg)
-    if not label:
+    if not key_label:
         raise typer.BadParameter(
-            "--master-key requires a --key-label (or top-level 'key_label:' "
-            "in the YAML). Pick a stable namespace string like 'customers_q4'."
+            "--master-key requires a --key-label. Pick a stable namespace "
+            "string like 'customers_q4'."
         )
 
     from decoy_engine import make_key_resolver
 
-    return make_key_resolver(master, label)
-
-
-def _detect_key_label(raw_cfg: dict | None) -> str | None:
-    """Read the top-level ``key_label:`` from the parsed YAML, or None."""
-    if isinstance(raw_cfg, dict):
-        label = raw_cfg.get("key_label")
-        if isinstance(label, str) and label.strip():
-            return label.strip()
-    return None
+    return make_key_resolver(master, key_label)
 
 
 def _detect_mode(raw_cfg: dict | None) -> str | None:
