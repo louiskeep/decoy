@@ -88,6 +88,15 @@ class _MaskSecretUsageError(Exception):
     """--mask-secret AND YAML mask_secret_ref both set; user error (exits EXIT_USAGE)."""
 
 
+class _ConfigValidationError(Exception):
+    """The pipeline YAML failed PipelineConfig schema validation (unknown key
+    under extra="forbid", wrong-typed / missing field). A raw Pydantic
+    ValidationError caught NARROWLY at the model_validate call site and
+    re-raised as this typed error, so the run-level handler classifies it
+    EXIT_USAGE without also catching internal engine ValidationErrors raised
+    deeper in the pipeline (which are engine defects -> EXIT_RUNTIME)."""
+
+
 # DE-02: the ONE place that decides whether a mask_secret_ref value is
 # well-formed. A valid ref is a non-empty `env:NAME` / `file:/PATH` string; a
 # non-str (list/int/dict), empty string, or wrong-prefix string is invalid.
@@ -359,6 +368,18 @@ def run(
             # (string or not) ever reaches Pydantic's diagnostics. YAML-only:
             # the --mask-secret flag is always a str from Typer.
             _raw_gs = raw.get("global_settings") if isinstance(raw, dict) else None
+            # A non-dict `global_settings` (e.g. a YAML list) is malformed AND
+            # could smuggle a mask_secret_ref value nested where the dict-path
+            # check below can't see it -- Pydantic would then echo that value in
+            # its ValidationError. Reject a present-but-non-mapping
+            # global_settings here, with a redacted message, before
+            # model_validate ever sees the raw structure.
+            if _raw_gs is not None and not isinstance(_raw_gs, dict):
+                raise _MaskSecretUsageError(
+                    "global_settings must be a mapping (a YAML block of "
+                    f"key: value pairs), not a {type(_raw_gs).__name__}. "
+                    "See: decoy explain keys."
+                )
             _raw_ref = _raw_gs.get("mask_secret_ref") if isinstance(_raw_gs, dict) else None
             if _raw_ref is not None and not _is_valid_mask_secret_ref(_raw_ref):
                 raise _MaskSecretUsageError(
@@ -368,7 +389,19 @@ def run(
                     "See: decoy explain keys."
                 )
 
-            config_dict = PipelineConfig.model_validate(raw).model_dump()
+            # Catch the schema ValidationError NARROWLY here (not in the
+            # run-level except) so ONLY user-config validation maps to
+            # EXIT_USAGE; a Pydantic error raised deeper in the engine (e.g.
+            # internal registry/capability models) stays an EXIT_RUNTIME defect.
+            # str(exc) is safe to surface: the mask_secret_ref ROOT guard above
+            # already rejected any secret-bearing structure before this point,
+            # and the F8 message cap bounds the rest.
+            try:
+                from pydantic import ValidationError as _PydanticValidationError
+
+                config_dict = PipelineConfig.model_validate(raw).model_dump()
+            except _PydanticValidationError as exc:
+                raise _ConfigValidationError(str(exc)) from exc
 
             # DE-02 Option B (2026-07-15): --mask-secret sets the same
             # `global_settings.mask_secret_ref` slot the YAML can set directly.
@@ -505,7 +538,6 @@ def run(
         # Imported lazily to keep the engine import off the help path.
         from decoy_engine import ConfigError, PipelineValidationError
         from decoy_engine.plan import PlanCompileError
-        from pydantic import ValidationError as _PydanticValidationError
 
         # DE-02: MaskSecretError lives in the engine's `keyprovider` module,
         # which a pre-DE-02 engine lacks. Import defensively so a missing
@@ -530,16 +562,14 @@ def run(
                     _ChunkedGenerateError,
                     _VaultUsageError,
                     _MaskSecretUsageError,
-                    # A raw Pydantic ValidationError from
-                    # PipelineConfig.model_validate(raw) (~L371) means the YAML
-                    # is structurally wrong (unknown key under extra="forbid",
-                    # wrong-typed field, missing required field) -- the user's
-                    # config is bad, not a runtime crash. The secret-disclosure
-                    # ROOT guard (~L363) already intercepts a bad mask_secret_ref
-                    # BEFORE model_validate, so no secret value reaches Pydantic
-                    # diagnostics here; the F8 message cap (below) bounds the
-                    # rest.
-                    _PydanticValidationError,
+                    # PipelineConfig.model_validate's ValidationError, caught
+                    # narrowly at its call site and re-raised as this typed
+                    # error, means the YAML is structurally wrong (unknown key
+                    # under extra="forbid", wrong-typed / missing field) -- the
+                    # user's config is bad, not a runtime crash. Narrow by
+                    # design: a Pydantic error raised deeper in the engine is
+                    # NOT reclassified and stays an EXIT_RUNTIME defect.
+                    _ConfigValidationError,
                     # DE-02: a bad/missing/weak --mask-secret ref (or YAML
                     # mask_secret_ref) resolves to MaskSecretError (and its
                     # subclasses MissingMaskSecret / WeakMaskSecret /
