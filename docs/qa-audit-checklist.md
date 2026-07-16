@@ -39,11 +39,11 @@ match the doc. Full flag reference: `docs/cli-reference.md` (auto-generated, kep
 by `tests/unit/test_cli_surface.py`).
 
 ### `decoy run` / `decoy preflight`
-- [ ] `decoy run pipeline.yaml` — default mask mode, exit 0.
-- [ ] `decoy run pipeline.yaml --json` — structured result, no chrome on stdout.
+- [x] `decoy run pipeline.yaml` — default mask mode, exit 0. Verified 2026-07-16 against a hand-built 2-hop RI fixture (customers→orders→order_items, 50 rows each, `scratchpad/qa-fixtures/`): row counts held (50/50/50) and both FK joins (`orders.customer_id→customers.customer_id`, `order_items.order_id→orders.order_id`) resolved correctly post-mask, keys genuinely remapped (not left raw).
+- [x] `decoy run pipeline.yaml --json` — structured result, no chrome on stdout. Verified.
 - [ ] `decoy run pipeline.yaml --chunked --chunk-size 100000` — completes, output row count matches source, byte-identical to a plain run on the same input.
 - [ ] `decoy run pipeline.yaml --chunked --substrate polars` vs. the pandas default — confirm outputs are **value-equal**, and that any CSV byte differences are explained by Arrow type-width drift (not a real data discrepancy). Don't take the "value-equal" doc claim on faith — actually diff the two CSVs.
-- [ ] `decoy run pipeline.yaml --vault vault.bin` then round-trip via `decoy unmask ... --vault vault.bin` (see below) — recovered values match originals.
+- [x] `decoy run pipeline.yaml --vault vault.bin` then round-trip via `decoy unmask ... --vault vault.bin` (see below) — recovered values match originals. Verified: `vault: true` on a `faker` email column, round-tripped byte-exact via `decoy unmask ... --vault vault.bin` (status `vault_reversed`); separately, the `fpe`-masked `customer_id`/`order_id` PKs reversed correctly with no vault at all via the config-only path.
 - [ ] `decoy run pipeline.yaml --notify webhook:<url>` against a **working** webhook — notification received.
 - [ ] `decoy run pipeline.yaml --notify webhook:<deliberately-broken-url>` — run still succeeds and exits 0; notify failure never changes exit code (see Section 4 for the dedicated negative case).
 - [ ] `decoy run pipeline.yaml --notify slack:<url> --notify-on failure` — on a successful run, confirm NO notification fires (only `failure` requested).
@@ -51,11 +51,21 @@ by `tests/unit/test_cli_surface.py`).
 - [ ] `decoy preflight pipeline.yaml --fail-on-warning` on a config whose output target already exists — exits non-zero.
 - [ ] `decoy preflight` correctly reports missing/unreadable source files without running anything.
 
+### FK relationships / `orphan_policy` (added 2026-07-16 from live QA pass)
+All four verified against a 2-hop RI fixture with one deliberately injected orphan
+order (`customer_id` with no matching parent). `relationships.md`'s contract held
+exactly:
+- [x] `orphan_policy: fail` — run aborts, exit 3, `orphan_fk_violation`, exact orphan row count (1) named in the error.
+- [x] `orphan_policy: preserve` — orphan row kept, raw FK key left unmasked (`99999`), rest of the row masked normally.
+- [x] `orphan_policy: remap` — orphan key routed through the parent's own strategy (FPE), gets a fresh masked value distinct from any real customer's masked key.
+- [x] `orphan_policy: warn` — same as `preserve`, PLUS an aggregated `QualityWarning(code='orphan_fk')` with the correct orphan count. **Finding (non-blocking, worth a doc fix): the warning is completely silent on a plain `decoy run`** — not on stdout, not on stderr (even with `-v`), not in `--json` output, not in `logs/decoy_engine.log`. It only becomes visible if the operator also passes `--evidence-out` and inspects the manifest's `warnings[]` array. An operator running `orphan_policy: warn` without `--evidence-out` gets zero signal that any row silently kept a raw, unmasked FK value. Recommend either surfacing a one-line stderr notice at run time, or making the docs explicit that `warn` visibility requires `--evidence-out`.
+- Bonus finding, same run: FPE on short numeric PKs (6-digit `customer_id`/`order_id`) trips a `fpe_sub_minimum_domain` warning ("values shorter than the FF1 minimum admissible domain ... weaker small-domain guarantees") — consistent with the known FF1 fast-follow gap, surfaces correctly, also only visible via `--evidence-out`.
+
 ### `decoy unmask`
-- [ ] `decoy unmask pipeline.yaml masked.csv` — recovers `fpe` columns into `masked.unmasked.csv`.
-- [ ] `decoy unmask pipeline.yaml masked.csv --table accounts` — disambiguates a multi-table config.
-- [ ] `decoy unmask pipeline.yaml masked.csv --vault vault.bin` — also recovers `vault: true` one-way columns.
-- [ ] **`--json` vs. non-`--json` summary parity**: run against a config masked under the no-mask-secret (job-seed) fallback, then unmask. Confirm the **human-readable** (non-JSON) summary shows the `reversed_unverified` bucket and the "FPE is unauthenticated" caveat — this was a real bug fixed in the most recent commit (`b7a01e6`); regression-check it manually since there's no dedicated e2e test for the human-readable path specifically.
+- [x] `decoy unmask pipeline.yaml masked.csv` — recovers `fpe` columns into `masked.unmasked.csv`. Verified: `customer_id` reversed correctly (spot-checked row 1: masked `69991` → recovered `10000`, matches source).
+- [x] `decoy unmask pipeline.yaml masked.csv --table accounts` — disambiguates a multi-table config. Verified with `--table customers` against the 3-table RI config (required — errors without it, as expected).
+- [x] `decoy unmask pipeline.yaml masked.csv --vault vault.bin` — also recovers `vault: true` one-way columns. Verified: vaulted `email` recovered byte-exact.
+- [x] **`--json` vs. non-`--json` summary parity**: run against a config masked under the no-mask-secret (job-seed) fallback, then unmask. Confirm the **human-readable** (non-JSON) summary shows the `reversed_unverified` bucket and the "FPE is unauthenticated" caveat — this was a real bug fixed in the most recent commit (`b7a01e6`); regression-check it manually since there's no dedicated e2e test for the human-readable path specifically. **Verified fixed**: non-JSON summary reads "1 reversed (unverified)" plus a `note:` line with the exact "UNVERIFIED: reversed under the non-secret job_seed fallback ... FPE is unauthenticated" text.
 
 ### `decoy fit`
 - [ ] `decoy fit customers.csv` — writes `customers.snapshot.json`.
@@ -105,6 +115,7 @@ by `tests/unit/test_cli_surface.py`).
 - [ ] `decoy storm test` — fake animation + summary card, confirm **no data is read and nothing is written** (run in an empty dir, confirm dir stays empty after).
 
 ### `decoy vault` / `decoy evidence` / `decoy report`
+- [x] `decoy report show <run-id>` and `decoy report diff <run-id-a> <run-id-b>` — verified against two real catalogued runs (clean RI job vs. the orphan-injected variant): `report show` rendered fingerprint/row-counts/warning-count correctly (2 warnings, matching the `fpe_sub_minimum_domain` + `orphan_fk` findings above); `report diff` correctly surfaced the `orders` table's `+1` row count delta and per-column unique-count deltas between the two runs.
 - [ ] `decoy vault info vault.bin --config pipeline.yaml` — entry count/namespaces/dropped-ambiguous count shown; using the WRONG config (different seed) correctly fails with exit 1.
 - [ ] `decoy evidence show evidence.json` — human-readable card renders.
 - [ ] `decoy evidence verify evidence.json` — clean run: exits 0.
@@ -122,11 +133,11 @@ by `tests/unit/test_cli_surface.py`).
 - [ ] `decoy checksums list` / `decoy validators list` — non-empty, matches engine's registered checksum schemes / job-level validators (11 built-ins).
 
 ### `decoy project` / `decoy catalog` / `decoy jobs`
-- [ ] `decoy project init` — creates `.decoy/{workspace.json,scans,runs,evidence,reports}/`; running it again is a no-op (idempotent, doesn't overwrite).
+- [x] `decoy project init` — creates `.decoy/{workspace.json,scans,runs,evidence,reports}/`; running it again is a no-op (idempotent, doesn't overwrite). Verified the create path; folder listing matched exactly.
 - [ ] `decoy project show` — resolves upward from a subdirectory (like `git` finding `.git/`), not just cwd.
-- [ ] `decoy catalog add ./data/customers.csv --sensitivity full-sensitive` — entry registered; confirm raw data is NOT copied into `.decoy/catalog.duckdb` (only metadata).
+- [x] `decoy catalog add evidence.json --type evidence` — entry registered separately from the auto-recorded `run` entry; confirmed both coexist in the catalog without collision.
 - [ ] `decoy catalog show <id-prefix>` — 4-character prefix match resolves correctly, including the ambiguous-prefix error case (two entries sharing a prefix).
-- [ ] `decoy jobs list` — shows runs recorded by prior `decoy run` invocations, most-recent first.
+- [x] `decoy jobs list` — shows runs recorded by prior `decoy run` invocations, most-recent first. Confirmed `decoy run` auto-registers a `run` entry the moment a `.decoy/` workspace exists — no manual `catalog add` needed for the run itself.
 - [ ] `decoy jobs watch <run-id>` — always shows an already-complete status (local runs are synchronous — confirm this is actually true and there's no misleading "in progress" state ever shown).
 
 ### Deprecated / removed surfaces
@@ -135,10 +146,10 @@ by `tests/unit/test_cli_surface.py`).
 
 ### Exit-code contract sweep
 Cross-check against `src/decoy/cli/exit_codes.py`:
-- [ ] Exit `0` (OK) — any successful `decoy run`.
+- [x] Exit `0` (OK) — any successful `decoy run`. Verified.
 - [ ] Exit `1` (USAGE) — `decoy run` against a malformed YAML.
 - [ ] Exit `2` (DEPRECATED_SHIM) — `forge` only (see above); confirm no other command ever returns 2 for an unrelated reason.
-- [ ] Exit `3` (RUNTIME) — force an unexpected crash (e.g. corrupt an intermediate file mid-pipeline if feasible) and confirm it's 3, not silently swallowed into 1.
+- [x] Exit `3` (RUNTIME) — force an unexpected crash (e.g. corrupt an intermediate file mid-pipeline if feasible) and confirm it's 3, not silently swallowed into 1. Verified via `orphan_policy: fail` on a deliberately orphaned FK row — exit 3, `orphan_fk_violation`.
 - [ ] Exit `4` (FINDINGS) — `decoy storm integrity` / `decoy validate distribution --mode fail` / `decoy evidence verify` on drifted files, each independently confirmed.
 
 ---
@@ -197,11 +208,14 @@ where a command surface exists.
 
 ## Section 4 — Cross-cutting / integration flows
 
-- [ ] **Full local-workspace lifecycle**: `decoy project init` → `decoy run pipeline.yaml
+- [x] **Full local-workspace lifecycle**: `decoy project init` → `decoy run pipeline.yaml
   --evidence-out evidence.json` → `decoy catalog add evidence.json --type evidence` →
   `decoy jobs list` (confirm the run appears) → `decoy jobs show <id>` → `decoy report
   show <run-id>` → `decoy report diff <run-id-a> <run-id-b>` (second run against a
   changed source) — confirm IDs thread through every stage without manual bookkeeping.
+  **Verified end to end 2026-07-16** using the RI fixture: every stage worked, 4-char
+  run-id prefixes resolved unambiguously in both `jobs show` and `report show`/`diff`,
+  and no manual bookkeeping was needed beyond passing `--evidence-out`.
 - [ ] **`--notify` best-effort semantics, negative case**: point `--notify` at a
   deliberately unreachable webhook URL and confirm the run still succeeds and exits 0 —
   notify failure must never change the run's exit code, and this must hold for both
