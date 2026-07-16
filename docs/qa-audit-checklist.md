@@ -44,12 +44,12 @@ by `tests/unit/test_cli_surface.py`).
 - [x] `decoy run pipeline.yaml --chunked --chunk-size 100000` — completes, output row count matches source, byte-identical to a plain run on the same input. **Required config changes beyond the plain-mode `pipeline.yaml`** (worth calling out — a plain-mode config is not chunked-ready as-is, confirmed on our RI fixture): (1) every `faker` column needs `deterministic: true` + `namespace` + explicit `pool_size` (the non-chunked implicit pool of 10000 is not applied silently — errored with a clear per-column message naming all three requirements); (2) chunked FK edges require `orphan_policy: remap` on the relationship (fail/warn/preserve all rejected with `chunked_fk_orphan_policy_not_remap` — "REMAP mints via the same parent strategy...WARN/FAIL/PRESERVE require the parent key set resident"); (3) the FK child column must use "self-masking" — the SAME `strategy`+`provider_config`+`namespace` as the parent (not `from_parent`), rejected otherwise with `chunked_fk_child_strategy_mismatch`; (4) both parent and child FK columns must declare an explicit `dtype:` family, and — this one bit us — CSV columns infer as `large_string`/`string`, not `int64`, even for all-numeric IDs; a wrong declared dtype fails closed with `chunked_fk_declared_dtype_mismatch` rather than silently mismasking. All 4 constraints are enforced with clear, correctly-worded errors — good fail-closed behavior, just a real onboarding cliff between "works in plain mode" and "works chunked" worth documenting prominently (e.g. a `decoy explain chunked --fk` walkthrough, or a `decoy preflight` hint). Working variant saved as `pipeline_chunked.yaml`; RI and row counts verified intact post-chunking.
 - [x] `decoy run pipeline.yaml --chunked --substrate polars` vs. the pandas default — confirm outputs are **value-equal**, and that any CSV byte differences are explained by Arrow type-width drift (not a real data discrepancy). Don't take the "value-equal" doc claim on faith — actually diff the two CSVs. **Verified on `pipeline_chunked.yaml`**: `diff` on all 3 output tables (customers/orders/order_items) between a pandas run and a polars run of the identical config came back completely empty — byte-identical, not just value-equal. Stronger result than the doc's "value-equal, CSV bytes may differ" claim technically promises; no Arrow type-width drift observed on this fixture (all-string/int-like columns, no float precision cases exercised).
 - [x] `decoy run pipeline.yaml --vault vault.bin` then round-trip via `decoy unmask ... --vault vault.bin` (see below) — recovered values match originals. Verified: `vault: true` on a `faker` email column, round-tripped byte-exact via `decoy unmask ... --vault vault.bin` (status `vault_reversed`); separately, the `fpe`-masked `customer_id`/`order_id` PKs reversed correctly with no vault at all via the config-only path.
-- [ ] `decoy run pipeline.yaml --notify webhook:<url>` against a **working** webhook — notification received.
-- [ ] `decoy run pipeline.yaml --notify webhook:<deliberately-broken-url>` — run still succeeds and exits 0; notify failure never changes exit code (see Section 4 for the dedicated negative case).
-- [ ] `decoy run pipeline.yaml --notify slack:<url> --notify-on failure` — on a successful run, confirm NO notification fires (only `failure` requested).
-- [ ] `decoy preflight pipeline.yaml` — passes on a good config.
-- [ ] `decoy preflight pipeline.yaml --fail-on-warning` on a config whose output target already exists — exits non-zero.
-- [ ] `decoy preflight` correctly reports missing/unreadable source files without running anything.
+- [x] `decoy run pipeline.yaml --notify webhook:<url>` against a **working** webhook — notification received.
+- [x] `decoy run pipeline.yaml --notify webhook:<deliberately-broken-url>` — run still succeeds and exits 0; notify failure never changes exit code (see Section 4 for the dedicated negative case).
+- [x] `decoy run pipeline.yaml --notify slack:<url> --notify-on failure` — on a successful run, confirm NO notification fires (only `failure` requested).
+- [x] `decoy preflight pipeline.yaml` — passes on a good config.
+- [x] `decoy preflight pipeline.yaml --fail-on-warning` on a config whose output target already exists — exits non-zero.
+- [x] `decoy preflight` correctly reports missing/unreadable source files without running anything.
 
 ### FK relationships / `orphan_policy` (added 2026-07-16 from live QA pass)
 All four verified against a 2-hop RI fixture with one deliberately injected orphan
@@ -68,34 +68,34 @@ exactly:
 - [x] **`--json` vs. non-`--json` summary parity**: run against a config masked under the no-mask-secret (job-seed) fallback, then unmask. Confirm the **human-readable** (non-JSON) summary shows the `reversed_unverified` bucket and the "FPE is unauthenticated" caveat — this was a real bug fixed in the most recent commit (`b7a01e6`); regression-check it manually since there's no dedicated e2e test for the human-readable path specifically. **Verified fixed**: non-JSON summary reads "1 reversed (unverified)" plus a `note:` line with the exact "UNVERIFIED: reversed under the non-secret job_seed fallback ... FPE is unauthenticated" text.
 
 ### `decoy fit`
-- [ ] `decoy fit customers.csv` — writes `customers.snapshot.json`.
-- [ ] `decoy fit customers.csv --parse-dates signup_date` — datetime column parsed correctly.
-- [ ] `decoy fit customers.csv --joint state,tier` — contingency table captured.
-- [ ] `decoy fit customers.csv --epsilon 1.0` — DP noise applied; sanity-check the noised histogram counts are plausible (not wildly off from the true distribution).
-- [ ] `decoy fit customers.csv --epsilon 1.0 --joint state,tier` — **must error** (`--epsilon` + `--joint` incompatible in v1). Confirm it actually errors rather than silently ignoring one flag.
+- [x] `decoy fit customers.csv` — writes `customers.snapshot.json`.
+- [x] `decoy fit customers.csv --parse-dates signup_date` — datetime column parsed correctly.
+- [x] `decoy fit customers.csv --joint state,tier` — contingency table captured.
+- [x] `decoy fit customers.csv --epsilon 1.0` — DP noise applied; sanity-check the noised histogram counts are plausible (not wildly off from the true distribution).
+- [x] `decoy fit customers.csv --epsilon 1.0 --joint state,tier` — **must error** (`--epsilon` + `--joint` incompatible in v1). Confirm it actually errors rather than silently ignoring one flag.
 
 ### `decoy init` / `decoy templates` / `decoy demo` / `decoy explain` / `decoy info` / `decoy schema`
-- [ ] `decoy init` — interactive wizard completes, writes `pipeline.yaml`.
-- [ ] `decoy init --preset hipaa --out hipaa_pipeline.yaml` — scaffolds from template, validates clean.
-- [ ] `decoy init customers.csv --out pipeline.yaml` — STORM column-aware scaffold, `# REVIEW:` comments present above every inferred column.
-- [ ] `decoy templates list` and `decoy templates show hipaa` — bundled templates (minimal, hipaa, pci, gdpr) all print valid YAML.
+- [x] `decoy init` — interactive wizard completes, writes `pipeline.yaml`.
+- [x] `decoy init --preset hipaa --out hipaa_pipeline.yaml` — scaffolds from template, validates clean.
+- [x] `decoy init customers.csv --out pipeline.yaml` — STORM column-aware scaffold, `# REVIEW:` comments present above every inferred column.
+- [x] `decoy templates list` and `decoy templates show hipaa` — bundled templates (minimal, hipaa, pci, gdpr) all print valid YAML.
 - [ ] `decoy demo` — end-to-end scan→mask walkthrough completes in `./decoy_demo/`.
 - [ ] `decoy explain` (no topic) — lists all topics; `decoy explain differential-privacy` and `decoy explain vault` — render sensible plain-English text.
-- [ ] `decoy info` / `decoy info --json` — banner and metadata render.
+- [decoy art needs work] `decoy info` / `decoy info --json` — banner and metadata render.
 - [ ] `decoy schema` / `decoy schema -o decoy.schema.json` — valid JSON Schema output.
 
 ### `decoy plan` / `decoy compile` / `decoy profile`
-- [ ] `decoy plan pipeline.yaml --no-profile` — compiles without loading data; `checks_skipped` populated.
+- [x] `decoy plan pipeline.yaml --no-profile` — compiles without loading data; `checks_skipped` populated.
 - [ ] `decoy plan pipeline.yaml --profile profile.json` — runs all five S1 plan-compile checks.
 - [ ] `decoy compile pipeline.yaml --explain` — per-column strategy/params/rationale shown.
 - [ ] `decoy profile data.csv --show-fields` — dtype/null_rate/distinct_count/PII-candidate-flag per field; confirm **no raw cell values** appear anywhere in the output (this is a hard documented guarantee — worth eyeballing directly, not trusting the doc).
 - [ ] `decoy profile data.csv --rows 0` — full scan completes on a file bigger than the 10k default sample.
 
 ### `decoy subset`
-- [ ] `decoy subset pipeline.yaml --dry-run` — projected row counts printed, **nothing written to disk** (confirm no output dir/files appear).
-- [ ] `decoy subset pipeline.yaml --out subset_out/` — real run, writes filtered Parquet + `subset-manifest.json`; re-running against the same non-empty `subset_out/` correctly refuses (must-not-already-exist guard).
-- [ ] Preflight rejects a CSV-sourced relationship table with a clear "subsetting requires Parquet" error naming the offending table.
-- [ ] Fan-out budget (`max_total_rows`/`max_table_seed_multiple`) is enforced **before** any output directory is created — verify by setting an absurdly low budget and confirming no partial output is left behind.
+- [x] `decoy subset pipeline.yaml --dry-run` — projected row counts printed, **nothing written to disk** (confirm no output dir/files appear).
+- [x] `decoy subset pipeline.yaml --out subset_out/` — real run, writes filtered Parquet + `subset-manifest.json`; re-running against the same non-empty `subset_out/` correctly refuses (must-not-already-exist guard).
+- [x] Preflight rejects a CSV-sourced relationship table with a clear "subsetting requires Parquet" error naming the offending table.
+- [x] Fan-out budget (`max_total_rows`/`max_table_seed_multiple`) is enforced **before** any output directory is created — verify by setting an absurdly low budget and confirming no partial output is left behind. **Verified**: `max_total_rows: 1` against a real 29-row closure (10 seeded customers, 2-hop cascade) failed cleanly with `subset_budget_exceeded`, exit 1, and the error named the exact overage (`29 rows > cap 1`) plus the single top-contributing FK edge. `--out subset_budget_test/` was never created on disk — `ls -d` fails both before and after the run, confirming no partial/empty directory is left behind.
 
 ### `decoy validate config` / `decoy validate distribution`
 - [ ] `decoy validate config pipeline.yaml` — prints OK on a good config.
