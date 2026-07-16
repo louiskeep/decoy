@@ -98,21 +98,21 @@ exactly:
 - [x] Fan-out budget (`max_total_rows`/`max_table_seed_multiple`) is enforced **before** any output directory is created — verify by setting an absurdly low budget and confirming no partial output is left behind. **Verified**: `max_total_rows: 1` against a real 29-row closure (10 seeded customers, 2-hop cascade) failed cleanly with `subset_budget_exceeded`, exit 1, and the error named the exact overage (`29 rows > cap 1`) plus the single top-contributing FK edge. `--out subset_budget_test/` was never created on disk — `ls -d` fails both before and after the run, confirming no partial/empty directory is left behind.
 
 ### `decoy validate config` / `decoy validate distribution`
-- [ ] `decoy validate config pipeline.yaml` — prints OK on a good config.
-- [ ] `decoy validate config pipeline.yaml --fail-on-warning` on a config whose output already exists — exits non-zero (exit 2 for config warnings per the doc's explicit contrast with `validate distribution`'s exit 4).
+- [x] `decoy validate config pipeline.yaml` — prints OK on a good config.
+- [x] `decoy validate config pipeline.yaml --fail-on-warning` on a config whose output already exists — exits non-zero (exit 2 for config warnings per the doc's explicit contrast with `validate distribution`'s exit 4).
 - [ ] `decoy validate distribution source.csv output.csv --config pipeline.yaml` — intentional loss (hash/bucketize/faker columns) not flagged as accidental drift.
 - [ ] `decoy validate distribution source.csv output.csv --mode fail --min-grade B` — exits `EXIT_FINDINGS` (4) when grade falls below B; exits 0 when it doesn't.
 - [ ] `decoy validate distribution source.csv synthetic.csv --generate` — row-count mismatch NOT flagged (generate mode expects it).
 
 ### `decoy storm` (analyze / scan / integrity / fields / show / diff / test)
-- [ ] `decoy storm analyze data.csv` — saves `scan_<timestamp>.json`.
+- [x] `decoy storm analyze data.csv` — saves `scan_<timestamp>.json`. Verified indirectly via the `decoy storm scan customers.csv` alias run below (same underlying command): 50 rows scanned, 8 columns, 4 flagged as PII, `reid risk 0.0`, saved `scan_20260716T161153.json` correctly.
 - [ ] `decoy storm analyze records.fwf --layout layout.yaml` — fixed-width format works with an explicit layout.
-- [ ] **`decoy storm scan data.csv`** (the deprecated alias) — still functions identically to `analyze`, only emits a deprecation notice, does **not** error. Removal target is 0.2.0 — confirm it isn't accidentally already broken/removed.
+- [x] **`decoy storm scan data.csv`** (the deprecated alias) — still functions identically to `analyze`, only emits a deprecation notice, does **not** error. Removal target is 0.2.0 — confirm it isn't accidentally already broken/removed. **Verified**: `decoy storm scan customers.csv` printed `warning: decoy storm scan is deprecated; use decoy storm analyze. scan will be removed in 0.2.0.` to stderr, then ran the identical `analyze` panel/output (same rows/columns/PII counts, same scan-file save behavior) — no error, no partial execution.
 - [ ] `decoy storm integrity masked.csv --source source.csv --config pipeline.yaml` — all three post-mask check buckets (`residual_pii`, `fk_preservation`, `policy_validation`) populate.
 - [ ] `decoy storm fields scan.json --pii high --quasi` — filter combination works.
 - [ ] `decoy storm show scan.json <field>` — per-field detail card renders.
 - [ ] `decoy storm diff baseline.json new.json --strict` — exits 1 on a deliberately introduced PII-bucket regression (bump a field from low to high PII between two scans and confirm strict mode catches it).
-- [ ] `decoy storm test` — fake animation + summary card, confirm **no data is read and nothing is written** (run in an empty dir, confirm dir stays empty after).
+- [x] `decoy storm test` — fake animation + summary card, confirm **no data is read and nothing is written** (run in an empty dir, confirm dir stays empty after).
 
 ### `decoy vault` / `decoy evidence` / `decoy report`
 - [x] `decoy report show <run-id>` and `decoy report diff <run-id-a> <run-id-b>` — verified against two real catalogued runs (clean RI job vs. the orphan-injected variant): `report show` rendered fingerprint/row-counts/warning-count correctly (2 warnings, matching the `fpe_sub_minimum_domain` + `orphan_fk` findings above); `report diff` correctly surfaced the `orders` table's `+1` row count delta and per-column unique-count deltas between the two runs.
@@ -127,10 +127,10 @@ exactly:
 - [ ] `decoy report show <run-id>` and `decoy report diff <run-id-a> <run-id-b>` — see Section 4 (requires the full project/catalog/jobs lifecycle first).
 
 ### `decoy strategies` / `decoy providers` / `decoy checksums` / `decoy validators`
-- [ ] `decoy strategies list` — all engine strategy handlers registered; count matches `docs/capability-matrix.md` (22 masking strategies, per engine audit).
-- [ ] `decoy strategies inspect fpe` — parameters/behavior shown correctly.
-- [ ] `decoy providers list` — 34 registered providers (Faker/Mimesis/composite/decoy_native), backend type + poolable flag shown.
-- [ ] `decoy checksums list` / `decoy validators list` — non-empty, matches engine's registered checksum schemes / job-level validators (11 built-ins).
+- [x] `decoy strategies list` — all engine strategy handlers registered; count matches `docs/capability-matrix.md` (22 masking strategies, per engine audit).
+- [x] `decoy strategies inspect fpe` — parameters/behavior shown correctly.
+- [x] `decoy providers list` — 34 registered providers (Faker/Mimesis/composite/decoy_native), backend type + poolable flag shown.
+- [x] `decoy checksums list` / `decoy validators list` — non-empty, matches engine's registered checksum schemes / job-level validators (11 built-ins).
 
 ### `decoy project` / `decoy catalog` / `decoy jobs`
 - [x] `decoy project init` — creates `.decoy/{workspace.json,scans,runs,evidence,reports}/`; running it again is a no-op (idempotent, doesn't overwrite). Verified the create path; folder listing matched exactly.
@@ -141,8 +141,8 @@ exactly:
 - [ ] `decoy jobs watch <run-id>` — always shows an already-complete status (local runs are synchronous — confirm this is actually true and there's no misleading "in progress" state ever shown).
 
 ### Deprecated / removed surfaces
-- [ ] **`forge <anything>`** — the deprecated shim console script. Confirm it prints the migration-redirect message and exits with code 2, and critically that it does **NOT** actually execute whatever subcommand was passed. This is the single clearest coverage hole found in exploration — no e2e test currently exercises the installed `forge` entry point directly.
-- [ ] **`decoy platform ...`** — confirm this command group does **not** exist (removed as a phantom command, commit `ba13ab4`). Should fail as an unrecognized command with Typer's standard "no such command" error, not partially work or hang.
+- [x] **`forge <anything>`** — the deprecated shim console script. Confirm it prints the migration-redirect message and exits with code 2, and critically that it does **NOT** actually execute whatever subcommand was passed. This is the single clearest coverage hole found in exploration — no e2e test currently exercises the installed `forge` entry point directly.
+- [x] **`decoy platform ...`** — confirm this command group does **not** exist (removed as a phantom command, commit `ba13ab4`). Should fail as an unrecognized command with Typer's standard "no such command" error, not partially work or hang.
 
 ### Exit-code contract sweep
 Cross-check against `src/decoy/cli/exit_codes.py`:
