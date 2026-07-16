@@ -116,9 +116,9 @@ exactly:
 
 ### `decoy vault` / `decoy evidence` / `decoy report`
 - [x] `decoy report show <run-id>` and `decoy report diff <run-id-a> <run-id-b>` — verified against two real catalogued runs (clean RI job vs. the orphan-injected variant): `report show` rendered fingerprint/row-counts/warning-count correctly (2 warnings, matching the `fpe_sub_minimum_domain` + `orphan_fk` findings above); `report diff` correctly surfaced the `orders` table's `+1` row count delta and per-column unique-count deltas between the two runs.
-- [ ] `decoy vault info vault.bin --config pipeline.yaml` — entry count/namespaces/dropped-ambiguous count shown; using the WRONG config (different seed) correctly fails with exit 1.
-- [ ] `decoy evidence show evidence.json` — human-readable card renders.
-- [ ] `decoy evidence verify evidence.json` — clean run: exits 0.
+- [x] `decoy vault info vault.bin --config pipeline.yaml` — entry count/namespaces/dropped-ambiguous count shown; using the WRONG config (different seed) correctly fails with exit 1. **Verified**: `OK vault.bin / entries: 50 / namespaces (1): email_ns / ambiguous dropped: 0` — matches the one `vault: true` column (`email`) from the RI fixture's mask run.
+- [x] `decoy evidence show evidence.json` — human-readable card renders.
+- [x] `decoy evidence verify evidence.json` — clean run: exits 0. **Verified**: `OK All fingerprints match. (evidence.json)` against an `--evidence-out evidence.json` run of `pipeline.yaml`.
 - [ ] **Evidence verify limitation, positive case**: edit a masked output file after a run, re-run `decoy evidence verify` — drift correctly detected (non-zero exit, `EXIT_FINDINGS`).
 - [ ] **Evidence verify limitation, documented negative case**: hand-edit the evidence manifest JSON itself AND recompute `manifest_hash` by hand to match — confirm `verify` does **NOT** catch this (per the doc: "UNKEYED SHA-256... does NOT detect a motivated tamperer"). This is a documented limitation, not a bug — confirm the doc is accurate, not stale or overstated.
 - [ ] `decoy report render evidence.json --out report.html` — self-contained offline HTML, opens without needing network access; confirm no raw row values/PII leak into the report (grep the HTML for anything that looks like source data).
