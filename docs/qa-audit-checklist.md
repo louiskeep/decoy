@@ -79,14 +79,14 @@ exactly:
 - [x] `decoy init --preset hipaa --out hipaa_pipeline.yaml` — scaffolds from template, validates clean.
 - [x] `decoy init customers.csv --out pipeline.yaml` — STORM column-aware scaffold, `# REVIEW:` comments present above every inferred column.
 - [x] `decoy templates list` and `decoy templates show hipaa` — bundled templates (minimal, hipaa, pci, gdpr) all print valid YAML.
-- [ ] `decoy demo` — end-to-end scan→mask walkthrough completes in `./decoy_demo/`.
-- [ ] `decoy explain` (no topic) — lists all topics; `decoy explain differential-privacy` and `decoy explain vault` — render sensible plain-English text.
+- [x] `decoy demo` — end-to-end scan→mask walkthrough completes in `./decoy_demo/`.
+- [x] `decoy explain` (no topic) — lists all topics; `decoy explain differential-privacy` and `decoy explain vault` — render sensible plain-English text.
 - [decoy art needs work] `decoy info` / `decoy info --json` — banner and metadata render.
-- [ ] `decoy schema` / `decoy schema -o decoy.schema.json` — valid JSON Schema output.
+- [x] `decoy schema` / `decoy schema -o decoy.schema.json` — valid JSON Schema output.
 
 ### `decoy plan` / `decoy compile` / `decoy profile`
 - [x] `decoy plan pipeline.yaml --no-profile` — compiles without loading data; `checks_skipped` populated.
-- [ ] `decoy plan pipeline.yaml --profile profile.json` — runs all five S1 plan-compile checks.
+- [x] `decoy plan pipeline.yaml --profile profile.json` — runs all five S1 plan-compile checks. **Finding: this checklist's own example command is not reproducible via the CLI alone.** `--profile` expects a `decoy_engine.profile.Profile` object (Arrow-column-stats, produced by `profile_source(validated_config, ...)`), which is a completely different type from what `decoy profile <file>` (the CLI command) produces (a STORM-based `StormProfile` with PII candidates) — and `decoy profile` has **no `-o`/`--output` flag at all**, it only ever prints to stdout. There is no `decoy` CLI command that writes the `Profile` JSON `decoy plan --profile` actually consumes; the only path is calling `decoy_engine.profile.profile_source()` + `profile_to_json()` directly in Python. Once I hand-built a real `profile.json` that way, `decoy plan --profile profile.json` worked correctly (full plan YAML with `seed_envelope`/`profile_hash` populated) — so the flag itself is not broken, but a CLI-only user following this exact documented example hits a dead end with no way forward. Worth either adding a `decoy plan pipeline.yaml` (no flags) path once the deferred "profile_source orchestration slice" ships (per `src/decoy/cli/plan.py`'s own TODO comment), or giving `decoy profile` an `--output`/`-o` flag that writes the `Profile`-shaped JSON `plan --profile` needs, or at minimum rewording this example so it doesn't imply a CLI-only round trip that doesn't exist yet.
 - [ ] `decoy compile pipeline.yaml --explain` — per-column strategy/params/rationale shown.
 - [ ] `decoy profile data.csv --show-fields` — dtype/null_rate/distinct_count/PII-candidate-flag per field; confirm **no raw cell values** appear anywhere in the output (this is a hard documented guarantee — worth eyeballing directly, not trusting the doc).
 - [ ] `decoy profile data.csv --rows 0` — full scan completes on a file bigger than the 10k default sample.
