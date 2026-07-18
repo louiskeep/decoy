@@ -47,7 +47,7 @@ python -m venv .smoke
 .smoke/bin/pip install "git+https://github.com/louiskeep/decoy-engine@main"
 
 # 5. Install the freshly-built decoy wheel.
-.smoke/bin/pip install dist/decoy-*.whl
+.smoke/bin/pip install dist/*.whl
 
 # 6. Smoke cells (each must exit 0).
 .smoke/bin/decoy --version
@@ -58,7 +58,7 @@ python -m venv .smoke
 #    repo's examples/, which are repo-only and not in the wheel).
 mkdir -p smoke_run
 printf 'first_name,last_name,email,ssn,account_status\nAda,Lovelace,ada@example.com,000-00-0000,active\n' > smoke_run/input.csv
-.smoke/bin/decoy templates show minimal --raw > smoke_run/pipeline.yaml
+.smoke/bin/decoy templates show minimal > smoke_run/pipeline.yaml
 cd smoke_run
 ../.smoke/bin/decoy run pipeline.yaml
 test -s output.csv && echo "OK: output.csv written"
@@ -87,7 +87,7 @@ python -m venv .smoke
 .\.smoke\Scripts\pip.exe install "git+https://github.com/louiskeep/decoy-engine@main"
 
 # 5. Install the freshly-built decoy wheel.
-Get-ChildItem dist\decoy-*.whl | ForEach-Object {
+Get-ChildItem dist\*.whl | ForEach-Object {
     .\.smoke\Scripts\pip.exe install $_.FullName
 }
 
@@ -99,7 +99,7 @@ Get-ChildItem dist\decoy-*.whl | ForEach-Object {
 # 7. Canonical run cell.
 New-Item -ItemType Directory -Force smoke_run | Out-Null
 "first_name,last_name,email,ssn,account_status`nAda,Lovelace,ada@example.com,000-00-0000,active" | Set-Content smoke_run\input.csv -Encoding utf8
-.\.smoke\Scripts\decoy.exe templates show minimal --raw | Set-Content smoke_run\pipeline.yaml -Encoding utf8
+.\.smoke\Scripts\decoy.exe templates show minimal | Set-Content smoke_run\pipeline.yaml -Encoding utf8
 Set-Location smoke_run
 ..\.smoke\Scripts\decoy.exe run pipeline.yaml
 if ((Get-Item output.csv).Length -gt 0) { Write-Output "OK: output.csv written" }
@@ -114,5 +114,6 @@ After a successful run, append an entry to [`docs/release/smoke-log.md`](smoke-l
 
 - **Engine resolution timeout**: the `git+https://github.com/louiskeep/decoy-engine@main` install step hits a transient GitHub error. Re-run; this is not a real failure.
 - **Wheel build fails on Python 3.13+**: out of scope; OSS.1 pins 3.10-3.12.
-- **`decoy templates show minimal --raw` writes color codes to stdout**: the `--raw` flag should bypass Rich coloring. If it does not, the bug is in `decoy templates show`; file an issue and do not work around with `sed`.
+- **`decoy templates show minimal` writes color codes to stdout**: default mode (no flags) is already raw YAML -- Rich highlighting is intentionally skipped so the output pipes cleanly to a file (see the command's docstring in `src/decoy/cli/templates.py`). There is no `--raw` flag; do not add `--raw` to the command (Typer will reject it with "No such option"; this was a real bug in this runbook + `release-smoke.yml` until the S3 fresh-install-smoke gate caught it by actually running the flow). If default-mode output still carries color codes, the bug is in `decoy templates show`; file an issue and do not work around with `sed`.
+- **`decoy templates show minimal --json` doesn't decode as plain YAML**: `--json` wraps the body in a JSON envelope (`{"command": ..., "body": "<yaml>"}`); it is not a substitute for the default raw-YAML mode. Use no flag for the smoke's pipeline.yaml redirect.
 - **`decoy run pipeline.yaml` exits 3 ("runtime error")**: read stderr. Common causes are a missing engine module, a wrong dependency version pinned upstream, or a real engine bug. Do not paper over with `--quiet`.
