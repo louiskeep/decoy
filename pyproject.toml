@@ -82,7 +82,12 @@ dependencies = [
     # broken or forced install (one that violates the resolver guarantee) rather
     # than the load-bearing guard it was under the 0.3.0 floor.
     "decoy-engine>=0.4.0",
-    "typer>=0.9",
+    # Cap below 0.27: it changed `typer utils docs` argument rendering
+    # ({config}->CONFIG, <mask|generate>->[mask|generate]), which drifts the
+    # committed docs/cli-reference.md and reds the test_cli_surface sentry in
+    # CI. The generator must be bounded for the committed doc to reproduce.
+    # Bump deliberately (regenerate the reference in the same PR) to adopt 0.27+.
+    "typer>=0.9,<0.27",
     "rich>=13.0",
     "duckdb>=0.9",
 ]
