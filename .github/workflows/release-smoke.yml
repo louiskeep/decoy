@@ -80,7 +80,7 @@ jobs:
           .smoke/bin/pip install "git+https://github.com/louiskeep/decoy-engine@main"
 
       - name: Install the freshly-built decoy wheel
-        run: .smoke/bin/pip install dist/decoy-*.whl
+        run: .smoke/bin/pip install dist/*.whl
 
       - name: decoy --version (smoke 1)
         run: .smoke/bin/decoy --version
@@ -98,13 +98,16 @@ jobs:
       - name: decoy run against the bundled minimal template (smoke 3b)
         # The canonical run cell: take a tmp CSV in, write a masked
         # CSV out. Reads the template from `decoy templates show
-        # minimal --raw`, NOT from the repo's `examples/` (those are
-        # repo-only, not wheel-shipped).
+        # minimal` (default mode already prints raw YAML -- there is
+        # no `--raw` flag; it does not exist on `templates show` and
+        # was a doc/workflow bug fixed alongside the S3 fresh-install
+        # gate, caught by actually running this flow fresh), NOT from
+        # the repo's `examples/` (those are repo-only, not wheel-shipped).
         run: |
           set -euo pipefail
           mkdir -p smoke_run
           printf 'first_name,last_name,email,ssn,account_status\nAda,Lovelace,ada@example.com,000-00-0000,active\n' > smoke_run/input.csv
-          .smoke/bin/decoy templates show minimal --raw > smoke_run/pipeline.yaml
+          .smoke/bin/decoy templates show minimal > smoke_run/pipeline.yaml
           # The bundled minimal template writes ./output.csv relative
           # to the working directory; cd into smoke_run/ so the output
           # lands alongside the input.
