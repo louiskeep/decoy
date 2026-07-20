@@ -87,7 +87,7 @@ dependencies = [
     # committed docs/cli-reference.md and reds the test_cli_surface sentry in
     # CI. The generator must be bounded for the committed doc to reproduce.
     # Bump deliberately (regenerate the reference in the same PR) to adopt 0.27+.
-    "typer>=0.9,<0.27",
+    "typer>=0.9,<0.28",
     "rich>=13.0",
     "duckdb>=0.9",
 ]
