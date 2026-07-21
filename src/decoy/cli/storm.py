@@ -755,9 +755,9 @@ def _fields(
 ) -> None:
     """List fields from a saved STORM scan, with optional filters.
 
-    The list view of the web FORECAST drill-down -- print the fields that
-    matter, filter by PII bucket or quasi-identifier membership, pipe the
-    result somewhere else. For per-field detail, see `decoy storm show`.
+    Print the fields that matter, filter by PII bucket or quasi-identifier
+    membership, pipe the result somewhere else. For per-field detail, see
+    `decoy storm show`.
     """
     state = setup_output(json_, quiet, verbose)
 
@@ -853,8 +853,7 @@ def _show(
     """Per-field detail from a saved STORM scan.
 
     The drill-down view of one field: PII score + bucket, detector matches,
-    sentinel hits, top values, quasi-identifier membership. Stays read-only
-    -- for live exploration use the web FORECAST panel.
+    sentinel hits, top values, quasi-identifier membership. Stays read-only.
     """
     state = setup_output(json_, quiet, verbose)
 
@@ -1392,8 +1391,7 @@ def _integrity(
 ) -> None:
     """Verify a masked file's integrity against its pre-mask source.
 
-    Wraps `decoy_engine.storm.postmask.run_storm_post_mask`. Runs the
-    three post-mask check buckets (residual_pii, fk_preservation,
+    Runs the three post-mask check buckets (residual_pii, fk_preservation,
     policy_validation) the platform's mask job already runs when
     `run_storm: true` is declared in the pipeline; this verb lets the
     CLI user run the same checks standalone.
@@ -1401,8 +1399,6 @@ def _integrity(
     Exit codes: 0 clean; 4 EXIT_FINDINGS on any fail-severity finding;
     1 EXIT_USAGE for missing files; 3 EXIT_RUNTIME for unexpected
     exceptions.
-
-    OSS.4b (2026-06-02).
     """
     import pandas as pd
     state = setup_output(json_, quiet, verbose)

@@ -807,7 +807,7 @@ What compare does NOT check:
   - Platform audit logs or schedule history.
 
 Scope: MANIFEST-vs-MANIFEST only. Data-level compare (source.csv vs masked.csv)
-is deferred to SP-18b/19.
+is not yet supported.
 
 See also: decoy report summarize, decoy evidence verify.
 """
