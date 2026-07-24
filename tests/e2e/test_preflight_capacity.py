@@ -174,6 +174,38 @@ class TestFourCapacityStates:
         assert "capacity:" in result.output
         assert "not applicable" in result.output
 
+    def test_non_file_source_skips_capacity_no_network(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # A "local" preflight must not open a DB/remote connection: when any
+        # source is non-file, the capacity check is skipped and the engine
+        # estimator (which would sample the source) is never invoked.
+        import decoy_engine.execution as engine_exec
+
+        called = {"n": 0}
+
+        def _spy(*a: Any, **k: Any) -> Any:
+            called["n"] += 1
+            return None
+
+        monkeypatch.setattr(engine_exec, "estimate_job_capacity", _spy)
+
+        config_path = _write_config(tmp_path)
+        cfg = yaml.safe_load(config_path.read_text(encoding="utf-8"))
+        # A valid non-file (network) source type: s3.
+        cfg["sources"]["parent"] = {
+            "type": "s3",
+            "format": "parquet",
+            "bucket": "b",
+            "key": "parent.parquet",
+        }
+        config_path.write_text(yaml.dump(cfg), encoding="utf-8")
+
+        result = _run_preflight(config_path)
+        assert called["n"] == 0  # gate fired before any estimate/connection
+        assert "capacity:" in result.output
+        assert "file sources" in result.output
+
     def test_fit(self, tmp_path: Path, low_threshold) -> None:
         config_path = _write_config(tmp_path)
         result = _run_preflight(config_path)

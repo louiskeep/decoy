@@ -310,6 +310,12 @@ def _check_capacity(raw: dict[str, Any], config_path: Path, acc: _PreflightAccum
     on a valid-but-uncovered shape, an unreadable source, ...) instead of
     crashing the rest of preflight -- this section augments the command, it
     does not gate whether the command itself can complete.
+
+    Scope + posture: this section reads FILE-source metadata (parquet footer /
+    a bounded local sample) to size the job. To keep preflight local and
+    no-network, it runs only when every source is a file; if any source is
+    non-file (database/API), capacity is "not checked" here rather than opening
+    a remote connection during a "local" preflight.
     """
     import decoy_engine.execution as _engine_execution
 
@@ -317,6 +323,20 @@ def _check_capacity(raw: dict[str, Any], config_path: Path, acc: _PreflightAccum
         acc.add_pass(
             name="capacity.out_of_core_fk",
             message="not checked -- capacity check needs a newer engine.",
+        )
+        return
+
+    # Preserve preflight's local, no-network posture: the engine estimate reads
+    # each source, which for a non-file source means opening a DB/remote
+    # connection. A "local" preflight must not do that, so skip capacity when
+    # any source is non-file (matches _check_source_files' file-only scope).
+    sources = raw.get("sources") or {}
+    if isinstance(sources, dict) and any(
+        isinstance(s, dict) and (s.get("type") or "file") != "file" for s in sources.values()
+    ):
+        acc.add_pass(
+            name="capacity.out_of_core_fk",
+            message="not checked -- capacity is estimated only for file sources in local preflight.",
         )
         return
 
@@ -350,7 +370,8 @@ def _check_capacity(raw: dict[str, Any], config_path: Path, acc: _PreflightAccum
             name="capacity.out_of_core_fk",
             message=(
                 f"INSUFFICIENT -- needs {needed}, budget {available}; use a larger "
-                "tier or reduce the job."
+                "tier or reduce the job. This estimate is conservative: a real run "
+                "may still admit the job via full-frame recovery."
             ),
             code=estimate.code,
         )
