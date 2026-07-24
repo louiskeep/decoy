@@ -294,18 +294,26 @@ _TOPICS: dict[str, _Topic] = {
     ),
     "differential-privacy": _Topic(
         name="differential-privacy",
-        summary="Add formal privacy noise to a fitted snapshot with `decoy fit --epsilon`.",
+        summary="Fit a dps-marginal/v3 release with `decoy fit --epsilon`.",
         body=(
             "`decoy fit` captures a distribution snapshot that `type: statistical`\n"
-            "generate columns sample from. With --epsilon, that snapshot is released\n"
-            "under differential privacy:\n\n"
-            "  decoy fit customers.csv --epsilon 1.0 --output snapshot.json\n\n"
-            "Laplace noise (the OpenDP/SmartNoise histogram mechanism) is added to\n"
-            "every snapshot count and exact quantiles/means are dropped. Lower epsilon\n"
-            "= more privacy and more noise. The budget is PER COLUMN HISTOGRAM, so k\n"
-            "columns compose to about k*epsilon overall. Incompatible with --joint in\n"
-            "v1 (releasing marginals plus joint tables under one budget needs\n"
-            "composition accounting)."
+            "generate columns sample from. --epsilon selects a second, disjoint mode\n"
+            "that fits a dps-marginal/v3 release through the engine's OpenDP-backed\n"
+            "fit_dp_snapshot instead of the exact snapshot:\n\n"
+            "  decoy fit customers.csv --epsilon 1.0 --delta 1e-6 \\\n"
+            "      --dp-number amount:0:500 --dp-text state --dp-flag is_active\n\n"
+            "Every released column must be declared with a carrier: --dp-number\n"
+            "COL:LO:HI for a numeric column plus its domain (declared, never read\n"
+            "from the data), --dp-text COL for a categorical column, --dp-flag COL\n"
+            "for a boolean column. A source column nobody declared is a usage error\n"
+            "unless you pass --dp-allow-omit (then it is dropped from the release\n"
+            "and the omission is printed). --delta is required alongside --epsilon\n"
+            "(no default: it sets a real privacy parameter). --epsilon is\n"
+            "incompatible with --joint and --parse-dates.\n\n"
+            "The fit also requires a certified DP proof stack (a pinned lock the\n"
+            "engine has been validated against). On an uncertified host it refuses\n"
+            "with dp_stack_uncertified rather than release under an unverified\n"
+            "guarantee."
         ),
         see_also=("decoy fit --help", "decoy run --help"),
     ),

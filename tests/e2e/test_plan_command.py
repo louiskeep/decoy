@@ -65,7 +65,9 @@ def test_plan_no_profile_emits_yaml(tmp_path: Path) -> None:
 
     result = runner.invoke(app, ["plan", str(config_path), "--no-profile"])
     assert result.exit_code == 0, result.stdout
-    assert "plan_version: 1" in result.stdout
+    # plan_version tracks the engine constant (2 after DPS Scope B's pinned
+    # GenerationPlan payload bump; see decoy_engine.plan._compile.PLAN_VERSION).
+    assert "plan_version: 2" in result.stdout
     # seed_protocol_version tracks the engine constant (6 after v6 determinism bump).
     assert "seed_protocol_version: 6" in result.stdout
 
@@ -175,7 +177,7 @@ def test_plan_json_emits_parseable_json(tmp_path: Path) -> None:
     result = runner.invoke(app, ["plan", str(config_path), "--no-profile", "--json"])
     assert result.exit_code == 0, result.stdout
     parsed = json.loads(result.stdout)
-    assert parsed["plan_version"] == 1
+    assert parsed["plan_version"] == 2
     # seed_protocol_version tracks the engine constant (6 after v6 determinism bump).
     assert parsed["seed_protocol_version"] == 6
 
@@ -193,7 +195,7 @@ def test_plan_out_writes_to_file(tmp_path: Path) -> None:
     )
     assert result.exit_code == 0, result.stdout
     assert out_path.exists()
-    assert "plan_version: 1" in out_path.read_text(encoding="utf-8")
+    assert "plan_version: 2" in out_path.read_text(encoding="utf-8")
     # stdout should be silent when --out is used (verify no plan dump on stdout)
     assert "plan_version" not in result.stdout
 

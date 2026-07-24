@@ -1,0 +1,106 @@
+# Pinned third-party dependency closure of the certified DP runtime environment.
+#
+# This is not the dev/test lock (see pyproject.toml's `dev`/`lint`/`vault`
+# extras). It is the exact 63-package third-party set that, together with
+# decoy-engine 0.5.0 and decoy-cli on CPython 3.10.20 (Linux/x86-64/glibc),
+# reproduces proof-stack fingerprint:
+#
+#   5a2f7ef75ba38c5c338d5dcbc0a790f1c104cb7f6b49c2b25908540e63bb8495
+#
+# That fingerprint is one of the certified rows in the engine's
+# `decoy_engine.quality.dp_provenance._CERTIFIED_STACKS` manifest. A real DP
+# fit (`fit_dp_snapshot`) only completes on a certified row; anywhere else it
+# raises `ProvenanceError` with code `dp_stack_uncertified`.
+#
+# Install into a runtime-only venv AFTER installing decoy-engine and
+# decoy-cli, with NO dev tooling (no pytest, ruff, mypy, hypothesis, or
+# anything else CI needs but a shipped runtime never touches):
+#
+#   uv pip install decoy-engine==0.5.0 decoy-cli
+#   uv pip install -r requirements-certified.txt
+#
+# Adding, removing, or re-pinning ANY line here changes the fingerprint and
+# drops the environment out of the certified row. Treat this file as frozen;
+# a legitimate re-certification re-derives it from a fresh `uv sync` and
+# re-verifies the new fingerprint against the engine manifest before this
+# file is touched.
+#
+# Seven of these are proof-critical: their exact versions are what make the
+# tested DP behaviour the shipped DP behaviour, not incidental transitive
+# noise.
+#
+#   opendp==0.15.1          the certified DP mechanisms and privacy maps
+#   dp-accounting==0.6.0    the PLD composition accountant
+#   numpy==2.2.6            numeric layer under both of the above
+#   scipy==1.15.3           numeric layer under both of the above
+#   pandas==2.3.3           the DataFrame -> carrier-table adapter boundary
+#   pyarrow==24.0.0         the carrier-table columnar backend
+#   packaging==26.2         PEP 503 name canonicalization for the fingerprint
+#
+# Everything else in this file is a transitive dependency the fingerprint
+# still covers (the gate certifies the complete installed set, not a curated
+# subset) but that does not itself touch DP numerics.
+
+absl-py==2.5.0
+annotated-doc==0.0.4
+annotated-types==0.8.0
+attrs==23.2.0
+boto3==1.43.55
+botocore==1.43.55
+certifi==2026.7.22
+cffi==2.1.0
+charset-normalizer==3.4.9
+cryptography==49.0.0
+deprecated==1.3.1
+dm-tree==0.1.10
+dp-accounting==0.6.0
+duckdb==1.5.5
+faker==40.23.0
+google-api-core==2.33.0
+google-auth==2.56.2
+google-cloud-core==2.6.0
+google-cloud-storage==3.13.0
+google-crc32c==1.8.0
+google-resumable-media==2.10.0
+googleapis-common-protos==1.75.0
+idna==3.18
+jmespath==1.1.0
+jsonpath-ng==1.8.0
+lark==1.3.1
+markdown-it-py==4.2.0
+mdurl==0.1.2
+mpmath==1.4.1
+numexpr==2.14.1
+numpy==2.2.6
+opendp==0.15.1
+packaging==26.2
+pandas==2.3.3
+polars==1.43.0
+polars-runtime-32==1.43.0
+proto-plus==1.28.2
+protobuf==7.35.1
+psutil==7.2.2
+pyarrow==24.0.0
+pyasn1==0.6.4
+pyasn1-modules==0.4.2
+pycparser==3.0
+pydantic==2.13.4
+pydantic-core==2.46.4
+pygments==2.20.0
+python-dateutil==2.9.0.post0
+python-stdnum==2.2
+pytz==2026.2
+pyyaml==6.0.3
+requests==2.34.2
+rich==15.0.0
+s3transfer==0.19.2
+scipy==1.15.3
+shellingham==1.5.4
+simpleeval==1.0.7
+six==1.17.0
+typer==0.27.0
+typing-extensions==4.16.0
+typing-inspection==0.4.2
+tzdata==2026.3
+urllib3==2.7.0
+wrapt==2.2.2
