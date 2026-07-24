@@ -430,6 +430,21 @@ def fit(
             if state.mode is not OutputMode.quiet:
                 state.err_console.print(warn("notice:"), omission_notice)
 
+        # A declared column absent from the CSV is a usage error, surfaced by
+        # name before the flag-grammar and engine steps. Otherwise a phantom
+        # --dp-flag column crashes _apply_flag_grammar with a raw KeyError
+        # (breaking the --json error contract), and a phantom --dp-number/text
+        # column gets misattributed to an uncertified host. Names only, so this
+        # stays data-independent (D6).
+        missing_declared = sorted(set(column_schema) - set(df.columns))
+        if missing_declared:
+            _emit_error(
+                f"declared DP column(s) not in the CSV: {', '.join(missing_declared)}.",
+                err_code="dp_schema_column_missing",
+                hint_text="each --dp-number/--dp-flag/--dp-text column must name a column in the source CSV.",
+            )
+            raise typer.Exit(code=EXIT_USAGE)
+
         flag_columns = [c for c, spec in column_schema.items() if spec.get("carrier") == "flag"]
         typed_df = _apply_flag_grammar(df, flag_columns)
 

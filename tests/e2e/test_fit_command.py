@@ -174,9 +174,7 @@ class TestFitDpModeSelectionFailClosed:
 
     def test_epsilon_without_carriers_exits_usage(self, tmp_path: Path) -> None:
         src = _dp_source_csv(tmp_path)
-        result = runner.invoke(
-            app, ["fit", str(src), "--epsilon", "1.0", "--delta", "1e-6"]
-        )
+        result = runner.invoke(app, ["fit", str(src), "--epsilon", "1.0", "--delta", "1e-6"])
         assert result.exit_code == EXIT_USAGE
         assert "dp_mode_no_carriers" in result.output
 
@@ -204,9 +202,7 @@ class TestFitDpModeSelectionFailClosed:
         assert "dp_mode_joint_unsupported" in result.output
         assert not out.exists()
 
-    def test_epsilon_with_parse_dates_exits_usage_before_csv_read(
-        self, tmp_path: Path
-    ) -> None:
+    def test_epsilon_with_parse_dates_exits_usage_before_csv_read(self, tmp_path: Path) -> None:
         src = _dp_source_csv(tmp_path)
         out = tmp_path / "snapshot.json"
         result = runner.invoke(
@@ -269,9 +265,7 @@ class TestFitDpDeclarationValidation:
 
     def test_duplicate_dp_number_declaration_exits_usage(self, tmp_path: Path) -> None:
         src = _dp_source_csv(tmp_path)
-        result = self._invoke(
-            src, "--dp-number", "amount:0:200", "--dp-number", "amount:0:50"
-        )
+        result = self._invoke(src, "--dp-number", "amount:0:200", "--dp-number", "amount:0:50")
         assert result.exit_code == EXIT_USAGE
         assert "dp_schema_duplicate_column" in result.output
 
@@ -442,9 +436,7 @@ class TestFitDpNoArtifactOnFailure:
         assert result.exit_code == EXIT_USAGE
         assert not out.exists()
 
-    def test_existing_output_not_overwritten_on_engine_failure(
-        self, tmp_path: Path
-    ) -> None:
+    def test_existing_output_not_overwritten_on_engine_failure(self, tmp_path: Path) -> None:
         src = _dp_source_csv(tmp_path)
         out = tmp_path / "snapshot.json"
         sentinel = "not a snapshot"
@@ -502,15 +494,11 @@ class TestFitDpErrorFamilies:
         # gate -- reachable on this uncertified host, unlike the other three
         # families (see the module docstring).
         src = _dp_source_csv(tmp_path)
-        result = runner.invoke(
-            app, self._dp_args(src, epsilon="0"), catch_exceptions=False
-        )
+        result = runner.invoke(app, self._dp_args(src, epsilon="0"), catch_exceptions=False)
         assert result.exit_code == EXIT_USAGE
         assert "dp_epsilon_invalid" in result.output
 
-    def test_dp_error_bad_epsilon_json_has_separate_code_and_message(
-        self, tmp_path: Path
-    ) -> None:
+    def test_dp_error_bad_epsilon_json_has_separate_code_and_message(self, tmp_path: Path) -> None:
         src = _dp_source_csv(tmp_path)
         result = runner.invoke(
             app, [*self._dp_args(src, epsilon="0"), "--json"], catch_exceptions=False
@@ -527,18 +515,14 @@ class TestFitDpErrorFamilies:
         assert result.exit_code == EXIT_USAGE
         assert "dp_delta_invalid" in result.output
 
-    def test_provenance_error_exits_runtime_with_dedicated_hint(
-        self, tmp_path: Path
-    ) -> None:
+    def test_provenance_error_exits_runtime_with_dedicated_hint(self, tmp_path: Path) -> None:
         src = _dp_source_csv(tmp_path)
         result = runner.invoke(app, self._dp_args(src))
         assert result.exit_code == EXIT_RUNTIME
         assert "dp_stack_uncertified" in result.output
         assert "not a certified DP platform/stack" in result.output
 
-    def test_provenance_error_json_has_code_message_and_hint(
-        self, tmp_path: Path
-    ) -> None:
+    def test_provenance_error_json_has_code_message_and_hint(self, tmp_path: Path) -> None:
         src = _dp_source_csv(tmp_path)
         result = runner.invoke(app, [*self._dp_args(src), "--json"])
         assert result.exit_code == EXIT_RUNTIME
@@ -547,9 +531,7 @@ class TestFitDpErrorFamilies:
         assert payload["message"]
         assert "not a certified DP platform/stack" in payload["hint"]
 
-    def test_carrier_error_surfaces_code_and_message(
-        self, tmp_path: Path, monkeypatch
-    ) -> None:
+    def test_carrier_error_surfaces_code_and_message(self, tmp_path: Path, monkeypatch) -> None:
         def _raise(*args, **kwargs):
             from decoy_engine.quality.carriers import CarrierError
 
@@ -609,10 +591,7 @@ class TestFitGenerateLoop:
     def test_fit_then_generate(self, tmp_path: Path) -> None:
         src = _source_csv(tmp_path)
         snap_path = tmp_path / "snapshot.json"
-        assert (
-            runner.invoke(app, ["fit", str(src), "--output", str(snap_path)]).exit_code
-            == 0
-        )
+        assert runner.invoke(app, ["fit", str(src), "--output", str(snap_path)]).exit_code == 0
 
         cfg = {
             "version": 1,
@@ -746,3 +725,70 @@ class TestFitDpArtifactShape:
         written = json.loads(out.read_text(encoding="utf-8"))
         assert written["schema_version"] == "distribution-snapshot/v1"
         assert "dp" not in written
+
+
+class TestFitDpDeclaredColumnMissing:
+    """A declared carrier column absent from the CSV is a coded usage error,
+    surfaced by name before the flag-grammar and proof-stack steps. Regression
+    for the phantom-column defect: a phantom --dp-flag crashed the flag grammar
+    with a raw KeyError (breaking the --json contract), and a phantom
+    --dp-number/text was misattributed to an uncertified host."""
+
+    def test_phantom_flag_column_is_coded_json_error_not_traceback(self, tmp_path: Path) -> None:
+        src = _dp_source_csv(tmp_path)
+        out = tmp_path / "snapshot.json"
+        # catch_exceptions=False fails the test if a KeyError escapes.
+        result = runner.invoke(
+            app,
+            [
+                "fit",
+                str(src),
+                "--output",
+                str(out),
+                "--epsilon",
+                "1.0",
+                "--delta",
+                "1e-6",
+                "--dp-number",
+                "amount:0:200",
+                "--dp-text",
+                "state",
+                "--dp-flag",
+                "active",  # phantom: the real column is "is_active"
+                "--dp-allow-omit",
+                "--json",
+            ],
+            catch_exceptions=False,
+        )
+        assert result.exit_code == EXIT_USAGE
+        payload = json.loads(result.stdout)
+        assert payload["code"] == "dp_schema_column_missing"
+        assert "active" in payload["message"]
+        assert not out.exists()
+
+    def test_phantom_number_column_reports_missing_before_proof_gate(self, tmp_path: Path) -> None:
+        src = _dp_source_csv(tmp_path)
+        # On this uncertified host the proof-stack gate would raise
+        # dp_stack_uncertified (EXIT_RUNTIME); the name check must fire first.
+        result = runner.invoke(
+            app,
+            [
+                "fit",
+                str(src),
+                "--epsilon",
+                "1.0",
+                "--delta",
+                "1e-6",
+                "--dp-number",
+                "amt:0:200",  # phantom: the real column is "amount"
+                "--dp-text",
+                "state",
+                "--dp-flag",
+                "is_active",
+                "--dp-allow-omit",
+            ],
+        )
+        assert result.exit_code == EXIT_USAGE
+        assert "dp_schema_column_missing" in result.output
+        assert "amt" in result.output
+        assert "dp_stack_uncertified" not in result.output
