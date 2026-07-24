@@ -293,6 +293,44 @@ def _format_gib(byte_count: int | None) -> str:
     return f"~{byte_count / _GIB:.1f} GB" if byte_count else "an unknown amount"
 
 
+def _file_sources_missing_on_disk(raw: dict[str, Any], base_dir: Path) -> bool:
+    """True if any declared FILE-type source does not resolve to a readable
+    regular file, resolved the SAME way `estimate_job_capacity` resolves
+    them (relative to `base_dir`, matching `decoy run`'s own convention --
+    R2) -- not `_check_source_files`' CWD-relative check, a documented,
+    unrelated asymmetry (see `test_relative_path_resolves_against_yaml_
+    directory`'s docstring).
+
+    Root-cause guard for a real regression: without it, a job whose source
+    is already known missing (Step 4's `_check_source_files` already
+    reported a `fail` for it) would still reach `estimate_job_capacity`,
+    which raises on an unreadable source (its own documented R3 contract,
+    "an unreadable source" propagates) -- and since that exception is no
+    longer swallowed here (R3, Codex P1-2), it would crash the WHOLE
+    `preflight` command before `_emit_preflight_result` ever runs, losing
+    every finding accumulated so far, including the one that already
+    explained the problem. Skipping the capacity estimate for a source we
+    already know cannot be read is not swallowing a defect -- it is
+    declining to run a check whose precondition is already known false,
+    exactly like the sibling non-file-source skip below.
+    """
+    sources = raw.get("sources") or {}
+    if not isinstance(sources, dict):
+        return False
+    for src in sources.values():
+        if not isinstance(src, dict) or (src.get("type") or "file") != "file":
+            continue
+        path_str = src.get("path")
+        if not path_str:
+            return True
+        path = Path(path_str)
+        if not path.is_absolute():
+            path = base_dir / path
+        if not path.is_file():
+            return True
+    return False
+
+
 def _check_capacity(raw: dict[str, Any], config_path: Path, acc: _PreflightAccumulator) -> None:
     """Predict the out-of-core-FK memory-capacity gate before a run starts.
 
@@ -306,10 +344,23 @@ def _check_capacity(raw: dict[str, Any], config_path: Path, acc: _PreflightAccum
     `estimate_job_capacity` degrades to "not checked" rather than an
     ImportError -- the CLI's floor stays >=0.5.0 either way.
 
-    Degrades to "not checked" on ANY unexpected exception (a compile defect
-    on a valid-but-uncovered shape, an unreadable source, ...) instead of
-    crashing the rest of preflight -- this section augments the command, it
-    does not gate whether the command itself can complete.
+    R3 (Codex P1-2): an UNEXPECTED exception from `estimate_job_capacity`
+    (a genuine engine defect -- a compile bug, ...) is NOT caught here.
+    `estimate_job_capacity` itself only raises for a real defect (its own R3
+    contract) or returns a typed verdict, including `UNKNOWN` for EXPECTED
+    indeterminacy (an undetectable memory ceiling, an unpriceable CSV row
+    count) -- so an exception reaching this call site is never "capacity
+    merely unknown", and folding it into a WARN here would make `decoy
+    preflight` report a false pass on a real defect. Only the THREE guarded
+    early-returns below (capability-detect, non-file sources, a source
+    already known missing/unreadable from disk) degrade this section
+    without running the estimator at all; once it runs, its exceptions
+    propagate and its `UNKNOWN` verdict renders as "not checked". The third
+    guard exists because a missing source is ALSO one of `estimate_job_
+    capacity`'s own documented propagating cases ("an unreadable source") --
+    without it, a job Step 4 (`_check_source_files`) already flagged as
+    missing would reach the estimator a second time and crash the whole
+    command before any finding (including Step 4's own) is ever printed.
 
     Scope + posture: this section reads FILE-source metadata (parquet footer /
     a bounded local sample) to size the job. To keep preflight local and
@@ -340,18 +391,26 @@ def _check_capacity(raw: dict[str, Any], config_path: Path, acc: _PreflightAccum
         )
         return
 
-    try:
-        from decoy_engine import PipelineConfig
-        from decoy_engine.execution.out_of_core._memory_estimate import CapacityVerdict
-
-        config_dump = PipelineConfig.model_validate(raw).model_dump()
-        estimate = _engine_execution.estimate_job_capacity(config_dump, config_path.parent)
-    except Exception as exc:  # degrade, never crash preflight over this section
-        acc.add_warn(
+    # A source already known missing/unreadable (Step 4 already reported this
+    # as a `fail`) cannot be estimated -- see `_file_sources_missing_on_disk`'s
+    # docstring for why this guard exists (a real regression it fixes).
+    if _file_sources_missing_on_disk(raw, config_path.parent):
+        acc.add_pass(
             name="capacity.out_of_core_fk",
-            message=f"capacity check could not run: {exc}",
+            message="not checked -- one or more declared source files are missing or "
+            "unreadable; see the source-file findings above.",
         )
         return
+
+    from decoy_engine import PipelineConfig
+    from decoy_engine.execution.out_of_core._memory_estimate import CapacityVerdict
+
+    # No try/except here (R3, Codex P1-2): `estimate_job_capacity` propagates
+    # any unexpected defect itself, so this call does too -- an exception here
+    # is a genuine problem `decoy preflight` must surface, not something to
+    # degrade into a WARN and let the command report a false pass.
+    config_dump = PipelineConfig.model_validate(raw).model_dump()
+    estimate = _engine_execution.estimate_job_capacity(config_dump, config_path.parent)
 
     needed = _format_gib(estimate.needed_bytes)
     available = _format_gib(estimate.available_bytes)

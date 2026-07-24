@@ -165,14 +165,23 @@ class TestFourCapacityStates:
         assert "capacity:" in result.output
         assert "not applicable" in result.output
 
-    def test_not_applicable_below_size_threshold(self, tmp_path: Path) -> None:
-        # No low_threshold fixture: at the real 5,000,000-row default this
-        # 40-row FK fixture is sequential-bound, not out-of-core-bound.
+    def test_ambiguous_below_size_threshold_is_not_checked_not_not_applicable(
+        self, tmp_path: Path
+    ) -> None:
+        # No low_threshold fixture: at the real 5,000,000-row default, the
+        # row-count-only decision picks `sequential` for this 40-row FK
+        # fixture. But the fixture IS out-of-core-compatible, and a real
+        # `decoy run` (byte-estimate routing on by default) can ignore that
+        # threshold and route it to out-of-core-FK regardless of size
+        # (Codex P1-1 gate finding) -- so preflight must not claim "not
+        # applicable" here (a false "fine"). It renders the engine's
+        # UNKNOWN verdict as "not checked" instead.
         config_path = _write_config(tmp_path)
         result = _run_preflight(config_path)
         assert result.exit_code == EXIT_OK
         assert "capacity:" in result.output
-        assert "not applicable" in result.output
+        assert "not checked" in result.output
+        assert "not applicable" not in result.output
 
     def test_non_file_source_skips_capacity_no_network(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -240,6 +249,31 @@ class TestFourCapacityStates:
         assert "capacity:" in result.output
         assert "not checked" in result.output
         assert "newer engine" in result.output
+
+
+class TestUnexpectedEstimatorExceptionPropagates:
+    """Codex P1-2 (item 2): an unexpected exception from
+    `estimate_job_capacity` must PROPAGATE out of `decoy preflight` (R3),
+    never degrade to a WARN that lets the command report a false pass.
+
+    Replaces the prior broad `except Exception: acc.add_warn(...)` at
+    `_check_capacity` -- no test asserted that swallow-to-WARN behavior
+    directly, but this is the behavior the removed `try/except` existed to
+    produce, so this test pins the corrected (propagate) contract in its
+    place."""
+
+    def test_unexpected_exception_propagates_not_a_warn(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        import decoy_engine.execution as engine_exec
+
+        def _boom(*_a: Any, **_k: Any) -> Any:
+            raise RuntimeError("unexpected estimator defect (test double)")
+
+        monkeypatch.setattr(engine_exec, "estimate_job_capacity", _boom)
+        config_path = _write_config(tmp_path)
+        with pytest.raises(RuntimeError, match="unexpected estimator defect"):
+            runner.invoke(app, ["preflight", str(config_path)], catch_exceptions=False)
 
 
 class TestJsonEnvelope:
