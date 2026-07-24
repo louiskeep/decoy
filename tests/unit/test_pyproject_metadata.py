@@ -109,14 +109,16 @@ def test_engine_dependency_pinned() -> None:
     )
     # Assert the exact minimum, not merely that *a* floor exists -- a bare
     # `>=` check would let a silent downgrade (e.g. `decoy-engine>=0.1.0`)
-    # slip through. 0.4.0 is DE-02's release marker: the first engine version
-    # guaranteed to carry `decoy_engine.keyprovider` (see the pin rationale in
-    # pyproject.toml). Bump this in lockstep when the floor legitimately rises.
+    # slip through. 0.5.0 is the DPS Scope B / DPS-CODEC release marker: the
+    # first engine version carrying the certified DP fit path
+    # (`fit_dp_snapshot` + `dp_provenance`) this CLI's fit rewire depends on
+    # (see the pin rationale in pyproject.toml). Bump this in lockstep when
+    # the floor legitimately rises.
     from packaging.requirements import Requirement
 
     req = Requirement(engine_deps[0])
     floors = [s for s in req.specifier if s.operator in (">=", "==")]
-    assert [str(s) for s in floors] == [">=0.4.0"], (
-        f"decoy-engine floor must be exactly >=0.4.0 (DE-02 keyprovider "
+    assert [str(s) for s in floors] == [">=0.5.0"], (
+        f"decoy-engine floor must be exactly >=0.5.0 (DPS certified-DP-fit "
         f"marker); got specifier {str(req.specifier)!r}"
     )

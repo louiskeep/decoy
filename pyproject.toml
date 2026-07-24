@@ -81,7 +81,7 @@ dependencies = [
     # configured -- with the 0.4.0 floor this is defense-in-depth against a
     # broken or forced install (one that violates the resolver guarantee) rather
     # than the load-bearing guard it was under the 0.3.0 floor.
-    "decoy-engine>=0.4.0",
+    "decoy-engine>=0.5.0",
     "typer>=0.9",
     "rich>=13.0",
     "duckdb>=0.9",
