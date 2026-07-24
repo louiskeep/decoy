@@ -19,6 +19,13 @@ docs/release/versioning.md (existing integers 0-3 do not move). Source
 pattern: semgrep's exit-code split (0 pass, 1 findings, 2 error); the analog
 here is 0 clean / 4 findings / 3 runtime crash.
 
+The OOM checker v1 (2026-07-24) added EXIT_CAPACITY=5: `decoy run` and
+`decoy preflight` both need a way to say "this job needs more memory than
+the host has" distinctly from a generic engine crash (EXIT_RUNTIME) or a bad
+config (EXIT_USAGE). `2` is already spoken for (`EXIT_DEPRECATED_SHIM`), so
+the new value is `5`, the next unused integer -- 0-4 are pinned and do not
+move.
+
 Reference: README "Exit codes" section + `decoy explain exit-codes`.
 """
 
@@ -53,7 +60,18 @@ data being checked, not in the CLI or the user's invocation. Pattern source:
 semgrep's exit-code split (0 pass, 1 findings, 2 error). Distinct from
 EXIT_USAGE (the user gave bad input) and EXIT_RUNTIME (the CLI crashed)."""
 
+EXIT_CAPACITY: int = 5
+"""The job needs more memory than this host (or the budget it was given) has.
+Raised by `decoy run` when the engine's out-of-core-FK memory gate refuses a
+job, and by `decoy preflight` when its capacity check predicts the same
+refusal before the run starts. The fix is a bigger host/cgroup ceiling or a
+smaller job -- not a config mistake (EXIT_USAGE) and not an engine defect
+(EXIT_RUNTIME). Covers exactly two engine codes:
+`out_of_core_insufficient_memory` and `out_of_core_fanin_exceeds_budget`.
+v1 checks the out-of-core-FK route only; see `decoy explain exit-codes`."""
+
 __all__ = [
+    "EXIT_CAPACITY",
     "EXIT_DEPRECATED_SHIM",
     "EXIT_FINDINGS",
     "EXIT_OK",

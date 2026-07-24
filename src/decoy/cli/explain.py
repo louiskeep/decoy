@@ -341,7 +341,7 @@ _TOPICS: dict[str, _Topic] = {
         name="exit-codes",
         summary="The process exit codes every `decoy` command returns.",
         body=(
-            "Every `decoy` subcommand returns one of five exit codes. Scripts,\n"
+            "Every `decoy` subcommand returns one of six exit codes. Scripts,\n"
             "Make recipes, and CI pipelines can switch on the integer value.\n\n"
             "  0   Success. The command did what it said. POSIX convention.\n"
             "  1   Usage error. The caller's request was wrong: config did not\n"
@@ -358,13 +358,21 @@ _TOPICS: dict[str, _Topic] = {
             "      `decoy storm integrity` flagged residual PII or FK\n"
             "      preservation failures). The fix is in the data being\n"
             "      checked, not in the CLI invocation. Pattern source:\n"
-            "      semgrep's exit-code split.\n\n"
+            "      semgrep's exit-code split.\n"
+            "  5   Capacity. `decoy run` or `decoy preflight` refused the job\n"
+            "      because it needs more memory than the host (or budget) has\n"
+            "      -- the engine's out-of-core-FK memory gate, either hit\n"
+            "      mid-run or predicted up front. The fix is a bigger\n"
+            "      host/cgroup ceiling or a smaller job. `decoy preflight`\n"
+            "      v1 checks this for the out-of-core-FK route only; it does\n"
+            "      not cover the ingestion peak `decoy run` pays before the\n"
+            "      engine gate runs, or the generate path.\n\n"
             "Integer values are stable across releases. The named constants\n"
             "(EXIT_OK / EXIT_USAGE / EXIT_DEPRECATED_SHIM / EXIT_RUNTIME /\n"
-            "EXIT_FINDINGS) live in `decoy.cli.exit_codes` for callers that\n"
-            "import them in Python."
+            "EXIT_FINDINGS / EXIT_CAPACITY) live in `decoy.cli.exit_codes` for\n"
+            "callers that import them in Python."
         ),
-        see_also=("decoy --help", "decoy run --help"),
+        see_also=("decoy --help", "decoy run --help", "decoy preflight --help"),
     ),
     "completion": _Topic(
         name="completion",

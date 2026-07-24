@@ -23,14 +23,16 @@ from decoy.cli import exit_codes
 
 
 def test_named_constants_have_pinned_integer_values() -> None:
-    """Pin the integer-value contract: 0/1/2/3/4 are stable across releases.
-    OSS.4b (2026-06-02) added EXIT_FINDINGS=4 for `decoy storm integrity`."""
+    """Pin the integer-value contract: 0/1/2/3/4/5 are stable across releases.
+    OSS.4b (2026-06-02) added EXIT_FINDINGS=4 for `decoy storm integrity`.
+    The OOM checker v1 (2026-07-24) added EXIT_CAPACITY=5."""
     assert exit_codes.EXIT_OK == 0
     assert exit_codes.EXIT_USAGE == 1
     assert exit_codes.EXIT_DEPRECATED_SHIM == 2
     assert exit_codes.EXIT_RUNTIME == 3
     assert exit_codes.EXIT_FINDINGS == 4
-    # __all__ covers exactly the five public names; any rename of an
+    assert exit_codes.EXIT_CAPACITY == 5
+    # __all__ covers exactly the six public names; any rename of an
     # existing constant or addition of a new public symbol must update
     # __all__ deliberately rather than slip through.
     assert set(exit_codes.__all__) == {
@@ -39,6 +41,7 @@ def test_named_constants_have_pinned_integer_values() -> None:
         "EXIT_DEPRECATED_SHIM",
         "EXIT_RUNTIME",
         "EXIT_FINDINGS",
+        "EXIT_CAPACITY",
     }
 
 
