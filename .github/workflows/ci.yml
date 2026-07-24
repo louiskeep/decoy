@@ -1,13 +1,36 @@
 # PR / push CI gate for the decoy CLI.
 #
-# Two jobs:
-#   ruff   -- lint check only (format --check excluded; see pyproject.toml
-#             [tool.ruff] comment for rationale -- 45 files would reformat
-#             on the first run; land a formatting commit first).
-#   pytest -- unit + sentry + e2e suites against an editable install.
-#             Engine is not on PyPI yet (OSS.7 lands the publish pipeline),
-#             so we install it from the sibling repo's main branch via a
-#             git+https VCS spec, mirroring the release-smoke.yml pattern.
+# Three jobs:
+#   ruff               -- lint check only (format --check excluded; see
+#                         pyproject.toml [tool.ruff] comment for rationale
+#                         -- 45 files would reformat on the first run; land
+#                         a formatting commit first).
+#   pytest             -- unit + sentry + e2e suites against an editable
+#                         install. Engine is not on PyPI yet (OSS.7 lands
+#                         the publish pipeline), so we install it from the
+#                         sibling repo's main branch via a git+https VCS
+#                         spec, mirroring the release-smoke.yml pattern.
+#   fresh-install-smoke -- S3 (OSS-launch sprint): builds the wheel via
+#                         hatchling and installs it NON-editable into a
+#                         clean venv (no source tree on PYTHONPATH), then
+#                         runs the same canonical smoke cells as
+#                         release-smoke.yml. pytest above always runs
+#                         against an editable install from the source
+#                         tree, which cannot catch "works from source,
+#                         breaks when installed" bugs -- a missing
+#                         package-data include, an import that only
+#                         resolves relative to the checkout, an
+#                         entry-point that isn't actually wired. This job
+#                         is that gate, and it runs on every PR/push
+#                         instead of only at release-tag time (unlike
+#                         release-smoke.yml, which is release/schedule
+#                         gated and gets the full 3.10/3.11/3.12 matrix).
+#                         Kept as its own job (not folded into pytest) so
+#                         it runs in parallel and does not slow the ruff /
+#                         pytest fast lanes; single Python version (3.11,
+#                         the middle of the pinned range) to keep this
+#                         lane itself fast -- the full version matrix on
+#                         a built artifact is release-smoke.yml's job.
 #
 # Triggers: every push to main AND every pull request targeting main.
 # The gate must be green before a PR can merge.
@@ -33,10 +56,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Set up Python 3.10
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: '3.10'
 
@@ -58,10 +81,10 @@ jobs:
         python: ['3.10', '3.11', '3.12']
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Set up Python ${{ matrix.python }}
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: ${{ matrix.python }}
 
@@ -83,3 +106,75 @@ jobs:
 
       - name: pytest e2e
         run: pytest tests/e2e --tb=short
+
+  # ---------------------------------------------------------------------------
+  # fresh-install-smoke: packaging gate (S3, OSS-launch sprint)
+  # ---------------------------------------------------------------------------
+  fresh-install-smoke:
+    name: fresh-install-smoke
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.11'
+
+      - name: Install build backend
+        run: pip install --upgrade pip build
+
+      - name: Build wheel
+        run: python -m build --wheel
+
+      - name: Create clean install venv
+        # A fresh venv, never activated -- steps call into it by path so
+        # the runner's own environment (which has the repo checked out
+        # on disk) cannot leak an import path into the smoke.
+        run: python -m venv .smoke
+
+      - name: Install engine from sibling repo (pre-publish window)
+        # Mirrors the pytest job's engine-resolution step above and
+        # release-smoke.yml: decoy-engine is not on PyPI yet (OSS.7 lands
+        # the publish pipeline), so install from the sibling repo's main
+        # branch via a git+https VCS spec. After OSS.7 publishes, swap to
+        # `.smoke/bin/pip install decoy-engine`.
+        run: |
+          .smoke/bin/pip install --upgrade pip
+          .smoke/bin/pip install "git+https://github.com/louiskeep/decoy-engine@main"
+
+      - name: Install the freshly-built decoy wheel (non-editable)
+        run: .smoke/bin/pip install dist/*.whl
+
+      - name: decoy --version (smoke 1)
+        run: .smoke/bin/decoy --version
+
+      - name: decoy demo --json (smoke 2)
+        # Demo runs end-to-end against the bundled templates set,
+        # produces a JSON status object on stdout, exits 0 on success.
+        # This exercises the engine import path from the installed
+        # package, not the source tree.
+        run: .smoke/bin/decoy demo --json
+
+      - name: decoy templates list --json (smoke 3a)
+        # Confirms the bundled templates set is registered + packaged
+        # (package-data) in the wheel, and the listing surfaces no V1
+        # graph template.
+        run: .smoke/bin/decoy templates list --json
+
+      - name: decoy run against the bundled minimal template (smoke 3b)
+        # The canonical run cell: take a tmp CSV in, write a masked CSV
+        # out. Reads the template from `decoy templates show minimal`
+        # (default mode already prints raw YAML; there is no `--raw`
+        # flag), NOT from the repo's `examples/` (those are repo-only,
+        # not wheel-shipped -- the smoke must only touch what the wheel
+        # actually ships).
+        run: |
+          set -euo pipefail
+          mkdir -p smoke_run
+          printf 'first_name,last_name,email,ssn,account_status\nAda,Lovelace,ada@example.com,000-00-0000,active\n' > smoke_run/input.csv
+          .smoke/bin/decoy templates show minimal > smoke_run/pipeline.yaml
+          cd smoke_run
+          ../.smoke/bin/decoy run pipeline.yaml
+          test -s output.csv

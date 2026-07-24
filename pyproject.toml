@@ -81,8 +81,16 @@ dependencies = [
     # configured -- with the 0.4.0 floor this is defense-in-depth against a
     # broken or forced install (one that violates the resolver guarantee) rather
     # than the load-bearing guard it was under the 0.3.0 floor.
+    # 0.5.0 is the first engine with the typed-carrier DP API (fit_dp_snapshot)
+    # the DP fit path calls.
     "decoy-engine>=0.5.0",
-    "typer>=0.9",
+    # Cap below 0.28: typer 0.27 changed `typer utils docs` argument rendering
+    # ({config}->CONFIG, <mask|generate>->[mask|generate]). This branch adopts
+    # 0.27 deliberately (the DP-flag rewire regenerated docs/cli-reference.md
+    # against it, which the remote comment anticipated as the sanctioned bump).
+    # Keep the upper bound so a future minor cannot silently drift the committed
+    # doc and red the test_cli_surface sentry.
+    "typer>=0.9,<0.28",
     "rich>=13.0",
     "duckdb>=0.9",
 ]
