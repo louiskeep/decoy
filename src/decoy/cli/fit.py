@@ -172,16 +172,26 @@ def _map_flag_token(cell: object) -> bool | None:
     return None
 
 
-def _apply_flag_grammar(df: Any, flag_columns: list[str]) -> Any:
-    """Return a copy of `df` with every declared `--dp-flag` column mapped
-    through the fixed grammar to `True`/`False`/`None`. Runs BEFORE the
-    engine call so the frame it receives already carries real bool cells
-    for flag columns (the codec never sees the raw CSV string)."""
-    if not flag_columns:
-        return df
+def _build_typed_frame(df: Any, column_schema: dict[str, dict[str, Any]]) -> Any:
+    """Convert each declared column from its raw CSV lexeme through a fixed,
+    per-cell, carrier-specific rule, so the frame the engine fits is a pure
+    per-cell function of cell content. DP mode reads every column as a raw
+    string (see the read below) precisely so pandas' column-wide dtype
+    inference cannot make one row change how another is boxed, which would
+    break D6 boxing invariance and the stability-1 assumption the DP noise
+    calibration relies on. Number lexemes parse independently via to_numeric
+    (unparseable -> null, matching the flag grammar's silent-null rule); flag
+    lexemes go through the fixed grammar; text keeps its raw lexeme."""
+    import pandas as pd
+
     out = df.copy()
-    for col in flag_columns:
-        out[col] = out[col].map(_map_flag_token)
+    for col, spec in column_schema.items():
+        carrier = spec.get("carrier")
+        if carrier == "number":
+            out[col] = pd.to_numeric(out[col], errors="coerce")
+        elif carrier == "flag":
+            out[col] = out[col].map(_map_flag_token)
+        # text: the raw string lexeme is the value.
     return out
 
 
@@ -388,7 +398,14 @@ def fit(
     from decoy_engine.quality.snapshot import compute_distribution_snapshot
 
     try:
-        df = pd.read_csv(source, parse_dates=list(parse_dates) or False)
+        if epsilon is None:
+            df = pd.read_csv(source, parse_dates=list(parse_dates) or False)
+        else:
+            # DP mode ingests declared columns as raw lexemes: read every column
+            # as a string so pandas' column-wide dtype inference cannot let one
+            # row change how another is boxed (D6 / stability-1). Per-cell
+            # carrier conversion happens in _build_typed_frame below.
+            df = pd.read_csv(source, dtype=str)
     except Exception as exc:
         _emit_error(f"could not read {source}: {exc}")
         raise typer.Exit(code=EXIT_USAGE)
@@ -431,8 +448,8 @@ def fit(
                 state.err_console.print(warn("notice:"), omission_notice)
 
         # A declared column absent from the CSV is a usage error, surfaced by
-        # name before the flag-grammar and engine steps. Otherwise a phantom
-        # --dp-flag column crashes _apply_flag_grammar with a raw KeyError
+        # name before the typed-frame and engine steps. Otherwise a phantom
+        # --dp-flag column crashes _build_typed_frame with a raw KeyError
         # (breaking the --json error contract), and a phantom --dp-number/text
         # column gets misattributed to an uncertified host. Names only, so this
         # stays data-independent (D6).
@@ -445,8 +462,7 @@ def fit(
             )
             raise typer.Exit(code=EXIT_USAGE)
 
-        flag_columns = [c for c, spec in column_schema.items() if spec.get("carrier") == "flag"]
-        typed_df = _apply_flag_grammar(df, flag_columns)
+        typed_df = _build_typed_frame(df, column_schema)
 
         dp_kwargs: dict[str, Any] = {}
         if numeric_bins is not None:

@@ -21,7 +21,9 @@ directly against the CLI's own logic.
 from __future__ import annotations
 
 import json
+import math
 from pathlib import Path
+from typing import Any
 
 import pandas as pd
 import pytest
@@ -30,7 +32,7 @@ from typer.testing import CliRunner
 
 from decoy.__main__ import app
 from decoy.cli.exit_codes import EXIT_RUNTIME, EXIT_USAGE
-from decoy.cli.fit import _apply_flag_grammar, _map_flag_token
+from decoy.cli.fit import _build_typed_frame, _map_flag_token
 
 runner = CliRunner()
 
@@ -314,15 +316,82 @@ class TestFitDpFlagGrammar:
         for token in ("maybe", "2", "TrueFalse", "1.0", "  ", "null", "None"):
             assert _map_flag_token(token) is None
 
-    def test_mapping_is_row_independent(self) -> None:
-        """Adding a row must not reinterpret a prior cell: the map is a pure
-        per-cell function, never a lookup keyed on the column's other
-        values or its length."""
-        short = pd.DataFrame({"f": ["true", "banana"]})
-        long = pd.DataFrame({"f": ["true", "banana", "false", "1", "0", "nope"]})
-        mapped_short = _apply_flag_grammar(short, ["f"])
-        mapped_long = _apply_flag_grammar(long, ["f"])
-        assert mapped_short["f"].tolist() == mapped_long["f"].tolist()[:2]
+    def test_dp_read_boxing_is_row_independent_at_the_csv_seam(self, tmp_path: Path) -> None:
+        """Codex P1 regression: pandas dtype inference at the CSV read must not
+        let one row reinterpret another. `01` infers as int 1 -> "1" -> True
+        when a column is all-numeric, but as the string "01" -> null once any
+        row forces the column to strings. DP mode reads every column as raw
+        text (dtype=str), so both cases box identically. This mirrors fit.py's
+        DP read + _build_typed_frame; the prior test built already-string
+        frames and never exercised this seam."""
+        flag_schema = {"f": {"kind": "categorical", "carrier": "flag"}}
+        short = tmp_path / "short.csv"
+        short.write_text("f\n01\n01\n", encoding="utf-8")
+        longer = tmp_path / "long.csv"
+        longer.write_text("f\n01\n01\nbanana\n", encoding="utf-8")
+        boxed_short = _build_typed_frame(pd.read_csv(short, dtype=str), flag_schema)
+        boxed_long = _build_typed_frame(pd.read_csv(longer, dtype=str), flag_schema)
+        # "01" is not in the true/false/1/0 grammar, so it is null in BOTH.
+        assert boxed_short["f"].tolist() == [None, None]
+        assert boxed_long["f"].tolist()[:2] == boxed_short["f"].tolist()
+
+    def test_dp_number_boxing_is_row_independent_at_the_csv_seam(self, tmp_path: Path) -> None:
+        """The same inference hazard for the number carrier: `01` parses to
+        1.0 per cell regardless of a later unparseable row, which coerces only
+        itself to null (never the prior rows)."""
+        number_schema = {"n": {"kind": "numeric", "carrier": "number", "bounds": [0.0, 10.0]}}
+        short = tmp_path / "s.csv"
+        short.write_text("n\n01\n2\n", encoding="utf-8")
+        longer = tmp_path / "l.csv"
+        longer.write_text("n\n01\n2\nbanana\n", encoding="utf-8")
+        boxed_short = _build_typed_frame(pd.read_csv(short, dtype=str), number_schema)["n"].tolist()
+        boxed_long = _build_typed_frame(pd.read_csv(longer, dtype=str), number_schema)["n"].tolist()
+        assert boxed_short == [1.0, 2.0]
+        assert boxed_long[:2] == [1.0, 2.0]
+        assert math.isnan(boxed_long[2])
+
+    def test_dp_read_path_boxes_row_independently_end_to_end(
+        self, tmp_path: Path, monkeypatch
+    ) -> None:
+        """Proves fit.py's ACTUAL read path (not a reconstruction) is row
+        stable: capture the frame the engine receives by stubbing
+        fit_dp_snapshot, and assert the `01` flag cells are null whether or
+        not a later `banana` row is present. Fails if the DP read stops using
+        dtype=str."""
+        captured: dict[str, Any] = {}
+
+        def _capture(df, column_schema, **kwargs):
+            # Capture the frame the engine would fit, then stop before the
+            # write path (whose shape is not what this test is about).
+            captured["flags"] = df["f"].tolist()
+            from decoy_engine.quality.dp import DpError
+
+            raise DpError(code="capture_stop", message="captured for the test")
+
+        monkeypatch.setattr("decoy_engine.quality.dp.fit_dp_snapshot", _capture)
+
+        def _run(rows: str) -> list[object]:
+            src = tmp_path / f"src_{len(rows)}.csv"
+            src.write_text("f\n" + rows, encoding="utf-8")
+            runner.invoke(
+                app,
+                [
+                    "fit",
+                    str(src),
+                    "--epsilon",
+                    "1.0",
+                    "--delta",
+                    "1e-6",
+                    "--dp-flag",
+                    "f",
+                ],
+            )
+            return captured["flags"]
+
+        short_flags = _run("01\n01\n")
+        long_flags = _run("01\n01\nbanana\n")
+        assert short_flags == [None, None]
+        assert long_flags[:2] == [None, None]
 
     def test_cli_run_with_garbage_tokens_never_exits_usage_from_flag_content(
         self, tmp_path: Path
