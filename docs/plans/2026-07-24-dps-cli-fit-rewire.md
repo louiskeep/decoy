@@ -167,6 +167,38 @@ together with `--parse-dates` is a usage error (rejected before the CSV is read)
 Without `--parse-dates`, a date-looking column declared `--dp-text` is ordinary
 categorical text — valid. There is no data-driven "is this a datetime" check.
 
+## Certified-fit host wiring (Cam decision 2026-07-24: certify the CLI env)
+
+The engine's DP fit is gated on a certified proof stack — a fingerprint over the
+COMPLETE installed distribution set (`quality/dp_provenance.py`). A CLI install
+adds typer/rich/shellingham, changing the fingerprint, so a CLI environment is
+uncertified by design and `fit_dp_snapshot` fail-closes with
+`dp_stack_uncertified`. The engine explicitly deferred this "host wiring" to this
+item. Cam chose **option A: certify the CLI's own locked environment** (over an
+isolated fit subprocess). Implications for this build:
+
+- The CLI ships and is developed against a **pinned lock** (`uv.lock`) that
+  resolves engine 0.5.0 + the CLI deps, on a **supported CPython** (match the
+  engine's tested runtime — Python 3.10, not the uv default 3.13, since the
+  guarantee is only honest on a TESTED stack and CI exercises 3.10). The dev env
+  must be rebuilt on 3.10.
+- Earn the certified row: run the engine's DP validation/test-flight ON the
+  locked CLI env, then add its `(platform_triple, cpython_full, lock_fingerprint)`
+  row to the engine's `_CERTIFIED_STACKS` manifest (`quality/dp_provenance.py`).
+  This is a **security-sensitive change to the engine** (asserting a stack is
+  trustworthy for the DP guarantee) — it must be EARNED by the test-flight
+  passing on that exact env, and reviewed as such (dennis + Codex) alongside the
+  CLI code, not rubber-stamped.
+- The CLI then calls `fit_dp_snapshot` directly; on any host whose lock differs
+  from the certified CLI lock, the fit still fail-closes with the D5
+  `dp_stack_uncertified` hint — which is correct (only the tested stack is
+  honest).
+- The real fit→run→generate e2e test runs on this certified CLI env; off it, the
+  test asserts the uncertified refusal is surfaced.
+
+This certification sub-task is part of item 2 and gates a *functional* `decoy fit
+--epsilon`. Build order below sequences it.
+
 ## Prerequisite — engine version floor (Codex)
 
 decoy-engine is at `0.4.0`, and so was the OLD (pre-DPS-CODEC) engine: the CLI's
@@ -223,8 +255,10 @@ No migration shim (pre-GA hard-delete rule, CLI CLAUDE.md).
 
 ## Build order
 
-1. Engine 0.5.0 bump + CLI floor bump (prerequisite above); dev env on the local
-   0.5.0 engine.
+0. DONE: engine 0.5.0 bump on main (`e435c11`) + CLI floor `>=0.5.0` (`f478001`).
+1. Rebuild the CLI dev env on **Python 3.10** (the engine's tested runtime) with
+   engine 0.5.0 editable + CLI `[dev]`, and produce the pinned `uv.lock`. (The
+   current 3.13 env was a scratch; it cannot be certified.)
 2. Land the failing assertion (broken import + new-contract test) — RED.
 3. **Parse + validate ALL declarations BEFORE reading the CSV** (Codex): carrier
    flags → `column_schema`, domain finite/ordered, carrier valid, no duplicates,
@@ -235,7 +269,12 @@ No migration shim (pre-GA hard-delete rule, CLI CLAUDE.md).
    omitted-column check (D3); write the artifact only on success.
 6. Error mapping (D5, four families + exit classes) + help/epilog + `explain
    differential-privacy` copy.
-7. Tests green (unit + e2e), mypy/ruff, then dennis → Codex gate.
+7. **Certify the CLI env**: run the engine DP validation/test-flight on the
+   locked 3.10 CLI env; compute its fingerprint; add the certified row to the
+   engine's `_CERTIFIED_STACKS` (a security-sensitive engine-main change, earned
+   by that test-flight passing, reviewed as such).
+8. Tests green (unit + the real certified fit→run→generate e2e), mypy/ruff, then
+   dennis → Codex gate on BOTH the CLI code and the engine certified-manifest row.
 
 ## Open questions — RESOLVED by Codex plan-review (2026-07-24)
 
