@@ -379,11 +379,12 @@ class TestFitDpFlagGrammar:
         self, tmp_path: Path, monkeypatch
     ) -> None:
         """Proves fit.py's ACTUAL read path (not a reconstruction) is row
-        stable: capture the frame the engine receives by stubbing
-        fit_dp_snapshot. The `01` flag cell is null and the large-integer
-        number cell is the unchanged raw lexeme whether or not a later row is
-        added. Fails if the DP read stops using dtype=str/keep_default_na=False
-        or reintroduces column-wide numeric conversion."""
+        stable across all three carriers: capture the frame the engine receives
+        by stubbing fit_dp_snapshot. Flags map per cell; the large-integer
+        number cell and the NA/null/empty text cells pass through as unchanged
+        raw lexemes, whether or not a later row is added. Fails if the DP read
+        stops using dtype=str/keep_default_na=False or reintroduces column-wide
+        numeric conversion."""
         captured: dict[str, Any] = {}
 
         def _capture(df, column_schema, **kwargs):
@@ -391,6 +392,8 @@ class TestFitDpFlagGrammar:
             # write path (whose shape is not what this test is about).
             captured["flags"] = df["f"].tolist()
             captured["nums"] = df["n"].tolist()
+            captured["text"] = df["t"].tolist()
+            captured["reached"] = True
             from decoy_engine.quality.dp import DpError
 
             raise DpError(code="capture_stop", message="captured for the test")
@@ -398,8 +401,9 @@ class TestFitDpFlagGrammar:
         monkeypatch.setattr("decoy_engine.quality.dp.fit_dp_snapshot", _capture)
 
         def _run(rows: str) -> dict[str, Any]:
+            captured.clear()
             src = tmp_path / f"src_{len(rows)}.csv"
-            src.write_text("f,n\n" + rows, encoding="utf-8")
+            src.write_text("f,n,t\n" + rows, encoding="utf-8")
             runner.invoke(
                 app,
                 [
@@ -413,14 +417,21 @@ class TestFitDpFlagGrammar:
                     "f",
                     "--dp-number",
                     "n:0:1e19",
+                    "--dp-text",
+                    "t",
                 ],
             )
+            # Guard against a stale capture from a prior run: the stub must have
+            # run this invocation for the assertions below to mean anything.
+            assert captured.get("reached"), "fit_dp_snapshot stub was not reached"
             return dict(captured)
 
-        short = _run("01,9223372036854775807\n")
-        longer = _run("01,9223372036854775807\n0,1.0\n")
-        assert short["flags"] == [None]
-        assert short["nums"] == ["9223372036854775807"]
+        short = _run("01,9223372036854775807,NA\n1,2,null\n0,3,\n")
+        longer = _run("01,9223372036854775807,NA\n0,1.0,real\n")
+        assert short["flags"] == [None, True, False]
+        assert short["nums"] == ["9223372036854775807", "2", "3"]
+        # NA/null/empty survive fit.py's real read as literal strings (D6 text).
+        assert short["text"] == ["NA", "null", ""]
         # Adding a decimal row must not rebox the large integer already seen.
         assert longer["flags"][:1] == [None]
         assert longer["nums"][0] == "9223372036854775807"
