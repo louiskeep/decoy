@@ -21,7 +21,6 @@ directly against the CLI's own logic.
 from __future__ import annotations
 
 import json
-import math
 from pathlib import Path
 from typing import Any
 
@@ -329,50 +328,78 @@ class TestFitDpFlagGrammar:
         short.write_text("f\n01\n01\n", encoding="utf-8")
         longer = tmp_path / "long.csv"
         longer.write_text("f\n01\n01\nbanana\n", encoding="utf-8")
-        boxed_short = _build_typed_frame(pd.read_csv(short, dtype=str), flag_schema)
-        boxed_long = _build_typed_frame(pd.read_csv(longer, dtype=str), flag_schema)
+        boxed_short = _build_typed_frame(
+            pd.read_csv(short, dtype=str, keep_default_na=False), flag_schema
+        )
+        boxed_long = _build_typed_frame(
+            pd.read_csv(longer, dtype=str, keep_default_na=False), flag_schema
+        )
         # "01" is not in the true/false/1/0 grammar, so it is null in BOTH.
         assert boxed_short["f"].tolist() == [None, None]
         assert boxed_long["f"].tolist()[:2] == boxed_short["f"].tolist()
 
-    def test_dp_number_boxing_is_row_independent_at_the_csv_seam(self, tmp_path: Path) -> None:
-        """The same inference hazard for the number carrier: `01` parses to
-        1.0 per cell regardless of a later unparseable row, which coerces only
-        itself to null (never the prior rows)."""
-        number_schema = {"n": {"kind": "numeric", "carrier": "number", "bounds": [0.0, 10.0]}}
+    def test_dp_number_columns_pass_through_as_raw_strings(self, tmp_path: Path) -> None:
+        """Number columns reach the engine as raw string lexemes so its per-cell
+        decode_number (float(cell)) canonicalizes each independently. Codex's
+        counterexample: a large integer must not be reboxed when another row is
+        added. pd.to_numeric would pick int64 for the all-integer column and
+        float64 once a decimal row appears, changing the released f64 for the
+        big value. Passing the lexeme through keeps it identical regardless of
+        the column's other values."""
+        number_schema = {"n": {"kind": "numeric", "carrier": "number", "bounds": [0.0, 1e19]}}
         short = tmp_path / "s.csv"
-        short.write_text("n\n01\n2\n", encoding="utf-8")
+        short.write_text("n\n9223372036854775807\n", encoding="utf-8")
         longer = tmp_path / "l.csv"
-        longer.write_text("n\n01\n2\nbanana\n", encoding="utf-8")
-        boxed_short = _build_typed_frame(pd.read_csv(short, dtype=str), number_schema)["n"].tolist()
-        boxed_long = _build_typed_frame(pd.read_csv(longer, dtype=str), number_schema)["n"].tolist()
-        assert boxed_short == [1.0, 2.0]
-        assert boxed_long[:2] == [1.0, 2.0]
-        assert math.isnan(boxed_long[2])
+        longer.write_text("n\n9223372036854775807\n1.0\n", encoding="utf-8")
+        boxed_short = _build_typed_frame(
+            pd.read_csv(short, dtype=str, keep_default_na=False), number_schema
+        )["n"].tolist()
+        boxed_long = _build_typed_frame(
+            pd.read_csv(longer, dtype=str, keep_default_na=False), number_schema
+        )["n"].tolist()
+        assert boxed_short == ["9223372036854775807"]
+        assert boxed_long[0] == "9223372036854775807"
+        assert boxed_long[1] == "1.0"
+
+    def test_dp_text_preserves_na_lexemes_at_the_csv_seam(self, tmp_path: Path) -> None:
+        """D6 text contract: genuine CSV lexemes reach the engine unchanged.
+        keep_default_na=False keeps NA/null/empty as literal strings rather than
+        letting pandas coerce them to NaN (which decode_text rejects as non-str)."""
+        text_schema = {"t": {"kind": "categorical", "carrier": "text"}}
+        src = tmp_path / "t.csv"
+        # A second column keeps each row populated, so the empty `t` field is a
+        # genuine empty CSV field (,) rather than a blank line pandas would skip.
+        src.write_text("t,x\nNA,1\nnull,2\n,3\nreal,4\n", encoding="utf-8")
+        boxed = _build_typed_frame(pd.read_csv(src, dtype=str, keep_default_na=False), text_schema)[
+            "t"
+        ].tolist()
+        assert boxed == ["NA", "null", "", "real"]
 
     def test_dp_read_path_boxes_row_independently_end_to_end(
         self, tmp_path: Path, monkeypatch
     ) -> None:
         """Proves fit.py's ACTUAL read path (not a reconstruction) is row
         stable: capture the frame the engine receives by stubbing
-        fit_dp_snapshot, and assert the `01` flag cells are null whether or
-        not a later `banana` row is present. Fails if the DP read stops using
-        dtype=str."""
+        fit_dp_snapshot. The `01` flag cell is null and the large-integer
+        number cell is the unchanged raw lexeme whether or not a later row is
+        added. Fails if the DP read stops using dtype=str/keep_default_na=False
+        or reintroduces column-wide numeric conversion."""
         captured: dict[str, Any] = {}
 
         def _capture(df, column_schema, **kwargs):
             # Capture the frame the engine would fit, then stop before the
             # write path (whose shape is not what this test is about).
             captured["flags"] = df["f"].tolist()
+            captured["nums"] = df["n"].tolist()
             from decoy_engine.quality.dp import DpError
 
             raise DpError(code="capture_stop", message="captured for the test")
 
         monkeypatch.setattr("decoy_engine.quality.dp.fit_dp_snapshot", _capture)
 
-        def _run(rows: str) -> list[object]:
+        def _run(rows: str) -> dict[str, Any]:
             src = tmp_path / f"src_{len(rows)}.csv"
-            src.write_text("f\n" + rows, encoding="utf-8")
+            src.write_text("f,n\n" + rows, encoding="utf-8")
             runner.invoke(
                 app,
                 [
@@ -384,14 +411,19 @@ class TestFitDpFlagGrammar:
                     "1e-6",
                     "--dp-flag",
                     "f",
+                    "--dp-number",
+                    "n:0:1e19",
                 ],
             )
-            return captured["flags"]
+            return dict(captured)
 
-        short_flags = _run("01\n01\n")
-        long_flags = _run("01\n01\nbanana\n")
-        assert short_flags == [None, None]
-        assert long_flags[:2] == [None, None]
+        short = _run("01,9223372036854775807\n")
+        longer = _run("01,9223372036854775807\n0,1.0\n")
+        assert short["flags"] == [None]
+        assert short["nums"] == ["9223372036854775807"]
+        # Adding a decimal row must not rebox the large integer already seen.
+        assert longer["flags"][:1] == [None]
+        assert longer["nums"][0] == "9223372036854775807"
 
     def test_cli_run_with_garbage_tokens_never_exits_usage_from_flag_content(
         self, tmp_path: Path

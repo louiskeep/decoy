@@ -173,25 +173,24 @@ def _map_flag_token(cell: object) -> bool | None:
 
 
 def _build_typed_frame(df: Any, column_schema: dict[str, dict[str, Any]]) -> Any:
-    """Convert each declared column from its raw CSV lexeme through a fixed,
-    per-cell, carrier-specific rule, so the frame the engine fits is a pure
-    per-cell function of cell content. DP mode reads every column as a raw
-    string (see the read below) precisely so pandas' column-wide dtype
-    inference cannot make one row change how another is boxed, which would
-    break D6 boxing invariance and the stability-1 assumption the DP noise
-    calibration relies on. Number lexemes parse independently via to_numeric
-    (unparseable -> null, matching the flag grammar's silent-null rule); flag
-    lexemes go through the fixed grammar; text keeps its raw lexeme."""
-    import pandas as pd
+    """Convert only the declared flag columns CLI-side; number and text columns
+    reach the engine as their raw CSV-string lexemes.
 
+    The engine's flag codec (`decode_flag`) rejects strings outright, so a
+    `--dp-flag` column must arrive as real bool/None cells. Its number and text
+    codecs, by contrast, canonicalize per cell: `decode_number` does `float(cell)`
+    (so `"1_000"`, `"01"`, unicode digits all parse), and `decode_text` requires
+    a genuine `str`. Passing those columns through as raw strings is therefore
+    both correct and row-independent by construction.
+
+    CLI-side column-wide numeric conversion (e.g. `pd.to_numeric`) is deliberately
+    NOT used: its int64-vs-float64 dtype choice depends on the column's other
+    values, so adding one row can rebox an already-released value (e.g. a large
+    integer), breaking D6 boxing invariance and stability-1."""
     out = df.copy()
     for col, spec in column_schema.items():
-        carrier = spec.get("carrier")
-        if carrier == "number":
-            out[col] = pd.to_numeric(out[col], errors="coerce")
-        elif carrier == "flag":
+        if spec.get("carrier") == "flag":
             out[col] = out[col].map(_map_flag_token)
-        # text: the raw string lexeme is the value.
     return out
 
 
@@ -401,11 +400,14 @@ def fit(
         if epsilon is None:
             df = pd.read_csv(source, parse_dates=list(parse_dates) or False)
         else:
-            # DP mode ingests declared columns as raw lexemes: read every column
-            # as a string so pandas' column-wide dtype inference cannot let one
-            # row change how another is boxed (D6 / stability-1). Per-cell
-            # carrier conversion happens in _build_typed_frame below.
-            df = pd.read_csv(source, dtype=str)
+            # DP mode ingests every cell as its literal CSV lexeme: dtype=str
+            # disables column-wide dtype inference (so one row cannot change how
+            # another is boxed), and keep_default_na=False disables pandas' NA
+            # grammar (so "NA"/"null"/"" stay the exact lexemes the engine's
+            # per-cell text/number codecs see). Both are required for D6 boxing
+            # invariance and stability-1. _build_typed_frame below converts only
+            # flags; number and text columns reach the engine as raw strings.
+            df = pd.read_csv(source, dtype=str, keep_default_na=False)
     except Exception as exc:
         _emit_error(f"could not read {source}: {exc}")
         raise typer.Exit(code=EXIT_USAGE)
