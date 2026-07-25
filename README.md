@@ -75,7 +75,7 @@ any subcommand.
 
 ## Exit codes
 
-`decoy` returns one of these five codes. Scripts, Make recipes, and CI
+`decoy` returns one of these six codes. Scripts, Make recipes, and CI
 pipelines can switch on the integer; the contract is stable across releases.
 
 | Code | Name                   | Meaning                                                                                    |
@@ -85,6 +85,7 @@ pipelines can switch on the integer; the contract is stable across releases.
 | 2    | `EXIT_DEPRECATED_SHIM` | The legacy `forge` console entry point was invoked; migrate to `decoy ...`.                |
 | 3    | `EXIT_RUNTIME`         | The CLI itself failed mid-run (engine error, output write failure, transient I/O problem). |
 | 4    | `EXIT_FINDINGS`        | The CLI ran cleanly but found data issues (e.g. `decoy storm integrity` flagged residual PII or FK preservation failures). The fix is in the data being checked, not in the CLI invocation. |
+| 5    | `EXIT_CAPACITY`        | `decoy run` or `decoy preflight` refused the job: it needs more memory than the host/budget has (the engine's out-of-core-FK memory gate). The fix is a bigger host/cgroup ceiling or a smaller job. `decoy preflight`'s v1 check covers the out-of-core-FK route only, not the ingestion peak or the generate path. |
 
 Constants live in `decoy.cli.exit_codes`. `decoy explain exit-codes` prints
 the same table from the CLI.

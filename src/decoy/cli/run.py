@@ -22,11 +22,18 @@ from pathlib import Path
 import typer
 
 from decoy import __version__ as _cli_version
-from decoy.cli.exit_codes import EXIT_RUNTIME, EXIT_USAGE
+from decoy.cli.exit_codes import EXIT_CAPACITY, EXIT_RUNTIME, EXIT_USAGE
 from decoy.ui.card import render_card
 from decoy.ui.output import OutputMode, emit_json, setup_output
 from decoy.ui.progress import spinner
 from decoy.ui.theme import error, hint, warn
+
+# OOM checker v1: the engine's out-of-core-FK memory gate raises `ExecutionError`
+# with exactly one of these two codes when it refuses a job for capacity, never
+# any other reason -- matched narrowly so a routing/compat/orphan-FK
+# `ExecutionError` (any other code) keeps its existing EXIT_RUNTIME
+# classification below. See docs/plans/2026-07-24-oom-checker-cli-v1.md R8.
+_CAPACITY_CODES = frozenset({"out_of_core_insufficient_memory", "out_of_core_fanin_exceeds_budget"})
 
 
 class Mode(str, Enum):
@@ -551,35 +558,54 @@ def run(
         except ImportError:
             _mask_secret_error_types = ()
 
-        _exit_code = (
-            EXIT_USAGE
-            if isinstance(
-                exc,
-                (
-                    PlanCompileError,
-                    PipelineValidationError,
-                    ConfigError,
-                    _ChunkedGenerateError,
-                    _VaultUsageError,
-                    _MaskSecretUsageError,
-                    # PipelineConfig.model_validate's ValidationError, caught
-                    # narrowly at its call site and re-raised as this typed
-                    # error, means the YAML is structurally wrong (unknown key
-                    # under extra="forbid", wrong-typed / missing field) -- the
-                    # user's config is bad, not a runtime crash. Narrow by
-                    # design: a Pydantic error raised deeper in the engine is
-                    # NOT reclassified and stays an EXIT_RUNTIME defect.
-                    _ConfigValidationError,
-                    # DE-02: a bad/missing/weak --mask-secret ref (or YAML
-                    # mask_secret_ref) resolves to MaskSecretError (and its
-                    # subclasses MissingMaskSecret / WeakMaskSecret /
-                    # KeyedStrategyRequiresSecret) -- the operator's config is
-                    # wrong, not a runtime crash.
-                    *_mask_secret_error_types,
-                ),
+        # OOM checker v1 (Part A): ExecutionError's two capacity-refusal codes
+        # get their own exit code and JSON error_kind, distinct from a generic
+        # engine crash. Same defensive-import posture as MaskSecretError above
+        # -- an engine too old to have ExecutionError at all just never
+        # matches, so this never crashes the error handler itself.
+        try:
+            from decoy_engine.execution import ExecutionError as _ExecutionError
+
+            _execution_error_types: tuple = (_ExecutionError,)
+        except ImportError:
+            _execution_error_types = ()
+
+        capacity_code: str | None = None
+        if isinstance(exc, _execution_error_types) and exc.code in _CAPACITY_CODES:
+            capacity_code = exc.code
+
+        if capacity_code is not None:
+            _exit_code = EXIT_CAPACITY
+        else:
+            _exit_code = (
+                EXIT_USAGE
+                if isinstance(
+                    exc,
+                    (
+                        PlanCompileError,
+                        PipelineValidationError,
+                        ConfigError,
+                        _ChunkedGenerateError,
+                        _VaultUsageError,
+                        _MaskSecretUsageError,
+                        # PipelineConfig.model_validate's ValidationError, caught
+                        # narrowly at its call site and re-raised as this typed
+                        # error, means the YAML is structurally wrong (unknown key
+                        # under extra="forbid", wrong-typed / missing field) -- the
+                        # user's config is bad, not a runtime crash. Narrow by
+                        # design: a Pydantic error raised deeper in the engine is
+                        # NOT reclassified and stays an EXIT_RUNTIME defect.
+                        _ConfigValidationError,
+                        # DE-02: a bad/missing/weak --mask-secret ref (or YAML
+                        # mask_secret_ref) resolves to MaskSecretError (and its
+                        # subclasses MissingMaskSecret / WeakMaskSecret /
+                        # KeyedStrategyRequiresSecret) -- the operator's config is
+                        # wrong, not a runtime crash.
+                        *_mask_secret_error_types,
+                    ),
+                )
+                else EXIT_RUNTIME
             )
-            else EXIT_RUNTIME
-        )
         # CLI QA fix (2026-06-02, F8): cap the error message at 500
         # chars before emitting through --json. Engine exceptions can
         # quote source-row content verbatim (pandas / pyarrow); without
@@ -610,6 +636,11 @@ def run(
         )
 
         if state.mode is OutputMode.json:
+            # R7: the capacity branch ADDS error_kind/code to this SAME
+            # envelope -- command/config/mode/error are never dropped, and
+            # this is the one emit_json call site for a run-time failure
+            # (no parallel emit that would lose the 500-char cap, the
+            # notify dispatch above, or quiet/verbose handling below).
             payload = {
                 "command": "run",
                 "status": "error",
@@ -617,14 +648,26 @@ def run(
                 "mode": yaml_mode,
                 "error": error_text,
             }
+            if capacity_code is not None:
+                payload["error_kind"] = "capacity"
+                payload["code"] = capacity_code
             if notify_channels:
                 payload["notify"] = notify_results
             emit_json(state, payload)
         elif state.mode is not OutputMode.quiet:
-            state.err_console.print(error("error:"), error_text)
-            state.err_console.print(
-                " ", hint("hint:"), "rerun with --verbose for the full traceback."
-            )
+            if capacity_code is not None:
+                state.err_console.print(error("capacity:"), error_text)
+                state.err_console.print(
+                    " ",
+                    hint("hint:"),
+                    "this job needs more memory than this host has; use a larger "
+                    "tier or reduce the job.",
+                )
+            else:
+                state.err_console.print(error("error:"), error_text)
+                state.err_console.print(
+                    " ", hint("hint:"), "rerun with --verbose for the full traceback."
+                )
         if state.verbose:
             state.err_console.print_exception()
         raise typer.Exit(code=_exit_code)

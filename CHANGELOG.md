@@ -8,6 +8,39 @@ version numbers follow the [versioning policy](docs/release/versioning.md).
 
 ## [Unreleased]
 
+### Added (OOM checker v1: labeled capacity refusal in `decoy run` + a pre-run capacity check in `decoy preflight`, 2026-07-24)
+
+- **New exit code `EXIT_CAPACITY = 5`.** The engine's out-of-core-FK
+  memory gate has always refused a job it predicts will not fit; the CLI
+  used to fold that refusal into the generic `EXIT_RUNTIME` path, printed
+  as a bare `error:` line with no distinct signal a script could switch
+  on. `decoy run` now matches the engine's two capacity-refusal codes
+  (`out_of_core_insufficient_memory`, `out_of_core_fanin_exceeds_budget`)
+  narrowly, prints a `capacity:`-labeled line, and exits `EXIT_CAPACITY`;
+  `--json` adds `error_kind: "capacity"` and `code` to the existing error
+  envelope (`command`/`config`/`mode`/`error` are unchanged). Any other
+  `ExecutionError`, and any config error, keep their existing exit codes.
+- **`decoy preflight` predicts the same refusal before a run starts.** A
+  new capacity section calls the engine's `estimate_job_capacity` (added
+  this cycle) against the SAME evaluator the mid-run gate uses, so the two
+  can't drift apart. Renders one of four states -- `capacity: OK`,
+  `capacity: INSUFFICIENT` (exits `EXIT_CAPACITY`, not the generic
+  usage-error path), `capacity: not checked` (RAM undetectable, an
+  unpriceable CSV row count, or an engine too old to have the estimator),
+  `capacity: not applicable` (this job would not take the out-of-core-FK
+  route) -- without running the pipeline. `--json` carries a structured
+  `capacity` block plus a `code` field on the matching `checks` entry, so
+  scripts never need to parse the message text.
+- **Honest scope, stated up front (v1):** this checks ONE gate, the
+  out-of-core-FK route's resident-memory floor. `decoy run` fully loads
+  every source into memory before it calls the engine at all, so an
+  ingestion `MemoryError` or an OS OOM-kill happens before this gate ever
+  runs, and neither command's capacity check covers that or the generate
+  path. `decoy explain exit-codes` and both commands' help text say so.
+- The engine floor stays `decoy-engine>=0.5.0`; an older, already-installed
+  engine without `estimate_job_capacity` degrades `decoy preflight`'s
+  capacity section to `not checked` rather than failing.
+
 ### Fixed (`decoy unmask` console summary is now a complete census, 2026-07-15)
 
 - **`decoy unmask`'s human-readable summary (non-`--json`) now accounts for
