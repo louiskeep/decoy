@@ -174,12 +174,22 @@ class _PreflightAccumulator:
 # ---------------------------------------------------------------------------
 
 
-def _check_source_files(raw: dict[str, Any], acc: _PreflightAccumulator) -> None:
+def _check_source_files(
+    raw: dict[str, Any], base_dir: Path, acc: _PreflightAccumulator
+) -> None:
     """Check that every declared source file exists and is readable.
 
     File checks only. Parser config, column layout, and format inference are
     NOT checked here (those are engine-level concerns that require a profile
     pass). This check is about the files themselves, not their contents.
+
+    Relative source paths resolve against `base_dir` (the pipeline YAML's
+    directory), the SAME way `decoy run` and `estimate_job_capacity` resolve
+    them (Codex re-gate MEDIUM). Resolving against CWD instead let a
+    same-named file in the caller's working directory mask a source that is
+    genuinely missing where the runner would look, so preflight could exit 0
+    on a job `decoy run` would fail -- and the capacity guard's
+    YAML-dir-resolved skip then hid it a second time.
     """
     sources = raw.get("sources") or {}
     if not isinstance(sources, dict):
@@ -210,6 +220,8 @@ def _check_source_files(raw: dict[str, Any], acc: _PreflightAccumulator) -> None
             continue
 
         src_path = Path(src_path_str)
+        if not src_path.is_absolute():
+            src_path = base_dir / src_path
         if not src_path.exists():
             acc.add_fail(
                 name=f"source.{table_name}.exists",
@@ -295,11 +307,11 @@ def _format_gib(byte_count: int | None) -> str:
 
 def _file_sources_missing_on_disk(raw: dict[str, Any], base_dir: Path) -> bool:
     """True if any declared FILE-type source does not resolve to a readable
-    regular file, resolved the SAME way `estimate_job_capacity` resolves
-    them (relative to `base_dir`, matching `decoy run`'s own convention --
-    R2) -- not `_check_source_files`' CWD-relative check, a documented,
-    unrelated asymmetry (see `test_relative_path_resolves_against_yaml_
-    directory`'s docstring).
+    regular file, resolved the SAME way `estimate_job_capacity`,
+    `_check_source_files`, and `decoy run` resolve them (relative to
+    `base_dir`, the pipeline YAML's directory -- R2). All three now agree on
+    resolution, so a source missing where the runner would look is reported
+    by Step 4 as a `fail` AND skipped here, never silently passed.
 
     Root-cause guard for a real regression: without it, a job whose source
     is already known missing (Step 4's `_check_source_files` already
@@ -327,6 +339,17 @@ def _file_sources_missing_on_disk(raw: dict[str, Any], base_dir: Path) -> bool:
         if not path.is_absolute():
             path = base_dir / path
         if not path.is_file():
+            return True
+        # Present but UNREADABLE counts too (Codex re-gate MEDIUM): the guard's
+        # message and docstring both promise "missing or unreadable", and
+        # `estimate_job_capacity` -> `profile_source` opens/reads the source, so
+        # a permission-denied or corrupt file would raise there and -- with the
+        # broad catch removed (R3) -- crash the whole command. Skip the estimate
+        # for it too; Step 4's readability check already reported the `fail`.
+        try:
+            with path.open("rb") as fh:
+                fh.read(0)
+        except OSError:
             return True
     return False
 
@@ -402,8 +425,7 @@ def _check_capacity(raw: dict[str, Any], config_path: Path, acc: _PreflightAccum
         )
         return
 
-    from decoy_engine import PipelineConfig
-    from decoy_engine.execution.out_of_core._memory_estimate import CapacityVerdict
+    from decoy_engine import CapacityVerdict, PipelineConfig
 
     # No try/except here (R3, Codex P1-2): `estimate_job_capacity` propagates
     # any unexpected defect itself, so this call does too -- an exception here
@@ -571,7 +593,7 @@ def preflight(
         raise typer.Exit(code=EXIT_USAGE)
 
     # -- Step 4: Source file checks ------------------------------------------
-    _check_source_files(raw, acc)
+    _check_source_files(raw, config.parent, acc)
 
     # -- Step 5: Target overwrite advisory -----------------------------------
     _check_target_overwrite(raw, acc)

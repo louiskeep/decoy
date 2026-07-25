@@ -18,6 +18,7 @@ real CLI command instead of calling the estimator directly).
 from __future__ import annotations
 
 import json as _json
+import os
 from pathlib import Path
 from typing import Any
 from unittest import mock
@@ -155,6 +156,14 @@ def _run_preflight(config_path: Path, *, json_mode: bool = False) -> Any:
     if json_mode:
         args.append("--json")
     return runner.invoke(app, args)
+
+
+def _check_status(payload: dict[str, Any], name: str) -> str | None:
+    """Status of the named check in the `--json` payload's `checks` list."""
+    for c in payload["checks"]:
+        if c["name"] == name:
+            return c["status"]
+    return None
 
 
 class TestFourCapacityStates:
@@ -302,21 +311,85 @@ class TestRelativeSourcePath:
     def test_relative_path_resolves_against_yaml_directory(
         self, tmp_path: Path, low_threshold
     ) -> None:
-        # Asserted on the `capacity` block specifically, not the overall exit
-        # code: preflight's OTHER (pre-existing, unrelated) file-existence
-        # check resolves relative source paths against CWD, not the YAML's
-        # directory (R2 documents this as a known asymmetry it does not
-        # touch) -- it would report the relative path missing when the test
-        # runner's CWD differs from tmp_path, muddying an exit-code assertion
-        # that has nothing to do with the capacity section under test here.
-        # The capacity check itself DOES resolve against the YAML directory
-        # (this module's `low_threshold`-independent base_dir plumbing), so a
-        # `capacity: OK` here is exactly what proves R2's requirement.
+        # Both the source-file check (Step 4) AND the capacity check resolve
+        # relative source paths against the YAML's directory, the same way
+        # `decoy run` does (R2). The sources exist under tmp_path, so Step 4
+        # passes, capacity resolves the same files and reports OK, and the
+        # overall exit is clean -- previously Step 4 resolved against CWD and
+        # could spuriously report the relative path missing (Codex re-gate
+        # MEDIUM: that asymmetry let a genuinely-missing source pass Step 4
+        # while capacity skipped it, exiting 0 on a job `decoy run` would fail).
         config_path = _write_config(tmp_path, relative_paths=True)
         result = _run_preflight(config_path, json_mode=True)
+        assert result.exit_code == EXIT_OK
         payload = _json.loads(result.output)
         assert payload["capacity"]["status"] == "pass"
         assert "OK" in payload["capacity"]["message"]
+        assert _check_status(payload, "source.parent.exists") == "pass"
+
+    def test_relative_source_missing_in_yaml_dir_fails_even_if_cwd_has_namesake(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # Regression (Codex re-gate MEDIUM, reproduced): a relative source that
+        # is MISSING in the YAML directory must FAIL Step 4 and produce a
+        # non-zero exit, even when a same-named file exists in the process CWD.
+        # Before the fix, Step 4 resolved against CWD (found the namesake ->
+        # pass) while the capacity guard resolved against the YAML dir (missing
+        # -> skip), so preflight exited 0 on a job the runner would reject.
+        yaml_dir = tmp_path / "proj"
+        yaml_dir.mkdir()
+        cfg = {
+            "version": 1,
+            "global_settings": {"seed": 7},
+            "sources": {
+                "parent": {"type": "file", "path": "parent.parquet", "format": "parquet"}
+            },
+            "tables": [{"name": "parent", "columns": [{"name": "id", "strategy": "passthrough"}]}],
+            "targets": {
+                "parent": {
+                    "type": "file",
+                    "path": str(tmp_path / "parent.out.parquet"),
+                    "format": "parquet",
+                }
+            },
+        }
+        config_path = yaml_dir / "pipeline.yaml"
+        config_path.write_text(yaml.dump(cfg), encoding="utf-8")
+        # A namesake in the CWD that must NOT satisfy the check.
+        cwd = tmp_path / "cwd"
+        cwd.mkdir()
+        pq.write_table(pa.table({"id": pa.array(range(3))}), cwd / "parent.parquet")
+        monkeypatch.chdir(cwd)
+
+        result = _run_preflight(config_path, json_mode=True)
+        assert result.exit_code != EXIT_OK
+        payload = _json.loads(result.output)
+        assert _check_status(payload, "source.parent.exists") == "fail"
+
+
+class TestUnreadableSource:
+    @pytest.mark.skipif(
+        os.geteuid() == 0, reason="chmod 000 is bypassed by root; unreadability not enforced"
+    )
+    def test_unreadable_source_does_not_crash_preflight(
+        self, tmp_path: Path, low_threshold
+    ) -> None:
+        # Regression (dennis + Codex re-gate MEDIUM): a source that exists but
+        # is unreadable must NOT crash the command. The capacity guard skips it
+        # (its `profile_source` read would raise, and the broad catch is gone
+        # for R3), so preflight reports Step 4's readability `fail` cleanly and
+        # a skipped capacity check, exiting non-zero -- never a traceback.
+        config_path = _write_config(tmp_path)
+        (tmp_path / "parent.parquet").chmod(0)
+        try:
+            result = _run_preflight(config_path, json_mode=True)
+        finally:
+            (tmp_path / "parent.parquet").chmod(0o600)
+        assert result.exit_code != EXIT_OK
+        payload = _json.loads(result.output)
+        assert _check_status(payload, "source.parent.readable") == "fail"
+        assert payload["capacity"]["status"] == "pass"
+        assert "not checked" in payload["capacity"]["message"]
 
 
 class TestExecutionNeverDispatched:
