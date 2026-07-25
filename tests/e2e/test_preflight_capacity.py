@@ -392,6 +392,26 @@ class TestUnreadableSource:
         assert "not checked" in payload["capacity"]["message"]
 
 
+class TestCorruptSource:
+    def test_corrupt_source_reports_capacity_fail_not_a_crash(
+        self, tmp_path: Path, low_threshold
+    ) -> None:
+        # A source that opens fine but is not valid Parquet passes the on-disk
+        # accessibility guard and fails when the estimator profiles it. Preflight
+        # must render a clean capacity FAIL (non-zero exit), NOT crash on a raw
+        # pyarrow traceback with every finding discarded (Codex re-gate MEDIUM).
+        config_path = _write_config(tmp_path)
+        (tmp_path / "child.parquet").write_bytes(b"NOT_A_PARQUET_FILE_corrupt")
+        result = _run_preflight(config_path, json_mode=True)
+        # No crash: a raw pyarrow error would abort before the result is emitted
+        # and leave a non-SystemExit exception. A clean non-zero exit surfaces as
+        # SystemExit, and the JSON result is still produced.
+        assert result.exception is None or isinstance(result.exception, SystemExit)
+        assert result.exit_code != EXIT_OK
+        payload = _json.loads(result.output)
+        assert _check_status(payload, "capacity.source_unreadable") == "fail"
+
+
 class TestExecutionNeverDispatched:
     def test_preflight_never_calls_the_execution_entrypoint(
         self, tmp_path: Path, low_threshold

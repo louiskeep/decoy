@@ -340,12 +340,15 @@ def _file_sources_missing_on_disk(raw: dict[str, Any], base_dir: Path) -> bool:
             path = base_dir / path
         if not path.is_file():
             return True
-        # Present but UNREADABLE counts too (Codex re-gate MEDIUM): the guard's
-        # message and docstring both promise "missing or unreadable", and
-        # `estimate_job_capacity` -> `profile_source` opens/reads the source, so
-        # a permission-denied or corrupt file would raise there and -- with the
-        # broad catch removed (R3) -- crash the whole command. Skip the estimate
-        # for it too; Step 4's readability check already reported the `fail`.
+        # Present but UN-OPENABLE counts too (Codex re-gate MEDIUM): a
+        # permission-denied file opens-then-fails, and `estimate_job_capacity`
+        # -> `profile_source` opens the source, so with the broad catch removed
+        # (R3) it would crash the command. Skip the estimate; Step 4's
+        # readability check already reported the `fail`. This tests filesystem
+        # ACCESSIBILITY only (open + zero-byte read) -- a file that opens but is
+        # truncated/corrupt/wrong-format is NOT caught here (parsing would be
+        # required); that case is handled downstream by the estimator's typed
+        # `capacity_source_unprofilable` error, rendered as a capacity fail.
         try:
             with path.open("rb") as fh:
                 fh.read(0)
@@ -425,14 +428,30 @@ def _check_capacity(raw: dict[str, Any], config_path: Path, acc: _PreflightAccum
         )
         return
 
-    from decoy_engine import CapacityVerdict, PipelineConfig
+    from decoy_engine import CapacityVerdict, ExecutionError, PipelineConfig
 
-    # No try/except here (R3, Codex P1-2): `estimate_job_capacity` propagates
-    # any unexpected defect itself, so this call does too -- an exception here
-    # is a genuine problem `decoy preflight` must surface, not something to
-    # degrade into a WARN and let the command report a false pass.
+    # The ONE narrow catch here (R3): a source that is present but corrupt /
+    # not-the-declared-format passes the on-disk guard above (which only tests
+    # filesystem accessibility, not parseability) and fails when the estimator
+    # profiles it -- `estimate_job_capacity` raises the typed
+    # `capacity_source_unprofilable` for exactly that. Render it as a FAIL (the
+    # profile read is the first check that actually parses the source, so this
+    # is where a corrupt file legitimately surfaces) rather than crashing on a
+    # raw traceback. Any OTHER exception -- an unexpected estimator defect --
+    # still propagates, never degraded into a WARN or a false pass (Codex
+    # P1-2 / re-gate MEDIUM).
     config_dump = PipelineConfig.model_validate(raw).model_dump()
-    estimate = _engine_execution.estimate_job_capacity(config_dump, config_path.parent)
+    try:
+        estimate = _engine_execution.estimate_job_capacity(config_dump, config_path.parent)
+    except ExecutionError as exc:
+        if exc.code != "capacity_source_unprofilable":
+            raise
+        acc.add_fail(
+            name="capacity.source_unreadable",
+            message=f"Cannot estimate capacity -- {exc.message}",
+            code=exc.code,
+        )
+        return
 
     needed = _format_gib(estimate.needed_bytes)
     available = _format_gib(estimate.available_bytes)
