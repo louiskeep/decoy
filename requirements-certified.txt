@@ -34,7 +34,7 @@
 #   numpy==2.2.6            numeric layer under both of the above
 #   scipy==1.15.3           numeric layer under both of the above
 #   pandas==2.3.3           the DataFrame -> carrier-table adapter boundary
-#   pyarrow==24.0.0         the carrier-table columnar backend
+#   pyarrow==25.0.0         the carrier-table columnar backend
 #   packaging==26.2         PEP 503 name canonicalization for the fingerprint
 #
 # Everything else in this file is a transitive dependency the fingerprint
@@ -80,7 +80,7 @@ polars-runtime-32==1.43.0
 proto-plus==1.28.2
 protobuf==7.35.1
 psutil==7.2.2
-pyarrow==24.0.0
+pyarrow==25.0.0
 pyasn1==0.6.4
 pyasn1-modules==0.4.2
 pycparser==3.0
