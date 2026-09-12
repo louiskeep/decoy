@@ -416,14 +416,14 @@ def mask(
         resolver = _build_generation_resolver(master_key, key_label)
         instance_locale = (config_dict.get("global_settings") or {}).get("default_locale")
 
-        # run_pipeline's own `substrate` kwarg default ("pandas") is NOT
-        # the same as passing `substrate=None` explicitly: `None` means
-        # "defer to DECOY_SUBSTRATE / the engine's internal default"
-        # (`resolve_substrate`), which resolves to "polars" when
-        # DECOY_SUBSTRATE is unset -- the opposite of the CLI's plain-run
-        # contract ("plain runs always use pandas; --substrate is only
-        # consulted for --chunked runs"). Mirror the CLI exactly: omit the
-        # kwarg entirely unless the caller explicitly chose a substrate.
+        # Passing `substrate=None` explicitly is NOT the same as omitting it:
+        # `None` means "defer to DECOY_SUBSTRATE / the engine's internal
+        # default" (`resolve_substrate`). That resolves to pandas when
+        # DECOY_SUBSTRATE is unset, but would honor DECOY_SUBSTRATE=polars if
+        # the environment set it -- which breaks the CLI's plain-run contract
+        # ("plain runs always use pandas; --substrate is only consulted for
+        # --chunked runs"). Mirror the CLI exactly: omit the kwarg entirely
+        # unless the caller explicitly chose a substrate.
         run_pipeline_kwargs: dict[str, Any] = {}
         if substrate is not None:
             run_pipeline_kwargs["substrate"] = substrate
