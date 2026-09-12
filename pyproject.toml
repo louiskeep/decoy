@@ -92,7 +92,7 @@ dependencies = [
     # committed 0.26.x reference and reddened the sentry. Cap to the 0.26 line so
     # CI reproduces the exact committed format; bumping the minor means
     # regenerating docs/cli-reference.md in the same PR.
-    "typer>=0.26.7,<0.27",
+    "typer>=0.26.7,<0.28",
     "rich>=13.0",
     "duckdb>=0.9",
 ]
