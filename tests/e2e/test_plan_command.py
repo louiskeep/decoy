@@ -68,8 +68,8 @@ def test_plan_no_profile_emits_yaml(tmp_path: Path) -> None:
     # plan_version tracks the engine constant (2 after DPS Scope B's pinned
     # GenerationPlan payload bump; see decoy_engine.plan._compile.PLAN_VERSION).
     assert "plan_version: 2" in result.stdout
-    # seed_protocol_version tracks the engine constant (6 after v6 determinism bump).
-    assert "seed_protocol_version: 6" in result.stdout
+    # seed_protocol_version tracks the engine constant (7 after the FF1 adoption bump).
+    assert "seed_protocol_version: 7" in result.stdout
 
 
 def test_plan_no_profile_records_skipped_checks(tmp_path: Path) -> None:
@@ -178,8 +178,8 @@ def test_plan_json_emits_parseable_json(tmp_path: Path) -> None:
     assert result.exit_code == 0, result.stdout
     parsed = json.loads(result.stdout)
     assert parsed["plan_version"] == 2
-    # seed_protocol_version tracks the engine constant (6 after v6 determinism bump).
-    assert parsed["seed_protocol_version"] == 6
+    # seed_protocol_version tracks the engine constant (7 after the FF1 adoption bump).
+    assert parsed["seed_protocol_version"] == 7
 
 
 # -- --out writes to file --------------------------------------------
