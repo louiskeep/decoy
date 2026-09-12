@@ -84,13 +84,15 @@ dependencies = [
     # 0.5.0 is the first engine with the typed-carrier DP API (fit_dp_snapshot)
     # the DP fit path calls.
     "decoy-engine>=0.5.0",
-    # Cap below 0.28: typer 0.27 changed `typer utils docs` argument rendering
-    # ({config}->CONFIG, <mask|generate>->[mask|generate]). This branch adopts
-    # 0.27 deliberately (the DP-flag rewire regenerated docs/cli-reference.md
-    # against it, which the remote comment anticipated as the sanctioned bump).
-    # Keep the upper bound so a future minor cannot silently drift the committed
-    # doc and red the test_cli_surface sentry.
-    "typer>=0.9,<0.28",
+    # Pin the typer minor: `typer utils docs` metavar rendering differs across
+    # typer minors (0.26.x emits `TEXT`/`FILE`; 0.27.x emits `<str>`/`<file>`),
+    # and docs/cli-reference.md is committed and checked by the test_cli_surface
+    # sentry. The old `>=0.9,<0.28` range still spanned both renderings, so a
+    # fresh CI resolve (typer 0.27.2) regenerated a different format than the
+    # committed 0.26.x reference and reddened the sentry. Cap to the 0.26 line so
+    # CI reproduces the exact committed format; bumping the minor means
+    # regenerating docs/cli-reference.md in the same PR.
+    "typer>=0.26.7,<0.27",
     "rich>=13.0",
     "duckdb>=0.9",
 ]

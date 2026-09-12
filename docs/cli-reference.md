@@ -96,7 +96,7 @@ $ decoy run [OPTIONS] CONFIG
 * `--chunked`: Stream the source through the engine chunk-by-chunk, for inputs too large to load whole. Works for mask configs whose every strategy is value-keyed (hash, fpe, redact, truncate, text_redact, date_shift, bucketize), plus faker/categorical when deterministic with an explicit pool_size / categories declared in config; output is byte-identical to a plain run. Sources/targets may be CSV or Parquet. See: decoy explain chunked.
 * `--chunk-size INTEGER RANGE`: Rows per chunk in --chunked mode.  [default: 100000; x&gt;=1]
 * `--vault PATH`: Write the token vault (encrypted source-to-masked map for vault: true columns) to this path. The vault plus the config re-identify every vaulted value: store them separately and never alongside the masked output. Needs the engine&#x27;s vault extra (cryptography).
-* `--substrate TEXT`: Execution substrate for --chunked runs: pandas (default) or polars. Non-chunked (plain) runs always use the engine&#x27;s pandas adapter (the V2 unified run_pipeline path); this flag and the DECOY_SUBSTRATE env var are only consulted for --chunked runs. Setting either on a plain run emits a warning to stderr and is otherwise ignored. Cross-substrate outputs are value-equal; CSV bytes may differ only via Arrow type-width drift, which CSV does not carry.  [env var: DECOY_SUBSTRATE]
+* `--substrate TEXT`: Execution substrate for --chunked runs. Masking uses pandas; that is the default and the actively supported substrate. The legacy &#x27;polars&#x27; value is retained but no longer recommended (value-equal to pandas, not faster for masking). Non-chunked (plain) runs always use the engine&#x27;s pandas adapter; this flag and the DECOY_SUBSTRATE env var are consulted only for --chunked runs, and setting either on a plain run emits a warning to stderr and is otherwise ignored.  [env var: DECOY_SUBSTRATE]
 * `--key-label TEXT`: Stable namespace string for the --master-key generation key hierarchy (synthetic generation only, not masking). Required when --master-key is set. Pick something durable (e.g. &#x27;customers_q4&#x27;); changing it produces different generated output. CLI flag only -- PipelineConfig forbids unknown top-level keys, so there is no YAML equivalent.
 * `--evidence-out PATH`: Write a local evidence manifest (JSON) to this path after a successful run. The manifest records pipeline hash, input/output file fingerprints, run metadata, and row counts/timings/warnings where available (these are omitted for --chunked runs). It does NOT contain raw data values. Use `decoy evidence verify` to check the manifest against current files. See: decoy explain evidence (when available).
 * `--notify TEXT`: Notify a channel after the run reaches its terminal state. Repeatable. Spec is &#x27;kind:target&#x27;: webhook:&lt;url&gt;, slack:&lt;url&gt;, email:&lt;address&gt;. Best-effort: a channel failure never changes the run&#x27;s exit code. Webhook signing key from DECOY_NOTIFY_WEBHOOK_SECRET (unsigned if unset); SMTP from DECOY_NOTIFY_SMTP_HOST/_PORT/_USER/_PASS/_FROM. Nothing is persisted to .decoy/workspace.json -- targets and secrets are flags/env only, never written to disk.
@@ -119,10 +119,9 @@ Examples:
     Write an encrypted token vault for columns marked `vault: true`, so
     they can be recovered later with `decoy unmask`. (See: decoy explain vault.)
 
-  decoy run pipeline.yaml --chunked --substrate polars
-    Stream with polars instead of the chunked-path pandas default.
-    (--substrate only affects --chunked runs; plain runs always use pandas.
-    See: decoy explain substrate.)
+  decoy run pipeline.yaml --chunked
+    Stream a large single-table mask in bounded memory (pandas chunked path).
+    (Masking uses the pandas substrate. See: decoy explain substrate.)
 
   decoy run pipeline.yaml --notify webhook:https://hooks.example.com/x
     Notify a webhook after the run reaches its terminal state. Repeatable;
@@ -142,11 +141,12 @@ See also: decoy validate config, decoy validate distribution, decoy explain chun
 Local pre-run readiness checks for a pipeline config.
 
 Checks file existence, file readability, YAML syntax, schema validity,
-and (v1) whether the engine&#x27;s out-of-core-FK memory gate would refuse
-the job. Reports findings as pass/warn/fail with structured output
-available via --json. An insufficient capacity result exits
-EXIT_CAPACITY (see `decoy explain exit-codes`), distinct from a config
-problem (EXIT_USAGE).
+and (v1) the engine&#x27;s out-of-core-FK memory feasibility. The build-floor
+estimate is advisory: an over-budget prediction reports a WARNING with a
+recommended size, not a refusal (`--fail-on-warning` makes it exit
+nonzero). Only a fan-in impossibility exits EXIT_CAPACITY (see `decoy
+explain exit-codes`), distinct from a config problem (EXIT_USAGE). Reports
+findings as pass/warn/fail with structured output available via --json.
 
 This is a LOCAL check only. It does NOT check platform server-side
 conditions, most engine run-time constraints, data quality, vault
@@ -154,8 +154,8 @@ access, secrets availability, or network connectivity. The capacity
 check covers the out-of-core-FK route only -- it does not cover the
 ingestion peak `decoy run` pays before the engine&#x27;s gate runs, or the
 generate path. Use `decoy validate` for pure schema-only checks; use
-this command when you want to confirm source files are present and the
-job would clear the memory gate before starting a run.
+this command when you want to confirm source files are present and check
+the job&#x27;s capacity feasibility before starting a run.
 
 **Usage**:
 
@@ -194,8 +194,8 @@ What preflight checks:
   - YAML syntax and schema (same as `decoy validate`)
   - Source file existence and readability
   - Target overwrite risk (advisory warning)
-  - Out-of-core-FK memory capacity (v1; exits EXIT_CAPACITY if insufficient --
-    see: decoy explain exit-codes)
+  - Out-of-core-FK memory capacity (v1; build-floor is advisory, only a fan-in
+    impossibility exits EXIT_CAPACITY -- see: decoy explain exit-codes)
 
 What preflight does NOT check:
   - Platform server-side conditions (secrets, RBAC, schedules, network targets)

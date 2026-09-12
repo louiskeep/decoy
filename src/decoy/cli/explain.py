@@ -272,20 +272,19 @@ _TOPICS: dict[str, _Topic] = {
     ),
     "substrate": _Topic(
         name="substrate",
-        summary="Pick the pandas or polars execution engine for `--chunked` runs.",
+        summary="pandas is the masking substrate (polars is a dormant legacy opt-in).",
         body=(
-            "Decoy supports two dataframe substrates:\n\n"
-            "  pandas   The only substrate for plain (non-chunked) runs. Plain runs\n"
-            "           go through the engine's unified run_pipeline (V2 path), which\n"
-            "           uses the internal PandasExecutionAdapter. --substrate and the\n"
-            "           DECOY_SUBSTRATE env var are only consulted for --chunked runs;\n"
-            "           setting either on a plain run emits a warning to stderr.\n\n"
-            "  polars   Available for --chunked runs via --substrate polars or by\n"
-            "           setting DECOY_SUBSTRATE=polars in the environment.\n"
-            "           pandas is the --chunked default (the byte-stable contract that\n"
-            "           mode shipped with).\n\n"
-            "To select polars for a chunked run:\n\n"
-            "  decoy run pipeline.yaml --chunked --substrate polars\n\n"
+            "Masking runs on pandas. It is the default and the actively supported\n"
+            "substrate for both plain and --chunked runs, via the engine's unified\n"
+            "run_pipeline (V2 path) and its internal PandasExecutionAdapter.\n\n"
+            "  polars   A legacy substrate, still reachable for --chunked runs via\n"
+            "           --substrate polars or DECOY_SUBSTRATE=polars, but no longer\n"
+            "           recommended: it is value-equal to pandas and not faster for\n"
+            "           the per-value keyed-crypto masking workload. It is retained\n"
+            "           dormant, not removed. (Polars is used elsewhere in Decoy for\n"
+            "           FK subsetting, its genuine strength; that is unaffected.)\n\n"
+            "--substrate and the DECOY_SUBSTRATE env var are consulted only for\n"
+            "--chunked runs; on a plain run either just emits a warning to stderr.\n"
             "Outputs are value-equal across substrates. CSV bytes are identical; only\n"
             "Arrow type-width metadata can differ, which CSV does not carry.\n"
             "(See: decoy explain chunked for when to use --chunked.)"

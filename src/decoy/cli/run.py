@@ -33,6 +33,11 @@ from decoy.ui.theme import error, hint, warn
 # any other reason -- matched narrowly so a routing/compat/orphan-FK
 # `ExecutionError` (any other code) keeps its existing EXIT_RUNTIME
 # classification below. See docs/plans/2026-07-24-oom-checker-cli-v1.md R8.
+# `out_of_core_insufficient_memory` is now LEGACY-ENGINE compat (round-4, engine
+# side): a current engine's build-floor gate is advisory and never raises it, so
+# this code only ever arrives from an older engine still running the pre-round-4
+# hard-fail gate; kept recognized here rather than dropped so the CLI stays
+# correct against that older engine too.
 _CAPACITY_CODES = frozenset({"out_of_core_insufficient_memory", "out_of_core_fanin_exceeds_budget"})
 
 
@@ -64,10 +69,9 @@ Examples:
     Write an encrypted token vault for columns marked `vault: true`, so
     they can be recovered later with `decoy unmask`. (See: decoy explain vault.)
 
-  decoy run pipeline.yaml --chunked --substrate polars
-    Stream with polars instead of the chunked-path pandas default.
-    (--substrate only affects --chunked runs; plain runs always use pandas.
-    See: decoy explain substrate.)
+  decoy run pipeline.yaml --chunked
+    Stream a large single-table mask in bounded memory (pandas chunked path).
+    (Masking uses the pandas substrate. See: decoy explain substrate.)
 
   decoy run pipeline.yaml --notify webhook:https://hooks.example.com/x
     Notify a webhook after the run reaches its terminal state. Repeatable;
@@ -232,13 +236,13 @@ def run(
         "--substrate",
         envvar="DECOY_SUBSTRATE",
         help=(
-            "Execution substrate for --chunked runs: pandas (default) or polars. "
-            "Non-chunked (plain) runs always use the engine's pandas adapter "
-            "(the V2 unified run_pipeline path); this flag and the DECOY_SUBSTRATE "
-            "env var are only consulted for --chunked runs. Setting either on a "
-            "plain run emits a warning to stderr and is otherwise ignored. "
-            "Cross-substrate outputs are value-equal; CSV bytes may differ only "
-            "via Arrow type-width drift, which CSV does not carry."
+            "Execution substrate for --chunked runs. Masking uses pandas; that is "
+            "the default and the actively supported substrate. The legacy 'polars' "
+            "value is retained but no longer recommended (value-equal to pandas, "
+            "not faster for masking). Non-chunked (plain) runs always use the "
+            "engine's pandas adapter; this flag and the DECOY_SUBSTRATE env var are "
+            "consulted only for --chunked runs, and setting either on a plain run "
+            "emits a warning to stderr and is otherwise ignored."
         ),
     ),
     key_label: str = typer.Option(
