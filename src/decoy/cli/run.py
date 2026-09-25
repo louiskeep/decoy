@@ -25,7 +25,9 @@ from decoy import __version__ as _cli_version
 from decoy.cli.exit_codes import EXIT_CAPACITY, EXIT_RUNTIME, EXIT_USAGE
 from decoy.cli.extras import (
     MissingExtraError,
+    UnsupportedCloudEndpointError,
     check_cloud_endpoints,
+    check_cloud_endpoints_supported,
     translate_missing_extra,
     translate_ner_unavailable,
 )
@@ -426,6 +428,14 @@ def run(
             # call, so a missing extra fails with the install line rather
             # than however boto3's own absence happens to surface deep in a
             # source/sink fetch.
+            #
+            # dennis H2: `decoy run`'s own I/O helpers only handle local
+            # files, regardless of whether [cloud] is installed -- without
+            # this check a cloud source/target was silently skipped and the
+            # run reported success with the masked output dropped. Checked
+            # first so this failure (a real capability gap) is not masked
+            # by check_cloud_endpoints's install-line message.
+            check_cloud_endpoints_supported(config_dict)
             check_cloud_endpoints(config_dict)
 
             # DE-02 Option B (2026-07-15): --mask-secret sets the same
@@ -646,6 +656,11 @@ def run(
                         # environment is missing a capability their config
                         # calls for, not a runtime crash.
                         MissingExtraError,
+                        # dennis H2: a cloud source/target `decoy run`
+                        # cannot execute against -- the operator's config
+                        # asks for a capability the CLI doesn't have yet,
+                        # not a runtime crash.
+                        UnsupportedCloudEndpointError,
                         # ner_model_not_installed and any other
                         # NerUnavailableError code not already rewritten
                         # above -- still a fixable environment gap, not an
@@ -714,6 +729,11 @@ def run(
             if capacity_code is not None:
                 payload["error_kind"] = "capacity"
                 payload["code"] = capacity_code
+            elif isinstance(exc, MissingExtraError):
+                # dennis M3: a machine-detectable field, not just the
+                # `[missing_extra]`-prefixed message text.
+                payload["error_kind"] = "missing_extra"
+                payload["extra"] = exc.extra
             if notify_channels:
                 payload["notify"] = notify_results
             emit_json(state, payload)

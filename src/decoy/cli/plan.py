@@ -168,8 +168,7 @@ def plan(
             # check above already prevents this branch when profile_path
             # is None, so the raise here is documentation of the invariant.
             raise RuntimeError(
-                "profile_path is None despite the mutual-exclusion check; "
-                "this is a bug in plan.py."
+                "profile_path is None despite the mutual-exclusion check; this is a bug in plan.py."
             )
         try:
             profile = profile_from_json(profile_path.read_text(encoding="utf-8"))
@@ -182,13 +181,16 @@ def plan(
         skipped_checks = ()
 
     try:
-        plan_obj = compile_plan(
-            config_dict, profile, decoy_engine_version=engine_version
-        )
+        plan_obj = compile_plan(config_dict, profile, decoy_engine_version=engine_version)
     except PlanCompileError as exc:
-        typer.echo(
-            f"ERROR: [{exc.code}] {exc.path or '<global>'}: {exc.message}", err=True
-        )
+        # CLI install DX (2026-09-25): rewrite ner_spacy_not_installed to
+        # decoy-cli's own [ner] extra (dennis H1); see
+        # plan_compile_error_fields's docstring for why every
+        # PlanCompileError call site needs this, not just `run`.
+        from decoy.cli.extras import plan_compile_error_fields
+
+        code, message = plan_compile_error_fields(exc)
+        typer.echo(f"ERROR: [{code}] {exc.path or '<global>'}: {message}", err=True)
         raise typer.Exit(code=EXIT_USAGE) from exc
 
     # Layer the checks_skipped onto the result. The compile already
@@ -201,9 +203,7 @@ def plan(
         # yaml.safe_load -> json.dumps for a stable JSON shape downstream
         # tooling can consume. L3 of the spec review (citation links) is
         # author-discretion; the shape rule lives here.
-        rendered = (
-            json.dumps(yaml.safe_load(rendered), indent=2, sort_keys=False) + "\n"
-        )
+        rendered = json.dumps(yaml.safe_load(rendered), indent=2, sort_keys=False) + "\n"
 
     if out is not None:
         out.write_text(rendered, encoding="utf-8")
@@ -226,7 +226,9 @@ PLAN_EPILOG = _PLAN_EPILOG
 # The POSIX epoch is the conventional "no real profile" sentinel; downstream
 # consumers that inspect profiled_at can detect "no profile available" by
 # comparing to this constant.
-_NO_PROFILE_SENTINEL_DATE = None  # set inside _empty_profile_for_no_profile to avoid circular import
+_NO_PROFILE_SENTINEL_DATE = (
+    None  # set inside _empty_profile_for_no_profile to avoid circular import
+)
 
 
 def _empty_profile_for_no_profile(config_dict: dict, engine_version: str):
@@ -271,12 +273,8 @@ def _attach_checks_skipped(plan_obj, skipped: tuple[str, ...]):
     from dataclasses import replace
 
     skipped_set = set(skipped)
-    new_passed = tuple(
-        c for c in plan_obj.plan_compile.checks_passed if c not in skipped_set
-    )
-    new_pc = replace(
-        plan_obj.plan_compile, checks_passed=new_passed, checks_skipped=skipped
-    )
+    new_passed = tuple(c for c in plan_obj.plan_compile.checks_passed if c not in skipped_set)
+    new_pc = replace(plan_obj.plan_compile, checks_passed=new_passed, checks_skipped=skipped)
     return replace(plan_obj, plan_compile=new_pc)
 
 

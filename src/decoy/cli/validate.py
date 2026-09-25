@@ -226,9 +226,7 @@ def _check_target_overwrite(raw: dict[str, Any], acc: _ValidationAccumulator) ->
         if out_path.exists():
             acc.add_warning(
                 code="target_file.would_overwrite",
-                message=(
-                    f"Output target already exists and would be overwritten: {out_path_str}"
-                ),
+                message=(f"Output target already exists and would be overwritten: {out_path_str}"),
                 location=f"targets.{table_name}.path",
             )
 
@@ -312,9 +310,7 @@ def config(
     if not isinstance(raw, dict):
         acc.add_error(
             code="yaml.not_mapping",
-            message=(
-                f"Pipeline YAML must be a YAML mapping (object), not {type(raw).__name__}."
-            ),
+            message=(f"Pipeline YAML must be a YAML mapping (object), not {type(raw).__name__}."),
         )
         _emit_result(state, acc, config_str, checks_run=None, fail_on_warning=fail_on_warning)
         raise typer.Exit(code=EXIT_USAGE)
@@ -347,7 +343,14 @@ def config(
     try:
         checks_run = run_config_only_checks(raw)
     except PlanCompileError as exc:
-        acc.add_error(code=exc.code, message=exc.message)
+        # CLI install DX (2026-09-25): rewrite ner_spacy_not_installed to
+        # decoy-cli's own [ner] extra (dennis H1); see
+        # plan_compile_error_fields's docstring for why every
+        # PlanCompileError call site needs this, not just `run`.
+        from decoy.cli.extras import plan_compile_error_fields
+
+        code, message = plan_compile_error_fields(exc)
+        acc.add_error(code=code, message=message)
         _emit_result(state, acc, config_str, checks_run=None, fail_on_warning=fail_on_warning)
         raise typer.Exit(code=EXIT_USAGE)
 
@@ -402,8 +405,14 @@ def _emit_result(
         # Include the error code so plan-compile codes (non_poolable_provider_with_pool_backend,
         # unknown_provider, etc.) remain visible in human output -- matches old behavior
         # where PlanCompileError emitted "{exc.code}: {exc.message}".
+        # dennis M4: first_error.message is arbitrary text, not authored UI
+        # copy -- a missing-extra install line legitimately contains `[ner]`
+        # / `[cloud]`, which Rich's markup parser silently drops as an
+        # unrecognized tag without markup=False (matches the run.py fix).
         state.err_console.print(
-            error("error:"), f"Invalid config: {first_error.code}: {first_error.message}"
+            error("error:"),
+            f"Invalid config: {first_error.code}: {first_error.message}",
+            markup=False,
         )
         state.err_console.print(
             " ", hint("hint:"), "see `decoy validate config --help` for the expected schema."

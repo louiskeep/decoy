@@ -660,7 +660,14 @@ def preflight(
         run_config_only_checks(raw)
         acc.add_pass(name="config.plan_checks", message="Profile-free plan-compile checks passed.")
     except PlanCompileError as exc:
-        acc.add_fail(name=f"config.{exc.code}", message=exc.message)
+        # CLI install DX (2026-09-25): rewrite ner_spacy_not_installed to
+        # decoy-cli's own [ner] extra (dennis H1); see
+        # plan_compile_error_fields's docstring for why every
+        # PlanCompileError call site needs this, not just `run`.
+        from decoy.cli.extras import plan_compile_error_fields
+
+        code, message = plan_compile_error_fields(exc)
+        acc.add_fail(name=f"config.{code}", message=message)
         _emit_preflight_result(state, acc, config_str, fail_on_warning)
         raise typer.Exit(code=EXIT_USAGE)
 

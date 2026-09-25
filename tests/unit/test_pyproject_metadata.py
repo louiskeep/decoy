@@ -68,8 +68,7 @@ def test_classifiers_marks_development_status_beta() -> None:
     """Pre-1.0: maturity is Beta. A 5+/Stable bump must follow the
     versioning policy at docs/release/versioning.md."""
     data = _load()
-    statuses = [c for c in data["project"]["classifiers"]
-                if c.startswith("Development Status ::")]
+    statuses = [c for c in data["project"]["classifiers"] if c.startswith("Development Status ::")]
     assert statuses == ["Development Status :: 4 - Beta"], (
         f"Development status drifted from Beta: {statuses}"
     )
@@ -104,21 +103,20 @@ def test_engine_dependency_pinned() -> None:
     data = _load()
     deps = data["project"]["dependencies"]
     engine_deps = [d for d in deps if d.startswith("decoy-engine")]
-    assert len(engine_deps) == 1, (
-        f"expected exactly one decoy-engine dep, got {engine_deps}"
-    )
+    assert len(engine_deps) == 1, f"expected exactly one decoy-engine dep, got {engine_deps}"
     # Assert the exact minimum, not merely that *a* floor exists -- a bare
     # `>=` check would let a silent downgrade (e.g. `decoy-engine>=0.1.0`)
-    # slip through. 0.5.0 is the DPS Scope B / DPS-CODEC release marker: the
-    # first engine version carrying the certified DP fit path
-    # (`fit_dp_snapshot` + `dp_provenance`) this CLI's fit rewire depends on
-    # (see the pin rationale in pyproject.toml). Bump this in lockstep when
-    # the floor legitimately rises.
+    # slip through. 0.6.0 is the CLI install DX marker (dennis M6): the
+    # first engine version carrying the `cloud` extra the pass-through
+    # `cloud`/`all` extras below resolve against (see the pin rationale in
+    # pyproject.toml; 0.5.0 was the prior floor, the DPS Scope B /
+    # DPS-CODEC certified-DP-fit marker). Bump this in lockstep when the
+    # floor legitimately rises.
     from packaging.requirements import Requirement
 
     req = Requirement(engine_deps[0])
     floors = [s for s in req.specifier if s.operator in (">=", "==")]
-    assert [str(s) for s in floors] == [">=0.5.0"], (
-        f"decoy-engine floor must be exactly >=0.5.0 (DPS certified-DP-fit "
+    assert [str(s) for s in floors] == [">=0.6.0"], (
+        f"decoy-engine floor must be exactly >=0.6.0 (CLI install DX cloud-extra "
         f"marker); got specifier {str(req.specifier)!r}"
     )
