@@ -23,6 +23,12 @@ import typer
 
 from decoy import __version__ as _cli_version
 from decoy.cli.exit_codes import EXIT_CAPACITY, EXIT_RUNTIME, EXIT_USAGE
+from decoy.cli.extras import (
+    MissingExtraError,
+    check_cloud_endpoints,
+    translate_missing_extra,
+    translate_ner_unavailable,
+)
 from decoy.ui.card import render_card
 from decoy.ui.output import OutputMode, emit_json, setup_output
 from decoy.ui.progress import spinner
@@ -414,6 +420,14 @@ def run(
             except _PydanticValidationError as exc:
                 raise _ConfigValidationError(str(exc)) from exc
 
+            # CLI install DX (2026-09-25): boto3/google-cloud-storage moved
+            # to an opt-in `[cloud]` extra (engine pyproject.toml, `cloud`
+            # extra). Check upfront, before the engine attempts any network
+            # call, so a missing extra fails with the install line rather
+            # than however boto3's own absence happens to surface deep in a
+            # source/sink fetch.
+            check_cloud_endpoints(config_dict)
+
             # DE-02 Option B (2026-07-15): --mask-secret sets the same
             # `global_settings.mask_secret_ref` slot the YAML can set directly.
             # It feeds run_pipeline's fail-closed KeyProvider resolution AND
@@ -550,6 +564,41 @@ def run(
         from decoy_engine import ConfigError, PipelineValidationError
         from decoy_engine.plan import PlanCompileError
 
+        # CLI install DX (2026-09-25): a pipeline step that lazily imports an
+        # optional dependency (boto3/google-cloud-storage for a cloud
+        # source/target, spacy for NER, etc.) raises ImportError when the
+        # matching decoy-cli extra isn't installed. Translate that into the
+        # exact install line instead of a raw traceback. An ImportError for
+        # anything NOT a known optional extra is left as-is (stays classified
+        # EXIT_RUNTIME below -- that is a real defect, not a missing extra).
+        if isinstance(exc, ImportError):
+            _missing_extra = translate_missing_extra(exc)
+            if _missing_extra is not None:
+                exc = _missing_extra
+
+        # CLI install DX (2026-09-25): the engine's own NerUnavailableError
+        # (text_mask/text_redact `ner`) already fails closed for a missing
+        # spaCy install; rewrite it to point at decoy-cli's own `[ner]`
+        # extra instead of `decoy-engine[ner]` (see translate_ner_unavailable
+        # docstring for why only the "spaCy absent" case is rewritten).
+        _translated_ner = translate_ner_unavailable(exc)
+        if _translated_ner is not None:
+            exc = _translated_ner
+
+        # A NerUnavailableError this session's engine build has (defensive
+        # import: an older engine just never matches) but that
+        # translate_ner_unavailable declined to rewrite -- e.g.
+        # ner_model_not_installed, spaCy itself IS present, just not the
+        # requested model, so the fix is `spacy download <model>`, not an
+        # extra -- still needs EXIT_USAGE classification below with the
+        # engine's own message intact.
+        try:
+            from decoy_engine.storm.ner import NerUnavailableError as _NerUnavailableError
+
+            _ner_unavailable_types: tuple = (_NerUnavailableError,)
+        except ImportError:
+            _ner_unavailable_types = ()
+
         # DE-02: MaskSecretError lives in the engine's `keyprovider` module,
         # which a pre-DE-02 engine lacks. Import defensively so a missing
         # module never crashes the error handler itself (it would mask the
@@ -592,6 +641,16 @@ def run(
                         _ChunkedGenerateError,
                         _VaultUsageError,
                         _MaskSecretUsageError,
+                        # CLI install DX: a pipeline step hit an optional
+                        # extra that isn't installed -- the operator's
+                        # environment is missing a capability their config
+                        # calls for, not a runtime crash.
+                        MissingExtraError,
+                        # ner_model_not_installed and any other
+                        # NerUnavailableError code not already rewritten
+                        # above -- still a fixable environment gap, not an
+                        # engine defect.
+                        *_ner_unavailable_types,
                         # PipelineConfig.model_validate's ValidationError, caught
                         # narrowly at its call site and re-raised as this typed
                         # error, means the YAML is structurally wrong (unknown key
@@ -659,8 +718,14 @@ def run(
                 payload["notify"] = notify_results
             emit_json(state, payload)
         elif state.mode is not OutputMode.quiet:
+            # CLI install DX (2026-09-25): error_text is arbitrary exception
+            # text, not authored UI copy -- it can legitimately contain `[`
+            # (a MissingExtraError's `pip install decoy-cli[cloud]`, or any
+            # future message that happens to quote a list/bracketed value).
+            # markup=False so Rich prints it verbatim instead of parsing it
+            # as markup and silently dropping an unrecognized tag.
             if capacity_code is not None:
-                state.err_console.print(error("capacity:"), error_text)
+                state.err_console.print(error("capacity:"), error_text, markup=False)
                 state.err_console.print(
                     " ",
                     hint("hint:"),
@@ -668,7 +733,7 @@ def run(
                     "tier or reduce the job.",
                 )
             else:
-                state.err_console.print(error("error:"), error_text)
+                state.err_console.print(error("error:"), error_text, markup=False)
                 state.err_console.print(
                     " ", hint("hint:"), "rerun with --verbose for the full traceback."
                 )

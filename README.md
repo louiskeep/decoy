@@ -21,7 +21,34 @@ pip install decoy-cli
 ```
 
 This installs the `decoy` console script and pulls in `decoy-engine` as a
-dependency. Python 3.10, 3.11, and 3.12 are supported.
+dependency. Python 3.10, 3.11, and 3.12 are supported. The base install is
+the full local masker + generator (CSV/Parquet, DuckDB, the pandas/polars/
+pyarrow data plane) with no extras to think about.
+
+For an isolated install that never collides with your other Python
+environments, use `uv` or `pipx` instead of a bare `pip install`:
+
+```
+uv tool install decoy-cli
+# or
+pipx install decoy-cli
+```
+
+### Extras
+
+A few heavier capabilities are opt-in, so the default install stays lean:
+
+| Extra | Adds | Install |
+|-------|------|---------|
+| `cloud` | S3 / GCS source and target connectors | `pip install decoy-cli[cloud]` |
+| `ner` | spaCy-based PII autodetect for `text_mask`/`text_redact` | `pip install decoy-cli[ner]` |
+| `ml` | The STORM field-classifier (scikit-learn/lightgbm) | `pip install decoy-cli[ml]` |
+| `vault` | Reversible-token vault support | `pip install decoy-cli[vault]` |
+| `all` | Every extra above | `pip install decoy-cli[all]` |
+
+You don't need to plan ahead: run a pipeline that needs one of these without
+it installed and `decoy` fails closed with the exact install line, not a
+raw traceback.
 
 ## Quickstart
 

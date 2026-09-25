@@ -101,6 +101,17 @@ dependencies = [
 dev = [
     "pytest>=7.0.0",
 ]
+# CLI install DX (2026-09-25): pass-through extras so `pip install
+# decoy-cli[...]` actually reaches the engine's matching extra instead of
+# failing "unknown extra". The base install stays lean (no cloud SDKs, no
+# NER/ML/vault weight); each of these is opt-in by name. `all` bundles
+# every user-facing extra; it deliberately excludes `dev` (contributor
+# tooling, not a runtime capability).
+cloud = ["decoy-engine[cloud]"]
+ner = ["decoy-engine[ner]"]
+ml = ["decoy-engine[ml]"]
+vault = ["decoy-engine[vault]"]
+all = ["decoy-cli[cloud,ner,ml,vault]"]
 
 # Project URLs surfaced on the PyPI sidebar. Source key is the
 # convention pip/Warehouse uses.

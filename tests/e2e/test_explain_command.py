@@ -117,5 +117,15 @@ def test_feature_topics_are_documented():
     """The recently-shipped run features + DP must each have an explain
     topic so they are discoverable from `decoy explain`."""
     names = set(topic_names())
-    for t in ("vault", "chunked", "substrate", "differential-privacy"):
+    for t in ("vault", "chunked", "substrate", "differential-privacy", "extras"):
         assert t in names, f"missing explain topic: {t}"
+
+
+def test_extras_topic_lists_every_pass_through_extra():
+    """CLI install DX (2026-09-25): `decoy explain extras` is the in-CLI
+    reference for the pass-through extras added to pyproject.toml; it must
+    name every one of them with its exact install line."""
+    result = runner.invoke(app, ["explain", "extras"])
+    assert result.exit_code == 0
+    for extra in ("cloud", "ner", "ml", "vault", "all"):
+        assert f"decoy-cli[{extra}]" in result.stdout, result.stdout

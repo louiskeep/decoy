@@ -389,6 +389,30 @@ _TOPICS: dict[str, _Topic] = {
         ),
         see_also=("decoy --help",),
     ),
+    "extras": _Topic(
+        name="extras",
+        summary="Optional install extras (cloud/ner/ml/vault) and what each adds.",
+        body=(
+            "`pip install decoy-cli` (no extras) gives a working masker + generator against\n"
+            "local CSV/Parquet/DuckDB. A few heavier capabilities are opt-in by name:\n\n"
+            "  cloud   S3 / GCS source and target connectors.\n"
+            "          pip install decoy-cli[cloud]\n"
+            "  ner     spaCy-based PII autodetect for text_mask / text_redact.\n"
+            "          pip install decoy-cli[ner]\n"
+            "  ml      The STORM field-classifier (scikit-learn / lightgbm).\n"
+            "          pip install decoy-cli[ml]\n"
+            "  vault   Reversible-token vault support.\n"
+            "          pip install decoy-cli[vault]\n"
+            "  all     Every extra above.\n"
+            "          pip install decoy-cli[all]\n\n"
+            "You don't have to plan ahead: run a pipeline that needs one of these without it\n"
+            "installed and decoy fails closed with the exact install line, not a raw traceback.\n\n"
+            "For an isolated install that never collides with your other Python environments:\n\n"
+            "  uv tool install decoy-cli\n"
+            "  pipx install decoy-cli"
+        ),
+        see_also=("decoy run --help", "README.md"),
+    ),
 }
 
 
