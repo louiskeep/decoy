@@ -150,3 +150,21 @@ class TestVaultInfoErrors:
         assert payload["command"] == "vault-info"
         assert payload["status"] == "error"
         assert "error" in payload
+
+
+class TestVaultInfoInstallLine:
+    def test_engine_install_line_keeps_its_bracketed_extra(
+        self, vault_setup, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # load_vault's vault_crypto_not_installed message ends in
+        # `pip install 'decoy-engine[vault]'`; printed through Rich markup,
+        # `[vault]` is parsed as a tag and disappears.
+        import sys
+
+        cfg, vault = vault_setup
+        monkeypatch.setitem(sys.modules, "cryptography.fernet", None)
+        result = runner.invoke(app, ["vault", "info", str(vault), "--config", str(cfg)])
+        assert result.exit_code == EXIT_USAGE, result.output
+        flat = " ".join(result.output.split())
+        assert "vault_crypto_not_installed" in flat, flat
+        assert "decoy-engine[vault]" in flat, flat

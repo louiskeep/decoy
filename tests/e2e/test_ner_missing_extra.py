@@ -1,5 +1,5 @@
 """End-to-end test for the NER `[ner]`-extra message through a real
-`decoy validate config` invocation (dennis H1, 2026-09-25).
+`decoy validate config` invocation.
 
 The existing unit test (tests/unit/test_extras.py) constructed a
 NerUnavailableError directly, which doesn't prove the message a real
@@ -102,10 +102,9 @@ class TestNerMissingExtraThroughRealCompile:
 
 
 class TestNerMissingExtraThroughPreflight:
-    """dennis round-2 finding 2: `decoy preflight` printed check messages
-    through Rich markup, so the `[ner]` in the install line was parsed as an
-    unknown tag and dropped. The operator saw `pip install decoy-cli` with
-    no extra, which installs nothing useful."""
+    """`decoy preflight` check messages must print with Rich markup off: the
+    `[ner]` in the install line would otherwise parse as an unknown tag and
+    vanish, leaving `pip install decoy-cli`, which installs nothing useful."""
 
     def test_preflight_shows_the_literal_extra_name(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -126,3 +125,48 @@ class TestNerMissingExtraThroughPreflight:
         result = runner.invoke(app, ["preflight", str(cfg), "--json"])
         assert result.exit_code == EXIT_USAGE, result.output
         assert "pip install decoy-cli[ner]" in result.output, result.output
+
+
+class TestNerMissingExtraThroughCompile:
+    """`decoy compile` renders its PlanCompileError through the same shared
+    translation as run/validate/preflight/plan, and prints with Rich markup
+    off so neither the `[missing_extra]` code prefix nor the `[ner]` extra
+    name is parsed as a style tag and dropped."""
+
+    def test_compile_shows_cli_extra_and_code_prefix(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr("decoy_engine.storm.ner.spacy_installed", lambda: False)
+        cfg = _ner_pipeline(tmp_path)
+        result = runner.invoke(app, ["compile", str(cfg)])
+        assert result.exit_code == EXIT_USAGE, result.output
+        collapsed = " ".join(result.output.split())
+        assert "pip install decoy-cli[ner]" in collapsed, result.output
+        assert "[missing_extra]" in collapsed, result.output
+        assert "decoy-engine" not in collapsed, result.output
+
+    def test_compile_explain_shows_cli_extra(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr("decoy_engine.storm.ner.spacy_installed", lambda: False)
+        cfg = _ner_pipeline(tmp_path)
+        result = runner.invoke(app, ["compile", str(cfg), "--explain"])
+        assert result.exit_code == EXIT_USAGE, result.output
+        collapsed = " ".join(result.output.split())
+        assert "pip install decoy-cli[ner]" in collapsed, result.output
+        assert "decoy-engine" not in collapsed, result.output
+
+    def test_compile_json_mode_shows_cli_extra(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        import json
+
+        monkeypatch.setattr("decoy_engine.storm.ner.spacy_installed", lambda: False)
+        cfg = _ner_pipeline(tmp_path)
+        result = runner.invoke(app, ["compile", str(cfg), "--json"])
+        assert result.exit_code == EXIT_USAGE, result.output
+        payload = json.loads(result.output)
+        assert payload["status"] == "error"
+        assert payload["code"] == "missing_extra"
+        assert "pip install decoy-cli[ner]" in payload["error"], payload
+        assert "decoy-engine" not in payload["error"], payload

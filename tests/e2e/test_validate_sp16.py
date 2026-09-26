@@ -221,6 +221,21 @@ def test_validate_human_readable_shows_warning_hint_when_target_exists(tmp_path:
     )
 
 
+def test_validate_warning_keeps_bracketed_text(tmp_path: Path):
+    """A warning message is not authored markup: a target path under a
+    directory named `[ner]` must print verbatim, not lose `[ner]` to Rich's
+    tag parser. Rich wraps long lines, so compare with whitespace removed."""
+    (tmp_path / "[ner]").mkdir()
+    _cfg, p = _valid_v2_mask_config(tmp_path, out_name="[ner]/out.csv")
+    existing_target = tmp_path / "[ner]" / "out.csv"
+    existing_target.write_text("id\n", encoding="utf-8")
+
+    result = runner.invoke(app, ["validate", "config", str(p)])
+    assert result.exit_code == 0, result.output
+    assert "warning:" in result.output, result.output
+    assert "".join(str(existing_target).split()) in "".join(result.output.split()), result.output
+
+
 # ---------------------------------------------------------------------------
 # A6. `messages` is always present in JSON output
 # ---------------------------------------------------------------------------

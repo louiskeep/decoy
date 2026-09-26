@@ -32,7 +32,7 @@ class TestMatchExtra:
         assert _match_extra("lightgbm") == "ml"
 
     def test_cryptography_is_not_mapped(self) -> None:
-        # dennis M2: cryptography is a base engine dependency (FF1's
+        # cryptography is a base engine dependency (FF1's
         # AES-256 backend), not optional -- vault is a pyproject-only
         # compatibility alias with no _MODULE_TO_EXTRA entry, so a real
         # cryptography import failure is never mislabeled as "install
@@ -93,7 +93,7 @@ class TestRequireExtra:
     def test_unrelated_transitive_failure_is_not_mislabeled_as_missing_extra(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        # dennis M1: probing "boto3" whose OWN import chain fails on some
+        # Probing "boto3" whose OWN import chain fails on some
         # unrelated missing module (a corrupted install, an ABI break) must
         # propagate the real error, not the "add [cloud]" fix -- installing
         # the extra again would not have helped.
@@ -114,7 +114,7 @@ class TestRequireExtra:
             require_extra("boto3", why="irrelevant")
 
     def test_non_module_not_found_import_error_is_not_caught(self) -> None:
-        # dennis M1: a plain ImportError (not ModuleNotFoundError -- e.g.
+        # A plain ImportError (not ModuleNotFoundError -- e.g.
         # "cannot import name X from Y", a real defect) must propagate
         # unchanged; require_extra's except clause only catches
         # ModuleNotFoundError now.
@@ -159,7 +159,7 @@ class TestTranslateMissingExtra:
         assert "pip install decoy-cli[ner]" in str(translated)
 
     def test_google_namespace_shell_absent_still_matches_cloud(self) -> None:
-        # dennis M1: when the `google` namespace package itself is
+        # When the `google` namespace package itself is
         # entirely absent, Python reports exc.name == "google" (not the
         # full "google.cloud.storage" that was actually probed), which
         # doesn't match the "google.cloud" map key directly.
@@ -169,7 +169,7 @@ class TestTranslateMissingExtra:
         assert "pip install decoy-cli[cloud]" in str(translated)
 
     def test_plain_import_error_is_not_module_not_found_returns_none(self) -> None:
-        # dennis M1: only ModuleNotFoundError is treated as a missing
+        # Only ModuleNotFoundError is treated as a missing
         # extra now; any other ImportError (e.g. "cannot import name")
         # stays unclassified even if it happens to carry a matching .name.
         exc = ImportError("cannot import name 'client' from 'boto3'")
@@ -234,7 +234,7 @@ class TestCheckCloudEndpoints:
 
 
 class TestCheckCloudEndpointsSupported:
-    """dennis H2: `decoy run` cannot execute against s3/gcs at all yet,
+    """`decoy run` cannot execute against s3/gcs at all yet,
     regardless of whether the SDK is installed -- this check fails closed
     unconditionally, distinct from check_cloud_endpoints's SDK-presence
     check above."""
@@ -288,7 +288,7 @@ class TestTranslateNerUnavailable:
         assert translate_ner_unavailable(ValueError("unrelated")) is None
 
     def test_rewrites_the_wrapped_plancompileerror_shape(self) -> None:
-        # dennis H1: compile_plan wraps NerUnavailableError in
+        # compile_plan wraps NerUnavailableError in
         # PlanCompileError(code=exc.code, ...) at plan-compile time, so a
         # real `decoy run`/`validate`/`preflight`/`plan` invocation never
         # sees a raw NerUnavailableError -- it arrives as this wrapped
@@ -318,7 +318,7 @@ class TestTranslateNerUnavailable:
 
 
 class TestPlanCompileErrorFields:
-    """dennis H1: validate/preflight/plan each catch PlanCompileError and
+    """validate/preflight/plan each catch PlanCompileError and
     render exc.code/exc.message directly at their own call site; this is
     the shared boundary each routes through instead of duplicating the
     NER-rewrite check four times."""
@@ -332,7 +332,7 @@ class TestPlanCompileErrorFields:
         code, message = plan_compile_error_fields(exc)
         assert code == "missing_extra"
         assert "pip install decoy-cli[ner]" in message
-        # The [missing_extra] code prefix (dennis M3) belongs to the
+        # The [missing_extra] code prefix belongs to the
         # exception's __str__, not this rendered message -- callers already
         # display `code` and `message` as separate fields, so duplicating
         # the prefix into message would show it twice.

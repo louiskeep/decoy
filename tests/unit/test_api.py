@@ -447,13 +447,13 @@ def test_scan_parity_with_cli_storm_analyze(sample_csv: Path, tmp_path: Path):
 
 
 # --------------------------------------------------------------------------
-# decoy.mask -- cloud endpoints fail closed (dennis round-2 finding 3)
+# decoy.mask -- cloud endpoints fail closed
 #
-# The s3/gcs refusal used to live only in `decoy run`'s command body, so
-# `decoy.mask()` skipped it: an s3 source with [cloud] absent surfaced as a
-# ModuleNotFoundError from the engine's profiler, and a gcs target ran the
-# whole pipeline and then dropped the output silently. The refusal now sits
-# in the shared I/O helpers both paths call. These tests go through the
+# `decoy.mask()` must refuse an s3/gcs source or target before the engine
+# runs, exactly as `decoy run` does: the refusal sits in the I/O helpers both
+# paths share. Without it an s3 source with [cloud] absent surfaces as a
+# ModuleNotFoundError from the engine's profiler, and a gcs target runs the
+# whole pipeline and then drops the output. These tests go through the
 # public `decoy.mask()` entry, not the helper.
 # --------------------------------------------------------------------------
 

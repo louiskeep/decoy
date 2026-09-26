@@ -8,7 +8,7 @@ ImportError/ModuleNotFoundError -- generalizes the DE-02 keyprovider probe
 in run.py (see _MaskSecretUsageError) into one reusable translator any
 command's exception-handling boundary can call.
 
-`vault` is a separate, pyproject-only compatibility alias (dennis M2):
+`vault` is a separate, pyproject-only compatibility alias:
 `cryptography` is a base engine dependency (Task 5.2, FF1 needs its AES-256
 backend unconditionally), so `_MODULE_TO_EXTRA` has no vault entry --
 cryptography can never fail to import for lack of the extra, and a real
@@ -37,7 +37,7 @@ class MissingExtraError(Exception):
     user-fixable (exits EXIT_USAGE) by running the printed install line.
 
     `extra` is the machine-readable extra name (e.g. "cloud", "ner") so a
-    caller can put it on the `--json` error envelope (dennis M3) without
+    caller can put it on the `--json` error envelope without
     parsing the message text.
     """
 
@@ -63,8 +63,8 @@ def _failed_name_is_probed(probed: str, failed: str) -> bool:
     """True when `failed` (a ModuleNotFoundError's `.name`) is `probed`
     itself or a leading dotted prefix of it -- confirms the import that
     actually failed is the package we probed for, not an unrelated module
-    missing somewhere inside its own dependency chain (dennis M1: a real
-    ABI error or corrupted install must not be mislabeled as a missing
+    missing somewhere inside its own dependency chain (a real ABI
+    error or corrupted install must not be mislabeled as a missing
     extra)."""
     return probed == failed or probed.startswith(failed + ".")
 
@@ -82,7 +82,7 @@ def require_extra(module_name: str, *, why: str) -> None:
     the `google` namespace package is entirely absent) is treated as a
     missing extra; any other `ImportError` -- including a `ModuleNotFoundError`
     for an unrelated transitive import -- is a real defect and propagates
-    unclassified (dennis M1).
+    unclassified.
     """
     try:
         __import__(module_name)
@@ -108,24 +108,24 @@ _CLOUD_ENDPOINT_MODULE: dict[str, str] = {
 
 
 class UnsupportedCloudEndpointError(Exception):
-    """`decoy run` cannot read from or write to S3/GCS yet: its local I/O
-    helpers (`_load_sources_from_config` / `_write_mask_outputs` /
+    """Neither `decoy run` nor `decoy.mask()` can read from or write to
+    S3/GCS yet: the local I/O helpers both entry points share
+    (`_load_sources_from_config` / `_write_mask_outputs` /
     `_run_chunked_mask` in run.py) only handle a `path`-typed source or
     target, and the engine's own S3/GCS connectors are never reached from
-    `decoy run` (dennis H2). Without this check a cloud source/target was
-    silently skipped: the run reported `{"status": "ok"}`, exit 0, with the
-    masked output for that table never written anywhere. Raised up front,
-    before execution, so the failure is loud and typed instead of a false
-    success that drops data."""
+    either. Without this check a cloud source/target would be silently
+    skipped: the run reports success with the masked output for that table
+    never written anywhere. Raised up front, before execution, so the
+    failure is loud and typed instead of a false success that drops data."""
 
 
 def check_cloud_endpoints_supported(config_dict: dict) -> None:
     """Refuse a pipeline whose `sources`/`targets` declare an s3 or gcs
-    endpoint: `decoy run` cannot execute against one yet (see
-    UnsupportedCloudEndpointError). This is separate from
+    endpoint: `decoy run` and `decoy.mask()` cannot execute against one yet
+    (see UnsupportedCloudEndpointError). This is separate from
     check_cloud_endpoints below (which only checks the SDK is installed)
     because that check stays useful for a command that validates a config
-    without executing it; `decoy run` needs both checks, this one first.
+    without executing it; execution needs both checks, this one first.
     """
     for endpoint_kind, endpoints in (
         ("source", config_dict.get("sources") or {}),
@@ -138,9 +138,10 @@ def check_cloud_endpoints_supported(config_dict: dict) -> None:
             if endpoint_type in _CLOUD_ENDPOINT_MODULE:
                 raise UnsupportedCloudEndpointError(
                     f"the {endpoint_type} {endpoint_kind} '{table_name}' cannot run through "
-                    "`decoy run` yet: cloud sources/targets are not wired into the CLI's "
-                    "execution path, only local files are. Installing [cloud] adds the SDK "
-                    "dependency but not I/O support for `decoy run`; tracked as a known gap."
+                    "`decoy run` or `decoy.mask()` yet: cloud sources/targets are not wired "
+                    "into the CLI's execution path, only local files are. Installing [cloud] "
+                    "adds the SDK dependency but not I/O support for either; tracked as a "
+                    "known gap."
                 )
 
 
@@ -177,7 +178,7 @@ def translate_ner_unavailable(exc: Exception) -> MissingExtraError | None:
     plan-compile time and re-raises it wrapped in `PlanCompileError(code=
     exc.code, ...)`, so a config-time NER failure never reaches the CLI as
     a raw `NerUnavailableError` -- it arrives as a `PlanCompileError`
-    carrying the same code (dennis H1). Both shapes are checked here.
+    carrying the same code. Both shapes are checked here.
 
     Only the "spaCy itself is absent" code is rewritten
     (`ner_spacy_not_installed`); `ner_model_not_installed` means spaCy IS
@@ -208,11 +209,14 @@ def plan_compile_error_fields(exc: Exception) -> tuple[str, str]:
     `PlanCompileError`, rewriting the `ner_spacy_not_installed` case to
     point at decoy-cli's own `[ner]` extra via `translate_ner_unavailable`.
 
-    `run`, `validate`, `preflight`, and `plan` each catch `PlanCompileError`
-    and render `exc.code`/`exc.message` at their own call site (dennis H1:
-    the NER rewrite has to reach every one of them, not just `run`, so this
-    is the single shared boundary each calls instead of duplicating the
-    translate_ner_unavailable check four times). Returns the untranslated
+    Every command that displays a `PlanCompileError` (`validate`,
+    `preflight`, `plan`, `compile`, `unmask`, `vault info`, `subset`; `run`
+    calls `translate_ner_unavailable` directly) renders `exc.code`/
+    `exc.message` at its own call site. The NER rewrite has to reach all of
+    them, so this is the single shared boundary each calls instead of
+    duplicating the check. Callers print the result with Rich markup off:
+    both the code (often shown as `[code]`) and the rewritten install line
+    contain brackets Rich would parse as tags. Returns the untranslated
     `(exc.code, exc.message)` for anything else.
     """
     translated = translate_ner_unavailable(exc)
@@ -229,7 +233,7 @@ def translate_missing_extra(exc: ImportError) -> MissingExtraError | None:
     raise instead. Returns None for any other ImportError -- including a
     plain ImportError that isn't a ModuleNotFoundError -- so the caller
     leaves it unclassified rather than mislabeling a real defect as a
-    usage error (dennis M1).
+    usage error.
     """
     if not isinstance(exc, ModuleNotFoundError):
         return None
@@ -239,7 +243,7 @@ def translate_missing_extra(exc: ImportError) -> MissingExtraError | None:
     if name == "google":
         # The `google` namespace package itself absent (not just
         # google-cloud-storage): exc.name reports the shell package, which
-        # is never a _MODULE_TO_EXTRA key on its own (dennis M1).
+        # is never a _MODULE_TO_EXTRA key on its own.
         name = "google.cloud"
     extra = _match_extra(name)
     if extra is None:

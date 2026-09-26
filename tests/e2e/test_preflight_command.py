@@ -226,8 +226,7 @@ def test_preflight_help_shows_what_it_checks(tmp_path: Path):
 
 
 # ---------------------------------------------------------------------------
-# Rich markup must not eat bracketed text in check messages (dennis round-2
-# finding 2). A message is not authored markup: `[cloud]` in a path, or an
+# Rich markup must not eat bracketed text in check messages. A message is not authored markup: `[cloud]` in a path, or an
 # install hint like `pip install decoy-cli[ner]`, has to print verbatim.
 # Rich wraps long lines, so the checks compare with all whitespace removed.
 # ---------------------------------------------------------------------------

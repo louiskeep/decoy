@@ -106,7 +106,7 @@ def test_engine_dependency_pinned() -> None:
     assert len(engine_deps) == 1, f"expected exactly one decoy-engine dep, got {engine_deps}"
     # Assert the exact minimum, not merely that *a* floor exists -- a bare
     # `>=` check would let a silent downgrade (e.g. `decoy-engine>=0.1.0`)
-    # slip through. 0.6.0 is the CLI install DX marker (dennis M6): the
+    # slip through. 0.6.0 is the CLI install DX marker: the
     # first engine version carrying the `cloud` extra the pass-through
     # `cloud`/`all` extras below resolve against (see the pin rationale in
     # pyproject.toml; 0.5.0 was the prior floor, the DPS Scope B /

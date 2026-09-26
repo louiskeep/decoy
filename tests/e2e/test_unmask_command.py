@@ -396,6 +396,25 @@ class TestUnmaskVaultError:
             f"Expected version/mismatch in JSON error, got: {payload['error']!r}"
         )
 
+    def test_engine_install_line_keeps_its_bracketed_extra(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # Real engine path: with cryptography.fernet unimportable, load_vault
+        # raises vault_crypto_not_installed whose message ends in
+        # `pip install 'decoy-engine[vault]'`. The error print must not hand
+        # that to Rich's markup parser, which drops `[vault]` as a tag.
+        import sys
+
+        cfg_path, masked, vault_path = self._minimal_setup(tmp_path)
+        monkeypatch.setitem(sys.modules, "cryptography.fernet", None)
+        result = runner.invoke(
+            app, ["unmask", str(cfg_path), str(masked), "--vault", str(vault_path)]
+        )
+        assert result.exit_code == EXIT_USAGE, result.output
+        flat = _flatten(result.output)
+        assert "vault_crypto_not_installed" in flat, flat
+        assert "decoy-engine[vault]" in flat, flat
+
     def test_other_vault_error_code_exits_usage(
         self, tmp_path: Path
     ) -> None:

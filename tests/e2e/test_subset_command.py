@@ -358,6 +358,30 @@ def test_missing_subset_block_is_usage_error(tmp_path: Path):
     assert "Traceback" not in result.output
 
 
+def test_usage_error_keeps_its_bracketed_code_prefix(tmp_path: Path):
+    # The human error line is `[<code>] <message>`; printed through Rich
+    # markup, `[subset_config_missing]` parses as a style tag and vanishes.
+    customers_path, orders_path = _write_customers_orders(tmp_path)
+    config = _base_config(tmp_path, customers_path, orders_path)
+    p = _write_config(tmp_path, config)
+    result = runner.invoke(app, ["subset", str(p), "--dry-run"])
+    assert result.exit_code != 0
+    assert "[subset_config_missing]" in result.output, result.output
+
+
+def test_runtime_error_keeps_its_bracketed_code_prefix(tmp_path: Path, monkeypatch):
+    from decoy_engine.subset import SubsetInternalError
+
+    def _raise(**_kwargs):
+        raise SubsetInternalError(code="subset_closure_violation", message="closure re-check failed")
+
+    monkeypatch.setattr("decoy_engine.subset.run_subset", _raise)
+    p = _sample_subset_config(tmp_path)
+    result = runner.invoke(app, ["subset", str(p), "--out", str(tmp_path / "out")])
+    assert result.exit_code != 0
+    assert "[subset_closure_violation]" in result.output, result.output
+
+
 # ---------------------------------------------------------------------------
 # S9: fan-out budget exceeded -> clean error, no output dir
 # ---------------------------------------------------------------------------

@@ -206,11 +206,18 @@ def compile(
 def _compile_error(state, config: Path, exc: Exception) -> None:
     """Render a compile error to the appropriate output stream."""
     # Import lazily to keep startup fast.
+    err_code: str | None = None
     try:
         from decoy_engine.plan import PlanCompileError
 
         if isinstance(exc, PlanCompileError):
-            msg = f"[{exc.code}] {exc.path or '<global>'}: {exc.message}"
+            # Shared with run/validate/preflight/plan: a spaCy-missing NER
+            # failure must name decoy-cli's own [ner] extra, not the
+            # engine's decoy-engine[ner] install line.
+            from decoy.cli.extras import plan_compile_error_fields
+
+            err_code, message = plan_compile_error_fields(exc)
+            msg = f"[{err_code}] {exc.path or '<global>'}: {message}"
         else:
             msg = str(exc)
     except ImportError:
@@ -219,16 +226,19 @@ def _compile_error(state, config: Path, exc: Exception) -> None:
     from decoy.ui.output import OutputMode
 
     if state.mode is OutputMode.json:
-        emit_json(
-            state,
-            {
-                "command": "compile explain",
-                "status": "error",
-                "error": msg,
-            },
-        )
+        payload: dict = {
+            "command": "compile explain",
+            "status": "error",
+            "error": msg,
+        }
+        if err_code is not None:
+            payload["code"] = err_code
+        emit_json(state, payload)
     elif state.mode is not OutputMode.quiet:
-        state.err_console.print(error("error:"), msg)
+        # markup=False: msg starts with a bracketed error code and can carry
+        # an install line such as `pip install decoy-cli[ner]`; Rich would
+        # parse both as unknown style tags and drop them.
+        state.err_console.print(error("error:"), msg, markup=False)
         state.err_console.print(
             " ", hint("hint:"), "run", code("decoy validate config <config>"), "for full validation."
         )

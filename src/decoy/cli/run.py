@@ -646,7 +646,7 @@ def run(
                         # environment is missing a capability their config
                         # calls for, not a runtime crash.
                         MissingExtraError,
-                        # dennis H2: a cloud source/target `decoy run`
+                        # A cloud source/target `decoy run`
                         # cannot execute against -- the operator's config
                         # asks for a capability the CLI doesn't have yet,
                         # not a runtime crash.
@@ -720,7 +720,7 @@ def run(
                 payload["error_kind"] = "capacity"
                 payload["code"] = capacity_code
             elif isinstance(exc, MissingExtraError):
-                # dennis M3: a machine-detectable field, not just the
+                # A machine-detectable field, not just the
                 # `[missing_extra]`-prefixed message text.
                 payload["error_kind"] = "missing_extra"
                 payload["extra"] = exc.extra
@@ -1043,13 +1043,13 @@ def _require_local_io_endpoints(config_dict: dict) -> None:
 
     The helpers below (`_load_sources_from_config`, `_write_mask_outputs`,
     `_run_chunked_mask`) only read and write local files; they would skip a
-    cloud entry and report success with that table's output dropped (dennis
-    H2). They are shared by `decoy run` and the `decoy.mask()` library API,
-    so the refusal lives here, at the I/O layer both paths go through, and
-    not in one command's body (dennis round-2 finding 3: `decoy.mask()`
-    bypassed a check that only `run` called, and a cloud source then failed
-    later as an ImportError from the engine's profiler when [cloud] was
-    absent).
+    cloud entry and report success with that table's output dropped. They
+    are shared by `decoy run` and the `decoy.mask()` library API, so the
+    refusal lives here, at the I/O layer every entry point goes through,
+    rather than in one command's body where another caller could bypass it
+    (a cloud source would then fail late, as an ImportError from the
+    engine's profiler when [cloud] is absent). Each helper calls this
+    itself, so a helper reached without the others still refuses.
 
     `check_cloud_endpoints_supported` raises first and unconditionally,
     since installing [cloud] adds the SDK but not a cloud I/O path here.

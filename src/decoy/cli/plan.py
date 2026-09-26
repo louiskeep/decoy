@@ -183,10 +183,9 @@ def plan(
     try:
         plan_obj = compile_plan(config_dict, profile, decoy_engine_version=engine_version)
     except PlanCompileError as exc:
-        # CLI install DX (2026-09-25): rewrite ner_spacy_not_installed to
-        # decoy-cli's own [ner] extra (dennis H1); see
-        # plan_compile_error_fields's docstring for why every
-        # PlanCompileError call site needs this, not just `run`.
+        # Rewrite ner_spacy_not_installed to decoy-cli's own [ner] extra;
+        # see plan_compile_error_fields's docstring for why every
+        # PlanCompileError display site goes through it.
         from decoy.cli.extras import plan_compile_error_fields
 
         code, message = plan_compile_error_fields(exc)

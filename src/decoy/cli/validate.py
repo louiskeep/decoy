@@ -343,10 +343,9 @@ def config(
     try:
         checks_run = run_config_only_checks(raw)
     except PlanCompileError as exc:
-        # CLI install DX (2026-09-25): rewrite ner_spacy_not_installed to
-        # decoy-cli's own [ner] extra (dennis H1); see
-        # plan_compile_error_fields's docstring for why every
-        # PlanCompileError call site needs this, not just `run`.
+        # Rewrite ner_spacy_not_installed to decoy-cli's own [ner] extra;
+        # see plan_compile_error_fields's docstring for why every
+        # PlanCompileError display site goes through it.
         from decoy.cli.extras import plan_compile_error_fields
 
         code, message = plan_compile_error_fields(exc)
@@ -405,7 +404,7 @@ def _emit_result(
         # Include the error code so plan-compile codes (non_poolable_provider_with_pool_backend,
         # unknown_provider, etc.) remain visible in human output -- matches old behavior
         # where PlanCompileError emitted "{exc.code}: {exc.message}".
-        # dennis M4: first_error.message is arbitrary text, not authored UI
+        # markup=False: first_error.message is arbitrary text, not authored UI
         # copy -- a missing-extra install line legitimately contains `[ner]`
         # / `[cloud]`, which Rich's markup parser silently drops as an
         # unrecognized tag without markup=False (matches the run.py fix).

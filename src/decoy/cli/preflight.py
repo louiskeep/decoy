@@ -374,7 +374,7 @@ def _check_capacity(raw: dict[str, Any], config_path: Path, acc: _PreflightAccum
 
     R5 capability-detect: an engine older than the one that ships
     `estimate_job_capacity` degrades to "not checked" rather than an
-    ImportError -- the CLI's floor stays >=0.5.0 either way.
+    ImportError -- the CLI's engine floor is >=0.6.0 either way.
 
     R3 (Codex P1-2): an UNEXPECTED exception from `estimate_job_capacity`
     (a genuine engine defect -- a compile bug, ...) is NOT caught here.
@@ -660,10 +660,9 @@ def preflight(
         run_config_only_checks(raw)
         acc.add_pass(name="config.plan_checks", message="Profile-free plan-compile checks passed.")
     except PlanCompileError as exc:
-        # CLI install DX (2026-09-25): rewrite ner_spacy_not_installed to
-        # decoy-cli's own [ner] extra (dennis H1); see
-        # plan_compile_error_fields's docstring for why every
-        # PlanCompileError call site needs this, not just `run`.
+        # Rewrite ner_spacy_not_installed to decoy-cli's own [ner] extra;
+        # see plan_compile_error_fields's docstring for why every
+        # PlanCompileError display site goes through it.
         from decoy.cli.extras import plan_compile_error_fields
 
         code, message = plan_compile_error_fields(exc)

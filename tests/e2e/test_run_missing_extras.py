@@ -1,10 +1,9 @@
 """End-to-end tests for `decoy run` against a cloud source/target
-(CLI install DX, 2026-09-25 -- corrected by dennis H2, 2026-09-25).
+(CLI install DX).
 
 boto3/google-cloud-storage moved from decoy-engine hard dependencies to an
 opt-in `[cloud]` extra. The original acceptance criterion assumed installing
-`[cloud]` would make an s3/gcs job actually run; dennis H2 found that's
-false -- `decoy run`'s own I/O helpers (`_load_sources_from_config` /
+`[cloud]` would make an s3/gcs job actually run; that's false -- `decoy run`'s own I/O helpers (`_load_sources_from_config` /
 `_write_mask_outputs` / `_run_chunked_mask`) only ever handle a `path`-typed
 local source/target, so a cloud endpoint was silently skipped and the run
 reported `{"status": "ok"}`, exit 0, with the masked output dropped. There
@@ -23,6 +22,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
 import yaml
 from typer.testing import CliRunner
 
@@ -108,10 +108,33 @@ def _gcs_target_pipeline(tmp_path: Path) -> Path:
 
 class TestCloudEndpointUnsupportedByRun:
     """`decoy run` fails closed on any s3/gcs source or target -- never a
-    silent skip that reports success with the masked output dropped
-    (dennis H2). This holds regardless of whether `[cloud]` is installed:
+    silent skip that reports success with the masked output dropped.
+    This holds regardless of whether `[cloud]` is installed:
     the gap is that `decoy run` has no cloud I/O path at all, not that the
-    SDK is missing."""
+    SDK is missing.
+
+    Every test here also proves the refusal happens BEFORE the engine runs:
+    a typed error raised after `run_pipeline` / `run_mask_pipeline_chunked`
+    had already masked the data would still exit EXIT_USAGE, so the exit
+    code alone cannot tell the two apart."""
+
+    @pytest.fixture(autouse=True)
+    def engine_calls(self, monkeypatch: pytest.MonkeyPatch):
+        calls: list[str] = []
+
+        def _spy(name: str):
+            def _called(*_args, **_kwargs):
+                calls.append(name)
+                raise AssertionError(f"{name} ran before the cloud refusal")
+
+            return _called
+
+        monkeypatch.setattr("decoy_engine.run_pipeline", _spy("run_pipeline"))
+        monkeypatch.setattr(
+            "decoy_engine.run_mask_pipeline_chunked", _spy("run_mask_pipeline_chunked")
+        )
+        yield calls
+        assert calls == [], f"engine entry points were invoked: {calls}"
 
     def test_s3_source_fails_closed_not_silently_skipped(self, tmp_path: Path) -> None:
         cfg = _s3_source_pipeline(tmp_path)
@@ -146,9 +169,9 @@ class TestCloudEndpointUnsupportedByRun:
         assert '"status": "ok"' not in result.output, result.output
 
     def test_chunked_run_fails_closed_too(self, tmp_path: Path) -> None:
-        # The refusal lives in the shared I/O helpers (dennis round-2
-        # finding 3), so the --chunked path needs its own proof: it goes
-        # through _run_chunked_mask, not _load_sources_from_config.
+        # The refusal lives in the shared I/O helpers, so the --chunked path
+        # needs its own proof: it goes through _run_chunked_mask, not
+        # _load_sources_from_config.
         cfg = _gcs_target_pipeline(tmp_path)
         result = runner.invoke(app, ["run", str(cfg), "--chunked"])
         assert result.exit_code == EXIT_USAGE, result.output
