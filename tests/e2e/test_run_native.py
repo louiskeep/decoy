@@ -363,6 +363,59 @@ def test_no_native_flag_forces_legacy_pandas(tmp_path: Path):
     assert payload["native_route"]["state"] == "pandas"
 
 
+def test_no_native_stays_compatible_with_an_older_engine(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    """HIGH regression (dennis/Codex round 3): `unified_slice_enabled`
+    landed on engine main (2026-09-15) after the `decoy-engine>=0.5.0`
+    floor was tagged (2026-07-24), so an in-range install can genuinely
+    lack the parameter. `--no-native` -- the documented ROLLBACK -- must
+    not be the one path that crashes such an install; the shared
+    `_native_gate.run_pipeline_kwargs` capability-detects the parameter and
+    omits it when absent (an engine without it has no unified-slice lane
+    at all, so omitting is not a compromise). The fake below has an
+    EXPLICIT signature (no **kwargs catch-all) mirroring a real function,
+    so passing an unrecognized keyword raises TypeError exactly like the
+    real old engine would."""
+    import decoy_engine
+
+    real_run_pipeline = decoy_engine.run_pipeline
+
+    # An EXPLICIT signature with no `unified_slice_enabled` parameter and no
+    # **kwargs catch-all, mirroring a real pre-2026-09-15 `run_pipeline` --
+    # forwards to the real implementation (this dev environment has no
+    # actual old engine build to install), but the wrapper's own signature
+    # is what `inspect.signature` sees and what raises TypeError on an
+    # unrecognized keyword, exactly like the real old function would.
+    def _old_engine_run_pipeline(
+        config,
+        sources=None,
+        *,
+        engine_version,
+        registry=None,
+        derive_key=None,
+        instance_default_locale=None,
+        vault_writer=None,
+        substrate=None,
+    ):
+        return real_run_pipeline(
+            config,
+            sources,
+            engine_version=engine_version,
+            registry=registry,
+            derive_key=derive_key,
+            instance_default_locale=instance_default_locale,
+            vault_writer=vault_writer,
+            substrate=substrate,
+        )
+
+    monkeypatch.setattr("decoy_engine.run_pipeline", _old_engine_run_pipeline)
+    config = _hash_eligible_config(tmp_path)
+    result = runner.invoke(app, ["run", str(config), "--no-native"])
+    assert result.exit_code == 0, result.output
+    assert (tmp_path / "out.csv").exists()
+
+
 def test_no_native_downgrades_broken_companion_to_warned_fallback(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ):
@@ -394,6 +447,44 @@ def test_native_require_refuses_broken_companion(tmp_path: Path, monkeypatch: py
     assert result.exit_code == EXIT_USAGE
     assert "abi-mismatch" in result.output
     assert not (tmp_path / "out.csv").exists()
+
+
+def test_native_require_refuses_a_live_vault_writer(tmp_path: Path):
+    """M4 regression (dennis round 2/3): `--native --vault` must refuse with
+    its own coded error (`native_require_vault_active`) before any run --
+    admission always declines a live vault writer, so this combination
+    could never show compiled-kernel evidence."""
+    pytest.importorskip("cryptography")
+    src = tmp_path / "in.parquet"
+    pd.DataFrame({"id": ["a", "b"], "email": ["a@x.com", "b@x.com"]}).to_parquet(src, index=False)
+    config = {
+        "version": 1,
+        "global_settings": {"seed": 42},
+        "sources": {"customers": {"type": "file", "format": "parquet", "path": str(src)}},
+        "tables": [
+            {
+                "name": "customers",
+                "columns": [
+                    {"name": "id", "strategy": "passthrough"},
+                    {"name": "email", "strategy": "hash", "namespace": "n", "vault": True},
+                ],
+            }
+        ],
+        "targets": {
+            "customers": {"type": "file", "format": "csv", "path": str(tmp_path / "out.csv")}
+        },
+    }
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(yaml.dump(config))
+    vault_path = tmp_path / "vault.bin"
+    result = runner.invoke(
+        app, ["run", str(config_path), "--native", "--vault", str(vault_path), "--json"]
+    )
+    assert result.exit_code == EXIT_USAGE
+    payload = _json.loads(result.stdout)
+    assert payload["code"] == "native_require_vault_active"
+    assert not (tmp_path / "out.csv").exists()
+    assert not vault_path.exists()
 
 
 def test_native_chunked_rejected_before_dispatch(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):

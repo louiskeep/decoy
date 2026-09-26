@@ -479,16 +479,16 @@ def mask(
         # ("plain runs always use pandas; --substrate is only consulted for
         # --chunked runs"). Mirror the CLI exactly: omit the kwarg entirely
         # unless the caller explicitly chose a substrate.
-        # H1 remediation (matches decoy run's own fix): `unified_slice_
-        # enabled=True` is already the engine's own default, so it is
-        # passed ONLY to force it False (native=False). Never passing it on
-        # the true/default path keeps `mask()` working against an engine
-        # that predates this kwarg entirely.
-        run_pipeline_kwargs: dict[str, Any] = {}
-        if not gate_result.unified_slice_enabled:
-            run_pipeline_kwargs["unified_slice_enabled"] = False
+        # H1 remediation (round 3, matches decoy run's own fix): the shared
+        # `_native_gate.run_pipeline_kwargs` capability-detects
+        # `unified_slice_enabled` against the installed engine, so `mask()`
+        # can't independently regress the same crash-on-an-older-engine bug
+        # `--no-native` had before this fix.
+        extra_run_pipeline_kwargs: dict[str, Any] = dict(
+            _native_gate.run_pipeline_kwargs(gate_result)
+        )
         if substrate is not None:
-            run_pipeline_kwargs["substrate"] = substrate
+            extra_run_pipeline_kwargs["substrate"] = substrate
 
         result = run_pipeline(
             config_dict,
@@ -496,7 +496,7 @@ def mask(
             engine_version=engine_version,
             derive_key=resolver,
             instance_default_locale=instance_locale,
-            **run_pipeline_kwargs,
+            **extra_run_pipeline_kwargs,
         )
 
         route = _native_gate.classify_route(

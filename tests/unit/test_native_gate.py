@@ -127,7 +127,7 @@ def test_all_seven_native_strategies_at_once_is_eligible():
         {"name": "c2", "strategy": "redact"},
         {"name": "c3", "strategy": "truncate"},
         {"name": "c4", "strategy": "hash"},
-        {"name": "c5", "strategy": "categorical"},
+        {"name": "c5", "strategy": "categorical", "deterministic": True},
         {"name": "c6", "strategy": "bucket_perturb"},
         {"name": "c7", "strategy": "group_key"},
     ]
@@ -217,9 +217,37 @@ def test_other_companion_dependent_strategies_are_eligible(strategy):
     companion-dependent (`_COMPANION_DEPENDENT_OPERATOR_IDS`), so any one of
     them alone must make a config eligible, not just hash."""
     config = _eligible_config()
+    column: dict = {"name": "email", "strategy": strategy}
+    if strategy == "categorical":
+        # A plain `categorical` column defaults to the random, non-native
+        # path (see test_categorical_requires_determinism_to_be_eligible);
+        # this test is about the STRATEGY-SET check, not the determinism one.
+        column["deterministic"] = True
     config["tables"][0]["columns"] = [
         {"name": "id", "strategy": "passthrough"},
-        {"name": "email", "strategy": strategy},
+        column,
+    ]
+    assert static_native_eligibility(config) is True
+
+
+def test_categorical_requires_determinism_to_be_eligible():
+    """A plain `strategy: categorical` column (the common case) defaults to
+    `deterministic: false`, which the compiler's own `categorical_not_
+    deterministic` rejection declines from native regardless of companion
+    health (dennis round 3, mirroring `is_deterministic_categorical`)."""
+    config = _eligible_config()
+    config["tables"][0]["columns"] = [
+        {"name": "id", "strategy": "passthrough"},
+        {"name": "email", "strategy": "categorical"},
+    ]
+    assert static_native_eligibility(config) is False
+
+
+def test_categorical_with_allow_collisions_is_eligible():
+    config = _eligible_config()
+    config["tables"][0]["columns"] = [
+        {"name": "id", "strategy": "passthrough"},
+        {"name": "email", "strategy": "categorical", "allow_collisions": True},
     ]
     assert static_native_eligibility(config) is True
 
@@ -443,13 +471,19 @@ def test_require_rejects_generate_config_before_dispatch():
     assert exc_info.value.code == "native_require_not_a_candidate"
 
 
-def test_require_never_probes_when_not_a_candidate():
-    """Stage 0 rejects before Stage 1's companion probe ever runs."""
+def test_require_never_probes_when_not_a_candidate(monkeypatch):
+    """Stage 0 rejects before Stage 1's companion probe ever runs. `_boom`
+    is actually installed (L1 fix, Codex round 3): a prior version of this
+    test defined it but never wired it in, so it proved nothing about
+    probing -- only that the chunked+require combo raises, which the
+    dedicated `test_require_rejects_chunked_before_dispatch` already
+    covers."""
 
     def _boom():
         raise AssertionError("probe should not run for a non-candidate --native request")
 
-    with pytest.raises(NativeGateError):
+    monkeypatch.setattr("decoy._native_gate._probe_status", _boom)
+    with pytest.raises(NativeGateError) as exc_info:
         pre_execution_gate(
             intent="require",
             chunked=True,
@@ -457,6 +491,7 @@ def test_require_never_probes_when_not_a_candidate():
             config_dict={},
             status=None,
         )
+    assert exc_info.value.code == "native_require_not_a_candidate"
 
 
 @pytest.mark.parametrize("status", [_ABSENT, _ABI_MISMATCH, _KAT_CORRUPT, _LOAD_ERROR])

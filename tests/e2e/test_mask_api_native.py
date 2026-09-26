@@ -133,6 +133,42 @@ def test_mask_native_true_uses_shared_gate_absent_companion(
     assert not (tmp_path / "out.csv").exists()
 
 
+def test_mask_native_true_refuses_absent_companion_before_a_missing_source_error(
+    tmp_path: Path, force_absent_companion: None
+):
+    """M4 regression (dennis round 2/3): the gate must win a race against an
+    UNRELATED config error (here, a source file that does not exist) --
+    Stage 1's refusal happens before `_load_sources_from_config` ever tries
+    to open it, so the caller sees the native-companion reason, not a
+    generic `FileNotFoundError` that would obscure it."""
+    config = {
+        "version": 1,
+        "global_settings": {"seed": 42},
+        "sources": {
+            "customers": {
+                "type": "file",
+                "format": "parquet",
+                "path": str(tmp_path / "does-not-exist.parquet"),
+            }
+        },
+        "tables": [
+            {
+                "name": "customers",
+                "columns": [
+                    {"name": "id", "strategy": "passthrough"},
+                    {"name": "email", "strategy": "hash", "namespace": "n"},
+                ],
+            }
+        ],
+        "targets": {
+            "customers": {"type": "file", "format": "csv", "path": str(tmp_path / "out.csv")}
+        },
+    }
+    with pytest.raises(NativeGateError):
+        decoy.mask(config=config, native=True)
+    assert not (tmp_path / "out.csv").exists()
+
+
 def test_mask_native_true_refuses_broken_companion(
     eligible_parquet_config: dict, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ):
@@ -143,6 +179,48 @@ def test_mask_native_true_refuses_broken_companion(
 
 
 def test_mask_native_false_forces_legacy_pandas(eligible_parquet_config: dict, tmp_path: Path):
+    out = decoy.mask(config=eligible_parquet_config, native=False)
+    assert isinstance(out, pd.DataFrame)
+    assert (tmp_path / "out.csv").exists()
+
+
+def test_mask_native_false_stays_compatible_with_an_older_engine(
+    eligible_parquet_config: dict, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    """HIGH regression (dennis/Codex round 3): `native=False` -- the
+    documented rollback -- must not crash on an engine whose `run_pipeline`
+    predates `unified_slice_enabled` (an in-range `decoy-engine>=0.5.0`
+    install can genuinely lack it; see
+    `decoy._native_gate.run_pipeline_kwargs`'s docstring). The fake below
+    has an EXPLICIT signature (no **kwargs), so an unrecognized keyword
+    raises TypeError exactly like the real old engine would."""
+    import decoy_engine
+
+    real_run_pipeline = decoy_engine.run_pipeline
+
+    def _old_engine_run_pipeline(
+        config,
+        sources=None,
+        *,
+        engine_version,
+        registry=None,
+        derive_key=None,
+        instance_default_locale=None,
+        vault_writer=None,
+        substrate=None,
+    ):
+        return real_run_pipeline(
+            config,
+            sources,
+            engine_version=engine_version,
+            registry=registry,
+            derive_key=derive_key,
+            instance_default_locale=instance_default_locale,
+            vault_writer=vault_writer,
+            substrate=substrate,
+        )
+
+    monkeypatch.setattr("decoy_engine.run_pipeline", _old_engine_run_pipeline)
     out = decoy.mask(config=eligible_parquet_config, native=False)
     assert isinstance(out, pd.DataFrame)
     assert (tmp_path / "out.csv").exists()

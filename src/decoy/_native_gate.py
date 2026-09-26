@@ -45,6 +45,7 @@ design decision to hide.
 
 from __future__ import annotations
 
+import inspect
 from dataclasses import dataclass
 from typing import Any, Literal
 
@@ -235,6 +236,19 @@ def static_native_eligibility(config_dict: dict[str, Any]) -> bool:
     if any(c.get("vault") for c in columns):
         return False
     if any(_has_when_gate(c) for c in columns):
+        return False
+    if any(
+        c.get("strategy") == "categorical"
+        and not (c.get("deterministic") or c.get("allow_collisions"))
+        for c in columns
+    ):
+        # Mirrors `is_deterministic_categorical` (`_operator_config_
+        # rejections.py`): a categorical column defaults to the RANDOM path
+        # (`deterministic: false`), which the compiler's own
+        # `categorical_not_deterministic` rejection declines from native
+        # regardless of companion health -- a plain `strategy: categorical`
+        # column (no `deterministic`/`allow_collisions` override) is common
+        # and must not be treated as eligible.
         return False
     strategies = {c.get("strategy") for c in columns}
     if not strategies <= _NATIVE_STRATEGIES:
@@ -440,6 +454,36 @@ def post_run_verify(*, intent: NativeIntent, route: RouteClassification) -> None
     )
 
 
+def run_pipeline_kwargs(gate_result: PreGateResult) -> dict[str, bool]:
+    """The `run_pipeline` kwargs to pass for `gate_result`, capability-detected
+    against the INSTALLED engine (HIGH remediation, round 3): `unified_slice_
+    enabled=True` is already the engine's own default, so it is passed only to
+    force it `False` (`--no-native` / `native=False`) -- and even then, only
+    if the installed `run_pipeline` actually accepts that parameter.
+
+    `unified_slice_enabled` landed on engine main (2026-09-15) after the
+    `decoy-engine>=0.5.0` floor was tagged (2026-07-24, per the same still-
+    labeled-0.5.0 situation `run.py`'s DE-02 comment documents for
+    `keyprovider`), so an in-range 0.5.0 install can genuinely lack it. Before
+    this fix, `--no-native` -- the documented ROLLBACK for when something
+    looks wrong -- was the one path guaranteed to crash such an install with a
+    `TypeError`, while doing nothing (the default path) or requiring native
+    (which fails on its own missing-capability check first) both degraded
+    cleanly. An engine without the parameter also has no unified-slice lane at
+    all, so omitting it is not a compromise: that engine already behaves as if
+    native were disabled, unconditionally.
+
+    Both `decoy run` and `decoy.mask()` call this instead of building the
+    kwargs dict themselves, so neither can independently regress this."""
+    if gate_result.unified_slice_enabled:
+        return {}
+    from decoy_engine import run_pipeline
+
+    if "unified_slice_enabled" not in inspect.signature(run_pipeline).parameters:
+        return {}
+    return {"unified_slice_enabled": False}
+
+
 __all__ = [
     "NativeGateError",
     "NativeIntent",
@@ -449,6 +493,7 @@ __all__ = [
     "is_unified_slice_candidate",
     "post_run_verify",
     "pre_execution_gate",
+    "run_pipeline_kwargs",
     "sanitize_abi",
     "static_native_eligibility",
 ]

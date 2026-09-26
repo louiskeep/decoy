@@ -615,14 +615,6 @@ def run(
             else:
                 sources = _load_sources_from_config(config_dict, config.parent)
                 instance_locale = (config_dict.get("global_settings") or {}).get("default_locale")
-                # H1 remediation: `unified_slice_enabled=True` is already the
-                # engine's own default, so it is passed ONLY to force it
-                # False (--no-native). Never passing it on the true/default
-                # path keeps a plain `decoy run` working against an engine
-                # that predates this kwarg entirely.
-                run_pipeline_kwargs = {}
-                if not gate_result.unified_slice_enabled:
-                    run_pipeline_kwargs["unified_slice_enabled"] = False
                 result = run_pipeline(
                     config_dict,
                     sources,
@@ -630,7 +622,7 @@ def run(
                     derive_key=resolver,
                     instance_default_locale=instance_locale,
                     vault_writer=vault_writer,
-                    **run_pipeline_kwargs,
+                    **_native_gate.run_pipeline_kwargs(gate_result),
                 )
                 _native_route = _native_gate.classify_route(
                     chunked=False,
