@@ -20,8 +20,10 @@ from enum import Enum
 from pathlib import Path
 
 import typer
+from rich.text import Text
 
 from decoy import __version__ as _cli_version
+from decoy import _native_gate
 from decoy.cli.exit_codes import EXIT_CAPACITY, EXIT_RUNTIME, EXIT_USAGE
 from decoy.cli.extras import (
     MissingExtraError,
@@ -298,6 +300,27 @@ def run(
         help="Which terminal outcome(s) to notify on: success, failure, or always.",
         case_sensitive=False,
     ),
+    native: bool = typer.Option(
+        False,
+        "--native",
+        help=(
+            "Require that a compiled native kernel actually executed. Refuses "
+            "up front (no run) on --chunked or a generate/mixed config, or on an "
+            "absent/broken decoy-engine-native companion. Refuses AFTER the run, "
+            "before any output is written, if the job finished without positive "
+            "compiled-kernel evidence (e.g. an FK or non-Parquet source). "
+            "Mutually exclusive with --no-native. See: decoy explain native."
+        ),
+    ),
+    no_native: bool = typer.Option(
+        False,
+        "--no-native",
+        help=(
+            "Force the legacy pandas adapter, bypassing the unified slice "
+            "entirely -- the documented rollback for native-on-when-present. "
+            "Mutually exclusive with --native. See: decoy explain native."
+        ),
+    ),
 ) -> None:
     """Run a decoy pipeline from a YAML config.
 
@@ -355,6 +378,9 @@ def run(
     # which only fills for --evidence-out). None for --chunked runs (no
     # ExecutionResult to count).
     _notify_row_count: int | None = None
+    # Native route classification (Phase 3.1), set on a successful run for
+    # the run-summary line and JSON record.
+    _native_route: _native_gate.RouteClassification | None = None
 
     _run_started_at = datetime.now(timezone.utc)
     started = time.perf_counter()
@@ -516,6 +542,32 @@ def run(
                     "Run without --chunked to execute a mixed or generate pipeline."
                 )
 
+            # Phase 3.1: resolve --native/--no-native intent and run the
+            # shared pre-execution gate (approach 2 Stage 0/1, plus the
+            # broken-companion classification of approach 3) BEFORE any
+            # dispatch. See decoy._native_gate.
+            if native and no_native:
+                raise _native_gate.NativeGateError(
+                    "--native and --no-native are mutually exclusive.",
+                    code="native_flag_conflict",
+                )
+            native_intent: _native_gate.NativeIntent = (
+                "require" if native else "disable" if no_native else "default"
+            )
+            gate_result = _native_gate.pre_execution_gate(
+                intent=native_intent,
+                chunked=chunked,
+                any_generate=any_generate,
+                config_dict=config_dict,
+            )
+            if gate_result.info_message and state.mode is not OutputMode.quiet:
+                # Wrapped in Text(): the message can carry a literal
+                # "decoy-cli[native]" extras spec, which Rich's default
+                # string markup parsing would otherwise mangle.
+                state.err_console.print(hint("native:"), Text(gate_result.info_message))
+            if gate_result.warn_message and state.mode is not OutputMode.quiet:
+                state.err_console.print(warn("warning:"), Text(gate_result.warn_message))
+
             vault_writer = None
             if vault is not None:
                 from decoy_engine import vault_writer_for_config
@@ -530,7 +582,15 @@ def run(
                 vault_writer = vault_writer_for_config(config_dict)
 
             if chunked:
-                _run_chunked_mask(config_dict, config.parent, chunk_size, substrate, vault_writer)
+                resolved_substrate = _run_chunked_mask(
+                    config_dict, config.parent, chunk_size, substrate, vault_writer
+                )
+                _native_route = _native_gate.classify_route(
+                    chunked=True,
+                    any_generate=any_generate,
+                    resolved_substrate=resolved_substrate,
+                    quality_metrics=None,
+                )
             else:
                 sources = _load_sources_from_config(config_dict, config.parent)
                 instance_locale = (config_dict.get("global_settings") or {}).get("default_locale")
@@ -541,7 +601,18 @@ def run(
                     derive_key=resolver,
                     instance_default_locale=instance_locale,
                     vault_writer=vault_writer,
+                    unified_slice_enabled=gate_result.unified_slice_enabled,
                 )
+                _native_route = _native_gate.classify_route(
+                    chunked=False,
+                    any_generate=any_generate,
+                    resolved_substrate=None,
+                    quality_metrics=result.quality_metrics,
+                )
+                # Stage 2 (approach 2): assert --native's compiled-kernel
+                # evidence BEFORE the first write on this path. A no-op for
+                # default/--no-native intent.
+                _native_gate.post_run_verify(intent=native_intent, route=_native_route)
                 _write_mask_outputs(config_dict, result, config.parent)
                 if evidence_out is not None:
                     _ev_row_counts = {name: len(tbl) for name, tbl in result.outputs.items()}
@@ -656,6 +727,12 @@ def run(
                         # above -- still a fixable environment gap, not an
                         # engine defect.
                         *_ner_unavailable_types,
+                        # Phase 3.1: every `NativeGateError` (a --native/
+                        # --no-native usage refusal, an absent/broken
+                        # companion, or --native's post-run evidence check)
+                        # is something the caller can fix by changing the
+                        # request, not a CLI/engine defect.
+                        _native_gate.NativeGateError,
                         # PipelineConfig.model_validate's ValidationError, caught
                         # narrowly at its call site and re-raised as this typed
                         # error, means the YAML is structurally wrong (unknown key
@@ -730,10 +807,11 @@ def run(
         elif state.mode is not OutputMode.quiet:
             # CLI install DX (2026-09-25): error_text is arbitrary exception
             # text, not authored UI copy -- it can legitimately contain `[`
-            # (a MissingExtraError's `pip install decoy-cli[cloud]`, or any
-            # future message that happens to quote a list/bracketed value).
-            # markup=False so Rich prints it verbatim instead of parsing it
-            # as markup and silently dropping an unrecognized tag.
+            # (a MissingExtraError's `pip install decoy-cli[cloud]`, a
+            # Phase 3.1 native-gate message quoting `decoy-cli[native]`, or
+            # any future message that happens to quote a list/bracketed
+            # value). markup=False so Rich prints it verbatim instead of
+            # parsing it as markup and silently dropping an unrecognized tag.
             if capacity_code is not None:
                 state.err_console.print(error("capacity:"), error_text, markup=False)
                 state.err_console.print(
@@ -811,6 +889,12 @@ def run(
         }
         if notify_channels:
             payload["notify"] = notify_results
+        if _native_route is not None:
+            payload["native_route"] = {
+                "applicable": _native_route.applicable,
+                "state": _native_route.state,
+                "label": _native_route.label,
+            }
         emit_json(state, payload)
         return
 
@@ -822,6 +906,8 @@ def run(
         ("Mode", yaml_mode),
         ("Elapsed", f"{elapsed:.2f}s"),
     ]
+    if _native_route is not None:
+        facts.append(("Route", _native_route.label))
     if notify_channels:
         delivered = sum(1 for r in notify_results if r["delivered"])
         facts.append(("Notify", f"{delivered}/{len(notify_results)} delivered"))
@@ -922,9 +1008,14 @@ def _run_chunked_mask(
     chunk_size: int,
     substrate: str | None = None,
     vault_writer=None,
-) -> None:
+) -> str:
     """WS4 chunked mask path: stream each mask table's source through
     `decoy_engine.run_mask_pipeline_chunked`, writing output per chunk.
+
+    Returns the RESOLVED substrate label (never None): the chunked path has
+    no `ExecutionResult` to read a route from, so the caller's native-route
+    indicator (Phase 3.1) builds its "Route: <substrate> chunked stream"
+    label from this instead of hardcoding "pandas".
 
     The engine's `check_chunked_compatibility` rejects anything that is
     not value-keyed (PlanCompileError -> EXIT_USAGE via the H10 typed
@@ -947,8 +1038,9 @@ def _run_chunked_mask(
 
     from decoy_engine import __version__ as engine_version
     from decoy_engine import run_mask_pipeline_chunked
-    from decoy_engine.execution import select_execution_adapter
+    from decoy_engine.execution import resolve_substrate, select_execution_adapter
 
+    resolved_substrate = resolve_substrate(substrate)
     adapter = select_execution_adapter(substrate=substrate) if substrate is not None else None
 
     sources = config_dict.get("sources") or {}
@@ -975,6 +1067,8 @@ def _run_chunked_mask(
             vault_writer=vault_writer,
         )
         _write_chunked_output(masked_iter, out_path, src_path)
+
+    return resolved_substrate
 
 
 def _iter_source_chunks(src_path: Path, chunk_size: int):

@@ -15,6 +15,9 @@ What preflight checks (honest framing)
                        estimate is advisory (warns, does not refuse); only a
                        fan-in impossibility exits EXIT_CAPACITY. Covers the
                        out-of-core-FK route ONLY -- see the OOM checker v1 note.
+8. Native (Phase 3.1): decoy-engine-native companion health (pass/warn), plus
+                       a STATIC config-shape native-eligibility possibility
+                       -- not a guarantee of the resolved route at run time.
 
 What preflight does NOT check
 ------------------------------
@@ -60,6 +63,7 @@ from typing import Any
 
 import typer
 import yaml as _yaml
+from rich.text import Text
 
 from decoy.cli.exit_codes import EXIT_CAPACITY, EXIT_USAGE
 from decoy.ui.output import OutputMode, emit_json, setup_output
@@ -86,6 +90,8 @@ What preflight checks:
   - Target overwrite risk (advisory warning)
   - Out-of-core-FK memory capacity (v1; build-floor is advisory, only a fan-in
     impossibility exits EXIT_CAPACITY -- see: decoy explain exit-codes)
+  - Native companion health, plus a STATIC (config-shape-only) native
+    eligibility possibility -- see: decoy explain native
 
 What preflight does NOT check:
   - Platform server-side conditions (secrets, RBAC, schedules, network targets)
@@ -536,6 +542,69 @@ def _check_capacity(raw: dict[str, Any], config_path: Path, acc: _PreflightAccum
 
 
 # ---------------------------------------------------------------------------
+# Native companion + eligibility check (Phase 3.1)
+# ---------------------------------------------------------------------------
+
+
+def _check_native(raw: dict[str, Any], acc: _PreflightAccumulator) -> None:
+    """Companion health (pass/warn, never a hard fail here -- a broken
+    companion is `decoy run`'s fail-closed gate's job, not a preflight
+    refusal) plus a STATIC, config-shape-only native-eligibility line.
+
+    The eligibility line is explicitly labeled a possibility, not a
+    guarantee (plan approach 4, open question 5): real admission needs the
+    resolved route, the source profile, the resident Arrow table, and the
+    compiled physical plan, none of which a profile-free preflight has.
+    """
+    from decoy_engine import native_companion_status
+
+    from decoy import _native_gate
+
+    status = native_companion_status()
+    if status.ok:
+        acc.add_pass(
+            name="native.companion",
+            message=f"native companion present and healthy (v{status.version}).",
+        )
+    elif status.present:
+        acc.add_warn(
+            name="native.companion",
+            message=(
+                f"native companion present but not usable ({status.reason}) -- "
+                f"expected ABI {status.abi_expected}, got "
+                f"{_native_gate.sanitize_abi(status.abi_actual)!r}. `decoy run` "
+                "fails closed on this by default; use --no-native to roll back."
+            ),
+            code=status.reason,
+        )
+    else:
+        acc.add_pass(
+            name="native.companion",
+            message="native companion not installed; masking runs on the Python fallback.",
+        )
+
+    if _native_gate.static_native_eligibility(raw):
+        acc.add_pass(
+            name="native.eligibility",
+            message=(
+                "Native eligibility: eligible by config (single non-FK Parquet "
+                "mask table, native strategies) -- a STATIC possibility, not a "
+                "guarantee; the actual route depends on the resolved profile and "
+                "resident data at run time."
+            ),
+        )
+    else:
+        acc.add_pass(
+            name="native.eligibility",
+            message=(
+                "Native eligibility: not eligible by config shape (needs a single "
+                "non-FK Parquet mask table using only passthrough/redact/truncate/"
+                "hash strategies, with at least one hash column)."
+            ),
+        )
+
+
+# ---------------------------------------------------------------------------
 # Main command
 # ---------------------------------------------------------------------------
 
@@ -679,6 +748,9 @@ def preflight(
     # -- Step 6: Capacity check (OOM checker v1) -----------------------------
     _check_capacity(raw, config, acc)
 
+    # -- Step 7: Native companion health + static eligibility (Phase 3.1) ----
+    _check_native(raw, acc)
+
     # -- Emit and exit --------------------------------------------------------
     _emit_preflight_result(state, acc, config_str, fail_on_warning)
 
@@ -702,6 +774,7 @@ def _emit_preflight_result(
 ) -> None:
     """Render the accumulated preflight result."""
     capacity_checks = [c for c in acc.checks if c.name == "capacity.out_of_core_fk"]
+    native_checks = [c for c in acc.checks if c.name in ("native.companion", "native.eligibility")]
 
     if state.mode is OutputMode.json:
         status = "ok" if not acc.has_failures else "fail"
@@ -725,6 +798,15 @@ def _emit_preflight_result(
                 "message": cap.message,
                 "code": cap.code,
             }
+        # Same structured-block treatment as `capacity` (R9): a --json
+        # caller asserts on `native.companion` / `native.eligibility`
+        # directly instead of parsing `checks` by name.
+        for chk in native_checks:
+            payload[chk.name.replace(".", "_")] = {
+                "status": chk.status,
+                "message": chk.message,
+                "code": chk.code,
+            }
         emit_json(state, payload)
         return
 
@@ -733,7 +815,7 @@ def _emit_preflight_result(
 
     # Human-readable: print warnings then failures, then overall result.
     for chk in acc.checks:
-        if chk.name == "capacity.out_of_core_fk":
+        if chk.name in ("capacity.out_of_core_fk", "native.companion", "native.eligibility"):
             continue  # rendered separately below, at every status (not just warn/fail)
         # markup=False on every message print in this function: a check
         # message is not authored markup. It can carry an install hint like
@@ -758,6 +840,19 @@ def _emit_preflight_result(
         else:
             label = hint("capacity:")
         state.err_console.print(label, cap.message, markup=False)
+
+    # Same always-print treatment for the native companion + eligibility
+    # lines: both are informative even at "pass" (companion absent, or
+    # config not eligible, are normal outcomes an operator should still see).
+    # Text(): the message can carry an untrusted `abi_actual` value (see
+    # sanitize_abi) that Rich's default string markup would otherwise
+    # reinterpret.
+    for nat in native_checks:
+        if nat.status == "warn":
+            label = warn("native:")
+        else:
+            label = hint("native:")
+        state.err_console.print(label, Text(nat.message))
 
     if acc.has_failures:
         state.err_console.print(

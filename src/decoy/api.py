@@ -23,6 +23,7 @@ plus returning the masked DataFrame(s) in memory.
 
 from __future__ import annotations
 
+import warnings
 from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
@@ -30,6 +31,7 @@ from typing import Any
 import pandas as pd
 import pyarrow as pa
 
+from decoy import _native_gate
 from decoy.cli.extras import UnsupportedCloudEndpointError
 from decoy.cli.run import (
     _is_valid_mask_secret_ref,
@@ -306,6 +308,7 @@ def mask(
     key_label: str | None = None,
     out: Any = None,
     substrate: str | None = None,
+    native: bool | None = None,
 ) -> "pd.DataFrame | dict[str, pd.DataFrame]":
     """Mask (or generate) data through the same engine path `decoy run` uses.
 
@@ -346,6 +349,18 @@ def mask(
             per table by name.
         substrate: Execution substrate override (`"pandas"` or `"polars"`).
             `None` keeps `run_pipeline`'s default.
+        native: Mirrors the CLI's `--native`/`--no-native` (Phase 3.1).
+            `None` (default): inherit the engine's native-on-when-present
+            behavior. `True`: require that a compiled native kernel actually
+            executed -- raises `decoy._native_gate.NativeGateError` up front
+            for a shape that could never route through the unified slice
+            (a generate/mixed config) or an absent/broken companion, or
+            AFTER the run, before anything is written or returned, if the
+            job finished with no compiled-kernel evidence. `False`: force
+            the legacy pandas adapter (the same rollback `--no-native`
+            gives the CLI). Routed through the SAME shared gate `decoy run`
+            uses, so this cannot silently write an ineligible-shape result
+            the CLI would refuse.
 
     Returns:
         The masked/generated table as a `pandas.DataFrame`, when the
@@ -364,6 +379,9 @@ def mask(
             raised by the shared I/O helper before the engine runs; cloud
             I/O is not wired into this path whether or not `[cloud]` is
             installed.
+        decoy._native_gate.NativeGateError: `native=True` on a shape that
+            cannot use the unified slice, on an absent/broken companion, or
+            on a job that finished without compiled-kernel evidence.
 
     Does NOT support `--chunked` streaming (`run_mask_pipeline_chunked`);
     that path exists for datasets too large to load into memory, which is
@@ -435,6 +453,27 @@ def mask(
         if substrate is not None:
             run_pipeline_kwargs["substrate"] = substrate
 
+        # Phase 3.1: the SAME shared gate `decoy run --native`/`--no-native`
+        # uses, so `mask(native=True)` cannot silently write an
+        # ineligible-shape result the CLI would refuse (see
+        # decoy._native_gate module docstring).
+        tables_list = config_dict.get("tables") or []
+        any_generate = any(isinstance(t, dict) and t.get("generate_columns") for t in tables_list)
+        native_intent: _native_gate.NativeIntent = (
+            "require" if native is True else "disable" if native is False else "default"
+        )
+        gate_result = _native_gate.pre_execution_gate(
+            intent=native_intent,
+            chunked=False,
+            any_generate=any_generate,
+            config_dict=config_dict,
+        )
+        if gate_result.info_message:
+            warnings.warn(gate_result.info_message, stacklevel=2)
+        if gate_result.warn_message:
+            warnings.warn(gate_result.warn_message, stacklevel=2)
+        run_pipeline_kwargs["unified_slice_enabled"] = gate_result.unified_slice_enabled
+
         result = run_pipeline(
             config_dict,
             sources,
@@ -443,6 +482,17 @@ def mask(
             instance_default_locale=instance_locale,
             **run_pipeline_kwargs,
         )
+
+        route = _native_gate.classify_route(
+            chunked=False,
+            any_generate=any_generate,
+            resolved_substrate=None,
+            quality_metrics=result.quality_metrics,
+        )
+        # Stage 2 (approach 2): assert --native's/`native=True`'s
+        # compiled-kernel evidence BEFORE either write point (this is the
+        # library's own write/return point).
+        _native_gate.post_run_verify(intent=native_intent, route=route)
 
         _write_mask_outputs(config_dict, result, base_dir)
     finally:

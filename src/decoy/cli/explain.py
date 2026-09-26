@@ -270,6 +270,36 @@ _TOPICS: dict[str, _Topic] = {
         ),
         see_also=("decoy run --help", "decoy explain substrate"),
     ),
+    "native": _Topic(
+        name="native",
+        summary="Native-on-when-present: a compiled kernel speeds up masking when installed.",
+        body=(
+            "A plain, non-chunked, mask-only `decoy run` (or `decoy.mask()`) already\n"
+            "prefers a compiled native kernel over the pandas adapter whenever the\n"
+            "optional decoy-engine-native companion is installed and the job is\n"
+            "eligible: a single non-FK table read from Parquet, masked only with\n"
+            "passthrough, redact, truncate, or hash. No flag is needed for this --\n"
+            "install the companion and eligible jobs speed up automatically.\n\n"
+            "  --native      Require that a compiled kernel actually ran. Refuses\n"
+            "                up front on --chunked, a generate/mixed config, or an\n"
+            "                absent/broken companion; refuses AFTER the run, before\n"
+            "                any output is written, if the job finished on Python\n"
+            "                anyway (e.g. an FK table, or a non-Parquet source).\n"
+            "  --no-native   Force the legacy pandas adapter, bypassing the native\n"
+            "                lane entirely -- the rollback if something looks wrong.\n\n"
+            "A present-but-broken companion (a bad build, a mismatched ABI) is\n"
+            "treated as a deployment defect, not a fallback: by default `decoy run`\n"
+            "refuses closed with the classified reason rather than silently masking\n"
+            "on pandas. `--no-native` downgrades that refusal to a warned fallback.\n\n"
+            "The companion is not on PyPI yet. Install it directly (see\n"
+            "docs/native/supported-matrix.md for the wheel/index URL), or once a\n"
+            "paired release exists, `pip install decoy-cli[native]`. `decoy info`\n"
+            "and `decoy preflight` both report companion health without running\n"
+            "anything; preflight also reports a config-shape possibility line, not\n"
+            "a guarantee of the resolved route."
+        ),
+        see_also=("decoy run --help", "decoy info", "decoy preflight"),
+    ),
     "substrate": _Topic(
         name="substrate",
         summary="pandas is the masking substrate (polars is a dormant legacy opt-in).",

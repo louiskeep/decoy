@@ -8,6 +8,46 @@ version numbers follow the [versioning policy](docs/release/versioning.md).
 
 ## [Unreleased]
 
+### Added (Phase 3.1: CLI native packaging default-on-when-present, 2026-09-26)
+
+- **`decoy run --native` / `--no-native`.** A non-chunked, mask-only run
+  already prefers the compiled `decoy-engine-native` kernel over the pandas
+  adapter whenever the companion is installed and the job is eligible
+  (single non-FK Parquet table, passthrough/redact/truncate/hash only) --
+  no flag needed. `--native` now requires it: it refuses before any run on
+  `--chunked` or a generate/mixed config, refuses before any run on an
+  absent/broken companion, and refuses AFTER the run (writing nothing) if
+  the job finished without positive compiled-kernel evidence.
+  `--no-native` forces the legacy pandas adapter, the documented rollback.
+  `decoy.mask(native=...)` mirrors this exactly, through the same shared
+  gate (`decoy._native_gate`), so the library cannot silently write a
+  result the CLI would refuse.
+- **A present-but-broken companion now fails closed by default.** Before,
+  an `abi-mismatch` / `kat-corrupt` / `load-error` companion silently
+  declined admission and ran pandas with no signal. `decoy run` (and
+  `decoy.mask()`) now refuse with the classified reason and a remediation
+  hint instead; `--no-native` downgrades that to a warned fallback.
+  `status.cause` is never shown; a companion's own `abi_version()` string
+  is sanitized (length-capped, printable-only) before display.
+- **Three-state route indicator.** The run summary and `--json` record now
+  report `native_route`: `native (compiled kernel)`, `unified slice (no
+  compiled kernel)` (a passthrough/redact/truncate-only job activating the
+  unified slice without the companion -- never mislabeled "pandas"), or
+  `pandas (legacy adapter)`, scoped to whether the run was even a
+  unified-slice candidate. A `--chunked` run reports its resolved
+  substrate; a generate/mixed run reports the engine's own
+  `execution_mode`, or a neutral "not a unified-slice candidate" label.
+- **`decoy info` / `decoy preflight` companion visibility.** `decoy info`
+  reports companion presence, reason, expected/actual ABI, and version
+  (JSON and human). `decoy preflight` adds a companion-health check
+  (pass/warn) plus a native-eligibility line computed from config shape
+  alone, explicitly labeled a static possibility, not a guarantee of the
+  resolved route.
+- **`decoy explain native`.** New topic covering the native lane, the two
+  flags, the fail-closed default, and the interim direct-install path (no
+  paired PyPI release of the companion exists yet, so the `native` extra
+  itself is deferred to that release).
+
 ### Changed (OOM checker recalibration: build-floor refusal is now advisory, capacity refusal is fan-in-only, 2026-09-08)
 
 - **`FIT` no longer means "clears the budget."** The engine's OOM checker
