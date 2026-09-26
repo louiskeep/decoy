@@ -142,16 +142,25 @@ def _probe_status() -> Any:
     return probe()
 
 
-def sanitize_abi(value: str | None) -> str | None:
-    """Bound and printable-filter an untrusted `abi_actual` string.
+_NON_STRING_ABI_MARKER = "<non-string value>"
 
-    Never raises on a malformed value: caps length first (so a pathological
+
+def sanitize_abi(value: Any) -> str | None:
+    """Bound and printable-filter an untrusted `abi_actual` / `version` value.
+
+    Never raises on a malformed value. The value comes straight from the
+    companion's own `abi_version()` call, so a broken install can hand back
+    anything: a non-string yields the fixed `_NON_STRING_ABI_MARKER` rather
+    than a TypeError (the diagnostic commands must survive exactly that
+    case). A string is capped in length first (so a pathological
     multi-megabyte string is not scanned character-by-character) and then
-    drops non-printable characters, per the plan's "Unsanitized ABI string in
-    output" known failure mode.
+    stripped of non-printable characters, per the plan's "Unsanitized ABI
+    string in output" known failure mode.
     """
     if value is None:
         return None
+    if not isinstance(value, str):
+        return _NON_STRING_ABI_MARKER
     truncated = value[:_ABI_DISPLAY_MAX_LEN]
     return "".join(ch for ch in truncated if ch.isprintable())
 
@@ -186,6 +195,14 @@ def _has_when_gate(column: dict[str, Any]) -> bool:
     coordinator does not implement, so any column carrying one declines."""
     when = column.get("when")
     return when is not None and when != {}
+
+
+def source_is_materialized(entry: Any) -> bool:
+    """Whether the CLI loader (`decoy.cli.run._load_sources_from_config`)
+    reads this `sources:` entry into a resident table. The loader calls this
+    same predicate, so the static eligibility check and the tables actually
+    handed to `run_pipeline` cannot drift apart."""
+    return isinstance(entry, dict) and isinstance(entry.get("path"), str)
 
 
 def static_native_eligibility(config_dict: dict[str, Any]) -> bool:
@@ -257,11 +274,16 @@ def static_native_eligibility(config_dict: dict[str, Any]) -> bool:
         return False
     name = table.get("name")
     sources = config_dict.get("sources")
-    if not isinstance(sources, dict) or set(sources) != {name}:
+    if not isinstance(sources, dict):
+        return False
+    materialized = {key for key, entry in sources.items() if source_is_materialized(entry)}
+    if materialized != {name}:
         # Admission requires the resident sources to be EXACTLY {table}
         # (`_unified_slice_admission.py`'s `set(caller_sources) != {table}`
-        # decline) -- an extra declared source is the config-visible half of
-        # that same check.
+        # decline). `caller_sources` is what the CLI loader actually
+        # materialized, not every declared key: a declared entry the loader
+        # skips (no `path`, e.g. a cloud reference) never reaches admission,
+        # so comparing raw declared keys here would wrongly decline.
         return False
     source = sources[name]
     if not isinstance(source, dict):
@@ -495,5 +517,6 @@ __all__ = [
     "pre_execution_gate",
     "run_pipeline_kwargs",
     "sanitize_abi",
+    "source_is_materialized",
     "static_native_eligibility",
 ]

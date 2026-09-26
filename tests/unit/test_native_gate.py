@@ -298,6 +298,41 @@ def test_extra_declared_source_not_eligible():
     assert static_native_eligibility(config) is False
 
 
+def test_extra_declared_source_without_path_still_eligible():
+    """dennis re-verify MEDIUM-1: admission compares the MATERIALIZED
+    caller sources, and the CLI loader (`_load_sources_from_config`) skips
+    any entry with no string `path` (e.g. a cloud source reference). An
+    extra declared-but-unloaded source never reaches `caller_sources`, so
+    it must not flip the static check to "not eligible"."""
+    config = _eligible_config()
+    config["sources"]["archive"] = {"type": "s3", "bucket": "b", "key": "k.parquet"}
+    assert static_native_eligibility(config) is True
+
+
+def test_extra_declared_source_agrees_with_cli_loader(tmp_path):
+    """The eligibility check and the real loader must agree on which
+    sources get materialized: the loader yields exactly `{table}` here."""
+    import pyarrow as pa
+    import pyarrow.parquet as pq
+
+    from decoy.cli.run import _load_sources_from_config
+
+    pq.write_table(pa.table({"id": [1], "email": ["a@x"]}), tmp_path / "in.parquet")
+    config = _eligible_config()
+    config["sources"]["archive"] = {"type": "s3", "bucket": "b", "key": "k.parquet"}
+    assert set(_load_sources_from_config(config, tmp_path)) == {"customers"}
+    assert static_native_eligibility(config) is True
+
+
+def test_mask_table_source_without_path_not_eligible():
+    """The mask table's own source must be one the loader materializes;
+    without a `path` it never becomes a resident table, and admission
+    declines a missing source."""
+    config = _eligible_config()
+    del config["sources"]["customers"]["path"]
+    assert static_native_eligibility(config) is False
+
+
 # ---------------------------------------------------------------------------
 # sanitize_abi
 # ---------------------------------------------------------------------------
@@ -323,6 +358,16 @@ def test_sanitize_abi_strips_non_printable():
     assert result is not None
     assert "\x00" not in result
     assert "\x01" not in result
+
+
+@pytest.mark.parametrize("bad", [2, 2.5, b"decoy-native-abi-2", ["abi"], {"abi": 2}, object()])
+def test_sanitize_abi_non_string_returns_bounded_marker(bad):
+    """dennis re-verify MEDIUM-2: `abi_actual`/`version` come from the
+    companion's own `abi_version()` call, which is untrusted on a broken
+    install. A non-string must yield a fixed marker, never a TypeError, so
+    `decoy info` / `decoy preflight` can still diagnose the install."""
+    result = sanitize_abi(bad)
+    assert result == "<non-string value>"
 
 
 # ---------------------------------------------------------------------------
@@ -714,6 +759,24 @@ def test_default_on_eligible_shape_with_broken_companion_fails_closed(status):
         )
     assert exc_info.value.code == f"native_companion_{status.reason}"
     assert "cause" not in str(exc_info.value).lower()
+
+
+def test_default_broken_companion_fails_closed_despite_unloaded_extra_source():
+    """dennis re-verify MEDIUM-1, gate-level consequence: an extra declared
+    source the loader never materializes must not scope the job OUT of the
+    broken-companion fail-closed check (which would let it run on a broken
+    install that admission would still have tried to use)."""
+    config = _eligible_config()
+    config["sources"]["archive"] = {"type": "s3", "bucket": "b", "key": "k.parquet"}
+    with pytest.raises(NativeGateError) as exc_info:
+        pre_execution_gate(
+            intent="default",
+            chunked=False,
+            any_generate=False,
+            config_dict=config,
+            status=_KAT_CORRUPT,
+        )
+    assert exc_info.value.code == "native_companion_kat-corrupt"
 
 
 def test_default_broken_companion_message_never_echoes_cause_object():

@@ -1212,12 +1212,9 @@ def _load_sources_from_config(config_dict: dict, base_dir: Path) -> dict:
     if not isinstance(sources, dict):
         return out
     for table_name, src in sources.items():
-        if not isinstance(src, dict):
+        if not _native_gate.source_is_materialized(src):
             continue
-        raw_path = src.get("path")
-        if not isinstance(raw_path, str):
-            continue
-        path = _resolve_path(raw_path, base_dir)
+        path = _resolve_path(src["path"], base_dir)
         suffix = path.suffix.lower()
         if suffix == ".parquet":
             out[table_name] = pq.read_table(str(path))

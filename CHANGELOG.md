@@ -29,7 +29,8 @@ version numbers follow the [versioning policy](docs/release/versioning.md).
   `decoy.mask()`) now refuse with the classified reason and a remediation
   hint instead; `--no-native` downgrades that to a warned fallback.
   `status.cause` is never shown; a companion's own `abi_version()` string
-  is sanitized (length-capped, printable-only) before display.
+  is sanitized (length-capped, printable-only, and a non-string value
+  shows a fixed marker instead of crashing) before display.
 - **Three-state route indicator.** The run summary and `--json` record now
   report `native_route`: `native (compiled kernel)`, `unified slice (no
   compiled kernel)` (a passthrough/redact/truncate-only job activating the
