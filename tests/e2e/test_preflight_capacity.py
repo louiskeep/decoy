@@ -360,6 +360,31 @@ class TestJsonEnvelope:
         assert capacity_checks[0]["code"] == payload["capacity"]["code"]
 
 
+class TestCapacityLineRendersVerbatim:
+    def test_bracketed_text_in_capacity_message_survives(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # The capacity line relays engine text verbatim and is printed apart
+        # from the other check messages. Rich markup would parse `[ner]` and
+        # `[fanin_budget]` below as style tags and drop them.
+        import decoy_engine.execution as engine_exec
+        from decoy_engine import ExecutionError
+
+        engine_text = "see [fanin_budget]; pip install decoy-cli[ner] does not help here."
+
+        def _boom(*_a: Any, **_k: Any) -> Any:
+            raise ExecutionError(code="out_of_core_fanin_exceeds_budget", message=engine_text)
+
+        monkeypatch.setattr(engine_exec, "estimate_job_capacity", _boom)
+        config_path = _write_config(tmp_path)
+        result = _run_preflight(config_path)
+        assert result.exit_code == EXIT_CAPACITY, result.output
+        squashed = "".join(result.output.split())
+        assert "".join(f"capacity: INSUFFICIENT -- {engine_text}".split()) in squashed, (
+            result.output
+        )
+
+
 class TestRelativeSourcePath:
     def test_relative_path_resolves_against_yaml_directory(
         self, tmp_path: Path, low_threshold

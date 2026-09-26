@@ -21,7 +21,43 @@ pip install decoy-cli
 ```
 
 This installs the `decoy` console script and pulls in `decoy-engine` as a
-dependency. Python 3.10, 3.11, and 3.12 are supported.
+dependency. Python 3.10, 3.11, and 3.12 are supported. The base install is
+the full local masker + generator (CSV/Parquet, DuckDB, the pandas/polars/
+pyarrow data plane) with no extras to think about.
+
+For an isolated install that never collides with your other Python
+environments, use `uv` or `pipx` instead of a bare `pip install`:
+
+```
+uv tool install decoy-cli
+# or
+pipx install decoy-cli
+```
+
+### Extras
+
+A few heavier capabilities are opt-in, so the default install stays lean:
+
+| Extra | Adds | Install |
+|-------|------|---------|
+| `cloud` | The S3 / GCS SDK dependencies (`boto3`, `google-cloud-storage`) | `pip install decoy-cli[cloud]` |
+| `ner` | spaCy-based PII autodetect for `text_mask`/`text_redact` | `pip install decoy-cli[ner]` |
+| `ml` | The STORM field-classifier (scikit-learn/lightgbm) | `pip install decoy-cli[ml]` |
+| `vault` | Compatibility alias only; installs nothing extra (see note below) | `pip install decoy-cli[vault]` |
+| `all` | Every extra above | `pip install decoy-cli[all]` |
+
+You don't need to plan ahead: run a pipeline that needs one of these without
+it installed and `decoy` fails closed with the exact install line, not a
+raw traceback. `ner` also needs a downloaded spaCy model, a separate step:
+`python -m spacy download en_core_web_sm`.
+
+`decoy run` does not read from or write to S3/GCS yet -- `cloud` installs
+the SDK dependencies for other tooling in the stack, but the CLI's own
+execution path only reads/writes local files, and a config that points a
+`decoy run` source or target at S3/GCS fails closed with a clear error
+rather than silently dropping the job's output. `vault`'s reversible-token
+support has no CLI wiring at all today; the extra is kept only so an
+existing `pip install decoy-cli[vault]` still resolves.
 
 ## Quickstart
 

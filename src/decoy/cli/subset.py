@@ -222,7 +222,10 @@ def subset(
         _fail_usage(state, config_str, code_=exc.code, message=exc.message)
         raise typer.Exit(code=EXIT_USAGE)
     except PlanCompileError as exc:
-        _fail_usage(state, config_str, code_=exc.code, message=exc.message)
+        from decoy.cli.extras import plan_compile_error_fields
+
+        err_code, message = plan_compile_error_fields(exc)
+        _fail_usage(state, config_str, code_=err_code, message=message)
         raise typer.Exit(code=EXIT_USAGE)
 
     try:
@@ -470,7 +473,7 @@ def _emit_budget_failure(state, config_str: str, exc) -> None:
     if state.mode is OutputMode.quiet:
         return
 
-    state.err_console.print(error("error:"), exc.message)
+    state.err_console.print(error("error:"), exc.message, markup=False)
     state.err_console.print(
         " ", hint("hint:"), "rerun with --dry-run to inspect the estimate before adjusting budget."
     )
@@ -492,7 +495,9 @@ def _fail_usage(state, config_str: str, *, code_: str, message: str) -> None:
         return
     if state.mode is OutputMode.quiet:
         return
-    state.err_console.print(error("error:"), f"[{code_}] {message}")
+    # markup=False: the `[code]` prefix is literal text; Rich would parse it
+    # as a style tag and drop it. The engine message can also quote paths.
+    state.err_console.print(error("error:"), f"[{code_}] {message}", markup=False)
 
 
 def _fail_runtime(state, config_str: str, *, code_: str, message: str) -> None:
@@ -511,7 +516,7 @@ def _fail_runtime(state, config_str: str, *, code_: str, message: str) -> None:
         return
     if state.mode is OutputMode.quiet:
         return
-    state.err_console.print(error("error:"), f"[{code_}] {message}")
+    state.err_console.print(error("error:"), f"[{code_}] {message}", markup=False)
     state.err_console.print(" ", hint("hint:"), "rerun with --verbose for the full traceback.")
 
 

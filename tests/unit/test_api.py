@@ -31,6 +31,7 @@ from typer.testing import CliRunner
 import decoy
 from decoy.__main__ import app
 from decoy.api import ConfigValidationError, MaskSecretConfigError
+from decoy.cli.exit_codes import EXIT_USAGE
 
 runner = CliRunner()
 
@@ -443,6 +444,102 @@ def test_scan_parity_with_cli_storm_analyze(sample_csv: Path, tmp_path: Path):
     lib_fields = {f["name"]: f["pii_score"] for f in lib_profile["fields"]}
     cli_fields = {f["name"]: f["pii_score"] for f in cli_profile["fields"]}
     assert lib_fields == cli_fields
+
+
+# --------------------------------------------------------------------------
+# decoy.mask -- cloud endpoints fail closed
+#
+# `decoy.mask()` must refuse an s3/gcs source or target before the engine
+# runs, exactly as `decoy run` does: the refusal sits in the I/O helpers both
+# paths share. Without it an s3 source with [cloud] absent surfaces as a
+# ModuleNotFoundError from the engine's profiler, and a gcs target runs the
+# whole pipeline and then drops the output. These tests go through the
+# public `decoy.mask()` entry, not the helper.
+# --------------------------------------------------------------------------
+
+
+_CLOUD_MODULES = ("boto3", "botocore", "google", "google.cloud", "google.cloud.storage")
+
+
+@pytest.fixture
+def no_cloud_extra(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Make every [cloud] SDK import fail with ModuleNotFoundError, whatever
+    this venv happens to have installed."""
+    import sys
+
+    for name in _CLOUD_MODULES:
+        monkeypatch.setitem(sys.modules, name, None)
+
+
+@pytest.fixture
+def engine_must_not_run(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The refusal has to happen before the engine is invoked."""
+
+    def _boom(*_args, **_kwargs):
+        raise AssertionError("run_pipeline was called; the cloud refusal came too late")
+
+    monkeypatch.setattr("decoy_engine.run_pipeline", _boom)
+
+
+def _single_table_config(source: dict, target: dict) -> dict:
+    return {
+        "version": 1,
+        "global_settings": {"seed": 42},
+        "sources": {"customers": source},
+        "tables": [
+            {
+                "name": "customers",
+                "columns": [
+                    {"name": "customer_id", "strategy": "passthrough"},
+                    {"name": "ssn", "strategy": "redact"},
+                ],
+            },
+        ],
+        "targets": {"customers": target},
+    }
+
+
+def test_mask_s3_source_without_cloud_extra_fails_closed(
+    tmp_path: Path, no_cloud_extra: None, engine_must_not_run: None
+):
+    config = _single_table_config(
+        {"type": "s3", "format": "csv", "bucket": "test-bucket", "key": "customers.csv"},
+        {"type": "file", "format": "csv", "path": str(tmp_path / "out.csv")},
+    )
+    with pytest.raises(decoy.UnsupportedCloudEndpointError) as excinfo:
+        decoy.mask(None, config)
+    message = str(excinfo.value)
+    assert "s3 source 'customers'" in message
+    assert "cannot run through" in message
+    assert not (tmp_path / "out.csv").exists()
+
+
+def test_mask_gcs_target_fails_closed_instead_of_dropping_output(
+    sample_csv: Path, tmp_path: Path, no_cloud_extra: None, engine_must_not_run: None
+):
+    config = _single_table_config(
+        {"type": "file", "format": "csv", "path": str(sample_csv)},
+        {"type": "gcs", "format": "csv", "bucket": "test-bucket", "object": "out.csv"},
+    )
+    with pytest.raises(decoy.UnsupportedCloudEndpointError) as excinfo:
+        decoy.mask(None, config)
+    assert "gcs target 'customers'" in str(excinfo.value)
+
+
+def test_mask_cloud_refusal_matches_cli_run(tmp_path: Path, no_cloud_extra: None):
+    """Same config, same refusal text from both entry points."""
+    config = _single_table_config(
+        {"type": "s3", "format": "csv", "bucket": "test-bucket", "key": "customers.csv"},
+        {"type": "file", "format": "csv", "path": str(tmp_path / "out.csv")},
+    )
+    with pytest.raises(decoy.UnsupportedCloudEndpointError) as excinfo:
+        decoy.mask(None, config)
+
+    config_path = tmp_path / "pipeline.yaml"
+    config_path.write_text(yaml.safe_dump(config), encoding="utf-8")
+    result = runner.invoke(app, ["run", str(config_path)])
+    assert result.exit_code == EXIT_USAGE, result.output
+    assert " ".join(str(excinfo.value).split()) in " ".join(result.output.split())
 
 
 # --------------------------------------------------------------------------

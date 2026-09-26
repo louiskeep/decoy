@@ -82,8 +82,10 @@ dependencies = [
     # broken or forced install (one that violates the resolver guarantee) rather
     # than the load-bearing guard it was under the 0.3.0 floor.
     # 0.5.0 is the first engine with the typed-carrier DP API (fit_dp_snapshot)
-    # the DP fit path calls.
-    "decoy-engine>=0.5.0",
+    # the DP fit path calls. 0.6.0 is the first with the `cloud` extra: the `cloud`/`ner`/`ml`/`vault` pass-through extras above resolve
+    # against an engine old enough to lack `[cloud]` under the prior 0.5.0
+    # floor, so `decoy-cli[cloud]` could silently install nothing extra.
+    "decoy-engine>=0.6.0",
     # Pin the typer minor: `typer utils docs` metavar rendering differs across
     # typer minors (0.26.x emits `TEXT`/`FILE`; 0.27.x emits `<str>`/`<file>`),
     # and docs/cli-reference.md is committed and checked by the test_cli_surface
@@ -101,6 +103,21 @@ dependencies = [
 dev = [
     "pytest>=7.0.0",
 ]
+# CLI install DX (2026-09-25): pass-through extras so `pip install
+# decoy-cli[...]` actually reaches the engine's matching extra instead of
+# failing "unknown extra". The base install stays lean (no cloud SDKs, no
+# NER/ML weight); each of these is opt-in by name. `all` bundles every
+# user-facing extra; it deliberately excludes `dev` (contributor tooling,
+# not a runtime capability).
+#
+# `vault` is a compatibility alias, not a real opt-in capability: the engine's own `vault` extra is `[]` because `cryptography` (FF1's
+# AES-256 backend) is a base engine dependency, not optional. Kept so an
+# existing `pip install decoy-cli[vault]` still resolves.
+cloud = ["decoy-engine[cloud]"]
+ner = ["decoy-engine[ner]"]
+ml = ["decoy-engine[ml]"]
+vault = ["decoy-engine[vault]"]
+all = ["decoy-cli[cloud,ner,ml,vault]"]
 
 # Project URLs surfaced on the PyPI sidebar. Source key is the
 # convention pip/Warehouse uses.

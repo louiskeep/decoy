@@ -31,8 +31,21 @@
 #                         the middle of the pinned range) to keep this
 #                         lane itself fast -- the full version matrix on
 #                         a built artifact is release-smoke.yml's job.
+#   certified-profile  -- rebuilds the pristine DP runtime profile from
+#                         requirements-certified.txt on the exact CPython
+#                         patch it was certified on and runs
+#                         scripts/cert_smoke.py. The fingerprint covers every
+#                         installed distribution, the engine's version string
+#                         included, so an engine bump (or any pin edit here)
+#                         silently decertifies the CLI profile unless
+#                         something re-derives it. This job is that check. It
+#                         fails closed: a mismatch or a dropped manifest row is
+#                         red CI, never a pass.
 #
-# Triggers: every push to main AND every pull request targeting main.
+# Triggers: every push to main, every pull request targeting main, and a
+# weekly schedule. The schedule exists for certified-profile: the engine is
+# installed from its main branch, so an engine-side change can decertify the
+# CLI profile with no CLI commit to trigger a run.
 # The gate must be green before a PR can merge.
 
 name: ci
@@ -42,6 +55,10 @@ on:
     branches: [main]
   pull_request:
     branches: [main]
+  schedule:
+    # Monday 07:00 UTC, an hour after release-smoke.yml's weekly run.
+    - cron: '0 7 * * 1'
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -178,3 +195,41 @@ jobs:
           cd smoke_run
           ../.smoke/bin/decoy run pipeline.yaml
           test -s output.csv
+
+  # ---------------------------------------------------------------------------
+  # certified-profile: requirements-certified.txt still reproduces a
+  # certified DP row
+  # ---------------------------------------------------------------------------
+  certified-profile:
+    name: certified-profile (cpython 3.10.20)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+
+      - name: Pin the exact CPython patch
+        # The certified row is keyed on the full patch (3.10.20.final), not
+        # a floating 3.10, matching the engine's dps-dependency-matrix job.
+        run: uv python install 3.10.20
+
+      - name: Create the runtime-only venv
+        # uv venv seeds no pip/setuptools: every distribution in the venv is
+        # part of the hashed set, so the venv must hold exactly the certified
+        # profile and nothing else.
+        run: uv venv --python 3.10.20 .venv-certified
+
+      - name: Install engine + CLI, then the pinned closure
+        # The install recipe from requirements-certified.txt's header. Engine
+        # comes from the sibling repo's main (pre-publish window, same as the
+        # pytest job above); the CLI from this checkout, non-editable.
+        env:
+          VIRTUAL_ENV: .venv-certified
+        run: |
+          uv pip install "git+https://github.com/louiskeep/decoy-engine@main" .
+          uv pip install -r requirements-certified.txt
+
+      - name: Certification smoke (fingerprint + manifest row + real DP fit)
+        run: .venv-certified/bin/python scripts/cert_smoke.py

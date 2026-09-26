@@ -374,7 +374,7 @@ def _check_capacity(raw: dict[str, Any], config_path: Path, acc: _PreflightAccum
 
     R5 capability-detect: an engine older than the one that ships
     `estimate_job_capacity` degrades to "not checked" rather than an
-    ImportError -- the CLI's floor stays >=0.5.0 either way.
+    ImportError -- the CLI's engine floor is >=0.6.0 either way.
 
     R3 (Codex P1-2): an UNEXPECTED exception from `estimate_job_capacity`
     (a genuine engine defect -- a compile bug, ...) is NOT caught here.
@@ -660,7 +660,13 @@ def preflight(
         run_config_only_checks(raw)
         acc.add_pass(name="config.plan_checks", message="Profile-free plan-compile checks passed.")
     except PlanCompileError as exc:
-        acc.add_fail(name=f"config.{exc.code}", message=exc.message)
+        # Rewrite ner_spacy_not_installed to decoy-cli's own [ner] extra;
+        # see plan_compile_error_fields's docstring for why every
+        # PlanCompileError display site goes through it.
+        from decoy.cli.extras import plan_compile_error_fields
+
+        code, message = plan_compile_error_fields(exc)
+        acc.add_fail(name=f"config.{code}", message=message)
         _emit_preflight_result(state, acc, config_str, fail_on_warning)
         raise typer.Exit(code=EXIT_USAGE)
 
@@ -729,12 +735,17 @@ def _emit_preflight_result(
     for chk in acc.checks:
         if chk.name == "capacity.out_of_core_fk":
             continue  # rendered separately below, at every status (not just warn/fail)
+        # markup=False on every message print in this function: a check
+        # message is not authored markup. It can carry an install hint like
+        # `pip install decoy-cli[ner]` (Rich would parse `[ner]` as an
+        # unknown tag and drop it), a user path, or engine text relayed
+        # verbatim. The styled labels are Text objects and keep their style.
         if chk.status == "warn":
             loc_hint = f" ({chk.location})" if chk.location else ""
-            state.err_console.print(warn("warning:"), chk.message + loc_hint)
+            state.err_console.print(warn("warning:"), chk.message + loc_hint, markup=False)
         elif chk.status == "fail":
             loc_hint = f" ({chk.location})" if chk.location else ""
-            state.err_console.print(error("fail:"), chk.message + loc_hint)
+            state.err_console.print(error("fail:"), chk.message + loc_hint, markup=False)
 
     # The capacity line always prints, regardless of pass/warn/fail: OK, not
     # checked, and not applicable are all informative outcomes an operator
@@ -746,7 +757,7 @@ def _emit_preflight_result(
             label = warn("capacity:")
         else:
             label = hint("capacity:")
-        state.err_console.print(label, cap.message)
+        state.err_console.print(label, cap.message, markup=False)
 
     if acc.has_failures:
         state.err_console.print(

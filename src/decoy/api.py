@@ -30,6 +30,7 @@ from typing import Any
 import pandas as pd
 import pyarrow as pa
 
+from decoy.cli.extras import UnsupportedCloudEndpointError
 from decoy.cli.run import (
     _is_valid_mask_secret_ref,
     _load_sources_from_config,
@@ -41,6 +42,7 @@ from decoy.cli.storm import _infer_format as _storm_infer_format
 __all__ = [
     "ConfigValidationError",
     "MaskSecretConfigError",
+    "UnsupportedCloudEndpointError",
     "mask",
     "scan",
 ]
@@ -357,6 +359,11 @@ def mask(
             configured in two places at once.
         ValueError / TypeError: an ambiguous or wrongly-shaped `data` /
             `out` argument.
+        UnsupportedCloudEndpointError: a source or target (after `data` /
+            `out` are applied) is s3 or gcs. Same refusal as `decoy run`,
+            raised by the shared I/O helper before the engine runs; cloud
+            I/O is not wired into this path whether or not `[cloud]` is
+            installed.
 
     Does NOT support `--chunked` streaming (`run_mask_pipeline_chunked`);
     that path exists for datasets too large to load into memory, which is

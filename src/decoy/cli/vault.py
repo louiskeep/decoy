@@ -108,7 +108,10 @@ def _info(
                 },
             )
         elif state.mode is not OutputMode.quiet:
-            state.err_console.print(error("error:"), message)
+            # markup=False: message is engine text or a user path, not authored
+            # markup. Engine install lines such as `pip install 'decoy-engine[vault]'`
+            # would otherwise lose the bracketed extra name to Rich's tag parser.
+            state.err_console.print(error("error:"), message, markup=False)
             if hint_text:
                 state.err_console.print(" ", hint("hint:"), hint_text)
 
@@ -131,10 +134,10 @@ def _info(
     try:
         job_seed = job_seed_for_config(raw)
     except PlanCompileError as exc:
-        _emit_error(
-            f"{getattr(exc, 'code', type(exc).__name__)}: "
-            f"{getattr(exc, 'message', exc)}"
-        )
+        from decoy.cli.extras import plan_compile_error_fields
+
+        err_code, message = plan_compile_error_fields(exc)
+        _emit_error(f"{err_code}: {message}")
         raise typer.Exit(code=EXIT_USAGE)
 
     # Open the vault.

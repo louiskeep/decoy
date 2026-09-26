@@ -23,6 +23,14 @@ import typer
 
 from decoy import __version__ as _cli_version
 from decoy.cli.exit_codes import EXIT_CAPACITY, EXIT_RUNTIME, EXIT_USAGE
+from decoy.cli.extras import (
+    MissingExtraError,
+    UnsupportedCloudEndpointError,
+    check_cloud_endpoints,
+    check_cloud_endpoints_supported,
+    translate_missing_extra,
+    translate_ner_unavailable,
+)
 from decoy.ui.card import render_card
 from decoy.ui.output import OutputMode, emit_json, setup_output
 from decoy.ui.progress import spinner
@@ -414,6 +422,12 @@ def run(
             except _PydanticValidationError as exc:
                 raise _ConfigValidationError(str(exc)) from exc
 
+            # Cloud (s3/gcs) sources/targets are refused inside the shared
+            # I/O helpers below (_load_sources_from_config /
+            # _run_chunked_mask / _write_mask_outputs, via
+            # _require_local_io_endpoints), not here, so `decoy.mask()` --
+            # which calls the same helpers -- gets the identical refusal.
+
             # DE-02 Option B (2026-07-15): --mask-secret sets the same
             # `global_settings.mask_secret_ref` slot the YAML can set directly.
             # It feeds run_pipeline's fail-closed KeyProvider resolution AND
@@ -550,6 +564,41 @@ def run(
         from decoy_engine import ConfigError, PipelineValidationError
         from decoy_engine.plan import PlanCompileError
 
+        # CLI install DX (2026-09-25): a pipeline step that lazily imports an
+        # optional dependency (boto3/google-cloud-storage for a cloud
+        # source/target, spacy for NER, etc.) raises ImportError when the
+        # matching decoy-cli extra isn't installed. Translate that into the
+        # exact install line instead of a raw traceback. An ImportError for
+        # anything NOT a known optional extra is left as-is (stays classified
+        # EXIT_RUNTIME below -- that is a real defect, not a missing extra).
+        if isinstance(exc, ImportError):
+            _missing_extra = translate_missing_extra(exc)
+            if _missing_extra is not None:
+                exc = _missing_extra
+
+        # CLI install DX (2026-09-25): the engine's own NerUnavailableError
+        # (text_mask/text_redact `ner`) already fails closed for a missing
+        # spaCy install; rewrite it to point at decoy-cli's own `[ner]`
+        # extra instead of `decoy-engine[ner]` (see translate_ner_unavailable
+        # docstring for why only the "spaCy absent" case is rewritten).
+        _translated_ner = translate_ner_unavailable(exc)
+        if _translated_ner is not None:
+            exc = _translated_ner
+
+        # A NerUnavailableError this session's engine build has (defensive
+        # import: an older engine just never matches) but that
+        # translate_ner_unavailable declined to rewrite -- e.g.
+        # ner_model_not_installed, spaCy itself IS present, just not the
+        # requested model, so the fix is `spacy download <model>`, not an
+        # extra -- still needs EXIT_USAGE classification below with the
+        # engine's own message intact.
+        try:
+            from decoy_engine.storm.ner import NerUnavailableError as _NerUnavailableError
+
+            _ner_unavailable_types: tuple = (_NerUnavailableError,)
+        except ImportError:
+            _ner_unavailable_types = ()
+
         # DE-02: MaskSecretError lives in the engine's `keyprovider` module,
         # which a pre-DE-02 engine lacks. Import defensively so a missing
         # module never crashes the error handler itself (it would mask the
@@ -592,6 +641,21 @@ def run(
                         _ChunkedGenerateError,
                         _VaultUsageError,
                         _MaskSecretUsageError,
+                        # CLI install DX: a pipeline step hit an optional
+                        # extra that isn't installed -- the operator's
+                        # environment is missing a capability their config
+                        # calls for, not a runtime crash.
+                        MissingExtraError,
+                        # A cloud source/target `decoy run`
+                        # cannot execute against -- the operator's config
+                        # asks for a capability the CLI doesn't have yet,
+                        # not a runtime crash.
+                        UnsupportedCloudEndpointError,
+                        # ner_model_not_installed and any other
+                        # NerUnavailableError code not already rewritten
+                        # above -- still a fixable environment gap, not an
+                        # engine defect.
+                        *_ner_unavailable_types,
                         # PipelineConfig.model_validate's ValidationError, caught
                         # narrowly at its call site and re-raised as this typed
                         # error, means the YAML is structurally wrong (unknown key
@@ -655,12 +719,23 @@ def run(
             if capacity_code is not None:
                 payload["error_kind"] = "capacity"
                 payload["code"] = capacity_code
+            elif isinstance(exc, MissingExtraError):
+                # A machine-detectable field, not just the
+                # `[missing_extra]`-prefixed message text.
+                payload["error_kind"] = "missing_extra"
+                payload["extra"] = exc.extra
             if notify_channels:
                 payload["notify"] = notify_results
             emit_json(state, payload)
         elif state.mode is not OutputMode.quiet:
+            # CLI install DX (2026-09-25): error_text is arbitrary exception
+            # text, not authored UI copy -- it can legitimately contain `[`
+            # (a MissingExtraError's `pip install decoy-cli[cloud]`, or any
+            # future message that happens to quote a list/bracketed value).
+            # markup=False so Rich prints it verbatim instead of parsing it
+            # as markup and silently dropping an unrecognized tag.
             if capacity_code is not None:
-                state.err_console.print(error("capacity:"), error_text)
+                state.err_console.print(error("capacity:"), error_text, markup=False)
                 state.err_console.print(
                     " ",
                     hint("hint:"),
@@ -668,7 +743,7 @@ def run(
                     "tier or reduce the job.",
                 )
             else:
-                state.err_console.print(error("error:"), error_text)
+                state.err_console.print(error("error:"), error_text, markup=False)
                 state.err_console.print(
                     " ", hint("hint:"), "rerun with --verbose for the full traceback."
                 )
@@ -868,6 +943,8 @@ def _run_chunked_mask(
     `substrate` None keeps the chunked default (pandas, the byte-stable
     contract this mode shipped with); an explicit value selects the
     adapter via the engine's `select_execution_adapter`."""
+    _require_local_io_endpoints(config_dict)
+
     from decoy_engine import __version__ as engine_version
     from decoy_engine import run_mask_pipeline_chunked
     from decoy_engine.execution import select_execution_adapter
@@ -960,6 +1037,29 @@ def _resolve_path(raw_path: str, base_dir: Path) -> Path:
     return p if p.is_absolute() else (base_dir / p).resolve()
 
 
+def _require_local_io_endpoints(config_dict: dict) -> None:
+    """Refuse a config whose `sources`/`targets` declare an s3 or gcs
+    endpoint before any data is read or the engine is invoked.
+
+    The helpers below (`_load_sources_from_config`, `_write_mask_outputs`,
+    `_run_chunked_mask`) only read and write local files; they would skip a
+    cloud entry and report success with that table's output dropped. They
+    are shared by `decoy run` and the `decoy.mask()` library API, so the
+    refusal lives here, at the I/O layer every entry point goes through,
+    rather than in one command's body where another caller could bypass it
+    (a cloud source would then fail late, as an ImportError from the
+    engine's profiler when [cloud] is absent). Each helper calls this
+    itself, so a helper reached without the others still refuses.
+
+    `check_cloud_endpoints_supported` raises first and unconditionally,
+    since installing [cloud] adds the SDK but not a cloud I/O path here.
+    `check_cloud_endpoints` (SDK presence) stays second so the install hint
+    still applies if cloud I/O is ever wired into these helpers.
+    """
+    check_cloud_endpoints_supported(config_dict)
+    check_cloud_endpoints(config_dict)
+
+
 def _load_sources_from_config(config_dict: dict, base_dir: Path) -> dict:
     """Read each `sources[table]` into a `dict[str, pa.Table]`.
 
@@ -967,7 +1067,14 @@ def _load_sources_from_config(config_dict: dict, base_dir: Path) -> dict:
     field are skipped (the engine treats absent tables as empty, but
     the mask spine will error on a missing source if the plan needs it;
     leave that error to the engine layer).
+
+    Checks targets as well as sources (via `_require_local_io_endpoints`):
+    this is the first I/O step on every non-chunked path, so an s3/gcs
+    target is refused here, before the engine runs, not after the masking
+    work is done and `_write_mask_outputs` finds nowhere to put it.
     """
+    _require_local_io_endpoints(config_dict)
+
     import pandas as pd
     import pyarrow as pa
     import pyarrow.parquet as pq
@@ -1006,7 +1113,12 @@ def _write_mask_outputs(config_dict: dict, result, base_dir: Path) -> None:
     adapter writes them via its own target-writer. CLI.1 bridges the
     pandas path with this helper. Format inferred from the path
     extension (csv or parquet).
+
+    Refuses s3/gcs targets rather than skipping them, for a caller that
+    writes without having gone through `_load_sources_from_config`.
     """
+    _require_local_io_endpoints(config_dict)
+
     targets = config_dict.get("targets") or {}
     if not isinstance(targets, dict):
         return

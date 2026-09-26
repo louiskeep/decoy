@@ -223,3 +223,44 @@ def test_preflight_help_shows_what_it_checks(tmp_path: Path):
     assert result.exit_code == 0
     output = result.output.lower()
     assert "file" in output or "source" in output
+
+
+# ---------------------------------------------------------------------------
+# Rich markup must not eat bracketed text in check messages. A message is not authored markup: `[cloud]` in a path, or an
+# install hint like `pip install decoy-cli[ner]`, has to print verbatim.
+# Rich wraps long lines, so the checks compare with all whitespace removed.
+# ---------------------------------------------------------------------------
+
+
+def _squash(text: str) -> str:
+    return "".join(text.split())
+
+
+def test_preflight_fail_message_keeps_bracketed_text(tmp_path: Path):
+    bracket_dir = tmp_path / "[cloud]"
+    bracket_dir.mkdir()
+    _cfg, p = _valid_config(tmp_path)
+    cfg = yaml.safe_load(p.read_text(encoding="utf-8"))
+    cfg["sources"]["customers"]["path"] = str(bracket_dir / "missing.csv")
+    p.write_text(yaml.dump(cfg), encoding="utf-8")
+
+    result = runner.invoke(app, ["preflight", str(p)])
+    assert result.exit_code != 0, result.output
+    assert _squash(f"Source file not found: {bracket_dir / 'missing.csv'}") in _squash(
+        result.output
+    ), result.output
+
+
+def test_preflight_warning_message_keeps_bracketed_text(tmp_path: Path):
+    bracket_dir = tmp_path / "[ner]"
+    bracket_dir.mkdir()
+    existing_target = bracket_dir / "out.csv"
+    existing_target.write_text("email\n", encoding="utf-8")
+    _cfg, p = _valid_config(tmp_path)
+    cfg = yaml.safe_load(p.read_text(encoding="utf-8"))
+    cfg["targets"]["customers"]["path"] = str(existing_target)
+    p.write_text(yaml.dump(cfg), encoding="utf-8")
+
+    result = runner.invoke(app, ["preflight", str(p)])
+    assert "warning:" in result.output, result.output
+    assert _squash(str(existing_target)) in _squash(result.output), result.output

@@ -5,13 +5,20 @@ Not a pytest test -- run it directly with the certified venv's interpreter:
 
     .venv-certified/bin/python scripts/cert_smoke.py
 
-This is the proof that the pristine runtime install (engine 0.5.0 + decoy-cli
+This is the proof that the pristine runtime install (engine 0.6.0 + decoy-cli
 + the pinned closure in requirements-certified.txt, no dev tooling) actually
 reproduces certified row (platform, cpython 3.10.20, fingerprint
-5a2f7ef7...). A real `fit_dp_snapshot` call only completes on a certified
+e75c87e9...). A real `fit_dp_snapshot` call only completes on a certified
 row; everywhere else it raises `ProvenanceError(code="dp_stack_uncertified")`
 (see tests/e2e/test_fit_command.py and tests/e2e/test_dp_provenance.py for
 that refusal arm under the normal dev venv).
+
+Before the fit, it checks the running fingerprint against the one recorded
+in requirements-certified.txt's header and runs the engine's own fit-time
+gate, so a drift fails with a message naming which of the two links broke:
+the pinned file no longer produces the fingerprint it records, or that
+fingerprint is no longer a certified row in the installed engine's manifest
+(an engine bump that did not re-certify the CLI profile).
 
 Exit code is 0 only if every assertion below holds; any failure exits
 non-zero so this can gate a release the same way a pytest suite would.
@@ -19,14 +26,30 @@ non-zero so this can gate a release the same way a pytest suite would.
 
 from __future__ import annotations
 
+import re
 import sys
+from pathlib import Path
 
 import pandas as pd
+
+_REQUIREMENTS = Path(__file__).resolve().parent.parent / "requirements-certified.txt"
+# The header records the fingerprint on a comment line of its own.
+_RECORDED_FINGERPRINT = re.compile(r"^#\s+([0-9a-f]{64})\s*$", re.MULTILINE)
 
 
 def _fail(message: str) -> None:
     print(f"FAIL: {message}", file=sys.stderr)
     sys.exit(1)
+
+
+def _recorded_fingerprint() -> str:
+    matches = _RECORDED_FINGERPRINT.findall(_REQUIREMENTS.read_text(encoding="utf-8"))
+    if len(matches) != 1:
+        _fail(
+            f"expected exactly one recorded fingerprint line in {_REQUIREMENTS.name}, "
+            f"found {len(matches)}"
+        )
+    return matches[0]
 
 
 def main() -> None:
@@ -39,6 +62,26 @@ def main() -> None:
     print("running platform:", dp_provenance.current_platform())
     print("running cpython:", dp_provenance.current_cpython())
     print("running fingerprint:", running_fingerprint)
+
+    recorded = _recorded_fingerprint()
+    if running_fingerprint != recorded:
+        _fail(
+            f"running fingerprint {running_fingerprint} does not match the "
+            f"{recorded} recorded in {_REQUIREMENTS.name}; the installed set "
+            "is not the pinned certified profile"
+        )
+    print(f"matches {_REQUIREMENTS.name}: OK")
+
+    try:
+        dp_provenance.check_fit_environment()
+    except dp_provenance.ProvenanceError as exc:
+        _fail(
+            f"{exc.code}: the engine's certified manifest does not admit this "
+            f"profile ({exc.message}). Typically an engine bump that did not "
+            "re-certify this profile: re-derive the fingerprint, add the row "
+            "engine-side, and update requirements-certified.txt."
+        )
+    print("certified row in engine manifest: OK")
 
     # -- (a) the real fit, on the certified stack, must complete -----------
     df = pd.DataFrame(
