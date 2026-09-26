@@ -1,6 +1,6 @@
 # Phase 3.1: CLI native packaging default-on-when-present
 
-Status: BUILT 2026-09-26 on `feat/cli-native-packaging-default-on`, pending dennis + Codex FINAL gate before merge (Codex PLAN gate GO 2026-09-24; 3 P2 build-time corrections folded below and applied during the build).
+Status: BUILT 2026-09-26 on `feat/cli-native-packaging-default-on` (commit 9740922), through 3 rounds of dennis + Codex adversarial review (see "Build corrections" below) -- each round found real, substantive issues (build-time-stale facts, weak acceptance evidence, an old-engine crash) that were fixed and re-verified; round 3's last verdicts converged to a single shared HIGH finding, now fixed. Round 4 (the fix for that HIGH plus the round-3 MEDIUM/LOW items) has NOT been re-verified by a fresh external gate pass -- Cam's call whether to run one more confirming round or proceed to merge given the extent of iteration already done. Codex PLAN gate GO 2026-09-24; 3 P2 build-time corrections folded below and applied during the build (one, native-strategy scope, was itself already stale by build time -- see "Build corrections").
 Risk: R2. Author: Opus.
 Locked decisions (subject to the open questions below):
 - Native-on-when-present is delivered by making the companion INSTALLABLE and PRESENT for CLI users and by inheriting the engine's existing default lane, not by adding a new native switch to the hot path.
