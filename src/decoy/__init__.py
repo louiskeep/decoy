@@ -17,7 +17,15 @@ pull in typer/pandas/pyarrow/decoy_engine.
 
 __version__ = "0.1.0"
 
-_LAZY_API = frozenset({"mask", "scan", "MaskSecretConfigError", "ConfigValidationError"})
+_LAZY_API = frozenset(
+    {
+        "mask",
+        "scan",
+        "MaskSecretConfigError",
+        "ConfigValidationError",
+        "UnsupportedCloudEndpointError",
+    }
+)
 
 
 def __getattr__(name: str):

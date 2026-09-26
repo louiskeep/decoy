@@ -422,21 +422,11 @@ def run(
             except _PydanticValidationError as exc:
                 raise _ConfigValidationError(str(exc)) from exc
 
-            # CLI install DX (2026-09-25): boto3/google-cloud-storage moved
-            # to an opt-in `[cloud]` extra (engine pyproject.toml, `cloud`
-            # extra). Check upfront, before the engine attempts any network
-            # call, so a missing extra fails with the install line rather
-            # than however boto3's own absence happens to surface deep in a
-            # source/sink fetch.
-            #
-            # dennis H2: `decoy run`'s own I/O helpers only handle local
-            # files, regardless of whether [cloud] is installed -- without
-            # this check a cloud source/target was silently skipped and the
-            # run reported success with the masked output dropped. Checked
-            # first so this failure (a real capability gap) is not masked
-            # by check_cloud_endpoints's install-line message.
-            check_cloud_endpoints_supported(config_dict)
-            check_cloud_endpoints(config_dict)
+            # Cloud (s3/gcs) sources/targets are refused inside the shared
+            # I/O helpers below (_load_sources_from_config /
+            # _run_chunked_mask / _write_mask_outputs, via
+            # _require_local_io_endpoints), not here, so `decoy.mask()` --
+            # which calls the same helpers -- gets the identical refusal.
 
             # DE-02 Option B (2026-07-15): --mask-secret sets the same
             # `global_settings.mask_secret_ref` slot the YAML can set directly.
@@ -953,6 +943,8 @@ def _run_chunked_mask(
     `substrate` None keeps the chunked default (pandas, the byte-stable
     contract this mode shipped with); an explicit value selects the
     adapter via the engine's `select_execution_adapter`."""
+    _require_local_io_endpoints(config_dict)
+
     from decoy_engine import __version__ as engine_version
     from decoy_engine import run_mask_pipeline_chunked
     from decoy_engine.execution import select_execution_adapter
@@ -1045,6 +1037,29 @@ def _resolve_path(raw_path: str, base_dir: Path) -> Path:
     return p if p.is_absolute() else (base_dir / p).resolve()
 
 
+def _require_local_io_endpoints(config_dict: dict) -> None:
+    """Refuse a config whose `sources`/`targets` declare an s3 or gcs
+    endpoint before any data is read or the engine is invoked.
+
+    The helpers below (`_load_sources_from_config`, `_write_mask_outputs`,
+    `_run_chunked_mask`) only read and write local files; they would skip a
+    cloud entry and report success with that table's output dropped (dennis
+    H2). They are shared by `decoy run` and the `decoy.mask()` library API,
+    so the refusal lives here, at the I/O layer both paths go through, and
+    not in one command's body (dennis round-2 finding 3: `decoy.mask()`
+    bypassed a check that only `run` called, and a cloud source then failed
+    later as an ImportError from the engine's profiler when [cloud] was
+    absent).
+
+    `check_cloud_endpoints_supported` raises first and unconditionally,
+    since installing [cloud] adds the SDK but not a cloud I/O path here.
+    `check_cloud_endpoints` (SDK presence) stays second so the install hint
+    still applies if cloud I/O is ever wired into these helpers.
+    """
+    check_cloud_endpoints_supported(config_dict)
+    check_cloud_endpoints(config_dict)
+
+
 def _load_sources_from_config(config_dict: dict, base_dir: Path) -> dict:
     """Read each `sources[table]` into a `dict[str, pa.Table]`.
 
@@ -1052,7 +1067,14 @@ def _load_sources_from_config(config_dict: dict, base_dir: Path) -> dict:
     field are skipped (the engine treats absent tables as empty, but
     the mask spine will error on a missing source if the plan needs it;
     leave that error to the engine layer).
+
+    Checks targets as well as sources (via `_require_local_io_endpoints`):
+    this is the first I/O step on every non-chunked path, so an s3/gcs
+    target is refused here, before the engine runs, not after the masking
+    work is done and `_write_mask_outputs` finds nowhere to put it.
     """
+    _require_local_io_endpoints(config_dict)
+
     import pandas as pd
     import pyarrow as pa
     import pyarrow.parquet as pq
@@ -1091,7 +1113,12 @@ def _write_mask_outputs(config_dict: dict, result, base_dir: Path) -> None:
     adapter writes them via its own target-writer. CLI.1 bridges the
     pandas path with this helper. Format inferred from the path
     extension (csv or parquet).
+
+    Refuses s3/gcs targets rather than skipping them, for a caller that
+    writes without having gone through `_load_sources_from_config`.
     """
+    _require_local_io_endpoints(config_dict)
+
     targets = config_dict.get("targets") or {}
     if not isinstance(targets, dict):
         return

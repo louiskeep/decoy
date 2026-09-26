@@ -736,12 +736,17 @@ def _emit_preflight_result(
     for chk in acc.checks:
         if chk.name == "capacity.out_of_core_fk":
             continue  # rendered separately below, at every status (not just warn/fail)
+        # markup=False on every message print in this function: a check
+        # message is not authored markup. It can carry an install hint like
+        # `pip install decoy-cli[ner]` (Rich would parse `[ner]` as an
+        # unknown tag and drop it), a user path, or engine text relayed
+        # verbatim. The styled labels are Text objects and keep their style.
         if chk.status == "warn":
             loc_hint = f" ({chk.location})" if chk.location else ""
-            state.err_console.print(warn("warning:"), chk.message + loc_hint)
+            state.err_console.print(warn("warning:"), chk.message + loc_hint, markup=False)
         elif chk.status == "fail":
             loc_hint = f" ({chk.location})" if chk.location else ""
-            state.err_console.print(error("fail:"), chk.message + loc_hint)
+            state.err_console.print(error("fail:"), chk.message + loc_hint, markup=False)
 
     # The capacity line always prints, regardless of pass/warn/fail: OK, not
     # checked, and not applicable are all informative outcomes an operator
@@ -753,7 +758,7 @@ def _emit_preflight_result(
             label = warn("capacity:")
         else:
             label = hint("capacity:")
-        state.err_console.print(label, cap.message)
+        state.err_console.print(label, cap.message, markup=False)
 
     if acc.has_failures:
         state.err_console.print(

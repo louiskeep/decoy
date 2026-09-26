@@ -5,10 +5,10 @@ Not a pytest test -- run it directly with the certified venv's interpreter:
 
     .venv-certified/bin/python scripts/cert_smoke.py
 
-This is the proof that the pristine runtime install (engine 0.5.0 + decoy-cli
+This is the proof that the pristine runtime install (engine 0.6.0 + decoy-cli
 + the pinned closure in requirements-certified.txt, no dev tooling) actually
 reproduces certified row (platform, cpython 3.10.20, fingerprint
-5a2f7ef7...). A real `fit_dp_snapshot` call only completes on a certified
+e75c87e9...). A real `fit_dp_snapshot` call only completes on a certified
 row; everywhere else it raises `ProvenanceError(code="dp_stack_uncertified")`
 (see tests/e2e/test_fit_command.py and tests/e2e/test_dp_provenance.py for
 that refusal arm under the normal dev venv).

@@ -99,3 +99,30 @@ class TestNerMissingExtraThroughRealCompile:
         collapsed = " ".join(result.output.split())
         assert "spacy download" in collapsed, result.output
         assert "pip install decoy-cli[ner]" not in collapsed, result.output
+
+
+class TestNerMissingExtraThroughPreflight:
+    """dennis round-2 finding 2: `decoy preflight` printed check messages
+    through Rich markup, so the `[ner]` in the install line was parsed as an
+    unknown tag and dropped. The operator saw `pip install decoy-cli` with
+    no extra, which installs nothing useful."""
+
+    def test_preflight_shows_the_literal_extra_name(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr("decoy_engine.storm.ner.spacy_installed", lambda: False)
+        cfg = _ner_pipeline(tmp_path)
+        result = runner.invoke(app, ["preflight", str(cfg)])
+        assert result.exit_code == EXIT_USAGE, result.output
+        collapsed = " ".join(result.output.split())
+        assert "pip install decoy-cli[ner]" in collapsed, result.output
+        assert "decoy-engine[ner]" not in collapsed, result.output
+
+    def test_preflight_json_mode_shows_the_literal_extra_name(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr("decoy_engine.storm.ner.spacy_installed", lambda: False)
+        cfg = _ner_pipeline(tmp_path)
+        result = runner.invoke(app, ["preflight", str(cfg), "--json"])
+        assert result.exit_code == EXIT_USAGE, result.output
+        assert "pip install decoy-cli[ner]" in result.output, result.output

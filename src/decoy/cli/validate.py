@@ -423,7 +423,9 @@ def _emit_result(
     for msg in acc.messages:
         if msg.severity == "warning":
             loc_hint = f" ({msg.location})" if msg.location else ""
-            state.err_console.print(warn("warning:"), msg.message + loc_hint)
+            # markup=False: same reason as the error print above; a warning
+            # message can quote a user path or other bracketed text.
+            state.err_console.print(warn("warning:"), msg.message + loc_hint, markup=False)
 
     state.console.print(success("OK"), code(config_str))
 

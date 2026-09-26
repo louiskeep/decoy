@@ -144,3 +144,14 @@ class TestCloudEndpointUnsupportedByRun:
         assert "cannot run through" in result.output, result.output
         # Never the false-success shape this check exists to prevent.
         assert '"status": "ok"' not in result.output, result.output
+
+    def test_chunked_run_fails_closed_too(self, tmp_path: Path) -> None:
+        # The refusal lives in the shared I/O helpers (dennis round-2
+        # finding 3), so the --chunked path needs its own proof: it goes
+        # through _run_chunked_mask, not _load_sources_from_config.
+        cfg = _gcs_target_pipeline(tmp_path)
+        result = runner.invoke(app, ["run", str(cfg), "--chunked"])
+        assert result.exit_code == EXIT_USAGE, result.output
+        collapsed = " ".join(result.output.split())
+        assert "cannot run through" in collapsed, result.output
+        assert "gcs" in collapsed and "accounts" in collapsed, result.output
