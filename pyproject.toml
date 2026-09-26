@@ -126,10 +126,12 @@ all = ["decoy-cli[cloud,ner,ml,vault]"]
 # pair it with a different-ABI `decoy-engine` (the base dependency above is
 # open-ended). The extra lands once a paired release exists, forwarding to
 # the engine's own `decoy-engine[native]` extra so the ABI pin has one
-# owner. Until then: `decoy explain native` for the direct-install path,
-# `decoy info` / `decoy preflight` for companion health, `decoy run
-# --native` / `--no-native` for the runtime behavior -- all of which work
-# today against a hand-installed companion regardless of how it arrived.
+# owner. No published direct-install artifact exists either yet (see
+# `decoy explain native`). Until then: `decoy info` / `decoy preflight`
+# for companion health, `decoy run --native` / `--no-native` for the
+# runtime behavior -- all of which work today against a companion
+# installed by other means (a local build, a hand-copied wheel),
+# regardless of how it arrived.
 
 # Project URLs surfaced on the PyPI sidebar. Source key is the
 # convention pip/Warehouse uses.

@@ -430,6 +430,36 @@ def mask(
 
         _apply_mask_secret(config_dict, mask_secret)
 
+        # Phase 3.1: the SAME shared gate `decoy run --native`/`--no-native`
+        # uses, so `mask(native=True)` cannot silently write an
+        # ineligible-shape result the CLI would refuse (see
+        # decoy._native_gate module docstring). Runs BEFORE
+        # `_load_sources_from_config` below (which reads every declared
+        # source file into memory and raises on a missing one) -- an
+        # absent/broken-companion refusal must win over an unrelated
+        # missing-file error, matching `decoy run`'s own ordering. `mask()`
+        # has no `--vault` equivalent, so `vault_active` is always False.
+        tables_list = config_dict.get("tables") or []
+        any_generate = any(isinstance(t, dict) and t.get("generate_columns") for t in tables_list)
+        native_intent: _native_gate.NativeIntent = (
+            "require" if native is True else "disable" if native is False else "default"
+        )
+        gate_result = _native_gate.pre_execution_gate(
+            intent=native_intent,
+            chunked=False,
+            any_generate=any_generate,
+            config_dict=config_dict,
+        )
+        # `info_message` (absent companion) is normal portable operation --
+        # the CLI shows it at most as a hint, never a warning (M4
+        # remediation: an earlier version used `warnings.warn` for BOTH
+        # messages, which would raise under a caller's `-W error` / strict
+        # `filterwarnings` policy for the ordinary, expected case). Only
+        # `warn_message` (a broken companion, downgraded via `native=False`)
+        # is an actual anomaly worth a real warning.
+        if gate_result.warn_message:
+            warnings.warn(gate_result.warn_message, stacklevel=2)
+
         base_dir = Path(config).parent if isinstance(config, (str, Path)) else Path.cwd()
         # Every `sources:` entry now points at a real file (the caller's
         # own declared path, or one of the temp files just staged), so the
@@ -449,30 +479,11 @@ def mask(
         # ("plain runs always use pandas; --substrate is only consulted for
         # --chunked runs"). Mirror the CLI exactly: omit the kwarg entirely
         # unless the caller explicitly chose a substrate.
-        run_pipeline_kwargs: dict[str, Any] = {}
+        run_pipeline_kwargs: dict[str, Any] = {
+            "unified_slice_enabled": gate_result.unified_slice_enabled
+        }
         if substrate is not None:
             run_pipeline_kwargs["substrate"] = substrate
-
-        # Phase 3.1: the SAME shared gate `decoy run --native`/`--no-native`
-        # uses, so `mask(native=True)` cannot silently write an
-        # ineligible-shape result the CLI would refuse (see
-        # decoy._native_gate module docstring).
-        tables_list = config_dict.get("tables") or []
-        any_generate = any(isinstance(t, dict) and t.get("generate_columns") for t in tables_list)
-        native_intent: _native_gate.NativeIntent = (
-            "require" if native is True else "disable" if native is False else "default"
-        )
-        gate_result = _native_gate.pre_execution_gate(
-            intent=native_intent,
-            chunked=False,
-            any_generate=any_generate,
-            config_dict=config_dict,
-        )
-        if gate_result.info_message:
-            warnings.warn(gate_result.info_message, stacklevel=2)
-        if gate_result.warn_message:
-            warnings.warn(gate_result.warn_message, stacklevel=2)
-        run_pipeline_kwargs["unified_slice_enabled"] = gate_result.unified_slice_enabled
 
         result = run_pipeline(
             config_dict,

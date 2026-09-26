@@ -22,6 +22,7 @@ from decoy_engine import NativeCompanionStatus
 
 from decoy._native_gate import (
     NativeGateError,
+    _NativeProbeUnavailable,
     classify_route,
     is_unified_slice_candidate,
     post_run_verify,
@@ -79,6 +80,43 @@ def test_eligible_config_is_eligible():
     assert static_native_eligibility(_eligible_config()) is True
 
 
+def test_table_without_columns_not_eligible():
+    config = _eligible_config()
+    config["tables"] = [{"name": "customers", "row_count": 5, "generate_columns": []}]
+    assert static_native_eligibility(config) is False
+
+
+def test_empty_columns_list_not_eligible():
+    config = _eligible_config()
+    config["tables"][0]["columns"] = []
+    assert static_native_eligibility(config) is False
+
+
+def test_non_dict_column_not_eligible():
+    config = _eligible_config()
+    config["tables"][0]["columns"].append("not-a-dict")
+    assert static_native_eligibility(config) is False
+
+
+def test_missing_source_entry_not_eligible():
+    config = _eligible_config()
+    config["sources"] = {}
+    assert static_native_eligibility(config) is False
+
+
+def test_probe_status_raises_when_engine_lacks_the_symbol(monkeypatch):
+    """Hits `_probe_status()`'s own missing-symbol branch directly (the
+    other engine-too-old tests monkeypatch `_probe_status` itself, which
+    bypasses this line)."""
+    import decoy_engine
+
+    from decoy._native_gate import _probe_status
+
+    monkeypatch.delattr(decoy_engine, "native_companion_status", raising=False)
+    with pytest.raises(_NativeProbeUnavailable):
+        _probe_status()
+
+
 def test_two_tables_not_eligible():
     config = _eligible_config()
     config["tables"].append({"name": "orders", "columns": [{"name": "x", "strategy": "redact"}]})
@@ -97,6 +135,24 @@ def test_validators_not_eligible():
     assert static_native_eligibility(config) is False
 
 
+def test_quarantine_not_eligible():
+    config = _eligible_config()
+    config["quarantine"] = {"path": "quarantine.csv"}
+    assert static_native_eligibility(config) is False
+
+
+def test_run_storm_not_eligible():
+    config = _eligible_config()
+    config["run_storm"] = True
+    assert static_native_eligibility(config) is False
+
+
+def test_vault_column_not_eligible():
+    config = _eligible_config()
+    config["tables"][0]["columns"][1]["vault"] = True
+    assert static_native_eligibility(config) is False
+
+
 def test_non_parquet_source_not_eligible():
     config = _eligible_config()
     config["sources"]["customers"]["format"] = "csv"
@@ -104,7 +160,10 @@ def test_non_parquet_source_not_eligible():
     assert static_native_eligibility(config) is False
 
 
-def test_no_hash_column_not_eligible():
+def test_no_companion_dependent_column_not_eligible():
+    """passthrough/redact/truncate run native WITHOUT the companion (state
+    b) -- eligibility (whether the companion-health gate is even reached)
+    requires at least one companion-dependent strategy."""
     config = _eligible_config()
     config["tables"][0]["columns"] = [
         {"name": "id", "strategy": "passthrough"},
@@ -116,6 +175,40 @@ def test_no_hash_column_not_eligible():
 def test_disallowed_strategy_not_eligible():
     config = _eligible_config()
     config["tables"][0]["columns"].append({"name": "first_name", "strategy": "faker"})
+    assert static_native_eligibility(config) is False
+
+
+@pytest.mark.parametrize("strategy", ["categorical", "bucket_perturb", "group_key"])
+def test_other_companion_dependent_strategies_are_eligible(strategy):
+    """Remediation (Codex/dennis round 1): the engine's admitted set widened
+    to 7 strategies (`_unified_slice_admission.ALLOWED_OPERATOR_IDS`) before
+    this plan's own PLAN gate ran; the original build's 4-strategy hardcode
+    was already stale. hash/categorical/bucket_perturb/group_key are ALL
+    companion-dependent (`_COMPANION_DEPENDENT_OPERATOR_IDS`), so any one of
+    them alone must make a config eligible, not just hash."""
+    config = _eligible_config()
+    config["tables"][0]["columns"] = [
+        {"name": "id", "strategy": "passthrough"},
+        {"name": "email", "strategy": strategy},
+    ]
+    assert static_native_eligibility(config) is True
+
+
+def test_transforms_not_eligible():
+    config = _eligible_config()
+    config["tables"][0]["transforms"] = [{"kind": "some_transform"}]
+    assert static_native_eligibility(config) is False
+
+
+def test_when_gate_not_eligible():
+    config = _eligible_config()
+    config["tables"][0]["columns"][1]["when"] = {"column": "id", "equals": "C1"}
+    assert static_native_eligibility(config) is False
+
+
+def test_non_file_source_type_not_eligible():
+    config = _eligible_config()
+    config["sources"]["customers"]["type"] = "database"
     assert static_native_eligibility(config) is False
 
 
@@ -341,6 +434,68 @@ def test_require_proceeds_on_healthy_companion():
     assert result.warn_message is None
 
 
+def test_require_refuses_live_vault_writer_before_probing():
+    """L5: admission always declines a live vault writer regardless of
+    companion health (`resident_contract_admission`), so `--native --vault`
+    is a Stage-0-style refusal, not a companion check -- status=None here
+    would blow up in `_probe_status()` if the short-circuit were missing."""
+    with pytest.raises(NativeGateError) as exc_info:
+        pre_execution_gate(
+            intent="require",
+            chunked=False,
+            any_generate=False,
+            config_dict=_eligible_config(),
+            vault_active=True,
+            status=None,
+        )
+    assert exc_info.value.code == "native_require_vault_active"
+
+
+def test_require_reports_clear_error_when_engine_too_old(monkeypatch):
+    def _boom():
+        raise _NativeProbeUnavailable
+
+    monkeypatch.setattr("decoy._native_gate._probe_status", _boom)
+    with pytest.raises(NativeGateError) as exc_info:
+        pre_execution_gate(
+            intent="require",
+            chunked=False,
+            any_generate=False,
+            config_dict=_eligible_config(),
+        )
+    assert exc_info.value.code == "native_require_engine_too_old"
+
+
+def test_default_collapses_to_noop_when_engine_too_old(monkeypatch):
+    def _boom():
+        raise _NativeProbeUnavailable
+
+    monkeypatch.setattr("decoy._native_gate._probe_status", _boom)
+    result = pre_execution_gate(
+        intent="default",
+        chunked=False,
+        any_generate=False,
+        config_dict=_eligible_config(),
+    )
+    assert result.unified_slice_enabled is True
+    assert result.info_message is None
+
+
+def test_disable_swallows_engine_too_old(monkeypatch):
+    def _boom():
+        raise _NativeProbeUnavailable
+
+    monkeypatch.setattr("decoy._native_gate._probe_status", _boom)
+    result = pre_execution_gate(
+        intent="disable",
+        chunked=False,
+        any_generate=False,
+        config_dict=_eligible_config(),
+    )
+    assert result.unified_slice_enabled is False
+    assert result.warn_message is None
+
+
 # ---------------------------------------------------------------------------
 # pre_execution_gate -- disable (--no-native)
 # ---------------------------------------------------------------------------
@@ -424,7 +579,7 @@ def test_default_on_eligible_shape_with_absent_companion_hints_install():
     )
     assert result.unified_slice_enabled is True
     assert result.info_message is not None
-    assert "decoy-cli[native]" in result.info_message
+    assert "decoy explain native" in result.info_message
 
 
 def test_default_on_eligible_shape_with_healthy_companion_is_silent():
@@ -438,6 +593,27 @@ def test_default_on_eligible_shape_with_healthy_companion_is_silent():
     assert result.unified_slice_enabled is True
     assert result.info_message is None
     assert result.warn_message is None
+
+
+def test_default_on_eligible_shape_with_live_vault_writer_never_probes(monkeypatch):
+    """A live `--vault` writer declines admission regardless of config
+    shape (`resident_contract_admission`); the default-intent fail-closed
+    check must not fire for it even with a broken companion, and must not
+    probe at all when `vault_active=True` short-circuits it first."""
+
+    def _boom():
+        raise AssertionError("probe should not run when vault_active=True")
+
+    monkeypatch.setattr("decoy._native_gate._probe_status", _boom)
+    result = pre_execution_gate(
+        intent="default",
+        chunked=False,
+        any_generate=False,
+        config_dict=_eligible_config(),
+        vault_active=True,
+    )
+    assert result.unified_slice_enabled is True
+    assert result.info_message is None
 
 
 @pytest.mark.parametrize("status", [_ABI_MISMATCH, _KAT_CORRUPT, _LOAD_ERROR])

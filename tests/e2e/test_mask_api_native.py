@@ -159,3 +159,49 @@ def test_mask_native_true_on_generate_only_rejected_before_dispatch(tmp_path: Pa
         decoy.mask(config=config, native=True)
     assert exc_info.value.code == "native_require_not_a_candidate"
     assert not (tmp_path / "gen.csv").exists()
+
+
+def test_mask_dispatches_native_route_when_engine_reports_compiled_kernel(
+    eligible_parquet_config: dict, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    """State (a) at the library dispatch level: no real compiled companion
+    exists in this environment, so the fake `run_pipeline` wrapper calls the
+    REAL one first (genuinely computed masked values) and only overrides
+    `quality_metrics` to carry the shape a real native run would produce --
+    proving `mask(native=True)` actually returns/writes on a native outcome,
+    not just that the shared gate classifies one correctly in isolation."""
+    import decoy_engine
+    from decoy_engine import ExecutionResult
+
+    real_run_pipeline = decoy_engine.run_pipeline
+
+    def _fake(*args, **kwargs):
+        result = real_run_pipeline(*args, **kwargs)
+        native_metrics = dict(result.quality_metrics)
+        native_metrics["unified_slice_activation"] = {
+            "activated": True,
+            "table": "customers",
+            "nodes": {
+                "n1": {
+                    "operator": "native_keyed_hash",
+                    "executed": True,
+                    "compiled_kernel_executed": True,
+                }
+            },
+        }
+        return ExecutionResult(
+            outputs=result.outputs,
+            timings=result.timings,
+            boundary_conversion_ms=result.boundary_conversion_ms,
+            warnings=result.warnings,
+            quality_metrics=native_metrics,
+            table_kinds=result.table_kinds,
+            row_errors=result.row_errors,
+        )
+
+    _patch(monkeypatch, _status("present-ok", present=True, ok=True, abi_actual=_ABI))
+    monkeypatch.setattr("decoy_engine.run_pipeline", _fake)
+
+    out = decoy.mask(config=eligible_parquet_config, native=True)
+    assert isinstance(out, pd.DataFrame)
+    assert (tmp_path / "out.csv").exists()

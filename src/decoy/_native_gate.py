@@ -25,6 +25,22 @@ the exception propagate).
 
 See docs/plans/2026-09-24-cli-native-packaging-default-on.md, approach
 sections 2-4, for the full design this module implements.
+
+Known, accepted gap (post-build-time correction, remediation round 1): admission
+gates a table's companion dependency PER OPERATOR (`native_kernel_availability()`
+-- a companion missing only the additive raw-hex symbol still runs hash /
+categorical / bucket_perturb natively and declines only group_key). That
+per-kernel probe is not re-exported at the engine's public boundary (only
+`native_companion_status()`'s blanket ok/not-ok is), and the plan's own
+reuse-only mandate ("reuse the engine's native_companion_status() probe ...
+do not re-implement companion detection in the CLI") argues against reaching
+into the engine's private `execution.native._companion_status` module to get
+it. This module therefore gates on the blanket probe: a companion that is
+only PARTIALLY broken (e.g. missing raw-hex only) is treated as fully broken
+here, which can fail closed a job that the engine would have run natively.
+That is the safe direction (over-conservative, never a silent false native
+claim), not the unsafe one -- but it is a real, known precision gap, not a
+design decision to hide.
 """
 
 from __future__ import annotations
@@ -40,11 +56,29 @@ NativeIntent = Literal["default", "require", "disable"]
 # non-printable value; see the plan's "Known failure modes" section).
 _ABI_DISPLAY_MAX_LEN = 200
 
-# The four strategies the unified slice currently admits (plan build-time
-# correction #3): deterministic-faker/categorical/bucket_perturb/group_key are
-# NOT in today's admitted scope, so the static eligibility predicate below
-# must not treat them as native-capable.
-_NATIVE_STRATEGIES = frozenset({"passthrough", "redact", "truncate", "hash"})
+# The full native-admitted strategy set, mirroring the engine's CURRENT
+# `ALLOWED_OPERATOR_IDS` (`_unified_slice_admission.py`) via
+# `OPERATOR_ID_BY_STRATEGY`'s strategy-name keys. Remediation round 1: the
+# original build hardcoded a 4-strategy set (passthrough/redact/truncate/
+# hash) per the plan's own build-time correction #3, which was accurate when
+# the plan's PLAN-gate ran but had already been overtaken by engine main
+# landing native_categorical/native_bucket_perturb/native_group_key days
+# earlier -- a stale-plan-fact bug, not a build mistake, but the CLI must
+# match the engine it actually ships against, not a snapshot of it. Keep
+# this set in lockstep with the engine's admission allowlist; a mismatch
+# either falsely blocks an admitted shape (this set too narrow) or
+# falsely offers eligibility for a shape the engine declines (too wide).
+_NATIVE_STRATEGIES = frozenset(
+    {"passthrough", "redact", "truncate", "hash", "categorical", "bucket_perturb", "group_key"}
+)
+
+# The subset of `_NATIVE_STRATEGIES` whose native execution needs the
+# compiled companion loadable at all (mirrors
+# `_COMPANION_DEPENDENT_OPERATOR_IDS`): passthrough/redact/truncate run
+# native via the coordinator alone, with no companion involvement (state
+# (b), "unified slice (no compiled kernel)"). A table needs company health
+# only when it uses one of THESE.
+_COMPANION_DEPENDENT_STRATEGIES = frozenset({"hash", "categorical", "bucket_perturb", "group_key"})
 
 
 class NativeGateError(Exception):
@@ -90,10 +124,21 @@ class RouteClassification:
     label: str
 
 
-def _probe_status() -> Any:
-    from decoy_engine import native_companion_status
+class _NativeProbeUnavailable(Exception):
+    """The installed `decoy-engine` predates `native_companion_status()`
+    (added after the `>=0.5.0` floor was tagged, per the same
+    still-labeled-0.5.0 situation `run.py`'s DE-02 comment documents for
+    `keyprovider`). Caught internally by `pre_execution_gate` -- never
+    escapes this module."""
 
-    return native_companion_status()
+
+def _probe_status() -> Any:
+    import decoy_engine
+
+    probe = getattr(decoy_engine, "native_companion_status", None)
+    if probe is None:
+        raise _NativeProbeUnavailable
+    return probe()
 
 
 def sanitize_abi(value: str | None) -> str | None:
@@ -112,7 +157,11 @@ def sanitize_abi(value: str | None) -> str | None:
 
 def _remediation(reason: str) -> str:
     if reason == "absent":
-        return "install the decoy-cli[native] extra, or see docs/native/supported-matrix.md"
+        # No `native` extra and no published direct-install artifact exist
+        # yet (see the plan's packaging section + `decoy explain native`) --
+        # point at the topic for current status rather than naming an
+        # install command that would fail today.
+        return "see `decoy explain native` for current install status"
     return (
         "reinstall a decoy-engine-native companion matching this engine's ABI, "
         "or rerun with --no-native to use the legacy pandas adapter"
@@ -129,22 +178,37 @@ def is_unified_slice_candidate(*, chunked: bool, any_generate: bool) -> bool:
     return not chunked and not any_generate
 
 
+def _has_when_gate(column: dict[str, Any]) -> bool:
+    """Mirrors the engine's own `_has_when_gate` (`_unified_slice_admission.py`):
+    a `when:` predicate gates masking to matching rows only, which the
+    coordinator does not implement, so any column carrying one declines."""
+    when = column.get("when")
+    return when is not None and when != {}
+
+
 def static_native_eligibility(config_dict: dict[str, Any]) -> bool:
     """Config-shape-only static approximation of "would this job's admission
-    even reach the companion-health gate": a single non-FK Parquet mask
-    table, every column strategy in the four the unified slice currently
-    admits, at least one `hash` column (the only strategy admission gates on
-    companion health for -- see `_unified_slice_admission.py`'s
-    `hash_columns` check), and no validators/quarantine.
+    even reach the companion-health gate": a single non-FK Parquet-file mask
+    table, every column strategy in the set the unified slice currently
+    admits (`_NATIVE_STRATEGIES`), at least one companion-dependent column
+    (hash/categorical/bucket_perturb/group_key -- the only strategies
+    admission gates on companion health for for `_COMPANION_DEPENDENT_
+    STRATEGIES`), and none of the config-visible declines
+    `cheap_admission`/`resident_contract_admission` check: validators,
+    quarantine, run_storm, a `vault: true` column, table-level `transforms`,
+    or a per-column `when:` gate.
 
     This is the SAME "config-shape half" of the eligibility predicate
     `decoy preflight`'s labeled-static-possibility line uses (plan approach
     4, open question 5): it cannot see the resolved route, the source
-    profile, or the resident Arrow table, so it is an approximation, not a
-    guarantee. Used to scope the default-intent broken-companion fail-closed
-    check (and the absent-companion info hint) to jobs that could plausibly
-    have wanted native, so an unrelated FK or passthrough-only job never
-    trips on a broken companion it was never going to use.
+    profile, the resident Arrow table, or a live `--vault` writer (that
+    needs the caller's own runtime state -- see `pre_execution_gate`'s
+    `vault_active` parameter), so it is an approximation, not a guarantee.
+    Used to scope the default-intent broken-companion fail-closed check
+    (and the absent-companion info hint) to jobs that could plausibly have
+    wanted native, so an unrelated FK, transform, quarantine, or
+    passthrough-only job never trips on a broken companion it was never
+    going to use.
     """
     tables = config_dict.get("tables")
     if not isinstance(tables, list) or len(tables) != 1:
@@ -156,18 +220,32 @@ def static_native_eligibility(config_dict: dict[str, Any]) -> bool:
         return False
     if config_dict.get("validators"):
         return False
+    if config_dict.get("quarantine"):
+        return False
+    if config_dict.get("run_storm"):
+        return False
+    if table.get("transforms"):
+        return False
     columns = table.get("columns")
     if not isinstance(columns, list) or not columns:
         return False
-    strategies = {c.get("strategy") for c in columns if isinstance(c, dict)}
+    if not all(isinstance(c, dict) for c in columns):
+        return False
+    if any(c.get("vault") for c in columns):
+        return False
+    if any(_has_when_gate(c) for c in columns):
+        return False
+    strategies = {c.get("strategy") for c in columns}
     if not strategies <= _NATIVE_STRATEGIES:
         return False
-    if "hash" not in strategies:
+    if not strategies & _COMPANION_DEPENDENT_STRATEGIES:
         return False
     name = table.get("name")
     sources = config_dict.get("sources")
     source = sources.get(name) if isinstance(sources, dict) else None
     if not isinstance(source, dict):
+        return False
+    if source.get("type") not in (None, "file"):
         return False
     fmt = source.get("format")
     path = source.get("path")
@@ -183,13 +261,19 @@ def pre_execution_gate(
     chunked: bool,
     any_generate: bool,
     config_dict: dict[str, Any],
+    vault_active: bool = False,
     status: Any = None,
 ) -> PreGateResult:
     """Resolve `intent` + the companion probe into what to pass
     `run_pipeline`, before it is ever called. May raise `NativeGateError`
     (Stage 0/1 of approach 2, and the broken-companion classification of
     approach 3). `status` is accepted for test injection; omit it to probe
-    the real companion."""
+    the real companion. `vault_active` is whether the CALLER actually built
+    a vault writer for this run (`decoy run --vault`) -- admission declines
+    a live vault writer regardless of config shape, so the default-intent
+    scoping below needs this precise runtime fact, not just a `vault: true`
+    column marker (`static_native_eligibility` already checks that marker
+    as its own config-shape proxy; this ANDs the exact answer on top)."""
     candidate = is_unified_slice_candidate(chunked=chunked, any_generate=any_generate)
 
     if intent == "require":
@@ -202,8 +286,27 @@ def pre_execution_gate(
                 "/ the generate table.",
                 code="native_require_not_a_candidate",
             )
+        if vault_active:
+            # Admission always declines a job with a live vault writer
+            # (`resident_contract_admission`), regardless of companion
+            # health -- a Stage 0-style refusal, not a companion check.
+            raise NativeGateError(
+                "--native cannot be satisfied together with --vault: the "
+                "unified slice always declines a job with a live vault writer, "
+                "so this run could never show compiled-kernel evidence. Drop "
+                "--native, or drop --vault.",
+                code="native_require_vault_active",
+            )
         if status is None:
-            status = _probe_status()
+            try:
+                status = _probe_status()
+            except _NativeProbeUnavailable:
+                raise NativeGateError(
+                    "--native needs a decoy-engine build with the native probe "
+                    "(native_companion_status); the installed decoy-engine "
+                    "predates it. Upgrade decoy-engine, or drop --native.",
+                    code="native_require_engine_too_old",
+                ) from None
         if not status.ok:
             raise NativeGateError(
                 "--native requires a healthy decoy-engine-native companion, but "
@@ -215,14 +318,17 @@ def pre_execution_gate(
     if intent == "disable":
         warn_message = None
         if candidate:
-            if status is None:
-                status = _probe_status()
-            if status.present and not status.ok:
-                warn_message = (
-                    "the decoy-engine-native companion is present but not usable "
-                    f"({status.reason}); moot here since --no-native already forces "
-                    "the legacy pandas adapter."
-                )
+            try:
+                if status is None:
+                    status = _probe_status()
+                if status.present and not status.ok:
+                    warn_message = (
+                        "the decoy-engine-native companion is present but not usable "
+                        f"({status.reason}); moot here since --no-native already forces "
+                        "the legacy pandas adapter."
+                    )
+            except _NativeProbeUnavailable:
+                pass
         return PreGateResult(unified_slice_enabled=False, warn_message=warn_message)
 
     # intent == "default": inherit the engine's own default (unified slice
@@ -230,17 +336,21 @@ def pre_execution_gate(
     # classification to a job that could plausibly have wanted native, so an
     # unrelated job is never blocked (or hinted at) by an install it would
     # never touch.
-    if not candidate or not static_native_eligibility(config_dict):
+    if vault_active or not candidate or not static_native_eligibility(config_dict):
         return PreGateResult(unified_slice_enabled=True)
-    if status is None:
-        status = _probe_status()
+    try:
+        if status is None:
+            status = _probe_status()
+    except _NativeProbeUnavailable:
+        # An engine this old predates the whole native lane too, so there is
+        # nothing to gate -- collapse to the same no-op as "not a candidate".
+        return PreGateResult(unified_slice_enabled=True)
     if status.reason == "absent":
         return PreGateResult(
             unified_slice_enabled=True,
             info_message=(
-                "native acceleration is not installed; install the decoy-cli[native] "
-                "extra (or see docs/native/supported-matrix.md) to enable it. "
-                "Running on the Python fallback."
+                "native acceleration is not installed; run `decoy explain native` "
+                "for current install status. Running on the Python fallback."
             ),
         )
     if not status.ok:

@@ -542,10 +542,27 @@ def run(
                     "Run without --chunked to execute a mixed or generate pipeline."
                 )
 
+            vault_writer = None
+            if vault is not None:
+                from decoy_engine import vault_writer_for_config
+                from decoy_engine.vault import iter_vault_columns
+
+                if not iter_vault_columns(config_dict):
+                    raise _VaultUsageError(
+                        "--vault was passed but no column declares vault: true "
+                        "in this config. Add `vault: true` to the columns whose "
+                        "source values the vault should record."
+                    )
+                vault_writer = vault_writer_for_config(config_dict)
+
             # Phase 3.1: resolve --native/--no-native intent and run the
             # shared pre-execution gate (approach 2 Stage 0/1, plus the
             # broken-companion classification of approach 3) BEFORE any
-            # dispatch. See decoy._native_gate.
+            # dispatch. `vault_active` must be known here (not just visible
+            # in the config's `vault: true` columns): admission declines
+            # ANY job with a live vault_writer regardless of column markers,
+            # so the fail-closed scoping needs the real runtime state, not a
+            # config-shape proxy.
             if native and no_native:
                 raise _native_gate.NativeGateError(
                     "--native and --no-native are mutually exclusive.",
@@ -559,6 +576,7 @@ def run(
                 chunked=chunked,
                 any_generate=any_generate,
                 config_dict=config_dict,
+                vault_active=vault_writer is not None,
             )
             if gate_result.info_message and state.mode is not OutputMode.quiet:
                 # Wrapped in Text(): the message can carry a literal
@@ -567,19 +585,6 @@ def run(
                 state.err_console.print(hint("native:"), Text(gate_result.info_message))
             if gate_result.warn_message and state.mode is not OutputMode.quiet:
                 state.err_console.print(warn("warning:"), Text(gate_result.warn_message))
-
-            vault_writer = None
-            if vault is not None:
-                from decoy_engine import vault_writer_for_config
-                from decoy_engine.vault import iter_vault_columns
-
-                if not iter_vault_columns(config_dict):
-                    raise _VaultUsageError(
-                        "--vault was passed but no column declares vault: true "
-                        "in this config. Add `vault: true` to the columns whose "
-                        "source values the vault should record."
-                    )
-                vault_writer = vault_writer_for_config(config_dict)
 
             if chunked:
                 resolved_substrate = _run_chunked_mask(
@@ -594,6 +599,14 @@ def run(
             else:
                 sources = _load_sources_from_config(config_dict, config.parent)
                 instance_locale = (config_dict.get("global_settings") or {}).get("default_locale")
+                # H1 remediation: `unified_slice_enabled=True` is already the
+                # engine's own default, so it is passed ONLY to force it
+                # False (--no-native). Never passing it on the true/default
+                # path keeps a plain `decoy run` working against an engine
+                # that predates this kwarg entirely.
+                run_pipeline_kwargs = {}
+                if not gate_result.unified_slice_enabled:
+                    run_pipeline_kwargs["unified_slice_enabled"] = False
                 result = run_pipeline(
                     config_dict,
                     sources,
@@ -601,7 +614,7 @@ def run(
                     derive_key=resolver,
                     instance_default_locale=instance_locale,
                     vault_writer=vault_writer,
-                    unified_slice_enabled=gate_result.unified_slice_enabled,
+                    **run_pipeline_kwargs,
                 )
                 _native_route = _native_gate.classify_route(
                     chunked=False,
@@ -697,6 +710,15 @@ def run(
         capacity_code: str | None = None
         if isinstance(exc, _execution_error_types) and exc.code in _CAPACITY_CODES:
             capacity_code = exc.code
+
+        # Phase 3.1: `NativeGateError.code` distinguishes a usage refusal
+        # (--native/--no-native conflict, an ineligible shape) from a
+        # companion-health refusal (`native_require_<reason>` /
+        # `native_companion_<reason>`) -- put it in the JSON envelope so a
+        # script can branch on it without parsing `error` text.
+        native_code: str | None = None
+        if isinstance(exc, _native_gate.NativeGateError):
+            native_code = exc.code
 
         if capacity_code is not None:
             _exit_code = EXIT_CAPACITY
@@ -796,6 +818,9 @@ def run(
             if capacity_code is not None:
                 payload["error_kind"] = "capacity"
                 payload["code"] = capacity_code
+            elif native_code is not None:
+                payload["error_kind"] = "native"
+                payload["code"] = native_code
             elif isinstance(exc, MissingExtraError):
                 # A machine-detectable field, not just the
                 # `[missing_extra]`-prefixed message text.

@@ -556,41 +556,53 @@ def _check_native(raw: dict[str, Any], acc: _PreflightAccumulator) -> None:
     resolved route, the source profile, the resident Arrow table, and the
     compiled physical plan, none of which a profile-free preflight has.
     """
-    from decoy_engine import native_companion_status
+    import decoy_engine
 
     from decoy import _native_gate
 
-    status = native_companion_status()
-    if status.ok:
+    probe = getattr(decoy_engine, "native_companion_status", None)
+    if probe is None:
+        # R5 capability-detect (matches `_check_capacity`'s own posture): an
+        # engine this old predates the probe entirely, not an error.
         acc.add_pass(
             name="native.companion",
-            message=f"native companion present and healthy (v{status.version}).",
-        )
-    elif status.present:
-        acc.add_warn(
-            name="native.companion",
-            message=(
-                f"native companion present but not usable ({status.reason}) -- "
-                f"expected ABI {status.abi_expected}, got "
-                f"{_native_gate.sanitize_abi(status.abi_actual)!r}. `decoy run` "
-                "fails closed on this by default; use --no-native to roll back."
-            ),
-            code=status.reason,
+            message="not checked -- native companion health needs a newer engine.",
         )
     else:
-        acc.add_pass(
-            name="native.companion",
-            message="native companion not installed; masking runs on the Python fallback.",
-        )
+        status = probe()
+        if status.ok:
+            acc.add_pass(
+                name="native.companion",
+                message=(
+                    f"native companion present and healthy "
+                    f"(v{_native_gate.sanitize_abi(status.version)})."
+                ),
+            )
+        elif status.present:
+            acc.add_warn(
+                name="native.companion",
+                message=(
+                    f"native companion present but not usable ({status.reason}) -- "
+                    f"expected ABI {status.abi_expected}, got "
+                    f"{_native_gate.sanitize_abi(status.abi_actual)!r}. `decoy run` "
+                    "fails closed on this by default; use --no-native to roll back."
+                ),
+                code=status.reason,
+            )
+        else:
+            acc.add_pass(
+                name="native.companion",
+                message="native companion not installed; masking runs on the Python fallback.",
+            )
 
     if _native_gate.static_native_eligibility(raw):
         acc.add_pass(
             name="native.eligibility",
             message=(
                 "Native eligibility: eligible by config (single non-FK Parquet "
-                "mask table, native strategies) -- a STATIC possibility, not a "
-                "guarantee; the actual route depends on the resolved profile and "
-                "resident data at run time."
+                "mask table, companion-dependent native strategy present) -- a "
+                "STATIC possibility, not a guarantee; the actual route depends "
+                "on the resolved profile and resident data at run time."
             ),
         )
     else:
@@ -598,8 +610,9 @@ def _check_native(raw: dict[str, Any], acc: _PreflightAccumulator) -> None:
             name="native.eligibility",
             message=(
                 "Native eligibility: not eligible by config shape (needs a single "
-                "non-FK Parquet mask table using only passthrough/redact/truncate/"
-                "hash strategies, with at least one hash column)."
+                "non-FK Parquet mask table with at least one hash/categorical/"
+                "bucket_perturb/group_key column, and no validators/quarantine/"
+                "run_storm/vault/transforms/when-gates)."
             ),
         )
 

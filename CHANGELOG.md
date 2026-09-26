@@ -13,8 +13,9 @@ version numbers follow the [versioning policy](docs/release/versioning.md).
 - **`decoy run --native` / `--no-native`.** A non-chunked, mask-only run
   already prefers the compiled `decoy-engine-native` kernel over the pandas
   adapter whenever the companion is installed and the job is eligible
-  (single non-FK Parquet table, passthrough/redact/truncate/hash only) --
-  no flag needed. `--native` now requires it: it refuses before any run on
+  (single non-FK Parquet table, using passthrough/redact/truncate and/or
+  hash/categorical/bucket_perturb/group_key) -- no flag needed. `--native`
+  now requires it: it refuses before any run on
   `--chunked` or a generate/mixed config, refuses before any run on an
   absent/broken companion, and refuses AFTER the run (writing nothing) if
   the job finished without positive compiled-kernel evidence.
@@ -44,9 +45,27 @@ version numbers follow the [versioning policy](docs/release/versioning.md).
   alone, explicitly labeled a static possibility, not a guarantee of the
   resolved route.
 - **`decoy explain native`.** New topic covering the native lane, the two
-  flags, the fail-closed default, and the interim direct-install path (no
-  paired PyPI release of the companion exists yet, so the `native` extra
-  itself is deferred to that release).
+  flags, and the fail-closed default. No `native` extra and no published
+  install artifact exist yet (no paired PyPI release of the companion), so
+  the topic says exactly that rather than pointing at an install command
+  that would fail today; everything else already works against a
+  companion installed by other means.
+- **Known, accepted gap: companion-health gating is all-or-nothing, not
+  per-kernel.** The engine can run hash/categorical/bucket_perturb natively
+  even when only the additive raw-hex kernel is missing (`native_kernel_
+  availability()`), but that per-kernel breakdown is not part of the
+  engine's public surface (only the blanket `native_companion_status()` is)
+  -- and the plan is explicit that this CLI reuses the engine's probe
+  rather than reimplementing companion detection. This module therefore
+  treats a partially-capable companion as fully broken, which is the safe
+  direction (over-conservative, never a false native claim) but can
+  occasionally fail closed a job the engine would have run natively.
+- **Graceful degradation on an older `decoy-engine`.** `decoy run`,
+  `decoy.mask()`, `decoy info`, and `decoy preflight` all detect whether
+  the installed engine actually has `native_companion_status()` before
+  calling it, and never pass `unified_slice_enabled=True` explicitly (only
+  `False`, for `--no-native`) -- an engine that predates this Phase 3.1
+  work keeps running a plain `decoy run` instead of crashing.
 
 ### Changed (OOM checker recalibration: build-floor refusal is now advisory, capacity refusal is fan-in-only, 2026-09-08)
 

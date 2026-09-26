@@ -211,7 +211,7 @@ def test_run_absent_companion_prints_install_hint(tmp_path: Path):
     config = _hash_eligible_config(tmp_path)
     result = runner.invoke(app, ["run", str(config)])
     assert result.exit_code == 0, result.output
-    assert "decoy-cli[native]" in result.output
+    assert "decoy explain native" in result.output
 
 
 def test_nonhash_job_reports_unified_slice_without_companion(tmp_path: Path):
@@ -368,6 +368,124 @@ def test_route_indicator_reports_resolved_substrate_for_chunked(tmp_path: Path):
     payload = _json.loads(result.stdout)
     assert payload["native_route"]["applicable"] is False
     assert payload["native_route"]["label"] == "pandas chunked stream"
+
+
+# ---------------------------------------------------------------------------
+# State (a) "native (compiled kernel)" at the CLI dispatch level.
+#
+# No real compiled companion exists in this environment (see module
+# docstring), so these monkeypatch `decoy_engine.run_pipeline` itself: the
+# fake wrapper calls the REAL `run_pipeline` first (so the masked values are
+# genuinely computed, not fabricated) and only overrides `quality_metrics`
+# to carry the shape a real native run would produce. This exercises the
+# FULL CLI path a synthetic `classify_route()` unit test cannot: dispatch,
+# `--native`'s Stage 1/2 gating, the JSON/summary rendering, and the actual
+# file write -- addressing the Codex final-gate finding that the original
+# suite never drove a "native" outcome through `decoy run` itself.
+# ---------------------------------------------------------------------------
+
+
+def _install_fake_native_run_pipeline(monkeypatch: pytest.MonkeyPatch) -> None:
+    import decoy_engine
+    from decoy_engine import ExecutionResult
+
+    real_run_pipeline = decoy_engine.run_pipeline
+
+    def _fake(*args, **kwargs):
+        result = real_run_pipeline(*args, **kwargs)
+        native_metrics = dict(result.quality_metrics)
+        native_metrics["unified_slice_activation"] = {
+            "activated": True,
+            "table": "customers",
+            "nodes": {
+                "n1": {
+                    "operator": "native_keyed_hash",
+                    "executed": True,
+                    "compiled_kernel_executed": True,
+                }
+            },
+        }
+        return ExecutionResult(
+            outputs=result.outputs,
+            timings=result.timings,
+            boundary_conversion_ms=result.boundary_conversion_ms,
+            warnings=result.warnings,
+            quality_metrics=native_metrics,
+            table_kinds=result.table_kinds,
+            row_errors=result.row_errors,
+        )
+
+    monkeypatch.setattr("decoy_engine.run_pipeline", _fake)
+
+
+def test_run_dispatches_native_route_when_engine_reports_compiled_kernel(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    _patch_status(monkeypatch, _status("present-ok", present=True, ok=True, abi_actual=_ABI))
+    _install_fake_native_run_pipeline(monkeypatch)
+    config = _hash_eligible_config(tmp_path)
+    result = runner.invoke(app, ["run", str(config), "--json"])
+    assert result.exit_code == 0, result.output
+    payload = _json.loads(result.stdout)
+    assert payload["native_route"] == {
+        "applicable": True,
+        "state": "native",
+        "label": "native (compiled kernel)",
+    }
+    assert (tmp_path / "out.csv").exists()
+
+
+def test_run_summary_card_shows_native_route(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    _patch_status(monkeypatch, _status("present-ok", present=True, ok=True, abi_actual=_ABI))
+    _install_fake_native_run_pipeline(monkeypatch)
+    config = _hash_eligible_config(tmp_path)
+    result = runner.invoke(app, ["run", str(config)])
+    assert result.exit_code == 0, result.output
+    assert "native (compiled kernel)" in result.output
+
+
+def test_native_require_succeeds_when_engine_reports_compiled_kernel(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    _patch_status(monkeypatch, _status("present-ok", present=True, ok=True, abi_actual=_ABI))
+    _install_fake_native_run_pipeline(monkeypatch)
+    config = _hash_eligible_config(tmp_path)
+    result = runner.invoke(app, ["run", str(config), "--native", "--json"])
+    assert result.exit_code == 0, result.output
+    payload = _json.loads(result.stdout)
+    assert payload["native_route"]["state"] == "native"
+    assert (tmp_path / "out.csv").exists()
+
+
+def test_output_file_bytes_identical_native_vs_absent(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    """The plan's actual claim: for a fixed writer/format, the WRITTEN file
+    is byte-identical whether the run reports state (a) native or state (c)
+    pandas. Both invocations mask the SAME source with the SAME deterministic
+    config, so the underlying values are identical either way; state (a)'s
+    `ExecutionResult` here is built from that same real computation (see
+    `_install_fake_native_run_pipeline`), so this is not a vacuous
+    same-input-same-output comparison of two mocks -- it proves
+    `_write_mask_outputs` is invariant to the route metadata, exactly the
+    property the byte-parity requirement is about."""
+    (tmp_path / "absent").mkdir()
+    (tmp_path / "native").mkdir()
+    config_absent = _hash_eligible_config(tmp_path / "absent")
+    config_native = _hash_eligible_config(tmp_path / "native")
+
+    result_absent = runner.invoke(app, ["run", str(config_absent)])
+    assert result_absent.exit_code == 0, result_absent.output
+
+    _patch_status(monkeypatch, _status("present-ok", present=True, ok=True, abi_actual=_ABI))
+    _install_fake_native_run_pipeline(monkeypatch)
+    result_native = runner.invoke(app, ["run", str(config_native), "--json"])
+    assert result_native.exit_code == 0, result_native.output
+    assert _json.loads(result_native.stdout)["native_route"]["state"] == "native"
+
+    bytes_absent = (tmp_path / "absent" / "out.csv").read_bytes()
+    bytes_native = (tmp_path / "native" / "out.csv").read_bytes()
+    assert bytes_absent == bytes_native
 
 
 # ---------------------------------------------------------------------------
