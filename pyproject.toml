@@ -119,6 +119,20 @@ ml = ["decoy-engine[ml]"]
 vault = ["decoy-engine[vault]"]
 all = ["decoy-cli[cloud,ner,ml,vault]"]
 
+# Phase 3.1 (docs/plans/2026-09-24-cli-native-packaging-default-on.md): no
+# `native` extra here yet. `decoy-engine-native` has no PyPI release, so a
+# bare `native = ["decoy-engine-native"]` would desync `uv.lock` the moment
+# anyone resolves it, and a version-pinned entry alone would still let pip
+# pair it with a different-ABI `decoy-engine` (the base dependency above is
+# open-ended). The extra lands once a paired release exists, forwarding to
+# the engine's own `decoy-engine[native]` extra so the ABI pin has one
+# owner. No published direct-install artifact exists either yet (see
+# `decoy explain native`). Until then: `decoy info` / `decoy preflight`
+# for companion health, `decoy run --native` / `--no-native` for the
+# runtime behavior -- all of which work today against a companion
+# installed by other means (a local build, a hand-copied wheel),
+# regardless of how it arrived.
+
 # Project URLs surfaced on the PyPI sidebar. Source key is the
 # convention pip/Warehouse uses.
 [project.urls]

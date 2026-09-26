@@ -101,6 +101,8 @@ $ decoy run [OPTIONS] CONFIG
 * `--evidence-out PATH`: Write a local evidence manifest (JSON) to this path after a successful run. The manifest records pipeline hash, input/output file fingerprints, run metadata, and row counts/timings/warnings where available (these are omitted for --chunked runs). It does NOT contain raw data values. Use `decoy evidence verify` to check the manifest against current files. See: decoy explain evidence (when available).
 * `--notify TEXT`: Notify a channel after the run reaches its terminal state. Repeatable. Spec is &#x27;kind:target&#x27;: webhook:&lt;url&gt;, slack:&lt;url&gt;, email:&lt;address&gt;. Best-effort: a channel failure never changes the run&#x27;s exit code. Webhook signing key from DECOY_NOTIFY_WEBHOOK_SECRET (unsigned if unset); SMTP from DECOY_NOTIFY_SMTP_HOST/_PORT/_USER/_PASS/_FROM. Nothing is persisted to .decoy/workspace.json -- targets and secrets are flags/env only, never written to disk.
 * `--notify-on [success|failure|always]`: Which terminal outcome(s) to notify on: success, failure, or always.  [default: always]
+* `--native`: Require that a compiled native kernel actually executed. Refuses up front (no run) on --chunked or a generate/mixed config, or on an absent/broken decoy-engine-native companion. Refuses AFTER the run, before any output is written, if the job finished without positive compiled-kernel evidence (e.g. an FK or non-Parquet source). Mutually exclusive with --no-native. See: decoy explain native.
+* `--no-native`: Force the legacy pandas adapter, bypassing the unified slice entirely -- the documented rollback for native-on-when-present. Mutually exclusive with --native. See: decoy explain native.
 * `--help`: Show this message and exit.
 
 Examples:
@@ -196,6 +198,8 @@ What preflight checks:
   - Target overwrite risk (advisory warning)
   - Out-of-core-FK memory capacity (v1; build-floor is advisory, only a fan-in
     impossibility exits EXIT_CAPACITY -- see: decoy explain exit-codes)
+  - Native companion health, plus a STATIC (config-shape-only) native
+    eligibility possibility -- see: decoy explain native
 
 What preflight does NOT check:
   - Platform server-side conditions (secrets, RBAC, schedules, network targets)

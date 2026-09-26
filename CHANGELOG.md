@@ -8,6 +8,66 @@ version numbers follow the [versioning policy](docs/release/versioning.md).
 
 ## [Unreleased]
 
+### Added (Phase 3.1: CLI native packaging default-on-when-present, 2026-09-26)
+
+- **`decoy run --native` / `--no-native`.** A non-chunked, mask-only run
+  already prefers the compiled `decoy-engine-native` kernel over the pandas
+  adapter whenever the companion is installed and the job is eligible
+  (single non-FK Parquet table, using passthrough/redact/truncate and/or
+  hash/categorical/bucket_perturb/group_key) -- no flag needed. `--native`
+  now requires it: it refuses before any run on
+  `--chunked` or a generate/mixed config, refuses before any run on an
+  absent/broken companion, and refuses AFTER the run (writing nothing) if
+  the job finished without positive compiled-kernel evidence.
+  `--no-native` forces the legacy pandas adapter, the documented rollback.
+  `decoy.mask(native=...)` mirrors this exactly, through the same shared
+  gate (`decoy._native_gate`), so the library cannot silently write a
+  result the CLI would refuse.
+- **A present-but-broken companion now fails closed by default.** Before,
+  an `abi-mismatch` / `kat-corrupt` / `load-error` companion silently
+  declined admission and ran pandas with no signal. `decoy run` (and
+  `decoy.mask()`) now refuse with the classified reason and a remediation
+  hint instead; `--no-native` downgrades that to a warned fallback.
+  `status.cause` is never shown; a companion's own `abi_version()` string
+  is sanitized (length-capped, printable-only, and a non-string value
+  shows a fixed marker instead of crashing) before display.
+- **Three-state route indicator.** The run summary and `--json` record now
+  report `native_route`: `native (compiled kernel)`, `unified slice (no
+  compiled kernel)` (a passthrough/redact/truncate-only job activating the
+  unified slice without the companion -- never mislabeled "pandas"), or
+  `pandas (legacy adapter)`, scoped to whether the run was even a
+  unified-slice candidate. A `--chunked` run reports its resolved
+  substrate; a generate/mixed run reports the engine's own
+  `execution_mode`, or a neutral "not a unified-slice candidate" label.
+- **`decoy info` / `decoy preflight` companion visibility.** `decoy info`
+  reports companion presence, reason, expected/actual ABI, and version
+  (JSON and human). `decoy preflight` adds a companion-health check
+  (pass/warn) plus a native-eligibility line computed from config shape
+  alone, explicitly labeled a static possibility, not a guarantee of the
+  resolved route.
+- **`decoy explain native`.** New topic covering the native lane, the two
+  flags, and the fail-closed default. No `native` extra and no published
+  install artifact exist yet (no paired PyPI release of the companion), so
+  the topic says exactly that rather than pointing at an install command
+  that would fail today; everything else already works against a
+  companion installed by other means.
+- **Known, accepted gap: companion-health gating is all-or-nothing, not
+  per-kernel.** The engine can run hash/categorical/bucket_perturb natively
+  even when only the additive raw-hex kernel is missing (`native_kernel_
+  availability()`), but that per-kernel breakdown is not part of the
+  engine's public surface (only the blanket `native_companion_status()` is)
+  -- and the plan is explicit that this CLI reuses the engine's probe
+  rather than reimplementing companion detection. This module therefore
+  treats a partially-capable companion as fully broken, which is the safe
+  direction (over-conservative, never a false native claim) but can
+  occasionally fail closed a job the engine would have run natively.
+- **Graceful degradation on an older `decoy-engine`.** `decoy run`,
+  `decoy.mask()`, `decoy info`, and `decoy preflight` all detect whether
+  the installed engine actually has `native_companion_status()` before
+  calling it, and never pass `unified_slice_enabled=True` explicitly (only
+  `False`, for `--no-native`) -- an engine that predates this Phase 3.1
+  work keeps running a plain `decoy run` instead of crashing.
+
 ### Changed (OOM checker recalibration: build-floor refusal is now advisory, capacity refusal is fan-in-only, 2026-09-08)
 
 - **`FIT` no longer means "clears the budget."** The engine's OOM checker

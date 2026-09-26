@@ -270,6 +270,52 @@ _TOPICS: dict[str, _Topic] = {
         ),
         see_also=("decoy run --help", "decoy explain substrate"),
     ),
+    "native": _Topic(
+        name="native",
+        summary="Native-on-when-present: a compiled kernel speeds up masking when installed.",
+        body=(
+            "A plain, non-chunked, mask-only `decoy run` (or `decoy.mask()`) on a\n"
+            "single non-FK table read from Parquet can finish on one of three routes,\n"
+            "shown on the run card's Route line:\n\n"
+            "  native (compiled kernel)            hash/categorical/bucket_perturb/\n"
+            "                                      group_key columns ran on the\n"
+            "                                      decoy-engine-native companion\n"
+            "                                      (needs it installed and healthy).\n"
+            "  unified slice (no compiled kernel)  the faster Arrow lane without the\n"
+            "                                      companion. passthrough/redact/\n"
+            "                                      truncate have no compiled kernel,\n"
+            "                                      so a table masked only with them\n"
+            "                                      lands here at best.\n"
+            "  pandas (legacy adapter)             the job did not qualify for either.\n\n"
+            "No flag is needed for the first two -- install the companion and\n"
+            "eligible jobs speed up automatically.\n\n"
+            "  --native      Require that a compiled kernel actually ran. Refuses\n"
+            "                up front on --chunked, a generate/mixed config, or an\n"
+            "                absent/broken companion; refuses AFTER the run, before\n"
+            "                any output is written, if the job finished without a\n"
+            "                compiled kernel (e.g. an FK table, a non-Parquet source,\n"
+            "                or a table masked only with passthrough/redact/truncate:\n"
+            "                those get the unified-slice speedup by default but can\n"
+            "                never satisfy --native on their own).\n"
+            "  --no-native   Force the legacy pandas adapter, bypassing the native\n"
+            "                lane entirely -- the rollback if something looks wrong.\n\n"
+            "A present-but-broken companion (a bad build, a mismatched ABI) is\n"
+            "treated as a deployment defect, not a fallback: by default `decoy run`\n"
+            "refuses closed with the classified reason rather than silently masking\n"
+            "on pandas. `--no-native` downgrades that refusal to a warned fallback.\n\n"
+            "No install path exists yet: decoy-engine-native has no PyPI release, so\n"
+            "there is no `decoy-cli[native]` extra and no published wheel to point at\n"
+            "(the engine repo's native-companion.yml CI workflow builds one per\n"
+            "commit, but it lands in CI, not anywhere pip can reach). Everything\n"
+            "above already works with a companion installed by other means (a local\n"
+            "build, a hand-copied wheel); the extra lands once a paired release\n"
+            "exists, forwarding to the engine's own ABI-pinned `decoy-engine[native]`.\n"
+            "`decoy info` and `decoy preflight` both report companion health without\n"
+            "running anything; preflight also reports a config-shape possibility\n"
+            "line, not a guarantee of the resolved route."
+        ),
+        see_also=("decoy run --help", "decoy info", "decoy preflight"),
+    ),
     "substrate": _Topic(
         name="substrate",
         summary="pandas is the masking substrate (polars is a dormant legacy opt-in).",
