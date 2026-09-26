@@ -542,27 +542,37 @@ def run(
                     "Run without --chunked to execute a mixed or generate pipeline."
                 )
 
-            vault_writer = None
+            # A cheap, no-secret-access check: whether --vault was passed
+            # AND at least one column declares it. Computed before
+            # constructing the real vault writer (which resolves key
+            # material) so the flag-conflict and native-gate usage checks
+            # below run first -- a usage error should never wait on a
+            # secret-reading side effect.
+            vault_columns_declared = False
             if vault is not None:
-                from decoy_engine import vault_writer_for_config
                 from decoy_engine.vault import iter_vault_columns
 
-                if not iter_vault_columns(config_dict):
+                vault_columns_declared = bool(iter_vault_columns(config_dict))
+                if not vault_columns_declared:
                     raise _VaultUsageError(
                         "--vault was passed but no column declares vault: true "
                         "in this config. Add `vault: true` to the columns whose "
                         "source values the vault should record."
                     )
-                vault_writer = vault_writer_for_config(config_dict)
 
             # Phase 3.1: resolve --native/--no-native intent and run the
             # shared pre-execution gate (approach 2 Stage 0/1, plus the
             # broken-companion classification of approach 3) BEFORE any
             # dispatch. `vault_active` must be known here (not just visible
             # in the config's `vault: true` columns): admission declines
-            # ANY job with a live vault_writer regardless of column markers,
+            # ANY job with a live vault writer regardless of column markers,
             # so the fail-closed scoping needs the real runtime state, not a
-            # config-shape proxy.
+            # config-shape proxy. Using `vault_columns_declared` here (not
+            # the constructed writer) is equivalent for this decision --
+            # `--vault` always fails closed above unless a vault column
+            # exists, so "the flag was given and validated" already implies
+            # "a writer will exist" -- without paying for key resolution
+            # before the gate has had its say.
             if native and no_native:
                 raise _native_gate.NativeGateError(
                     "--native and --no-native are mutually exclusive.",
@@ -576,15 +586,21 @@ def run(
                 chunked=chunked,
                 any_generate=any_generate,
                 config_dict=config_dict,
-                vault_active=vault_writer is not None,
+                vault_active=vault is not None and vault_columns_declared,
             )
             if gate_result.info_message and state.mode is not OutputMode.quiet:
-                # Wrapped in Text(): the message can carry a literal
-                # "decoy-cli[native]" extras spec, which Rich's default
-                # string markup parsing would otherwise mangle.
+                # Wrapped in Text(): a gate message is free text (e.g. a
+                # remediation hint), which Rich's default string markup
+                # parsing could otherwise reinterpret.
                 state.err_console.print(hint("native:"), Text(gate_result.info_message))
             if gate_result.warn_message and state.mode is not OutputMode.quiet:
                 state.err_console.print(warn("warning:"), Text(gate_result.warn_message))
+
+            vault_writer = None
+            if vault is not None:
+                from decoy_engine import vault_writer_for_config
+
+                vault_writer = vault_writer_for_config(config_dict)
 
             if chunked:
                 resolved_substrate = _run_chunked_mask(
@@ -833,10 +849,11 @@ def run(
             # CLI install DX (2026-09-25): error_text is arbitrary exception
             # text, not authored UI copy -- it can legitimately contain `[`
             # (a MissingExtraError's `pip install decoy-cli[cloud]`, a
-            # Phase 3.1 native-gate message quoting `decoy-cli[native]`, or
-            # any future message that happens to quote a list/bracketed
-            # value). markup=False so Rich prints it verbatim instead of
-            # parsing it as markup and silently dropping an unrecognized tag.
+            # Phase 3.1 native-gate message quoting `decoy-cli[native]` or a
+            # companion's own ABI string, or any future message that quotes
+            # a list/bracketed value). markup=False so Rich prints it
+            # verbatim instead of parsing it as markup and silently
+            # dropping an unrecognized tag.
             if capacity_code is not None:
                 state.err_console.print(error("capacity:"), error_text, markup=False)
                 state.err_console.print(

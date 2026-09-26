@@ -479,9 +479,14 @@ def mask(
         # ("plain runs always use pandas; --substrate is only consulted for
         # --chunked runs"). Mirror the CLI exactly: omit the kwarg entirely
         # unless the caller explicitly chose a substrate.
-        run_pipeline_kwargs: dict[str, Any] = {
-            "unified_slice_enabled": gate_result.unified_slice_enabled
-        }
+        # H1 remediation (matches decoy run's own fix): `unified_slice_
+        # enabled=True` is already the engine's own default, so it is
+        # passed ONLY to force it False (native=False). Never passing it on
+        # the true/default path keeps `mask()` working against an engine
+        # that predates this kwarg entirely.
+        run_pipeline_kwargs: dict[str, Any] = {}
+        if not gate_result.unified_slice_enabled:
+            run_pipeline_kwargs["unified_slice_enabled"] = False
         if substrate is not None:
             run_pipeline_kwargs["substrate"] = substrate
 

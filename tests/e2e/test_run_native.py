@@ -1,29 +1,46 @@
 """End-to-end tests for `decoy run --native`/`--no-native` and the
 native-route indicator (Phase 3.1: CLI native packaging default-on-when-present).
 
-This dev/test environment has no compiled `decoy-engine-native` companion
-installed (no paired PyPI release exists yet -- see the plan's packaging
-section), so `native_companion_status()` genuinely reports `absent` here.
-Tests that need `present-ok` or a broken companion monkeypatch
-`decoy_engine.native_companion_status` -- the exact spot both
-`decoy._native_gate` and `decoy.cli.info`/`decoy.cli.preflight` read it from.
-That monkeypatch controls the CLI-side gate's OWN decision (Stage 0/1, the
-info/warn text, `decoy info`/`decoy preflight` reporting) fully; it does NOT
-make the engine's internal admission predicate see a healthy companion (that
-reads the probe from a different import path, by design -- see
-`decoy_engine/execution/physical/_snapshot.py` /`_live_inputs.py`), so a
-"required a compiled kernel" run in this environment always finishes via the
-legacy pandas route regardless of what the CLI gate believed going in. State
-(a) "native (compiled kernel)" is covered at the unit level instead
-(`tests/unit/test_native_gate.py::test_classify_route_activation_with_compiled_kernel_is_native`),
-reading a synthetic `ExecutionResult.quality_metrics` shaped exactly like a
-real native run would produce -- the engine's own D9 cert already proves a
-real compiled kernel produces that shape (out of this CLI plan's scope).
+Two independent ways of driving each companion state, used side by side so
+these tests hold regardless of whether a compiled `decoy-engine-native`
+companion happens to be installed in whatever environment runs them:
+
+1. **Genuine absence, everywhere, on demand.** `force_absent_companion`
+   (a fixture below) sets `sys.modules["decoy_engine_native"] = None`,
+   which is the standard way to make Python's import system report a
+   module as genuinely not installed (`importlib.util.find_spec` returns
+   `None` for a `None` sys.modules entry) -- this fools the ENGINE's own
+   internal admission check too, not just the CLI-facing probe, because it
+   acts at the import system itself rather than any one probe function.
+   Confirmed directly: `run_pipeline` on an eligible hash/Parquet config
+   produces `compiled_kernel_executed: true` with the fixture inactive (a
+   real companion built via `maturin develop --release` in
+   `decoy-engine/decoy-engine-native`) and produces no
+   `unified_slice_activation` key at all with it active -- the exact
+   state (c) contract. Tests that need `absent` for real use this fixture,
+   not an assumption about the ambient environment.
+2. **Genuine present-ok, when a companion is actually built.** Tests
+   requiring compiled-kernel execution are guarded by
+   `_NATIVE_COMPANION_INSTALLED` and skip (not fail) when no companion is
+   importable -- true in CI today (no paired PyPI release exists yet, so
+   nothing installs one there), false in this dev environment once one is
+   built locally. Skipping is honest: the plan's whole premise is that the
+   companion is optional, so a suite that hard-required one would
+   contradict it.
+
+Tests that need a BROKEN companion (abi-mismatch/kat-corrupt/load-error)
+still monkeypatch `decoy_engine.native_companion_status` directly --
+genuinely corrupting a loaded compiled extension is impractical, and this
+only needs to control the CLI-side gate's OWN classification of an already
+non-`ok` probe result, not the engine's admission decision (which the CLI
+never disagrees with for a broken companion: both correctly avoid it).
 """
 
 from __future__ import annotations
 
+import importlib.util
 import json as _json
+import sys
 from pathlib import Path
 
 import pandas as pd
@@ -38,6 +55,20 @@ from decoy.cli.exit_codes import EXIT_USAGE
 runner = CliRunner()
 
 _ABI = "decoy-native-abi-2"
+
+_NATIVE_COMPANION_INSTALLED = importlib.util.find_spec("decoy_engine_native") is not None
+_requires_real_companion = pytest.mark.skipif(
+    not _NATIVE_COMPANION_INSTALLED,
+    reason="needs a real compiled decoy-engine-native companion (none importable here)",
+)
+
+
+@pytest.fixture
+def force_absent_companion(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Make the companion genuinely absent for BOTH the CLI probe and the
+    engine's own internal admission check, regardless of whether one is
+    actually installed in this environment. See module docstring point 1."""
+    monkeypatch.setitem(sys.modules, "decoy_engine_native", None)
 
 
 def _status(
@@ -197,7 +228,9 @@ def test_native_and_no_native_are_mutually_exclusive(tmp_path: Path):
 # ---------------------------------------------------------------------------
 
 
-def test_run_falls_back_to_legacy_pandas_when_companion_absent(tmp_path: Path):
+def test_run_falls_back_to_legacy_pandas_when_companion_absent(
+    tmp_path: Path, force_absent_companion: None
+):
     config = _hash_eligible_config(tmp_path)
     result = runner.invoke(app, ["run", str(config), "--json"])
     assert result.exit_code == 0, result.output
@@ -207,7 +240,7 @@ def test_run_falls_back_to_legacy_pandas_when_companion_absent(tmp_path: Path):
     assert (tmp_path / "out.csv").exists()
 
 
-def test_run_absent_companion_prints_install_hint(tmp_path: Path):
+def test_run_absent_companion_prints_install_hint(tmp_path: Path, force_absent_companion: None):
     config = _hash_eligible_config(tmp_path)
     result = runner.invoke(app, ["run", str(config)])
     assert result.exit_code == 0, result.output
@@ -233,6 +266,22 @@ def test_run_fails_closed_on_broken_companion(tmp_path: Path, monkeypatch: pytes
     assert not (tmp_path / "out.csv").exists()
 
 
+def test_run_json_error_envelope_carries_native_error_kind_and_code(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    """M3 regression (dennis round 2): a NativeGateError's `code` must ride
+    in the `--json` error envelope as `error_kind`/`code`, matching the
+    existing `capacity_code` convention, so a script can branch on it
+    without parsing message text."""
+    _patch_status(monkeypatch, _status("kat-corrupt", present=True, ok=False, abi_actual=_ABI))
+    config = _hash_eligible_config(tmp_path)
+    result = runner.invoke(app, ["run", str(config), "--json"])
+    assert result.exit_code == EXIT_USAGE
+    payload = _json.loads(result.stdout)
+    assert payload["error_kind"] == "native"
+    assert payload["code"] == "native_companion_kat-corrupt"
+
+
 @pytest.mark.parametrize("reason", ["abi-mismatch", "kat-corrupt", "load-error"])
 def test_run_fails_closed_on_every_broken_reason(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, reason: str
@@ -256,6 +305,49 @@ def test_broken_companion_does_not_affect_non_eligible_job(
     result = runner.invoke(app, ["run", str(config)])
     assert result.exit_code == 0, result.output
     assert (tmp_path / "out.csv").exists()
+
+
+def test_broken_companion_does_not_affect_a_live_vault_run(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    """`vault_active` wiring (M1/L5 remediation, dennis round 2): a broken
+    companion must not block a `--vault` run -- admission always declines a
+    live vault writer regardless of companion health, so this job was never
+    going to touch native either way. (A `vault: true` column also trips
+    `static_native_eligibility`'s own config-shape check, which alone would
+    already cover this observable outcome; `vault_active`'s unit-level
+    behavior in isolation -- a config with NO `vault: true` column but a
+    live writer anyway -- is covered by
+    `test_default_on_eligible_shape_with_live_vault_writer_never_probes` in
+    `tests/unit/test_native_gate.py`.)"""
+    pytest.importorskip("cryptography")
+    _patch_status(monkeypatch, _status("kat-corrupt", present=True, ok=False, abi_actual=_ABI))
+    src = tmp_path / "in.parquet"
+    pd.DataFrame({"id": ["a", "b"], "email": ["a@x.com", "b@x.com"]}).to_parquet(src, index=False)
+    config = {
+        "version": 1,
+        "global_settings": {"seed": 42},
+        "sources": {"customers": {"type": "file", "format": "parquet", "path": str(src)}},
+        "tables": [
+            {
+                "name": "customers",
+                "columns": [
+                    {"name": "id", "strategy": "passthrough"},
+                    {"name": "email", "strategy": "hash", "namespace": "n", "vault": True},
+                ],
+            }
+        ],
+        "targets": {
+            "customers": {"type": "file", "format": "csv", "path": str(tmp_path / "out.csv")}
+        },
+    }
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(yaml.dump(config))
+    vault_path = tmp_path / "vault.bin"
+    result = runner.invoke(app, ["run", str(config_path), "--vault", str(vault_path)])
+    assert result.exit_code == 0, result.output
+    assert (tmp_path / "out.csv").exists()
+    assert vault_path.exists()
 
 
 # ---------------------------------------------------------------------------
@@ -287,7 +379,7 @@ def test_no_native_downgrades_broken_companion_to_warned_fallback(
 # ---------------------------------------------------------------------------
 
 
-def test_native_require_refuses_absent_companion(tmp_path: Path):
+def test_native_require_refuses_absent_companion(tmp_path: Path, force_absent_companion: None):
     config = _hash_eligible_config(tmp_path)
     result = runner.invoke(app, ["run", str(config), "--native"])
     assert result.exit_code == EXIT_USAGE
@@ -371,17 +463,79 @@ def test_route_indicator_reports_resolved_substrate_for_chunked(tmp_path: Path):
 
 
 # ---------------------------------------------------------------------------
-# State (a) "native (compiled kernel)" at the CLI dispatch level.
-#
-# No real compiled companion exists in this environment (see module
-# docstring), so these monkeypatch `decoy_engine.run_pipeline` itself: the
-# fake wrapper calls the REAL `run_pipeline` first (so the masked values are
-# genuinely computed, not fabricated) and only overrides `quality_metrics`
-# to carry the shape a real native run would produce. This exercises the
-# FULL CLI path a synthetic `classify_route()` unit test cannot: dispatch,
-# `--native`'s Stage 1/2 gating, the JSON/summary rendering, and the actual
-# file write -- addressing the Codex final-gate finding that the original
-# suite never drove a "native" outcome through `decoy run` itself.
+# State (a) "native (compiled kernel)", GENUINE: an actual compiled
+# companion, actually invoked, with `compiled_kernel_executed` evidence the
+# engine itself produced -- not simulated. Skips (does not fail) when no
+# companion is importable in this environment (see module docstring point
+# 2): true in CI today, false here once `maturin develop --release` has
+# been run in `decoy-engine/decoy-engine-native`.
+# ---------------------------------------------------------------------------
+
+
+@_requires_real_companion
+def test_run_native_when_companion_present_ok(tmp_path: Path):
+    """The plan's own acceptance-test name. A REAL compiled companion, a
+    REAL eligible hash job, no flags: the compiled kernel actually runs."""
+    config = _hash_eligible_config(tmp_path)
+    result = runner.invoke(app, ["run", str(config), "--json"])
+    assert result.exit_code == 0, result.output
+    payload = _json.loads(result.stdout)
+    assert payload["native_route"] == {
+        "applicable": True,
+        "state": "native",
+        "label": "native (compiled kernel)",
+    }
+    assert (tmp_path / "out.csv").exists()
+
+
+@_requires_real_companion
+def test_native_require_succeeds_with_a_real_companion(tmp_path: Path):
+    config = _hash_eligible_config(tmp_path)
+    result = runner.invoke(app, ["run", str(config), "--native", "--json"])
+    assert result.exit_code == 0, result.output
+    assert _json.loads(result.stdout)["native_route"]["state"] == "native"
+    assert (tmp_path / "out.csv").exists()
+
+
+@_requires_real_companion
+def test_output_file_bytes_identical_native_vs_genuinely_absent(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    """The plan's actual claim, proven with a REAL compiled kernel on one
+    side and a REAL absent companion on the other -- not two runs of the
+    same mocked route. The native run happens FIRST, while the companion is
+    genuinely present; `sys.modules["decoy_engine_native"] = None` is only
+    applied afterward, before the second (absent) invocation, so the two
+    calls see genuinely different companion states within one test."""
+    (tmp_path / "native").mkdir()
+    (tmp_path / "absent").mkdir()
+    config_native = _hash_eligible_config(tmp_path / "native")
+    config_absent = _hash_eligible_config(tmp_path / "absent")
+
+    result_native = runner.invoke(app, ["run", str(config_native), "--json"])
+    assert result_native.exit_code == 0, result_native.output
+    assert _json.loads(result_native.stdout)["native_route"]["state"] == "native"
+
+    monkeypatch.setitem(sys.modules, "decoy_engine_native", None)
+    result_absent = runner.invoke(app, ["run", str(config_absent), "--json"])
+    assert result_absent.exit_code == 0, result_absent.output
+    assert _json.loads(result_absent.stdout)["native_route"]["state"] == "pandas"
+
+    bytes_native = (tmp_path / "native" / "out.csv").read_bytes()
+    bytes_absent = (tmp_path / "absent" / "out.csv").read_bytes()
+    assert bytes_native == bytes_absent
+
+
+# ---------------------------------------------------------------------------
+# State (a) "native (compiled kernel)" CLI PLUMBING, portable across every
+# environment (no real companion required): monkeypatches
+# `decoy_engine.run_pipeline` itself, calling the REAL implementation first
+# (so masked values are genuinely computed) and only overriding
+# `quality_metrics` to carry the shape a real native run produces. This
+# covers dispatch/rendering/write-path wiring even where no compiled
+# companion can be built (e.g. a CI runner with no Rust toolchain); the
+# tests above are the genuine acceptance evidence, these are the portable
+# regression net under them.
 # ---------------------------------------------------------------------------
 
 

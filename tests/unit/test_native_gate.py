@@ -212,11 +212,32 @@ def test_non_file_source_type_not_eligible():
     assert static_native_eligibility(config) is False
 
 
-def test_path_suffix_alone_counts_as_parquet():
+def test_missing_format_field_not_eligible_even_with_parquet_path():
+    """Remediation (dennis round 2): admission checks the DECLARED `format`
+    field exactly (`source_descriptor.get("format") != "parquet"`), never a
+    path-suffix inference -- a `.parquet`-suffixed path with no (or a
+    mismatched) format field is not eligible, matching the engine exactly."""
     config = _eligible_config()
     del config["sources"]["customers"]["format"]
     config["sources"]["customers"]["path"] = "in.parquet"
-    assert static_native_eligibility(config) is True
+    assert static_native_eligibility(config) is False
+
+
+def test_mislabeled_format_not_eligible_even_with_parquet_path():
+    config = _eligible_config()
+    config["sources"]["customers"]["format"] = "csv"
+    config["sources"]["customers"]["path"] = "in.parquet"
+    assert static_native_eligibility(config) is False
+
+
+def test_extra_declared_source_not_eligible():
+    """Remediation (dennis round 2): admission requires the resident
+    sources to be EXACTLY {table} -- an extra declared source (even for a
+    table that plays no other role here) is the config-visible half of
+    that same decline."""
+    config = _eligible_config()
+    config["sources"]["orders"] = {"type": "file", "format": "parquet", "path": "orders.parquet"}
+    assert static_native_eligibility(config) is False
 
 
 # ---------------------------------------------------------------------------

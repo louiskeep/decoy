@@ -2,10 +2,21 @@
 `--native`/`--no-native` through the SAME shared gate
 (`decoy._native_gate`), so it cannot silently write an ineligible-shape
 result the CLI would refuse.
+
+See `tests/e2e/test_run_native.py`'s module docstring for the two ways
+these tests drive a companion state portably (a `force_absent_companion`
+fixture using `sys.modules["decoy_engine_native"] = None`, which fools the
+engine's own admission check too, not just the library-facing probe; and a
+`_requires_real_companion` skip guard for tests needing GENUINE
+compiled-kernel execution, true only when one has actually been built
+locally -- e.g. `maturin develop --release` in
+`decoy-engine/decoy-engine-native`).
 """
 
 from __future__ import annotations
 
+import importlib.util
+import sys
 from pathlib import Path
 
 import pandas as pd
@@ -16,6 +27,17 @@ import decoy
 from decoy._native_gate import NativeGateError
 
 _ABI = "decoy-native-abi-2"
+
+_NATIVE_COMPANION_INSTALLED = importlib.util.find_spec("decoy_engine_native") is not None
+_requires_real_companion = pytest.mark.skipif(
+    not _NATIVE_COMPANION_INSTALLED,
+    reason="needs a real compiled decoy-engine-native companion (none importable here)",
+)
+
+
+@pytest.fixture
+def force_absent_companion(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setitem(sys.modules, "decoy_engine_native", None)
 
 
 def _status(
@@ -85,14 +107,25 @@ def csv_config(tmp_path: Path) -> dict:
     }
 
 
-def test_mask_default_native_falls_back_silently(eligible_parquet_config: dict, tmp_path: Path):
-    out = decoy.mask(config=eligible_parquet_config)
+def test_mask_default_native_falls_back_silently(
+    eligible_parquet_config: dict, tmp_path: Path, force_absent_companion: None
+):
+    """M4 regression (dennis round 2): the ordinary absent-companion case
+    must NEVER raise/emit a `UserWarning` -- a caller running with
+    warnings-as-errors would otherwise get an exception from a normal
+    `mask()` call. `pytest.warns` isn't used here (it expects at least one
+    matching warning); `recwarn` asserts none fired instead."""
+    import warnings
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        out = decoy.mask(config=eligible_parquet_config)
     assert isinstance(out, pd.DataFrame)
     assert (tmp_path / "out.csv").exists()
 
 
 def test_mask_native_true_uses_shared_gate_absent_companion(
-    eligible_parquet_config: dict, tmp_path: Path
+    eligible_parquet_config: dict, tmp_path: Path, force_absent_companion: None
 ):
     with pytest.raises(NativeGateError) as exc_info:
         decoy.mask(config=eligible_parquet_config, native=True)
@@ -161,11 +194,25 @@ def test_mask_native_true_on_generate_only_rejected_before_dispatch(tmp_path: Pa
     assert not (tmp_path / "gen.csv").exists()
 
 
+@_requires_real_companion
+def test_mask_native_true_succeeds_with_a_real_companion(
+    eligible_parquet_config: dict, tmp_path: Path
+):
+    """Genuine acceptance evidence (skips, does not fail, when no compiled
+    companion is importable here): `mask(native=True)` against a REAL
+    companion actually returns a DataFrame and writes the file, using a
+    genuinely executed compiled kernel."""
+    out = decoy.mask(config=eligible_parquet_config, native=True)
+    assert isinstance(out, pd.DataFrame)
+    assert (tmp_path / "out.csv").exists()
+
+
 def test_mask_dispatches_native_route_when_engine_reports_compiled_kernel(
     eligible_parquet_config: dict, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ):
-    """State (a) at the library dispatch level: no real compiled companion
-    exists in this environment, so the fake `run_pipeline` wrapper calls the
+    """State (a) at the library dispatch level (portable plumbing check that
+    runs regardless of environment; see the genuine-companion test above for
+    the real acceptance evidence). The fake `run_pipeline` wrapper calls the
     REAL one first (genuinely computed masked values) and only overrides
     `quality_metrics` to carry the shape a real native run would produce --
     proving `mask(native=True)` actually returns/writes on a native outcome,
@@ -205,3 +252,44 @@ def test_mask_dispatches_native_route_when_engine_reports_compiled_kernel(
     out = decoy.mask(config=eligible_parquet_config, native=True)
     assert isinstance(out, pd.DataFrame)
     assert (tmp_path / "out.csv").exists()
+
+
+def test_mask_default_and_native_true_stay_compatible_with_an_older_engine(
+    eligible_parquet_config: dict, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    """H1 regression (Codex round-2 repro): `mask()` must never pass
+    `unified_slice_enabled=True` explicitly -- an engine whose `run_pipeline`
+    predates that kwarg entirely would raise `TypeError` on every plain
+    call, not just a `--no-native` one. Simulates that older engine by
+    wrapping the real `run_pipeline` and asserting the kwarg never arrives
+    unless it is `False`."""
+    import decoy_engine
+
+    real_run_pipeline = decoy_engine.run_pipeline
+
+    def _old_engine_run_pipeline(*args, **kwargs):
+        if "unified_slice_enabled" in kwargs and kwargs["unified_slice_enabled"] is not False:
+            raise TypeError(
+                "old_run_pipeline() got an unexpected keyword argument 'unified_slice_enabled'"
+            )
+        kwargs.pop("unified_slice_enabled", None)
+        return real_run_pipeline(*args, **kwargs)
+
+    monkeypatch.setattr("decoy_engine.run_pipeline", _old_engine_run_pipeline)
+
+    # Default intent: must not pass the kwarg at all.
+    out = decoy.mask(config=eligible_parquet_config)
+    assert isinstance(out, pd.DataFrame)
+
+    # native=True with a companion the CLI-side gate believes is healthy:
+    # Stage 1 passes, so this actually REACHES the old-engine fake. Forcing
+    # the companion genuinely absent (regardless of whether one happens to
+    # be built in this environment) makes admission decline the hash gate,
+    # so Stage 2 refuses for lack of compiled-kernel evidence -- but that
+    # must be `post_run_verify`'s NativeGateError, not a TypeError from
+    # `unified_slice_enabled=True` hitting the simulated old engine.
+    _patch(monkeypatch, _status("present-ok", present=True, ok=True, abi_actual=_ABI))
+    monkeypatch.setitem(sys.modules, "decoy_engine_native", None)
+    with pytest.raises(NativeGateError) as exc_info:
+        decoy.mask(config=eligible_parquet_config, native=True)
+    assert exc_info.value.code == "native_require_no_evidence"

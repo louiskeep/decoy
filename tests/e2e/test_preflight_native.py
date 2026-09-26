@@ -99,7 +99,7 @@ def test_preflight_reports_health_and_eligible_shape_json(tmp_path: Path):
     assert result.exit_code == 0, result.output
     payload = _json.loads(result.stdout)
     assert payload["native_companion"]["status"] == "pass"
-    assert payload["native_companion"]["message"]  # non-empty, absent is normal
+    assert payload["native_companion"]["message"]  # non-empty either way (absent or healthy)
     assert payload["native_eligibility"]["status"] == "pass"
     assert "possibility" in payload["native_eligibility"]["message"].lower()
     assert "eligible" in payload["native_eligibility"]["message"].lower()
@@ -157,3 +157,19 @@ def test_preflight_abi_actual_sanitized(tmp_path: Path, monkeypatch: pytest.Monk
     message = payload["native_companion"]["message"]
     assert "\x00" not in message
     assert len(message) < 500  # bounded by the capped abi_actual, not the raw 10k string
+
+
+def test_preflight_degrades_gracefully_on_an_older_engine(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    """H1 regression (dennis round 2): an engine predating
+    `native_companion_status()` must not crash `decoy preflight`."""
+    import decoy_engine
+
+    monkeypatch.delattr(decoy_engine, "native_companion_status", raising=False)
+    config = _eligible_config(tmp_path)
+    result = runner.invoke(app, ["preflight", str(config), "--json"])
+    assert result.exit_code == 0, result.output
+    payload = _json.loads(result.stdout)
+    assert payload["native_companion"]["status"] == "pass"
+    assert "newer engine" in payload["native_companion"]["message"].lower()

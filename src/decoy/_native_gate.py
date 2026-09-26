@@ -164,7 +164,8 @@ def _remediation(reason: str) -> str:
         return "see `decoy explain native` for current install status"
     return (
         "reinstall a decoy-engine-native companion matching this engine's ABI, "
-        "or rerun with --no-native to use the legacy pandas adapter"
+        "or force the legacy pandas adapter (--no-native on the CLI, "
+        "native=False for decoy.mask())"
     )
 
 
@@ -242,17 +243,23 @@ def static_native_eligibility(config_dict: dict[str, Any]) -> bool:
         return False
     name = table.get("name")
     sources = config_dict.get("sources")
-    source = sources.get(name) if isinstance(sources, dict) else None
+    if not isinstance(sources, dict) or set(sources) != {name}:
+        # Admission requires the resident sources to be EXACTLY {table}
+        # (`_unified_slice_admission.py`'s `set(caller_sources) != {table}`
+        # decline) -- an extra declared source is the config-visible half of
+        # that same check.
+        return False
+    source = sources[name]
     if not isinstance(source, dict):
         return False
     if source.get("type") not in (None, "file"):
         return False
-    fmt = source.get("format")
-    path = source.get("path")
-    is_parquet = fmt == "parquet" or (
-        isinstance(path, str) and path.lower().endswith((".parquet", ".pq"))
-    )
-    return bool(is_parquet)
+    # Exact match, matching admission's own check
+    # (`source_descriptor.get("format") != "parquet"`) -- no path-suffix
+    # fallback, so a mislabeled `format: csv` with a `.parquet` path is
+    # correctly NOT eligible (the engine goes by the declared format, not
+    # the extension).
+    return source.get("format") == "parquet"
 
 
 def pre_execution_gate(
@@ -324,8 +331,8 @@ def pre_execution_gate(
                 if status.present and not status.ok:
                     warn_message = (
                         "the decoy-engine-native companion is present but not usable "
-                        f"({status.reason}); moot here since --no-native already forces "
-                        "the legacy pandas adapter."
+                        f"({status.reason}); moot here since disabling native already "
+                        "forces the legacy pandas adapter."
                     )
             except _NativeProbeUnavailable:
                 pass
