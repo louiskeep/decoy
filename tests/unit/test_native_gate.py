@@ -311,7 +311,15 @@ def test_extra_declared_source_without_path_still_eligible():
 
 def test_extra_declared_source_agrees_with_cli_loader(tmp_path):
     """The eligibility check and the real loader must agree on which
-    sources get materialized: the loader yields exactly `{table}` here."""
+    sources get materialized: the loader yields exactly `{table}` here.
+
+    Uses a no-`path` local entry, not a cloud one: `_load_sources_from_config`
+    now refuses ANY declared s3/gcs source outright via
+    `_require_local_io_endpoints` (the CLI install DX cloud fail-closed fix),
+    so a cloud fixture would raise before reaching the materialization check
+    this test targets. A `path`-less local entry exercises the same
+    `source_is_materialized` skip without tripping that refusal.
+    """
     import pyarrow as pa
     import pyarrow.parquet as pq
 
@@ -319,7 +327,7 @@ def test_extra_declared_source_agrees_with_cli_loader(tmp_path):
 
     pq.write_table(pa.table({"id": [1], "email": ["a@x"]}), tmp_path / "in.parquet")
     config = _eligible_config()
-    config["sources"]["archive"] = {"type": "s3", "bucket": "b", "key": "k.parquet"}
+    config["sources"]["archive"] = {"type": "file", "format": "parquet"}
     assert set(_load_sources_from_config(config, tmp_path)) == {"customers"}
     assert static_native_eligibility(config) is True
 
