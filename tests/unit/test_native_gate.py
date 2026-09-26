@@ -104,6 +104,36 @@ def test_missing_source_entry_not_eligible():
     assert static_native_eligibility(config) is False
 
 
+def test_non_dict_source_entry_not_eligible():
+    config = _eligible_config()
+    config["sources"]["customers"] = "not-a-dict"
+    assert static_native_eligibility(config) is False
+
+
+def test_non_list_columns_not_eligible():
+    config = _eligible_config()
+    config["tables"][0]["columns"] = "not-a-list"
+    assert static_native_eligibility(config) is False
+
+
+def test_all_seven_native_strategies_at_once_is_eligible():
+    """Mutation regression (Codex round 3): `strategies <= _NATIVE_STRATEGIES`
+    must stay a subset-or-EQUAL check, not a strict subset -- a table using
+    every currently-admitted strategy at once (the equality case) is still
+    eligible."""
+    config = _eligible_config()
+    config["tables"][0]["columns"] = [
+        {"name": "c1", "strategy": "passthrough"},
+        {"name": "c2", "strategy": "redact"},
+        {"name": "c3", "strategy": "truncate"},
+        {"name": "c4", "strategy": "hash"},
+        {"name": "c5", "strategy": "categorical"},
+        {"name": "c6", "strategy": "bucket_perturb"},
+        {"name": "c7", "strategy": "group_key"},
+    ]
+    assert static_native_eligibility(config) is True
+
+
 def test_probe_status_raises_when_engine_lacks_the_symbol(monkeypatch):
     """Hits `_probe_status()`'s own missing-symbol branch directly (the
     other engine-too-old tests monkeypatch `_probe_status` itself, which
