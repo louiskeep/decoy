@@ -224,14 +224,29 @@ def _stage_source_entry(name: str, value: Any, tmp_paths: list[Path], declared: 
     temp path is tracked in `tmp_paths` for post-run cleanup.
 
     `declared` is the config's own `sources[name]` entry, if any. A path
-    `value` only replaces its `path`: a declared `format` (and `layout`,
-    for fixed_width) is the user's statement of how the bytes are laid
-    out and wins over the file suffix. The format is guessed from the
-    suffix only when the config declares none."""
+    `value` replaces the source with a local file. When the declaration
+    is a file source with a `format`, that format (and `layout`, for
+    fixed_width) is the user's statement of how the bytes are laid out
+    and wins over the file suffix. A cloud (s3/gcs) declaration, or none
+    with a format, falls back to inferring the format from the suffix."""
     if isinstance(value, (str, Path)):
         path = Path(value)
-        if isinstance(declared, dict) and declared.get("format"):
-            return {**declared, "type": declared.get("type", "file"), "path": str(path)}
+        if (
+            isinstance(declared, dict)
+            and declared.get("type", "file") == "file"
+            and "format" in declared
+        ):
+            # Fresh descriptor, never a spread of `declared`: only a file
+            # source's format/layout carry over. An invalid declared format
+            # (null, "") is passed through so schema validation rejects it.
+            entry: dict[str, Any] = {
+                "type": "file",
+                "format": declared["format"],
+                "path": str(path),
+            }
+            if declared["format"] == "fixed_width" and "layout" in declared:
+                entry["layout"] = declared["layout"]
+            return entry
         fmt = "parquet" if path.suffix.lower() in (".parquet", ".pq") else "csv"
         return {"type": "file", "format": fmt, "path": str(path)}
 
@@ -334,8 +349,12 @@ def mask(
             - A `pandas.DataFrame` or `pyarrow.Table`: used as the single
               mask-kind table's source. Only valid when the config declares
               exactly one mask-kind table (a `columns:` table).
-            - A path (str/Path) to a CSV or Parquet file: same
-              single-table rule as above.
+            - A path (str/Path) to a local file: same single-table rule
+              as above. A declared file `format`/`layout` in the config
+              wins (fixed_width included); the suffix (Parquet for
+              `.parquet`/`.pq`, else CSV) applies only when the config
+              declares no file format. A cloud-declared (s3/gcs) source
+              becomes a local file, with the format inferred by suffix.
             - A `dict[str, DataFrame | Table]` keyed by table name: for
               multi-table configs.
         config: The pipeline config, shaped exactly like the YAML `decoy

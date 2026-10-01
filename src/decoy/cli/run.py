@@ -1108,8 +1108,7 @@ def _run_chunked_mask(
         if not isinstance(table_entry, dict) or not table_entry.get("columns"):
             continue
         name = table_entry.get("name")
-        if not isinstance(name, str):
-            continue
+        assert isinstance(name, str)  # pydantic guarantees a str table name
         src_spec = sources.get(name) if isinstance(sources, dict) else None
         tgt_spec = targets.get(name) if isinstance(targets, dict) else None
         if not isinstance(src_spec, dict) or not isinstance(src_spec.get("path"), str):

@@ -488,3 +488,45 @@ def test_mask_api_data_path_infers_format_when_config_declares_none(tmp_path: Pa
 
     assert _stage_source_entry("t", tmp_path / "a.parquet", [], None)["format"] == "parquet"
     assert _stage_source_entry("t", tmp_path / "a.csv", [], None)["format"] == "csv"
+
+
+def _cloud_declared_config(tmp_path: Path, source: dict[str, Any]) -> Path:
+    cfg = {
+        "version": 1,
+        "global_settings": {"seed": 42},
+        "sources": {"people": source},
+        "tables": [{"name": "people", "columns": _COLUMNS}],
+        "targets": {"people": {"type": "file", "format": "csv", "path": str(tmp_path / "out.csv")}},
+    }
+    p = tmp_path / "cloud.yaml"
+    p.write_text(yaml.safe_dump(cfg), encoding="utf-8")
+    return p
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        {"type": "s3", "format": "csv", "bucket": "b", "key": "people.csv"},
+        {"type": "gcs", "format": "csv", "bucket": "b", "object": "people.csv"},
+    ],
+    ids=["s3", "gcs"],
+)
+def test_mask_api_data_path_overrides_cloud_declared_source(tmp_path: Path, source: dict[str, Any]):
+    local = tmp_path / "local.csv"
+    _frame().to_csv(local, index=False)
+    config = _cloud_declared_config(tmp_path, source)
+    got = decoy.mask(data=str(local), config=str(config))
+    assert [int(a) for a in got["age"]] == [31, 4, 57]
+    assert got["name"].tolist() != ["Alice", "Bob", "Carol"]
+
+
+@pytest.mark.parametrize("bad", [None, ""], ids=["null", "empty"])
+def test_mask_api_data_path_invalid_declared_format_is_rejected(tmp_path: Path, bad):
+    local = tmp_path / "local.csv"
+    _frame().to_csv(local, index=False)
+    config = _config(tmp_path, tmp_path / "missing.csv", "csv")
+    cfg = yaml.safe_load(config.read_text())
+    cfg["sources"]["people"]["format"] = bad
+    config.write_text(yaml.safe_dump(cfg), encoding="utf-8")
+    with pytest.raises(ConfigValidationError):
+        decoy.mask(data=str(local), config=str(config))
