@@ -207,7 +207,7 @@ def _to_pa_table(value: "pd.DataFrame | pa.Table") -> pa.Table:
     )
 
 
-def _stage_source_entry(name: str, value: Any, tmp_paths: list[Path]) -> dict:
+def _stage_source_entry(name: str, value: Any, tmp_paths: list[Path], declared: Any = None) -> dict:
     """Return a `sources[name]` descriptor dict pointing at a REAL,
     readable file for `value`.
 
@@ -221,9 +221,17 @@ def _stage_source_entry(name: str, value: Any, tmp_paths: list[Path]) -> dict:
     DataFrame/Table `value` has no file yet, so it is spooled to a
     Parquet temp file (a lossless round-trip, unlike CSV's blanket
     stringification) purely so profiling has real bytes to read; the
-    temp path is tracked in `tmp_paths` for post-run cleanup."""
+    temp path is tracked in `tmp_paths` for post-run cleanup.
+
+    `declared` is the config's own `sources[name]` entry, if any. A path
+    `value` only replaces its `path`: a declared `format` (and `layout`,
+    for fixed_width) is the user's statement of how the bytes are laid
+    out and wins over the file suffix. The format is guessed from the
+    suffix only when the config declares none."""
     if isinstance(value, (str, Path)):
         path = Path(value)
+        if isinstance(declared, dict) and declared.get("format"):
+            return {**declared, "type": declared.get("type", "file"), "path": str(path)}
         fmt = "parquet" if path.suffix.lower() in (".parquet", ".pq") else "csv"
         return {"type": "file", "format": fmt, "path": str(path)}
 
@@ -261,7 +269,7 @@ def _stage_data_sources(raw: dict, data: Any, tmp_paths: list[Path]) -> None:
         )
         items = [(name, data)]
     for name, value in items:
-        sources[name] = _stage_source_entry(name, value, tmp_paths)
+        sources[name] = _stage_source_entry(name, value, tmp_paths, sources.get(name))
     raw["sources"] = sources
 
 

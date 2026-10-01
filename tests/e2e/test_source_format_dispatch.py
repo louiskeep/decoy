@@ -140,6 +140,8 @@ def test_demo_path_fixed_width_matches_engine(tmp_path: Path):
     got = pd.read_csv(tmp_path / "out.csv", dtype=str)
     assert list(got.columns) == ["id", "name", "age"]
     assert got["age"].tolist() == ["31", "4", "57"]
+    expected = _engine_expected(tmp_path, config).astype(str)
+    pd.testing.assert_frame_equal(got, expected, check_dtype=False)
 
 
 def test_mask_api_fixed_width_matches_engine(tmp_path: Path):
@@ -448,3 +450,41 @@ def test_fixed_width_succeeds_under_mask_native_false(
     with pytest.warns(UserWarning):
         got = decoy.mask(config=str(config), native=False)
     assert [int(a) for a in got["age"]] == [31, 4, 57]
+
+
+# --------------------------------------------------------------------------
+# decoy.mask(data=<path>) keeps the config's declared format and layout
+# --------------------------------------------------------------------------
+
+
+def test_mask_api_data_path_keeps_declared_fixed_width(tmp_path: Path):
+    config = _fixed_width_config(tmp_path)
+    other = tmp_path / "b.dat"
+    other.write_bytes((tmp_path / "people.dat").read_bytes())
+    # Point the config at a path that does not exist so only `data=` can supply bytes.
+    cfg = yaml.safe_load(config.read_text())
+    cfg["sources"]["people"]["path"] = str(tmp_path / "missing.dat")
+    config.write_text(yaml.safe_dump(cfg), encoding="utf-8")
+    got = decoy.mask(data=str(other), config=str(config))
+    assert [int(a) for a in got["age"]] == [31, 4, 57]
+    ref_dir = tmp_path / "ref"
+    ref_dir.mkdir()
+    ref_config = _fixed_width_config(ref_dir)
+    expected = _engine_expected(ref_dir, ref_config)
+    pd.testing.assert_frame_equal(got.reset_index(drop=True), expected.reset_index(drop=True))
+
+
+def test_mask_api_data_path_keeps_declared_parquet_at_dat_suffix(tmp_path: Path):
+    src = tmp_path / "people.dat"
+    _frame().to_parquet(src, index=False)
+    config = _config(tmp_path, tmp_path / "missing.dat", "parquet")
+    got = decoy.mask(data=str(src), config=str(config))
+    assert [int(a) for a in got["age"]] == [31, 4, 57]
+    assert got["name"].tolist() != ["Alice", "Bob", "Carol"]
+
+
+def test_mask_api_data_path_infers_format_when_config_declares_none(tmp_path: Path):
+    from decoy.api import _stage_source_entry
+
+    assert _stage_source_entry("t", tmp_path / "a.parquet", [], None)["format"] == "parquet"
+    assert _stage_source_entry("t", tmp_path / "a.csv", [], None)["format"] == "csv"

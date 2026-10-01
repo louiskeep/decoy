@@ -226,7 +226,9 @@ def run(
             "text_redact, date_shift, bucketize), plus faker/categorical "
             "when deterministic with an explicit pool_size / categories "
             "declared in config; output is byte-identical to a plain run. "
-            "Sources/targets may be CSV or Parquet (fixed_width sources are not supported here). See: decoy explain chunked."
+            "Sources are read by their declared format (csv or parquet; fixed_width is "
+            "not supported with --chunked); targets are written by file suffix. "
+            "See: decoy explain chunked."
         ),
     ),
     chunk_size: int = typer.Option(
@@ -313,7 +315,8 @@ def run(
             "up front (no run) on --chunked or a generate/mixed config, or on an "
             "absent/broken decoy-engine-native companion. Refuses AFTER the run, "
             "before any output is written, if the job finished without positive "
-            "compiled-kernel evidence (e.g. an FK or non-Parquet source). "
+            "compiled-kernel evidence (e.g. an FK table or a table masked only with "
+            "passthrough/redact/truncate). "
             "Mutually exclusive with --no-native. See: decoy explain native."
         ),
     ),
@@ -1105,6 +1108,8 @@ def _run_chunked_mask(
         if not isinstance(table_entry, dict) or not table_entry.get("columns"):
             continue
         name = table_entry.get("name")
+        if not isinstance(name, str):
+            continue
         src_spec = sources.get(name) if isinstance(sources, dict) else None
         tgt_spec = targets.get(name) if isinstance(targets, dict) else None
         if not isinstance(src_spec, dict) or not isinstance(src_spec.get("path"), str):

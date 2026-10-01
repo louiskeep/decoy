@@ -265,8 +265,9 @@ _TOPICS: dict[str, _Topic] = {
             "text_redact, date_shift, bucketize (plus faker/categorical when the\n"
             "config declares an explicit pool). Anything that needs the whole column\n"
             "(e.g. shuffle) is rejected with a usage error.\n\n"
-            "Sources and targets may be CSV or Parquet independently; the file suffix\n"
-            "picks the reader and writer."
+            "Sources are read by their declared format (csv or parquet; fixed_width is\n"
+            "not supported with --chunked). Targets are written by file suffix (CSV\n"
+            "or Parquet), independently of the source format."
         ),
         see_also=("decoy run --help", "decoy explain substrate"),
     ),
@@ -275,7 +276,8 @@ _TOPICS: dict[str, _Topic] = {
         summary="Native-on-when-present: a compiled kernel speeds up masking when installed.",
         body=(
             "A plain, non-chunked, mask-only `decoy run` (or `decoy.mask()`) on a\n"
-            "single non-FK table read from Parquet can finish on one of three routes,\n"
+            "single non-FK table whose declared source format is csv, parquet or\n"
+            "fixed_width can finish on one of three routes,\n"
             "shown on the run card's Route line:\n\n"
             "  native (compiled kernel)            hash/categorical/bucket_perturb/\n"
             "                                      group_key columns ran on the\n"
@@ -293,7 +295,7 @@ _TOPICS: dict[str, _Topic] = {
             "                up front on --chunked, a generate/mixed config, or an\n"
             "                absent/broken companion; refuses AFTER the run, before\n"
             "                any output is written, if the job finished without a\n"
-            "                compiled kernel (e.g. an FK table, a non-Parquet source,\n"
+            "                compiled kernel (e.g. an FK table,\n"
             "                or a table masked only with passthrough/redact/truncate:\n"
             "                those get the unified-slice speedup by default but can\n"
             "                never satisfy --native on their own).\n"
