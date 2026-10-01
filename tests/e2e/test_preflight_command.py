@@ -136,7 +136,9 @@ def test_preflight_reports_missing_source(tmp_path: Path):
     result = runner.invoke(app, ["preflight", str(p)])
     assert result.exit_code != 0
     combined = (result.stdout or "") + (result.output or "")
-    assert "DOES_NOT_EXIST" in combined
+    # Rich wraps long paths at the terminal width (a long tmp_path splits the
+    # filename across lines), so compare with all whitespace removed.
+    assert "DOES_NOT_EXIST" in "".join(combined.split())
 
 
 # ---------------------------------------------------------------------------

@@ -253,10 +253,9 @@ def run(
         "--substrate",
         envvar="DECOY_SUBSTRATE",
         help=(
-            "Execution substrate for --chunked runs. Masking uses pandas; that is "
-            "the default and the actively supported substrate. The legacy 'polars' "
-            "value is retained but no longer recommended (value-equal to pandas, "
-            "not faster for masking). Non-chunked (plain) runs always use the "
+            "Execution substrate for --chunked runs. pandas is the only substrate "
+            "(the default); any other value, including the removed 'polars', is "
+            "rejected with a usage error. Non-chunked (plain) runs always use the "
             "engine's pandas adapter; this flag and the DECOY_SUBSTRATE env var are "
             "consulted only for --chunked runs, and setting either on a plain run "
             "emits a warning to stderr and is otherwise ignored."
@@ -350,6 +349,25 @@ def run(
         try:
             notify_channels = [parse_notify_spec(spec) for spec in notify]
         except NotifySpecError as exc:
+            msg = str(exc)
+            if state.mode is OutputMode.json:
+                emit_json(
+                    state,
+                    {"command": "run", "status": "error", "config": config_str, "error": msg},
+                )
+            elif state.mode is not OutputMode.quiet:
+                state.err_console.print(error("error:"), msg)
+            raise typer.Exit(code=EXIT_USAGE)
+
+    # Reject an unsupported substrate (e.g. the removed 'polars') up front, on
+    # plain and chunked runs alike: the engine only ships pandas, so a value it
+    # would refuse mid-run is a usage error the user can fix now.
+    if substrate is not None:
+        from decoy_engine.execution import ExecutionError, resolve_substrate
+
+        try:
+            resolve_substrate(substrate)
+        except ExecutionError as exc:
             msg = str(exc)
             if state.mode is OutputMode.json:
                 emit_json(

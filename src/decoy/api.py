@@ -371,7 +371,7 @@ def mask(
             nothing, if it declares none). A path overrides the single
             declared table's target path. A `dict[str, path]` overrides
             per table by name.
-        substrate: Execution substrate override (`"pandas"` or `"polars"`).
+        substrate: Execution substrate override (only `"pandas"`; anything else raises `invalid_substrate`).
             `None` keeps `run_pipeline`'s default.
         native: Mirrors the CLI's `--native`/`--no-native` (Phase 3.1).
             `None` (default): inherit the engine's native-on-when-present
@@ -498,8 +498,8 @@ def mask(
         # Passing `substrate=None` explicitly is NOT the same as omitting it:
         # `None` means "defer to DECOY_SUBSTRATE / the engine's internal
         # default" (`resolve_substrate`). That resolves to pandas when
-        # DECOY_SUBSTRATE is unset, but would honor DECOY_SUBSTRATE=polars if
-        # the environment set it -- which breaks the CLI's plain-run contract
+        # DECOY_SUBSTRATE is unset, but would honor whatever DECOY_SUBSTRATE the
+        # environment set -- which breaks the CLI's plain-run contract
         # ("plain runs always use pandas; --substrate is only consulted for
         # --chunked runs"). Mirror the CLI exactly: omit the kwarg entirely
         # unless the caller explicitly chose a substrate.

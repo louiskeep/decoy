@@ -401,18 +401,27 @@ class TestSubstrateWarning:
         return p
 
     def test_plain_run_substrate_exits_zero_and_warns(self, tmp_path: Path) -> None:
-        """Non-chunked run with --substrate polars exits 0 and emits warning to stderr."""
+        """Non-chunked run with --substrate pandas exits 0 and emits warning to stderr."""
         cfg = self._hash_pipeline(tmp_path)
-        result = runner.invoke(app, ["run", str(cfg), "--substrate", "polars"])
+        result = runner.invoke(app, ["run", str(cfg), "--substrate", "pandas"])
         assert result.exit_code == 0, result.output
         assert "warning" in result.stderr.lower()
         assert "substrate" in result.stderr.lower()
         assert "chunked" in result.stderr.lower()
 
+    def test_plain_run_polars_substrate_rejected(self, tmp_path: Path) -> None:
+        """The engine removed polars; a plain run rejects it as a usage error
+        (exit 1) rather than warn-and-ignore, and writes no output."""
+        cfg = self._hash_pipeline(tmp_path)
+        result = runner.invoke(app, ["run", str(cfg), "--substrate", "polars"])
+        assert result.exit_code == 1, result.output
+        assert "must be one of" in result.stderr
+        assert not (tmp_path / "out.csv").exists()
+
     def test_plain_run_substrate_quiet_suppresses_warning(self, tmp_path: Path) -> None:
         """--quiet suppresses the substrate warning."""
         cfg = self._hash_pipeline(tmp_path)
-        result = runner.invoke(app, ["run", str(cfg), "--substrate", "polars", "--quiet"])
+        result = runner.invoke(app, ["run", str(cfg), "--substrate", "pandas", "--quiet"])
         assert result.exit_code == 0, result.output
         assert "substrate" not in result.stderr.lower()
 
@@ -420,7 +429,7 @@ class TestSubstrateWarning:
         """--chunked + --substrate is the documented usage; no warning emitted."""
         cfg = self._hash_pipeline(tmp_path)
         result = runner.invoke(
-            app, ["run", str(cfg), "--chunked", "--chunk-size", "3", "--substrate", "polars"]
+            app, ["run", str(cfg), "--chunked", "--chunk-size", "3", "--substrate", "pandas"]
         )
         assert result.exit_code == 0, result.output
         assert "substrate" not in result.stderr.lower()

@@ -320,21 +320,19 @@ _TOPICS: dict[str, _Topic] = {
     ),
     "substrate": _Topic(
         name="substrate",
-        summary="pandas is the masking substrate (polars is a dormant legacy opt-in).",
+        summary="pandas is the only masking substrate; polars was removed.",
         body=(
-            "Masking runs on pandas. It is the default and the actively supported\n"
-            "substrate for both plain and --chunked runs, via the engine's unified\n"
-            "run_pipeline (V2 path) and its internal PandasExecutionAdapter.\n\n"
-            "  polars   A legacy substrate, still reachable for --chunked runs via\n"
-            "           --substrate polars or DECOY_SUBSTRATE=polars, but no longer\n"
-            "           recommended: it is value-equal to pandas and not faster for\n"
-            "           the per-value keyed-crypto masking workload. It is retained\n"
-            "           dormant, not removed. (Polars is used elsewhere in Decoy for\n"
-            "           FK subsetting, its genuine strength; that is unaffected.)\n\n"
-            "--substrate and the DECOY_SUBSTRATE env var are consulted only for\n"
-            "--chunked runs; on a plain run either just emits a warning to stderr.\n"
-            "Outputs are value-equal across substrates. CSV bytes are identical; only\n"
-            "Arrow type-width metadata can differ, which CSV does not carry.\n"
+            "Masking runs on pandas. It is the default and the only substrate for\n"
+            "both plain and --chunked runs, via the engine's unified run_pipeline\n"
+            "(V2 path) and its internal PandasExecutionAdapter.\n\n"
+            "The polars masking substrate was removed from the engine: it was\n"
+            "value-equal to pandas and not faster for the per-value keyed-crypto\n"
+            "masking workload. --substrate polars and DECOY_SUBSTRATE=polars now\n"
+            "fail with a usage error (exit 1). (Polars is still used elsewhere in\n"
+            "Decoy for FK subsetting, its genuine strength; that is unaffected.)\n\n"
+            "--substrate and the DECOY_SUBSTRATE env var accept only 'pandas' and\n"
+            "are consulted only for --chunked runs; on a plain run either just\n"
+            "emits a warning to stderr.\n"
             "(See: decoy explain chunked for when to use --chunked.)"
         ),
         see_also=("decoy run --help", "decoy explain chunked"),
