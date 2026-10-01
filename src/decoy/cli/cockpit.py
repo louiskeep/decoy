@@ -398,7 +398,7 @@ providers_app.command(name="inspect", epilog=_PROVIDERS_INSPECT_EPILOG)(_provide
 
 checksums_app = typer.Typer(
     name="checksums",
-    help="List the engine's registered checksum schemes (SP-04).",
+    help="List the engine's registered checksum schemes.",
     no_args_is_help=True,
 )
 
@@ -428,7 +428,7 @@ def _checksums_list(
         False, "--verbose", "-v", help="Enable debug-level CLI logs on stderr."
     ),
 ) -> None:
-    """List every registered checksum scheme in the engine (SP-04)."""
+    """List every registered checksum scheme in the engine."""
     state = setup_output(json_, quiet, verbose)
 
     # Read the REAL engine registry at runtime.
@@ -472,7 +472,7 @@ checksums_app.command(name="list", epilog=_CHECKSUMS_LIST_EPILOG)(_checksums_lis
 
 validators_app = typer.Typer(
     name="validators",
-    help="List the engine's registered job-level validators (SP-05).",
+    help="List the engine's registered job-level validators.",
     no_args_is_help=True,
 )
 
@@ -502,7 +502,7 @@ def _validators_list(
         False, "--verbose", "-v", help="Enable debug-level CLI logs on stderr."
     ),
 ) -> None:
-    """List every registered job-level validator in the engine (SP-05)."""
+    """List every registered job-level validator in the engine."""
     state = setup_output(json_, quiet, verbose)
 
     # Read the REAL engine registry at runtime.
