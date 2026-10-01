@@ -183,10 +183,17 @@ def test_vault_column_not_eligible():
     assert static_native_eligibility(config) is False
 
 
-def test_non_parquet_source_not_eligible():
+def test_csv_source_is_eligible():
     config = _eligible_config()
     config["sources"]["customers"]["format"] = "csv"
     config["sources"]["customers"]["path"] = "in.csv"
+    assert static_native_eligibility(config) is True
+
+
+def test_unknown_source_format_not_eligible():
+    config = _eligible_config()
+    config["sources"]["customers"]["format"] = "xlsx"
+    config["sources"]["customers"]["path"] = "in.xlsx"
     assert static_native_eligibility(config) is False
 
 
@@ -271,21 +278,22 @@ def test_non_file_source_type_not_eligible():
 
 
 def test_missing_format_field_not_eligible_even_with_parquet_path():
-    """Remediation (dennis round 2): admission checks the DECLARED `format`
-    field exactly (`source_descriptor.get("format") != "parquet"`), never a
-    path-suffix inference -- a `.parquet`-suffixed path with no (or a
-    mismatched) format field is not eligible, matching the engine exactly."""
+    """Eligibility goes by the DECLARED `format` field, never a path-suffix
+    inference -- a `.parquet`-suffixed path with no format field is not
+    eligible."""
     config = _eligible_config()
     del config["sources"]["customers"]["format"]
     config["sources"]["customers"]["path"] = "in.parquet"
     assert static_native_eligibility(config) is False
 
 
-def test_mislabeled_format_not_eligible_even_with_parquet_path():
+def test_declared_format_wins_over_parquet_suffix():
+    """A `format: csv` source named `.parquet` is eligible as CSV; the
+    suffix is not consulted."""
     config = _eligible_config()
     config["sources"]["customers"]["format"] = "csv"
     config["sources"]["customers"]["path"] = "in.parquet"
-    assert static_native_eligibility(config) is False
+    assert static_native_eligibility(config) is True
 
 
 def test_extra_declared_source_not_eligible():

@@ -68,7 +68,8 @@ def _eligible_config(tmp_path: Path) -> Path:
 
 
 def _ineligible_config(tmp_path: Path) -> Path:
-    """CSV source (not Parquet) -- fails the static eligibility predicate."""
+    """A `vault: true` column -- fails the static eligibility predicate
+    whatever the source format (CSV sources are eligible by declared format)."""
     src = tmp_path / "in.csv"
     pd.DataFrame({"id": ["a", "b"], "email": ["a@x.com", "b@x.com"]}).to_csv(src, index=False)
     cfg = {
@@ -80,7 +81,7 @@ def _ineligible_config(tmp_path: Path) -> Path:
                 "name": "customers",
                 "columns": [
                     {"name": "id", "strategy": "passthrough"},
-                    {"name": "email", "strategy": "hash", "namespace": "email_ns"},
+                    {"name": "email", "strategy": "hash", "namespace": "email_ns", "vault": True},
                 ],
             }
         ],

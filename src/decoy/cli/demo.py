@@ -22,6 +22,7 @@ from pathlib import Path
 
 import typer
 
+from decoy.cli._sources import read_source
 from decoy.cli.exit_codes import EXIT_RUNTIME, EXIT_USAGE
 from decoy.ui.card import render_card
 from decoy.ui.output import OutputMode, OutputState, emit_json, setup_output
@@ -259,26 +260,16 @@ def _resolve_path(raw_path: str, base_dir: Path) -> Path:
 
 
 def _load_sources_from_config(config_dict: dict, base_dir: Path) -> dict:
-    import pandas as pd
     import pyarrow as pa
-    import pyarrow.parquet as pq
 
     out: dict[str, pa.Table] = {}
     sources = config_dict.get("sources") or {}
     if not isinstance(sources, dict):
         return out
     for table_name, src in sources.items():
-        if not isinstance(src, dict):
+        if not isinstance(src, dict) or not isinstance(src.get("path"), str):
             continue
-        raw_path = src.get("path")
-        if not isinstance(raw_path, str):
-            continue
-        path = _resolve_path(raw_path, base_dir)
-        if path.suffix.lower() == ".parquet":
-            out[table_name] = pq.read_table(str(path))
-        else:
-            df = pd.read_csv(path, dtype=str)
-            out[table_name] = pa.Table.from_pandas(df, preserve_index=False)
+        out[table_name] = read_source(table_name, src, base_dir)
     return out
 
 

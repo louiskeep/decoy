@@ -599,7 +599,7 @@ def _check_native(raw: dict[str, Any], acc: _PreflightAccumulator) -> None:
         acc.add_pass(
             name="native.eligibility",
             message=(
-                "Native eligibility: eligible by config (single non-FK Parquet "
+                "Native eligibility: eligible by config (single non-FK csv/parquet/fixed_width "
                 "mask table, companion-dependent native strategy present) -- a "
                 "STATIC possibility, not a guarantee; the actual route depends "
                 "on the resolved profile and resident data at run time."

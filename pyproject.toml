@@ -85,7 +85,10 @@ dependencies = [
     # the DP fit path calls. 0.6.0 is the first with the `cloud` extra: the `cloud`/`ner`/`ml`/`vault` pass-through extras above resolve
     # against an engine old enough to lack `[cloud]` under the prior 0.5.0
     # floor, so `decoy-cli[cloud]` could silently install nothing extra.
-    "decoy-engine>=0.6.0",
+    # 0.7.0 is the first engine that exports `read_fixed_width` and
+    # `FixedWidthParseError`, which the CLI's source reader calls for
+    # `format: fixed_width` sources.
+    "decoy-engine>=0.7.0",
     # Pin the typer minor: `typer utils docs` metavar rendering differs across
     # typer minors (0.26.x emits `TEXT`/`FILE`; 0.27.x emits `<str>`/`<file>`),
     # and docs/cli-reference.md is committed and checked by the test_cli_surface

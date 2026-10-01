@@ -23,7 +23,7 @@ The CLI must not import the engine's private `decoy_engine.profile._fixed_width_
 - `decoy.cli._sources.read_source(table_name, src, base_dir) -> pa.Table`, used by `run.py` and `demo.py` in place of both copies: `parquet` with `pq.read_table`; `csv` with `pd.read_csv(dtype=str)` then `pa.Table.from_pandas(preserve_index=False)` (unchanged); `fixed_width` with the public `decoy_engine.read_fixed_width(path, layout)` then `pa.Table.from_pandas(preserve_index=False)`, as the platform does. An unknown format that somehow passes validation fails with the table and format named.
 - `iter_source_chunks(table_name, src, base_dir, chunk_size)` for the chunked path, dispatching strictly on `src["format"]`; `_run_chunked_mask` passes the descriptor, not a path. CSV and Parquet stream regardless of suffix. The engine has no bounded fixed-width iterator, so `fixed_width` with `--chunked` is rejected in preflight with `EXIT_USAGE` before any table is written.
 - Native eligibility accepts declared `csv`, `parquet` and `fixed_width`, with no suffix inference; its comments are updated.
-- The CLI's minimum engine version is bumped to the release that exports `read_fixed_width`.
+- The CLI's minimum engine version is bumped to `decoy-engine>=0.7.0`, the release that will carry A5a (`read_fixed_width`), shipped later with other slices. CI and installs of this branch need that release; until then the branch is developed against the engine integration branch source on `PYTHONPATH`.
 - Out of scope: `profile.py` (~120) and `init.py` (~122) are standalone path-driven profile and scaffold readers, not pipeline mask-source loaders.
 
 ## Acceptance tests (written first)
