@@ -227,24 +227,21 @@ def _stage_source_entry(name: str, value: Any, tmp_paths: list[Path], declared: 
     `value` replaces the source with a local file. When the declaration
     is a file source with a `format`, that format (and `layout`, for
     fixed_width) is the user's statement of how the bytes are laid out
-    and wins over the file suffix. A cloud (s3/gcs) declaration, or none
-    with a format, falls back to inferring the format from the suffix."""
+    and wins over the file suffix; a file declaration without a valid
+    format is left for schema validation to reject. A cloud (s3/gcs)
+    declaration, or none at all, falls back to inferring the format from
+    the suffix."""
     if isinstance(value, (str, Path)):
         path = Path(value)
-        if (
-            isinstance(declared, dict)
-            and declared.get("type", "file") == "file"
-            and "format" in declared
-        ):
+        if isinstance(declared, dict) and declared.get("type", "file") == "file":
             # Fresh descriptor, never a spread of `declared`: only a file
-            # source's format/layout carry over. An invalid declared format
-            # (null, "") is passed through so schema validation rejects it.
-            entry: dict[str, Any] = {
-                "type": "file",
-                "format": declared["format"],
-                "path": str(path),
-            }
-            if declared["format"] == "fixed_width" and "layout" in declared:
+            # source's format/layout carry over. A missing or invalid declared
+            # format is carried as-is so schema validation rejects it rather
+            # than the override's suffix repairing it.
+            entry: dict[str, Any] = {"type": "file", "path": str(path)}
+            if "format" in declared:
+                entry["format"] = declared["format"]
+            if declared.get("format") == "fixed_width" and "layout" in declared:
                 entry["layout"] = declared["layout"]
             return entry
         fmt = "parquet" if path.suffix.lower() in (".parquet", ".pq") else "csv"

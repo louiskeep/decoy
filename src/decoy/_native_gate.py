@@ -292,7 +292,7 @@ def static_native_eligibility(config_dict: dict[str, Any]) -> bool:
     source = sources[name]
     if not isinstance(source, dict):
         return False
-    if source.get("type") not in (None, "file"):
+    if source.get("type") != "file":
         return False
     # Exact match on the declared format, matching admission's own check
     # (`source_descriptor.get("format") not in _ADMITTED_SOURCE_FORMATS`) --

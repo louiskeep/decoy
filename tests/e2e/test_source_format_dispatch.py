@@ -530,3 +530,16 @@ def test_mask_api_data_path_invalid_declared_format_is_rejected(tmp_path: Path, 
     config.write_text(yaml.safe_dump(cfg), encoding="utf-8")
     with pytest.raises(ConfigValidationError):
         decoy.mask(data=str(local), config=str(config))
+
+
+def test_mask_api_data_path_missing_declared_format_is_rejected(tmp_path: Path):
+    # A file declaration without `format` is invalid; a `data=` path must not
+    # repair it by guessing from the override's suffix.
+    local = tmp_path / "local.csv"
+    _frame().to_csv(local, index=False)
+    config = _config(tmp_path, tmp_path / "missing.csv", "csv")
+    cfg = yaml.safe_load(config.read_text())
+    del cfg["sources"]["people"]["format"]
+    config.write_text(yaml.safe_dump(cfg), encoding="utf-8")
+    with pytest.raises(ConfigValidationError):
+        decoy.mask(data=str(local), config=str(config))
