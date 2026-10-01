@@ -24,6 +24,7 @@ from rich.text import Text
 
 from decoy import __version__ as _cli_version
 from decoy import _native_gate
+from decoy.cli._sources import iter_source_chunks, read_source
 from decoy.cli.exit_codes import EXIT_CAPACITY, EXIT_RUNTIME, EXIT_USAGE
 from decoy.cli.extras import (
     MissingExtraError,
@@ -103,6 +104,10 @@ class _VaultUsageError(Exception):
 
 class _ChunkedGenerateError(Exception):
     """--chunked with a generate-table config; user error (exits EXIT_USAGE)."""
+
+
+class _ChunkedFixedWidthError(Exception):
+    """--chunked with a fixed_width source; user error (exits EXIT_USAGE)."""
 
 
 class _MaskSecretUsageError(Exception):
@@ -221,7 +226,9 @@ def run(
             "text_redact, date_shift, bucketize), plus faker/categorical "
             "when deterministic with an explicit pool_size / categories "
             "declared in config; output is byte-identical to a plain run. "
-            "Sources/targets may be CSV or Parquet. See: decoy explain chunked."
+            "Sources are read by their declared format (csv or parquet; fixed_width is "
+            "not supported with --chunked); targets are written by file suffix. "
+            "See: decoy explain chunked."
         ),
     ),
     chunk_size: int = typer.Option(
@@ -246,10 +253,9 @@ def run(
         "--substrate",
         envvar="DECOY_SUBSTRATE",
         help=(
-            "Execution substrate for --chunked runs. Masking uses pandas; that is "
-            "the default and the actively supported substrate. The legacy 'polars' "
-            "value is retained but no longer recommended (value-equal to pandas, "
-            "not faster for masking). Non-chunked (plain) runs always use the "
+            "Execution substrate for --chunked runs. pandas is the only substrate "
+            "(the default); any other value, including the removed 'polars', is "
+            "rejected with a usage error. Non-chunked (plain) runs always use the "
             "engine's pandas adapter; this flag and the DECOY_SUBSTRATE env var are "
             "consulted only for --chunked runs, and setting either on a plain run "
             "emits a warning to stderr and is otherwise ignored."
@@ -308,7 +314,8 @@ def run(
             "up front (no run) on --chunked or a generate/mixed config, or on an "
             "absent/broken decoy-engine-native companion. Refuses AFTER the run, "
             "before any output is written, if the job finished without positive "
-            "compiled-kernel evidence (e.g. an FK or non-Parquet source). "
+            "compiled-kernel evidence (e.g. an FK table or a table masked only with "
+            "passthrough/redact/truncate). "
             "Mutually exclusive with --no-native. See: decoy explain native."
         ),
     ),
@@ -342,6 +349,25 @@ def run(
         try:
             notify_channels = [parse_notify_spec(spec) for spec in notify]
         except NotifySpecError as exc:
+            msg = str(exc)
+            if state.mode is OutputMode.json:
+                emit_json(
+                    state,
+                    {"command": "run", "status": "error", "config": config_str, "error": msg},
+                )
+            elif state.mode is not OutputMode.quiet:
+                state.err_console.print(error("error:"), msg)
+            raise typer.Exit(code=EXIT_USAGE)
+
+    # Reject an unsupported substrate (e.g. the removed 'polars') up front, on
+    # plain and chunked runs alike: the engine only ships pandas, so a value it
+    # would refuse mid-run is a usage error the user can fix now.
+    if substrate is not None:
+        from decoy_engine.execution import ExecutionError, resolve_substrate
+
+        try:
+            resolve_substrate(substrate)
+        except ExecutionError as exc:
             msg = str(exc)
             if state.mode is OutputMode.json:
                 emit_json(
@@ -542,6 +568,22 @@ def run(
                     "Run without --chunked to execute a mixed or generate pipeline."
                 )
 
+            # The engine has no bounded fixed-width iterator, so a chunked
+            # run cannot stream one. Refuse before any table is written
+            # rather than part-way through a multi-table config.
+            if chunked:
+                _fw_tables = sorted(
+                    str(_n)
+                    for _n, _s in (config_dict.get("sources") or {}).items()
+                    if isinstance(_s, dict) and _s.get("format") == "fixed_width"
+                )
+                if _fw_tables:
+                    raise _ChunkedFixedWidthError(
+                        "--chunked cannot read format: fixed_width sources "
+                        f"({', '.join(_fw_tables)}); the engine has no streaming "
+                        "fixed-width reader. Run without --chunked."
+                    )
+
             # A cheap, no-secret-access check: whether --vault was passed
             # AND at least one column declares it. Computed before
             # constructing the real vault writer (which resolves key
@@ -740,6 +782,7 @@ def run(
                         PipelineValidationError,
                         ConfigError,
                         _ChunkedGenerateError,
+                        _ChunkedFixedWidthError,
                         _VaultUsageError,
                         _MaskSecretUsageError,
                         # CLI install DX: a pipeline step hit an optional
@@ -1059,9 +1102,9 @@ def _run_chunked_mask(
     fixed (chunk_size, pyarrow version) but not across chunk sizes,
     because each chunk writes one row group.
 
-    Formats: CSV and parquet, on either side independently (suffix
-    picks the reader/writer, mirroring the plain path's free mixing).
-    Parquet reads stream via ParquetFile.iter_batches; CSV reads keep
+    Formats: CSV and parquet, on either side independently. The source
+    reader follows the declared source `format`; the writer follows the
+    target path suffix. Parquet reads stream via ParquetFile.iter_batches; CSV reads keep
     the dtype=str contract of the plain path, so a csv -> parquet run
     produces an all-string schema.
 
@@ -1083,6 +1126,7 @@ def _run_chunked_mask(
         if not isinstance(table_entry, dict) or not table_entry.get("columns"):
             continue
         name = table_entry.get("name")
+        assert isinstance(name, str)  # pydantic guarantees a str table name
         src_spec = sources.get(name) if isinstance(sources, dict) else None
         tgt_spec = targets.get(name) if isinstance(targets, dict) else None
         if not isinstance(src_spec, dict) or not isinstance(src_spec.get("path"), str):
@@ -1094,40 +1138,22 @@ def _run_chunked_mask(
 
         masked_iter = run_mask_pipeline_chunked(
             config_dict,
-            _iter_source_chunks(src_path, chunk_size),
+            iter_source_chunks(name, src_spec, base_dir, chunk_size),
             table=name,
             engine_version=engine_version,
             adapter=adapter,
             vault_writer=vault_writer,
         )
-        _write_chunked_output(masked_iter, out_path, src_path)
+        _write_chunked_output(
+            masked_iter, out_path, src_path, src_is_parquet=src_spec.get("format") == "parquet"
+        )
 
     return resolved_substrate
 
 
-def _iter_source_chunks(src_path: Path, chunk_size: int):
-    """Yield pa.Tables of at most `chunk_size` rows from a CSV or parquet file.
-
-    Parquet batches can come back SHORTER than chunk_size at row-group
-    boundaries; that is fine and must stay fine -- chunked output is
-    chunking-invariant by the engine's parity contract, so nobody should
-    "fix" the short batches by re-buffering.
-    """
-    import pandas as pd
-    import pyarrow as pa
-
-    if src_path.suffix.lower() == ".parquet":
-        import pyarrow.parquet as pq
-
-        parquet_file = pq.ParquetFile(str(src_path))
-        for batch in parquet_file.iter_batches(batch_size=chunk_size):
-            yield pa.Table.from_batches([batch])
-        return
-    for df in pd.read_csv(src_path, dtype=str, chunksize=chunk_size):
-        yield pa.Table.from_pandas(df, preserve_index=False)
-
-
-def _write_chunked_output(masked_iter, out_path: Path, src_path: Path) -> None:
+def _write_chunked_output(
+    masked_iter, out_path: Path, src_path: Path, *, src_is_parquet: bool
+) -> None:
     """Stream masked chunks to `out_path`, format picked by its suffix."""
     if out_path.suffix.lower() == ".parquet":
         import pyarrow.parquet as pq
@@ -1138,7 +1164,7 @@ def _write_chunked_output(masked_iter, out_path: Path, src_path: Path) -> None:
                 if writer is None:
                     writer = pq.ParquetWriter(str(out_path), masked.schema)
                 writer.write_table(masked)
-            if writer is None and src_path.suffix.lower() == ".parquet":
+            if writer is None and src_is_parquet:
                 # Empty parquet source: emit a valid zero-row file with the
                 # source schema, matching what a plain run writes. (An empty
                 # CSV source writes nothing, same as the CSV target path.)
@@ -1191,8 +1217,8 @@ def _require_local_io_endpoints(config_dict: dict) -> None:
 def _load_sources_from_config(config_dict: dict, base_dir: Path) -> dict:
     """Read each `sources[table]` into a `dict[str, pa.Table]`.
 
-    Accepts CSV and Parquet by file extension. Sources without a `path`
-    field are skipped (the engine treats absent tables as empty, but
+    Reads each source by its declared `format` (csv, parquet, fixed_width).
+    Sources without a `path` field are skipped (the engine treats absent tables as empty, but
     the mask spine will error on a missing source if the plan needs it;
     leave that error to the engine layer).
 
@@ -1203,9 +1229,7 @@ def _load_sources_from_config(config_dict: dict, base_dir: Path) -> dict:
     """
     _require_local_io_endpoints(config_dict)
 
-    import pandas as pd
     import pyarrow as pa
-    import pyarrow.parquet as pq
 
     out: dict[str, pa.Table] = {}
     sources = config_dict.get("sources") or {}
@@ -1214,13 +1238,7 @@ def _load_sources_from_config(config_dict: dict, base_dir: Path) -> dict:
     for table_name, src in sources.items():
         if not _native_gate.source_is_materialized(src):
             continue
-        path = _resolve_path(src["path"], base_dir)
-        suffix = path.suffix.lower()
-        if suffix == ".parquet":
-            out[table_name] = pq.read_table(str(path))
-        else:
-            df = pd.read_csv(path, dtype=str)
-            out[table_name] = pa.Table.from_pandas(df, preserve_index=False)
+        out[table_name] = read_source(table_name, src, base_dir)
     return out
 
 

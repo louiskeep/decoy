@@ -205,10 +205,14 @@ def source_is_materialized(entry: Any) -> bool:
     return isinstance(entry, dict) and isinstance(entry.get("path"), str)
 
 
+# Mirrors the engine's `_ADMITTED_SOURCE_FORMATS` (unified-slice admission).
+_NATIVE_SOURCE_FORMATS = frozenset({"parquet", "csv", "fixed_width"})
+
+
 def static_native_eligibility(config_dict: dict[str, Any]) -> bool:
     """Config-shape-only static approximation of "would this job's admission
-    even reach the companion-health gate": a single non-FK Parquet-file mask
-    table, every column strategy in the set the unified slice currently
+    even reach the companion-health gate": a single non-FK csv/parquet/fixed_width
+    file mask table, every column strategy in the set the unified slice currently
     admits (`_NATIVE_STRATEGIES`), at least one companion-dependent column
     (hash/categorical/bucket_perturb/group_key -- the only strategies
     admission gates on companion health for for `_COMPANION_DEPENDENT_
@@ -288,14 +292,13 @@ def static_native_eligibility(config_dict: dict[str, Any]) -> bool:
     source = sources[name]
     if not isinstance(source, dict):
         return False
-    if source.get("type") not in (None, "file"):
+    if source.get("type") != "file":
         return False
-    # Exact match, matching admission's own check
-    # (`source_descriptor.get("format") != "parquet"`) -- no path-suffix
-    # fallback, so a mislabeled `format: csv` with a `.parquet` path is
-    # correctly NOT eligible (the engine goes by the declared format, not
-    # the extension).
-    return source.get("format") == "parquet"
+    # Exact match on the declared format, matching admission's own check
+    # (`source_descriptor.get("format") not in _ADMITTED_SOURCE_FORMATS`) --
+    # no path-suffix fallback, so the extension never decides eligibility
+    # (the engine goes by the declared format, not the extension).
+    return source.get("format") in _NATIVE_SOURCE_FORMATS
 
 
 def pre_execution_gate(

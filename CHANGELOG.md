@@ -8,6 +8,22 @@ version numbers follow the [versioning policy](docs/release/versioning.md).
 
 ## [Unreleased]
 
+### Fixed (CLI reads sources by declared format, 2026-09-30)
+
+- **Sources are read by their declared `format`, not by file suffix.** A
+  `format: fixed_width` source (with its `layout`) now reads typed columns
+  through the engine's public `read_fixed_width`, matching the platform.
+  Before, it was parsed as CSV. A Parquet file named `.pq` (or with no
+  extension) and a CSV named `.dat` now read correctly in plain and
+  `--chunked` runs. `decoy run --chunked` refuses `fixed_width` sources up
+  front (usage error, nothing written) because the engine has no streaming
+  fixed-width reader.
+- **Native eligibility follows the declared format.** CSV and fixed-width
+  jobs are now native-eligible (and fail closed on a broken companion) the
+  same way Parquet jobs are.
+- **Engine floor raised to `decoy-engine>=0.7.0`**, the first release that
+  exports `read_fixed_width`. Installs and CI need that engine release.
+
 ### Added (Phase 3.1: CLI native packaging default-on-when-present, 2026-09-26)
 
 - **`decoy run --native` / `--no-native`.** A non-chunked, mask-only run

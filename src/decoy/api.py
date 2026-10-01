@@ -207,7 +207,7 @@ def _to_pa_table(value: "pd.DataFrame | pa.Table") -> pa.Table:
     )
 
 
-def _stage_source_entry(name: str, value: Any, tmp_paths: list[Path]) -> dict:
+def _stage_source_entry(name: str, value: Any, tmp_paths: list[Path], declared: Any = None) -> dict:
     """Return a `sources[name]` descriptor dict pointing at a REAL,
     readable file for `value`.
 
@@ -221,9 +221,29 @@ def _stage_source_entry(name: str, value: Any, tmp_paths: list[Path]) -> dict:
     DataFrame/Table `value` has no file yet, so it is spooled to a
     Parquet temp file (a lossless round-trip, unlike CSV's blanket
     stringification) purely so profiling has real bytes to read; the
-    temp path is tracked in `tmp_paths` for post-run cleanup."""
+    temp path is tracked in `tmp_paths` for post-run cleanup.
+
+    `declared` is the config's own `sources[name]` entry, if any. A path
+    `value` replaces the source with a local file. When the declaration
+    is a file source with a `format`, that format (and `layout`, for
+    fixed_width) is the user's statement of how the bytes are laid out
+    and wins over the file suffix; a file declaration without a valid
+    format is left for schema validation to reject. A cloud (s3/gcs)
+    declaration, or none at all, falls back to inferring the format from
+    the suffix."""
     if isinstance(value, (str, Path)):
         path = Path(value)
+        if isinstance(declared, dict) and declared.get("type", "file") == "file":
+            # Fresh descriptor, never a spread of `declared`: only a file
+            # source's format/layout carry over. A missing or invalid declared
+            # format is carried as-is so schema validation rejects it rather
+            # than the override's suffix repairing it.
+            entry: dict[str, Any] = {"type": "file", "path": str(path)}
+            if "format" in declared:
+                entry["format"] = declared["format"]
+            if declared.get("format") == "fixed_width" and "layout" in declared:
+                entry["layout"] = declared["layout"]
+            return entry
         fmt = "parquet" if path.suffix.lower() in (".parquet", ".pq") else "csv"
         return {"type": "file", "format": fmt, "path": str(path)}
 
@@ -261,7 +281,7 @@ def _stage_data_sources(raw: dict, data: Any, tmp_paths: list[Path]) -> None:
         )
         items = [(name, data)]
     for name, value in items:
-        sources[name] = _stage_source_entry(name, value, tmp_paths)
+        sources[name] = _stage_source_entry(name, value, tmp_paths, sources.get(name))
     raw["sources"] = sources
 
 
@@ -326,8 +346,12 @@ def mask(
             - A `pandas.DataFrame` or `pyarrow.Table`: used as the single
               mask-kind table's source. Only valid when the config declares
               exactly one mask-kind table (a `columns:` table).
-            - A path (str/Path) to a CSV or Parquet file: same
-              single-table rule as above.
+            - A path (str/Path) to a local file: same single-table rule
+              as above. A declared file `format`/`layout` in the config
+              wins (fixed_width included); the suffix (Parquet for
+              `.parquet`/`.pq`, else CSV) applies only when the config
+              declares no file format. A cloud-declared (s3/gcs) source
+              becomes a local file, with the format inferred by suffix.
             - A `dict[str, DataFrame | Table]` keyed by table name: for
               multi-table configs.
         config: The pipeline config, shaped exactly like the YAML `decoy
@@ -347,7 +371,7 @@ def mask(
             nothing, if it declares none). A path overrides the single
             declared table's target path. A `dict[str, path]` overrides
             per table by name.
-        substrate: Execution substrate override (`"pandas"` or `"polars"`).
+        substrate: Execution substrate override (only `"pandas"`; anything else raises `invalid_substrate`).
             `None` keeps `run_pipeline`'s default.
         native: Mirrors the CLI's `--native`/`--no-native` (Phase 3.1).
             `None` (default): inherit the engine's native-on-when-present
@@ -474,8 +498,8 @@ def mask(
         # Passing `substrate=None` explicitly is NOT the same as omitting it:
         # `None` means "defer to DECOY_SUBSTRATE / the engine's internal
         # default" (`resolve_substrate`). That resolves to pandas when
-        # DECOY_SUBSTRATE is unset, but would honor DECOY_SUBSTRATE=polars if
-        # the environment set it -- which breaks the CLI's plain-run contract
+        # DECOY_SUBSTRATE is unset, but would honor whatever DECOY_SUBSTRATE the
+        # environment set -- which breaks the CLI's plain-run contract
         # ("plain runs always use pandas; --substrate is only consulted for
         # --chunked runs"). Mirror the CLI exactly: omit the kwarg entirely
         # unless the caller explicitly chose a substrate.

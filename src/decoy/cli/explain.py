@@ -265,8 +265,9 @@ _TOPICS: dict[str, _Topic] = {
             "text_redact, date_shift, bucketize (plus faker/categorical when the\n"
             "config declares an explicit pool). Anything that needs the whole column\n"
             "(e.g. shuffle) is rejected with a usage error.\n\n"
-            "Sources and targets may be CSV or Parquet independently; the file suffix\n"
-            "picks the reader and writer."
+            "Sources are read by their declared format (csv or parquet; fixed_width is\n"
+            "not supported with --chunked). Targets are written by file suffix (CSV\n"
+            "or Parquet), independently of the source format."
         ),
         see_also=("decoy run --help", "decoy explain substrate"),
     ),
@@ -275,7 +276,8 @@ _TOPICS: dict[str, _Topic] = {
         summary="Native-on-when-present: a compiled kernel speeds up masking when installed.",
         body=(
             "A plain, non-chunked, mask-only `decoy run` (or `decoy.mask()`) on a\n"
-            "single non-FK table read from Parquet can finish on one of three routes,\n"
+            "single non-FK table whose declared source format is csv, parquet or\n"
+            "fixed_width can finish on one of three routes,\n"
             "shown on the run card's Route line:\n\n"
             "  native (compiled kernel)            hash/categorical/bucket_perturb/\n"
             "                                      group_key columns ran on the\n"
@@ -293,7 +295,7 @@ _TOPICS: dict[str, _Topic] = {
             "                up front on --chunked, a generate/mixed config, or an\n"
             "                absent/broken companion; refuses AFTER the run, before\n"
             "                any output is written, if the job finished without a\n"
-            "                compiled kernel (e.g. an FK table, a non-Parquet source,\n"
+            "                compiled kernel (e.g. an FK table,\n"
             "                or a table masked only with passthrough/redact/truncate:\n"
             "                those get the unified-slice speedup by default but can\n"
             "                never satisfy --native on their own).\n"
@@ -318,21 +320,19 @@ _TOPICS: dict[str, _Topic] = {
     ),
     "substrate": _Topic(
         name="substrate",
-        summary="pandas is the masking substrate (polars is a dormant legacy opt-in).",
+        summary="pandas is the only masking substrate; polars was removed.",
         body=(
-            "Masking runs on pandas. It is the default and the actively supported\n"
-            "substrate for both plain and --chunked runs, via the engine's unified\n"
-            "run_pipeline (V2 path) and its internal PandasExecutionAdapter.\n\n"
-            "  polars   A legacy substrate, still reachable for --chunked runs via\n"
-            "           --substrate polars or DECOY_SUBSTRATE=polars, but no longer\n"
-            "           recommended: it is value-equal to pandas and not faster for\n"
-            "           the per-value keyed-crypto masking workload. It is retained\n"
-            "           dormant, not removed. (Polars is used elsewhere in Decoy for\n"
-            "           FK subsetting, its genuine strength; that is unaffected.)\n\n"
-            "--substrate and the DECOY_SUBSTRATE env var are consulted only for\n"
-            "--chunked runs; on a plain run either just emits a warning to stderr.\n"
-            "Outputs are value-equal across substrates. CSV bytes are identical; only\n"
-            "Arrow type-width metadata can differ, which CSV does not carry.\n"
+            "Masking runs on pandas. It is the default and the only substrate for\n"
+            "both plain and --chunked runs, via the engine's unified run_pipeline\n"
+            "(V2 path) and its internal PandasExecutionAdapter.\n\n"
+            "The polars masking substrate was removed from the engine: it was\n"
+            "value-equal to pandas and not faster for the per-value keyed-crypto\n"
+            "masking workload. --substrate polars and DECOY_SUBSTRATE=polars now\n"
+            "fail with a usage error (exit 1). (Polars is still used elsewhere in\n"
+            "Decoy for FK subsetting, its genuine strength; that is unaffected.)\n\n"
+            "--substrate and the DECOY_SUBSTRATE env var accept only 'pandas' and\n"
+            "are consulted only for --chunked runs; on a plain run either just\n"
+            "emits a warning to stderr.\n"
             "(See: decoy explain chunked for when to use --chunked.)"
         ),
         see_also=("decoy run --help", "decoy explain chunked"),

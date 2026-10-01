@@ -106,17 +106,16 @@ def test_engine_dependency_pinned() -> None:
     assert len(engine_deps) == 1, f"expected exactly one decoy-engine dep, got {engine_deps}"
     # Assert the exact minimum, not merely that *a* floor exists -- a bare
     # `>=` check would let a silent downgrade (e.g. `decoy-engine>=0.1.0`)
-    # slip through. 0.6.0 is the CLI install DX marker: the
-    # first engine version carrying the `cloud` extra the pass-through
-    # `cloud`/`all` extras below resolve against (see the pin rationale in
-    # pyproject.toml; 0.5.0 was the prior floor, the DPS Scope B /
-    # DPS-CODEC certified-DP-fit marker). Bump this in lockstep when the
-    # floor legitimately rises.
+    # slip through. 0.7.0 is the first engine that exports the public
+    # `read_fixed_width` reader the CLI's fixed-width source loading calls
+    # (see the pin rationale in pyproject.toml; 0.6.0 was the prior floor,
+    # the CLI install DX `cloud` extra marker). Bump this in lockstep when
+    # the floor legitimately rises.
     from packaging.requirements import Requirement
 
     req = Requirement(engine_deps[0])
     floors = [s for s in req.specifier if s.operator in (">=", "==")]
-    assert [str(s) for s in floors] == [">=0.6.0"], (
-        f"decoy-engine floor must be exactly >=0.6.0 (CLI install DX cloud-extra "
+    assert [str(s) for s in floors] == [">=0.7.0"], (
+        f"decoy-engine floor must be exactly >=0.7.0 (public read_fixed_width "
         f"marker); got specifier {str(req.specifier)!r}"
     )
