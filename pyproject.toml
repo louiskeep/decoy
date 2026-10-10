@@ -163,6 +163,11 @@ forge = "decoy._deprecated:forge_shim"
 # AND the templates still ship inside the wheel under decoy/templates/.
 packages = ["src/decoy"]
 
+[tool.hatch.build.targets.sdist]
+# Keep hatchling's default file selection, but never ship the test suite: it is
+# dev-only, not importable from an install, and only adds download weight.
+exclude = ["tests"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["src"]
