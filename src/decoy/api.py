@@ -576,11 +576,11 @@ def scan(
             list (`[{"name": ..., "start": ..., "width": ...}, ...]`).
 
     Returns:
-        A `decoy_engine.StormProfile` -- the same object `decoy storm
+        A `decoy_engine.ColumnProfile` -- the same object `decoy storm
         analyze` serializes to `scan_<timestamp>.json`. Call `.to_dict()`
         for the JSON-ready shape.
     """
-    from decoy_engine import run_storm
+    from decoy_engine import profile_columns
 
     try:
         strategy_enum = SampleStrategy(strategy)
@@ -613,7 +613,7 @@ def scan(
             f"data must be a pandas DataFrame or a path (str/Path), got {type(data).__name__}."
         )
 
-    return run_storm(
+    return profile_columns(
         df,
         source_label=label,
         sample_strategy=strategy_enum.value,

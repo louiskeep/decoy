@@ -150,19 +150,19 @@ def profile(
     # sample_strategy="head" signals bounded mode to the engine (any non-"full"
     # value enables the engine-side sampling guard).  When rows==0 use "full".
     try:
-        from decoy_engine import run_storm
+        from decoy_engine import profile_columns
 
         if rows > 0:
             # df is already bounded to `rows` rows via nrows= / head().
-            # Pass the same cap so the StormProfile records the intent.
-            storm_profile = run_storm(
+            # Pass the same cap so the ColumnProfile records the intent.
+            storm_profile = profile_columns(
                 df,
                 source_label=source.name,
                 sample_strategy="head",
                 sample_row_cap=rows,
             )
         else:
-            storm_profile = run_storm(
+            storm_profile = profile_columns(
                 df,
                 source_label=source.name,
                 sample_strategy="full",

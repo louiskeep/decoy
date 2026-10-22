@@ -189,8 +189,8 @@ def translate_ner_unavailable(exc: Exception) -> MissingExtraError | None:
     unclassified rather than mislabeling it.
     """
     try:
+        from decoy_engine.detection.ner import NerUnavailableError
         from decoy_engine.plan import PlanCompileError
-        from decoy_engine.storm.ner import NerUnavailableError
     except ImportError:
         return None
     if not isinstance(exc, (NerUnavailableError, PlanCompileError)):

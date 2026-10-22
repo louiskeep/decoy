@@ -727,7 +727,7 @@ def run(
         # extra -- still needs EXIT_USAGE classification below with the
         # engine's own message intact.
         try:
-            from decoy_engine.storm.ner import NerUnavailableError as _NerUnavailableError
+            from decoy_engine.detection.ner import NerUnavailableError as _NerUnavailableError
 
             _ner_unavailable_types: tuple = (_NerUnavailableError,)
         except ImportError:

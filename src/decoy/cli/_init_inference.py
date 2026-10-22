@@ -62,7 +62,7 @@ class Inference:
 
 
 # Detector-id -> Inference. Detector ids come from STORM's detectors
-# (`decoy_engine.storm.detectors`). The table is intentionally a
+# (`decoy_engine.detection.detectors`). The table is intentionally a
 # narrow subset; the long tail goes through `_FALLBACK`.
 #
 # The REVIEW reason is the operator-facing copy that lands in the

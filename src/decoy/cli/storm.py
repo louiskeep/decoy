@@ -100,7 +100,7 @@ Examples:
     Sample 50K random rows.
 
   decoy storm analyze data.csv --json > scan.json
-    Pipe the full StormProfile JSON for downstream tooling.
+    Pipe the full ColumnProfile JSON for downstream tooling.
 
   decoy storm analyze data.parquet
     Analyze a Parquet file (format inferred from extension).
@@ -544,7 +544,7 @@ def _scan(
     json_: bool = typer.Option(
         False,
         "--json",
-        help="Emit the full StormProfile JSON to stdout. No card.",
+        help="Emit the full ColumnProfile JSON to stdout. No card.",
     ),
     quiet: bool = typer.Option(
         False, "--quiet", "-q", help="Suppress stdout. Errors still go to stderr."
@@ -645,12 +645,12 @@ def _scan(
             raise typer.Exit(code=EXIT_USAGE)
 
     try:
-        from decoy_engine import run_storm
+        from decoy_engine import profile_columns
 
         with stormy_multistage(state, ["Load source", "Profile columns", "Save profile"]) as ms:
             df = _load_data(source, effective_fmt, layout_columns, rows, strategy)
             ms.complete()
-            profile = run_storm(
+            profile = profile_columns(
                 df,
                 source_label=source.name,
                 sample_strategy=strategy.value,
@@ -1392,7 +1392,7 @@ def _integrity(
 ) -> None:
     """Verify a masked file's integrity against its pre-mask source.
 
-    Wraps `decoy_engine.storm.postmask.run_storm_post_mask`. Runs the
+    Wraps `decoy_engine.verification.postmask.run_post_mask`. Runs the
     three post-mask check buckets (residual_pii, fk_preservation,
     policy_validation) the platform's mask job already runs when
     `run_storm: true` is declared in the pipeline; this verb lets the
@@ -1410,7 +1410,7 @@ def _integrity(
     source_str = str(source)
 
     try:
-        from decoy_engine.storm.postmask import run_storm_post_mask
+        from decoy_engine.verification.postmask import run_post_mask
 
         source_df = pd.read_csv(source)
         masked_df = pd.read_csv(masked)
@@ -1450,7 +1450,7 @@ def _integrity(
             # residual_pii + policy_validation branches degrade
             # gracefully when relationships + sources + tables are
             # absent (verified against
-            # decoy_engine.storm.postmask.runner docstring +
+            # decoy_engine.verification.postmask.runner docstring +
             # tests/unit/storm/test_postmask_runner.py).
             table_name = masked.stem
             config_dict = {
@@ -1462,7 +1462,7 @@ def _integrity(
                 "relationships": [],
             }
 
-        report = run_storm_post_mask(
+        report = run_post_mask(
             source_frames={table_name: source_df},
             output_frames={table_name: masked_df},
             config=config_dict,
@@ -1568,7 +1568,7 @@ storm_app.command(name="analyze", epilog=_ANALYZE_EPILOG)(_scan)
 # Deprecated alias: `decoy storm scan`. Removal target: 0.2.0.
 storm_app.command(name="scan", epilog=_SCAN_EPILOG)(_scan_deprecated_shim)
 # OSS.4b (2026-06-02): post-run integrity verb. CLI wrapper for
-# decoy_engine.storm.postmask.run_storm_post_mask.
+# decoy_engine.verification.postmask.run_post_mask.
 storm_app.command(name="integrity", epilog=_INTEGRITY_EPILOG)(_integrity)
 storm_app.command(name="fields", epilog=_FIELDS_EPILOG)(_fields)
 storm_app.command(name="show", epilog=_SHOW_EPILOG)(_show)

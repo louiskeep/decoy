@@ -9,7 +9,7 @@
      mask-secret / target / data shapes).
   2. Parity: `decoy.mask(...)` on a config produces byte-identical output
      to `decoy run <same config>.yaml` (test_mask_parity_with_cli_run*),
-     and `decoy.scan(...)` on a file produces the identical StormProfile
+     and `decoy.scan(...)` on a file produces the identical ColumnProfile
      to `decoy storm analyze <same file>` (test_scan_parity_with_cli*).
 
 See src/decoy/api.py for the design notes (why `data`/`out` need staged

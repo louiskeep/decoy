@@ -8,6 +8,33 @@ version numbers follow the [versioning policy](docs/release/versioning.md).
 
 ## [Unreleased]
 
+### Changed (STORM split: CLI consumer migration, 2026-10-22)
+
+Consumer half (step 3) of the engine STORM taxonomy rename, which splits
+`decoy_engine.storm` into `detection` / `profiling` / `verification`. All CLI
+engine-symbol imports are retargeted: `from decoy_engine import run_storm` and
+`from decoy_engine.storm import run_storm` -> `from decoy_engine import
+profile_columns` / `from decoy_engine.profiling import profile_columns`;
+`decoy_engine.storm.postmask.run_storm_post_mask` ->
+`decoy_engine.verification.postmask.run_post_mask`; the `NerUnavailableError`
+failure-path imports (`extras.py`, `run.py`) -> `decoy_engine.detection.ner`
+(the class name is unchanged, only the path).
+
+The CLI's OWN `storm` product surface is unchanged (KEEP): the `storm` command,
+`storm_app`, the animated intro, and the `run_storm` config KEY rendered in help
+/ diagnostics. The `--json` help now names the engine artifact `ColumnProfile`
+(the renamed type), matching the engine.
+
+CRITICAL follow-up for the review/merge agents (plan 3d, finding 1 — the CLI is
+UNGATED): the CI/release-smoke workflows install `decoy-engine@main` (a moving
+ref) at `ci.yml:114,162,231` and `release-smoke.yml:80`. Before the engine
+rename lands on engine `main`, step 0 must pin those to a FIXED pre-rename
+engine ref; this migration then switches them to the renamed-engine artifact and
+bumps the `decoy-engine` floor. Not done here (needs the engine release). All
+changed files compile and pass ruff; the CLI suite was not run (no CLI venv with
+the renamed engine in this environment). No cross-model review (owner
+instruction).
+
 ### Fixed (CLI reads sources by declared format, 2026-09-30)
 
 - **Sources are read by their declared `format`, not by file suffix.** A

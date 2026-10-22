@@ -1,6 +1,6 @@
 """End-to-end tests for `decoy storm integrity` (OSS.4b, 2026-06-02).
 
-The CLI verb wraps `decoy_engine.storm.postmask.run_storm_post_mask` and
+The CLI verb wraps `decoy_engine.verification.postmask.run_post_mask` and
 returns the same JobStormReport-shaped payload the platform persists
 when a mask job declared `run_storm: true`. These cells pin the wire
 shape + the exit-code contract + the deprecation-free help body.
