@@ -25,7 +25,7 @@ from rich.text import Text
 from decoy import __version__ as _cli_version
 from decoy import _native_gate
 from decoy.cli._sources import iter_source_chunks, read_source
-from decoy.cli.exit_codes import EXIT_CAPACITY, EXIT_RUNTIME, EXIT_USAGE
+from decoy.cli.exit_codes import EXIT_CAPACITY, EXIT_FINDINGS, EXIT_RUNTIME, EXIT_USAGE
 from decoy.cli.extras import (
     MissingExtraError,
     UnsupportedCloudEndpointError,
@@ -37,7 +37,8 @@ from decoy.cli.extras import (
 from decoy.ui.card import render_card
 from decoy.ui.output import OutputMode, emit_json, setup_output
 from decoy.ui.progress import spinner
-from decoy.ui.theme import error, hint, warn
+from decoy.ui.table import make_table
+from decoy.ui.theme import accent, code, error, hint, success, warn
 
 # OOM checker v1: the engine's out-of-core-FK memory gate raises `ExecutionError`
 # with exactly one of these two codes when it refuses a job for capacity, never
@@ -94,7 +95,27 @@ Examples:
   decoy run pipeline.yaml --notify slack:https://hooks.slack.com/services/x --notify-on failure
     Only notify on a failed run.
 
-See also: decoy validate config, decoy report fidelity, decoy explain chunked, decoy explain vault.
+  decoy run pipeline.yaml --explain-plan
+    After the run, show the EXECUTION ROUTE the engine chose (sequential /
+    full_frame / out_of_core) and why. This is the route decision, not the
+    per-column masking rationale -- for that, run
+    `decoy validate compile --explain` before the run.
+
+  decoy run pipeline.yaml --fidelity
+    After the run, show a quick inline marginal-fidelity check per mask table.
+    A low grade never fails the run. For the fuller post-hoc grade, run
+    `decoy report fidelity`.
+
+  decoy run pipeline.yaml --post-validate
+    After the run, run the post-execution validator suite over the masked
+    output and show the findings. Warn-only: the run still exits 0.
+
+  decoy run pipeline.yaml --post-validate-enforce
+    Like --post-validate, but exit 4 (findings) when any hard check fails.
+    The masked output is still written. (The report flags are not supported
+    with --chunked.)
+
+See also: decoy validate compile --explain, decoy report fidelity, decoy validate config, decoy explain chunked, decoy explain vault.
 """
 
 
@@ -108,6 +129,17 @@ class _ChunkedGenerateError(Exception):
 
 class _ChunkedFixedWidthError(Exception):
     """--chunked with a fixed_width source; user error (exits EXIT_USAGE)."""
+
+
+class _ChunkedReportFlagError(Exception):
+    """--chunked combined with a report flag (--explain-plan / --fidelity /
+    --post-validate[-enforce]); user error (exits EXIT_USAGE).
+
+    S5 (2026-10-23): the four report flags surface fields of the non-chunked
+    `run_pipeline`'s `ExecutionResult.quality_metrics`. The `--chunked` path
+    (`_run_chunked_mask`) streams mask-only and returns no `ExecutionResult`,
+    so there is nothing to read those fields off. Reject the combination
+    loudly rather than silently dropping the requested report (plan P2-3)."""
 
 
 class _MaskSecretUsageError(Exception):
@@ -328,6 +360,52 @@ def run(
             "Mutually exclusive with --native. See: decoy explain native."
         ),
     ),
+    explain_plan: bool = typer.Option(
+        False,
+        "--explain-plan",
+        help=(
+            "After the run, show the EXECUTION ROUTE the engine chose "
+            "(sequential / full_frame / out_of_core) and why, from the "
+            "result's execution_plan metrics. This is the route decision, NOT "
+            "the per-column masking rationale -- for that, use "
+            "`decoy validate compile --explain` (pre-run). Default off; "
+            "report-only, never changes the exit code. Not supported with "
+            "--chunked."
+        ),
+    ),
+    fidelity: bool = typer.Option(
+        False,
+        "--fidelity",
+        help=(
+            "After the run, show a QUICK inline distribution-fidelity check "
+            "per mask table (marginal grade/score), from the result's "
+            "fidelity_reports metrics. A low grade NEVER fails the run. For "
+            "the fuller post-hoc grade, use `decoy report fidelity`. Default "
+            "off; report-only. Not supported with --chunked."
+        ),
+    ),
+    post_validate: bool = typer.Option(
+        False,
+        "--post-validate",
+        help=(
+            "After the run, run the post-execution validator suite over the "
+            "masked output and show its results (findings + quality summary), "
+            "from the result's quality metrics. Warn-only: findings are "
+            "reported but the run still exits 0. Use --post-validate-enforce to "
+            "exit with findings. Default off. Not supported with --chunked."
+        ),
+    ),
+    post_validate_enforce: bool = typer.Option(
+        False,
+        "--post-validate-enforce",
+        help=(
+            "Like --post-validate, but exit EXIT_FINDINGS (4) when the "
+            "validator reports any hard-failed check. The masked output is "
+            "still written (the mask succeeded; the findings are a data-quality "
+            "signal). Implies --post-validate. Default off. Not supported with "
+            "--chunked."
+        ),
+    ),
 ) -> None:
     """Run a decoy pipeline from a YAML config.
 
@@ -407,6 +485,15 @@ def run(
     # Native route classification (Phase 3.1), set on a successful run for
     # the run-summary line and JSON record.
     _native_route: _native_gate.RouteClassification | None = None
+
+    # S5 report flags. `post_validation` is on when EITHER post-validate flag
+    # is set (--post-validate-enforce implies --post-validate); it feeds the
+    # engine kwarg. `_report_flags` gates the --chunked rejection below. The
+    # non-chunked branch stamps `_report_quality_metrics` so the tail can
+    # render the requested sections and apply the enforce -> EXIT_FINDINGS map.
+    post_validation = post_validate or post_validate_enforce
+    _report_flags = explain_plan or fidelity or post_validation
+    _report_quality_metrics: dict | None = None
 
     _run_started_at = datetime.now(timezone.utc)
     started = time.perf_counter()
@@ -568,6 +655,28 @@ def run(
                     "Run without --chunked to execute a mixed or generate pipeline."
                 )
 
+            # S5 (P2-3): the report flags read fields of the non-chunked
+            # run_pipeline's ExecutionResult.quality_metrics; the chunked path
+            # returns no ExecutionResult, so the flags have nothing to render.
+            # Reject the combination up front rather than silently no-op.
+            if chunked and _report_flags:
+                _requested = [
+                    name
+                    for name, on in (
+                        ("--explain-plan", explain_plan),
+                        ("--fidelity", fidelity),
+                        ("--post-validate", post_validate),
+                        ("--post-validate-enforce", post_validate_enforce),
+                    )
+                    if on
+                ]
+                raise _ChunkedReportFlagError(
+                    f"--chunked cannot be combined with {', '.join(_requested)}: "
+                    "the report flags surface fields of the non-chunked run's "
+                    "ExecutionResult, which the streaming --chunked path does not "
+                    "produce. Run without --chunked to use these flags."
+                )
+
             # The engine has no bounded fixed-width iterator, so a chunked
             # run cannot stream one. Refuse before any table is written
             # rather than part-way through a multi-table config.
@@ -657,6 +766,24 @@ def run(
             else:
                 sources = _load_sources_from_config(config_dict, config.parent)
                 instance_locale = (config_dict.get("global_settings") or {}).get("default_locale")
+                # S5 report kwargs are passed ONLY when a report flag was
+                # requested. All four default off, so the default run sends no
+                # new kwargs -- keeping the hot path byte-identical and
+                # preserving compatibility with an older engine whose
+                # `run_pipeline` predates these parameters (the native-compat
+                # contract in test_run_native). When a flag IS set the user has
+                # opted into the engine feature and a too-old engine surfacing a
+                # TypeError is the honest outcome.
+                _report_kwargs = (
+                    {
+                        "explain_plan": explain_plan,
+                        "fidelity_report": fidelity,
+                        "post_validation": post_validation,
+                        "post_validation_enforce": post_validate_enforce,
+                    }
+                    if _report_flags
+                    else {}
+                )
                 result = run_pipeline(
                     config_dict,
                     sources,
@@ -664,6 +791,7 @@ def run(
                     derive_key=resolver,
                     instance_default_locale=instance_locale,
                     vault_writer=vault_writer,
+                    **_report_kwargs,
                     **_native_gate.run_pipeline_kwargs(gate_result),
                 )
                 _native_route = _native_gate.classify_route(
@@ -677,6 +805,13 @@ def run(
                 # default/--no-native intent.
                 _native_gate.post_run_verify(intent=native_intent, route=_native_route)
                 _write_mask_outputs(config_dict, result, config.parent)
+                # S5: capture the quality metrics so the tail can render the
+                # requested report sections and apply the enforce -> EXIT_FINDINGS
+                # mapping. The mask has already succeeded and its outputs are
+                # written above; enforce only changes the EXIT CODE, never whether
+                # output is produced (plan P1-2 -- the engine never fails the job).
+                if _report_flags:
+                    _report_quality_metrics = dict(result.quality_metrics)
                 if evidence_out is not None:
                     _ev_row_counts = {name: len(tbl) for name, tbl in result.outputs.items()}
                 _ev_timings = result.timings
@@ -783,6 +918,7 @@ def run(
                         ConfigError,
                         _ChunkedGenerateError,
                         _ChunkedFixedWidthError,
+                        _ChunkedReportFlagError,
                         _VaultUsageError,
                         _MaskSecretUsageError,
                         # CLI install DX: a pipeline step hit an optional
@@ -943,6 +1079,15 @@ def run(
         state=state,
     )
 
+    # S5 enforce mapping (plan P1-2): the engine never fails the job on a
+    # hard-failed validator check -- it only stamps `failed_checks`. The CLI
+    # maps a non-empty `failed_checks` under --post-validate-enforce to
+    # EXIT_FINDINGS, AFTER the requested sections render and the outputs /
+    # evidence are already written. --post-validate (without enforce) is
+    # warn-only and leaves the exit code at 0.
+    _qm = _report_quality_metrics or {}
+    _enforce_fires = bool(post_validate_enforce and _qm.get("failed_checks"))
+
     if state.mode is OutputMode.json:
         payload = {
             "command": "run",
@@ -959,10 +1104,25 @@ def run(
                 "state": _native_route.state,
                 "label": _native_route.label,
             }
+        if _report_flags:
+            report: dict = {}
+            if explain_plan:
+                report["execution_plan"] = _qm.get("execution_plan")
+            if fidelity:
+                report["fidelity_reports"] = _qm.get("fidelity_reports")
+            if post_validation:
+                report["failed_checks"] = _qm.get("failed_checks")
+                report["quality_summary"] = _qm.get("quality_summary")
+                report["post_validation_enforce"] = post_validate_enforce
+            payload["report"] = report
         emit_json(state, payload)
+        if _enforce_fires:
+            raise typer.Exit(code=EXIT_FINDINGS)
         return
 
     if state.mode is OutputMode.quiet:
+        if _enforce_fires:
+            raise typer.Exit(code=EXIT_FINDINGS)
         return
 
     facts = [
@@ -983,6 +1143,19 @@ def run(
         next_hint=_next_hint_for_run(raw_cfg, mode),
         status="ok",
     )
+
+    # S5 report sections (human mode). Rendered below the summary card so the
+    # card stays the one-glance result; each is report-only and reads the
+    # captured quality metrics.
+    if explain_plan:
+        _render_execution_route(state, _qm.get("execution_plan"))
+    if fidelity:
+        _render_fidelity(state, _qm.get("fidelity_reports"))
+    if post_validation:
+        _render_post_validation(state, _qm, enforce=post_validate_enforce)
+
+    if _enforce_fires:
+        raise typer.Exit(code=EXIT_FINDINGS)
 
 
 def _build_resolver(master_key_hex: str | None, key_label: str | None, raw_cfg: dict | None, state):
@@ -1064,6 +1237,118 @@ def _next_hint_for_run(raw_cfg: dict | None, mode: "Mode") -> str | None:
     except Exception:
         pass
     return None
+
+
+def _render_execution_route(state, execution_plan: dict | None) -> None:
+    """Render the EXECUTION ROUTE decision (--explain-plan).
+
+    `execution_plan` is `quality_metrics["execution_plan"]` =
+    `{mode, reason, rejections}`: which run lane the engine chose (sequential /
+    full_frame / out_of_core) and why. This is deliberately NOT the per-column
+    masking rationale `validate compile --explain` renders pre-run (plan P1-1) --
+    a different payload, so a small dedicated renderer rather than reusing
+    compile_explain's column table. `rejections` maps each lane the engine
+    DECLINED to the reason it was declined.
+    """
+    state.console.print()
+    state.console.print(accent("Execution route"))
+    if not execution_plan:
+        # explain_plan was requested but the engine stamped nothing (e.g. a path
+        # that produced no decision). Say so rather than render an empty table.
+        state.console.print(
+            hint("  "), "no execution-route decision was recorded for this run."
+        )
+        return
+    state.console.print("  Mode:", code(str(execution_plan.get("mode", "?"))))
+    state.console.print("  Reason:", str(execution_plan.get("reason", "?")))
+    rejections = execution_plan.get("rejections") or {}
+    if rejections:
+        tbl = make_table("Lane declined", "Why")
+        for lane, why in rejections.items():
+            tbl.add_row(str(lane), str(why))
+        state.console.print(tbl)
+    state.console.print(
+        hint("  Note:"),
+        "this is the execution ROUTE decision, not the per-column masking "
+        "rationale. For that, run",
+        code("decoy validate compile --explain"),
+        "before the run.",
+    )
+
+
+def _render_fidelity(state, fidelity_reports: dict | None) -> None:
+    """Render the QUICK inline marginal-fidelity check (--fidelity).
+
+    `fidelity_reports` is `quality_metrics["fidelity_reports"]`, a per-mask-table
+    `quality-report/v1` block. This is a quick inline glance (letter grade +
+    overall score, marginal-only); it NEVER fails the run. The fuller post-hoc
+    grade is `decoy report fidelity` (plan P2-4).
+    """
+    state.console.print()
+    state.console.print(accent("Fidelity (quick inline check)"))
+    if not fidelity_reports:
+        state.console.print(
+            hint("  "), "no mask-table fidelity report was produced for this run."
+        )
+        return
+    tbl = make_table("Table", "Grade", "Overall score")
+    for table_name, rep in fidelity_reports.items():
+        rep = rep or {}
+        score = rep.get("overall_score")
+        tbl.add_row(
+            str(table_name),
+            str(rep.get("grade", "?")),
+            "n/a" if score is None else f"{score:.3f}",
+        )
+    state.console.print(tbl)
+    state.console.print(
+        hint("  Note:"),
+        "a quick marginal check; a low grade does not fail the run. For the "
+        "fuller post-hoc grade, run",
+        code("decoy report fidelity"),
+        ".",
+    )
+
+
+def _render_post_validation(state, qm: dict, *, enforce: bool) -> None:
+    """Render the post-execution validator results (--post-validate[-enforce]).
+
+    Reads `quality_metrics["failed_checks"]` (a list of `{code, message}`) and
+    `["quality_summary"]` (the manifest block). Warn-only by default; under
+    --post-validate-enforce a non-empty `failed_checks` maps to EXIT_FINDINGS in
+    the caller (the engine never fails the job -- plan P1-2).
+    """
+    state.console.print()
+    state.console.print(accent("Post-validation"))
+    failed = qm.get("failed_checks") or []
+    summary = qm.get("quality_summary")
+    if summary is None:
+        state.console.print(
+            hint("  "), "no post-validation summary was produced for this run."
+        )
+        return
+    if not failed:
+        state.console.print(success("  All post-validation checks passed."))
+        return
+    tbl = make_table("Failed check", "Detail")
+    for item in failed:
+        item = item or {}
+        tbl.add_row(str(item.get("code", "?")), str(item.get("message", "")))
+    state.console.print(tbl)
+    if enforce:
+        state.console.print(
+            warn("  enforce:"),
+            f"{len(failed)} hard-failed check(s); outputs were written, exiting "
+            "with findings (code 4).",
+        )
+    else:
+        state.console.print(
+            hint("  Note:"),
+            f"{len(failed)} hard-failed check(s) reported; warn-only, the run "
+            "still exits 0. Use",
+            code("--post-validate-enforce"),
+            "to exit with findings.",
+        )
 
 
 def _run_chunked_mask(

@@ -89,6 +89,10 @@ $ decoy run [OPTIONS] CONFIG
 * `--notify-on [success|failure|always]`: Which terminal outcome(s) to notify on: success, failure, or always.  [default: always]
 * `--native`: Require that a compiled native kernel actually executed. Refuses up front (no run) on --chunked or a generate/mixed config, or on an absent/broken decoy-engine-native companion. Refuses AFTER the run, before any output is written, if the job finished without positive compiled-kernel evidence (e.g. an FK table or a table masked only with passthrough/redact/truncate). Mutually exclusive with --no-native. See: decoy explain native.
 * `--no-native`: Force the legacy pandas adapter, bypassing the unified slice entirely -- the documented rollback for native-on-when-present. Mutually exclusive with --native. See: decoy explain native.
+* `--explain-plan`: After the run, show the EXECUTION ROUTE the engine chose (sequential / full_frame / out_of_core) and why, from the result&#x27;s execution_plan metrics. This is the route decision, NOT the per-column masking rationale -- for that, use `decoy validate compile --explain` (pre-run). Default off; report-only, never changes the exit code. Not supported with --chunked.
+* `--fidelity`: After the run, show a QUICK inline distribution-fidelity check per mask table (marginal grade/score), from the result&#x27;s fidelity_reports metrics. A low grade NEVER fails the run. For the fuller post-hoc grade, use `decoy report fidelity`. Default off; report-only. Not supported with --chunked.
+* `--post-validate`: After the run, run the post-execution validator suite over the masked output and show its results (findings + quality summary), from the result&#x27;s quality metrics. Warn-only: findings are reported but the run still exits 0. Use --post-validate-enforce to exit with findings. Default off. Not supported with --chunked.
+* `--post-validate-enforce`: Like --post-validate, but exit EXIT_FINDINGS (4) when the validator reports any hard-failed check. The masked output is still written (the mask succeeded; the findings are a data-quality signal). Implies --post-validate. Default off. Not supported with --chunked.
 * `--help`: Show this message and exit.
 
 Examples:
@@ -121,7 +125,27 @@ Examples:
   decoy run pipeline.yaml --notify slack:https://hooks.slack.com/services/x --notify-on failure
     Only notify on a failed run.
 
-See also: decoy validate config, decoy report fidelity, decoy explain chunked, decoy explain vault.
+  decoy run pipeline.yaml --explain-plan
+    After the run, show the EXECUTION ROUTE the engine chose (sequential /
+    full_frame / out_of_core) and why. This is the route decision, not the
+    per-column masking rationale -- for that, run
+    `decoy validate compile --explain` before the run.
+
+  decoy run pipeline.yaml --fidelity
+    After the run, show a quick inline marginal-fidelity check per mask table.
+    A low grade never fails the run. For the fuller post-hoc grade, run
+    `decoy report fidelity`.
+
+  decoy run pipeline.yaml --post-validate
+    After the run, run the post-execution validator suite over the masked
+    output and show the findings. Warn-only: the run still exits 0.
+
+  decoy run pipeline.yaml --post-validate-enforce
+    Like --post-validate, but exit 4 (findings) when any hard check fails.
+    The masked output is still written. (The report flags are not supported
+    with --chunked.)
+
+See also: decoy validate compile --explain, decoy report fidelity, decoy validate config, decoy explain chunked, decoy explain vault.
 
 
 ## `decoy unmask`
