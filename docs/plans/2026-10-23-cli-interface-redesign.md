@@ -281,7 +281,7 @@ subcommand set. Every former capability keeps a door (§8); the doors just stop 
 - No shims (CLI pre-GA convention; the `forge` shim is itself a delete candidate, D4). Deleted top-level
   commands fail with Typer's "No such command."
 - Rewire `src/decoy/__main__.py`; delete/merge the affected `cli/` modules; rebuild the test surface
-  (`tests/e2e/test_cli_surface.py` is the drift net).
+  (`tests/unit/test_cli_surface.py` is the drift net).
 - Regenerate `docs/cli-reference.md` (the drift sentry); rewrite the README "Common commands" table and the
   root-help block **from** the regenerated reference, establishing it as the single source of truth.
 - Update `examples/`, `explain` topic text, and any internal scripts that invoke old forms.

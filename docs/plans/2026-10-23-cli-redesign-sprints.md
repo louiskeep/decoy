@@ -33,7 +33,7 @@ Runs in parallel, independently: the **file-format contract** slice
 reader, not the command tree, so it does not block or get blocked by this sequence.
 
 Cross-cutting, every sprint (the development-loop discipline):
-- TDD per task; regenerate `docs/cli-reference.md` (the drift sentry) and keep `tests/e2e/test_cli_surface.py`
+- TDD per task; regenerate `docs/cli-reference.md` (the drift sentry) and keep `tests/unit/test_cli_surface.py`
   green; `pytest -q` + `ruff check src/decoy tests` before each commit.
 - Each sprint ends **shippable**: a coherent surface, the regenerated reference, and the README "Common
   commands" table + root-help block regenerated from it (never hand-edited after S1).
