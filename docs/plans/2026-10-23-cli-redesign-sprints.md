@@ -26,7 +26,16 @@ the first cut; `query`/`run --pin` fast-follow; `report fidelity --privacy` gate
 | S3 ✅ | Inspection: `scan` + `list`/`show` | one "look at my data" verb; one reference vocabulary | S1 |
 | S4 ✅ | Post-run: `report` + stateless | one post-run noun; `project`/`catalog`/`jobs` gone | S1, S2, S3 |
 | S5 ◑ | `run` flags shipped; disguises end-to-end owner-gated | run flags done; compliance wiring escalated | S2, S3 |
-| S6 | Delight / fast-follows: `query`, privacy metrics | optional capabilities surfaced | S4; engine exports |
+| S6 ◑ | `decoy query` shipped; privacy metrics deferred | query surfaced; `report fidelity --privacy` needs engine export | S4; engine exports |
+
+**Loop complete (2026-10-23):** S1–S4 shipped in full; S5 shipped the `run` flags (disguise end-to-end
+escalated to the owner); S6 shipped `decoy query` (`report fidelity --privacy` deferred). All on branch
+`claude/happy-fermi-44osad`, each slice through plan-gate → build → independent review, merge-ready and NOT
+merged (PO-gated). Owner/engine follow-ups: compliance-template authoring for the ~7 remaining regimes
+(legal review); engine exports for `recommend_disguises` (→ `scan --suggest`), pinned generation
+(→ `run --pin`), and the `quality` compute surface (→ `report fidelity --privacy`); the `report.py` split
+tech-debt; the two S6 LOW advisories; and the ROADMAP-index entry in `decoy-platform` (a platform-repo
+change, flagged not done here).
 
 Runs in parallel, independently: the **file-format contract** slice
 (`docs/plans/2026-09-30-cli-source-format-dispatch.md`) — it is engine-release-gated and touches the source

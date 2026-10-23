@@ -116,6 +116,21 @@ Full `pytest -q` green; `ruff check`; regen reference + the three doc sentries g
 - `report fidelity --privacy` is recorded as an engine-export follow-up (not built); `fit` unchanged (or
   help-only polish); no engine change; full suite + ruff + sentries green.
 
+## Build status (2026-10-23)
+
+- **S6 `decoy query` — DONE** (`c2628c1`): read-only SQL over masked Parquet via `run_discovery_sql`;
+  `--table NAME=PATH`/bare-PATH stem inference; `row_limit+1` truncation; dual error catch (DiscoverySqlError
+  + raw duckdb.Error) → EXIT_USAGE, never a traceback; SELECT-only + arbitrary-file-read guards enforced by
+  the engine and CLI-tested. **S6 independent review — ACCEPT** (security paths verified live; 2 LOW advisory
+  follow-ups, both pre-existing house convention: (1) `_fail_usage` is silent under `--quiet` while help says
+  "errors go to stderr" — codebase-wide, mirrors subset/cockpit/demo; (2) the broad `except Exception` maps
+  to EXIT_USAGE not EXIT_RUNTIME — plan-sanctioned for the never-leak-a-traceback goal). Suite 1157 pass/5
+  skip; ruff clean.
+- **Deferred (engine-export follow-up):** `report fidelity --privacy` (DCR/synth metrics — the engine
+  `quality` compute surface is not in `__all__`). `fit` help-polish — trivial standalone follow-up.
+
+**S6 CLOSED** (merge-ready on the branch; not merged — PO-gated). This closes the S1–S6 CLI-redesign loop.
+
 ## Loop handoff
 
 Plan-gate review before DEVELOP (confirm the `--table NAME=PATH` surface vs the redesign's `query OUTPUT
