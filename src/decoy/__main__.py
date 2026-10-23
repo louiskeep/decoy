@@ -11,7 +11,6 @@ from decoy import __version__
 from decoy.cli.cockpit import DOCTOR_EPILOG, doctor
 from decoy.cli.demo import DEMO_EPILOG
 from decoy.cli.demo import _demo as demo_command
-from decoy.cli.evidence import evidence_app
 from decoy.cli.explain import EXPLAIN_EPILOG
 from decoy.cli.explain import explain as explain_command
 from decoy.cli.fit import FIT_EPILOG
@@ -26,13 +25,11 @@ from decoy.cli.run import run as run_command
 from decoy.cli.scan import scan_app
 from decoy.cli.schema import SCHEMA_EPILOG
 from decoy.cli.schema import schema as schema_command
-from decoy.cli.storm import storm_app
 from decoy.cli.subset import SUBSET_EPILOG
 from decoy.cli.subset import subset as subset_command
 from decoy.cli.unmask import UNMASK_EPILOG
 from decoy.cli.unmask import unmask as unmask_command
 from decoy.cli.validate import validate_app
-from decoy.cli.vault import vault_app
 
 # Quick-start hints embedded in the root help. Picked up by Typer's
 # default formatter; the `decoy info` command renders the same idea
@@ -54,8 +51,9 @@ Try one of:
   decoy show template hipaa        Dump one bundled template to stdout.
   decoy explain modes              Plain-English topic help. `explain` lists topics.
   decoy info                       Branded splash + quick-start hints.
-  decoy report show evidence.json  Render the evidence report from an evidence manifest file.
-  decoy report diff a.json b.json  Data-level compare between two evidence manifests.
+  decoy report show evidence.json  Show the evidence manifest (the post-run surface: show/verify/fidelity/integrity/diff/vault).
+  decoy report verify evidence.json  Re-hash the recorded files and report fingerprint drift.
+  decoy report diff a.json b.json  Compare two manifests: fingerprints always, data when the output files exist.
 
 Run `decoy --install-completion` to enable shell tab completion.
 """
@@ -99,9 +97,6 @@ app.command(name="explain", epilog=EXPLAIN_EPILOG)(explain_command)
 app.command(name="info", epilog=INFO_EPILOG)(info_command)
 app.command(name="schema", epilog=SCHEMA_EPILOG)(schema_command)
 app.add_typer(scan_app, name="scan")
-app.add_typer(storm_app, name="storm")
-app.add_typer(vault_app, name="vault")
-app.add_typer(evidence_app, name="evidence")
 app.add_typer(report_app, name="report")
 app.command(name="list", epilog=LIST_EPILOG)(list_)
 app.command(name="show", epilog=SHOW_EPILOG)(show)

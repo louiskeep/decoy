@@ -17,8 +17,9 @@ mislabeled it "reserved/unused"; in fact `validate`/`preflight` already
 returned 2 under `--fail-on-warning`, so S2 promotes it to this public name
 with one meaning across every path.
 
-OSS.4b (2026-06-02) added EXIT_FINDINGS=4 to support `decoy storm integrity`,
-which has a meaningful 4th state distinct from the existing three: the
+OSS.4b (2026-06-02) added EXIT_FINDINGS=4 to support `decoy report integrity`
+(which began under the now-retired `storm` group, relocated in S4b), which has
+a meaningful 4th state distinct from the existing three: the
 operation ran cleanly, but the data being checked has issues the integrity
 runner flagged. Adding a new constant is a MINOR-eligible additive change per
 docs/release/versioning.md (existing integers 0-3 do not move). Source
@@ -63,7 +64,7 @@ pipelines can route a runtime crash to a different alert."""
 
 EXIT_FINDINGS: int = 4
 """The CLI ran cleanly but found data issues. Used by data-validation /
-integrity verbs (`decoy storm integrity` is the first; future verbs that
+integrity verbs (`decoy report integrity` is the first; future verbs that
 audit data rather than execute it will reuse this code). The fix is in the
 data being checked, not in the CLI or the user's invocation. Pattern source:
 semgrep's exit-code split (0 pass, 1 findings, 2 error). Distinct from

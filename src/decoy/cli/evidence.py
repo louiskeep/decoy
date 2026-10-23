@@ -1,26 +1,31 @@
-"""`decoy evidence` -- show and verify local run evidence manifests (SP-17).
+"""Local run evidence manifests: build, hash, verify, and render (SP-17).
 
 Local evidence manifests are produced by `decoy run --evidence-out <path>` and
 contain fingerprints of the pipeline config, input files, and output files at
 the time of the run. They also include a self-consistency fingerprint
 (`manifest_hash`) that covers the entire manifest body.
 
-What evidence show/verify check
----------------------------------
-`evidence show`   -- Read-only. Renders the manifest in human-readable or
-                      JSON form. Does NOT expose raw row values (the manifest
-                      itself never contains them).
+S4b (CLI redesign) folded the former `evidence` verbs (show/verify) into
+the `decoy report` noun (`report show` / `report verify`). This module is now a
+HELPER module: it owns the manifest builder/hasher/verifier plus the shared
+manifest-summary card renderer that `decoy report` imports. It registers no
+Typer sub-app of its own.
 
-`evidence verify` -- Reads the manifest then re-hashes the current files to
-                      detect drift (accidental file changes):
-                        - pipeline_fingerprint: sha256:<hex> of pipeline.yaml
-                        - input_fingerprints: sha256:<hex> of each source file
-                        - output_fingerprints: sha256:<hex> of each target file
-                        - manifest_hash: sha256:<hex> of the manifest body itself
-                      Exits non-zero and reports which fingerprints changed.
+What `report show` renders (via `_render_manifest_card`)
+--------------------------------------------------------
+Read-only. The manifest in human-readable or JSON form. Does NOT expose raw
+row values (the manifest itself never contains them).
 
-What evidence verify does NOT check
---------------------------------------
+What `report verify` checks (via `verify_manifest`)
+---------------------------------------------------
+Re-hashes the current files to detect drift (accidental file changes):
+  - pipeline_fingerprint: sha256:<hex> of pipeline.yaml
+  - input_fingerprints: sha256:<hex> of each source file
+  - output_fingerprints: sha256:<hex> of each target file
+  - manifest_hash: sha256:<hex> of the manifest body itself
+
+What verify does NOT check
+--------------------------
 * Platform audit logs, RBAC, schedule history, or secret access records.
 * Whether the output was produced by the declared pipeline (it only checks
   that the files have not changed since the manifest was recorded).
@@ -55,20 +60,7 @@ from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
-import typer
-
-from decoy.cli.exit_codes import EXIT_FINDINGS, EXIT_USAGE
-from decoy.ui.output import OutputMode, emit_json, setup_output
-from decoy.ui.theme import code, error, hint, success, warn
-
-evidence_app = typer.Typer(
-    name="evidence",
-    help=(
-        "Show and verify local run evidence manifests. "
-        "`show` renders a manifest; `verify` checks file fingerprints for drift."
-    ),
-    no_args_is_help=True,
-)
+from decoy.ui.theme import warn
 
 _SCHEMA_VERSION = "cli-local-1"
 
@@ -397,115 +389,8 @@ def verify_manifest(manifest: dict[str, Any]) -> list[str]:
 
 
 # ---------------------------------------------------------------------------
-# CLI: evidence show
+# Shared manifest-summary card (rendered by `decoy report show`)
 # ---------------------------------------------------------------------------
-
-
-_SHOW_EPILOG = """\
-Examples:
-
-  decoy evidence show evidence.json
-    Render the evidence manifest in a human-readable card.
-
-  decoy evidence show evidence.json --json
-    Emit the manifest as structured JSON (suitable for scripting).
-
-What evidence show does NOT do:
-  - It does not verify fingerprints against current files.
-  - Use `decoy evidence verify` to check for drift (accidental file changes).
-
-Integrity note: manifest_hash is an UNKEYED SHA-256 fingerprint. It detects
-accidental drift; it does NOT detect a motivated tamperer who can edit the
-manifest and recompute the hash. Keyed signing is platform R4 territory.
-
-See also: decoy evidence verify, decoy run --evidence-out.
-"""
-
-
-def _show(
-    evidence_file: Path = typer.Argument(
-        ...,
-        exists=False,  # checked manually for cleaner error
-        dir_okay=False,
-        help="Path to a local evidence manifest JSON (produced by decoy run --evidence-out).",
-    ),
-    json_: bool = typer.Option(
-        False,
-        "--json",
-        help="Emit the manifest as structured JSON instead of a human-readable card.",
-    ),
-    quiet: bool = typer.Option(
-        False, "--quiet", "-q", help="Suppress stdout. Errors still go to stderr."
-    ),
-    verbose: bool = typer.Option(
-        False, "--verbose", "-v", help="Enable debug-level CLI logs on stderr."
-    ),
-) -> None:
-    """Render a local evidence manifest in human-readable form.
-
-    Shows pipeline fingerprint, input/output fingerprints, run metadata,
-    masking strategies, and manifest self-consistency status. Read-only:
-    this command never modifies files and never exposes raw data values
-    (the manifest itself does not contain them).
-
-    Use `decoy evidence verify` to check whether the recorded fingerprints
-    still match the current on-disk files.
-
-    What this does NOT prove: manifest_hash is an UNKEYED SHA-256 check.
-    It detects accidental drift; it does NOT detect a motivated tamperer who
-    can edit the manifest and recompute the hash. Keyed signing is platform
-    R4 territory.
-    """
-    state = setup_output(json_, quiet, verbose)
-
-    if not evidence_file.exists():
-        msg = f"evidence file not found: {evidence_file}"
-        if state.mode is OutputMode.json:
-            emit_json(state, {"command": "evidence show", "status": "error", "error": msg})
-        elif state.mode is not OutputMode.quiet:
-            state.err_console.print(error("error:"), msg)
-            state.err_console.print(
-                " ",
-                hint("hint:"),
-                "produce an evidence file with",
-                code("decoy run pipeline.yaml --evidence-out evidence.json"),
-            )
-        raise typer.Exit(code=EXIT_USAGE)
-
-    try:
-        raw = evidence_file.read_text(encoding="utf-8")
-        manifest = _json.loads(raw)
-    except _json.JSONDecodeError as exc:
-        msg = f"could not parse {evidence_file.name} as JSON: {exc.msg}"
-        if state.mode is OutputMode.json:
-            emit_json(state, {"command": "evidence show", "status": "error", "error": msg})
-        elif state.mode is not OutputMode.quiet:
-            state.err_console.print(error("error:"), msg)
-        raise typer.Exit(code=EXIT_USAGE)
-    except OSError as exc:
-        msg = f"could not read {evidence_file}: {exc}"
-        if state.mode is OutputMode.json:
-            emit_json(state, {"command": "evidence show", "status": "error", "error": msg})
-        elif state.mode is not OutputMode.quiet:
-            state.err_console.print(error("error:"), msg)
-        raise typer.Exit(code=EXIT_USAGE)
-
-    if state.mode is OutputMode.json:
-        emit_json(
-            state,
-            {
-                "command": "evidence show",
-                "status": "ok",
-                "evidence_file": str(evidence_file),
-                "manifest": manifest,
-            },
-        )
-        return
-
-    if state.mode is OutputMode.quiet:
-        return
-
-    _render_manifest_card(state, manifest, evidence_file)
 
 
 def _render_manifest_card(state: Any, manifest: dict[str, Any], evidence_file: Path) -> None:
@@ -547,9 +432,9 @@ def _render_manifest_card(state: Any, manifest: dict[str, Any], evidence_file: P
 
     render_card(
         state,
-        command="decoy evidence show",
+        command="decoy report show",
         facts=facts,
-        next_hint=f"decoy evidence verify {evidence_file}",
+        next_hint=f"decoy report verify {evidence_file}",
         status="ok" if hash_ok else "warn",
     )
 
@@ -608,172 +493,14 @@ def _render_manifest_card(state: Any, manifest: dict[str, Any], evidence_file: P
             warn("warning:"),
             "manifest_hash does not match the manifest body. "
             "The manifest file may have been edited. "
-            "Run `decoy evidence verify` for a full fingerprint check.",
+            "Run `decoy report verify` for a full fingerprint check.",
         )
 
-
-# ---------------------------------------------------------------------------
-# CLI: evidence verify
-# ---------------------------------------------------------------------------
-
-
-_VERIFY_EPILOG = """\
-Examples:
-
-  decoy evidence verify evidence.json
-    Check all fingerprints (pipeline, inputs, outputs, manifest integrity).
-    Exits 0 when all match; non-zero when any changed.
-
-  decoy evidence verify evidence.json --json
-    Emit a structured JSON result with the list of issues found.
-
-What verify checks:
-  - manifest_hash: detects edits to the manifest JSON file.
-  - pipeline_fingerprint: detects changes to pipeline.yaml.
-  - input_fingerprints: detects changes to source data files.
-  - output_fingerprints: detects changes to masked/generated output files.
-
-What verify does NOT check:
-  - Whether the output was produced by the declared pipeline.
-  - Data correctness or masking quality.
-  - Platform audit logs, RBAC, or schedule history.
-  - Network, vault, or secrets accessibility.
-
-Integrity limit: manifest_hash is an UNKEYED SHA-256 check. It detects
-accidental drift; it does NOT detect a motivated tamperer who can edit the
-manifest and recompute the hash. Keyed signing is platform R4 territory.
-
-Exit codes: 0 clean; 4 fingerprint drift detected; 1 bad input.
-
-See also: decoy evidence show, decoy run --evidence-out.
-"""
-
-
-def _verify(
-    evidence_file: Path = typer.Argument(
-        ...,
-        exists=False,  # checked manually for cleaner error
-        dir_okay=False,
-        help="Path to a local evidence manifest JSON.",
-    ),
-    json_: bool = typer.Option(
-        False,
-        "--json",
-        help="Emit a structured JSON result instead of human-readable output.",
-    ),
-    quiet: bool = typer.Option(
-        False, "--quiet", "-q", help="Suppress stdout. Exit code carries the result."
-    ),
-    verbose: bool = typer.Option(
-        False, "--verbose", "-v", help="Enable debug-level CLI logs on stderr."
-    ),
-) -> None:
-    """Verify a local evidence manifest's fingerprints against current files.
-
-    Re-hashes the pipeline config, input files, and output files and
-    compares against the fingerprints recorded in the manifest. Also checks
-    manifest_hash to detect edits to the manifest file itself.
-
-    Exits 0 when all fingerprints match (no drift). Exits non-zero
-    (EXIT_FINDINGS) when any fingerprint has changed.
-
-    What this DOES prove: the files look the same as when the run
-    completed. What this does NOT prove: correctness of the output,
-    platform audit compliance, or that the run actually occurred.
-
-    Integrity limit: manifest_hash is an UNKEYED SHA-256 check. It detects
-    accidental drift (file changes since the run), NOT a motivated tamperer
-    who can edit the manifest and recompute the hash. Keyed signing (R4) is
-    required for adversarial authenticity guarantees.
-    """
-    state = setup_output(json_, quiet, verbose)
-
-    if not evidence_file.exists():
-        msg = f"evidence file not found: {evidence_file}"
-        if state.mode is OutputMode.json:
-            emit_json(
-                state,
-                {"command": "evidence verify", "status": "error", "error": msg},
-            )
-        elif state.mode is not OutputMode.quiet:
-            state.err_console.print(error("error:"), msg)
-        raise typer.Exit(code=EXIT_USAGE)
-
-    try:
-        manifest = _json.loads(evidence_file.read_text(encoding="utf-8"))
-    except _json.JSONDecodeError as exc:
-        msg = f"could not parse {evidence_file.name} as JSON: {exc.msg}"
-        if state.mode is OutputMode.json:
-            emit_json(state, {"command": "evidence verify", "status": "error", "error": msg})
-        elif state.mode is not OutputMode.quiet:
-            state.err_console.print(error("error:"), msg)
-        raise typer.Exit(code=EXIT_USAGE)
-    except OSError as exc:
-        msg = f"could not read {evidence_file}: {exc}"
-        if state.mode is OutputMode.json:
-            emit_json(state, {"command": "evidence verify", "status": "error", "error": msg})
-        elif state.mode is not OutputMode.quiet:
-            state.err_console.print(error("error:"), msg)
-        raise typer.Exit(code=EXIT_USAGE)
-
-    issues = verify_manifest(manifest)
-
-    if state.mode is OutputMode.json:
-        emit_json(
-            state,
-            {
-                "command": "evidence verify",
-                "status": "ok" if not issues else "fingerprint_mismatch",
-                "evidence_file": str(evidence_file),
-                "issues": issues,
-                "issue_count": len(issues),
-            },
-        )
-        if issues:
-            raise typer.Exit(code=EXIT_FINDINGS)
-        return
-
-    if state.mode is OutputMode.quiet:
-        if issues:
-            raise typer.Exit(code=EXIT_FINDINGS)
-        return
-
-    if not issues:
-        state.console.print(
-            success("OK"),
-            f"All fingerprints match. ({evidence_file.name})",
-        )
-        return
-
-    state.err_console.print(
-        error("INTEGRITY CHECK FAILED: fingerprint mismatch"),
-        f"{len(issues)} fingerprint(s) changed in {evidence_file.name}",
-    )
-    for issue in issues:
-        state.err_console.print(" ", hint("-"), issue)
-    state.err_console.print(
-        " ",
-        hint("hint:"),
-        "files may have changed since the evidence was recorded, "
-        "or the manifest file may have been edited.",
-    )
-    state.err_console.print(
-        " ",
-        hint("note:"),
-        "manifest_hash is an UNKEYED SHA-256 check; it detects accidental "
-        "drift, not adversarial edits. Keyed signing is platform R4 territory.",
-    )
-    raise typer.Exit(code=EXIT_FINDINGS)
-
-
-evidence_app.command(name="show", epilog=_SHOW_EPILOG)(_show)
-evidence_app.command(name="verify", epilog=_VERIFY_EPILOG)(_verify)
 
 # Public exports (used by run.py --evidence-out and tests)
 __all__ = [
     "build_manifest",
     "compute_manifest_hash",
-    "evidence_app",
     "hash_file",
     "verify_manifest",
 ]

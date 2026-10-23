@@ -102,7 +102,7 @@ What preflight does NOT check:
   - Data validity or masking quality
   - Vault or secrets accessibility
 
-See also: decoy validate, decoy run, decoy evidence verify, decoy explain exit-codes.
+See also: decoy validate, decoy run, decoy report verify, decoy explain exit-codes.
 """
 
 

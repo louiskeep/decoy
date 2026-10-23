@@ -40,14 +40,11 @@ _ROOT_HELP_OMITTED = frozenset(
     {
         "schema",
         "doctor",
-        "vault",
-        "evidence",
         # S3b: the four registry sub-apps folded into `list`/`show`, which ARE
         # advertised in the root help (`decoy list templates` / `show template`).
-        # S3a: `storm` is down to the lone `storm integrity` (post-run,
-        # transient until `report integrity` in S4) and is deliberately kept
-        # out of the quick-start root help; `decoy scan` is the advertised verb.
-        "storm",
+        # S4b: `vault`, `evidence`, and `storm` are gone -- their verbs folded
+        # into `decoy report` (vault / verify+show / integrity), so they are no
+        # longer registered and must not appear here.
     }
 )
 
@@ -62,14 +59,12 @@ _README_TABLE_OMITTED = frozenset(
         "schema",
         "doctor",
         "subset",
-        "vault",
-        "evidence",
-        "report",
         # S3b: the four registry sub-apps folded into `list`/`show`; the README
         # table advertises `decoy list templates` / `decoy show template`.
-        # S3a: `storm` is down to the transient lone `storm integrity`; the
-        # README table advertises `decoy scan` instead.
-        "storm",
+        # S4b: `vault`, `evidence`, and `storm` are gone (folded into `decoy
+        # report`), so they are no longer registered and must not appear here.
+        # `report` is now featured in the table (the post-run surface), so it
+        # is no longer allowlisted out.
     }
 )
 
@@ -182,8 +177,8 @@ def test_extractor_flags_a_phantom() -> None:
     assert _extract_path("bogus --flag") == "bogus"
     assert "bogus" not in VALID_TARGETS
     # A real nested path resolves and is registered.
-    assert _extract_path("storm integrity masked.csv") == "storm integrity"
-    assert "storm integrity" in VALID_TARGETS
+    assert _extract_path("report integrity masked.csv") == "report integrity"
+    assert "report integrity" in VALID_TARGETS
     # A top-level leaf does not over-consume its positional arg.
     assert _extract_path("explain modes") == "explain"
 

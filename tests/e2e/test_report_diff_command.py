@@ -233,12 +233,12 @@ def test_report_diff_missing_manifest_exits_nonzero(tmp_path: Path) -> None:
 
 
 # ---------------------------------------------------------------------------
-# D6: output files no longer exist
+# D6: output files no longer exist -> manifest-level only (note, not failure)
 # ---------------------------------------------------------------------------
 
 
-def test_report_diff_missing_output_files_exits_nonzero(tmp_path: Path) -> None:
-    """report diff when the referenced output files were deleted exits non-zero."""
+def test_report_diff_missing_output_files_succeeds_manifest_only(tmp_path: Path) -> None:
+    """report diff degrades to manifest-level when output files are gone (exit 0, note)."""
     csv = "email\nA@B.com\n"
 
     ev_a, _ = _write_evidence_for_output(tmp_path, "_a", csv, row_count=1)
@@ -253,7 +253,83 @@ def test_report_diff_missing_output_files_exits_nonzero(tmp_path: Path) -> None:
         ["report", "diff", str(ev_a), str(ev_b)],
         catch_exceptions=False,
     )
+    # S4b superset contract: a missing output file is a NOTE, not a failure.
+    assert result.exit_code == 0, result.output
+    combined = result.output + (result.stderr if hasattr(result, "stderr") else "")
+    assert "data-level" in combined.lower() or "missing" in combined.lower()
+
+
+def test_report_diff_missing_output_files_json_skips_data_level(tmp_path: Path) -> None:
+    """report diff --json still returns the manifest-level envelope when files are gone."""
+    csv = "email\nA@B.com\n"
+
+    ev_a, _ = _write_evidence_for_output(tmp_path, "_a", csv, row_count=1)
+    ev_b, _ = _write_evidence_for_output(tmp_path, "_b", csv, row_count=1)
+    (tmp_path / "out_a.csv").unlink()
+    (tmp_path / "out_b.csv").unlink()
+
+    result = runner.invoke(
+        app,
+        ["report", "diff", str(ev_a), str(ev_b), "--json"],
+        catch_exceptions=False,
+    )
+    assert result.exit_code == 0, result.output
+    data = _json.loads(result.stdout)
+    assert data["command"] == "report diff"
+    assert data["status"] == "ok"
+    # Manifest-level fields always present.
+    assert "pipeline_fingerprint_changed" in data
+    # Data level was skipped because the output files are gone.
+    assert data["data_level"] == "skipped"
+    assert data["any_data_change"] is None
+    assert data["missing_files"]
+
+
+def test_report_diff_require_data_hard_fails_on_missing(tmp_path: Path) -> None:
+    """--require-data restores today's strict hard-fail when output files are gone."""
+    csv = "email\nA@B.com\n"
+
+    ev_a, _ = _write_evidence_for_output(tmp_path, "_a", csv, row_count=1)
+    ev_b, _ = _write_evidence_for_output(tmp_path, "_b", csv, row_count=1)
+    (tmp_path / "out_a.csv").unlink()
+    (tmp_path / "out_b.csv").unlink()
+
+    result = runner.invoke(
+        app,
+        ["report", "diff", str(ev_a), str(ev_b), "--require-data"],
+        catch_exceptions=False,
+    )
     assert result.exit_code != 0
+
+
+# ---------------------------------------------------------------------------
+# D6c: manifest-level comparison (absorbed `report compare`) always runs
+# ---------------------------------------------------------------------------
+
+
+def test_report_diff_reports_pipeline_fingerprint_change(tmp_path: Path) -> None:
+    """report diff --json always runs the manifest-level compare (absorbed compare)."""
+    import copy
+
+    from decoy.cli.evidence import compute_manifest_hash
+
+    csv = "email\nA@B.com\n"
+    ev_a, manifest = _write_evidence_for_output(tmp_path, "_a", csv, row_count=1)
+
+    new_manifest = copy.deepcopy(manifest)
+    new_manifest["pipeline_fingerprint"] = "sha256:" + "b" * 64
+    new_manifest["manifest_hash"] = compute_manifest_hash(new_manifest)
+    ev_b = tmp_path / "evidence_b.json"
+    ev_b.write_text(_json.dumps(new_manifest, indent=2), encoding="utf-8")
+
+    result = runner.invoke(
+        app,
+        ["report", "diff", str(ev_a), str(ev_b), "--json"],
+        catch_exceptions=False,
+    )
+    assert result.exit_code == 0, result.output
+    data = _json.loads(result.stdout)
+    assert data["pipeline_fingerprint_changed"] is True
 
 
 # ---------------------------------------------------------------------------

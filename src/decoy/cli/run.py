@@ -94,7 +94,7 @@ Examples:
   decoy run pipeline.yaml --notify slack:https://hooks.slack.com/services/x --notify-on failure
     Only notify on a failed run.
 
-See also: decoy validate config, decoy validate distribution, decoy explain chunked, decoy explain vault.
+See also: decoy validate config, decoy report fidelity, decoy explain chunked, decoy explain vault.
 """
 
 
@@ -281,7 +281,7 @@ def run(
             "successful run. The manifest records pipeline hash, input/output "
             "file fingerprints, run metadata, and row counts/timings/warnings "
             "where available (these are omitted for --chunked runs). It does "
-            "NOT contain raw data values. Use `decoy evidence verify` to check "
+            "NOT contain raw data values. Use `decoy report verify` to check "
             "the manifest against current files. "
             "See: decoy explain evidence (when available)."
         ),

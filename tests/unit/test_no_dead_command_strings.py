@@ -59,6 +59,16 @@ DEAD_STRINGS = (
     "decoy project",
     "decoy catalog",
     "decoy jobs",
+    # S4b: the `evidence`, `vault`, and `storm` groups and `validate
+    # distribution` folded into `decoy report` (verify+show / vault / integrity
+    # / fidelity). The live forms are `decoy report ...`, which none of these
+    # substrings match. `storm integrity` and `validate distribution` (the
+    # exact nested paths) are dead; `decoy evidence` / `decoy vault` catch
+    # every invocation of those removed groups.
+    "decoy evidence",
+    "decoy vault",
+    "storm integrity",
+    "validate distribution",
 )
 
 

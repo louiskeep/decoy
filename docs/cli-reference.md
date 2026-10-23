@@ -16,8 +16,9 @@ Try one of:
   decoy show template hipaa        Dump one bundled template to stdout.
   decoy explain modes              Plain-English topic help. `explain` lists topics.
   decoy info                       Branded splash + quick-start hints.
-  decoy report show evidence.json  Render the evidence report from an evidence manifest file.
-  decoy report diff a.json b.json  Data-level compare between two evidence manifests.
+  decoy report show evidence.json  Show the evidence manifest (the post-run surface: show/verify/fidelity/integrity/diff/vault).
+  decoy report verify evidence.json  Re-hash the recorded files and report fingerprint drift.
+  decoy report diff a.json b.json  Compare two manifests: fingerprints always, data when the output files exist.
 
 Run `decoy --install-completion` to enable shell tab completion.
 
@@ -50,10 +51,7 @@ $ decoy [OPTIONS] COMMAND [ARGS]...
 * `subset`: Cut a referentially-complete FK-aware...
 * `validate`: Pre-run validation gate.
 * `scan`: Profile a dataset for PII and...
-* `storm`: Masked-file verification -- `integrity`...
-* `vault`: Vault inspection utilities.
-* `evidence`: Show and verify local run evidence manifests.
-* `report`: Render, summarize, and compare local...
+* `report`: The post-run surface: show / render /...
 
 ## `decoy run`
 
@@ -86,7 +84,7 @@ $ decoy run [OPTIONS] CONFIG
 * `--vault PATH`: Write the token vault (encrypted source-to-masked map for vault: true columns) to this path. The vault plus the config re-identify every vaulted value: store them separately and never alongside the masked output. Needs the engine&#x27;s vault extra (cryptography).
 * `--substrate TEXT`: Execution substrate for --chunked runs. pandas is the only substrate (the default); any other value, including the removed &#x27;polars&#x27;, is rejected with a usage error. Non-chunked (plain) runs always use the engine&#x27;s pandas adapter; this flag and the DECOY_SUBSTRATE env var are consulted only for --chunked runs, and setting either on a plain run emits a warning to stderr and is otherwise ignored.  [env var: DECOY_SUBSTRATE]
 * `--key-label TEXT`: Stable namespace string for the --master-key generation key hierarchy (synthetic generation only, not masking). Required when --master-key is set. Pick something durable (e.g. &#x27;customers_q4&#x27;); changing it produces different generated output. CLI flag only -- PipelineConfig forbids unknown top-level keys, so there is no YAML equivalent.
-* `--evidence-out PATH`: Write a local evidence manifest (JSON) to this path after a successful run. The manifest records pipeline hash, input/output file fingerprints, run metadata, and row counts/timings/warnings where available (these are omitted for --chunked runs). It does NOT contain raw data values. Use `decoy evidence verify` to check the manifest against current files. See: decoy explain evidence (when available).
+* `--evidence-out PATH`: Write a local evidence manifest (JSON) to this path after a successful run. The manifest records pipeline hash, input/output file fingerprints, run metadata, and row counts/timings/warnings where available (these are omitted for --chunked runs). It does NOT contain raw data values. Use `decoy report verify` to check the manifest against current files. See: decoy explain evidence (when available).
 * `--notify TEXT`: Notify a channel after the run reaches its terminal state. Repeatable. Spec is &#x27;kind:target&#x27;: webhook:&lt;url&gt;, slack:&lt;url&gt;, email:&lt;address&gt;. Best-effort: a channel failure never changes the run&#x27;s exit code. Webhook signing key from DECOY_NOTIFY_WEBHOOK_SECRET (unsigned if unset); SMTP from DECOY_NOTIFY_SMTP_HOST/_PORT/_USER/_PASS/_FROM. Nothing is persisted to .decoy/workspace.json -- targets and secrets are flags/env only, never written to disk.
 * `--notify-on [success|failure|always]`: Which terminal outcome(s) to notify on: success, failure, or always.  [default: always]
 * `--native`: Require that a compiled native kernel actually executed. Refuses up front (no run) on --chunked or a generate/mixed config, or on an absent/broken decoy-engine-native companion. Refuses AFTER the run, before any output is written, if the job finished without positive compiled-kernel evidence (e.g. an FK table or a table masked only with passthrough/redact/truncate). Mutually exclusive with --no-native. See: decoy explain native.
@@ -123,7 +121,7 @@ Examples:
   decoy run pipeline.yaml --notify slack:https://hooks.slack.com/services/x --notify-on failure
     Only notify on a failed run.
 
-See also: decoy validate config, decoy validate distribution, decoy explain chunked, decoy explain vault.
+See also: decoy validate config, decoy report fidelity, decoy explain chunked, decoy explain vault.
 
 
 ## `decoy unmask`
@@ -622,7 +620,7 @@ See also: decoy run, decoy validate, decoy validate preflight.
 
 ## `decoy validate`
 
-Pre-run validation gate. `decoy validate CONFIG` runs the whole gate (config + compile + preflight) and emits one report + one exit code. Subcommands run a single layer: schema + config checks (`config`), plan compilation + checks (`compile`), source/capacity readiness (`preflight`), and post-run distribution fidelity (`distribution`).
+Pre-run validation gate. `decoy validate CONFIG` runs the whole gate (config + compile + preflight) and emits one report + one exit code. Subcommands run a single layer: schema + config checks (`config`), plan compilation + checks (`compile`), and source/capacity readiness (`preflight`). Post-run fidelity checks moved to `decoy report fidelity`.
 
 **Usage**:
 
@@ -649,17 +647,12 @@ Examples:
   decoy validate preflight pipeline.yaml
     Source / file / schema readiness + capacity estimate + native probe.
 
-  decoy validate distribution source.csv output.csv
-    Recompute distribution fidelity between a pre-mask source and its
-    masked output (post-run; moving to `report fidelity` in S4).
-
-See also: decoy run, decoy fit.
+See also: decoy run, decoy fit, decoy report fidelity.
 
 
 **Commands**:
 
 * `config`: Validate a decoy pipeline config without...
-* `distribution`: Recompute distribution fidelity between a...
 * `compile`: Compile a pipeline config and run...
 * `preflight`: Local pre-run readiness checks for a...
 
@@ -707,88 +700,7 @@ Examples:
   decoy validate config pipeline.yaml --fail-on-warning
     Exit non-zero if any advisory warning fires (e.g. output target exists).
 
-See also: decoy run, decoy validate distribution.
-
-
-### `decoy validate distribution`
-
-Recompute distribution fidelity between a source and an output CSV.
-
-Wraps `decoy_engine.quality.compute_quality_report` +
-`apply_quality_policy` (report.py:97, policy.py:142): the engine owns
-every metric and the letter grade; this command computes no fidelity
-number itself. Reads both CSVs fresh on every invocation (pure,
-repeatable) -- the CLI&#x27;s local evidence manifest records file
-fingerprints but not the raw frames, so recomputing from the two files
-is the only honest source for this number (BF1).
-
-Exit codes: 0 when the policy verdict is &#x27;pass&#x27; (or &#x27;warn&#x27; without
---fail-on-warning); EXIT_FINDINGS (4) when the verdict is &#x27;fail&#x27;, or
-&#x27;warn&#x27; with --fail-on-warning set. This mirrors `decoy storm
-integrity`&#x27;s exit-code contract -- a data-audit verb that reports
-findings, not a run that crashed -- rather than EXIT_RUNTIME (reserved
-for the CLI/engine blowing up unexpectedly).
-
-**Usage**:
-
-```console
-$ decoy validate distribution [OPTIONS] SOURCE OUTPUT
-```
-
-**Arguments**:
-
-* `SOURCE`: Pre-mask / pre-generate source CSV (ground truth).  [required]
-* `OUTPUT`: Post-mask / post-generate output CSV to check.  [required]
-
-**Options**:
-
-* `--joint TEXT`: Column pair &#x27;a,b&#x27; to also score jointly (repeatable).
-* `--generate`: Output is synthetic generation, not masking: row counts may legitimately differ (sets expect_row_parity=False). Default assumes masking (row parity expected).
-* `--config FILE`: Pipeline YAML naming each column&#x27;s strategy, so intentional loss (hash, bucketize, faker, ...) is not flagged as accidental drift. Without it, per-column policy checks run on defaults only.
-* `--policy FILE`: A quality-policy config (YAML or JSON: mode / thresholds / strategy_expectations) overriding --mode / --min-grade / --min-score.
-* `--mode TEXT`: report (record only, verdict always pass) | warn (violations promote verdict to warn) | fail (violations promote verdict to fail). Ignored when --policy sets its own mode.  [default: report]
-* `--min-grade TEXT`: Shorthand: minimum letter grade (A/B/C/D) the overall score must reach.
-* `--min-score FLOAT`: Shorthand: minimum overall_score in [0, 1].
-* `--fail-on-warning`: Also exit non-zero (EXIT_FINDINGS) when the policy verdict is &#x27;warn&#x27;.
-* `--report-out PATH`: Write the full quality-report/v1 + policy JSON to this path.
-* `--json`: Emit the full quality-report/v1 + policy result as JSON.
-* `-q, --quiet`: Suppress stdout. Exit code carries the result.
-* `-v, --verbose`: Enable debug-level CLI logs on stderr.
-* `--help`: Show this message and exit.
-
-Examples:
-
-  decoy validate distribution source.csv output.csv
-    Recompute distribution fidelity between a pre-mask source and its
-    masked output. Report mode (record only): always exits 0.
-
-  decoy validate distribution source.csv output.csv --config pipeline.yaml
-    Pass the pipeline config so intentional loss (hash, bucketize, ...)
-    is not flagged as accidental drift.
-
-  decoy validate distribution source.csv synthetic.csv --generate
-    Row counts are expected to differ (synthetic generation, not masking).
-
-  decoy validate distribution source.csv output.csv --mode fail --min-grade B
-    Exit non-zero (EXIT_FINDINGS) when the overall grade falls below B.
-
-  decoy validate distribution source.csv output.csv --joint state,tier --json
-    Include a (state, tier) joint fidelity score; emit the full
-    quality-report/v1 + policy JSON.
-
-  decoy validate distribution source.csv output.csv --report-out report.json
-    Also write the full report + policy verdict to disk.
-
-Exit codes: 0 pass (or warn without --fail-on-warning); 4 EXIT_FINDINGS
-when the policy verdict is fail, or warn with --fail-on-warning set;
-1 EXIT_USAGE for bad input (missing columns, unreadable CSV, bad flags).
-
-Note: the sibling `validate config --fail-on-warning` exits 2 for its
-warnings (config well-formedness), while this command exits 4 for its
-warnings (data-fidelity findings). The two subcommands intentionally use
-different warning exit codes for their different domains.
-
-See also: decoy validate config, decoy fit, decoy run.
+See also: decoy run, decoy report fidelity.
 
 
 ### `decoy validate compile`
@@ -924,7 +836,7 @@ What preflight does NOT check:
   - Data validity or masking quality
   - Vault or secrets accessibility
 
-See also: decoy validate, decoy run, decoy evidence verify, decoy explain exit-codes.
+See also: decoy validate, decoy run, decoy report verify, decoy explain exit-codes.
 
 
 ## `decoy scan`
@@ -1103,292 +1015,9 @@ Examples:
 See also: decoy scan, decoy scan fields.
 
 
-## `decoy storm`
-
-Masked-file verification -- `integrity` checks a masked file against its pre-mask source (post-run; moves to `report integrity` in S4). Pre-run profiling now lives in `decoy scan`.
-
-**Usage**:
-
-```console
-$ decoy storm [OPTIONS] COMMAND [ARGS]...
-```
-
-**Options**:
-
-* `--help`: Show this message and exit.
-
-**Commands**:
-
-* `integrity`: Verify a masked file&#x27;s integrity against...
-
-### `decoy storm integrity`
-
-Verify a masked file&#x27;s integrity against its pre-mask source.
-
-Wraps `decoy_engine.storm.postmask.run_storm_post_mask`. Runs the
-three post-mask check buckets (residual_pii, fk_preservation,
-policy_validation) the platform&#x27;s mask job already runs when
-`run_storm: true` is declared in the pipeline; this verb lets the
-CLI user run the same checks standalone.
-
-Exit codes: 0 clean; 4 EXIT_FINDINGS on any fail-severity finding;
-1 EXIT_USAGE for missing files; 3 EXIT_RUNTIME for unexpected
-exceptions.
-
-OSS.4b (2026-06-02).
-
-**Usage**:
-
-```console
-$ decoy storm integrity [OPTIONS] MASKED
-```
-
-**Arguments**:
-
-* `MASKED`: Path to the masked CSV to verify.  [required]
-
-**Options**:
-
-* `--source FILE`: Pre-mask source CSV (ground truth for the integrity check).  [required]
-* `--config FILE`: Optional pipeline.yaml. When passed, policy_validation can compare against the configured masks. Without it the runner still produces residual_pii + fk_preservation findings.
-* `-o, --output PATH`: Write the JobStormReport JSON to this path. The Rich table still renders to stderr.
-* `--allow-source-mismatch`: Suppress the stderr warning when --source does not match the pipeline&#x27;s declared sources block.
-* `--json`: Emit the full JobStormReport JSON to stdout. No card.
-* `-q, --quiet`: Suppress stdout. Errors still go to stderr.
-* `-v, --verbose`: Enable debug-level CLI logs on stderr.
-* `--help`: Show this message and exit.
-
-Examples:
-
-  decoy storm integrity masked.csv --source source.csv
-    Run all three post-mask checks (residual_pii + fk_preservation +
-    policy_validation) against a masked file with its pre-mask
-    baseline as ground truth. Render a Rich findings table.
-
-  decoy storm integrity masked.csv --source source.csv --config pipeline.yaml
-    Same, but load the pipeline YAML so policy_validation can
-    compare against the configured masks. Without --config the
-    runner still produces residual_pii findings; policy_validation
-    is reduced to "no config provided" notes.
-
-  decoy storm integrity masked.csv --source source.csv --json > report.json
-    Pipe the full JobStormReport-shaped JSON for downstream tooling.
-
-  decoy storm integrity masked.csv --source source.csv --output report.json
-    Write JSON to file + render a Rich summary on stderr.
-
-Exit codes: 0 clean (no fail/error findings); 4 EXIT_FINDINGS (one
-or more fail-severity findings); 1 EXIT_USAGE for missing files;
-3 EXIT_RUNTIME for unexpected exceptions.
-
-See also: decoy scan, decoy run, decoy explain exit-codes.
-
-
-## `decoy vault`
-
-Vault inspection utilities. `info` summarises a vault without full decode.
-
-**Usage**:
-
-```console
-$ decoy vault [OPTIONS] COMMAND [ARGS]...
-```
-
-**Options**:
-
-* `--help`: Show this message and exit.
-
-**Commands**:
-
-* `info`: Inspect a vault file: report entry count,...
-
-### `decoy vault info`
-
-Inspect a vault file: report entry count, namespaces, and dropped-ambiguous count.
-
-Opens the vault using the seed derived from the pipeline config. A
-mismatched seed (wrong config) exits 1 with a clear error message.
-Exits 0 on success, 1 on a config/vault/usage error.
-
-**Usage**:
-
-```console
-$ decoy vault info [OPTIONS] VAULT
-```
-
-**Arguments**:
-
-* `VAULT`: The vault file written by `decoy run --vault`.  [required]
-
-**Options**:
-
-* `--config FILE`: The pipeline config the mask run used (must carry the same seed as the run that wrote the vault).  [required]
-* `--json`: Emit a structured JSON result on stdout. Errors still go to stderr.
-* `-q, --quiet`: Suppress stdout. Errors still go to stderr; exit code carries the result.
-* `-v, --verbose`: Enable debug-level CLI logs on stderr.
-* `--help`: Show this message and exit.
-
-Examples:
-
-  decoy vault info vault.bin --config pipeline.yaml
-    Show entry count, namespaces, and ambiguous-dropped count.
-
-  decoy vault info vault.bin --config pipeline.yaml --json
-    Same data as a JSON envelope for scripting.
-
-  decoy vault info vault.bin --config pipeline.yaml --quiet
-    Silent mode; exit code 0 = vault opened successfully.
-
-The vault is encrypted under a key derived from the config's seed. The
-config passed to --config must be the SAME config (or at least the same
-global_settings.seed) used by the `decoy run --vault` call that wrote
-the vault, otherwise the decrypt will fail and the command exits 1.
-
-See also: decoy run --vault, decoy unmask --vault.
-
-
-## `decoy evidence`
-
-Show and verify local run evidence manifests. `show` renders a manifest; `verify` checks file fingerprints for drift.
-
-**Usage**:
-
-```console
-$ decoy evidence [OPTIONS] COMMAND [ARGS]...
-```
-
-**Options**:
-
-* `--help`: Show this message and exit.
-
-**Commands**:
-
-* `show`: Render a local evidence manifest in...
-* `verify`: Verify a local evidence manifest&#x27;s...
-
-### `decoy evidence show`
-
-Render a local evidence manifest in human-readable form.
-
-Shows pipeline fingerprint, input/output fingerprints, run metadata,
-masking strategies, and manifest self-consistency status. Read-only:
-this command never modifies files and never exposes raw data values
-(the manifest itself does not contain them).
-
-Use `decoy evidence verify` to check whether the recorded fingerprints
-still match the current on-disk files.
-
-What this does NOT prove: manifest_hash is an UNKEYED SHA-256 check.
-It detects accidental drift; it does NOT detect a motivated tamperer who
-can edit the manifest and recompute the hash. Keyed signing is platform
-R4 territory.
-
-**Usage**:
-
-```console
-$ decoy evidence show [OPTIONS] EVIDENCE_FILE
-```
-
-**Arguments**:
-
-* `EVIDENCE_FILE`: Path to a local evidence manifest JSON (produced by decoy run --evidence-out).  [required]
-
-**Options**:
-
-* `--json`: Emit the manifest as structured JSON instead of a human-readable card.
-* `-q, --quiet`: Suppress stdout. Errors still go to stderr.
-* `-v, --verbose`: Enable debug-level CLI logs on stderr.
-* `--help`: Show this message and exit.
-
-Examples:
-
-  decoy evidence show evidence.json
-    Render the evidence manifest in a human-readable card.
-
-  decoy evidence show evidence.json --json
-    Emit the manifest as structured JSON (suitable for scripting).
-
-What evidence show does NOT do:
-  - It does not verify fingerprints against current files.
-  - Use `decoy evidence verify` to check for drift (accidental file changes).
-
-Integrity note: manifest_hash is an UNKEYED SHA-256 fingerprint. It detects
-accidental drift; it does NOT detect a motivated tamperer who can edit the
-manifest and recompute the hash. Keyed signing is platform R4 territory.
-
-See also: decoy evidence verify, decoy run --evidence-out.
-
-
-### `decoy evidence verify`
-
-Verify a local evidence manifest&#x27;s fingerprints against current files.
-
-Re-hashes the pipeline config, input files, and output files and
-compares against the fingerprints recorded in the manifest. Also checks
-manifest_hash to detect edits to the manifest file itself.
-
-Exits 0 when all fingerprints match (no drift). Exits non-zero
-(EXIT_FINDINGS) when any fingerprint has changed.
-
-What this DOES prove: the files look the same as when the run
-completed. What this does NOT prove: correctness of the output,
-platform audit compliance, or that the run actually occurred.
-
-Integrity limit: manifest_hash is an UNKEYED SHA-256 check. It detects
-accidental drift (file changes since the run), NOT a motivated tamperer
-who can edit the manifest and recompute the hash. Keyed signing (R4) is
-required for adversarial authenticity guarantees.
-
-**Usage**:
-
-```console
-$ decoy evidence verify [OPTIONS] EVIDENCE_FILE
-```
-
-**Arguments**:
-
-* `EVIDENCE_FILE`: Path to a local evidence manifest JSON.  [required]
-
-**Options**:
-
-* `--json`: Emit a structured JSON result instead of human-readable output.
-* `-q, --quiet`: Suppress stdout. Exit code carries the result.
-* `-v, --verbose`: Enable debug-level CLI logs on stderr.
-* `--help`: Show this message and exit.
-
-Examples:
-
-  decoy evidence verify evidence.json
-    Check all fingerprints (pipeline, inputs, outputs, manifest integrity).
-    Exits 0 when all match; non-zero when any changed.
-
-  decoy evidence verify evidence.json --json
-    Emit a structured JSON result with the list of issues found.
-
-What verify checks:
-  - manifest_hash: detects edits to the manifest JSON file.
-  - pipeline_fingerprint: detects changes to pipeline.yaml.
-  - input_fingerprints: detects changes to source data files.
-  - output_fingerprints: detects changes to masked/generated output files.
-
-What verify does NOT check:
-  - Whether the output was produced by the declared pipeline.
-  - Data correctness or masking quality.
-  - Platform audit logs, RBAC, or schedule history.
-  - Network, vault, or secrets accessibility.
-
-Integrity limit: manifest_hash is an UNKEYED SHA-256 check. It detects
-accidental drift; it does NOT detect a motivated tamperer who can edit the
-manifest and recompute the hash. Keyed signing is platform R4 territory.
-
-Exit codes: 0 clean; 4 fingerprint drift detected; 1 bad input.
-
-See also: decoy evidence show, decoy run --evidence-out.
-
-
 ## `decoy report`
 
-Render, summarize, and compare local evidence manifests. Operates on evidence JSON files produced by `decoy run --evidence-out`.
+The post-run surface: show / render / verify / fidelity / integrity / diff / vault. Operates on files -- evidence manifests produced by `decoy run --evidence-out` plus the source/output data they reference.
 
 **Usage**:
 
@@ -1402,11 +1031,65 @@ $ decoy report [OPTIONS] COMMAND [ARGS]...
 
 **Commands**:
 
-* `render`: Render an evidence manifest to an HTML or...
-* `summarize`: Print a concise terminal summary of a...
-* `compare`: Compare two evidence manifests and report...
 * `show`: Render the evidence report from an...
-* `diff`: Compare output data files from two...
+* `render`: Render an evidence manifest to an HTML or...
+* `verify`: Verify a local evidence manifest&#x27;s...
+* `fidelity`: Recompute distribution fidelity between a...
+* `integrity`: Verify a masked file&#x27;s integrity against...
+* `diff`: Compare two evidence manifests:...
+* `vault`: Inspect a vault file: report entry count,...
+
+### `decoy report show`
+
+Render the evidence report from an evidence manifest file.
+
+Loads the evidence manifest at the given path and renders the UNION card
+(the former `report summarize` + `evidence show`): run metadata +
+manifest_hash integrity status, input/output fingerprint tables, masking
+strategies, and row counts. With --format + --output it instead writes an
+HTML or Markdown report (like `decoy report render`).
+
+Reads only the file it is given; never connects to a server or catalog.
+
+**Usage**:
+
+```console
+$ decoy report show [OPTIONS] EVIDENCE_FILE
+```
+
+**Arguments**:
+
+* `EVIDENCE_FILE`: Path to an evidence manifest JSON (from `decoy run --evidence-out`).  [required]
+
+**Options**:
+
+* `--format TEXT`: Output format when --output is given: &#x27;html&#x27; or &#x27;markdown&#x27;. Without --output, prints a terminal summary.
+* `-o, --output PATH`: Write the report to this file path (requires --format).
+* `--json`: Emit the evidence manifest as JSON.
+* `-q, --quiet`: Suppress stdout.
+* `-v, --verbose`: Enable debug-level logs.
+* `--help`: Show this message and exit.
+
+Examples:
+
+  decoy report show evidence.json
+    Print a summary of the evidence manifest to the terminal.
+
+  decoy report show evidence.json --format html --output report.html
+    Write a full HTML report from the evidence manifest.
+
+  decoy report show evidence.json --json
+    Emit the raw evidence manifest as structured JSON.
+
+The terminal card is the UNION of the former `report summarize` + `evidence
+show`: run metadata + manifest_hash integrity status, input/output fingerprint
+tables, masking strategies, and row counts.
+
+Requirements:
+  - An evidence manifest JSON produced by `decoy run --evidence-out`.
+
+See also: decoy report render, decoy report verify.
+
 
 ### `decoy report render`
 
@@ -1454,21 +1137,32 @@ What the report intentionally excludes:
   The evidence manifest records strategy names and fingerprints only; the
   report renders that safe subset.
 
-See also: decoy report summarize, decoy report compare, decoy evidence show.
+See also: decoy report show, decoy report diff, decoy report verify.
 
 
-### `decoy report summarize`
+### `decoy report verify`
 
-Print a concise terminal summary of a local evidence manifest.
+Verify a local evidence manifest&#x27;s fingerprints against current files.
 
-Renders key fields from the manifest in a Rich card: run metadata,
-pipeline fingerprint, input/output counts, row counts, and warnings.
-Read-only; never modifies files.
+Re-hashes the pipeline config, input files, and output files and
+compares against the fingerprints recorded in the manifest. Also checks
+manifest_hash to detect edits to the manifest file itself.
+
+Exits 0 when all fingerprints match (no drift). Exits non-zero
+(EXIT_FINDINGS) when any fingerprint has changed.
+
+Distinct from `report integrity` (post-mask residual-PII / FK / policy on
+a masked file plus `--source`): verify is manifest fingerprint-drift.
+
+Integrity limit: manifest_hash is an UNKEYED SHA-256 check. It detects
+accidental drift (file changes since the run), NOT a motivated tamperer
+who can edit the manifest and recompute the hash. Keyed signing (R4) is
+required for adversarial authenticity guarantees.
 
 **Usage**:
 
 ```console
-$ decoy report summarize [OPTIONS] EVIDENCE_FILE
+$ decoy report verify [OPTIONS] EVIDENCE_FILE
 ```
 
 **Arguments**:
@@ -1477,135 +1171,194 @@ $ decoy report summarize [OPTIONS] EVIDENCE_FILE
 
 **Options**:
 
-* `--json`: Emit the evidence manifest as JSON instead of the card.
-* `-q, --quiet`: Suppress stdout. Errors still go to stderr.
+* `--json`: Emit a structured JSON result instead of human-readable output.
+* `-q, --quiet`: Suppress stdout. Exit code carries the result.
 * `-v, --verbose`: Enable debug-level CLI logs on stderr.
 * `--help`: Show this message and exit.
 
 Examples:
 
-  decoy report summarize evidence.json
-    Print a concise summary of the evidence manifest to the terminal.
+  decoy report verify evidence.json
+    Check all fingerprints (pipeline, inputs, outputs, manifest integrity).
+    Exits 0 when all match; non-zero when any changed.
 
-What summarize shows:
-  Run ID, timestamp, CLI/engine versions, pipeline fingerprint (prefix),
-  input/output fingerprint counts, row counts per table, and warning count.
+  decoy report verify evidence.json --json
+    Emit a structured JSON result with the list of issues found.
 
-See also: decoy report render, decoy evidence show.
+What verify checks:
+  - manifest_hash: detects edits to the manifest JSON file.
+  - pipeline_fingerprint: detects changes to pipeline.yaml.
+  - input_fingerprints: detects changes to source data files.
+  - output_fingerprints: detects changes to masked/generated output files.
 
-
-### `decoy report compare`
-
-Compare two evidence manifests and report what changed between runs.
-
-Detects changes in pipeline fingerprint, per-table input/output
-fingerprints, row counts, and warnings. MANIFEST-vs-MANIFEST only --
-does not read source/output CSV data files.
-
-Exits 0 in both change and no-change cases. Use --json for scripting.
-
-**Usage**:
-
-```console
-$ decoy report compare [OPTIONS] OLD_EVIDENCE NEW_EVIDENCE
-```
-
-**Arguments**:
-
-* `OLD_EVIDENCE`: Path to the older evidence manifest JSON.  [required]
-* `NEW_EVIDENCE`: Path to the newer evidence manifest JSON.  [required]
-
-**Options**:
-
-* `--json`: Emit structured JSON instead of human-readable output.
-* `-q, --quiet`: Suppress stdout. Errors still go to stderr.
-* `-v, --verbose`: Enable debug-level CLI logs on stderr.
-* `--help`: Show this message and exit.
-
-Examples:
-
-  decoy report compare old-evidence.json new-evidence.json
-    Compare two evidence manifests and show which fingerprints changed,
-    row-count deltas, and warnings added or removed.
-
-  decoy report compare old-evidence.json new-evidence.json --json
-    Emit structured JSON suitable for scripting.
-
-What compare checks:
-  - Pipeline fingerprint change.
-  - Per-table input fingerprint changes (added/removed/changed).
-  - Per-table output fingerprint changes (added/removed/changed).
-  - Row count deltas per table.
-  - Warnings added or removed.
-
-What compare does NOT check:
+What verify does NOT check:
+  - Whether the output was produced by the declared pipeline.
   - Data correctness or masking quality.
-  - Platform audit logs or schedule history.
+  - Platform audit logs, RBAC, or schedule history.
+  - Network, vault, or secrets accessibility.
 
-Scope: MANIFEST-vs-MANIFEST only. Data-level compare (source.csv vs masked.csv)
-is deferred to SP-18b/19.
+Integrity limit: manifest_hash is an UNKEYED SHA-256 check. It detects
+accidental drift; it does NOT detect a motivated tamperer who can edit the
+manifest and recompute the hash. Keyed signing is platform R4 territory.
 
-See also: decoy report summarize, decoy evidence verify.
+Exit codes: 0 clean; 4 fingerprint drift detected; 1 bad input.
+
+See also: decoy report show, decoy run --evidence-out.
 
 
-### `decoy report show`
+### `decoy report fidelity`
 
-Render the evidence report from an evidence manifest file.
+Recompute distribution fidelity between a source and an output CSV.
 
-Loads the evidence manifest at the given path and renders it using the
-same format as `decoy report summarize` (terminal) or `decoy report
-render` (file output with --format and --output).
+Wraps `decoy_engine.quality.compute_quality_report` +
+`apply_quality_policy` (report.py:97, policy.py:142): the engine owns
+every metric and the letter grade; this command computes no fidelity
+number itself. Reads both CSVs fresh on every invocation (pure,
+repeatable) -- the CLI&#x27;s local evidence manifest records file
+fingerprints but not the raw frames, so recomputing from the two files
+is the only honest source for this number (BF1).
 
-Reads only the file it is given; never connects to a server or catalog.
+Exit codes: 0 when the policy verdict is &#x27;pass&#x27; (or &#x27;warn&#x27; without
+--fail-on-warning); EXIT_FINDINGS (4) when the verdict is &#x27;fail&#x27;, or
+&#x27;warn&#x27; with --fail-on-warning set. This mirrors `report integrity`&#x27;s
+exit-code contract -- a data-audit verb that reports findings, not a run
+that crashed -- rather than EXIT_RUNTIME (reserved for the CLI/engine
+blowing up unexpectedly).
 
 **Usage**:
 
 ```console
-$ decoy report show [OPTIONS] EVIDENCE_FILE
+$ decoy report fidelity [OPTIONS] SOURCE OUTPUT
 ```
 
 **Arguments**:
 
-* `EVIDENCE_FILE`: Path to an evidence manifest JSON (from `decoy run --evidence-out`).  [required]
+* `SOURCE`: Pre-mask / pre-generate source CSV (ground truth).  [required]
+* `OUTPUT`: Post-mask / post-generate output CSV to check.  [required]
 
 **Options**:
 
-* `--format TEXT`: Output format when --output is given: &#x27;html&#x27; or &#x27;markdown&#x27;. Without --output, prints a terminal summary.
-* `-o, --output PATH`: Write the report to this file path (requires --format).
-* `--json`: Emit the evidence manifest as JSON.
-* `-q, --quiet`: Suppress stdout.
-* `-v, --verbose`: Enable debug-level logs.
+* `--joint TEXT`: Column pair &#x27;a,b&#x27; to also score jointly (repeatable).
+* `--generate`: Output is synthetic generation, not masking: row counts may legitimately differ (sets expect_row_parity=False). Default assumes masking (row parity expected).
+* `--config FILE`: Pipeline YAML naming each column&#x27;s strategy, so intentional loss (hash, bucketize, faker, ...) is not flagged as accidental drift. Without it, per-column policy checks run on defaults only.
+* `--policy FILE`: A quality-policy config (YAML or JSON: mode / thresholds / strategy_expectations) overriding --mode / --min-grade / --min-score.
+* `--mode TEXT`: report (record only, verdict always pass) | warn (violations promote verdict to warn) | fail (violations promote verdict to fail). Ignored when --policy sets its own mode.  [default: report]
+* `--min-grade TEXT`: Shorthand: minimum letter grade (A/B/C/D) the overall score must reach.
+* `--min-score FLOAT`: Shorthand: minimum overall_score in [0, 1].
+* `--fail-on-warning`: Also exit non-zero (EXIT_FINDINGS) when the policy verdict is &#x27;warn&#x27;.
+* `--report-out PATH`: Write the full quality-report/v1 + policy JSON to this path.
+* `--json`: Emit the full quality-report/v1 + policy result as JSON.
+* `-q, --quiet`: Suppress stdout. Exit code carries the result.
+* `-v, --verbose`: Enable debug-level CLI logs on stderr.
 * `--help`: Show this message and exit.
 
 Examples:
 
-  decoy report show evidence.json
-    Print a summary of the evidence manifest to the terminal.
+  decoy report fidelity source.csv output.csv
+    Recompute distribution fidelity between a pre-mask source and its
+    masked output. Report mode (record only): always exits 0.
 
-  decoy report show evidence.json --format html --output report.html
-    Write a full HTML report from the evidence manifest.
+  decoy report fidelity source.csv output.csv --config pipeline.yaml
+    Pass the pipeline config so intentional loss (hash, bucketize, ...)
+    is not flagged as accidental drift.
 
-  decoy report show evidence.json --json
-    Emit the raw evidence manifest as structured JSON.
+  decoy report fidelity source.csv synthetic.csv --generate
+    Row counts are expected to differ (synthetic generation, not masking).
 
-Requirements:
-  - An evidence manifest JSON produced by `decoy run --evidence-out`.
+  decoy report fidelity source.csv output.csv --mode fail --min-grade B
+    Exit non-zero (EXIT_FINDINGS) when the overall grade falls below B.
 
-See also: decoy report summarize, decoy report render.
+  decoy report fidelity source.csv output.csv --joint state,tier --json
+    Include a (state, tier) joint fidelity score; emit the full
+    quality-report/v1 + policy JSON.
+
+  decoy report fidelity source.csv output.csv --report-out report.json
+    Also write the full report + policy verdict to disk.
+
+Exit codes: 0 pass (or warn without --fail-on-warning); 4 EXIT_FINDINGS
+when the policy verdict is fail, or warn with --fail-on-warning set;
+1 EXIT_USAGE for bad input (missing columns, unreadable CSV, bad flags).
+
+See also: decoy report integrity, decoy fit, decoy run.
+
+
+### `decoy report integrity`
+
+Verify a masked file&#x27;s integrity against its pre-mask source.
+
+Wraps `decoy_engine.storm.postmask.run_storm_post_mask`. Runs the
+three post-mask check buckets (residual_pii, fk_preservation,
+policy_validation) the platform&#x27;s mask job already runs when
+`run_storm: true` is declared in the pipeline; this verb lets the
+CLI user run the same checks standalone.
+
+Distinct from `report verify` (manifest fingerprint-drift): integrity is
+post-mask residual-PII / FK / policy on a masked file plus --source.
+
+Exit codes: 0 clean; 4 EXIT_FINDINGS on any fail-severity finding;
+1 EXIT_USAGE for missing files; 3 EXIT_RUNTIME for unexpected
+exceptions.
+
+**Usage**:
+
+```console
+$ decoy report integrity [OPTIONS] MASKED
+```
+
+**Arguments**:
+
+* `MASKED`: Path to the masked CSV to verify.  [required]
+
+**Options**:
+
+* `--source FILE`: Pre-mask source CSV (ground truth for the integrity check).  [required]
+* `--config FILE`: Optional pipeline.yaml. When passed, policy_validation can compare against the configured masks. Without it the runner still produces residual_pii + fk_preservation findings.
+* `-o, --output PATH`: Write the JobStormReport JSON to this path. The Rich table still renders to stderr.
+* `--allow-source-mismatch`: Suppress the stderr warning when --source does not match the pipeline&#x27;s declared sources block.
+* `--json`: Emit the full JobStormReport JSON to stdout. No card.
+* `-q, --quiet`: Suppress stdout. Errors still go to stderr.
+* `-v, --verbose`: Enable debug-level CLI logs on stderr.
+* `--help`: Show this message and exit.
+
+Examples:
+
+  decoy report integrity masked.csv --source source.csv
+    Run all three post-mask checks (residual_pii + fk_preservation +
+    policy_validation) against a masked file with its pre-mask
+    baseline as ground truth. Render a Rich findings table.
+
+  decoy report integrity masked.csv --source source.csv --config pipeline.yaml
+    Same, but load the pipeline YAML so policy_validation can
+    compare against the configured masks. Without --config the
+    runner still produces residual_pii findings; policy_validation
+    is reduced to "no config provided" notes.
+
+  decoy report integrity masked.csv --source source.csv --json > report.json
+    Pipe the full JobStormReport-shaped JSON for downstream tooling.
+
+  decoy report integrity masked.csv --source source.csv --output report.json
+    Write JSON to file + render a Rich summary on stderr.
+
+Exit codes: 0 clean (no fail/error findings); 4 EXIT_FINDINGS (one
+or more fail-severity findings); 1 EXIT_USAGE for missing files;
+3 EXIT_RUNTIME for unexpected exceptions.
+
+See also: decoy report verify, decoy report fidelity, decoy explain exit-codes.
 
 
 ### `decoy report diff`
 
-Compare output data files from two evidence manifests at the data level.
+Compare two evidence manifests: fingerprints always, data when present.
 
-Loads both evidence manifests, reads the output data files referenced in
-them, and compares:
-  - Per-table row counts
-  - Schema (columns added/removed/type-changed)
-  - Per-column null-count and unique-count deltas
+A lossless superset of the former `report diff` (data-level) and `report
+compare` (manifest-level). It ALWAYS runs the manifest/fingerprint-level
+comparison (works even when output files are gone). It ADDITIONALLY runs
+the data-level comparison (reading the CSV/Parquet the manifests
+reference) when those output files exist; when a file is missing it prints
+a note and reports manifest-level only -- unless --require-data is set,
+which restores the strict hard-fail.
 
 EVIDENCE-SAFE: only aggregate counts are reported -- no raw values.
-See `decoy report compare` for manifest-level (fingerprint) comparison.
 Reads only the files it is given; never connects to a server or catalog.
 
 **Usage**:
@@ -1621,6 +1374,7 @@ $ decoy report diff [OPTIONS] EVIDENCE_FILE_A EVIDENCE_FILE_B
 
 **Options**:
 
+* `--require-data`: Hard-fail (EXIT_USAGE) when a referenced output file is missing, instead of degrading to manifest-level only.
 * `--json`: Emit structured JSON.
 * `-q, --quiet`: Suppress stdout.
 * `-v, --verbose`: Enable debug-level logs.
@@ -1629,29 +1383,82 @@ $ decoy report diff [OPTIONS] EVIDENCE_FILE_A EVIDENCE_FILE_B
 Examples:
 
   decoy report diff a.json b.json
-    Compare the output data files referenced by two evidence manifests at the
-    data level.
+    Compare two evidence manifests. Always runs the manifest/fingerprint-level
+    comparison (pipeline + per-table fingerprints + row-count deltas +
+    warnings). If the referenced output files still exist, ALSO runs the
+    data-level comparison (row/column counts read from the CSV/Parquet).
 
   decoy report diff a.json b.json --json
-    Emit structured JSON with per-table row-count and column-level deltas.
+    Emit structured JSON: manifest-level fields always, plus any_data_change +
+    table_deltas when the output files were present.
 
-What diff compares:
-  - Row counts per table (from actual data files)
-  - Schema: columns added/removed/type-changed between runs
-  - Per column: null-count delta, unique-count delta
+  decoy report diff a.json b.json --require-data
+    Hard-fail (exit 1) if any referenced output file is missing, instead of
+    degrading to manifest-level only. For scripted callers that need the
+    data-level comparison to have run.
+
+What diff compares at the MANIFEST level (always):
+  - Pipeline fingerprint change.
+  - Per-table input/output fingerprint changes (added/removed/changed).
+  - Row count deltas per table.
+  - Warnings added or removed.
+
+What diff compares at the DATA level (when output files exist):
+  - Row counts per table (from the actual data files).
+  - Schema: columns added/removed/type-changed.
+  - Per column: null-count delta, unique-count delta.
 
 What diff does NOT compare:
-  - Raw row or cell values (never -- evidence-safe by design)
-  - Platform-managed state, audit logs, or remote job history
-  - Pipeline config changes (use `decoy report compare` for manifest-level diff)
+  - Raw row or cell values (never -- evidence-safe by design).
+  - Platform-managed state, audit logs, or remote job history.
 
-Scope and limitations:
-  - Takes two evidence manifest JSON files (`decoy run --evidence-out`).
-  - Requires the output files referenced in the evidence manifests to still
-    exist at their recorded paths.
-  - Compares aggregate counts only -- not a full row-by-row diff.
+Missing output files are a NOTE, not a failure: the manifest-level comparison
+still runs. Pass --require-data to restore the strict hard-fail.
 
 Methodology: pandas.Series.nunique() / .isnull().sum() for column-level
 counts (pandas v2.x). No novel statistical method is used.
 
-See also: decoy report compare (manifest-level).
+
+### `decoy report vault`
+
+Inspect a vault file: report entry count, namespaces, and dropped-ambiguous count.
+
+Opens the vault using the seed derived from the pipeline config. A
+mismatched seed (wrong config) exits 1 with a clear error message.
+Exits 0 on success, 1 on a config/vault/usage error.
+
+**Usage**:
+
+```console
+$ decoy report vault [OPTIONS] VAULT
+```
+
+**Arguments**:
+
+* `VAULT`: The vault file written by `decoy run --vault`.  [required]
+
+**Options**:
+
+* `--config FILE`: The pipeline config the mask run used (must carry the same seed as the run that wrote the vault).  [required]
+* `--json`: Emit a structured JSON result on stdout. Errors still go to stderr.
+* `-q, --quiet`: Suppress stdout. Errors still go to stderr; exit code carries the result.
+* `-v, --verbose`: Enable debug-level CLI logs on stderr.
+* `--help`: Show this message and exit.
+
+Examples:
+
+  decoy report vault vault.bin --config pipeline.yaml
+    Show entry count, namespaces, and ambiguous-dropped count.
+
+  decoy report vault vault.bin --config pipeline.yaml --json
+    Same data as a JSON envelope for scripting.
+
+  decoy report vault vault.bin --config pipeline.yaml --quiet
+    Silent mode; exit code 0 = vault opened successfully.
+
+The vault is encrypted under a key derived from the config's seed. The
+config passed to --config must be the SAME config (or at least the same
+global_settings.seed) used by the `decoy run --vault` call that wrote
+the vault, otherwise the decrypt will fail and the command exits 1.
+
+See also: decoy run --vault, decoy unmask --vault.

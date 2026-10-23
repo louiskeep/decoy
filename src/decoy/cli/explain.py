@@ -401,7 +401,7 @@ _TOPICS: dict[str, _Topic] = {
             "      transient I/O problem happened. The fix is in the CLI or\n"
             "      engine, not the user's request.\n"
             "  4   Findings. The CLI ran cleanly but found data issues (e.g.\n"
-            "      `decoy storm integrity` flagged residual PII or FK\n"
+            "      `decoy report integrity` flagged residual PII or FK\n"
             "      preservation failures). The fix is in the data being\n"
             "      checked, not in the CLI invocation. Pattern source:\n"
             "      semgrep's exit-code split.\n"

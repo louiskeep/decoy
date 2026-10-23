@@ -90,7 +90,7 @@ decoy run pipeline.yaml
 `decoy validate pipeline.yaml` runs the whole pre-run gate -- config schema,
 plan compile, and source/capacity preflight -- in one pass, with one report
 grouped by layer and one aggregated exit code. `decoy validate config` runs
-the fast schema-only subset; `decoy validate distribution` recomputes
+the fast schema-only subset; `decoy report fidelity` recomputes
 distribution fidelity between a source and an output CSV after a run.
 `decoy run` runs the pipeline and writes the masked output to the path
 declared under `targets:` in the YAML.
@@ -102,9 +102,9 @@ declared under `targets:` in the YAML.
 | `decoy demo`                     | Run a packaged end-to-end mask on synthetic input. Good first call.           |
 | `decoy init [file]`              | Scaffold a starter `pipeline.yaml`. With a file: column-aware via STORM. Without: prompt for preset (`minimal`, `gdpr`, ...). |
 | `decoy validate <path>`          | Run the whole pre-run gate (config + compile + preflight): one report, one exit code. |
-| `decoy validate distribution <source> <output>` | Recompute distribution fidelity between a source and an output CSV. |
 | `decoy run <path>`               | Execute a pipeline: read sources, mask, write targets.                        |
 | `decoy scan <path>`              | Profile a source file: distributions, PII candidates, cardinality hints.      |
+| `decoy report show <evidence.json>` | The post-run surface: show / verify / fidelity / integrity / diff / vault over run artifacts. |
 | `decoy list templates`           | List the bundled pipeline templates.                                         |
 | `decoy show template <name>`     | Dump one bundled template to stdout (e.g. `decoy show template hipaa`).      |
 | `decoy explain <topic>`          | In-CLI reference (exit codes, providers, strategies).                         |
@@ -123,7 +123,7 @@ pipelines can switch on the integer; the contract is stable across releases.
 | 1    | `EXIT_USAGE`           | Usage error: config did not validate, path did not exist, flag combination was invalid.    |
 | 2    | `EXIT_WARNINGS`        | The command ran clean except for advisory warnings, and `--fail-on-warning` was set. Returned by `decoy validate config` / `validate preflight` (and the `validate` aggregate). Without `--fail-on-warning` the same run exits 0. |
 | 3    | `EXIT_RUNTIME`         | The CLI itself failed mid-run (engine error, output write failure, transient I/O problem). |
-| 4    | `EXIT_FINDINGS`        | The CLI ran cleanly but found data issues (e.g. `decoy storm integrity` flagged residual PII or FK preservation failures). The fix is in the data being checked, not in the CLI invocation. |
+| 4    | `EXIT_FINDINGS`        | The CLI ran cleanly but found data issues (e.g. `decoy report integrity` flagged residual PII or FK preservation failures). The fix is in the data being checked, not in the CLI invocation. |
 | 5    | `EXIT_CAPACITY`        | `decoy run` or `decoy validate preflight` refused the job: it needs more memory than the host/budget has (the engine's out-of-core-FK memory gate). The fix is a bigger host/cgroup ceiling or a smaller job. `decoy validate preflight`'s v1 check covers the out-of-core-FK route only, not the ingestion peak or the generate path. |
 
 Constants live in `decoy.cli.exit_codes`. `decoy explain exit-codes` prints

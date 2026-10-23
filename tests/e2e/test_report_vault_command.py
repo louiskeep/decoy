@@ -1,7 +1,7 @@
-"""`decoy vault info` e2e tests.
+"""`decoy report vault` e2e tests (relocated from `vault info`, S4b).
 
 Creates a real vault via `decoy run --vault`, then exercises the
-`decoy vault info` command: happy path, --json envelope, and the
+`decoy report vault` command: happy path, --json envelope, and the
 wrong-seed error path.
 """
 
@@ -80,7 +80,7 @@ class TestVaultInfoHappyPath:
     def test_exit_0_and_entry_count_positive(self, vault_setup) -> None:
         cfg, vault = vault_setup
         result = runner.invoke(
-            app, ["vault", "info", str(vault), "--config", str(cfg)]
+            app, ["report", "vault", str(vault), "--config", str(cfg)]
         )
         assert result.exit_code == 0, result.output
         assert "entries" in result.output or "OK" in result.output
@@ -88,7 +88,7 @@ class TestVaultInfoHappyPath:
     def test_namespaces_reported(self, vault_setup) -> None:
         cfg, vault = vault_setup
         result = runner.invoke(
-            app, ["vault", "info", str(vault), "--config", str(cfg)]
+            app, ["report", "vault", str(vault), "--config", str(cfg)]
         )
         assert result.exit_code == 0, result.output
         # The namespace we declared is "email_ns"
@@ -97,11 +97,11 @@ class TestVaultInfoHappyPath:
     def test_json_envelope_keys(self, vault_setup) -> None:
         cfg, vault = vault_setup
         result = runner.invoke(
-            app, ["vault", "info", str(vault), "--config", str(cfg), "--json"]
+            app, ["report", "vault", str(vault), "--config", str(cfg), "--json"]
         )
         assert result.exit_code == 0, result.output
         payload = json.loads(result.output.strip())
-        assert payload["command"] == "vault-info"
+        assert payload["command"] == "report vault"
         assert payload["status"] == "ok"
         assert payload["vault"] == str(vault)
         assert isinstance(payload["entries"], int) and payload["entries"] > 0
@@ -111,7 +111,7 @@ class TestVaultInfoHappyPath:
     def test_quiet_exits_0(self, vault_setup) -> None:
         cfg, vault = vault_setup
         result = runner.invoke(
-            app, ["vault", "info", str(vault), "--config", str(cfg), "--quiet"]
+            app, ["report", "vault", str(vault), "--config", str(cfg), "--quiet"]
         )
         assert result.exit_code == 0
         # quiet mode produces no stdout
@@ -128,7 +128,7 @@ class TestVaultInfoErrors:
         wrong_path.write_text(yaml.safe_dump(wrong_cfg), encoding="utf-8")
 
         result = runner.invoke(
-            app, ["vault", "info", str(vault), "--config", str(wrong_path)]
+            app, ["report", "vault", str(vault), "--config", str(wrong_path)]
         )
         assert result.exit_code == EXIT_USAGE
         # Must not print a Python traceback.
@@ -143,11 +143,11 @@ class TestVaultInfoErrors:
 
         result = runner.invoke(
             app,
-            ["vault", "info", str(vault), "--config", str(wrong_path), "--json"],
+            ["report", "vault", str(vault), "--config", str(wrong_path), "--json"],
         )
         assert result.exit_code == EXIT_USAGE
         payload = json.loads(result.output.strip())
-        assert payload["command"] == "vault-info"
+        assert payload["command"] == "report vault"
         assert payload["status"] == "error"
         assert "error" in payload
 
@@ -163,7 +163,7 @@ class TestVaultInfoInstallLine:
 
         cfg, vault = vault_setup
         monkeypatch.setitem(sys.modules, "cryptography.fernet", None)
-        result = runner.invoke(app, ["vault", "info", str(vault), "--config", str(cfg)])
+        result = runner.invoke(app, ["report", "vault", str(vault), "--config", str(cfg)])
         assert result.exit_code == EXIT_USAGE, result.output
         flat = " ".join(result.output.split())
         assert "vault_crypto_not_installed" in flat, flat

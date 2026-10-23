@@ -167,7 +167,8 @@ def test_storm_analyze_is_gone() -> None:
     assert "No such command" in result.output
 
 
-def test_storm_integrity_still_registered() -> None:
-    result = runner.invoke(app, ["storm", "integrity", "--help"])
+def test_report_integrity_registered() -> None:
+    # S4b: `storm integrity` relocated to `report integrity`.
+    result = runner.invoke(app, ["report", "integrity", "--help"])
     assert result.exit_code == 0
     assert "--source" in result.output

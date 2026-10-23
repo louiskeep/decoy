@@ -304,7 +304,7 @@ def _validate_scaffold(body: str) -> None:
     gate or import path the CLI cannot reach in some embedded contexts;
     in that case the function returns silently and the user's
     `decoy validate config` step picks up any schema issue. This matches the
-    pattern used in `decoy.cli.storm._integrity`.
+    pattern used in `decoy.cli.report._integrity`.
     """
     try:
         import yaml

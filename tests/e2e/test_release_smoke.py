@@ -163,7 +163,7 @@ def test_root_help_lists_canonical_commands():
     result = runner.invoke(app, ["--help"])
     assert result.exit_code == 0
     output = result.output.lower()
-    for cmd in ("validate", "run", "demo", "storm", "list", "init"):
+    for cmd in ("validate", "run", "demo", "report", "list", "init"):
         assert cmd in output, f"root help missing {cmd!r}: {result.output[:500]}"
     # CLI.1 (2026-06-02): forecast subcommand deleted under storm-reframe-C.
     assert "forecast" not in output

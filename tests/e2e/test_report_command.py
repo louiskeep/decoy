@@ -1,4 +1,5 @@
-"""E2E tests for ``decoy report render/summarize/compare`` (SP-18).
+"""E2E tests for ``decoy report render`` plus the show/diff verbs that absorbed
+the former ``report summarize`` / ``report compare`` (SP-18; folded in S4b).
 
 TDD: these tests assert CLI behavior. They fail first, then the implementation
 makes them pass.
@@ -170,7 +171,7 @@ def test_report_render_invalid_json(tmp_path: Path) -> None:
 def test_report_summarize_exits_0(tmp_path: Path) -> None:
     """report summarize exits 0 and prints key fields to stdout."""
     evidence_path, _ = _write_evidence(tmp_path)
-    result = runner.invoke(app, ["report", "summarize", str(evidence_path)])
+    result = runner.invoke(app, ["report", "show", str(evidence_path)])
 
     assert result.exit_code == 0, f"Expected exit 0; got {result.exit_code}. Output:\n{result.output}"
     output = result.output
@@ -185,7 +186,7 @@ def test_report_summarize_exits_0(tmp_path: Path) -> None:
 
 def test_report_summarize_missing_evidence_file(tmp_path: Path) -> None:
     """report summarize with a missing evidence file exits 1."""
-    result = runner.invoke(app, ["report", "summarize", str(tmp_path / "no_such.json")])
+    result = runner.invoke(app, ["report", "show", str(tmp_path / "no_such.json")])
     assert result.exit_code != 0
 
 
@@ -201,7 +202,7 @@ def test_report_compare_no_changes(tmp_path: Path) -> None:
     evidence_path2 = tmp_path / "evidence2.json"
     evidence_path2.write_text(_json.dumps(manifest, indent=2), encoding="utf-8")
 
-    result = runner.invoke(app, ["report", "compare", str(evidence_path), str(evidence_path2)])
+    result = runner.invoke(app, ["report", "diff", str(evidence_path), str(evidence_path2)])
 
     assert result.exit_code == 0, f"Expected exit 0; got {result.exit_code}. Output:\n{result.output}"
     output = result.output.lower()
@@ -227,7 +228,7 @@ def test_report_compare_detects_changed_pipeline_fingerprint(tmp_path: Path) -> 
     evidence_path2 = tmp_path / "evidence2.json"
     evidence_path2.write_text(_json.dumps(new_manifest, indent=2), encoding="utf-8")
 
-    result = runner.invoke(app, ["report", "compare", str(evidence_path), str(evidence_path2)])
+    result = runner.invoke(app, ["report", "diff", str(evidence_path), str(evidence_path2)])
 
     assert result.exit_code == 0, f"Expected exit 0; got {result.exit_code}. Output:\n{result.output}"
     output = result.output.lower()
@@ -252,7 +253,7 @@ def test_report_compare_json_output(tmp_path: Path) -> None:
     evidence_path2.write_text(_json.dumps(new_manifest, indent=2), encoding="utf-8")
 
     result = runner.invoke(
-        app, ["report", "compare", str(evidence_path), str(evidence_path2), "--json"]
+        app, ["report", "diff", str(evidence_path), str(evidence_path2), "--json"]
     )
 
     assert result.exit_code == 0, f"Expected exit 0; got {result.exit_code}. Output:\n{result.output}"
@@ -270,7 +271,7 @@ def test_report_compare_missing_evidence_file(tmp_path: Path) -> None:
     """report compare with a missing file exits 1."""
     evidence_path, _ = _write_evidence(tmp_path)
     result = runner.invoke(
-        app, ["report", "compare", str(evidence_path), str(tmp_path / "no_such.json")]
+        app, ["report", "diff", str(evidence_path), str(tmp_path / "no_such.json")]
     )
     assert result.exit_code != 0
 
@@ -309,7 +310,7 @@ def test_report_render_html_no_external_script(tmp_path: Path) -> None:
 def test_report_summarize_includes_pipeline_fingerprint(tmp_path: Path) -> None:
     """report summarize output includes the pipeline fingerprint (sha256: prefix)."""
     evidence_path, _ = _write_evidence(tmp_path)
-    result = runner.invoke(app, ["report", "summarize", str(evidence_path)])
+    result = runner.invoke(app, ["report", "show", str(evidence_path)])
 
     assert result.exit_code == 0
     assert "sha256:" in result.output
@@ -380,11 +381,11 @@ def test_report_render_json_envelope_unwritable_output(tmp_path: Path) -> None:
 def test_report_summarize_json_envelope_ok(tmp_path: Path) -> None:
     """report summarize --json emits the ok envelope carrying the full manifest."""
     evidence_path, manifest = _write_evidence(tmp_path)
-    result = runner.invoke(app, ["report", "summarize", str(evidence_path), "--json"])
+    result = runner.invoke(app, ["report", "show", str(evidence_path), "--json"])
 
     assert result.exit_code == 0, f"got {result.exit_code}; output:\n{result.output}"
     data = _json.loads(result.stdout)
-    assert data["command"] == "report summarize"
+    assert data["command"] == "report show"
     assert data["status"] == "ok"
     assert data["evidence_file"] == str(evidence_path)
     assert data["manifest"] == manifest
