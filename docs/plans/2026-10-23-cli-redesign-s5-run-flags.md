@@ -118,6 +118,20 @@ branches (esp. the enforce → EXIT_FINDINGS path).
 - Default `run` unchanged; no engine change; full suite + ruff + sentries green.
 - The disguise wiring + `run --pin` are recorded as owner-gated/engine-dependent follow-ups (not built).
 
+## Build status (2026-10-23)
+
+- **S5 run flags — DONE** (`8c338ad`): `run --explain-plan` (execution-route decision), `--fidelity`
+  (inline marginal check), `--post-validate` / `--post-validate-enforce` (job validators; enforce →
+  `EXIT_FINDINGS` after outputs are written). `--chunked` + any flag → `EXIT_USAGE`; kwargs gated behind the
+  flags so the default hot path is byte-identical. **S5 independent review — ACCEPT** (no findings; enforce
+  ordering + kwarg-gating + older-engine compat independently verified). Suite 1141 pass/5 skip; ruff clean.
+- **Owner-gated / engine-dependent follow-ups (NOT built — see the scope-change section):** `init --preset`
+  for the ~7 additional compliance regimes (legal-artifact authoring + compliance review); `scan --suggest`
+  (needs an engine `recommend_disguises` / TriggerSpec-eval export); `run --pin` (needs the engine to export
+  pinned generation). `list disguises` already shipped in S3.
+
+**S5 CLOSED** (merge-ready on the branch; not merged — PO-gated).
+
 ## Loop handoff
 
 Plan-gate review before DEVELOP (confirm the scoping/escalation is right — is any part of the disguise

@@ -25,7 +25,7 @@ the first cut; `query`/`run --pin` fast-follow; `report fidelity --privacy` gate
 | S2 ✅ | Pre-run gate: `validate` | one pre-run gate; `plan`/`compile`/`preflight` folded in | S1 |
 | S3 ✅ | Inspection: `scan` + `list`/`show` | one "look at my data" verb; one reference vocabulary | S1 |
 | S4 ✅ | Post-run: `report` + stateless | one post-run noun; `project`/`catalog`/`jobs` gone | S1, S2, S3 |
-| S5 | Compliance story: disguises end-to-end + `run` flags | the headline latent capability is real | S2, S3 |
+| S5 ◑ | `run` flags shipped; disguises end-to-end owner-gated | run flags done; compliance wiring escalated | S2, S3 |
 | S6 | Delight / fast-follows: `query`, privacy metrics | optional capabilities surfaced | S4; engine exports |
 
 Runs in parallel, independently: the **file-format contract** slice
