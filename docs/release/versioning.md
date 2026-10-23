@@ -22,7 +22,7 @@ These are stable across MAJOR boundaries:
 2. Exit-code integer values (the named constants in `decoy.cli.exit_codes` may evolve; the integers may not).
 3. The V2 `PipelineConfig` YAML schema (engine-owned; the CLI propagates the engine's contract).
 4. The `--json` envelope shape per command (the JSON output that scripts pipe into).
-5. The set of bundled templates surfaced by `decoy templates list`.
+5. The set of bundled templates surfaced by `decoy list templates`.
 
 These are NOT stable and may change across MINOR boundaries:
 

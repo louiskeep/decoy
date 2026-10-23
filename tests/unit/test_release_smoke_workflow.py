@@ -56,9 +56,10 @@ def test_release_smoke_workflow_runs_canonical_smoke_cells() -> None:
     assert "decoy --version" in run_bodies, "smoke cell 1 (--version) missing"
     assert "decoy demo --json" in run_bodies, "smoke cell 2 (demo --json) missing"
     assert "decoy run" in run_bodies, "smoke cell 3 (decoy run) missing"
-    assert "decoy templates show minimal" in run_bodies, (
+    assert "decoy show template minimal" in run_bodies, (
         "the run cell must source its pipeline from the bundled minimal "
-        "template, not from examples/ (which is repo-only, not in the wheel)"
+        "template, not from examples/ (which is repo-only, not in the wheel). "
+        "S3b redesign: `templates show` folded into `show <kind> <name>`."
     )
 
 
