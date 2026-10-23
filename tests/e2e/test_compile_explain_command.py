@@ -328,3 +328,22 @@ def test_compile_explain_undeclared_column_rationale(tmp_path: Path) -> None:
         f"internal_id (no strategy) must not say 'declared in pipeline config'. "
         f"Got: {id_col['rationale']!r}"
     )
+
+
+def test_compile_non_utf8_config_errors_cleanly(tmp_path: Path) -> None:
+    """A non-UTF-8 config fails with a clean read error, not an uncaught
+    UnicodeDecodeError traceback, and --json still emits an error envelope.
+
+    Regression: narrowing the parse handler from `except Exception` to
+    YAMLError/OSError once let UnicodeDecodeError (a ValueError) escape.
+    """
+    bad = tmp_path / "latin1.yaml"
+    # 0xFF is not valid UTF-8; decoding the file raises UnicodeDecodeError.
+    bad.write_bytes(b"version: 1\nname: caf\xe9\n")
+
+    result = runner.invoke(app, ["validate", "compile", str(bad), "--json"])
+    assert result.exit_code == 1  # EXIT_USAGE, not a crash
+    payload = _json.loads(result.stdout)  # the --json envelope must still emit
+    assert payload["status"] == "error"
+    # Type-only message: no decoded byte value, no traceback.
+    assert "could not read" in _json.dumps(payload).lower()

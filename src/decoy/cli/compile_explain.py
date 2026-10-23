@@ -177,9 +177,13 @@ def compile(
         # YAMLError quotes the offending source line; sanitize to coordinates.
         _simple_error(state, config, sanitize_yaml_error(exc))
         raise typer.Exit(code=EXIT_USAGE)
-    except OSError as exc:
-        # A read failure is a different category; report it as one (the path is
-        # the user's own argument, the exception TYPE is not a data value).
+    except (OSError, UnicodeDecodeError) as exc:
+        # A read/decode failure is a different category; report it as one. The
+        # path is the user's own argument and only the exception TYPE is shown,
+        # never str(exc) (a UnicodeDecodeError repr carries the offending byte).
+        # UnicodeDecodeError is a ValueError, not an OSError, so it is named
+        # explicitly: without it a non-UTF-8 config would escape as an uncaught
+        # traceback and emit no --json envelope.
         _simple_error(state, config, f"could not read {config}: {type(exc).__name__}")
         raise typer.Exit(code=EXIT_USAGE)
 
