@@ -3,7 +3,7 @@
 The only place wizards belong (CLI_UX_GUIDE.md section 13). Walks the user
 through a couple of prompts and writes a starter `pipeline.yaml` they can
 iterate on. The body of every preset comes from `decoy.templates`, so
-`decoy init --preset hipaa` and `decoy templates show hipaa` produce the
+`decoy init --preset hipaa` and `decoy show template hipaa` produce the
 same YAML up to input/output path edits.
 
 OSS.4c (2026-06-02) added a column-aware path: `decoy init <file>` runs
@@ -36,10 +36,10 @@ Examples:
   decoy init
     Interactive Q&A; writes pipeline.yaml in the current directory.
 
-  decoy init --preset hipaa --out hipaa_pipeline.yaml
+  decoy init --preset hipaa --output hipaa_pipeline.yaml
     Skip the wizard; scaffold from the HIPAA template.
 
-  decoy init customers.csv --out pipeline.yaml
+  decoy init customers.csv --output pipeline.yaml
     Column-aware scaffolding (OSS.4c, 2026-06-02). Runs STORM against
     the file, picks a starter strategy per column from the inference
     table, writes the YAML with `# REVIEW:` comments above every
@@ -48,7 +48,7 @@ Examples:
   decoy init --yes
     Skip confirmation when overwriting an existing file.
 
-See also: decoy validate config, decoy run, decoy storm analyze, decoy templates list.
+See also: decoy validate config, decoy run, decoy scan, decoy list templates.
 """
 
 
@@ -304,7 +304,7 @@ def _validate_scaffold(body: str) -> None:
     gate or import path the CLI cannot reach in some embedded contexts;
     in that case the function returns silently and the user's
     `decoy validate config` step picks up any schema issue. This matches the
-    pattern used in `decoy.cli.storm._integrity`.
+    pattern used in `decoy.cli.report._integrity`.
     """
     try:
         import yaml
@@ -404,7 +404,8 @@ def _init(
     ),
     out: Path = typer.Option(
         Path("pipeline.yaml"),
-        "--out",
+        "--output",
+        "-o",
         help="Where to write the pipeline YAML. Use `-` to write to stdout.",
     ),
     preset: str = typer.Option(
@@ -527,7 +528,7 @@ def _init(
                     " ",
                     hint("hint:"),
                     "list every preset with",
-                    code("decoy templates list") + ".",
+                    code("decoy list templates") + ".",
                 )
         raise typer.Exit(code=EXIT_USAGE)
 

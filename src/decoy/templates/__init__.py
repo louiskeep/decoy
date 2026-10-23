@@ -1,7 +1,7 @@
 """Starter pipeline templates bundled with the decoy CLI.
 
-Each `.yaml` file in this directory is exposed via `decoy templates list`
-and dumped to stdout via `decoy templates show <name>`. The same set is
+Each `.yaml` file in this directory is exposed via `decoy list templates`
+and dumped to stdout via `decoy show template <name>`. The same set is
 also offered as a preset by `decoy init`.
 """
 
@@ -18,7 +18,7 @@ class Template:
     body: str
 
 
-# Order is the listing order in `decoy templates list`. Summaries echo into
+# Order is the listing order in `decoy list templates`. Summaries echo into
 # the listing table and the `decoy init` preset prompt.
 _REGISTRY: tuple[tuple[str, str], ...] = (
     ("minimal", "Bare-bones masking: name / email / SSN. Smallest sensible starting point."),

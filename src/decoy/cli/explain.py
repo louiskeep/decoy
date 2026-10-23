@@ -87,13 +87,13 @@ _TOPICS: dict[str, _Topic] = {
             "A Disguise is a named set of (column-pattern -> transform) defaults. Two ship today:\n\n"
             "  default   The fallback. Generic name/email/SSN handling.\n"
             "  hipaa     The 18 PHI identifiers from 45 CFR 164.514(b)(2) -- Safe Harbor.\n\n"
-            "Pick a Disguise by hand via `decoy templates show hipaa` (gets the pipeline shape\n"
+            "Pick a Disguise by hand via `decoy show template hipaa` (gets the pipeline shape\n"
             "you'd start from) or by browsing the engine source under decoy_engine.disguises.\n\n"
             "The V1 FORECAST recommender (which scored Disguises against a STORM scan and drafted\n"
             "a pipeline) was retired under storm-reframe-C (2026-05-30); pick the Disguise by\n"
             "hand from the templates set for now."
         ),
-        see_also=("decoy templates show hipaa", "decoy explain transforms"),
+        see_also=("decoy show template hipaa", "decoy explain transforms"),
     ),
     "output": _Topic(
         name="output",
@@ -134,22 +134,22 @@ _TOPICS: dict[str, _Topic] = {
             "  explain keys`.\n\n"
             "Mode is inferred per-table from `columns` (mask) vs `generate_columns`\n"
             "(generate); a single pipeline can mix both kinds (FC-1, 2026-06-02).\n\n"
-            "Pick a template to start from: `decoy templates show minimal`.\n\n"
+            "Pick a template to start from: `decoy show template minimal`.\n\n"
             "Legacy V1 shape (REJECTED by `decoy validate` since storm-reframe-C,\n"
             "2026-05-30): `version: '1.0'`, `input:`, `output:`, `masking_rules:`.\n"
             "Old YAML on disk must be re-authored to the V2 shape above; the\n"
             "graph builder in decoy-platform's web UI emits V2 directly.\n\n"
             "Validate any pipeline before running it: `decoy validate config pipeline.yaml`."
         ),
-        see_also=("decoy validate config --help", "decoy templates list"),
+        see_also=("decoy validate config --help", "decoy list templates"),
     ),
     "yaml": _Topic(
         name="yaml",
         summary="How to author a Decoy YAML file without starting from scratch.",
         body=(
             "Start from a template, edit paths, validate, then run on a small fixture:\n\n"
-            "  decoy templates list\n"
-            "  decoy templates show minimal > pipeline.yaml\n"
+            "  decoy list templates\n"
+            "  decoy show template minimal > pipeline.yaml\n"
             "  decoy validate config pipeline.yaml\n"
             "  decoy run pipeline.yaml\n\n"
             "Pick one top-level mode:\n"
@@ -169,7 +169,7 @@ _TOPICS: dict[str, _Topic] = {
             "Full guide in the docs hub:\n"
             "  decoy-platform/docs/guides/cli-yaml-workflows.md"
         ),
-        see_also=("decoy explain pipeline", "decoy templates list", "decoy validate config --help"),
+        see_also=("decoy explain pipeline", "decoy list templates", "decoy validate config --help"),
     ),
     "storm": _Topic(
         name="storm",
@@ -184,7 +184,7 @@ _TOPICS: dict[str, _Topic] = {
             "Run it before writing a masking pipeline. The output JSON gives you the column-by-column\n"
             "PII signal the operator uses to pick a Disguise template + tune the mask."
         ),
-        see_also=("decoy storm analyze --help", "decoy templates list"),
+        see_also=("decoy scan --help", "decoy list templates"),
     ),
     "keys": _Topic(
         name="keys",
@@ -312,11 +312,11 @@ _TOPICS: dict[str, _Topic] = {
             "above already works with a companion installed by other means (a local\n"
             "build, a hand-copied wheel); the extra lands once a paired release\n"
             "exists, forwarding to the engine's own ABI-pinned `decoy-engine[native]`.\n"
-            "`decoy info` and `decoy preflight` both report companion health without\n"
-            "running anything; preflight also reports a config-shape possibility\n"
-            "line, not a guarantee of the resolved route."
+            "`decoy info` and `decoy validate preflight` both report companion health\n"
+            "without running anything; preflight also reports a config-shape\n"
+            "possibility line, not a guarantee of the resolved route."
         ),
-        see_also=("decoy run --help", "decoy info", "decoy preflight"),
+        see_also=("decoy run --help", "decoy info", "decoy validate preflight"),
     ),
     "substrate": _Topic(
         name="substrate",
@@ -392,32 +392,33 @@ _TOPICS: dict[str, _Topic] = {
             "  1   Usage error. The caller's request was wrong: config did not\n"
             "      validate, a path did not exist, an incompatible flag\n"
             "      combination was passed. The fix is in the user's input.\n"
-            "  2   Deprecated shim. The legacy `forge` console entry point was\n"
-            "      invoked; the CLI printed a migration hint and exited. The\n"
-            "      fix is to run `decoy ...` instead of `forge ...`.\n"
+            "  2   Warnings. The command ran clean except for advisory\n"
+            "      warnings, and --fail-on-warning was set (the warning-\n"
+            "      blocking CI gate). Without --fail-on-warning the same run\n"
+            "      exits 0.\n"
             "  3   Runtime error. The CLI itself failed mid-run: the engine\n"
             "      raised an unexpected error, an output write failed, a\n"
             "      transient I/O problem happened. The fix is in the CLI or\n"
             "      engine, not the user's request.\n"
             "  4   Findings. The CLI ran cleanly but found data issues (e.g.\n"
-            "      `decoy storm integrity` flagged residual PII or FK\n"
+            "      `decoy report integrity` flagged residual PII or FK\n"
             "      preservation failures). The fix is in the data being\n"
             "      checked, not in the CLI invocation. Pattern source:\n"
             "      semgrep's exit-code split.\n"
-            "  5   Capacity. `decoy run` or `decoy preflight` refused the job\n"
-            "      because it needs more memory than the host (or budget) has\n"
-            "      -- the engine's out-of-core-FK memory gate, either hit\n"
-            "      mid-run or predicted up front. The fix is a bigger\n"
-            "      host/cgroup ceiling or a smaller job. `decoy preflight`\n"
-            "      v1 checks this for the out-of-core-FK route only; it does\n"
+            "  5   Capacity. `decoy run` or `decoy validate preflight` refused\n"
+            "      the job because it needs more memory than the host (or\n"
+            "      budget) has -- the engine's out-of-core-FK memory gate,\n"
+            "      either hit mid-run or predicted up front. The fix is a\n"
+            "      bigger host/cgroup ceiling or a smaller job. `decoy validate\n"
+            "      preflight` v1 checks this for the out-of-core-FK route only; it does\n"
             "      not cover the ingestion peak `decoy run` pays before the\n"
             "      engine gate runs, or the generate path.\n\n"
-            "Integer values are stable across releases. The named constants\n"
-            "(EXIT_OK / EXIT_USAGE / EXIT_DEPRECATED_SHIM / EXIT_RUNTIME /\n"
-            "EXIT_FINDINGS / EXIT_CAPACITY) live in `decoy.cli.exit_codes` for\n"
-            "callers that import them in Python."
+            "Integer values are stable across releases.\n"
+            "The named constants (EXIT_OK / EXIT_USAGE / EXIT_WARNINGS /\n"
+            "EXIT_RUNTIME / EXIT_FINDINGS / EXIT_CAPACITY) live in\n"
+            "`decoy.cli.exit_codes` for callers that import them in Python."
         ),
-        see_also=("decoy --help", "decoy run --help", "decoy preflight --help"),
+        see_also=("decoy --help", "decoy run --help", "decoy validate preflight --help"),
     ),
     "completion": _Topic(
         name="completion",
@@ -429,7 +430,7 @@ _TOPICS: dict[str, _Topic] = {
             "the rc file after install. Test with:\n\n"
             "  decoy run --mode <Tab>\n"
             "  decoy explain <Tab>\n"
-            "  decoy templates show <Tab>\n\n"
+            "  decoy show template <Tab>\n\n"
             "If completion stops working after a Decoy upgrade, re-run --install-completion to\n"
             "refresh the script. Custom completers cache lookups in-process; they're cheap."
         ),
@@ -487,7 +488,7 @@ Examples:
   decoy explain
     No topic -- list every topic with its summary.
 
-See also: decoy --help, decoy templates list.
+See also: decoy --help, decoy list templates.
 """
 
 

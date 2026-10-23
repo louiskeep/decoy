@@ -96,7 +96,7 @@ def _ineligible_config(tmp_path: Path) -> Path:
 
 def test_preflight_reports_health_and_eligible_shape_json(tmp_path: Path):
     config = _eligible_config(tmp_path)
-    result = runner.invoke(app, ["preflight", str(config), "--json"])
+    result = runner.invoke(app, ["validate", "preflight", str(config), "--json"])
     assert result.exit_code == 0, result.output
     payload = _json.loads(result.stdout)
     assert payload["native_companion"]["status"] == "pass"
@@ -108,7 +108,7 @@ def test_preflight_reports_health_and_eligible_shape_json(tmp_path: Path):
 
 def test_preflight_reports_ineligible_shape_json(tmp_path: Path):
     config = _ineligible_config(tmp_path)
-    result = runner.invoke(app, ["preflight", str(config), "--json"])
+    result = runner.invoke(app, ["validate", "preflight", str(config), "--json"])
     assert result.exit_code == 0, result.output
     payload = _json.loads(result.stdout)
     assert "not eligible" in payload["native_eligibility"]["message"].lower()
@@ -117,7 +117,7 @@ def test_preflight_reports_ineligible_shape_json(tmp_path: Path):
 def test_preflight_warns_on_broken_companion(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     _patch(monkeypatch, _status("kat-corrupt", present=True, ok=False, abi_actual=_ABI))
     config = _eligible_config(tmp_path)
-    result = runner.invoke(app, ["preflight", str(config), "--json"])
+    result = runner.invoke(app, ["validate", "preflight", str(config), "--json"])
     assert result.exit_code == 0, result.output  # a warning alone does not fail preflight
     payload = _json.loads(result.stdout)
     assert payload["native_companion"]["status"] == "warn"
@@ -131,13 +131,13 @@ def test_preflight_fail_on_warning_escalates_broken_companion(
 
     _patch(monkeypatch, _status("kat-corrupt", present=True, ok=False, abi_actual=_ABI))
     config = _eligible_config(tmp_path)
-    result = runner.invoke(app, ["preflight", str(config), "--fail-on-warning"])
+    result = runner.invoke(app, ["validate", "preflight", str(config), "--fail-on-warning"])
     assert result.exit_code != 0
 
 
 def test_preflight_human_mode_always_shows_native_lines(tmp_path: Path):
     config = _eligible_config(tmp_path)
-    result = runner.invoke(app, ["preflight", str(config)])
+    result = runner.invoke(app, ["validate", "preflight", str(config)])
     assert result.exit_code == 0, result.output
     assert "native" in result.output.lower()
 
@@ -145,7 +145,7 @@ def test_preflight_human_mode_always_shows_native_lines(tmp_path: Path):
 def test_preflight_never_leaks_cause(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     _patch(monkeypatch, _status("load-error", present=True, ok=False, abi_actual=_ABI))
     config = _eligible_config(tmp_path)
-    result = runner.invoke(app, ["preflight", str(config), "--json"])
+    result = runner.invoke(app, ["validate", "preflight", str(config), "--json"])
     assert "SECRET_PATH_SENTINEL" not in result.output
 
 
@@ -153,7 +153,7 @@ def test_preflight_abi_actual_sanitized(tmp_path: Path, monkeypatch: pytest.Monk
     hostile = ("y" * 10_000) + "\x00"
     _patch(monkeypatch, _status("abi-mismatch", present=True, ok=False, abi_actual=hostile))
     config = _eligible_config(tmp_path)
-    result = runner.invoke(app, ["preflight", str(config), "--json"])
+    result = runner.invoke(app, ["validate", "preflight", str(config), "--json"])
     payload = _json.loads(result.stdout)
     message = payload["native_companion"]["message"]
     assert "\x00" not in message
@@ -169,7 +169,7 @@ def test_preflight_degrades_gracefully_on_an_older_engine(
 
     monkeypatch.delattr(decoy_engine, "native_companion_status", raising=False)
     config = _eligible_config(tmp_path)
-    result = runner.invoke(app, ["preflight", str(config), "--json"])
+    result = runner.invoke(app, ["validate", "preflight", str(config), "--json"])
     assert result.exit_code == 0, result.output
     payload = _json.loads(result.stdout)
     assert payload["native_companion"]["status"] == "pass"

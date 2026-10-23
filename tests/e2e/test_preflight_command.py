@@ -121,7 +121,7 @@ def _missing_source_config(tmp_path: Path) -> Path:
 def test_preflight_passes_valid_config(tmp_path: Path):
     """preflight exits 0 for a config where all source files exist."""
     _, p = _valid_config(tmp_path)
-    result = runner.invoke(app, ["preflight", str(p)])
+    result = runner.invoke(app, ["validate", "preflight", str(p)])
     assert result.exit_code == 0
 
 
@@ -133,7 +133,7 @@ def test_preflight_passes_valid_config(tmp_path: Path):
 def test_preflight_reports_missing_source(tmp_path: Path):
     """preflight exits non-zero and mentions the missing path."""
     p = _missing_source_config(tmp_path)
-    result = runner.invoke(app, ["preflight", str(p)])
+    result = runner.invoke(app, ["validate", "preflight", str(p)])
     assert result.exit_code != 0
     combined = (result.stdout or "") + (result.output or "")
     # Rich wraps long paths at the terminal width (a long tmp_path splits the
@@ -150,7 +150,7 @@ def test_preflight_invalid_yaml(tmp_path: Path):
     """preflight exits non-zero on a YAML parse error."""
     p = tmp_path / "bad.yaml"
     p.write_text("version: 1\n  bad_indent: [unclosed", encoding="utf-8")
-    result = runner.invoke(app, ["preflight", str(p)])
+    result = runner.invoke(app, ["validate", "preflight", str(p)])
     assert result.exit_code != 0
 
 
@@ -165,7 +165,7 @@ def test_preflight_schema_error(tmp_path: Path):
     cfg = {"global_settings": {"seed": 42}, "sources": {}, "tables": [], "targets": {}}
     p = tmp_path / "no_version.yaml"
     p.write_text(yaml.dump(cfg), encoding="utf-8")
-    result = runner.invoke(app, ["preflight", str(p)])
+    result = runner.invoke(app, ["validate", "preflight", str(p)])
     assert result.exit_code != 0
 
 
@@ -177,7 +177,7 @@ def test_preflight_schema_error(tmp_path: Path):
 def test_preflight_json_valid_config(tmp_path: Path):
     """preflight --json exits 0 and emits structured JSON with check results."""
     _, p = _valid_config(tmp_path)
-    result = runner.invoke(app, ["preflight", "--json", str(p)])
+    result = runner.invoke(app, ["validate", "preflight", "--json", str(p)])
     assert result.exit_code == 0
     data = _json.loads(result.stdout)
     assert data["command"] == "preflight"
@@ -193,7 +193,7 @@ def test_preflight_json_valid_config(tmp_path: Path):
 def test_preflight_local_flag_accepted(tmp_path: Path):
     """--local flag is accepted and performs the same file checks."""
     _, p = _valid_config(tmp_path)
-    result = runner.invoke(app, ["preflight", "--local", str(p)])
+    result = runner.invoke(app, ["validate", "preflight", "--local", str(p)])
     assert result.exit_code == 0
 
 
@@ -205,7 +205,7 @@ def test_preflight_local_flag_accepted(tmp_path: Path):
 def test_preflight_json_missing_source(tmp_path: Path):
     """preflight --json with missing source exits non-zero with structured error."""
     p = _missing_source_config(tmp_path)
-    result = runner.invoke(app, ["preflight", "--json", str(p)])
+    result = runner.invoke(app, ["validate", "preflight", "--json", str(p)])
     assert result.exit_code != 0
     data = _json.loads(result.stdout)
     assert data["status"] != "ok"
@@ -221,7 +221,7 @@ def test_preflight_json_missing_source(tmp_path: Path):
 
 def test_preflight_help_shows_what_it_checks(tmp_path: Path):
     """--help is reachable and mentions file/source checks."""
-    result = runner.invoke(app, ["preflight", "--help"])
+    result = runner.invoke(app, ["validate", "preflight", "--help"])
     assert result.exit_code == 0
     output = result.output.lower()
     assert "file" in output or "source" in output
@@ -246,7 +246,7 @@ def test_preflight_fail_message_keeps_bracketed_text(tmp_path: Path):
     cfg["sources"]["customers"]["path"] = str(bracket_dir / "missing.csv")
     p.write_text(yaml.dump(cfg), encoding="utf-8")
 
-    result = runner.invoke(app, ["preflight", str(p)])
+    result = runner.invoke(app, ["validate", "preflight", str(p)])
     assert result.exit_code != 0, result.output
     assert _squash(f"Source file not found: {bracket_dir / 'missing.csv'}") in _squash(
         result.output
@@ -263,6 +263,6 @@ def test_preflight_warning_message_keeps_bracketed_text(tmp_path: Path):
     cfg["targets"]["customers"]["path"] = str(existing_target)
     p.write_text(yaml.dump(cfg), encoding="utf-8")
 
-    result = runner.invoke(app, ["preflight", str(p)])
+    result = runner.invoke(app, ["validate", "preflight", str(p)])
     assert "warning:" in result.output, result.output
     assert _squash(str(existing_target)) in _squash(result.output), result.output

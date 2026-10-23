@@ -5,7 +5,7 @@ lives in decoy_engine; this package only handles command parsing,
 terminal UX, and forwarding work to the engine.
 
 S6 (OSS-launch, 2026-07-18): `decoy.mask()` / `decoy.scan()` are the
-library one-liner equivalents of `decoy run` / `decoy storm analyze`,
+library one-liner equivalents of `decoy run` / `decoy scan`,
 for `import decoy; decoy.mask(...)` without shelling out to the CLI. See
 `decoy.api` for the implementation -- both wrap the exact same
 decoy_engine entrypoints the CLI commands call.

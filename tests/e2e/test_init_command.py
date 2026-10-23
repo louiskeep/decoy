@@ -26,7 +26,7 @@ def test_init_quiet_writes_minimal_pipeline(tmp_path: Path):
     """CLI.3 (2026-06-02): bundled minimal template is now V2 PipelineConfig
     shape: `version: 1`, `tables[].columns`, no `masking_rules`."""
     out = tmp_path / "pipeline.yaml"
-    result = runner.invoke(app, ["init", "--out", str(out), "--quiet"])
+    result = runner.invoke(app, ["init", "--output", str(out), "--quiet"])
     assert result.exit_code == 0
     assert result.stdout == ""
     assert out.exists()
@@ -39,7 +39,7 @@ def test_init_quiet_writes_minimal_pipeline(tmp_path: Path):
 
 def test_init_json_returns_metadata(tmp_path: Path):
     out = tmp_path / "pipeline.yaml"
-    result = runner.invoke(app, ["init", "--out", str(out), "--json"])
+    result = runner.invoke(app, ["init", "--output", str(out), "--json"])
     assert result.exit_code == 0
     payload = _json.loads(result.stdout)
     assert payload["command"] == "init"
@@ -51,7 +51,7 @@ def test_init_json_returns_metadata(tmp_path: Path):
 def test_init_refuses_to_overwrite_in_json_mode(tmp_path: Path):
     out = tmp_path / "pipeline.yaml"
     out.write_text("existing")
-    result = runner.invoke(app, ["init", "--out", str(out), "--json"])
+    result = runner.invoke(app, ["init", "--output", str(out), "--json"])
     assert result.exit_code == 1
     assert "already exists" in result.stderr
 
@@ -60,7 +60,7 @@ def test_init_overwrites_with_yes_flag(tmp_path: Path):
     """CLI.3 (2026-06-02): bundled template body is V2 (`tables:` block)."""
     out = tmp_path / "pipeline.yaml"
     out.write_text("existing")
-    result = runner.invoke(app, ["init", "--out", str(out), "--yes", "--quiet"])
+    result = runner.invoke(app, ["init", "--output", str(out), "--yes", "--quiet"])
     assert result.exit_code == 0
     assert "tables:" in out.read_text()
 
@@ -68,7 +68,7 @@ def test_init_overwrites_with_yes_flag(tmp_path: Path):
 def test_init_preset_hipaa_writes_hipaa_template(tmp_path: Path):
     out = tmp_path / "pipeline.yaml"
     result = runner.invoke(
-        app, ["init", "--preset", "hipaa", "--out", str(out), "--quiet"]
+        app, ["init", "--preset", "hipaa", "--output", str(out), "--quiet"]
     )
     assert result.exit_code == 0
     body = out.read_text()
@@ -82,7 +82,7 @@ def test_init_preset_unknown_suggests_close_match(tmp_path: Path):
     out = tmp_path / "pipeline.yaml"
     result = runner.invoke(
         app,
-        ["init", "--preset", "hippa", "--out", str(out), "--yes"],
+        ["init", "--preset", "hippa", "--output", str(out), "--yes"],
     )
     assert result.exit_code == 1
     assert "unknown preset" in result.stderr.lower()
@@ -94,7 +94,7 @@ def test_init_preset_json_envelope_carries_preset_and_count(tmp_path: Path):
 
     out = tmp_path / "pipeline.yaml"
     result = runner.invoke(
-        app, ["init", "--preset", "pci", "--out", str(out), "--json"]
+        app, ["init", "--preset", "pci", "--output", str(out), "--json"]
     )
     assert result.exit_code == 0
     payload = _json.loads(result.stdout)
@@ -108,7 +108,7 @@ def test_init_preset_generate_produces_generator_yaml(tmp_path: Path):
     V2 `global_settings:`."""
     out = tmp_path / "pipeline.yaml"
     result = runner.invoke(
-        app, ["init", "--preset", "generate", "--out", str(out), "--quiet"]
+        app, ["init", "--preset", "generate", "--output", str(out), "--quiet"]
     )
     assert result.exit_code == 0
     body = out.read_text()
@@ -216,7 +216,7 @@ def test_init_scaffold_round_trips_date_shift_truncate_fpe(
 
     out = tmp_path / "pipeline.yaml"
     result = runner.invoke(
-        app, ["init", str(csv_with_date_zip_pan_id), "--out", str(out), "--quiet"]
+        app, ["init", str(csv_with_date_zip_pan_id), "--output", str(out), "--quiet"]
     )
     assert result.exit_code == 0, result.stdout + result.stderr
 
@@ -255,7 +255,7 @@ def test_init_scaffold_actually_runs_and_pan_stays_luhn_valid(
     """
     out = tmp_path / "pipeline.yaml"
     init_result = runner.invoke(
-        app, ["init", str(csv_with_date_zip_pan_id), "--out", str(out), "--quiet"]
+        app, ["init", str(csv_with_date_zip_pan_id), "--output", str(out), "--quiet"]
     )
     assert init_result.exit_code == 0, init_result.stdout + init_result.stderr
 

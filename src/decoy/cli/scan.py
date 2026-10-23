@@ -1,33 +1,62 @@
-"""`decoy storm` -- dataset analysis (PII detectors, sentinels, re-id risk)."""
+"""`decoy scan` -- one "look at my data" verb (merges `profile` + `storm analyze`).
+
+`decoy scan SOURCE` profiles a CSV / Parquet / fixed-width file with the engine's
+STORM (Statistical Top-down Risk Mapping) detector and reports dataset shape,
+per-field stats, PII candidates, quasi-identifier groups, and a re-identification
+risk score. Saved-scan operations are subcommands: `scan fields SCAN`,
+`scan show SCAN FIELD`, `scan diff OLD NEW`.
+
+This command is the S3a merge of the former top-level `profile` command and the
+`storm analyze` verb. It keeps BOTH commands' capabilities while preserving the
+former profile command's two
+non-negotiable disciplines:
+
+  HONESTY (H4): PII candidates are framed as SUGGESTIONS the user reviews, never
+  as authoritative auto-classification. Output says "suggestion -- review
+  required" and carries a `pii_note`; it NEVER says "classified as" / "detected
+  as" / "is PII". The user picks the PII type per field; auto-classification is
+  abandoned by design.
+
+  PRIVACY (H5): the inline / `--show-fields` field rendering uses the
+  privacy-safe `_safe_field_record` -- dtype, null_rate, distinct_count,
+  pii_score, detector ids ONLY. It NEVER includes top_values, mode/min/max, or
+  any aggregate that could expose raw cell data. (The `--output` artifact keeps
+  the engine's richer `profile.to_dict()`; that is pre-existing and intentional.)
+
+Reuses the engine's `run_storm` function. Does NOT reimplement detection.
+"""
 
 from __future__ import annotations
 
 import difflib
 import json as _json
 import sys
-import time
-from datetime import datetime
 from enum import Enum
 from pathlib import Path
 
 import typer
 
-from decoy.cli.exit_codes import EXIT_FINDINGS, EXIT_RUNTIME, EXIT_USAGE
+from decoy.cli._default_group import make_default_group
+from decoy.cli.exit_codes import EXIT_RUNTIME, EXIT_USAGE
 from decoy.ui.card import render_card
 from decoy.ui.output import OutputMode, OutputState, emit_json, setup_output
 from decoy.ui.storm_animation import stormy_multistage
 from decoy.ui.table import make_table
-from decoy.ui.theme import code, error, hint, risk_high, risk_med, success
+from decoy.ui.theme import accent, code, error, hint, risk_high, risk_med, success, warn
 
-storm_app = typer.Typer(
-    name="storm",
-    help=(
-        "Dataset analysis -- the STORM event. `analyze` looks at a file "
-        "(pre-run); `integrity` verifies a masked file (post-run). The "
-        "previous `scan` verb is a deprecated alias for `analyze`."
-    ),
-    no_args_is_help=True,
+_SCAN_GROUP_HELP = (
+    "Profile a dataset for PII and re-identification risk. `decoy scan "
+    "SOURCE` scans a CSV/Parquet/fixed-width file (shape, field stats, PII "
+    "candidates as suggestions, quasi-identifiers, reid risk) and, with "
+    "`--output scan.json`, saves the scan. Subcommands operate on a saved "
+    "scan: list fields (`fields`), per-field detail (`show`), compare two "
+    "scans (`diff`)."
 )
+
+
+# PII score threshold to surface a field as a candidate. Mirrors the engine's
+# STORM internal threshold (>=0.6 is a "PII candidate" / "high" bucket).
+_PII_CANDIDATE_THRESHOLD = 0.6
 
 
 class SampleStrategy(str, Enum):
@@ -44,7 +73,7 @@ class PiiLevel(str, Enum):
 
 
 class InputFormat(str, Enum):
-    """Explicit input format selector for `storm analyze`.
+    """Explicit input format selector for `scan`.
 
     When omitted, format is inferred from the file extension:
     - .parquet        -> parquet
@@ -66,7 +95,6 @@ _FIXED_WIDTH_EXTENSIONS: frozenset[str] = frozenset({".fwf", ".dat", ".fixed", "
 # File extensions that map to parquet format.
 _PARQUET_EXTENSIONS: frozenset[str] = frozenset({".parquet", ".pq"})
 
-
 _BUCKET_RANK: dict[str, int] = {"none": 0, "low": 1, "med": 2, "high": 3}
 
 # Suffixes that almost certainly mean "this is raw data, not a saved scan."
@@ -74,152 +102,103 @@ _BUCKET_RANK: dict[str, int] = {"none": 0, "low": 1, "med": 2, "high": 3}
 # specific "scan it first" suggestion.
 _RAW_DATA_SUFFIXES = {".csv", ".tsv", ".txt", ".parquet", ".json.gz", ".jsonl"}
 
-# `storm test` -- demo command. Stages and a fixed set of made-up facts the
-# fake summary card renders. Marked clearly so no one mistakes the output
-# for a real scan.
-_TEST_STAGES: tuple[str, ...] = ("Load source", "Profile columns", "Save profile")
-_DEFAULT_TEST_SECONDS = 10.0
-_FAKE_FACTS: list[tuple[str, str]] = [
-    ("Mode", "demo (no data scanned)"),
-    ("Source", "patients_demo.csv (sample)"),
-    ("Rows scanned", "50,000 (head)"),
-    ("Columns", "10"),
-    ("PII columns", "6"),
-    ("Reid risk", "88.9"),
-    ("Quasi-identifiers", "(first_name + last_name + zip)"),
-]
 
-
-_ANALYZE_EPILOG = """\
+_SCAN_EPILOG = """\
 Examples:
 
-  decoy storm analyze data.csv
-    Analyze a CSV with default sampling, save scan_<timestamp>.json.
+  decoy scan data.csv
+    Profile a CSV: row/field counts, PII candidates (as suggestions), reid risk.
+    Reads the first 10 000 rows by default (--rows 0 for a full scan).
 
-  decoy storm analyze data.csv --rows 50000 --strategy random
-    Sample 50K random rows.
+  decoy scan data.csv --show-fields
+    Per-field detail: dtype, null_rate, distinct_count, PII candidate flag.
 
-  decoy storm analyze data.csv --json > scan.json
-    Pipe the full StormProfile JSON for downstream tooling.
+  decoy scan data.csv --rows 50000 --strategy random
+    Sample 50K random rows instead of the first 10 000.
 
-  decoy storm analyze data.parquet
-    Analyze a Parquet file (format inferred from extension).
+  decoy scan data.csv --output scan.json
+    Save the scan to scan.json, then: decoy scan fields scan.json
 
-  decoy storm analyze data.parquet --format parquet
-    Same, with explicit format flag.
+  decoy scan data.csv --output -
+    Stream the scan JSON to stdout for downstream tooling.
 
-  decoy storm analyze records.fwf --layout layout.yaml
-    Analyze a fixed-width file using an explicit column layout.
+  decoy scan records.fwf --layout layout.yaml
+    Scan a fixed-width file using an explicit column layout.
     Layout YAML: columns: [{name: id, start: 0, width: 5}, ...]
 
-See also: decoy storm fields, decoy storm show, decoy storm diff,
-  decoy storm integrity, decoy init, decoy run.
-"""
+HONESTY: PII candidates are SUGGESTIONS based on STORM pattern matching. They
+are NOT authoritative classifications. You review each flagged field and decide
+what masking to apply. Decoy never auto-classifies PII.
 
-# Kept for the deprecated `decoy storm scan` alias (renamed 2026-06-02
-# under OSS.4a, scheduled removal in 0.2.0). Same body as
-# _ANALYZE_EPILOG but the first example writes the deprecated form so
-# anyone running `decoy storm scan --help` sees the old shape.
-_SCAN_EPILOG = """\
-DEPRECATED: `decoy storm scan` is the old name for `decoy storm analyze`.
-Run `decoy storm analyze --help` for the canonical examples.
+No raw cell values appear in the inline output. Field stats include dtype,
+null_rate, distinct_count only.
 
-Removal target: 0.2.0.
+See also: decoy scan fields, decoy scan show, decoy scan diff,
+  decoy explain storm, decoy validate.
 """
 
 
 _FIELDS_EPILOG = """\
 Examples:
 
-  decoy storm fields scan.json
+  decoy scan fields scan.json
     List every field with PII score, bucket, quasi-identifier flag.
 
-  decoy storm fields scan.json --pii high --quasi
+  decoy scan fields scan.json --pii high --quasi
     Only fields that are high PII *and* part of a quasi-identifier group.
 
-  decoy storm fields scan.json --json | jq '.fields[].name'
+  decoy scan fields scan.json --json | jq '.fields[].name'
     Pipe just the matching field names somewhere else.
 
-See also: decoy storm analyze, decoy storm show.
+See also: decoy scan, decoy scan show.
 """
 
 
 _SHOW_EPILOG = """\
 Examples:
 
-  decoy storm show scan.json ssn
+  decoy scan show scan.json ssn
     Per-field detail card -- PII score, detectors, sentinels, top values, QI.
 
-  decoy storm show scan.json email --json
+  decoy scan show scan.json email --json
     Same data as a structured JSON envelope.
 
-  decoy storm analyze data.csv --json | decoy storm show - ssn
+  decoy scan data.csv --output - | decoy scan show - ssn
     Pipe a fresh scan straight in.
 
-See also: decoy storm analyze, decoy storm fields.
+See also: decoy scan, decoy scan fields.
 """
 
 
 _DIFF_EPILOG = """\
 Examples:
 
-  decoy storm diff baseline.json new.json
+  decoy scan diff baseline.json new.json
     Print field-, PII-, QI-, and risk-level differences between two scans.
 
-  decoy storm diff baseline.json new.json --strict
+  decoy scan diff baseline.json new.json --strict
     Same, but exit 1 on drift (PII bucket bumped up, new high-PII field, or
     new quasi-identifier group). Wire this into CI.
 
-  decoy storm diff baseline.json new.json --json | jq '.drift'
+  decoy scan diff baseline.json new.json --json | jq '.drift'
     Boolean drift flag for scripting.
 
-See also: decoy storm analyze, decoy storm fields.
+See also: decoy scan, decoy scan fields.
 """
 
 
-_INTEGRITY_EPILOG = """\
-Examples:
-
-  decoy storm integrity masked.csv --source source.csv
-    Run all three post-mask checks (residual_pii + fk_preservation +
-    policy_validation) against a masked file with its pre-mask
-    baseline as ground truth. Render a Rich findings table.
-
-  decoy storm integrity masked.csv --source source.csv --config pipeline.yaml
-    Same, but load the pipeline YAML so policy_validation can
-    compare against the configured masks. Without --config the
-    runner still produces residual_pii findings; policy_validation
-    is reduced to "no config provided" notes.
-
-  decoy storm integrity masked.csv --source source.csv --json > report.json
-    Pipe the full JobStormReport-shaped JSON for downstream tooling.
-
-  decoy storm integrity masked.csv --source source.csv --out report.json
-    Write JSON to file + render a Rich summary on stderr.
-
-Exit codes: 0 clean (no fail/error findings); 4 EXIT_FINDINGS (one
-or more fail-severity findings); 1 EXIT_USAGE for missing files;
-3 EXIT_RUNTIME for unexpected exceptions.
-
-See also: decoy storm analyze, decoy run, decoy explain exit-codes.
-"""
+scan_app = typer.Typer(
+    name="scan",
+    cls=make_default_group("_scan"),
+    help=_SCAN_GROUP_HELP,
+    epilog=_SCAN_EPILOG,
+    no_args_is_help=True,
+)
 
 
-_TEST_EPILOG = """\
-Examples:
-
-  decoy storm test
-    10 seconds of stormy multistage animation, then a fake summary card.
-    No data is read; nothing is written.
-
-  decoy storm test --seconds 30
-    Stretch the demo to 30 seconds -- handy for screen recording.
-
-  decoy storm test --json
-    Skip the animation, emit a fake envelope. For pipeline smoke tests.
-
-See also: decoy storm analyze, decoy demo.
-"""
+# ---------------------------------------------------------------------------
+# Source loaders (format dispatch + sampling). Moved from storm.py with `scan`.
+# ---------------------------------------------------------------------------
 
 
 def _infer_format(path: Path) -> InputFormat:
@@ -388,19 +367,24 @@ def _load_data(
             raise ValueError(
                 f"Fixed-width input requires --layout: column boundaries in {path.name} "
                 "are ambiguous without an explicit layout spec. "
-                "Run: decoy storm analyze <file> --layout <layout.yaml>"
+                "Run: decoy scan <file> --layout <layout.yaml>"
             )
         return _load_fixed_width_with_sampling(path, layout, rows, strategy)
     # Default: delimited (CSV/TSV)
     return _load_csv_with_sampling(path, rows, strategy)
 
 
+# ---------------------------------------------------------------------------
+# Saved-scan helpers (used by fields/show/diff). Moved from storm.py.
+# ---------------------------------------------------------------------------
+
+
 def _load_scan_dict(scan_path: str) -> dict:
     """Load a STORM scan JSON file (or stdin when path is `-`).
 
-    Accepts both shapes that `decoy storm scan` produces -- the bare
-    `to_dict()` written to disk by default, and the `{"profile": {...}}`
-    envelope from `--json` mode.
+    Accepts both shapes `decoy scan` produces -- the bare `to_dict()` written
+    to disk by `--output FILE`, and the `{"profile": {...}}` envelope some
+    tools wrap it in.
     """
     try:
         if scan_path == "-":
@@ -421,7 +405,7 @@ def _load_scan_dict(scan_path: str) -> dict:
 
 
 def _pii_bucket(score: float | None) -> str:
-    """Same buckets as the `storm scan` card uses (>=0.6 PII columns count)."""
+    """Same buckets as the `scan` card uses (>=0.6 PII candidate count)."""
     if score is None:
         return "none"
     if score >= 0.6:
@@ -483,7 +467,7 @@ def _emit_load_error(
     if raw_data:
         label = Path(scan).name
         message = f"{label} looks like raw data, not a STORM scan JSON."
-        scan_cmd = f"decoy storm analyze {scan}"
+        scan_cmd = f"decoy scan {scan} --output scan.json"
     elif isinstance(exc, FileNotFoundError):
         message = f"could not open {scan}: file not found."
         scan_cmd = None
@@ -514,8 +498,96 @@ def _emit_load_error(
             state.err_console.print(
                 " ", hint("hint:"),
                 "pass the JSON file produced by",
-                code("decoy storm analyze"),
+                code("decoy scan --output scan.json"),
             )
+
+
+# ---------------------------------------------------------------------------
+# Privacy-safe field record (H5). Carried from `profile`.
+# ---------------------------------------------------------------------------
+
+
+def _safe_field_record(field_stats) -> dict:
+    """Return a privacy-safe field record from a FieldStats object.
+
+    Includes ONLY: name, inferred_type (dtype), null_rate, distinct_count,
+    pii_score, pii_candidate (bool), detector ids (names only, no match
+    details).
+
+    NEVER includes: top_values, mode_value, min_value, max_value, sample_invalid,
+    mean_value, or any other aggregate that could expose raw cell data.
+    """
+    is_candidate = field_stats.pii_score >= _PII_CANDIDATE_THRESHOLD
+    # Detector IDs only (no match rates, no sample_misses which could be raw data).
+    detector_ids = [m.detector_id for m in (field_stats.detector_matches or [])]
+    return {
+        "name": field_stats.name,
+        "dtype": field_stats.inferred_type,
+        "null_rate": round(field_stats.null_rate, 4),
+        "distinct_count": field_stats.distinct_count,
+        "pii_score": round(field_stats.pii_score, 3),
+        "pii_candidate": is_candidate,
+        # Detector IDs are safe metadata (pattern names, not cell values).
+        "detector_hits": detector_ids,
+    }
+
+
+_PII_NOTE = (
+    "PII candidates are SUGGESTIONS based on STORM pattern matching. "
+    "They are not authoritative classifications. Review each flagged field "
+    "and decide what masking to apply. Decoy never auto-classifies PII."
+)
+
+
+def _render_fields(state, field_records: list[dict], pii_candidate_count: int) -> None:
+    """Render the privacy-safe per-field detail table + honesty framing."""
+    state.console.print(accent(f"Fields ({len(field_records)}):"))
+
+    tbl = make_table("Field", "Type", "Null rate", "Distinct", "PII candidate")
+    for f in field_records:
+        pii_cell = ""
+        if f["pii_candidate"]:
+            detectors = ", ".join(f["detector_hits"]) if f["detector_hits"] else ""
+            pii_cell = "suggestion -- review"
+            if detectors:
+                pii_cell += f" [{detectors}]"
+        tbl.add_row(
+            f["name"],
+            f["dtype"],
+            f"{f['null_rate']:.1%}",
+            str(f["distinct_count"]),
+            pii_cell,
+        )
+    state.console.print(tbl)
+    state.console.print()
+
+    if pii_candidate_count > 0:
+        _render_pii_honesty(state, pii_candidate_count)
+
+
+def _render_pii_honesty(state, pii_candidate_count: int) -> None:
+    """The profile-honesty framing block (H4): candidates are suggestions."""
+    state.console.print(
+        warn("PII candidates:"),
+        f"{pii_candidate_count} field(s) flagged by STORM pattern matching.",
+    )
+    state.console.print(
+        " ",
+        hint("These are SUGGESTIONS for review -- NOT authoritative classifications."),
+    )
+    state.console.print(
+        " ",
+        "Review each flagged field and choose the masking strategy that fits.",
+        "Use",
+        code("decoy list templates"),
+        "to browse available templates.",
+    )
+    state.console.print()
+
+
+# ---------------------------------------------------------------------------
+# `decoy scan SOURCE` -- the default command (merges profile + storm analyze)
+# ---------------------------------------------------------------------------
 
 
 def _scan(
@@ -526,31 +598,32 @@ def _scan(
         readable=True,
         help="Path to a file to scan (CSV, Parquet, or fixed-width).",
     ),
-    rows: int | None = typer.Option(
-        None,
+    show_fields: bool = typer.Option(
+        False,
+        "--show-fields",
+        help="Show per-field detail: dtype, null_rate, distinct_count, PII candidate flag.",
+    ),
+    rows: int = typer.Option(
+        10_000,
         "--rows",
-        help="Sample row cap. Default: scan everything.",
+        help=(
+            "Limit the scan to the first N rows (a bounded sample). "
+            "Use 0 for a full scan of the whole file. Default: 10000."
+        ),
     ),
     strategy: SampleStrategy = typer.Option(
         SampleStrategy.head,
         "--strategy",
-        help="Sampling strategy when --rows is set.",
+        help="Sampling strategy when --rows bounds the scan (ignored for --rows 0).",
     ),
     out: Path | None = typer.Option(
         None,
-        "--out",
-        help="Where to save the scan JSON. Use - for stdout. Default: scan_<timestamp>.json next to the source.",
-    ),
-    json_: bool = typer.Option(
-        False,
-        "--json",
-        help="Emit the full StormProfile JSON to stdout. No card.",
-    ),
-    quiet: bool = typer.Option(
-        False, "--quiet", "-q", help="Suppress stdout. Errors still go to stderr."
-    ),
-    verbose: bool = typer.Option(
-        False, "--verbose", "-v", help="Enable debug-level CLI logs on stderr."
+        "--output",
+        "-o",
+        help=(
+            "Save the scan JSON to this path. Use - for stdout. "
+            "Without --output nothing is written to disk."
+        ),
     ),
     fmt: InputFormat | None = typer.Option(
         None,
@@ -571,22 +644,55 @@ def _scan(
             "Each column needs 'name', 'start' (0-indexed), and 'width'."
         ),
     ),
+    json_: bool = typer.Option(
+        False,
+        "--json",
+        help="Emit a structured JSON result on stdout instead of the styled card.",
+    ),
+    quiet: bool = typer.Option(
+        False, "--quiet", "-q", help="Suppress stdout. Errors still go to stderr."
+    ),
+    verbose: bool = typer.Option(
+        False, "--verbose", "-v", help="Enable debug-level CLI logs on stderr."
+    ),
 ) -> None:
-    """Scan a dataset and produce a STORM profile.
+    """Profile a source dataset: shape, field stats, PII candidates, reid risk.
 
-    Use this when you've been handed a dataset and want to know what's in it
-    -- which fields are PII, which look like quasi-identifiers, what
-    re-identification risk the dataset carries -- before writing a masking
-    pipeline. Pass the saved scan JSON to `decoy storm fields` or
-    `decoy storm show`.
+    Runs STORM detection on the source file. PII candidates are surfaced as
+    SUGGESTIONS for review -- never as authoritative auto-classifications.
+    No raw cell values appear in the inline output. Save the scan with
+    `--output scan.json`, then operate on it with `decoy scan fields/show/diff`.
 
     Supported formats: delimited (CSV/TSV, default), parquet, and fixed-width.
-    Fixed-width input requires an explicit --layout spec (column boundaries
-    are ambiguous without one). Format is inferred from the file extension
-    when --format is not supplied.
+    Fixed-width input requires an explicit --layout spec (column boundaries are
+    ambiguous without one). Format is inferred from the extension when --format
+    is not supplied.
     """
     state = setup_output(json_, quiet, verbose)
     source_str = str(source)
+
+    # Fail closed early: `--output -` streams the rich profile (raw-value-bearing,
+    # like the on-disk artifact) to stdout, which collides with the two stdout
+    # contracts that must stay privacy-safe -- the --json envelope and --quiet's
+    # suppression. Resolve the conflict before scanning rather than letting the
+    # stream path (below) silently win and leak values a -q/--json caller never
+    # asked for.
+    if out is not None and str(out) == "-" and state.mode is not OutputMode.default:
+        msg = (
+            "--output - (stream the scan to stdout) cannot be combined with "
+            f"--{'json' if state.mode is OutputMode.json else 'quiet'}: the "
+            "streamed profile carries raw values and would break that mode's "
+            "stdout contract. Save to a file (--output scan.json), or drop the "
+            "conflicting flag."
+        )
+        if state.mode is OutputMode.json:
+            emit_json(
+                state,
+                {"command": "scan", "status": "error", "source": source_str, "error": msg},
+            )
+        else:  # quiet: the contract is "no stdout", so the error goes to stderr.
+            state.err_console.print(error("error:"), msg)
+        raise typer.Exit(code=EXIT_USAGE)
 
     # Resolve the effective format (explicit flag overrides extension detection).
     effective_fmt: InputFormat = fmt if fmt is not None else _infer_format(source)
@@ -596,17 +702,12 @@ def _scan(
         msg = (
             f"Fixed-width input requires --layout: column boundaries in {source.name} "
             "are ambiguous without an explicit layout spec. "
-            "Run: decoy storm analyze <file> --layout <layout.yaml>"
+            "Run: decoy scan <file> --layout <layout.yaml>"
         )
         if state.mode is OutputMode.json:
             emit_json(
                 state,
-                {
-                    "command": "storm analyze",
-                    "status": "error",
-                    "source": source_str,
-                    "error": msg,
-                },
+                {"command": "scan", "status": "error", "source": source_str, "error": msg},
             )
         elif state.mode is not OutputMode.quiet:
             state.err_console.print(error("error:"), msg)
@@ -614,7 +715,7 @@ def _scan(
                 " ",
                 hint("hint:"),
                 "provide a layout file:",
-                code(f"decoy storm analyze {source.name} --layout layout.yaml"),
+                code(f"decoy scan {source.name} --layout layout.yaml"),
             )
         raise typer.Exit(code=EXIT_USAGE)
 
@@ -626,7 +727,7 @@ def _scan(
             if state.mode is OutputMode.json:
                 emit_json(
                     state,
-                    {"command": "storm analyze", "status": "error", "source": source_str, "error": msg},
+                    {"command": "scan", "status": "error", "source": source_str, "error": msg},
                 )
             elif state.mode is not OutputMode.quiet:
                 state.err_console.print(error("error:"), msg)
@@ -638,97 +739,133 @@ def _scan(
             if state.mode is OutputMode.json:
                 emit_json(
                     state,
-                    {"command": "storm analyze", "status": "error", "source": source_str, "error": msg},
+                    {"command": "scan", "status": "error", "source": source_str, "error": msg},
                 )
             elif state.mode is not OutputMode.quiet:
                 state.err_console.print(error("error:"), msg)
             raise typer.Exit(code=EXIT_USAGE)
 
+    # --rows default 10000 bounds the sample (profile's safe default); --rows 0
+    # scans the whole file. A bounded scan uses --strategy; a full scan ignores it.
+    row_cap: int | None = None if rows == 0 else rows
+    effective_strategy = SampleStrategy.full if rows == 0 else strategy
+
     try:
         from decoy_engine import run_storm
 
-        with stormy_multistage(state, ["Load source", "Profile columns", "Save profile"]) as ms:
-            df = _load_data(source, effective_fmt, layout_columns, rows, strategy)
+        with stormy_multistage(state, ["Load source", "Profile columns", "Summarize"]) as ms:
+            df = _load_data(source, effective_fmt, layout_columns, row_cap, effective_strategy)
             ms.complete()
             profile = run_storm(
                 df,
                 source_label=source.name,
-                sample_strategy=strategy.value,
-                sample_row_cap=rows,
+                sample_strategy=effective_strategy.value,
+                sample_row_cap=row_cap,
             )
             ms.complete()
 
-            if out is not None and str(out) == "-":
-                out_path: Path | None = None
-            elif out is not None:
-                out_path = out
-            else:
-                ts = datetime.utcnow().strftime("%Y%m%dT%H%M%S")
-                out_path = source.parent / f"scan_{ts}.json"
-
+            # PERSIST ONLY on --output (H7b): no auto scan_<ts>.json to cwd.
+            streamed = out is not None and str(out) == "-"
+            out_path: Path | None = out if (out is not None and not streamed) else None
             if out_path is not None:
+                # The on-disk artifact keeps the engine's richer profile.to_dict()
+                # (pre-existing); the inline/--json field output stays privacy-safe.
                 out_path.write_text(_json.dumps(profile.to_dict(), indent=2))
             ms.complete()
     except Exception as exc:
+        # Do NOT interpolate str(exc) -- engine parse errors can embed raw cell
+        # data in their messages. Report only the exception class name.
+        msg = f"scan failed: {type(exc).__name__}"
         if state.mode is OutputMode.json:
             emit_json(
                 state,
-                {
-                    "command": "storm analyze",
-                    "status": "error",
-                    "source": source_str,
-                    "error": str(exc),
-                },
+                {"command": "scan", "status": "error", "source": source_str, "error": msg},
             )
         elif state.mode is not OutputMode.quiet:
-            state.err_console.print(error("error:"), str(exc))
-            state.err_console.print(" ", hint("hint:"), "rerun with --verbose for the full traceback.")
+            state.err_console.print(error("error:"), msg)
+            state.err_console.print(
+                " ", hint("hint:"), "rerun with --verbose for the full traceback."
+            )
         if state.verbose:
+            state.err_console.print(
+                hint("(--verbose: traceback below; diagnostic output may contain row data)")
+            )
             state.err_console.print_exception()
         raise typer.Exit(code=EXIT_RUNTIME)
 
+    # --output - streams the scan JSON (the richer artifact) to stdout, nothing else.
+    if streamed:
+        sys.stdout.write(_json.dumps(profile.to_dict()) + "\n")
+        return
+
+    # Privacy-safe field records (no raw cell values) for inline / --json output.
+    field_records = [_safe_field_record(f) for f in profile.fields]
+    pii_candidate_count = sum(
+        1 for f in profile.fields if f.pii_score >= _PII_CANDIDATE_THRESHOLD
+    )
+
     if state.mode is OutputMode.json:
-        if out is not None and str(out) == "-":
-            sys.stdout.write(_json.dumps(profile.to_dict()) + "\n")
-        else:
-            emit_json(
-                state,
-                {
-                    "command": "storm analyze",
-                    "status": "ok",
-                    "source": source_str,
-                    "saved": str(out_path) if out_path else None,
-                    "profile": profile.to_dict(),
-                },
-            )
+        payload: dict = {
+            "command": "scan",
+            "status": "ok",
+            "source": source_str,
+            "row_count": profile.row_count,
+            "field_count": len(profile.fields),
+            "sample_strategy": profile.sample_strategy,
+            "pii_candidate_count": pii_candidate_count,
+            # H4: the honesty note travels in --json too.
+            "pii_note": _PII_NOTE,
+            "reid_risk_score": profile.reid_risk_score,
+            "quasi_identifier_groups": [list(g) for g in profile.quasi_identifier_groups],
+            "saved": str(out_path) if out_path else None,
+        }
+        if show_fields:
+            payload["fields"] = field_records
+        emit_json(state, payload)
         return
 
     if state.mode is OutputMode.quiet:
         return
 
-    pii_columns = sum(1 for f in profile.fields if f.pii_score >= 0.6)
+    # Human-readable: a run-summary card with PII framed as suggestions (H4).
     facts: list[tuple[str, str]] = [
         ("Source", source.name),
         ("Rows scanned", f"{profile.row_count:,} ({profile.sample_strategy})"),
         ("Columns", str(len(profile.fields))),
-        ("PII columns", str(pii_columns)),
-        ("Reid risk", f"{profile.reid_risk_score}"),
     ]
+    if pii_candidate_count > 0:
+        facts.append(
+            ("PII candidates", f"{pii_candidate_count} field(s) -- suggestions only, review required")
+        )
+    else:
+        facts.append(("PII candidates", "none detected"))
+    facts.append(("Reid risk", f"{profile.reid_risk_score}"))
     if profile.quasi_identifier_groups:
         qi = ", ".join("(" + " + ".join(g) + ")" for g in profile.quasi_identifier_groups)
         facts.append(("Quasi-identifiers", qi))
-    next_hint = None
+
+    next_hint: str | None
     if out_path is not None:
         facts.append(("Saved", str(out_path)))
-        next_hint = f"decoy storm fields {out_path}"
+        next_hint = f"decoy scan fields {out_path}"
+    else:
+        # Persist-only-on-output: point at the two-step saved-scan flow.
+        next_hint = f"decoy scan {source.name} --output scan.json  (then: decoy scan fields scan.json)"
 
-    render_card(
-        state,
-        command="decoy storm analyze",
-        facts=facts,
-        next_hint=next_hint,
-        status="ok",
-    )
+    render_card(state, command="decoy scan", facts=facts, next_hint=next_hint, status="ok")
+
+    if show_fields:
+        state.console.print()
+        _render_fields(state, field_records, pii_candidate_count)
+    elif pii_candidate_count > 0:
+        state.console.print()
+        _render_pii_honesty(state, pii_candidate_count)
+        state.console.print(hint("Tip:"), "add", code("--show-fields"), "for per-field detail.")
+
+
+# ---------------------------------------------------------------------------
+# `decoy scan fields SCAN` -- list fields from a saved scan (was the storm verb)
+# ---------------------------------------------------------------------------
 
 
 def _fields(
@@ -753,18 +890,18 @@ def _fields(
         False, "--verbose", "-v", help="Enable debug-level CLI logs on stderr."
     ),
 ) -> None:
-    """List fields from a saved STORM scan, with optional filters.
+    """List fields from a saved scan, with optional filters.
 
-    The list view of the web FORECAST drill-down -- print the fields that
-    matter, filter by PII bucket or quasi-identifier membership, pipe the
-    result somewhere else. For per-field detail, see `decoy storm show`.
+    Print the fields that matter, filter by PII bucket or quasi-identifier
+    membership, pipe the result somewhere else. For per-field detail, see
+    `decoy scan show`.
     """
     state = setup_output(json_, quiet, verbose)
 
     try:
         data = _load_scan_dict(scan)
     except (FileNotFoundError, _json.JSONDecodeError, OSError) as exc:
-        _emit_load_error(state, scan, exc, "storm fields")
+        _emit_load_error(state, scan, exc, "scan fields")
         raise typer.Exit(code=EXIT_USAGE)
 
     fields = data.get("fields", [])
@@ -790,7 +927,7 @@ def _fields(
         emit_json(
             state,
             {
-                "command": "storm fields",
+                "command": "scan fields",
                 "status": "ok",
                 "scan": scan,
                 "matched": len(rows),
@@ -832,7 +969,12 @@ def _fields(
 
     if rows and scan != "-":
         first = rows[0]["name"]
-        state.console.print(hint("Next:"), code(f"decoy storm show {scan} {first}"))
+        state.console.print(hint("Next:"), code(f"decoy scan show {scan} {first}"))
+
+
+# ---------------------------------------------------------------------------
+# `decoy scan show SCAN FIELD` -- per-field detail (was the storm verb)
+# ---------------------------------------------------------------------------
 
 
 def _show(
@@ -850,18 +992,17 @@ def _show(
         False, "--verbose", "-v", help="Enable debug-level CLI logs on stderr."
     ),
 ) -> None:
-    """Per-field detail from a saved STORM scan.
+    """Per-field detail from a saved scan.
 
     The drill-down view of one field: PII score + bucket, detector matches,
-    sentinel hits, top values, quasi-identifier membership. Stays read-only
-    -- for live exploration use the web FORECAST panel.
+    sentinel hits, top values, quasi-identifier membership. Read-only.
     """
     state = setup_output(json_, quiet, verbose)
 
     try:
         data = _load_scan_dict(scan)
     except (FileNotFoundError, _json.JSONDecodeError, OSError) as exc:
-        _emit_load_error(state, scan, exc, "storm show")
+        _emit_load_error(state, scan, exc, "scan show")
         raise typer.Exit(code=EXIT_USAGE)
 
     fields = data.get("fields", [])
@@ -874,7 +1015,7 @@ def _show(
             emit_json(
                 state,
                 {
-                    "command": "storm show",
+                    "command": "scan show",
                     "status": "error",
                     "scan": scan,
                     "field": field,
@@ -893,7 +1034,7 @@ def _show(
             else:
                 state.err_console.print(
                     " ", hint("hint:"), "list all fields with",
-                    code(f"decoy storm fields {scan}"),
+                    code(f"decoy scan fields {scan}"),
                 )
         raise typer.Exit(code=EXIT_USAGE)
 
@@ -909,7 +1050,7 @@ def _show(
         emit_json(
             state,
             {
-                "command": "storm show",
+                "command": "scan show",
                 "status": "ok",
                 "scan": scan,
                 "field": matched,
@@ -950,11 +1091,11 @@ def _show(
 
     next_hint = None
     if scan != "-":
-        next_hint = f"decoy storm fields {scan}"
+        next_hint = f"decoy scan fields {scan}"
 
     render_card(
         state,
-        command="decoy storm show",
+        command="decoy scan show",
         facts=facts,
         next_hint=next_hint,
         status="ok",
@@ -983,6 +1124,11 @@ def _show(
         state.console.print(t)
 
 
+# ---------------------------------------------------------------------------
+# `decoy scan diff OLD NEW` -- compare two saved scans (was the storm verb)
+# ---------------------------------------------------------------------------
+
+
 def _diff(
     old: str = typer.Argument(
         ..., help="Path to the older STORM scan JSON, or `-` for stdin."
@@ -1004,9 +1150,9 @@ def _diff(
         False, "--verbose", "-v", help="Enable debug-level CLI logs on stderr."
     ),
 ) -> None:
-    """Compare two STORM scans -- catch schema, PII, and risk drift.
+    """Compare two scans -- catch schema, PII, and risk drift.
 
-    Designed for CI: run `decoy storm diff baseline.json new.json --strict`
+    Designed for CI: run `decoy scan diff baseline.json new.json --strict`
     on every PR to fail the build when a column's PII bucket goes up, a new
     high-PII field appears, or a new quasi-identifier group forms. Read-only
     -- the scans are JSON; raw data never enters the CLI.
@@ -1018,7 +1164,7 @@ def _diff(
             emit_json(
                 state,
                 {
-                    "command": "storm diff",
+                    "command": "scan diff",
                     "status": "error",
                     "error": "only one of OLD or NEW can be `-` (stdin).",
                 },
@@ -1035,12 +1181,12 @@ def _diff(
     try:
         old_data = _load_scan_dict(old)
     except (FileNotFoundError, _json.JSONDecodeError, OSError) as exc:
-        _emit_load_error(state, old, exc, "storm diff")
+        _emit_load_error(state, old, exc, "scan diff")
         raise typer.Exit(code=EXIT_USAGE)
     try:
         new_data = _load_scan_dict(new)
     except (FileNotFoundError, _json.JSONDecodeError, OSError) as exc:
-        _emit_load_error(state, new, exc, "storm diff")
+        _emit_load_error(state, new, exc, "scan diff")
         raise typer.Exit(code=EXIT_USAGE)
 
     old_fields = {
@@ -1113,7 +1259,7 @@ def _diff(
         emit_json(
             state,
             {
-                "command": "storm diff",
+                "command": "scan diff",
                 "status": "ok",
                 "old": old,
                 "new": new,
@@ -1163,13 +1309,13 @@ def _diff(
     status_token = "warn" if drift else "ok"
     next_hint = None
     if pii_increased and new != "-":
-        next_hint = f"decoy storm show {new} {pii_increased[0]['name']}"
+        next_hint = f"decoy scan show {new} {pii_increased[0]['name']}"
     elif new_high_pii and new != "-":
-        next_hint = f"decoy storm show {new} {new_high_pii[0]['name']}"
+        next_hint = f"decoy scan show {new} {new_high_pii[0]['name']}"
 
     render_card(
         state,
-        command="decoy storm diff",
+        command="decoy scan diff",
         facts=facts,
         next_hint=next_hint,
         status=status_token,
@@ -1246,331 +1392,14 @@ def _diff(
         raise typer.Exit(code=EXIT_USAGE)
 
 
-def _test_command(
-    seconds: float = typer.Option(
-        _DEFAULT_TEST_SECONDS, "--seconds",
-        help="How long to run the simulated scan stages (default 10).",
-        min=0.0,
-    ),
-    json_: bool = typer.Option(
-        False, "--json",
-        help="Skip the animation, emit a fake scan-shaped envelope to stdout.",
-    ),
-    quiet: bool = typer.Option(
-        False, "--quiet", "-q",
-        help="Suppress stdout. Skips the animation and exits 0.",
-    ),
-    verbose: bool = typer.Option(
-        False, "--verbose", "-v",
-        help="Enable debug-level CLI logs on stderr.",
-    ),
-) -> None:
-    """Preview the `storm analyze` UX without scanning any data.
+# The hidden default command: `decoy scan SOURCE` (no subcommand) routes here
+# via the shared default-command group. Hidden so it stays out of help / the
+# generated reference / completion, while the group can still dispatch to it.
+scan_app.command(name="_scan", hidden=True, epilog=_SCAN_EPILOG)(_scan)
+scan_app.command(name="fields", epilog=_FIELDS_EPILOG)(_fields)
+scan_app.command(name="show", epilog=_SHOW_EPILOG)(_show)
+scan_app.command(name="diff", epilog=_DIFF_EPILOG)(_diff)
 
-    Runs the stormy multistage animation for ~10 seconds (the default), then
-    prints a clearly-marked fake summary card. No data is read; nothing is
-    written. Use this to demo the CLI on a clean terminal, record a screen
-    capture, or confirm the storm animation renders before pointing the real
-    scan at a slow dataset.
+SCAN_EPILOG = _SCAN_EPILOG
 
-    --json and --quiet skip the animation -- they are pipeline-shape only.
-    """
-    state = setup_output(json_, quiet, verbose)
-
-    if state.mode is OutputMode.json:
-        emit_json(
-            state,
-            {
-                "command": "storm test",
-                "status": "ok",
-                "demo": True,
-                "facts": dict(_FAKE_FACTS),
-            },
-        )
-        return
-
-    if state.mode is OutputMode.quiet:
-        return
-
-    per_stage = (seconds / len(_TEST_STAGES)) if _TEST_STAGES else 0.0
-    with stormy_multistage(state, list(_TEST_STAGES)) as ms:
-        for _ in _TEST_STAGES:
-            if per_stage > 0:
-                time.sleep(per_stage)
-            ms.complete()
-
-    render_card(
-        state,
-        command="decoy storm test",
-        facts=_FAKE_FACTS,
-        next_hint="decoy storm analyze path/to/your/data.csv",
-        status="ok",
-    )
-
-
-# Deprecated alias for `decoy storm scan` -> `decoy storm analyze`.
-# OSS.4a (2026-06-02): the verb was renamed because `analyze` is a truer
-# name for what the command does (look at the data, tell the user what's
-# in it). `scan` keeps working for one minor release (removal target:
-# 0.2.0) and emits a stderr warning on every invocation so scripts that
-# pipe-import the JSON output keep working while the world rewrites.
-# Pattern source: kubectl deprecation convention.
-#
-# functools.wraps copies _scan's __wrapped__, __module__, __name__,
-# __qualname__, __doc__, __dict__, __annotations__, and most
-# importantly __signature__ -- Typer introspects __signature__ when
-# building the help body + parameter parser, so the alias renders
-# the SAME --help / parameters as `analyze`.
-import functools as _functools  # noqa: E402 -- deliberate: alias must build after analyze is defined
-
-
-@_functools.wraps(_scan)
-def _scan_deprecated_shim(*args, **kwargs):  # type: ignore[no-untyped-def]
-    sys.stderr.write(
-        "warning: `decoy storm scan` is deprecated; "
-        "use `decoy storm analyze`. "
-        "`scan` will be removed in 0.2.0.\n"
-    )
-    return _scan(*args, **kwargs)
-
-
-def _integrity(
-    masked: Path = typer.Argument(
-        ...,
-        exists=True,
-        dir_okay=False,
-        readable=True,
-        help="Path to the masked CSV to verify.",
-    ),
-    source: Path = typer.Option(
-        ...,
-        "--source",
-        exists=True,
-        dir_okay=False,
-        readable=True,
-        help="Pre-mask source CSV (ground truth for the integrity check).",
-    ),
-    config: Path | None = typer.Option(
-        None,
-        "--config",
-        exists=True,
-        dir_okay=False,
-        readable=True,
-        help=(
-            "Optional pipeline.yaml. When passed, policy_validation can "
-            "compare against the configured masks. Without it the runner "
-            "still produces residual_pii + fk_preservation findings."
-        ),
-    ),
-    out: Path | None = typer.Option(
-        None,
-        "--out",
-        help=(
-            "Write the JobStormReport JSON to this path. The Rich table "
-            "still renders to stderr."
-        ),
-    ),
-    allow_source_mismatch: bool = typer.Option(
-        False,
-        "--allow-source-mismatch",
-        help=(
-            "Suppress the stderr warning when --source does not match "
-            "the pipeline's declared sources block."
-        ),
-    ),
-    json_: bool = typer.Option(
-        False,
-        "--json",
-        help="Emit the full JobStormReport JSON to stdout. No card.",
-    ),
-    quiet: bool = typer.Option(
-        False, "--quiet", "-q", help="Suppress stdout. Errors still go to stderr."
-    ),
-    verbose: bool = typer.Option(
-        False, "--verbose", "-v", help="Enable debug-level CLI logs on stderr."
-    ),
-) -> None:
-    """Verify a masked file's integrity against its pre-mask source.
-
-    Wraps `decoy_engine.storm.postmask.run_storm_post_mask`. Runs the
-    three post-mask check buckets (residual_pii, fk_preservation,
-    policy_validation) the platform's mask job already runs when
-    `run_storm: true` is declared in the pipeline; this verb lets the
-    CLI user run the same checks standalone.
-
-    Exit codes: 0 clean; 4 EXIT_FINDINGS on any fail-severity finding;
-    1 EXIT_USAGE for missing files; 3 EXIT_RUNTIME for unexpected
-    exceptions.
-
-    OSS.4b (2026-06-02).
-    """
-    import pandas as pd
-    state = setup_output(json_, quiet, verbose)
-    masked_str = str(masked)
-    source_str = str(source)
-
-    try:
-        from decoy_engine.storm.postmask import run_storm_post_mask
-
-        source_df = pd.read_csv(source)
-        masked_df = pd.read_csv(masked)
-
-        config_dict: dict
-        table_name: str
-        if config is not None:
-            import yaml as _yaml
-            from decoy_engine import PipelineConfig
-
-            raw = _yaml.safe_load(config.read_text(encoding="utf-8"))
-            config_dict = PipelineConfig.model_validate(raw).model_dump()
-            # Pick the first declared table name. Mixed-mode configs
-            # can declare multiple; the CLI verb today handles a single
-            # source/masked pair, so we anchor on the first table the
-            # pipeline declared and warn if the user passed a source
-            # that points elsewhere.
-            tables = config_dict.get("tables") or []
-            table_name = tables[0]["name"] if tables else masked.stem
-            declared_sources = config_dict.get("sources") or {}
-            declared_path = None
-            if table_name in declared_sources:
-                declared_path = declared_sources[table_name].get("path")
-            if (
-                declared_path
-                and not allow_source_mismatch
-                and Path(declared_path).resolve() != source.resolve()
-            ):
-                state.err_console.print(
-                    hint("warning:"),
-                    f"--source {source_str} does not match pipeline "
-                    f"input.path {declared_path}; proceeding with --source "
-                    "as ground truth (suppress with --allow-source-mismatch).",
-                )
-        else:
-            # No config: synthesize a minimal dict. The runner's
-            # residual_pii + policy_validation branches degrade
-            # gracefully when relationships + sources + tables are
-            # absent (verified against
-            # decoy_engine.storm.postmask.runner docstring +
-            # tests/unit/storm/test_postmask_runner.py).
-            table_name = masked.stem
-            config_dict = {
-                "version": 1,
-                "global_settings": {"seed": 0},
-                "sources": {},
-                "tables": [],
-                "targets": {},
-                "relationships": [],
-            }
-
-        report = run_storm_post_mask(
-            source_frames={table_name: source_df},
-            output_frames={table_name: masked_df},
-            config=config_dict,
-        )
-
-        if out is not None:
-            out.write_text(_json.dumps(report, indent=2))
-
-        # Decide exit code based on the report's severity counters.
-        fail_count = int(report.get("fail_count") or 0)
-        error_count = int(report.get("error_count") or 0)
-        exit_code = EXIT_FINDINGS if (fail_count + error_count) > 0 else 0
-
-        if state.mode is OutputMode.json:
-            emit_json(
-                state,
-                {
-                    "command": "storm integrity",
-                    "status": "ok" if exit_code == 0 else "findings",
-                    "masked": masked_str,
-                    "source": source_str,
-                    "report": report,
-                },
-            )
-        elif state.mode is not OutputMode.quiet:
-            # Render a 3-row summary table; the per-finding detail
-            # lives in the JSON payload (--json or --out).
-            table = make_table("Bucket", "Findings", "Severities", title="Storm integrity")
-            for bucket in ("residual_pii", "fk_preservation", "policy_validation"):
-                findings = report.get(bucket) or []
-                if not findings:
-                    table.add_row(bucket, "0", success("clean"))
-                    continue
-                sevs: dict[str, int] = {}
-                for f in findings:
-                    sev = (f.get("severity") if isinstance(f, dict) else None) or "info"
-                    sevs[sev] = sevs.get(sev, 0) + 1
-                sev_text = ", ".join(f"{k}:{v}" for k, v in sorted(sevs.items()))
-                table.add_row(bucket, str(len(findings)), sev_text)
-            state.console.print(table)
-            counters = (
-                f"pass={report.get('pass_count', 0)}  "
-                f"warning={report.get('warning_count', 0)}  "
-                f"fail={fail_count}  "
-                f"error={error_count}"
-            )
-            state.console.print(counters)
-            if exit_code == 0:
-                state.console.print(success("OK"), "no fail or error findings.")
-            else:
-                state.console.print(
-                    risk_high("FINDINGS"),
-                    f"{fail_count + error_count} fail/error findings; review the report.",
-                )
-
-        if exit_code != 0:
-            raise typer.Exit(code=exit_code)
-
-    except typer.Exit:
-        raise
-    except FileNotFoundError as exc:
-        if state.mode is OutputMode.json:
-            emit_json(
-                state,
-                {
-                    "command": "storm integrity",
-                    "status": "error",
-                    "masked": masked_str,
-                    "source": source_str,
-                    "error": str(exc),
-                },
-            )
-        elif state.mode is not OutputMode.quiet:
-            state.err_console.print(error("error:"), str(exc))
-        raise typer.Exit(code=EXIT_USAGE)
-    except Exception as exc:
-        error_text = str(exc)
-        if len(error_text) > 500:
-            error_text = error_text[:500] + "..."
-        if state.mode is OutputMode.json:
-            emit_json(
-                state,
-                {
-                    "command": "storm integrity",
-                    "status": "error",
-                    "masked": masked_str,
-                    "source": source_str,
-                    "error": error_text,
-                },
-            )
-        elif state.mode is not OutputMode.quiet:
-            state.err_console.print(error("error:"), error_text)
-            state.err_console.print(
-                " ", hint("hint:"), "rerun with --verbose for the full traceback.",
-            )
-        if state.verbose:
-            state.err_console.print_exception()
-        raise typer.Exit(code=EXIT_RUNTIME)
-
-
-# Canonical: `decoy storm analyze` (OSS.4a, 2026-06-02).
-storm_app.command(name="analyze", epilog=_ANALYZE_EPILOG)(_scan)
-# Deprecated alias: `decoy storm scan`. Removal target: 0.2.0.
-storm_app.command(name="scan", epilog=_SCAN_EPILOG)(_scan_deprecated_shim)
-# OSS.4b (2026-06-02): post-run integrity verb. CLI wrapper for
-# decoy_engine.storm.postmask.run_storm_post_mask.
-storm_app.command(name="integrity", epilog=_INTEGRITY_EPILOG)(_integrity)
-storm_app.command(name="fields", epilog=_FIELDS_EPILOG)(_fields)
-storm_app.command(name="show", epilog=_SHOW_EPILOG)(_show)
-storm_app.command(name="diff", epilog=_DIFF_EPILOG)(_diff)
-storm_app.command(name="test", epilog=_TEST_EPILOG)(_test_command)
+__all__ = ["SCAN_EPILOG", "scan_app"]

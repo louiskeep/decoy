@@ -1,7 +1,7 @@
 """decoy.mask() / decoy.scan() -- the library one-liner API (OSS-launch S6).
 
 Thin wrappers over `decoy_engine`'s existing public entrypoints. They reuse
-the exact CLI helper functions `decoy run` / `decoy storm analyze` call
+the exact CLI helper functions `decoy run` / `decoy scan` call
 (config loading, source loading, mask-secret validation, output writing) so
 `import decoy; decoy.mask(...)` walks the SAME engine path as the CLI --
 same determinism, same keyed-secret fail-closed gate -- never a
@@ -11,7 +11,7 @@ wrapper around decoy-engine; all data logic lives in the engine."
     decoy.mask(...)  wraps decoy_engine.run_pipeline  (the call `decoy run`
                       makes for non-chunked runs).
     decoy.scan(...)  wraps decoy_engine.run_storm     (the call
-                      `decoy storm analyze` makes).
+                      `decoy scan` makes).
 
 Both accept a config/source shaped exactly like the pipeline YAML `decoy
 run` consumes (a dict with `version`, `global_settings`, `tables`,
@@ -38,8 +38,8 @@ from decoy.cli.run import (
     _load_sources_from_config,
     _write_mask_outputs,
 )
-from decoy.cli.storm import InputFormat, SampleStrategy, _load_data, _parse_layout
-from decoy.cli.storm import _infer_format as _storm_infer_format
+from decoy.cli.scan import InputFormat, SampleStrategy, _load_data, _parse_layout
+from decoy.cli.scan import _infer_format as _storm_infer_format
 
 __all__ = [
     "ConfigValidationError",
@@ -555,9 +555,9 @@ def scan(
     layout: Any = None,
 ):
     """Profile a dataset for PII / re-identification risk, through the same
-    engine path `decoy storm analyze` uses.
+    engine path `decoy scan` uses.
 
-    Wraps `decoy_engine.run_storm` -- exactly what `decoy storm analyze`
+    Wraps `decoy_engine.run_storm` -- exactly what `decoy scan`
     calls after loading the source into a DataFrame.
 
     Args:
@@ -576,9 +576,9 @@ def scan(
             list (`[{"name": ..., "start": ..., "width": ...}, ...]`).
 
     Returns:
-        A `decoy_engine.StormProfile` -- the same object `decoy storm
-        analyze` serializes to `scan_<timestamp>.json`. Call `.to_dict()`
-        for the JSON-ready shape.
+        A `decoy_engine.StormProfile` -- the same object `decoy scan
+        --output scan.json` serializes. Call `.to_dict()` for the
+        JSON-ready shape.
     """
     from decoy_engine import run_storm
 

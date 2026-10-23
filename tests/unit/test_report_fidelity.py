@@ -1,12 +1,11 @@
-"""Unit tests for `decoy validate distribution` (BF1, Sprint 5).
+"""Unit tests for `decoy report fidelity` (relocated from the validate group, S4b).
 
-Covers the CLI-side logic that is NOT already exercised end to end by
-tests/e2e/test_validate_distribution_e2e.py: flag validation, --joint spec
-parsing, the --min-grade/--min-score shorthand translation, the
---config -> strategy_map flattening helper, and -- the headline assertion
-for this slice -- that the CLI computes NO fidelity metric itself. It is a
-thin surface over `decoy_engine.quality.compute_quality_report` +
-`apply_quality_policy`; this file spies on both to prove it.
+Covers the CLI-side logic: flag validation, --joint spec parsing, the
+--min-grade/--min-score shorthand translation, the --config -> strategy_map
+flattening helper, and -- the headline assertion -- that the CLI computes NO
+fidelity metric itself. It is a thin surface over
+`decoy_engine.quality.compute_quality_report` + `apply_quality_policy`; this
+file spies on both to prove it.
 """
 
 from __future__ import annotations
@@ -22,7 +21,7 @@ from typer.testing import CliRunner
 
 from decoy.__main__ import app
 from decoy.cli.exit_codes import EXIT_FINDINGS, EXIT_USAGE
-from decoy.cli.validate import _GRADE_MIN_SCORE, _build_strategy_map
+from decoy.cli.report import _GRADE_MIN_SCORE, _build_strategy_map
 
 runner = CliRunner()
 
@@ -54,11 +53,11 @@ def test_distribution_calls_engine_compute_quality_report(tmp_path: Path):
         mock.patch.object(eq, "compute_quality_report", wraps=real_report) as spy_report,
         mock.patch.object(eq, "apply_quality_policy", wraps=real_policy) as spy_policy,
     ):
-        result = runner.invoke(app, ["validate", "distribution", str(src), str(out), "--json"])
+        result = runner.invoke(app, ["report", "fidelity", str(src), str(out), "--json"])
 
     assert result.exit_code == 0, result.output
-    assert spy_report.call_count == 1, "validate distribution must call compute_quality_report exactly once"
-    assert spy_policy.call_count == 1, "validate distribution must call apply_quality_policy exactly once"
+    assert spy_report.call_count == 1, "report fidelity must call compute_quality_report exactly once"
+    assert spy_policy.call_count == 1, "report fidelity must call apply_quality_policy exactly once"
 
     payload = _json.loads(result.output)
     assert payload["schema_version"] == "quality-report/v1"
@@ -74,7 +73,7 @@ def test_distribution_expect_row_parity_true_by_default(tmp_path: Path):
     import decoy_engine.quality as eq
 
     with mock.patch.object(eq, "compute_quality_report", wraps=eq.compute_quality_report) as spy:
-        result = runner.invoke(app, ["validate", "distribution", str(src), str(out), "--json"])
+        result = runner.invoke(app, ["report", "fidelity", str(src), str(out), "--json"])
 
     assert result.exit_code == 0, result.output
     _, kwargs = spy.call_args
@@ -89,7 +88,7 @@ def test_distribution_generate_flag_sets_expect_row_parity_false(tmp_path: Path)
 
     with mock.patch.object(eq, "compute_quality_report", wraps=eq.compute_quality_report) as spy:
         result = runner.invoke(
-            app, ["validate", "distribution", str(src), str(out), "--generate", "--json"]
+            app, ["report", "fidelity", str(src), str(out), "--generate", "--json"]
         )
 
     assert result.exit_code == 0, result.output
@@ -112,7 +111,7 @@ def test_distribution_generate_flag_sets_expect_row_parity_false(tmp_path: Path)
 def test_distribution_joint_bad_spec_exits_usage(tmp_path: Path):
     src, out = _write_pair(tmp_path, {"a": [1], "b": [2]}, {"a": [1], "b": [2]})
     result = runner.invoke(
-        app, ["validate", "distribution", str(src), str(out), "--joint", "onlyone"]
+        app, ["report", "fidelity", str(src), str(out), "--joint", "onlyone"]
     )
     assert result.exit_code == EXIT_USAGE
 
@@ -126,7 +125,7 @@ def test_distribution_joint_produces_pairwise_block(tmp_path: Path):
     )
     result = runner.invoke(
         app,
-        ["validate", "distribution", str(src), str(out), "--joint", "state,tier", "--json"],
+        ["report", "fidelity", str(src), str(out), "--joint", "state,tier", "--json"],
     )
     assert result.exit_code == 0, result.output
     payload = _json.loads(result.output)
@@ -143,7 +142,7 @@ def test_distribution_joint_produces_pairwise_block(tmp_path: Path):
 def test_distribution_bad_mode_exits_usage(tmp_path: Path):
     src, out = _write_pair(tmp_path, {"a": [1]}, {"a": [1]})
     result = runner.invoke(
-        app, ["validate", "distribution", str(src), str(out), "--mode", "bogus"]
+        app, ["report", "fidelity", str(src), str(out), "--mode", "bogus"]
     )
     assert result.exit_code == EXIT_USAGE
 
@@ -151,7 +150,7 @@ def test_distribution_bad_mode_exits_usage(tmp_path: Path):
 def test_distribution_bad_min_grade_exits_usage(tmp_path: Path):
     src, out = _write_pair(tmp_path, {"a": [1]}, {"a": [1]})
     result = runner.invoke(
-        app, ["validate", "distribution", str(src), str(out), "--min-grade", "Z"]
+        app, ["report", "fidelity", str(src), str(out), "--min-grade", "Z"]
     )
     assert result.exit_code == EXIT_USAGE
 
@@ -161,8 +160,8 @@ def test_distribution_min_grade_and_min_score_together_exits_usage(tmp_path: Pat
     result = runner.invoke(
         app,
         [
-            "validate",
-            "distribution",
+            "report",
+            "fidelity",
             str(src),
             str(out),
             "--min-grade",
@@ -185,7 +184,7 @@ def test_min_grade_translates_to_engine_grade_thresholds(grade, expected):
 def test_distribution_mode_fail_with_drift_exits_findings(tmp_path: Path):
     """Slice 1 acceptance 3: --mode fail on drifted output exits EXIT_FINDINGS
     (not EXIT_RUNTIME -- see the module docstring for the deviation rationale:
-    this mirrors `decoy storm integrity`'s data-audit exit-code contract)."""
+    this mirrors `decoy report integrity`'s data-audit exit-code contract)."""
     src, out = _write_pair(
         tmp_path,
         {"a": list(range(50))},
@@ -193,7 +192,7 @@ def test_distribution_mode_fail_with_drift_exits_findings(tmp_path: Path):
     )
     result = runner.invoke(
         app,
-        ["validate", "distribution", str(src), str(out), "--mode", "fail", "--min-grade", "B"],
+        ["report", "fidelity", str(src), str(out), "--mode", "fail", "--min-grade", "B"],
     )
     assert result.exit_code == EXIT_FINDINGS, result.output
 
@@ -209,8 +208,8 @@ def test_distribution_mode_report_never_fails_even_with_drift(tmp_path: Path):
     result = runner.invoke(
         app,
         [
-            "validate",
-            "distribution",
+            "report",
+            "fidelity",
             str(src),
             str(out),
             "--mode",
@@ -235,8 +234,8 @@ def test_distribution_fail_on_warning_promotes_warn_to_nonzero(tmp_path: Path):
     warn_result = runner.invoke(
         app,
         [
-            "validate",
-            "distribution",
+            "report",
+            "fidelity",
             str(src),
             str(out),
             "--mode",
@@ -250,8 +249,8 @@ def test_distribution_fail_on_warning_promotes_warn_to_nonzero(tmp_path: Path):
     fail_on_warning_result = runner.invoke(
         app,
         [
-            "validate",
-            "distribution",
+            "report",
+            "fidelity",
             str(src),
             str(out),
             "--mode",
@@ -322,8 +321,8 @@ def test_distribution_config_prevents_intentional_loss_from_flagging(tmp_path: P
     with_config = runner.invoke(
         app,
         [
-            "validate",
-            "distribution",
+            "report",
+            "fidelity",
             str(src),
             str(out),
             "--config",
@@ -352,7 +351,7 @@ def test_distribution_missing_source_exits_usage(tmp_path: Path):
     out = tmp_path / "output.csv"
     pd.DataFrame({"a": [1]}).to_csv(out, index=False)
     result = runner.invoke(
-        app, ["validate", "distribution", str(tmp_path / "nope.csv"), str(out)]
+        app, ["report", "fidelity", str(tmp_path / "nope.csv"), str(out)]
     )
     assert result.exit_code != 0
 
@@ -363,8 +362,8 @@ def test_distribution_report_out_writes_json(tmp_path: Path):
     result = runner.invoke(
         app,
         [
-            "validate",
-            "distribution",
+            "report",
+            "fidelity",
             str(src),
             str(out),
             "--report-out",

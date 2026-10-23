@@ -7,12 +7,19 @@ only by convention. A single typo would silently change the contract; a
 contributor reading the source had no way to learn what each code meant short
 of grepping every call site.
 
-The five values below are the public exit-code contract. Their INTEGER VALUES
+The values below are the public exit-code contract. Their INTEGER VALUES
 are stable across releases (callers in shell scripts, CI pipelines, and Make
-recipes depend on them). The names may evolve; the integers may not.
+recipes depend on them). The names may evolve; the integers may not. Code 2 is
+EXIT_WARNINGS: a command ran clean except for advisory warnings and
+`--fail-on-warning` was set (the warning-blocking CI gate). Previously the
+integer belonged to the `forge` deprecation shim (removed pre-GA) and S1 docs
+mislabeled it "reserved/unused"; in fact `validate`/`preflight` already
+returned 2 under `--fail-on-warning`, so S2 promotes it to this public name
+with one meaning across every path.
 
-OSS.4b (2026-06-02) added EXIT_FINDINGS=4 to support `decoy storm integrity`,
-which has a meaningful 4th state distinct from the existing three: the
+OSS.4b (2026-06-02) added EXIT_FINDINGS=4 to support `decoy report integrity`
+(which began under the now-retired `storm` group, relocated in S4b), which has
+a meaningful 4th state distinct from the existing three: the
 operation ran cleanly, but the data being checked has issues the integrity
 runner flagged. Adding a new constant is a MINOR-eligible additive change per
 docs/release/versioning.md (existing integers 0-3 do not move). Source
@@ -20,11 +27,10 @@ pattern: semgrep's exit-code split (0 pass, 1 findings, 2 error); the analog
 here is 0 clean / 4 findings / 3 runtime crash.
 
 The OOM checker v1 (2026-07-24) added EXIT_CAPACITY=5: `decoy run` and
-`decoy preflight` both need a way to say "this job needs more memory than
-the host has" distinctly from a generic engine crash (EXIT_RUNTIME) or a bad
-config (EXIT_USAGE). `2` is already spoken for (`EXIT_DEPRECATED_SHIM`), so
-the new value is `5`, the next unused integer -- 0-4 are pinned and do not
-move.
+`decoy validate preflight` both need a way to say "this job needs more memory
+than the host has" distinctly from a generic engine crash (EXIT_RUNTIME) or a
+bad config (EXIT_USAGE). The value is `5` -- 0, 1, 2, 3, and 4 are pinned and
+do not move (2 is EXIT_WARNINGS, see above).
 
 Reference: README "Exit codes" section + `decoy explain exit-codes`.
 """
@@ -40,11 +46,15 @@ EXIT_USAGE: int = 1
 validation, a path that did not exist, a flag combination that was invalid.
 The fix is in the user's request, not in the CLI itself."""
 
-EXIT_DEPRECATED_SHIM: int = 2
-"""The legacy `forge` console script was invoked. The user is on the old name;
-the CLI prints a migration hint and exits without running. Reserved for the
-`decoy._deprecated` shim only; do not reuse for other deprecation cases
-without a public-contract conversation first."""
+EXIT_WARNINGS: int = 2
+"""The command ran clean except for advisory warnings, and `--fail-on-warning`
+was set. Returned by `decoy validate config`/`validate preflight` (and the
+`validate` aggregate) when no error or failure fired but at least one warning
+did and the caller opted to treat warnings as blocking. Without
+`--fail-on-warning` the same run exits EXIT_OK. (The integer previously
+belonged to the removed `forge` deprecation shim; it is reused here rather
+than held open, since a warning-blocking result is a genuinely distinct state
+from EXIT_OK and EXIT_USAGE.)"""
 
 EXIT_RUNTIME: int = 3
 """The CLI itself blew up at run time: the engine raised an unexpected error,
@@ -54,7 +64,7 @@ pipelines can route a runtime crash to a different alert."""
 
 EXIT_FINDINGS: int = 4
 """The CLI ran cleanly but found data issues. Used by data-validation /
-integrity verbs (`decoy storm integrity` is the first; future verbs that
+integrity verbs (`decoy report integrity` is the first; future verbs that
 audit data rather than execute it will reuse this code). The fix is in the
 data being checked, not in the CLI or the user's invocation. Pattern source:
 semgrep's exit-code split (0 pass, 1 findings, 2 error). Distinct from
@@ -63,8 +73,8 @@ EXIT_USAGE (the user gave bad input) and EXIT_RUNTIME (the CLI crashed)."""
 EXIT_CAPACITY: int = 5
 """The job needs more memory than this host (or the budget it was given) has.
 Raised by `decoy run` when the engine's out-of-core-FK memory gate refuses a
-job, and by `decoy preflight` when its capacity check predicts the same
-refusal before the run starts. The fix is a bigger host/cgroup ceiling or a
+job, and by `decoy validate preflight` when its capacity check predicts the
+same refusal before the run starts. The fix is a bigger host/cgroup ceiling or a
 smaller job -- not a config mistake (EXIT_USAGE) and not an engine defect
 (EXIT_RUNTIME).
 
@@ -89,9 +99,9 @@ v1 checks the out-of-core-FK route only; see `decoy explain exit-codes`."""
 
 __all__ = [
     "EXIT_CAPACITY",
-    "EXIT_DEPRECATED_SHIM",
     "EXIT_FINDINGS",
     "EXIT_OK",
     "EXIT_RUNTIME",
     "EXIT_USAGE",
+    "EXIT_WARNINGS",
 ]

@@ -1,4 +1,4 @@
-"""`decoy validate` -- config schema checks + distribution fidelity checks.
+"""`decoy validate` -- the pre-run validation gate (config / compile / preflight).
 
 CLI.2 commit 1 (2026-06-02): rewired against the V2 choke point. Pre-fix the
 module imported `validate_graph` (deleted under S22) from `decoy_engine`
@@ -28,27 +28,20 @@ SP-16 (2026-06-28):
   --fail-on-warning.
 
 Sprint 5 (BF1, 2026-07-04): `validate` is promoted from a flat command to
-a Typer group so `validate distribution` can sit beside the original
-check. Per the CLI's CLAUDE.md ("Pre-GA = hard delete"), the old
-`decoy validate <cfg>` invocation is renamed to `decoy validate config
-<cfg>`; the `config` subcommand's body is the pre-promotion `validate()`
-function, moved unchanged (same envelope shape, same exit-code contract).
+a Typer group so sibling subcommands can sit beside the original check. Per
+the CLI's CLAUDE.md ("Pre-GA = hard delete"), the old `decoy validate <cfg>`
+invocation is renamed to `decoy validate config <cfg>`; the `config`
+subcommand's body is the pre-promotion `validate()` function, moved unchanged
+(same envelope shape, same exit-code contract).
 
-`validate distribution <source> <output>` is the CLI surface for BF1: it
-recomputes distribution fidelity between a pre-mask/pre-generate source
-CSV and a post-mask/post-generate output CSV via the engine's
-`decoy_engine.quality.compute_quality_report` + `apply_quality_policy`
-(report.py:97, policy.py:142) -- the same functions `decoy fit` already
-depends on siblings of (fit.py:144). This command computes NO fidelity
-metric itself; it is a thin CLI surface over the engine. Recompute (not a
-stored-metric read) is the honest path here: the CLI's local evidence
-manifest (`decoy evidence show/verify`) records file fingerprints but not
-the raw frames, so it cannot supply the data the engine needs.
+S4b (CLI redesign): `validate` is now purely PRE-RUN -- it owns
+`config` / `compile` / `preflight` only. The former post-run distribution
+fidelity check relocated to `decoy report fidelity`
+(`decoy.cli.report._fidelity`), beside the other post-run verbs.
 """
 
 from __future__ import annotations
 
-import json
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -56,40 +49,40 @@ from typing import Any
 import typer
 import yaml as _yaml
 
-from decoy.cli.exit_codes import EXIT_FINDINGS, EXIT_USAGE
+from decoy.cli._default_group import make_default_group
+from decoy.cli._yaml_errors import sanitize_yaml_error
+from decoy.cli.exit_codes import EXIT_CAPACITY, EXIT_USAGE, EXIT_WARNINGS
 from decoy.ui.output import OutputMode, emit_json, setup_output
-from decoy.ui.theme import code, error, hint, success, warn
-
-_WARN_EXIT = 2  # Exit code for --fail-on-warning when warnings exist
-
-# Grade -> minimum overall_score, mirroring the engine's own grade
-# thresholds (decoy_engine.quality.report._GRADE_THRESHOLDS: A >= 0.95,
-# B >= 0.85, C >= 0.70, D >= 0.50). The engine maps score -> grade; there
-# is no reverse (grade -> score) helper on the public surface, so
-# `--min-grade` needs its own copy of the same table to translate into a
-# `thresholds.overall.min` policy value. This is a threshold-translation
-# convenience, not a new metric: the score and grade themselves still
-# come entirely from `compute_quality_report`.
-_GRADE_MIN_SCORE: dict[str, float] = {"A": 0.95, "B": 0.85, "C": 0.70, "D": 0.50}
+from decoy.ui.theme import accent, code, error, hint, success, warn
 
 _VALIDATE_EPILOG = """\
 Examples:
 
+  decoy validate pipeline.yaml
+    Run the whole pre-run gate (config + compile + preflight): one report
+    grouped by layer, one aggregated exit code.
+
   decoy validate config pipeline.yaml
-    Check a YAML pipeline config before running it.
+    Schema + config-only checks (fast, no source read).
 
-  decoy validate distribution source.csv output.csv
-    Recompute distribution fidelity between a pre-mask source and its
-    masked output.
+  decoy validate compile pipeline.yaml --explain
+    Compile the plan, run plan-compile checks, explain per-column decisions.
 
-See also: decoy run, decoy fit.
+  decoy validate preflight pipeline.yaml
+    Source / file / schema readiness + capacity estimate + native probe.
+
+See also: decoy run, decoy fit, decoy report fidelity.
 """
 
 validate_app = typer.Typer(
     name="validate",
+    cls=make_default_group("_gate"),
     help=(
-        "Validate a pipeline config (`config`) or check distribution "
-        "fidelity between a source and an output (`distribution`)."
+        "Pre-run validation gate. `decoy validate CONFIG` runs the whole gate "
+        "(config + compile + preflight) and emits one report + one exit code. "
+        "Subcommands run a single layer: schema + config checks (`config`), plan "
+        "compilation + checks (`compile`), and source/capacity readiness "
+        "(`preflight`). Post-run fidelity checks moved to `decoy report fidelity`."
     ),
     epilog=_VALIDATE_EPILOG,
     no_args_is_help=True,
@@ -110,43 +103,7 @@ Examples:
   decoy validate config pipeline.yaml --fail-on-warning
     Exit non-zero if any advisory warning fires (e.g. output target exists).
 
-See also: decoy run, decoy validate distribution.
-"""
-
-_DISTRIBUTION_EPILOG = """\
-Examples:
-
-  decoy validate distribution source.csv output.csv
-    Recompute distribution fidelity between a pre-mask source and its
-    masked output. Report mode (record only): always exits 0.
-
-  decoy validate distribution source.csv output.csv --config pipeline.yaml
-    Pass the pipeline config so intentional loss (hash, bucketize, ...)
-    is not flagged as accidental drift.
-
-  decoy validate distribution source.csv synthetic.csv --generate
-    Row counts are expected to differ (synthetic generation, not masking).
-
-  decoy validate distribution source.csv output.csv --mode fail --min-grade B
-    Exit non-zero (EXIT_FINDINGS) when the overall grade falls below B.
-
-  decoy validate distribution source.csv output.csv --joint state,tier --json
-    Include a (state, tier) joint fidelity score; emit the full
-    quality-report/v1 + policy JSON.
-
-  decoy validate distribution source.csv output.csv --report-out report.json
-    Also write the full report + policy verdict to disk.
-
-Exit codes: 0 pass (or warn without --fail-on-warning); 4 EXIT_FINDINGS
-when the policy verdict is fail, or warn with --fail-on-warning set;
-1 EXIT_USAGE for bad input (missing columns, unreadable CSV, bad flags).
-
-Note: the sibling `validate config --fail-on-warning` exits 2 for its
-warnings (config well-formedness), while this command exits 4 for its
-warnings (data-fidelity findings). The two subcommands intentionally use
-different warning exit codes for their different domains.
-
-See also: decoy validate config, decoy fit, decoy run.
+See also: decoy run, decoy report fidelity.
 """
 
 
@@ -297,7 +254,7 @@ def config(
     try:
         raw = _yaml.safe_load(config.read_text(encoding="utf-8"))
     except _yaml.YAMLError as exc:
-        acc.add_error(code="yaml.parse_error", message=f"YAML parse error: {exc}")
+        acc.add_error(code="yaml.parse_error", message=sanitize_yaml_error(exc))
         _emit_result(state, acc, config_str, checks_run=None, fail_on_warning=fail_on_warning)
         raise typer.Exit(code=EXIT_USAGE)
 
@@ -360,7 +317,7 @@ def config(
     _emit_result(state, acc, config_str, checks_run=checks_run, fail_on_warning=fail_on_warning)
 
     if fail_on_warning and acc.has_warnings:
-        raise typer.Exit(code=_WARN_EXIT)
+        raise typer.Exit(code=EXIT_WARNINGS)
 
 
 def _emit_result(
@@ -430,124 +387,217 @@ def _emit_result(
 
 
 # ---------------------------------------------------------------------------
-# `decoy validate distribution` (BF1)
+# `decoy validate CONFIG` -- the default pre-run gate (config + compile + preflight)
 # ---------------------------------------------------------------------------
 
 
-def _build_strategy_map(config_dict: dict[str, Any]) -> dict[str, str]:
-    """Flatten column -> strategy across every declared table.
+@dataclass
+class _GateFinding:
+    """One finding in the aggregate gate report, tagged by its layer.
 
-    Mirrors the evidence manifest's strategy-summary loop
-    (`decoy.cli.evidence.build_manifest`). `validate distribution` checks a
-    single source/output CSV pair, not a specific table, so this assumes
-    column names are unique across the pipeline's declared tables; a
-    multi-table config with a repeated column name lets the last table's
-    strategy win. Acceptable for the v1 single source/output scope (D4).
+    layer    in {config, compile, preflight}
+    severity in {error, warning}  (a passing check contributes no finding)
     """
-    strategy_map: dict[str, str] = {}
-    for table in config_dict.get("tables") or []:
-        if not isinstance(table, dict):
+
+    layer: str
+    severity: str
+    code: str
+    message: str
+    location: str | None = None
+
+
+# Canonical layer order for the grouped human report.
+_GATE_LAYERS: tuple[tuple[str, str], ...] = (
+    ("config", "Config"),
+    ("compile", "Compile"),
+    ("preflight", "Preflight"),
+)
+
+
+def _run_config_base(config: Path) -> tuple[dict[str, Any] | None, list[_GateFinding]]:
+    """The shared config layer: YAML parse + schema validate + the profile-free
+    plan-compile checks, composed exactly as `validate config` composes them.
+
+    `run_config_only_checks` is called here EXACTLY ONCE for the whole gate
+    (F5 dedup): compile_plan re-validates a superset of these checks internally
+    on the success path, but the engine's `run_config_only_checks` entrypoint
+    itself fires only on this call.
+
+    Returns `(raw, [])` when the config is valid, or `(None, findings)` with the
+    config-layer error(s) when it fails to parse / schema-validate / pass the
+    config-only checks. A None result means compile/preflight cannot run (they
+    both need a valid config), so the caller short-circuits with EXIT_USAGE.
+    """
+    import decoy_engine
+    from decoy_engine import ConfigError, PipelineConfig, PipelineValidationError
+    from decoy_engine.plan import PlanCompileError
+    from pydantic import ValidationError
+
+    findings: list[_GateFinding] = []
+
+    try:
+        raw = _yaml.safe_load(config.read_text(encoding="utf-8"))
+    except _yaml.YAMLError as exc:
+        findings.append(_GateFinding("config", "error", "yaml.parse_error", sanitize_yaml_error(exc)))
+        return None, findings
+
+    if raw is None:
+        findings.append(_GateFinding("config", "error", "yaml.empty", "Pipeline YAML is empty."))
+        return None, findings
+
+    if not isinstance(raw, dict):
+        findings.append(
+            _GateFinding(
+                "config",
+                "error",
+                "yaml.not_mapping",
+                f"Pipeline YAML must be a YAML mapping (object), not {type(raw).__name__}.",
+            )
+        )
+        return None, findings
+
+    try:
+        PipelineConfig.model_validate(raw)
+    except ValidationError as exc:
+        for e in exc.errors():
+            loc_parts = [str(p) for p in e.get("loc", ())]
+            location = ".".join(loc_parts) if loc_parts else None
+            findings.append(
+                _GateFinding(
+                    "config", "error", e.get("type", "validation_error"), e.get("msg", str(e)), location
+                )
+            )
+        return None, findings
+    except (PipelineValidationError, ConfigError) as exc:
+        findings.append(_GateFinding("config", "error", "pipeline.validation_error", str(exc)))
+        return None, findings
+
+    # Looked up on the module (not a `from ... import` binding) so a test can
+    # spy the single call via `decoy_engine.run_config_only_checks`.
+    try:
+        decoy_engine.run_config_only_checks(raw)
+    except PlanCompileError as exc:
+        from decoy.cli.extras import plan_compile_error_fields
+
+        err_code, message = plan_compile_error_fields(exc)
+        findings.append(_GateFinding("config", "error", err_code, message))
+        return None, findings
+
+    return raw, findings
+
+
+def _run_compile_layer(raw: dict[str, Any]) -> list[_GateFinding]:
+    """The compile layer: a no-profile compile and its plan-compile checks,
+    composed from the same helpers `validate compile --no-profile` uses (the
+    H2 unique-cardinality guard, the empty sentinel profile, `compile_plan`,
+    and the H1 checks-skipped attachment). No check logic is reimplemented.
+
+    Returns compile-layer findings (an error on a compile failure; warnings for
+    any plan-compile warnings). Never raises on a compile error -- the gate runs
+    all layers and aggregates rather than short-circuiting here.
+    """
+    from decoy_engine import __version__ as engine_version
+    from decoy_engine.plan import PlanCompileError, compile_plan
+
+    from decoy.cli.plan import (
+        empty_profile_for_no_profile,
+        find_first_unique_column_path,
+    )
+
+    findings: list[_GateFinding] = []
+
+    # H2 guard (reused from the `compile` command): --no-profile cannot run the
+    # pool-capacity pre-flight, so a cardinality_mode: unique column is refused.
+    unique_column_path = find_first_unique_column_path(raw)
+    if unique_column_path is not None:
+        findings.append(
+            _GateFinding(
+                "compile",
+                "error",
+                "no_profile_unique_incompatible",
+                "--no-profile is incompatible with cardinality_mode: unique "
+                f"(offending column: {unique_column_path}). The basic_uniqueness_pre_flight "
+                "check requires profile data; run `decoy validate compile CONFIG "
+                "--profile <profile.json>`, or remove the unique cardinality_mode.",
+                unique_column_path,
+            )
+        )
+        return findings
+
+    profile = empty_profile_for_no_profile(raw, engine_version)
+    try:
+        plan = compile_plan(raw, profile, decoy_engine_version=engine_version, no_profile=True)
+    except PlanCompileError as exc:
+        from decoy.cli.extras import plan_compile_error_fields
+
+        err_code, message = plan_compile_error_fields(exc)
+        findings.append(
+            _GateFinding("compile", "error", err_code, message, location=exc.path or None)
+        )
+        return findings
+    except Exception as exc:  # mirrors `compile`'s own broad compile-error catch
+        findings.append(_GateFinding("compile", "error", "compile_error", str(exc)))
+        return findings
+
+    for w in plan.plan_compile.warnings:
+        findings.append(_GateFinding("compile", "warning", "compile_warning", w))
+    return findings
+
+
+def _run_preflight_layer(raw: dict[str, Any], config: Path) -> tuple[list[_GateFinding], bool]:
+    """The preflight layer: source/file readiness, target-overwrite advisory,
+    out-of-core-FK capacity, and native companion/eligibility -- the exact check
+    functions `validate preflight` runs for its steps 4-7, reused as-is (steps
+    1-3 are the shared config base, already run once).
+
+    Returns `(findings, capacity_insufficient)`: passing checks contribute no
+    finding; a `fail` maps to an error and a `warn` to a warning. The capacity
+    fan-in impossibility sets `capacity_insufficient`, which the caller uses for
+    the EXIT_CAPACITY precedence.
+    """
+    from decoy.cli.preflight import (
+        _check_capacity,
+        _check_native,
+        _check_source_files,
+        _check_target_overwrite,
+        _PreflightAccumulator,
+    )
+
+    acc = _PreflightAccumulator()
+    _check_source_files(raw, config.parent, acc)
+    _check_target_overwrite(raw, acc)
+    _check_capacity(raw, config, acc)
+    _check_native(raw, acc)
+
+    findings: list[_GateFinding] = []
+    for c in acc.checks:
+        if c.status == "pass":
             continue
-        for col in table.get("columns") or []:
-            if isinstance(col, dict) and col.get("name"):
-                strategy_map[col["name"]] = col.get("strategy", "")
-        for gen_col in table.get("generate_columns") or []:
-            if isinstance(gen_col, dict) and gen_col.get("name"):
-                strategy_map[gen_col["name"]] = "generate"
-    return strategy_map
+        severity = "error" if c.status == "fail" else "warning"
+        findings.append(
+            _GateFinding("preflight", severity, c.code or c.name, c.message, c.location)
+        )
+    return findings, acc.capacity_insufficient
 
 
-def distribution(
-    source: Path = typer.Argument(
+def _gate(
+    config: Path = typer.Argument(
         ...,
         exists=True,
         dir_okay=False,
         readable=True,
-        help="Pre-mask / pre-generate source CSV (ground truth).",
-    ),
-    output: Path = typer.Argument(
-        ...,
-        exists=True,
-        dir_okay=False,
-        readable=True,
-        help="Post-mask / post-generate output CSV to check.",
-    ),
-    joint: list[str] = typer.Option(
-        [],
-        "--joint",
-        help="Column pair 'a,b' to also score jointly (repeatable).",
-    ),
-    generate: bool = typer.Option(
-        False,
-        "--generate",
-        help=(
-            "Output is synthetic generation, not masking: row counts may "
-            "legitimately differ (sets expect_row_parity=False). Default "
-            "assumes masking (row parity expected)."
-        ),
-    ),
-    pipeline_config: Path | None = typer.Option(
-        None,
-        "--config",
-        exists=True,
-        dir_okay=False,
-        readable=True,
-        help=(
-            "Pipeline YAML naming each column's strategy, so intentional "
-            "loss (hash, bucketize, faker, ...) is not flagged as accidental "
-            "drift. Without it, per-column policy checks run on defaults only."
-        ),
-    ),
-    policy: Path | None = typer.Option(
-        None,
-        "--policy",
-        exists=True,
-        dir_okay=False,
-        readable=True,
-        help=(
-            "A quality-policy config (YAML or JSON: mode / thresholds / "
-            "strategy_expectations) overriding --mode / --min-grade / --min-score."
-        ),
-    ),
-    mode: str = typer.Option(
-        "report",
-        "--mode",
-        help=(
-            "report (record only, verdict always pass) | warn (violations "
-            "promote verdict to warn) | fail (violations promote verdict to "
-            "fail). Ignored when --policy sets its own mode."
-        ),
-    ),
-    min_grade: str | None = typer.Option(
-        None,
-        "--min-grade",
-        help="Shorthand: minimum letter grade (A/B/C/D) the overall score must reach.",
-    ),
-    min_score: float | None = typer.Option(
-        None,
-        "--min-score",
-        help="Shorthand: minimum overall_score in [0, 1].",
-    ),
-    fail_on_warning: bool = typer.Option(
-        False,
-        "--fail-on-warning",
-        help="Also exit non-zero (EXIT_FINDINGS) when the policy verdict is 'warn'.",
-    ),
-    report_out: Path | None = typer.Option(
-        None,
-        "--report-out",
-        help="Write the full quality-report/v1 + policy JSON to this path.",
+        help="Path to the YAML pipeline config to run the whole pre-run gate against.",
     ),
     json_: bool = typer.Option(
         False,
         "--json",
-        help="Emit the full quality-report/v1 + policy result as JSON.",
+        help="Emit one aggregate JSON envelope on stdout (command/status/messages).",
     ),
     quiet: bool = typer.Option(
         False,
         "--quiet",
         "-q",
-        help="Suppress stdout. Exit code carries the result.",
+        help="Suppress stdout. Errors still go to stderr; exit code carries the result.",
     ),
     verbose: bool = typer.Option(
         False,
@@ -555,204 +605,155 @@ def distribution(
         "-v",
         help="Enable debug-level CLI logs on stderr.",
     ),
+    fail_on_warning: bool = typer.Option(
+        False,
+        "--fail-on-warning",
+        help="Exit non-zero (EXIT_WARNINGS) when any advisory warning fires across the gate.",
+    ),
 ) -> None:
-    """Recompute distribution fidelity between a source and an output CSV.
+    """Run the whole pre-run gate: config + compile + preflight in one pass.
 
-    Wraps `decoy_engine.quality.compute_quality_report` +
-    `apply_quality_policy` (report.py:97, policy.py:142): the engine owns
-    every metric and the letter grade; this command computes no fidelity
-    number itself. Reads both CSVs fresh on every invocation (pure,
-    repeatable) -- the CLI's local evidence manifest records file
-    fingerprints but not the raw frames, so recomputing from the two files
-    is the only honest source for this number (BF1).
+    This is `decoy validate CONFIG` with no subcommand. It runs the shared
+    config base once (YAML parse + schema + the profile-free plan-compile
+    checks); if that fails it reports the error and exits EXIT_USAGE without
+    running compile/preflight. Otherwise it runs BOTH the compile layer and the
+    preflight layer, aggregates every finding into one report grouped by layer,
+    and exits by precedence: a capacity fan-in refusal -> EXIT_CAPACITY (it
+    outranks a co-occurring compile failure); any other failure -> EXIT_USAGE;
+    warnings with --fail-on-warning -> EXIT_WARNINGS; otherwise 0.
 
-    Exit codes: 0 when the policy verdict is 'pass' (or 'warn' without
-    --fail-on-warning); EXIT_FINDINGS (4) when the verdict is 'fail', or
-    'warn' with --fail-on-warning set. This mirrors `decoy storm
-    integrity`'s exit-code contract -- a data-audit verb that reports
-    findings, not a run that crashed -- rather than EXIT_RUNTIME (reserved
-    for the CLI/engine blowing up unexpectedly).
+    The subcommands (`config`, `compile`, `preflight`) run a single layer
+    each and keep their own output and exit semantics.
     """
     state = setup_output(json_, quiet, verbose)
-    source_str = str(source)
-    output_str = str(output)
+    config_str = str(config)
 
-    def _emit_error(message: str) -> None:
-        if state.mode is OutputMode.json:
-            emit_json(
-                state,
-                {
-                    "command": "validate distribution",
-                    "status": "error",
-                    "source": source_str,
-                    "output": output_str,
-                    "error": message,
-                },
-            )
-        elif state.mode is not OutputMode.quiet:
-            state.err_console.print(error("error:"), message)
-
-    joint_pairs: list[tuple[str, str]] = []
-    for spec in joint:
-        parts = [p.strip() for p in spec.split(",") if p.strip()]
-        if len(parts) != 2:
-            _emit_error(f"--joint expects 'colA,colB'; got {spec!r}.")
-            raise typer.Exit(code=EXIT_USAGE)
-        joint_pairs.append((parts[0], parts[1]))
-
-    if min_grade is not None and min_score is not None:
-        _emit_error("specify only one of --min-grade / --min-score, not both.")
+    raw, config_findings = _run_config_base(config)
+    if raw is None:
+        # Config base failed: compile/preflight cannot run. Short-circuit.
+        _emit_gate(state, config_findings, config_str, fail_on_warning, ran_layers={"config"})
         raise typer.Exit(code=EXIT_USAGE)
 
-    if min_grade is not None and min_grade.upper() not in _GRADE_MIN_SCORE:
-        _emit_error(f"--min-grade must be one of A, B, C, D; got {min_grade!r}.")
-        raise typer.Exit(code=EXIT_USAGE)
+    compile_findings = _run_compile_layer(raw)
+    preflight_findings, capacity_insufficient = _run_preflight_layer(raw, config)
+    findings = config_findings + compile_findings + preflight_findings
 
-    if mode not in ("report", "warn", "fail"):
-        _emit_error(f"--mode must be one of report, warn, fail; got {mode!r}.")
-        raise typer.Exit(code=EXIT_USAGE)
-
-    strategy_map: dict[str, str] = {}
-    if pipeline_config is not None:
-        from decoy_engine import PipelineConfig
-
-        try:
-            raw_cfg = _yaml.safe_load(pipeline_config.read_text(encoding="utf-8"))
-            config_dict = PipelineConfig.model_validate(raw_cfg).model_dump()
-        except Exception as exc:
-            _emit_error(f"could not parse --config {pipeline_config}: {exc}")
-            raise typer.Exit(code=EXIT_USAGE)
-        strategy_map = _build_strategy_map(config_dict)
-
-    if policy is not None:
-        try:
-            policy_config = _yaml.safe_load(policy.read_text(encoding="utf-8")) or {}
-        except Exception as exc:
-            _emit_error(f"could not parse --policy {policy}: {exc}")
-            raise typer.Exit(code=EXIT_USAGE)
-        if not isinstance(policy_config, dict):
-            _emit_error(f"--policy {policy} must be a YAML/JSON mapping.")
-            raise typer.Exit(code=EXIT_USAGE)
-    else:
-        thresholds: dict[str, Any] = {}
-        if min_score is not None:
-            thresholds["overall"] = {"min": min_score}
-        elif min_grade is not None:
-            thresholds["overall"] = {"min": _GRADE_MIN_SCORE[min_grade.upper()]}
-        policy_config = {"mode": mode, "thresholds": thresholds}
-
-    import pandas as pd
-    from decoy_engine.quality import apply_quality_policy, compute_quality_report
-
-    try:
-        src_df = pd.read_csv(source)
-    except Exception as exc:
-        _emit_error(f"could not read {source}: {exc}")
-        raise typer.Exit(code=EXIT_USAGE)
-    try:
-        out_df = pd.read_csv(output)
-    except Exception as exc:
-        _emit_error(f"could not read {output}: {exc}")
-        raise typer.Exit(code=EXIT_USAGE)
-
-    report = compute_quality_report(
-        src_df,
-        out_df,
-        joint_columns=joint_pairs or None,
-        expect_row_parity=not generate,
+    _emit_gate(
+        state,
+        findings,
+        config_str,
+        fail_on_warning,
+        ran_layers={"config", "compile", "preflight"},
     )
-    policy_result = apply_quality_policy(report, policy_config, strategy_map=strategy_map)
 
-    if report_out is not None:
-        report_out.write_text(
-            json.dumps({**report, "policy": policy_result}, indent=2),
-            encoding="utf-8",
-        )
+    # Exit-code precedence (highest first).
+    if capacity_insufficient:
+        # A hard capacity FAIL always exits EXIT_CAPACITY, outranking a
+        # co-occurring compile failure (both appear in the report).
+        raise typer.Exit(code=EXIT_CAPACITY)
+    if any(f.severity == "error" for f in findings):
+        raise typer.Exit(code=EXIT_USAGE)
+    if fail_on_warning and any(f.severity == "warning" for f in findings):
+        raise typer.Exit(code=EXIT_WARNINGS)
+    # else EXIT_OK (implicit clean return)
 
-    verdict = policy_result["verdict"]
-    status = "ok" if verdict == "pass" else verdict
+
+def _emit_gate(
+    state: Any,
+    findings: list[_GateFinding],
+    config_str: str,
+    fail_on_warning: bool,
+    ran_layers: set[str],
+) -> None:
+    """Render the aggregate gate result: a grouped human report, or ONE JSON
+    envelope `{command, status, config, messages:[{layer, severity, code,
+    message, location}]}`.
+
+    Coarser by design than `validate preflight --json`: no structured
+    capacity/native_companion blocks, just the flat `messages` list.
+    """
+    has_error = any(f.severity == "error" for f in findings)
+    has_warning = any(f.severity == "warning" for f in findings)
 
     if state.mode is OutputMode.json:
-        envelope = dict(report)
-        envelope["command"] = "validate distribution"
-        envelope["status"] = status
-        envelope["policy"] = policy_result
+        if has_error:
+            status = "error"
+        elif has_warning and fail_on_warning:
+            status = "warn"
+        else:
+            status = "ok"
+        envelope: dict[str, Any] = {
+            "command": "validate",
+            "status": status,
+            "config": config_str,
+            "messages": [
+                {
+                    "layer": f.layer,
+                    "severity": f.severity,
+                    "code": f.code,
+                    "message": f.message,
+                    "location": f.location,
+                }
+                for f in findings
+            ],
+        }
         emit_json(state, envelope)
-    elif state.mode is not OutputMode.quiet:
-        _render_distribution_report(state, report, policy_result)
+        return
 
-    if verdict == "fail" or (verdict == "warn" and fail_on_warning):
-        raise typer.Exit(code=EXIT_FINDINGS)
+    if state.mode is OutputMode.quiet:
+        return
 
+    # Human-readable: group by layer, in canonical order. Only layers that
+    # actually ran are shown (so a config short-circuit does not claim
+    # compile/preflight "passed" when they never ran).
+    for key, label in _GATE_LAYERS:
+        if key not in ran_layers:
+            continue
+        layer_findings = [f for f in findings if f.layer == key]
+        errs = [f for f in layer_findings if f.severity == "error"]
+        warns = [f for f in layer_findings if f.severity == "warning"]
+        if not errs and not warns:
+            state.console.print(success("OK"), f"{label}: passed")
+            continue
+        state.console.print(accent(f"{label}:"))
+        # markup=False throughout: a finding message is not authored markup --
+        # it can carry a user path or an install hint like `decoy-cli[ner]`.
+        for f in errs:
+            loc_hint = f" ({f.location})" if f.location else ""
+            state.err_console.print(error("  fail:"), f.message + loc_hint, markup=False)
+        for f in warns:
+            loc_hint = f" ({f.location})" if f.location else ""
+            state.err_console.print(warn("  warning:"), f.message + loc_hint, markup=False)
 
-def _render_distribution_report(
-    state: Any,
-    report: dict[str, Any],
-    policy_result: dict[str, Any],
-) -> None:
-    """Human-readable rendering of a quality-report/v1 + policy result."""
-    from decoy.ui.table import make_table
+    if has_error:
+        state.err_console.print(
+            error("FAIL"), code(config_str), hint("- fix the errors above, then rerun.")
+        )
+        return
 
-    grade = report.get("grade", "unavailable")
-    overall = report.get("overall_score")
-    overall_str = f"{overall:.3f}" if isinstance(overall, (int, float)) else "n/a"
-    verdict = policy_result.get("verdict", "pass")
-
-    if verdict == "pass":
-        verdict_text = success(verdict.upper())
-    elif verdict == "warn":
-        verdict_text = warn(verdict.upper())
-    else:
-        verdict_text = error(verdict.upper())
-    state.console.print(verdict_text, f"grade {grade}  overall_score {overall_str}")
-
-    columns = report.get("marginal", {}).get("columns", [])
-    if columns:
-        table = make_table("Column", "Comparable", "Similarity", title="Marginal fidelity")
-        for col in columns:
-            if not isinstance(col, dict):
-                continue
-            sim = col.get("similarity")
-            sim_str = f"{sim:.3f}" if isinstance(sim, (int, float)) else "n/a"
-            table.add_row(
-                str(col.get("column", "?")),
-                "yes" if col.get("comparable") else "no",
-                sim_str,
-            )
-        state.console.print(table)
-
-    joints = report.get("pairwise", {}).get("joints", [])
-    if joints:
-        table = make_table("Joint", "Comparable", "Similarity", title="Pairwise fidelity")
-        for j in joints:
-            if not isinstance(j, dict):
-                continue
-            sim = j.get("similarity")
-            sim_str = f"{sim:.3f}" if isinstance(sim, (int, float)) else "n/a"
-            table.add_row(
-                "x".join(j.get("columns", [])),
-                "yes" if j.get("comparable") else "no",
-                sim_str,
-            )
-        state.console.print(table)
-
-    violations = policy_result.get("violations", [])
-    if violations:
-        table = make_table("Check", "Column", "Expected", "Actual", title="Policy violations")
-        for v in violations:
-            table.add_row(
-                str(v.get("check", "?")),
-                str(v.get("column", "-")),
-                str(v.get("expected", "-")),
-                str(v.get("actual", "-")),
-            )
-        state.console.print(table)
-    elif verdict == "pass":
-        state.console.print(success("OK"), "no policy violations.")
+    state.console.print(success("OK"), code(config_str))
+    if has_warning and fail_on_warning:
+        state.err_console.print(
+            warn("warning:"), "warnings present and --fail-on-warning is set."
+        )
 
 
 validate_app.command(name="config", epilog=_CONFIG_EPILOG)(config)
-validate_app.command(name="distribution", epilog=_DISTRIBUTION_EPILOG)(distribution)
+# The hidden default command: `decoy validate CONFIG` (no subcommand) routes
+# here via `_DefaultCommandGroup`. Hidden so it stays out of help / the
+# generated reference / completion, while the group can still dispatch to it.
+validate_app.command(name="_gate", hidden=True)(_gate)
+
+# S2: the top-level `compile` and `preflight` commands were re-parented under
+# `validate` (and `plan` was folded into `validate compile`). Their bodies
+# stay in their own modules; register them here beside config.
+from decoy.cli.compile_explain import COMPILE_EPILOG  # noqa: E402
+from decoy.cli.compile_explain import compile as _compile_command  # noqa: E402
+from decoy.cli.preflight import PREFLIGHT_EPILOG  # noqa: E402
+from decoy.cli.preflight import preflight as _preflight_command  # noqa: E402
+
+validate_app.command(name="compile", epilog=COMPILE_EPILOG)(_compile_command)
+validate_app.command(name="preflight", epilog=PREFLIGHT_EPILOG)(_preflight_command)
 
 VALIDATE_EPILOG = _VALIDATE_EPILOG
 

@@ -1,4 +1,4 @@
-"""End-to-end tests for `decoy storm integrity` (OSS.4b, 2026-06-02).
+"""End-to-end tests for `decoy report integrity` (relocated from the storm group, S4b).
 
 The CLI verb wraps `decoy_engine.storm.postmask.run_storm_post_mask` and
 returns the same JobStormReport-shaped payload the platform persists
@@ -52,7 +52,7 @@ def clean_pair(tmp_path: Path) -> tuple[Path, Path]:
 def test_integrity_help_includes_examples():
     """The `--help` body advertises the four invocation examples plus
     the exit-code contract."""
-    result = runner.invoke(app, ["storm", "integrity", "--help"])
+    result = runner.invoke(app, ["report", "integrity", "--help"])
     assert result.exit_code == 0
     assert "Examples:" in result.stdout
     assert "Exit codes:" in result.stdout
@@ -65,11 +65,11 @@ def test_integrity_clean_pair_exits_zero(clean_pair: tuple[Path, Path]):
     and reports `status: ok` in --json mode."""
     src, masked = clean_pair
     result = runner.invoke(
-        app, ["storm", "integrity", str(masked), "--source", str(src), "--json"]
+        app, ["report", "integrity", str(masked), "--source", str(src), "--json"]
     )
     assert result.exit_code == 0, result.stdout + result.stderr
     payload = _json.loads(result.stdout)
-    assert payload["command"] == "storm integrity"
+    assert payload["command"] == "report integrity"
     assert payload["status"] == "ok"
     assert "report" in payload
     report = payload["report"]
@@ -89,7 +89,7 @@ def test_integrity_returns_jobstormreport_shape(clean_pair: tuple[Path, Path]):
     can't silently change the public contract."""
     src, masked = clean_pair
     result = runner.invoke(
-        app, ["storm", "integrity", str(masked), "--source", str(src), "--json"]
+        app, ["report", "integrity", str(masked), "--source", str(src), "--json"]
     )
     assert result.exit_code == 0
     payload = _json.loads(result.stdout)
@@ -112,19 +112,19 @@ def test_integrity_returns_jobstormreport_shape(clean_pair: tuple[Path, Path]):
 
 
 def test_integrity_writes_out_file(clean_pair: tuple[Path, Path], tmp_path: Path):
-    """`--out <path>` writes the report JSON to disk; the report is
+    """`--output <path>` writes the report JSON to disk; the report is
     valid JSON and matches the --json output's `report` key."""
     src, masked = clean_pair
     out_path = tmp_path / "report.json"
     result = runner.invoke(
         app,
         [
-            "storm",
+            "report",
             "integrity",
             str(masked),
             "--source",
             str(src),
-            "--out",
+            "--output",
             str(out_path),
         ],
     )
@@ -141,7 +141,7 @@ def test_integrity_missing_source_exits_usage(tmp_path: Path):
     pd.DataFrame({"x": [1]}).to_csv(masked, index=False)
     result = runner.invoke(
         app,
-        ["storm", "integrity", str(masked), "--source", str(tmp_path / "nope.csv")],
+        ["report", "integrity", str(masked), "--source", str(tmp_path / "nope.csv")],
     )
     # Typer rejects nonexistent --source paths at the click parser layer
     # before the body runs; exit 2 is the click-canonical "usage error"
@@ -157,7 +157,7 @@ def test_integrity_quiet_suppresses_stdout(clean_pair: tuple[Path, Path]):
     src, masked = clean_pair
     result = runner.invoke(
         app,
-        ["storm", "integrity", str(masked), "--source", str(src), "--quiet"],
+        ["report", "integrity", str(masked), "--source", str(src), "--quiet"],
     )
     assert result.exit_code == 0
     assert result.stdout == ""
@@ -182,7 +182,7 @@ class TestExitFourReachable:
         masked.write_bytes(src.read_bytes())  # mask "ran" but changed nothing
 
         result = runner.invoke(
-            app, ["storm", "integrity", str(masked), "--source", str(src), "--json"]
+            app, ["report", "integrity", str(masked), "--source", str(src), "--json"]
         )
         assert result.exit_code == EXIT_FINDINGS, result.output
         payload = _json.loads(result.output)
@@ -202,6 +202,6 @@ class TestExitFourReachable:
         ).to_csv(masked, index=False)
 
         result = runner.invoke(
-            app, ["storm", "integrity", str(masked), "--source", str(src), "--json"]
+            app, ["report", "integrity", str(masked), "--source", str(src), "--json"]
         )
         assert result.exit_code == 0, result.output

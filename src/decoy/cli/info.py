@@ -23,7 +23,7 @@ Examples:
   decoy info --json
     Emit version + counts of bundled topics and templates as JSON.
 
-See also: decoy --help, decoy explain, decoy templates list.
+See also: decoy --help, decoy explain, decoy list templates.
 """
 
 

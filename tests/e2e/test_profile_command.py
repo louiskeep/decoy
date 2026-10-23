@@ -1,4 +1,4 @@
-"""E2E tests for `decoy profile` (SP-19b).
+"""E2E tests for `decoy scan` default command (merged from `profile`, SP-19b/S3a).
 
 Covers:
   - profile on a CSV shows field-level dtype, cardinality, null_rate, row count.
@@ -83,13 +83,13 @@ def sentinel_csv(tmp_path: Path) -> Path:
 
 
 def test_profile_help_shows_show_fields_flag() -> None:
-    result = runner.invoke(app, ["profile", "--help"])
+    result = runner.invoke(app, ["scan", "--help"])
     assert result.exit_code == 0
     assert "--show-fields" in result.stdout
 
 
 def test_profile_help_shows_examples() -> None:
-    result = runner.invoke(app, ["profile", "--help"])
+    result = runner.invoke(app, ["scan", "--help"])
     assert result.exit_code == 0
     assert "Examples:" in result.stdout
 
@@ -100,19 +100,19 @@ def test_profile_help_shows_examples() -> None:
 
 
 def test_profile_exits_0(sample_csv: Path) -> None:
-    result = runner.invoke(app, ["profile", str(sample_csv)])
+    result = runner.invoke(app, ["scan", str(sample_csv)])
     assert result.exit_code == 0, result.output
 
 
 def test_profile_shows_row_count(sample_csv: Path) -> None:
-    result = runner.invoke(app, ["profile", str(sample_csv)])
+    result = runner.invoke(app, ["scan", str(sample_csv)])
     assert result.exit_code == 0, result.output
     assert "5" in result.output
 
 
 def test_profile_shows_column_count_or_fields(sample_csv: Path) -> None:
     """Profile summary must mention the number of fields/columns."""
-    result = runner.invoke(app, ["profile", str(sample_csv)])
+    result = runner.invoke(app, ["scan", str(sample_csv)])
     assert result.exit_code == 0, result.output
     # 5 columns in the fixture
     assert "5" in result.output
@@ -124,12 +124,12 @@ def test_profile_shows_column_count_or_fields(sample_csv: Path) -> None:
 
 
 def test_profile_show_fields_exits_0(sample_csv: Path) -> None:
-    result = runner.invoke(app, ["profile", str(sample_csv), "--show-fields"])
+    result = runner.invoke(app, ["scan", str(sample_csv), "--show-fields"])
     assert result.exit_code == 0, result.output
 
 
 def test_profile_show_fields_lists_all_columns(sample_csv: Path) -> None:
-    result = runner.invoke(app, ["profile", str(sample_csv), "--show-fields"])
+    result = runner.invoke(app, ["scan", str(sample_csv), "--show-fields"])
     assert result.exit_code == 0, result.output
     for col in ("customer_id", "first_name", "email", "ssn", "score"):
         assert col in result.output
@@ -137,7 +137,7 @@ def test_profile_show_fields_lists_all_columns(sample_csv: Path) -> None:
 
 def test_profile_show_fields_shows_null_rate(sample_csv: Path) -> None:
     """Each field entry must show a null rate."""
-    result = runner.invoke(app, ["profile", str(sample_csv), "--show-fields"])
+    result = runner.invoke(app, ["scan", str(sample_csv), "--show-fields"])
     assert result.exit_code == 0, result.output
     # null_rate appears as a label or value
     assert "null" in result.output.lower()
@@ -145,7 +145,7 @@ def test_profile_show_fields_shows_null_rate(sample_csv: Path) -> None:
 
 def test_profile_show_fields_shows_dtype(sample_csv: Path) -> None:
     """Each field entry must show the dtype."""
-    result = runner.invoke(app, ["profile", str(sample_csv), "--show-fields"])
+    result = runner.invoke(app, ["scan", str(sample_csv), "--show-fields"])
     assert result.exit_code == 0, result.output
     # Some type information must be present
     lower = result.output.lower()
@@ -168,7 +168,7 @@ def test_profile_pii_framed_as_suggestion_not_classified(sample_csv: Path) -> No
     This enforces Decoy's core design: the user picks the PII type per field;
     auto-classification is abandoned by design.
     """
-    result = runner.invoke(app, ["profile", str(sample_csv), "--show-fields"])
+    result = runner.invoke(app, ["scan", str(sample_csv), "--show-fields"])
     assert result.exit_code == 0, result.output
     lower = result.output.lower()
 
@@ -185,7 +185,7 @@ def test_profile_json_pii_framed_as_suggestion(sample_csv: Path) -> None:
 
     Must NOT have a field called 'pii_classification' or 'pii_detected' (authoritative).
     """
-    result = runner.invoke(app, ["profile", str(sample_csv), "--show-fields", "--json"])
+    result = runner.invoke(app, ["scan", str(sample_csv), "--show-fields", "--json"])
     assert result.exit_code == 0, result.output
     payload = _json.loads(result.stdout)
 
@@ -201,7 +201,7 @@ def test_profile_json_pii_framed_as_suggestion(sample_csv: Path) -> None:
             pass  # present is fine; what matters is the key name and framing
 
     # Check the command metadata
-    assert payload.get("command") == "profile"
+    assert payload.get("command") == "scan"
     assert payload.get("status") == "ok"
 
 
@@ -217,7 +217,7 @@ def test_profile_no_raw_cell_values_in_output(sentinel_csv: Path) -> None:
     values below are distinctive strings from the data file that absolutely
     must not appear in profile output (counts/types/cardinality only).
     """
-    result = runner.invoke(app, ["profile", str(sentinel_csv), "--show-fields"])
+    result = runner.invoke(app, ["scan", str(sentinel_csv), "--show-fields"])
     assert result.exit_code == 0, result.output
     assert _SENTINEL_EMAIL not in result.output, (
         f"profile output leaked raw cell value '{_SENTINEL_EMAIL}'. "
@@ -231,7 +231,7 @@ def test_profile_no_raw_cell_values_in_output(sentinel_csv: Path) -> None:
 
 def test_profile_json_no_raw_cell_values(sentinel_csv: Path) -> None:
     """--json output must also not contain raw cell values."""
-    result = runner.invoke(app, ["profile", str(sentinel_csv), "--show-fields", "--json"])
+    result = runner.invoke(app, ["scan", str(sentinel_csv), "--show-fields", "--json"])
     assert result.exit_code == 0, result.output
     payload_str = result.stdout
     assert _SENTINEL_EMAIL not in payload_str, (
@@ -248,17 +248,17 @@ def test_profile_json_no_raw_cell_values(sentinel_csv: Path) -> None:
 
 
 def test_profile_json_structure(sample_csv: Path) -> None:
-    result = runner.invoke(app, ["profile", str(sample_csv), "--json"])
+    result = runner.invoke(app, ["scan", str(sample_csv), "--json"])
     assert result.exit_code == 0, result.output
     payload = _json.loads(result.stdout)
-    assert payload["command"] == "profile"
+    assert payload["command"] == "scan"
     assert payload["status"] == "ok"
     assert "row_count" in payload
     assert "field_count" in payload
 
 
 def test_profile_json_show_fields_structure(sample_csv: Path) -> None:
-    result = runner.invoke(app, ["profile", str(sample_csv), "--show-fields", "--json"])
+    result = runner.invoke(app, ["scan", str(sample_csv), "--show-fields", "--json"])
     assert result.exit_code == 0, result.output
     payload = _json.loads(result.stdout)
     assert "fields" in payload
@@ -277,7 +277,7 @@ def test_profile_json_show_fields_structure(sample_csv: Path) -> None:
 
 
 def test_profile_quiet_mode(sample_csv: Path) -> None:
-    result = runner.invoke(app, ["profile", str(sample_csv), "--quiet"])
+    result = runner.invoke(app, ["scan", str(sample_csv), "--quiet"])
     assert result.exit_code == 0
     assert result.stdout == ""
 
@@ -288,7 +288,7 @@ def test_profile_quiet_mode(sample_csv: Path) -> None:
 
 
 def test_profile_missing_file_exits_nonzero(tmp_path: Path) -> None:
-    result = runner.invoke(app, ["profile", str(tmp_path / "nope.csv")])
+    result = runner.invoke(app, ["scan", str(tmp_path / "nope.csv")])
     assert result.exit_code != 0
 
 
@@ -327,7 +327,7 @@ def test_profile_rows_limits_row_count_in_json(large_csv: Path) -> None:
     Proves --rows is REAL: a 200-row file profiled with --rows 50 must
     report row_count ~50, not 200.
     """
-    result = runner.invoke(app, ["profile", str(large_csv), "--rows", "50", "--json"])
+    result = runner.invoke(app, ["scan", str(large_csv), "--rows", "50", "--json"])
     assert result.exit_code == 0, result.output
     payload = _json.loads(result.stdout)
     assert payload["row_count"] <= 50, (
@@ -338,7 +338,7 @@ def test_profile_rows_limits_row_count_in_json(large_csv: Path) -> None:
 
 def test_profile_rows_0_full_scan_in_json(large_csv: Path) -> None:
     """--rows 0 must produce a full scan (row_count == 200)."""
-    result = runner.invoke(app, ["profile", str(large_csv), "--rows", "0", "--json"])
+    result = runner.invoke(app, ["scan", str(large_csv), "--rows", "0", "--json"])
     assert result.exit_code == 0, result.output
     payload = _json.loads(result.stdout)
     assert payload["row_count"] == 200, (
@@ -353,7 +353,7 @@ def test_profile_default_rows_limits_row_count(large_csv: Path) -> None:
     Here the file only has 200 rows (< default 10000), so this confirms the
     default produces a full result -- both paths behave correctly.
     """
-    result = runner.invoke(app, ["profile", str(large_csv), "--json"])
+    result = runner.invoke(app, ["scan", str(large_csv), "--json"])
     assert result.exit_code == 0, result.output
     payload = _json.loads(result.stdout)
     # 200 <= 10000 so the full 200 rows are profiled
@@ -375,7 +375,7 @@ def test_profile_numeric_column_reports_numeric_type(sample_csv: Path) -> None:
     With proper dtype inference (no dtype=str override), STORM must report
     inferred_type as 'integer', NOT 'string'.
     """
-    result = runner.invoke(app, ["profile", str(sample_csv), "--show-fields", "--json"])
+    result = runner.invoke(app, ["scan", str(sample_csv), "--show-fields", "--json"])
     assert result.exit_code == 0, result.output
     payload = _json.loads(result.stdout)
 

@@ -73,7 +73,7 @@ def test_decoy_module_invocation_succeeds():
 def test_templates_list_json_returns_v2_template_set():
     """V2 surviving templates (5): minimal, hipaa, pci, gdpr, generate.
     CLI.3 commit 1 (2026-06-02) hard-deleted the V1 graph template."""
-    result = runner.invoke(app, ["templates", "list", "--json"])
+    result = runner.invoke(app, ["list", "templates", "--json"])
     assert result.exit_code == 0, result.output
     payload = json.loads(result.output)
     names = {t["name"] for t in payload["templates"]}
@@ -163,7 +163,7 @@ def test_root_help_lists_canonical_commands():
     result = runner.invoke(app, ["--help"])
     assert result.exit_code == 0
     output = result.output.lower()
-    for cmd in ("validate", "run", "demo", "storm", "templates", "init"):
+    for cmd in ("validate", "run", "demo", "report", "list", "init"):
         assert cmd in output, f"root help missing {cmd!r}: {result.output[:500]}"
     # CLI.1 (2026-06-02): forecast subcommand deleted under storm-reframe-C.
     assert "forecast" not in output

@@ -8,6 +8,69 @@ version numbers follow the [versioning policy](docs/release/versioning.md).
 
 ## [Unreleased]
 
+### Changed (CLI command-surface redesign, 2026-10-23) -- BREAKING, pre-GA
+
+The `decoy` command surface was redesigned from ~17 top-level commands plus 11
+sub-apps into one coherent, discoverable set. Pre-GA hard delete: there are no
+migration shims. Highlights:
+
+- **One `run`.** Masking, generation, and mixed jobs all run through `decoy
+  run <config>`; the mode is inferred from the config.
+- **One pre-run gate, `validate`.** `plan`, `compile`, `preflight`, and the old
+  `validate config` folded into `decoy validate <config>`, which compiles,
+  preflights, and reports the plan. `--fail-on-warning` returns exit code 2
+  (`EXIT_WARNINGS`).
+- **`scan` replaces `storm`/`profile`/`fit`** as the one "look at my data" verb.
+- **One reference vocabulary, `list` / `show`.** `decoy list <kind>` and `decoy
+  show <kind> [name]` replace the per-registry sub-apps (strategies, providers,
+  templates, validators).
+- **One post-run noun, `report`.** `evidence`, the old `report` verbs, `validate
+  distribution`, and `storm integrity` folded into `report`
+  (`summarize`/`diff`/`integrity`/`verify`/`show`/`fidelity`/`vault`). The CLI is
+  now stateless and file-first: `project`, `catalog`, and `jobs` are removed; a
+  `report` verb takes manifest/output file paths, not catalog run-ids.
+- **`vault info` moved to `report vault`.**
+- **`run` capability flags.** `--explain-plan`, `--fidelity`, and
+  `--post-validate` surface the report-shaped engine results `run` already
+  computes. All default off; the default hot path is unchanged.
+- **One flag vocabulary.** `--out` renamed to `--output`/`-o` everywhere; a
+  uniform `--json` (stable machine envelope) / `--quiet,-q` / `--verbose,-v`
+  trio on every command; `plan`'s former off-meaning `--json` removed.
+- **Deletions.** `storm test`, the deprecated `storm scan` alias, `jobs watch`,
+  and the `forge` compatibility shim (and its exit code) are gone. The exit-code
+  contract is the six documented codes (0/1/2/3/4/5).
+- **Anti-drift.** The README "Common commands" table and root help are generated
+  from `docs/cli-reference.md`; a sentry fails if the three surfaces diverge.
+
+`decoy query` (read-only SQL over masked Parquet output) is NOT in this release:
+its pre-merge security review found two defects in the engine's
+`run_discovery_sql` validator (a stacked-write bypass and arbitrary file read).
+It returns once the engine validator is hardened and released.
+
+### Fixed (CLI redesign hardening, 2026-10-23)
+
+- **`scan --output -` no longer leaks when combined with `--json` or
+  `--quiet`.** Streaming the rich profile to stdout conflicts with the JSON
+  envelope and with quiet suppression (both carry raw values), so the
+  combination is now rejected up front with a usage error instead of streaming.
+- **`report diff` degrades instead of crashing on a corrupt output file.** A
+  present-but-unreadable CSV/Parquet is now treated like a missing file
+  (manifest-level still reported, data level skipped, `--require-data` still
+  hard-fails), rather than raising out of the command. The raw parser message is
+  not surfaced.
+- **The surface drift sentry now guards the hidden default-command handlers.**
+  `scan` and `validate` dispatch a bare positional to a hidden handler whose
+  flags no other sentry watched; their option surface is now pinned (every
+  spelling, aliases included) so a flag change there is a reviewed edit.
+- **A YAML parse error no longer echoes the offending config line.** PyYAML's
+  error text quotes the line it failed on, so a malformed config whose broken
+  line held a secret leaked that secret into the message. Every command that
+  parses a config (`run`, `validate`, `validate config`, `validate preflight`,
+  `compile`, `subset`, `unmask`, `report fidelity`/`integrity`) now reports a
+  sanitized message with only the line/column and a fixed classification. A new
+  sentry asserts a secret-bearing malformed config never appears in any output
+  stream.
+
 ### Fixed (CLI reads sources by declared format, 2026-09-30)
 
 - **Sources are read by their declared `format`, not by file suffix.** A

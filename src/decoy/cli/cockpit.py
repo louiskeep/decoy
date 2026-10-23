@@ -1,7 +1,9 @@
-"""`decoy strategies`, `decoy providers`, `decoy checksums`, `decoy validators`,
-and `decoy doctor` -- engine cockpit: live registry introspection + health check.
+"""Engine cockpit readers + `decoy doctor`: live registry introspection + health check.
 
-All list/inspect commands read the REAL engine registry at runtime. No
+The list/inspect reader bodies here back the `decoy list`/`decoy show` verbs
+(dispatched from `cli/reference.py`); `decoy doctor` is registered directly.
+
+All list/inspect readers read the REAL engine registry at runtime. No
 provider names, strategy names, checksum schemes, or validator names are
 hardcoded in this module. If the engine adds or removes an entry, the CLI
 surfaces it automatically without a CLI code change.
@@ -31,38 +33,8 @@ from decoy.ui.table import make_table
 from decoy.ui.theme import accent, code, error, hint, success, warn
 
 # ---------------------------------------------------------------------------
-# strategies sub-app
+# strategies readers (dispatched from `decoy list strategies` / `show strategy`)
 # ---------------------------------------------------------------------------
-
-strategies_app = typer.Typer(
-    name="strategies",
-    help="Enumerate and inspect the engine's registered mask strategies.",
-    no_args_is_help=True,
-)
-
-_STRATEGIES_LIST_EPILOG = """\
-Examples:
-
-  decoy strategies list
-    Print every registered mask strategy with its class name.
-
-  decoy strategies list --json
-    Same data as JSON for CI or support tooling.
-
-See also: decoy strategies inspect, decoy providers list.
-"""
-
-_STRATEGIES_INSPECT_EPILOG = """\
-Examples:
-
-  decoy strategies inspect fpe
-    Show parameters and behavior for the FPE strategy.
-
-  decoy strategies inspect geo_generalize --json
-    Same data as JSON.
-
-See also: decoy strategies list.
-"""
 
 
 def _strategies_list(
@@ -93,7 +65,7 @@ def _strategies_list(
         emit_json(
             state,
             {
-                "command": "strategies list",
+                "command": "list strategies",
                 "status": "ok",
                 "count": len(entries),
                 "strategies": entries,
@@ -113,7 +85,7 @@ def _strategies_list(
     state.console.print(
         hint("Tip:"),
         "inspect one with",
-        code("decoy strategies inspect <name>") + ".",
+        code("decoy show strategy <name>") + ".",
     )
 
 
@@ -143,7 +115,7 @@ def _strategies_inspect(
             emit_json(
                 state,
                 {
-                    "command": "strategies inspect",
+                    "command": "show strategy",
                     "status": "error",
                     "name": name,
                     "error": f"unknown strategy {name!r}",
@@ -156,7 +128,7 @@ def _strategies_inspect(
                 " ",
                 hint("hint:"),
                 "list strategies with",
-                code("decoy strategies list") + ".",
+                code("decoy list strategies") + ".",
             )
         raise typer.Exit(code=EXIT_USAGE)
 
@@ -175,7 +147,7 @@ def _strategies_inspect(
     if state.mode is OutputMode.json:
         emit_json(
             state,
-            {"command": "strategies inspect", "status": "ok", **record},
+            {"command": "show strategy", "status": "ok", **record},
         )
         return
 
@@ -193,47 +165,13 @@ def _strategies_inspect(
     state.console.print()
     state.console.print(
         hint("See also:"),
-        code("decoy strategies list") + ".",
+        code("decoy list strategies") + ".",
     )
 
 
-strategies_app.command(name="list", epilog=_STRATEGIES_LIST_EPILOG)(_strategies_list)
-strategies_app.command(name="inspect", epilog=_STRATEGIES_INSPECT_EPILOG)(_strategies_inspect)
-
-
 # ---------------------------------------------------------------------------
-# providers sub-app
+# providers readers (dispatched from `decoy list providers` / `show provider`)
 # ---------------------------------------------------------------------------
-
-providers_app = typer.Typer(
-    name="providers",
-    help="Enumerate and inspect the engine's registered generation providers.",
-    no_args_is_help=True,
-)
-
-_PROVIDERS_LIST_EPILOG = """\
-Examples:
-
-  decoy providers list
-    Print every registered provider with backend type and poolable flag.
-
-  decoy providers list --json
-    Same data as JSON.
-
-See also: decoy providers inspect, decoy strategies list.
-"""
-
-_PROVIDERS_INSPECT_EPILOG = """\
-Examples:
-
-  decoy providers inspect person_name
-    Show capability matrix for the person_name provider.
-
-  decoy providers inspect synthetic_ssn --json
-    Same data as JSON.
-
-See also: decoy providers list.
-"""
 
 
 def _providers_list(
@@ -274,7 +212,7 @@ def _providers_list(
         emit_json(
             state,
             {
-                "command": "providers list",
+                "command": "list providers",
                 "status": "ok",
                 "count": len(entries),
                 "providers": entries,
@@ -300,7 +238,7 @@ def _providers_list(
     state.console.print(
         hint("Tip:"),
         "inspect one with",
-        code("decoy providers inspect <name>") + ".",
+        code("decoy show provider <name>") + ".",
     )
 
 
@@ -331,7 +269,7 @@ def _providers_inspect(
             emit_json(
                 state,
                 {
-                    "command": "providers inspect",
+                    "command": "show provider",
                     "status": "error",
                     "name": name,
                     "error": f"unknown provider {name!r}",
@@ -344,7 +282,7 @@ def _providers_inspect(
                 " ",
                 hint("hint:"),
                 "list providers with",
-                code("decoy providers list") + ".",
+                code("decoy list providers") + ".",
             )
         raise typer.Exit(code=EXIT_USAGE)
 
@@ -369,7 +307,7 @@ def _providers_inspect(
     if state.mode is OutputMode.json:
         emit_json(
             state,
-            {"command": "providers inspect", "status": "ok", **record},
+            {"command": "show provider", "status": "ok", **record},
         )
         return
 
@@ -384,35 +322,13 @@ def _providers_inspect(
     state.console.print()
     state.console.print(
         hint("See also:"),
-        code("decoy providers list") + ".",
+        code("decoy list providers") + ".",
     )
 
 
-providers_app.command(name="list", epilog=_PROVIDERS_LIST_EPILOG)(_providers_list)
-providers_app.command(name="inspect", epilog=_PROVIDERS_INSPECT_EPILOG)(_providers_inspect)
-
-
 # ---------------------------------------------------------------------------
-# checksums sub-app
+# checksums reader (dispatched from `decoy list checksums`)
 # ---------------------------------------------------------------------------
-
-checksums_app = typer.Typer(
-    name="checksums",
-    help="List the engine's registered checksum schemes (SP-04).",
-    no_args_is_help=True,
-)
-
-_CHECKSUMS_LIST_EPILOG = """\
-Examples:
-
-  decoy checksums list
-    Print every registered checksum scheme.
-
-  decoy checksums list --json
-    Same data as JSON.
-
-See also: decoy validators list.
-"""
 
 
 def _checksums_list(
@@ -440,7 +356,7 @@ def _checksums_list(
         emit_json(
             state,
             {
-                "command": "checksums list",
+                "command": "list checksums",
                 "status": "ok",
                 "count": len(schemes),
                 "schemes": schemes,
@@ -459,34 +375,13 @@ def _checksums_list(
     state.console.print()
     state.console.print(
         hint("See also:"),
-        code("decoy validators list") + ".",
+        code("decoy list validators") + ".",
     )
 
 
-checksums_app.command(name="list", epilog=_CHECKSUMS_LIST_EPILOG)(_checksums_list)
-
-
 # ---------------------------------------------------------------------------
-# validators sub-app
+# validators reader (dispatched from `decoy list validators`)
 # ---------------------------------------------------------------------------
-
-validators_app = typer.Typer(
-    name="validators",
-    help="List the engine's registered job-level validators (SP-05).",
-    no_args_is_help=True,
-)
-
-_VALIDATORS_LIST_EPILOG = """\
-Examples:
-
-  decoy validators list
-    Print every registered job-level validator.
-
-  decoy validators list --json
-    Same data as JSON.
-
-See also: decoy checksums list.
-"""
 
 
 def _validators_list(
@@ -514,7 +409,7 @@ def _validators_list(
         emit_json(
             state,
             {
-                "command": "validators list",
+                "command": "list validators",
                 "status": "ok",
                 "count": len(validator_names),
                 "validators": validator_names,
@@ -533,11 +428,8 @@ def _validators_list(
     state.console.print()
     state.console.print(
         hint("See also:"),
-        code("decoy checksums list") + ".",
+        code("decoy list checksums") + ".",
     )
-
-
-validators_app.command(name="list", epilog=_VALIDATORS_LIST_EPILOG)(_validators_list)
 
 
 # ---------------------------------------------------------------------------

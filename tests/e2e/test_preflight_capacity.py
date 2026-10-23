@@ -152,7 +152,7 @@ def low_threshold(monkeypatch: pytest.MonkeyPatch):
 
 
 def _run_preflight(config_path: Path, *, json_mode: bool = False) -> Any:
-    args = ["preflight", str(config_path)]
+    args = ["validate", "preflight", str(config_path)]
     if json_mode:
         args.append("--json")
     return runner.invoke(app, args)
@@ -255,7 +255,7 @@ class TestFourCapacityStates:
         # `--fail-on-warning` governs whether the advisory itself exits
         # nonzero; default execution (the test above) exits EXIT_OK on the
         # exact same job.
-        from decoy.cli.preflight import _WARN_EXIT
+        from decoy.cli.exit_codes import EXIT_WARNINGS
 
         big_parent, big_child = _parent_child_tables(300_000)
         config_path = _write_config(tmp_path, tables=(big_parent, big_child))
@@ -263,8 +263,8 @@ class TestFourCapacityStates:
             "decoy_engine.execution.out_of_core._budget.detect_effective_memory_bytes",
             return_value=1024 * 1024,
         ):
-            result = runner.invoke(app, ["preflight", str(config_path), "--fail-on-warning"])
-        assert result.exit_code == _WARN_EXIT
+            result = runner.invoke(app, ["validate", "preflight", str(config_path), "--fail-on-warning"])
+        assert result.exit_code == EXIT_WARNINGS
         assert result.exit_code != EXIT_OK
 
     def test_unknown_older_engine_simulated(self, tmp_path: Path, monkeypatch) -> None:
@@ -304,7 +304,7 @@ class TestUnexpectedEstimatorExceptionPropagates:
         monkeypatch.setattr(engine_exec, "estimate_job_capacity", _boom)
         config_path = _write_config(tmp_path)
         with pytest.raises(RuntimeError, match="unexpected estimator defect"):
-            runner.invoke(app, ["preflight", str(config_path)], catch_exceptions=False)
+            runner.invoke(app, ["validate", "preflight", str(config_path)], catch_exceptions=False)
 
 
 class TestJsonEnvelope:

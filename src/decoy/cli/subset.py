@@ -12,9 +12,9 @@ YAML's `subset:` block -- the SAME config surface every other `decoy`
 command reads (`PipelineConfig.model_validate`), per the engine's GATE-1 #5
 decision. There is no separate subset-only CLI flag surface for those.
 
-Modeled on `decoy plan` (dry-run-vs-real distinction, `--out` to redirect
-output) and `decoy preflight` (surfacing a fail-closed report as clean
-per-finding errors instead of a stack trace).
+Modeled on `decoy validate compile` (dry-run-vs-real distinction, `--output`
+to redirect output) and `decoy validate preflight` (surfacing a fail-closed
+report as clean per-finding errors instead of a stack trace).
 
 Dry-run safety UX (GATE-1 #3 "mandatory dry-run/estimate before any real
 run"): `--dry-run` calls `plan_subset`, which never touches `output_dir` and
@@ -36,6 +36,7 @@ from typing import Any
 import typer
 import yaml as _yaml
 
+from decoy.cli._yaml_errors import sanitize_yaml_error
 from decoy.cli.exit_codes import EXIT_RUNTIME, EXIT_USAGE
 from decoy.ui.output import OutputMode, emit_json, setup_output
 from decoy.ui.table import make_table
@@ -49,12 +50,12 @@ Examples:
     anything. Runs the full preflight + closure estimate. Always do this
     before a real run on data you have not subsetted before.
 
-  decoy subset pipeline.yaml --out subset_out/
+  decoy subset pipeline.yaml --output subset_out/
     Run the subset for real: write filtered Parquet per table plus
     subset-manifest.json into subset_out/. subset_out/ must not already
     exist (or must be empty).
 
-  decoy subset pipeline.yaml --out subset_out/ --json
+  decoy subset pipeline.yaml --output subset_out/ --json
     Same as above, structured JSON result on stdout.
 
 The pipeline YAML must declare a `subset:` block (seeds + optional budget /
@@ -71,7 +72,7 @@ What this command checks before touching any data:
   - The fan-out budget (max_total_rows / max_table_seed_multiple), BEFORE
     any output directory is created.
 
-See also: decoy run, decoy validate, decoy preflight.
+See also: decoy run, decoy validate, decoy validate preflight.
 """
 
 
@@ -85,7 +86,8 @@ def subset(
     ),
     out: Path | None = typer.Option(
         None,
-        "--out",
+        "--output",
+        "-o",
         help=(
             "Output directory for the filtered Parquet + subset-manifest.json. "
             "Required unless --dry-run. Must not already exist as a non-empty "
@@ -140,7 +142,7 @@ def subset(
             config_str,
             code_="subset_cli_missing_out",
             message=(
-                "decoy subset requires --out <dir> for a real run "
+                "decoy subset requires --output <dir> for a real run "
                 "(or pass --dry-run to only see the estimate)."
             ),
         )
@@ -149,13 +151,13 @@ def subset(
     if dry_run and out is not None and state.mode is not OutputMode.quiet:
         state.err_console.print(
             warn("warning:"),
-            "--out is ignored with --dry-run; no files are written in dry-run mode.",
+            "--output is ignored with --dry-run; no files are written in dry-run mode.",
         )
 
     try:
         raw = _yaml.safe_load(config.read_text(encoding="utf-8"))
     except _yaml.YAMLError as exc:
-        _fail_usage(state, config_str, code_="yaml.parse_error", message=f"YAML parse error: {exc}")
+        _fail_usage(state, config_str, code_="yaml.parse_error", message=sanitize_yaml_error(exc))
         raise typer.Exit(code=EXIT_USAGE)
 
     if raw is None:
@@ -241,7 +243,7 @@ def subset(
             _emit_dry_run(state, config_str, plan)
             return
 
-        assert out is not None  # guaranteed by the --out/--dry-run check above
+        assert out is not None  # guaranteed by the --output/--dry-run check above
         result = run_subset(
             sources=sources,
             relationships=relationships,
@@ -362,7 +364,7 @@ def _emit_dry_run(state, config_str: str, plan) -> None:
         state.console.print(warn("warning:"), w)
     state.console.print()
     state.console.print(
-        hint("Next:"), "drop --dry-run and add", code("--out <dir>"), "to materialize this subset."
+        hint("Next:"), "drop --dry-run and add", code("--output <dir>"), "to materialize this subset."
     )
 
 
