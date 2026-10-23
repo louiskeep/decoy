@@ -127,3 +127,46 @@ class TestFixedWidthHelpers:
 
         with pytest.raises(typer.Exit):
             _write_fixed_width_target(pa.table({"id": [1]}), {}, tmp_path / "x.fw")
+
+
+class TestChunkedWriterFormat:
+    def test_declared_csv_format_wins_over_parquet_suffix(self, tmp_path: Path):
+        from decoy.cli.run import _write_chunked_output
+
+        out = tmp_path / "out.parquet"  # suffix would say parquet
+        _write_chunked_output(
+            iter([pa.table({"a": [1, 2]})]),
+            out,
+            tmp_path / "in.csv",
+            src_is_parquet=False,
+            tgt_format="csv",
+        )
+        assert out.read_text().splitlines()[0] == "a"  # wrote CSV, not parquet
+
+    def test_unknown_chunked_target_format_raises(self, tmp_path: Path):
+        import typer
+
+        from decoy.cli.run import _write_chunked_output
+
+        with pytest.raises(typer.Exit):
+            _write_chunked_output(
+                iter([pa.table({"a": [1]})]),
+                tmp_path / "out.x",
+                tmp_path / "in.csv",
+                src_is_parquet=False,
+                tgt_format="orc",
+            )
+
+
+class TestNonChunkedUnknownFormat:
+    def test_unknown_target_format_raises(self, tmp_path: Path):
+        import typer
+
+        from decoy.cli.run import _write_mask_outputs
+
+        class _Result:
+            outputs = {"t": pa.table({"a": [1]})}
+
+        cfg = {"targets": {"t": {"type": "file", "format": "orc", "path": str(tmp_path / "o.orc")}}}
+        with pytest.raises(typer.Exit):
+            _write_mask_outputs(cfg, _Result(), tmp_path)

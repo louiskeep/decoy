@@ -1180,6 +1180,11 @@ def _write_chunked_output(
     want_parquet = tgt_format == "parquet" or (
         tgt_format is None and out_path.suffix.lower() == ".parquet"
     )
+    if not want_parquet and tgt_format not in (None, "csv"):
+        # Defense-in-depth: a chunked run only writes csv/parquet (fixed_width is
+        # refused up front). Raise rather than silently fall through to CSV.
+        typer.echo(f"chunked run cannot write target format {tgt_format!r}", err=True)
+        raise typer.Exit(code=EXIT_USAGE)
     if want_parquet:
         import pyarrow.parquet as pq
 
@@ -1318,6 +1323,11 @@ def _write_mask_outputs(config_dict: dict, result, base_dir: Path) -> None:
         elif fmt in ("csv", None):
             table.to_pandas().to_csv(path, index=False)
         else:
+            typer.echo(
+                f"target {table_name!r}: unsupported format {fmt!r} "
+                "(csv | parquet | fixed_width)",
+                err=True,
+            )
             raise typer.Exit(code=EXIT_USAGE)
 
 
@@ -1336,7 +1346,14 @@ def _coerce_fixed_width_int_columns(frame, layout):
         if name not in frame.columns:
             continue
         series = frame[name]
-        if series.dtype.kind == "f" and series.notna().all() and (series == series.round()).all():
+        # Only a finite, in-int64-range, all-integral, non-null float is safe to
+        # cast; inf / out-of-range values are left float so the writer fail-closes.
+        if (
+            series.dtype.kind == "f"
+            and series.notna().all()
+            and (series.abs() < 2**63).all()
+            and (series == series.round()).all()
+        ):
             frame[name] = series.astype("int64")
     return frame
 
@@ -1347,6 +1364,7 @@ def _write_fixed_width_target(table, entry: dict, path: Path) -> None:
     target (there is no platform layout store on the CLI side)."""
     layout = entry.get("layout")
     if not isinstance(layout, dict):
+        typer.echo("fixed_width target requires an inline `layout` column-spec", err=True)
         raise typer.Exit(code=EXIT_USAGE)
     from decoy_engine import write_fixed_width
 
