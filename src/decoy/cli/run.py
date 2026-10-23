@@ -227,7 +227,8 @@ def run(
             "when deterministic with an explicit pool_size / categories "
             "declared in config; output is byte-identical to a plain run. "
             "Sources are read by their declared format (csv or parquet; fixed_width is "
-            "not supported with --chunked); targets are written by file suffix. "
+            "not supported with --chunked); targets are written by their declared "
+            "format, falling back to file suffix (fixed_width targets need a non-chunked run). "
             "See: decoy explain chunked."
         ),
     ),
@@ -582,6 +583,20 @@ def run(
                         "--chunked cannot read format: fixed_width sources "
                         f"({', '.join(_fw_tables)}); the engine has no streaming "
                         "fixed-width reader. Run without --chunked."
+                    )
+                # A1: the engine's fixed-width WRITER needs the whole frame, so
+                # a chunked run cannot stream one. Refuse up front (matching the
+                # source rule above) rather than silently writing CSV part-way.
+                _fw_targets = sorted(
+                    str(_n)
+                    for _n, _t in (config_dict.get("targets") or {}).items()
+                    if isinstance(_t, dict) and _t.get("format") == "fixed_width"
+                )
+                if _fw_targets:
+                    raise _ChunkedFixedWidthError(
+                        "--chunked cannot write format: fixed_width targets "
+                        f"({', '.join(_fw_targets)}); the engine's fixed-width "
+                        "writer needs the whole frame. Run without --chunked."
                     )
 
             # A cheap, no-secret-access check: whether --vault was passed
@@ -1104,7 +1119,7 @@ def _run_chunked_mask(
 
     Formats: CSV and parquet, on either side independently. The source
     reader follows the declared source `format`; the writer follows the
-    target path suffix. Parquet reads stream via ParquetFile.iter_batches; CSV reads keep
+    declared target `format` (suffix fallback). Parquet reads stream via ParquetFile.iter_batches; CSV reads keep
     the dtype=str contract of the plain path, so a csv -> parquet run
     produces an all-string schema.
 
@@ -1145,17 +1160,27 @@ def _run_chunked_mask(
             vault_writer=vault_writer,
         )
         _write_chunked_output(
-            masked_iter, out_path, src_path, src_is_parquet=src_spec.get("format") == "parquet"
+            masked_iter,
+            out_path,
+            src_path,
+            src_is_parquet=src_spec.get("format") == "parquet",
+            tgt_format=tgt_spec.get("format"),
         )
 
     return resolved_substrate
 
 
 def _write_chunked_output(
-    masked_iter, out_path: Path, src_path: Path, *, src_is_parquet: bool
+    masked_iter, out_path: Path, src_path: Path, *, src_is_parquet: bool, tgt_format: str | None = None
 ) -> None:
-    """Stream masked chunks to `out_path`, format picked by its suffix."""
-    if out_path.suffix.lower() == ".parquet":
+    """Stream masked chunks to `out_path`. A5: the declared target `format`
+    wins; the suffix is only a fallback when `format` is absent. (Fixed-width
+    targets are rejected before a chunked run reaches here -- the engine's
+    fixed-width writer needs the whole frame.)"""
+    want_parquet = tgt_format == "parquet" or (
+        tgt_format is None and out_path.suffix.lower() == ".parquet"
+    )
+    if want_parquet:
         import pyarrow.parquet as pq
 
         writer = None
@@ -1279,13 +1304,54 @@ def _write_mask_outputs(config_dict: dict, result, base_dir: Path) -> None:
             continue
         path = _resolve_path(raw_path, base_dir)
         path.parent.mkdir(parents=True, exist_ok=True)
+        # A5: honor the DECLARED target `format`; the file suffix is only a
+        # fallback when `format` is absent. Previously the suffix decided, so a
+        # `format: fixed_width` target was silently written as CSV.
+        fmt = entry.get("format")
         suffix = path.suffix.lower()
-        if suffix == ".parquet":
+        if fmt == "fixed_width":
+            _write_fixed_width_target(table, entry, path)  # A1
+        elif fmt == "parquet" or (fmt is None and suffix == ".parquet"):
             import pyarrow.parquet as pq
 
             pq.write_table(table, str(path))
-        else:
+        elif fmt in ("csv", None):
             table.to_pandas().to_csv(path, index=False)
+        else:
+            raise typer.Exit(code=EXIT_USAGE)
+
+
+def _coerce_fixed_width_int_columns(frame, layout):
+    """Coerce layout-declared `int` columns that pandas widened to float back
+    to int before write_fixed_width (A1). Only a float column with no nulls and
+    all-integral values is coerced; a null-bearing column is left to fail-closed
+    (a null is not representable in a fixed-width field)."""
+    columns = layout.get("columns") if isinstance(layout, dict) else None
+    if not isinstance(columns, list):
+        return frame
+    for col in columns:
+        if not isinstance(col, dict) or col.get("type") != "int":
+            continue
+        name = col.get("name")
+        if name not in frame.columns:
+            continue
+        series = frame[name]
+        if series.dtype.kind == "f" and series.notna().all() and (series == series.round()).all():
+            frame[name] = series.astype("int64")
+    return frame
+
+
+def _write_fixed_width_target(table, entry: dict, path: Path) -> None:
+    """A1: write a fixed-width output via the engine's fail-closed
+    write_fixed_width. The CLI uses the inline `layout` dict from the YAML
+    target (there is no platform layout store on the CLI side)."""
+    layout = entry.get("layout")
+    if not isinstance(layout, dict):
+        raise typer.Exit(code=EXIT_USAGE)
+    from decoy_engine import write_fixed_width
+
+    frame = _coerce_fixed_width_int_columns(table.to_pandas(), layout)
+    write_fixed_width(frame, layout, str(path))
 
 
 def _record_run_to_catalog(
