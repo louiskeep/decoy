@@ -21,7 +21,7 @@ the first cut; `query`/`run --pin` fast-follow; `report fidelity --privacy` gate
 
 | Sprint | Theme | Leaves the CLI at... | Depends on |
 |--------|-------|----------------------|------------|
-| S1 | Foundations: conventions, deletions, anti-drift | smaller, uniform surface; same capabilities | — |
+| S1 ✅ | Foundations: conventions, deletions, anti-drift | smaller, uniform surface; same capabilities | — |
 | S2 | Pre-run gate: `validate` | one pre-run gate; `plan`/`compile`/`preflight` folded in | S1 |
 | S3 | Inspection: `scan` + `list`/`show` | one "look at my data" verb; one reference vocabulary | S1 |
 | S4 | Post-run: `report` + stateless | one post-run noun; `project`/`catalog`/`jobs` gone | S1, S2, S3 |
