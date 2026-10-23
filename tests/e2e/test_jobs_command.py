@@ -1,4 +1,4 @@
-"""E2E tests for `decoy jobs list/show/watch` (SP-18b).
+"""E2E tests for `decoy jobs list/show` (SP-18b).
 
 TDD: tests fail first, then the implementation makes them pass.
 
@@ -6,10 +6,6 @@ Honest framing: `jobs` reads LOCAL run history from the DuckDB catalog
 (.decoy/catalog.duckdb). Entries are written by `decoy run` when a workspace
 exists. LOCAL ONLY -- does not connect to the platform server or reflect
 remote/platform job state.
-
-`jobs watch`: local CLI runs are SYNCHRONOUS. A run appears in the catalog only
-after it completes. `watch` is honest about this: it shows completed run status
-and states that local runs are synchronous (remote watch is SP-20/platform).
 
 Assertions:
 
@@ -24,10 +20,6 @@ S2. `jobs show <run-id> --json` exits 0 with structured JSON.
 S3. `jobs show` with a non-existent id exits non-zero.
 S4. `jobs show` with an ambiguous prefix exits non-zero.
 S5. `jobs show` with a prefix < 4 chars exits non-zero.
-
-W1. `jobs watch <run-id>` for a completed run exits 0 with honest status.
-W2. `jobs watch` for a missing run-id exits non-zero.
-W3. `jobs watch --help` mentions that local runs are synchronous (honest framing).
 """
 
 from __future__ import annotations
@@ -286,42 +278,3 @@ def test_jobs_show_short_prefix_exits_nonzero(tmp_path: Path) -> None:
         catch_exceptions=False,
     )
     assert result.exit_code != 0
-
-
-# ---------------------------------------------------------------------------
-# W1-W3: jobs watch
-# ---------------------------------------------------------------------------
-
-
-def test_jobs_watch_completed_run_exits_ok(tmp_path: Path) -> None:
-    """jobs watch for a completed run exits 0 with honest status message."""
-    _init_workspace(tmp_path)
-    entry_id = _seed_run_entry(tmp_path, status="ok")
-
-    result = runner.invoke(
-        app, ["jobs", "watch", entry_id, "--workspace", str(tmp_path)], catch_exceptions=False
-    )
-    assert result.exit_code == 0
-    # Must communicate the run is already complete -- not fake progress
-    output = result.output.lower()
-    assert "complete" in output or "done" in output or "finished" in output or "ok" in output
-
-
-def test_jobs_watch_missing_id_exits_nonzero(tmp_path: Path) -> None:
-    """jobs watch with a missing run-id exits non-zero."""
-    _init_workspace(tmp_path)
-    result = runner.invoke(
-        app,
-        ["jobs", "watch", "00000000-0000-0000-0000-000000000000", "--workspace", str(tmp_path)],
-        catch_exceptions=False,
-    )
-    assert result.exit_code != 0
-
-
-def test_jobs_watch_help_mentions_synchronous() -> None:
-    """jobs watch --help states local runs are synchronous (honest framing)."""
-    result = runner.invoke(app, ["jobs", "watch", "--help"])
-    assert result.exit_code == 0
-    output = result.output.lower()
-    # Must mention that local runs are synchronous and watch has limited utility
-    assert "synchronous" in output or "complete" in output or "local" in output

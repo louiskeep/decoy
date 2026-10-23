@@ -111,14 +111,16 @@ any subcommand.
 
 ## Exit codes
 
-`decoy` returns one of these six codes. Scripts, Make recipes, and CI
+`decoy` returns one of these five codes. Scripts, Make recipes, and CI
 pipelines can switch on the integer; the contract is stable across releases.
+Code `2` is reserved/unused (it previously belonged to a deprecation shim that
+was removed; the gap is held open so the higher codes keep their values).
 
 | Code | Name                   | Meaning                                                                                    |
 |------|------------------------|--------------------------------------------------------------------------------------------|
 | 0    | `EXIT_OK`              | Success.                                                                                   |
 | 1    | `EXIT_USAGE`           | Usage error: config did not validate, path did not exist, flag combination was invalid.    |
-| 2    | `EXIT_DEPRECATED_SHIM` | The legacy `forge` console entry point was invoked; migrate to `decoy ...`.                |
+| 2    | _(reserved)_           | Reserved/unused -- held open; no command returns it.                                        |
 | 3    | `EXIT_RUNTIME`         | The CLI itself failed mid-run (engine error, output write failure, transient I/O problem). |
 | 4    | `EXIT_FINDINGS`        | The CLI ran cleanly but found data issues (e.g. `decoy storm integrity` flagged residual PII or FK preservation failures). The fix is in the data being checked, not in the CLI invocation. |
 | 5    | `EXIT_CAPACITY`        | `decoy run` or `decoy preflight` refused the job: it needs more memory than the host/budget has (the engine's out-of-core-FK memory gate). The fix is a bigger host/cgroup ceiling or a smaller job. `decoy preflight`'s v1 check covers the out-of-core-FK route only, not the ingestion peak or the generate path. |

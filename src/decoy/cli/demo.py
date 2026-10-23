@@ -128,7 +128,7 @@ def _run_single_demo(state: OutputState, out_dir: Path) -> int:
     S22-CL-V1GRAPHRUNNER). The new walkthrough: write a sample CSV ->
     STORM scan -> V2 PipelineConfig validate -> compile_plan ->
     select_execution_adapter().run(...) -> write masked output.
-    The FORECAST step is dropped (no V2 successor); the storm scan
+    The FORECAST step is dropped (no V2 successor); storm analyze
     still surfaces PII counts so the operator gets the same gut-check
     on what the engine saw in their data.
     """

@@ -98,7 +98,7 @@ def test_storm_analyze_strategy_random_caps_rows(sample_csv: Path, tmp_path: Pat
         app,
         [
             "storm",
-            "scan",
+            "analyze",
             str(sample_csv),
             "--out",
             str(out_path),
@@ -111,24 +111,3 @@ def test_storm_analyze_strategy_random_caps_rows(sample_csv: Path, tmp_path: Pat
     assert result.exit_code == 0
     payload = _json.loads(out_path.read_text())
     assert payload["row_count"] == 3
-
-
-def test_storm_scan_alias_works_and_warns(sample_csv: Path, tmp_path: Path):
-    """OSS.4a (2026-06-02): `decoy storm scan` is a deprecated alias for
-    `decoy storm analyze`. It must still produce the same scan output AND
-    emit a stderr deprecation warning naming the canonical verb + the
-    removal target (0.2.0). Pattern source: kubectl deprecation
-    convention. Removal of this alias removes this test too."""
-    out_path = tmp_path / "scan.json"
-    result = runner.invoke(
-        app, ["storm", "scan", str(sample_csv), "--out", str(out_path)]
-    )
-    assert result.exit_code == 0, result.stdout
-    assert out_path.exists()
-    payload = _json.loads(out_path.read_text())
-    assert payload["row_count"] == 5
-    # The deprecation warning lives on stderr (`result.output` carries
-    # the combined streams under typer.testing.CliRunner).
-    assert "`decoy storm scan` is deprecated" in result.output
-    assert "`decoy storm analyze`" in result.output
-    assert "0.2.0" in result.output

@@ -7,9 +7,12 @@ only by convention. A single typo would silently change the contract; a
 contributor reading the source had no way to learn what each code meant short
 of grepping every call site.
 
-The five values below are the public exit-code contract. Their INTEGER VALUES
+The values below are the public exit-code contract. Their INTEGER VALUES
 are stable across releases (callers in shell scripts, CI pipelines, and Make
-recipes depend on them). The names may evolve; the integers may not.
+recipes depend on them). The names may evolve; the integers may not. Code 2 is
+reserved/unused: it previously belonged to the `forge` deprecation shim
+(removed pre-GA), and renumbering the higher codes to close the gap would break
+the scriptable contract for no gain, so 2 is simply held open.
 
 OSS.4b (2026-06-02) added EXIT_FINDINGS=4 to support `decoy storm integrity`,
 which has a meaningful 4th state distinct from the existing three: the
@@ -22,9 +25,8 @@ here is 0 clean / 4 findings / 3 runtime crash.
 The OOM checker v1 (2026-07-24) added EXIT_CAPACITY=5: `decoy run` and
 `decoy preflight` both need a way to say "this job needs more memory than
 the host has" distinctly from a generic engine crash (EXIT_RUNTIME) or a bad
-config (EXIT_USAGE). `2` is already spoken for (`EXIT_DEPRECATED_SHIM`), so
-the new value is `5`, the next unused integer -- 0-4 are pinned and do not
-move.
+config (EXIT_USAGE). The value is `5` -- 0, 1, 3, and 4 are pinned and do not
+move, and 2 is reserved/unused (see above).
 
 Reference: README "Exit codes" section + `decoy explain exit-codes`.
 """
@@ -40,11 +42,9 @@ EXIT_USAGE: int = 1
 validation, a path that did not exist, a flag combination that was invalid.
 The fix is in the user's request, not in the CLI itself."""
 
-EXIT_DEPRECATED_SHIM: int = 2
-"""The legacy `forge` console script was invoked. The user is on the old name;
-the CLI prints a migration hint and exits without running. Reserved for the
-`decoy._deprecated` shim only; do not reuse for other deprecation cases
-without a public-contract conversation first."""
+# Code 2 is reserved/unused. It previously belonged to EXIT_DEPRECATED_SHIM
+# (the `forge` console-script shim, removed pre-GA). The integer is held open
+# rather than reassigned so the higher codes keep their stable values.
 
 EXIT_RUNTIME: int = 3
 """The CLI itself blew up at run time: the engine raised an unexpected error,
@@ -89,7 +89,6 @@ v1 checks the out-of-core-FK route only; see `decoy explain exit-codes`."""
 
 __all__ = [
     "EXIT_CAPACITY",
-    "EXIT_DEPRECATED_SHIM",
     "EXIT_FINDINGS",
     "EXIT_OK",
     "EXIT_RUNTIME",

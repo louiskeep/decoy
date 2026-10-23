@@ -23,22 +23,22 @@ from decoy.cli import exit_codes
 
 
 def test_named_constants_have_pinned_integer_values() -> None:
-    """Pin the integer-value contract: 0/1/2/3/4/5 are stable across releases.
+    """Pin the integer-value contract: 0/1/3/4/5 are stable across releases.
     OSS.4b (2026-06-02) added EXIT_FINDINGS=4 for `decoy storm integrity`.
-    The OOM checker v1 (2026-07-24) added EXIT_CAPACITY=5."""
+    The OOM checker v1 (2026-07-24) added EXIT_CAPACITY=5. Code 2 is
+    reserved/unused (the removed `forge` shim) -- the gap is held open so
+    the higher codes keep their values; see exit_codes module docstring."""
     assert exit_codes.EXIT_OK == 0
     assert exit_codes.EXIT_USAGE == 1
-    assert exit_codes.EXIT_DEPRECATED_SHIM == 2
     assert exit_codes.EXIT_RUNTIME == 3
     assert exit_codes.EXIT_FINDINGS == 4
     assert exit_codes.EXIT_CAPACITY == 5
-    # __all__ covers exactly the six public names; any rename of an
+    # __all__ covers exactly the five public names; any rename of an
     # existing constant or addition of a new public symbol must update
     # __all__ deliberately rather than slip through.
     assert set(exit_codes.__all__) == {
         "EXIT_OK",
         "EXIT_USAGE",
-        "EXIT_DEPRECATED_SHIM",
         "EXIT_RUNTIME",
         "EXIT_FINDINGS",
         "EXIT_CAPACITY",
@@ -51,10 +51,9 @@ def test_no_remaining_literal_typer_exits_in_cli_source() -> None:
     case where a future contributor adds ``typer.Exit(code=5)`` and
     silently extends the public contract.
 
-    Scope: ``src/decoy/cli/`` plus the closely-coupled ``src/decoy/ui/``
-    + ``src/decoy/_deprecated.py``. The exit_codes module itself is
-    excluded (its docstring intentionally cites the legacy pattern as
-    an example of what is being centralized)."""
+    Scope: ``src/decoy/cli/`` plus the closely-coupled ``src/decoy/ui/``.
+    The exit_codes module itself is excluded (its docstring intentionally
+    cites the legacy pattern as an example of what is being centralized)."""
     cli_root = Path(__file__).resolve().parent.parent.parent / "src" / "decoy"
     pattern = re.compile(r"typer\.Exit\(code=\d|sys\.exit\(\d")
     offenders: list[tuple[Path, int, str]] = []

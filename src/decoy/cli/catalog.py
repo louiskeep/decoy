@@ -347,9 +347,9 @@ Sensitivity classes:
 What catalog add does NOT do:
   - It does NOT copy raw source data into DuckDB.
   - It does NOT sync the registration with the platform server.
-  - It does NOT scan or profile the file (use `decoy storm scan` for that).
+  - It does NOT scan or profile the file (use `decoy storm analyze` for that).
 
-See also: decoy catalog list, decoy catalog show, decoy storm scan.
+See also: decoy catalog list, decoy catalog show, decoy storm analyze.
 """
 
 

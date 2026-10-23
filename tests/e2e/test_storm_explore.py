@@ -259,14 +259,14 @@ def test_storm_show_unknown_field_json_emits_error_envelope(scan_file: Path):
 
 
 def test_storm_show_accepts_envelope_shape(tmp_path: Path):
-    """`storm scan --json` envelopes wrap the profile in a `profile` key --
+    """`storm analyze --json` envelopes wrap the profile in a `profile` key --
     `storm show` should accept that shape too, matching forecast's loader.
     """
     path = tmp_path / "envelope.json"
     path.write_text(
         _json.dumps(
             {
-                "command": "storm scan",
+                "command": "storm analyze",
                 "status": "ok",
                 "profile": {
                     "row_count": 1,

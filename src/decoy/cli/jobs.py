@@ -9,17 +9,14 @@ remote job state, or track platform-managed schedules or audit logs.
 There is no `decoy platform` command group -- remote job monitoring is a
 platform-service concern (see the platform web UI / API), not this CLI.
 
-Watch honesty note
--------------------
-`jobs watch <run-id>`: local CLI runs are SYNCHRONOUS. `decoy run` blocks until
-the run is complete before returning. A run entry is only written to the catalog
-AFTER the run finishes, so by the time any run appears in the catalog it is
-already done. `watch` is honest about this: it shows the completed run status
-and explains that live watching is not applicable to synchronous local runs.
-
-If you want to monitor a run while it is happening, re-run it in the foreground:
-the spinner in `decoy run` shows live progress. There is no background-job
-mechanism in local CLI mode.
+Synchrony note
+--------------
+Local CLI runs are SYNCHRONOUS. `decoy run` blocks until the run is complete
+before returning, and a run entry is only written to the catalog AFTER the run
+finishes, so by the time any run appears in `jobs list`/`jobs show` it is
+already done. To monitor a run while it is happening, re-run it in the
+foreground: the spinner in `decoy run` shows live progress. There is no
+background-job mechanism in local CLI mode.
 """
 
 from __future__ import annotations
@@ -136,7 +133,7 @@ LOCAL ONLY: shows runs recorded by `decoy run` in this local workspace.
 No platform job history, schedules, or remote state is included.
 Use `decoy project init` to create a workspace if you haven't already.
 
-See also: decoy jobs show, decoy jobs watch, decoy project init.
+See also: decoy jobs show, decoy project init.
 """
 
 
@@ -293,118 +290,6 @@ def _show(
         state.console.print(" ", hint("engine:"), code(run["engine_version"]))
     if run.get("cli_version"):
         state.console.print(" ", hint("cli:"), code(run["cli_version"]))
-
-
-# ---------------------------------------------------------------------------
-# jobs watch
-# ---------------------------------------------------------------------------
-
-_WATCH_EPILOG = """\
-Examples:
-
-  decoy jobs watch <run-id>
-    Show the status of a local run. If the run is complete, prints its status.
-
-Honesty note -- local CLI runs are SYNCHRONOUS:
-  `decoy run` blocks until the run is done before returning. A run entry is
-  only written to the catalog AFTER the run finishes, so every run in the
-  catalog is already complete by the time you can `watch` it.
-
-  This command shows the recorded completed status. It does NOT stream live
-  progress for an in-progress run, because local CLI runs have no background
-  mechanism that would allow that.
-
-  There is no `decoy platform` command group. Remote/async job monitoring
-  is a platform-service concern, outside this CLI's local-only scope.
-
-  To watch a run while it is happening, run it in the foreground:
-    decoy run pipeline.yaml
-  The spinner shows live progress.
-
-See also: decoy jobs list, decoy jobs show, decoy run.
-"""
-
-
-@jobs_app.command(name="watch", epilog=_WATCH_EPILOG)
-def _watch(
-    run_id: str = typer.Argument(
-        ...,
-        help="Run catalog id (or prefix, min 4 chars).",
-    ),
-    json_: bool = typer.Option(False, "--json", help="Emit structured JSON on stdout."),
-    quiet: bool = typer.Option(False, "--quiet", "-q", help="Suppress stdout."),
-    verbose: bool = typer.Option(False, "--verbose", "-v", help="Enable debug-level logs."),
-    workspace: str | None = typer.Option(
-        None,
-        "--workspace",
-        help="Workspace root (default: search upward from cwd). Overrides DECOY_WORKSPACE_ROOT.",
-    ),
-) -> None:
-    """Show status of a local run (always complete -- local runs are synchronous).
-
-    LOCAL CLI RUNS ARE SYNCHRONOUS. A run entry only appears in the catalog
-    after `decoy run` has already finished. This command shows the recorded
-    completed status.
-
-    For live progress during a run, use `decoy run pipeline.yaml` in the
-    foreground -- the spinner shows progress. There is no `decoy platform`
-    command group; remote job monitoring is a platform-service concern.
-    """
-    state = setup_output(json_, quiet, verbose)
-    root = _require_workspace(workspace, "jobs watch", state)
-
-    with _catalog_db(root, "jobs watch", state) as conn:
-        entry = _lookup_run(run_id, conn, "jobs watch", state)
-
-    run = _entry_to_run_dict(entry)
-    status_str = run.get("status") or "unknown"
-
-    if state.mode is OutputMode.json:
-        emit_json(
-            state,
-            {
-                "command": "jobs watch",
-                "status": "ok",
-                "workspace_root": str(root),
-                "run_status": status_str,
-                "already_complete": True,
-                "note": (
-                    "Local CLI runs are synchronous. This run is already complete. "
-                    "There is no `decoy platform` command group; remote job "
-                    "monitoring is a platform-service concern."
-                ),
-                "run": run,
-            },
-        )
-        return
-
-    if state.mode is OutputMode.quiet:
-        return
-
-    ts = (run.get("run_timestamp") or run.get("recorded_at") or "")[:19]
-    state.console.print(
-        success("run complete"),
-        code(run["id"][:8] + "..."),
-        hint(f"status: {status_str}"),
-        hint(ts),
-    )
-    state.console.print(
-        " ",
-        hint("note:"),
-        "local CLI runs are synchronous -- this run finished before its catalog entry was written.",
-    )
-    state.console.print(
-        " ",
-        hint("for live progress, run in the foreground:"),
-        code("decoy run pipeline.yaml"),
-    )
-    if run.get("evidence_path"):
-        state.console.print(
-            " ",
-            hint("evidence at:"),
-            code(run["evidence_path"]),
-            hint("(use `decoy report show` to render)"),
-        )
 
 
 # Public exports

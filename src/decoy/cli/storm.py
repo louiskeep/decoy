@@ -5,7 +5,6 @@ from __future__ import annotations
 import difflib
 import json as _json
 import sys
-import time
 from datetime import datetime
 from enum import Enum
 from pathlib import Path
@@ -23,8 +22,7 @@ storm_app = typer.Typer(
     name="storm",
     help=(
         "Dataset analysis -- the STORM event. `analyze` looks at a file "
-        "(pre-run); `integrity` verifies a masked file (post-run). The "
-        "previous `scan` verb is a deprecated alias for `analyze`."
+        "(pre-run); `integrity` verifies a masked file (post-run)."
     ),
     no_args_is_help=True,
 )
@@ -74,21 +72,6 @@ _BUCKET_RANK: dict[str, int] = {"none": 0, "low": 1, "med": 2, "high": 3}
 # specific "scan it first" suggestion.
 _RAW_DATA_SUFFIXES = {".csv", ".tsv", ".txt", ".parquet", ".json.gz", ".jsonl"}
 
-# `storm test` -- demo command. Stages and a fixed set of made-up facts the
-# fake summary card renders. Marked clearly so no one mistakes the output
-# for a real scan.
-_TEST_STAGES: tuple[str, ...] = ("Load source", "Profile columns", "Save profile")
-_DEFAULT_TEST_SECONDS = 10.0
-_FAKE_FACTS: list[tuple[str, str]] = [
-    ("Mode", "demo (no data scanned)"),
-    ("Source", "patients_demo.csv (sample)"),
-    ("Rows scanned", "50,000 (head)"),
-    ("Columns", "10"),
-    ("PII columns", "6"),
-    ("Reid risk", "88.9"),
-    ("Quasi-identifiers", "(first_name + last_name + zip)"),
-]
-
 
 _ANALYZE_EPILOG = """\
 Examples:
@@ -114,17 +97,6 @@ Examples:
 
 See also: decoy storm fields, decoy storm show, decoy storm diff,
   decoy storm integrity, decoy init, decoy run.
-"""
-
-# Kept for the deprecated `decoy storm scan` alias (renamed 2026-06-02
-# under OSS.4a, scheduled removal in 0.2.0). Same body as
-# _ANALYZE_EPILOG but the first example writes the deprecated form so
-# anyone running `decoy storm scan --help` sees the old shape.
-_SCAN_EPILOG = """\
-DEPRECATED: `decoy storm scan` is the old name for `decoy storm analyze`.
-Run `decoy storm analyze --help` for the canonical examples.
-
-Removal target: 0.2.0.
 """
 
 
@@ -202,23 +174,6 @@ or more fail-severity findings); 1 EXIT_USAGE for missing files;
 3 EXIT_RUNTIME for unexpected exceptions.
 
 See also: decoy storm analyze, decoy run, decoy explain exit-codes.
-"""
-
-
-_TEST_EPILOG = """\
-Examples:
-
-  decoy storm test
-    10 seconds of stormy multistage animation, then a fake summary card.
-    No data is read; nothing is written.
-
-  decoy storm test --seconds 30
-    Stretch the demo to 30 seconds -- handy for screen recording.
-
-  decoy storm test --json
-    Skip the animation, emit a fake envelope. For pipeline smoke tests.
-
-See also: decoy storm analyze, decoy demo.
 """
 
 
@@ -398,7 +353,7 @@ def _load_data(
 def _load_scan_dict(scan_path: str) -> dict:
     """Load a STORM scan JSON file (or stdin when path is `-`).
 
-    Accepts both shapes that `decoy storm scan` produces -- the bare
+    Accepts both shapes that `decoy storm analyze` produces -- the bare
     `to_dict()` written to disk by default, and the `{"profile": {...}}`
     envelope from `--json` mode.
     """
@@ -421,7 +376,7 @@ def _load_scan_dict(scan_path: str) -> dict:
 
 
 def _pii_bucket(score: float | None) -> str:
-    """Same buckets as the `storm scan` card uses (>=0.6 PII columns count)."""
+    """Same buckets as the `storm analyze` card uses (>=0.6 PII columns count)."""
     if score is None:
         return "none"
     if score >= 0.6:
@@ -1246,94 +1201,6 @@ def _diff(
         raise typer.Exit(code=EXIT_USAGE)
 
 
-def _test_command(
-    seconds: float = typer.Option(
-        _DEFAULT_TEST_SECONDS, "--seconds",
-        help="How long to run the simulated scan stages (default 10).",
-        min=0.0,
-    ),
-    json_: bool = typer.Option(
-        False, "--json",
-        help="Skip the animation, emit a fake scan-shaped envelope to stdout.",
-    ),
-    quiet: bool = typer.Option(
-        False, "--quiet", "-q",
-        help="Suppress stdout. Skips the animation and exits 0.",
-    ),
-    verbose: bool = typer.Option(
-        False, "--verbose", "-v",
-        help="Enable debug-level CLI logs on stderr.",
-    ),
-) -> None:
-    """Preview the `storm analyze` UX without scanning any data.
-
-    Runs the stormy multistage animation for ~10 seconds (the default), then
-    prints a clearly-marked fake summary card. No data is read; nothing is
-    written. Use this to demo the CLI on a clean terminal, record a screen
-    capture, or confirm the storm animation renders before pointing the real
-    scan at a slow dataset.
-
-    --json and --quiet skip the animation -- they are pipeline-shape only.
-    """
-    state = setup_output(json_, quiet, verbose)
-
-    if state.mode is OutputMode.json:
-        emit_json(
-            state,
-            {
-                "command": "storm test",
-                "status": "ok",
-                "demo": True,
-                "facts": dict(_FAKE_FACTS),
-            },
-        )
-        return
-
-    if state.mode is OutputMode.quiet:
-        return
-
-    per_stage = (seconds / len(_TEST_STAGES)) if _TEST_STAGES else 0.0
-    with stormy_multistage(state, list(_TEST_STAGES)) as ms:
-        for _ in _TEST_STAGES:
-            if per_stage > 0:
-                time.sleep(per_stage)
-            ms.complete()
-
-    render_card(
-        state,
-        command="decoy storm test",
-        facts=_FAKE_FACTS,
-        next_hint="decoy storm analyze path/to/your/data.csv",
-        status="ok",
-    )
-
-
-# Deprecated alias for `decoy storm scan` -> `decoy storm analyze`.
-# OSS.4a (2026-06-02): the verb was renamed because `analyze` is a truer
-# name for what the command does (look at the data, tell the user what's
-# in it). `scan` keeps working for one minor release (removal target:
-# 0.2.0) and emits a stderr warning on every invocation so scripts that
-# pipe-import the JSON output keep working while the world rewrites.
-# Pattern source: kubectl deprecation convention.
-#
-# functools.wraps copies _scan's __wrapped__, __module__, __name__,
-# __qualname__, __doc__, __dict__, __annotations__, and most
-# importantly __signature__ -- Typer introspects __signature__ when
-# building the help body + parameter parser, so the alias renders
-# the SAME --help / parameters as `analyze`.
-import functools as _functools  # noqa: E402 -- deliberate: alias must build after analyze is defined
-
-
-@_functools.wraps(_scan)
-def _scan_deprecated_shim(*args, **kwargs):  # type: ignore[no-untyped-def]
-    sys.stderr.write(
-        "warning: `decoy storm scan` is deprecated; "
-        "use `decoy storm analyze`. "
-        "`scan` will be removed in 0.2.0.\n"
-    )
-    return _scan(*args, **kwargs)
-
-
 def _integrity(
     masked: Path = typer.Argument(
         ...,
@@ -1565,12 +1432,9 @@ def _integrity(
 
 # Canonical: `decoy storm analyze` (OSS.4a, 2026-06-02).
 storm_app.command(name="analyze", epilog=_ANALYZE_EPILOG)(_scan)
-# Deprecated alias: `decoy storm scan`. Removal target: 0.2.0.
-storm_app.command(name="scan", epilog=_SCAN_EPILOG)(_scan_deprecated_shim)
 # OSS.4b (2026-06-02): post-run integrity verb. CLI wrapper for
 # decoy_engine.storm.postmask.run_storm_post_mask.
 storm_app.command(name="integrity", epilog=_INTEGRITY_EPILOG)(_integrity)
 storm_app.command(name="fields", epilog=_FIELDS_EPILOG)(_fields)
 storm_app.command(name="show", epilog=_SHOW_EPILOG)(_show)
 storm_app.command(name="diff", epilog=_DIFF_EPILOG)(_diff)
-storm_app.command(name="test", epilog=_TEST_EPILOG)(_test_command)

@@ -386,15 +386,14 @@ _TOPICS: dict[str, _Topic] = {
         name="exit-codes",
         summary="The process exit codes every `decoy` command returns.",
         body=(
-            "Every `decoy` subcommand returns one of six exit codes. Scripts,\n"
+            "Every `decoy` subcommand returns one of five exit codes. Scripts,\n"
             "Make recipes, and CI pipelines can switch on the integer value.\n\n"
             "  0   Success. The command did what it said. POSIX convention.\n"
             "  1   Usage error. The caller's request was wrong: config did not\n"
             "      validate, a path did not exist, an incompatible flag\n"
             "      combination was passed. The fix is in the user's input.\n"
-            "  2   Deprecated shim. The legacy `forge` console entry point was\n"
-            "      invoked; the CLI printed a migration hint and exited. The\n"
-            "      fix is to run `decoy ...` instead of `forge ...`.\n"
+            "  2   Reserved/unused. (Previously a deprecated-shim code; held\n"
+            "      open so the higher codes keep their stable values.)\n"
             "  3   Runtime error. The CLI itself failed mid-run: the engine\n"
             "      raised an unexpected error, an output write failed, a\n"
             "      transient I/O problem happened. The fix is in the CLI or\n"
@@ -412,8 +411,8 @@ _TOPICS: dict[str, _Topic] = {
             "      v1 checks this for the out-of-core-FK route only; it does\n"
             "      not cover the ingestion peak `decoy run` pays before the\n"
             "      engine gate runs, or the generate path.\n\n"
-            "Integer values are stable across releases. The named constants\n"
-            "(EXIT_OK / EXIT_USAGE / EXIT_DEPRECATED_SHIM / EXIT_RUNTIME /\n"
+            "Integer values are stable across releases (2 is reserved/unused).\n"
+            "The named constants (EXIT_OK / EXIT_USAGE / EXIT_RUNTIME /\n"
             "EXIT_FINDINGS / EXIT_CAPACITY) live in `decoy.cli.exit_codes` for\n"
             "callers that import them in Python."
         ),

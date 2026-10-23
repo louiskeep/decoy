@@ -147,10 +147,8 @@ Changelog = "https://github.com/louiskeep/decoy/blob/main/CHANGELOG.md"
 "Release smoke log" = "https://github.com/louiskeep/decoy/blob/main/docs/release/smoke-log.md"
 
 [project.scripts]
-# Console script name STAYS `decoy` regardless of the distribution
-# name. Same with `forge` (the deprecation shim from S22).
+# Console script name STAYS `decoy` regardless of the distribution name.
 decoy = "decoy.__main__:app"
-forge = "decoy._deprecated:forge_shim"
 
 [tool.hatch.build.targets.wheel]
 # Import package stays `decoy` (Q-OSS-1 RESOLVED). The `packages` walk

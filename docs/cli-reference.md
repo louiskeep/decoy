@@ -934,7 +934,7 @@ See also: decoy validate config, decoy fit, decoy run.
 
 ## `decoy storm`
 
-Dataset analysis -- the STORM event. `analyze` looks at a file (pre-run); `integrity` verifies a masked file (post-run). The previous `scan` verb is a deprecated alias for `analyze`.
+Dataset analysis -- the STORM event. `analyze` looks at a file (pre-run); `integrity` verifies a masked file (post-run).
 
 **Usage**:
 
@@ -949,12 +949,10 @@ $ decoy storm [OPTIONS] COMMAND [ARGS]...
 **Commands**:
 
 * `analyze`: Scan a dataset and produce a STORM profile.
-* `scan`: Scan a dataset and produce a STORM profile.
 * `integrity`: Verify a masked file&#x27;s integrity against...
 * `fields`: List fields from a saved STORM scan, with...
 * `show`: Per-field detail from a saved STORM scan.
 * `diff`: Compare two STORM scans -- catch schema,...
-* `test`: Preview the `storm analyze` UX without...
 
 ### `decoy storm analyze`
 
@@ -1016,49 +1014,6 @@ Examples:
 
 See also: decoy storm fields, decoy storm show, decoy storm diff,
   decoy storm integrity, decoy init, decoy run.
-
-
-### `decoy storm scan`
-
-Scan a dataset and produce a STORM profile.
-
-Use this when you&#x27;ve been handed a dataset and want to know what&#x27;s in it
--- which fields are PII, which look like quasi-identifiers, what
-re-identification risk the dataset carries -- before writing a masking
-pipeline. Pass the saved scan JSON to `decoy storm fields` or
-`decoy storm show`.
-
-Supported formats: delimited (CSV/TSV, default), parquet, and fixed-width.
-Fixed-width input requires an explicit --layout spec (column boundaries
-are ambiguous without one). Format is inferred from the file extension
-when --format is not supplied.
-
-**Usage**:
-
-```console
-$ decoy storm scan [OPTIONS] SOURCE
-```
-
-**Arguments**:
-
-* `SOURCE`: Path to a file to scan (CSV, Parquet, or fixed-width).  [required]
-
-**Options**:
-
-* `--rows INTEGER`: Sample row cap. Default: scan everything.
-* `--strategy [full|head|random]`: Sampling strategy when --rows is set.  [default: head]
-* `--out PATH`: Where to save the scan JSON. Use - for stdout. Default: scan_&lt;timestamp&gt;.json next to the source.
-* `--json`: Emit the full StormProfile JSON to stdout. No card.
-* `-q, --quiet`: Suppress stdout. Errors still go to stderr.
-* `-v, --verbose`: Enable debug-level CLI logs on stderr.
-* `--format [delimited|parquet|fixed-width]`: Input format: delimited (CSV/TSV), parquet, or fixed-width. Default: inferred from file extension. fixed-width always requires --layout.
-* `--layout PATH`: Layout spec (YAML or JSON) for fixed-width input. Required when format is fixed-width. Each column needs &#x27;name&#x27;, &#x27;start&#x27; (0-indexed), and &#x27;width&#x27;.
-* `--help`: Show this message and exit.
-
-DEPRECATED: `decoy storm scan` is the old name for `decoy storm analyze`.
-Run `decoy storm analyze --help` for the canonical examples.
-
-Removal target: 0.2.0.
 
 
 ### `decoy storm integrity`
@@ -1246,47 +1201,6 @@ Examples:
     Boolean drift flag for scripting.
 
 See also: decoy storm analyze, decoy storm fields.
-
-
-### `decoy storm test`
-
-Preview the `storm analyze` UX without scanning any data.
-
-Runs the stormy multistage animation for ~10 seconds (the default), then
-prints a clearly-marked fake summary card. No data is read; nothing is
-written. Use this to demo the CLI on a clean terminal, record a screen
-capture, or confirm the storm animation renders before pointing the real
-scan at a slow dataset.
-
---json and --quiet skip the animation -- they are pipeline-shape only.
-
-**Usage**:
-
-```console
-$ decoy storm test [OPTIONS]
-```
-
-**Options**:
-
-* `--seconds FLOAT RANGE`: How long to run the simulated scan stages (default 10).  [default: 10.0; x&gt;=0.0]
-* `--json`: Skip the animation, emit a fake scan-shaped envelope to stdout.
-* `-q, --quiet`: Suppress stdout. Skips the animation and exits 0.
-* `-v, --verbose`: Enable debug-level CLI logs on stderr.
-* `--help`: Show this message and exit.
-
-Examples:
-
-  decoy storm test
-    10 seconds of stormy multistage animation, then a fake summary card.
-    No data is read; nothing is written.
-
-  decoy storm test --seconds 30
-    Stretch the demo to 30 seconds -- handy for screen recording.
-
-  decoy storm test --json
-    Skip the animation, emit a fake envelope. For pipeline smoke tests.
-
-See also: decoy storm analyze, decoy demo.
 
 
 ## `decoy templates`
@@ -2351,9 +2265,9 @@ Sensitivity classes:
 What catalog add does NOT do:
   - It does NOT copy raw source data into DuckDB.
   - It does NOT sync the registration with the platform server.
-  - It does NOT scan or profile the file (use `decoy storm scan` for that).
+  - It does NOT scan or profile the file (use `decoy storm analyze` for that).
 
-See also: decoy catalog list, decoy catalog show, decoy storm scan.
+See also: decoy catalog list, decoy catalog show, decoy storm analyze.
 
 
 ### `decoy catalog show`
@@ -2415,7 +2329,6 @@ $ decoy jobs [OPTIONS] COMMAND [ARGS]...
 
 * `list`: List local runs from the catalog,...
 * `show`: Show full metadata for a local run entry.
-* `watch`: Show status of a local run (always...
 
 ### `decoy jobs list`
 
@@ -2456,7 +2369,7 @@ LOCAL ONLY: shows runs recorded by `decoy run` in this local workspace.
 No platform job history, schedules, or remote state is included.
 Use `decoy project init` to create a workspace if you haven't already.
 
-See also: decoy jobs show, decoy jobs watch, decoy project init.
+See also: decoy jobs show, decoy project init.
 
 
 ### `decoy jobs show`
@@ -2498,57 +2411,3 @@ Examples:
 LOCAL ONLY: shows local run metadata from the DuckDB catalog.
 
 See also: decoy jobs list, decoy report show <run-id>.
-
-
-### `decoy jobs watch`
-
-Show status of a local run (always complete -- local runs are synchronous).
-
-LOCAL CLI RUNS ARE SYNCHRONOUS. A run entry only appears in the catalog
-after `decoy run` has already finished. This command shows the recorded
-completed status.
-
-For live progress during a run, use `decoy run pipeline.yaml` in the
-foreground -- the spinner shows progress. There is no `decoy platform`
-command group; remote job monitoring is a platform-service concern.
-
-**Usage**:
-
-```console
-$ decoy jobs watch [OPTIONS] RUN_ID
-```
-
-**Arguments**:
-
-* `RUN_ID`: Run catalog id (or prefix, min 4 chars).  [required]
-
-**Options**:
-
-* `--json`: Emit structured JSON on stdout.
-* `-q, --quiet`: Suppress stdout.
-* `-v, --verbose`: Enable debug-level logs.
-* `--workspace TEXT`: Workspace root (default: search upward from cwd). Overrides DECOY_WORKSPACE_ROOT.
-* `--help`: Show this message and exit.
-
-Examples:
-
-  decoy jobs watch <run-id>
-    Show the status of a local run. If the run is complete, prints its status.
-
-Honesty note -- local CLI runs are SYNCHRONOUS:
-  `decoy run` blocks until the run is done before returning. A run entry is
-  only written to the catalog AFTER the run finishes, so every run in the
-  catalog is already complete by the time you can `watch` it.
-
-  This command shows the recorded completed status. It does NOT stream live
-  progress for an in-progress run, because local CLI runs have no background
-  mechanism that would allow that.
-
-  There is no `decoy platform` command group. Remote/async job monitoring
-  is a platform-service concern, outside this CLI's local-only scope.
-
-  To watch a run while it is happening, run it in the foreground:
-    decoy run pipeline.yaml
-  The spinner shows live progress.
-
-See also: decoy jobs list, decoy jobs show, decoy run.
