@@ -59,6 +59,10 @@ _README_TABLE_OMITTED = frozenset(
         "schema",
         "doctor",
         "subset",
+        # S6: `query` (read-only SQL over Parquet output) is featured in the root
+        # help, not the curated README Common-commands table -- allowlisted here
+        # like the other delight commands (subset/fit).
+        "query",
         # S3b: the four registry sub-apps folded into `list`/`show`; the README
         # table advertises `decoy list templates` / `decoy show template`.
         # S4b: `vault`, `evidence`, and `storm` are gone (folded into `decoy

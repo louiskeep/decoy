@@ -18,6 +18,8 @@ from decoy.cli.fit import fit as fit_command
 from decoy.cli.info import INFO_EPILOG
 from decoy.cli.info import info as info_command
 from decoy.cli.init import INIT_EPILOG, init_command
+from decoy.cli.query import QUERY_EPILOG
+from decoy.cli.query import query as query_command
 from decoy.cli.reference import LIST_EPILOG, SHOW_EPILOG, list_, show
 from decoy.cli.report import report_app
 from decoy.cli.run import RUN_EPILOG
@@ -54,6 +56,7 @@ Try one of:
   decoy report show evidence.json  Show the evidence manifest (the post-run surface: show/verify/fidelity/integrity/diff/vault).
   decoy report verify evidence.json  Re-hash the recorded files and report fingerprint drift.
   decoy report diff a.json b.json  Compare two manifests: fingerprints always, data when the output files exist.
+  decoy query "SELECT ..." --table t=out.parquet  Read-only SQL over masked Parquet output.
 
 Run `decoy --install-completion` to enable shell tab completion.
 """
@@ -102,6 +105,7 @@ app.command(name="list", epilog=LIST_EPILOG)(list_)
 app.command(name="show", epilog=SHOW_EPILOG)(show)
 app.command(name="doctor", epilog=DOCTOR_EPILOG)(doctor)
 app.command(name="subset", epilog=SUBSET_EPILOG)(subset_command)
+app.command(name="query", epilog=QUERY_EPILOG)(query_command)
 
 
 if __name__ == "__main__":
