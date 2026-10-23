@@ -148,6 +148,25 @@ test-strength on the file-first `report show`/`diff` and the relocated commands.
 - No source string names a removed command; all three doc sentries green; full suite + ruff green; no engine
   change.
 
+## Build status (2026-10-23)
+
+- **S4a stateless — DONE** (`1ea8e22`): project/catalog/jobs deleted; run writes no catalog; report
+  show/diff file-first. Verified (no `.decoy/` on a clean-dir run).
+- **S4b consolidate — DONE** (`8f5991f`): `report {show,render,verify,fidelity,integrity,diff,vault}`;
+  evidence/vault sub-apps + storm group gone; validate purely pre-run; `report diff` lossless superset
+  (manifest always + data-when-present + `--require-data`). Verified live.
+- **S4 independent review — ACCEPT-WITH-FOLLOWUPS** (0 blocking). Remediated now: #1 added the union-card
+  test (`report show` asserts Input/Output fingerprints + Masking strategies + Row counts together); #2
+  deleted the orphan `cli/storm.py`/`cli/vault.py` stubs (pre-GA hard delete; evidence.py correctly kept as
+  a real helper); #4 deduped the missing-output-file note. **Recorded tech-debt follow-up (#3):** `report.py`
+  is ~2344 lines (7 verbs + compare helpers + renderers); no CLI module-size gate exists, but per the CLI
+  CLAUDE.md "command handlers are short" it should later split into a `report/` package (one module per verb
+  + a shared `_compare.py`). Not done now — a sizeable refactor out of proportion to the loop; logged for a
+  cleanup pass.
+
+**S4 CLOSED** (merge-ready on the branch; not merged — PO-gated). Suite 1124 pass/5 skip; ruff clean; all
+three doc sentries green; no engine behavior change.
+
 ## Loop handoff
 
 Plan-gate review before DEVELOP (confirm: the file-first arg-contract break on `report show`/`diff`; the

@@ -931,7 +931,7 @@ def compare_data(
 
         if not path_a.exists():
             missing_files.append(path_a_str)
-        if not path_b.exists():
+        if not path_b.exists() and path_b_str not in missing_files:
             missing_files.append(path_b_str)
 
         if missing_files:

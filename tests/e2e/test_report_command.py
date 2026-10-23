@@ -389,3 +389,15 @@ def test_report_summarize_json_envelope_ok(tmp_path: Path) -> None:
     assert data["status"] == "ok"
     assert data["evidence_file"] == str(evidence_path)
     assert data["manifest"] == manifest
+
+
+def test_report_show_union_card_has_all_sections(tmp_path: Path) -> None:
+    """`report show` renders the UNION of the former evidence-show + summarize:
+    input/output fingerprint tables + Masking strategies + Row counts together.
+    Guards the S4 #6 merge so a future edit can't silently drop a section."""
+    evidence_path, _ = _write_evidence(tmp_path)
+    result = runner.invoke(app, ["report", "show", str(evidence_path)])
+    assert result.exit_code == 0, result.output
+    out = result.output
+    for section in ("Input fingerprint", "Output fingerprint", "Masking", "Row count"):
+        assert section in out, f"report show card is missing the {section!r} section:\n{out}"
