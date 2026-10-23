@@ -154,8 +154,6 @@ def compile(
     # Profile-fold helpers live in cli/plan.py (the retired `plan` command's
     # reusable write/H1/H2 helpers); import them rather than reimplement (S2).
     from decoy.cli.plan import (
-        NO_PROFILE_SKIPPED_CHECKS,
-        attach_checks_skipped,
         empty_profile_for_no_profile,
         find_first_unique_column_path,
         render_plan_artifact,
@@ -198,7 +196,6 @@ def compile(
                 state, config, f"--profile {profile_path} did not parse as a Profile JSON: {exc}"
             )
             raise typer.Exit(code=EXIT_USAGE) from exc
-        skipped_checks: tuple[str, ...] = ()
     else:
         # H2 (reused from cli/plan.py): --no-profile cannot run the
         # pool-capacity pre-flight, so a cardinality_mode: unique column would
@@ -215,20 +212,20 @@ def compile(
             )
             raise typer.Exit(code=EXIT_USAGE)
         profile = empty_profile_for_no_profile(raw, engine_version)
-        skipped_checks = NO_PROFILE_SKIPPED_CHECKS
 
-    # Compile: validate config, run plan-compile checks.
+    # Compile: validate config, run plan-compile checks. no_profile=True in the
+    # no-profile branch makes the ENGINE emit its own honest checks_skipped set
+    # (basic_uniqueness_pre_flight, pool_capacity_pre_flight,
+    # null_bearing_int_unsupported, when_string_output_on_numeric_unsupported) and
+    # keep structural checks like fk_plan_ordering in checks_passed. We do not
+    # hand-maintain a parallel skip list (it drifts from the engine's contract).
     try:
-        plan = compile_plan(raw, profile, decoy_engine_version=engine_version)
+        plan = compile_plan(
+            raw, profile, decoy_engine_version=engine_version, no_profile=not use_profile
+        )
     except Exception as exc:
         _compile_error(state, config, exc)
         raise typer.Exit(code=EXIT_USAGE)
-
-    # H1 (reused from cli/plan.py): record the profile-dependent checks as
-    # skipped and strip them from checks_passed so no check is claimed both
-    # verified and skipped.
-    if skipped_checks:
-        plan = attach_checks_skipped(plan, skipped_checks)
 
     # --output: also write the frozen plan artifact (absorbs the old `plan` command).
     if out is not None:

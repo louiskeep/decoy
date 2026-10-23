@@ -211,3 +211,35 @@ exit-code choice; the layering dedupe). On GO: build in recoverable slices (S2a:
 `validate` default aggregator + one envelope + precedence; S2c: reconcile root-help/README/reference + the
 anti-drift allowlists), each self-check + verify, then one independent review of the S2 diff, then DOCUMENT.
 No merge to main.
+
+## Build status (2026-10-23)
+
+- **S2a structural — DONE** (commit `f3c9b9b`): `validate compile`/`validate preflight` subcommands;
+  `plan` folded (`--profile`/`--output`/`--format`); top-level `plan`/`compile`/`preflight` deleted;
+  `EXIT_WARNINGS` promoted (corrects S1's wrong "code 2 reserved" claim).
+- **S2b default aggregator — DONE** (commit `8effa4e`): bare `decoy validate CONFIG` runs the gate via a
+  dependency-free `_DefaultCommandGroup` (hidden `_gate`, excluded from help/reference/completion); one
+  grouped report + one `--json` envelope; exit-code precedence verified live.
+- **S2 independent review — ACCEPT-WITH-FOLLOWUPS**, P1 remediated: **P1-1** (the `validate compile
+  --no-profile` dishonest skip set — a regression that marked the structural `fk_plan_ordering` skipped and
+  three unverifiable checks passed) is FIXED by passing `no_profile=True` to `compile_plan` so the engine
+  emits its own honest skip set `{basic_uniqueness_pre_flight, pool_capacity_pre_flight,
+  null_bearing_int_unsupported, when_string_output_on_numeric_unsupported}` with `fk_plan_ordering` in
+  passed; the hand-maintained `NO_PROFILE_SKIPPED_CHECKS`/`attach_checks_skipped` are deleted; the two
+  mislabeled tests now assert the honest invariants. Verified live + suite green.
+- **Recorded follow-ups (not blocking, pre-GA):**
+  - *P2-1* — the config-base parse+validate sequence is duplicated across `config()`, `_run_config_base()`
+    (the gate), and `preflight()`; the dedup guarantee (one `run_config_only_checks` call in the default) is
+    met and tested, but extracting one shared config-base helper would remove the hand-sync risk.
+  - *P2-2* — `EXIT_WARNINGS` (2) collides with Typer/Click's own parse-layer exit 2 (bad option, path not
+    found, no-args), so a script keying `==2` cannot distinguish "clean-but-warnings" from a malformed
+    invocation. Pre-existing CLI-wide (EXIT_USAGE=1 already disagrees with Typer's parse-layer 2). Options:
+    document the overlap, or remap Click `UsageError` -> `EXIT_USAGE(1)`. Owner call.
+  - *P2-3* — `_DefaultCommandGroup` UX: options must FOLLOW the config path (`validate pipeline.yaml --json`,
+    not `validate --json pipeline.yaml`), and a typo'd subcommand becomes a "path not found" rather than a
+    "did you mean". Acceptable pre-GA; a clearer unknown-option/subcommand message would be a polish item.
+  - *known issue (low)* — a config file literally named `config`/`compile`/`preflight`/`distribution`
+    (no extension) in the invocation slot routes to the subcommand, not the gate. Astronomically unlikely.
+
+**S2 CLOSED** (merge-ready on the branch; not merged — PO-gated). Suite 1111 pass/5 skip; ruff clean; all
+doc-surface sentries green.

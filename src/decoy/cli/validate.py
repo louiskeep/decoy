@@ -918,8 +918,6 @@ def _run_compile_layer(raw: dict[str, Any]) -> list[_GateFinding]:
     from decoy_engine.plan import PlanCompileError, compile_plan
 
     from decoy.cli.plan import (
-        NO_PROFILE_SKIPPED_CHECKS,
-        attach_checks_skipped,
         empty_profile_for_no_profile,
         find_first_unique_column_path,
     )
@@ -946,7 +944,7 @@ def _run_compile_layer(raw: dict[str, Any]) -> list[_GateFinding]:
 
     profile = empty_profile_for_no_profile(raw, engine_version)
     try:
-        plan = compile_plan(raw, profile, decoy_engine_version=engine_version)
+        plan = compile_plan(raw, profile, decoy_engine_version=engine_version, no_profile=True)
     except PlanCompileError as exc:
         from decoy.cli.extras import plan_compile_error_fields
 
@@ -959,7 +957,6 @@ def _run_compile_layer(raw: dict[str, Any]) -> list[_GateFinding]:
         findings.append(_GateFinding("compile", "error", "compile_error", str(exc)))
         return findings
 
-    plan = attach_checks_skipped(plan, NO_PROFILE_SKIPPED_CHECKS)
     for w in plan.plan_compile.warnings:
         findings.append(_GateFinding("compile", "warning", "compile_warning", w))
     return findings

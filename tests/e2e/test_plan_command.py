@@ -119,8 +119,10 @@ def test_no_profile_output_json_format_round_trips(tmp_path: Path) -> None:
 
 
 def test_no_profile_records_skipped_checks(tmp_path: Path) -> None:
-    """H1 (Dennis slice 4-6 review): both fk_plan_ordering AND
-    basic_uniqueness_pre_flight must land in checks_skipped under --no-profile."""
+    """--no-profile records the engine's own honest skip set: the genuinely
+    profile-dependent basic_uniqueness_pre_flight is SKIPPED, while the
+    STRUCTURAL fk_plan_ordering stays in checks_passed (it needs no profile).
+    The CLI no longer hand-labels fk_plan_ordering as skipped."""
     config_path = tmp_path / "pipeline.yaml"
     out_path = tmp_path / "plan.yaml"
     _write_yaml(config_path, _good_config())
@@ -131,8 +133,10 @@ def test_no_profile_records_skipped_checks(tmp_path: Path) -> None:
     assert result.exit_code == 0, result.output
     plan_doc = yaml.safe_load(out_path.read_text(encoding="utf-8"))
     skipped = plan_doc["plan_compile"]["checks_skipped"]
+    passed = plan_doc["plan_compile"]["checks_passed"]
     assert "basic_uniqueness_pre_flight" in skipped
-    assert "fk_plan_ordering" in skipped
+    assert "fk_plan_ordering" not in skipped
+    assert "fk_plan_ordering" in passed
 
 
 def test_no_profile_strips_skipped_from_passed(tmp_path: Path) -> None:
@@ -162,7 +166,8 @@ def test_no_profile_strips_skipped_from_passed(tmp_path: Path) -> None:
 
 
 def test_no_profile_json_envelope_reports_skipped(tmp_path: Path) -> None:
-    """The standard --json envelope carries the H1-adjusted skipped set too."""
+    """The standard --json envelope carries the engine's honest skip set:
+    basic_uniqueness_pre_flight skipped, structural fk_plan_ordering passed."""
     config_path = tmp_path / "pipeline.yaml"
     _write_yaml(config_path, _good_config())
 
@@ -171,8 +176,9 @@ def test_no_profile_json_envelope_reports_skipped(tmp_path: Path) -> None:
     payload = json.loads(result.stdout)
     skipped = set(payload["compile_checks"]["skipped"])
     passed = set(payload["compile_checks"]["passed"])
-    assert "fk_plan_ordering" in skipped
     assert "basic_uniqueness_pre_flight" in skipped
+    assert "fk_plan_ordering" in passed
+    assert "fk_plan_ordering" not in skipped
     assert not (passed & skipped)
 
 

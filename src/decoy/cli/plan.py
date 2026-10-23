@@ -9,14 +9,15 @@ This module keeps the reusable pieces that command imports, so the logic has
 exactly one home:
 
   - `render_plan_artifact`        serialize a Plan to YAML or JSON.
-  - `attach_checks_skipped`       the H1 honesty guard (a check is never in
-                                  both checks_passed and checks_skipped).
   - `find_first_unique_column_path`  the H2 guard (--no-profile is incompatible
                                   with cardinality_mode: unique).
   - `empty_profile_for_no_profile`   the empty sentinel Profile for no-profile
                                   compiles.
-  - `NO_PROFILE_SKIPPED_CHECKS`   the profile-dependent checks skipped under
-                                  --no-profile.
+
+The engine emits its own honest checks_skipped set when `compile_plan` is called
+with `no_profile=True` (structural checks like fk_plan_ordering stay in
+checks_passed; the genuinely profile-dependent checks are skipped), so this
+module does NOT hand-maintain a parallel skip list.
 """
 
 from __future__ import annotations
@@ -24,12 +25,6 @@ from __future__ import annotations
 import json
 
 import yaml
-
-# The two profile-dependent plan-compile checks skipped under --no-profile.
-# H1 (Dennis slice 4-6 review): both fk_plan_ordering AND
-# basic_uniqueness_pre_flight need profile data; recorded in checks_skipped
-# and stripped from checks_passed by `attach_checks_skipped`.
-NO_PROFILE_SKIPPED_CHECKS: tuple[str, ...] = ("fk_plan_ordering", "basic_uniqueness_pre_flight")
 
 
 def render_plan_artifact(plan_obj, fmt: str = "yaml") -> str:
@@ -53,11 +48,9 @@ def render_plan_artifact(plan_obj, fmt: str = "yaml") -> str:
 def empty_profile_for_no_profile(config_dict: dict, engine_version: str):
     """Build a minimal empty Profile so `compile_plan` can run without one.
 
-    Used only by the --no-profile path. The resulting Profile has zero
-    tables and zero relationships; the profile-dependent checks
-    (basic_uniqueness_pre_flight) silently pass because they iterate
-    over empty profile data, and the caller records them in
-    checks_skipped via `attach_checks_skipped`.
+    Used only by the --no-profile path, paired with `compile_plan(...,
+    no_profile=True)` so the engine records the profile-dependent checks as
+    skipped (rather than letting them pass vacuously against empty data).
 
     The `profiled_at` field carries the POSIX epoch (1970-01-01) as a
     "no real profile available" sentinel; downstream consumers should
@@ -76,25 +69,6 @@ def empty_profile_for_no_profile(config_dict: dict, engine_version: str):
         decoy_engine_version=engine_version,
         profile_seed=None,
     )
-
-
-def attach_checks_skipped(plan_obj, skipped: tuple[str, ...]):
-    """Return a new Plan with `plan_compile.checks_skipped` populated AND
-    `checks_passed` stripped of the skipped names.
-
-    Frozen dataclasses can't mutate in-place; this builds a new Plan
-    that swaps the `plan_compile` field. Used by the --no-profile path
-    to record which checks were skipped. The strip-from-passed half
-    (H1 of the Dennis slice 4-6 review) keeps a single check name from
-    appearing in both lists, which would mislead manifest consumers
-    about what was actually verified.
-    """
-    from dataclasses import replace
-
-    skipped_set = set(skipped)
-    new_passed = tuple(c for c in plan_obj.plan_compile.checks_passed if c not in skipped_set)
-    new_pc = replace(plan_obj.plan_compile, checks_passed=new_passed, checks_skipped=skipped)
-    return replace(plan_obj, plan_compile=new_pc)
 
 
 def find_first_unique_column_path(config_dict: dict) -> str | None:
