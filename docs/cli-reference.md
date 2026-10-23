@@ -19,7 +19,6 @@ Try one of:
   decoy report show evidence.json  Show the evidence manifest (the post-run surface: show/verify/fidelity/integrity/diff/vault).
   decoy report verify evidence.json  Re-hash the recorded files and report fingerprint drift.
   decoy report diff a.json b.json  Compare two manifests: fingerprints always, data when the output files exist.
-  decoy query &quot;SELECT ...&quot; --table t=out.parquet  Read-only SQL over masked Parquet output.
 
 Run `decoy --install-completion` to enable shell tab completion.
 
@@ -50,7 +49,6 @@ $ decoy [OPTIONS] COMMAND [ARGS]...
 * `show`: Show detail for one reference item.
 * `doctor`: Check engine and dependency health.
 * `subset`: Cut a referentially-complete FK-aware...
-* `query`: Run a read-only SQL query over one or more...
 * `validate`: Pre-run validation gate.
 * `scan`: Profile a dataset for PII and...
 * `report`: The post-run surface: show / render /...
@@ -642,59 +640,6 @@ What this command checks before touching any data:
     any output directory is created.
 
 See also: decoy run, decoy validate, decoy validate preflight.
-
-
-## `decoy query`
-
-Run a read-only SQL query over one or more masked-output Parquet files.
-
-Registers each `--table` file as a view and runs the SELECT via the
-engine&#x27;s `run_discovery_sql` (SELECT-only, Parquet-only, no arbitrary
-file reads). Prints a table in human mode or a
-`{command:&quot;query&quot;, status, columns, rows, row_count, truncated}` envelope
-under `--json`. Bad input (a malformed `--table`, a non-SELECT statement,
-an unreadable/non-Parquet file) is a clean `EXIT_USAGE`, never a traceback.
-
-**Usage**:
-
-```console
-$ decoy query [OPTIONS] SQL
-```
-
-**Arguments**:
-
-* `SQL`: The SELECT statement to run (quote it in the shell).  [required]
-
-**Options**:
-
-* `--table TEXT`: A Parquet table to query, as NAME=PATH or a bare PATH (the name is inferred from the file stem). Repeatable; at least one is required.
-* `--row-limit INTEGER RANGE`: Maximum number of rows to return (default 10000).  [default: 10000; x&gt;=1]
-* `--json`: Emit a structured JSON result on stdout.
-* `-q, --quiet`: Suppress stdout. Errors still go to stderr; exit code carries the result.
-* `-v, --verbose`: Enable debug-level CLI logs on stderr.
-* `--help`: Show this message and exit.
-
-Examples:
-
-  decoy query "SELECT count(*) AS n FROM out" --table out.parquet
-    Bare PATH: the table name is inferred from the file stem ("out").
-
-  decoy query "SELECT * FROM t WHERE amount > 100" --table t=masked.parquet
-    NAME=PATH: register masked.parquet under the name `t`.
-
-  decoy query "SELECT c.id FROM customers c JOIN orders o ON o.cust = c.id" \
-      --table customers=customers.parquet --table orders=orders.parquet
-    Repeat --table to JOIN across several masked outputs.
-
-  decoy query "SELECT * FROM t" --table t=out.parquet --row-limit 50 --json
-    Cap at 50 rows and emit a structured envelope on stdout.
-
-Read-only by construction: only SELECT / WITH / VALUES / TABLE statements are
-allowed, and the SQL may not read arbitrary files (`read_parquet(...)` or
-`FROM '/path'` inside the query are rejected). Anything else is a clean usage
-error, not a traceback. Tables must be Parquet.
-
-See also: decoy run, decoy report fidelity.
 
 
 ## `decoy validate`
