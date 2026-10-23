@@ -161,3 +161,25 @@ Failure modes: the allowlists becoming a dumping ground — keep them short and 
 Stops at the plan-gate (independent review of this plan against the redesign/sprint docs + rulebooks)
 before DEVELOP. On GO: build slices A->B->C TDD, each self-check + verify + independent review, then
 DOCUMENT (reconcile this plan's status + the sprint doc). No merge to main.
+
+## Build status (2026-10-23)
+
+- **Slice A — DONE** (commit `fd9b377`): deletions + dead-string sweep + exit-code 2 reserved. Verified:
+  suite 1082 pass/5 skip, ruff clean, drift sentry green, deletions confirmed via the live CLI.
+- **Slice B1 (rename + trio) — DONE** (commit `5c7cb92`): `--out`->`--output/-o` at all 7 defs + every
+  help string; `--json` added to `report render`/`report summarize`; `--out` grep gate. (`plan`'s trio is
+  the one intentional gap, normalized in S2 with its envelope.) Verified: suite 1088 pass/5 skip, ruff clean.
+- **Slice C (anti-drift) — DONE** (commit `5c7cb92`): `tests/unit/test_surface_docs_consistency.py` pins
+  `_ROOT_HELP` + the README table to the live registry. Green.
+- **Slice B2 (destructive-overwrite confirmation) — DEFERRED to an S1 follow-up.** It is the only
+  behavior change in S1 and carries a real design decision that should be the owner's, not a unilateral
+  autonomous call: **in a non-TTY / CI context, should an existing `--output` path be a hard failure
+  (forcing `--force`) or a silent overwrite?** A hard failure regresses scripts that intentionally
+  overwrite (the CLI is a CI front end); the CLIG-aligned alternative is "prompt only when interactive
+  (TTY) + file exists + no `--force`; in non-TTY, overwrite as today." Recommendation: the CLIG-aligned
+  TTY-only prompt + a `--force/-f` on the output-writing commands (subset/init/report render/storm
+  analyze/storm integrity/fit/unmask/schema), no non-TTY behavior change. Held for owner confirmation of
+  that semantics before building, so S1's shippable foundation (A+B1+C) is not blocked on it.
+
+S1 is otherwise complete and shippable; `--force`/overwrite is additive and can land later without
+reworking A/B1/C.
