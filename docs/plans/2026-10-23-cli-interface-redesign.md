@@ -291,6 +291,15 @@ subcommand set. Every former capability keeps a door (§8); the doors just stop 
 
 ## 10. Owner decisions before build
 
+RESOLVED 2026-10-23 (Cam): all six locked to the recommended option ("go with recommended"). This section
+is kept as the decision record; the build sequences against these in
+`docs/plans/2026-10-23-cli-redesign-sprints.md`. The locked choices: D1 one `run` (mode inferred, no
+`mask`/`generate` aliases); D2 rename to `scan` (STORM stays the engine profiler + keeps the animation);
+D3 drop `project`/`catalog`/`jobs`, CLI goes stateless and `report` is file-first; D4 hard-delete the
+`forge` shim and `EXIT_DEPRECATED_SHIM` (exit code 2); D5 `vault info` -> `report vault`, no standalone
+`vault` noun; D6 disguises in the first cut, `query`/`run --pin` as fast-follows, `report fidelity
+--privacy` gated on the engine `quality` export.
+
 - **D1 — Golden-path verb set.** Confirm the 8 top-level workflow verbs, and whether `run` stays one
   command with mode inferred, or ships `mask`/`generate` as thin aliases for discoverability.
   (Recommendation: one `run`, mode inferred, `--mode` override; aliases are cheap to add later and risk the
