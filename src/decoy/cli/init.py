@@ -3,7 +3,7 @@
 The only place wizards belong (CLI_UX_GUIDE.md section 13). Walks the user
 through a couple of prompts and writes a starter `pipeline.yaml` they can
 iterate on. The body of every preset comes from `decoy.templates`, so
-`decoy init --preset hipaa` and `decoy templates show hipaa` produce the
+`decoy init --preset hipaa` and `decoy show template hipaa` produce the
 same YAML up to input/output path edits.
 
 OSS.4c (2026-06-02) added a column-aware path: `decoy init <file>` runs
@@ -48,7 +48,7 @@ Examples:
   decoy init --yes
     Skip confirmation when overwriting an existing file.
 
-See also: decoy validate config, decoy run, decoy scan, decoy templates list.
+See also: decoy validate config, decoy run, decoy scan, decoy list templates.
 """
 
 
@@ -528,7 +528,7 @@ def _init(
                     " ",
                     hint("hint:"),
                     "list every preset with",
-                    code("decoy templates list") + ".",
+                    code("decoy list templates") + ".",
                 )
         raise typer.Exit(code=EXIT_USAGE)
 

@@ -12,7 +12,8 @@ Try one of:
   decoy unmask pipeline.yaml masked.csv   Recover fpe columns from a masked file.
   decoy fit source.csv             Fit a distribution snapshot for statistical generation.
   decoy init                       Scaffold a starter pipeline interactively.
-  decoy templates list             Browse bundled pipeline templates.
+  decoy list templates             Browse bundled pipeline templates.
+  decoy show template hipaa        Dump one bundled template to stdout.
   decoy explain modes              Plain-English topic help. `explain` lists topics.
   decoy info                       Branded splash + quick-start hints.
   decoy project init               Create a local .decoy/ workspace (local only).
@@ -46,19 +47,16 @@ $ decoy [OPTIONS] COMMAND [ARGS]...
 * `explain`: Explain a Decoy concept in plain English.
 * `info`: Print the Decoy CLI banner with...
 * `schema`: Print the PipelineConfig JSON Schema to...
+* `list`: List the contents of one engine registry.
+* `show`: Show detail for one reference item.
 * `doctor`: Check engine and dependency health.
 * `subset`: Cut a referentially-complete FK-aware...
 * `validate`: Pre-run validation gate.
 * `scan`: Profile a dataset for PII and...
 * `storm`: Masked-file verification -- `integrity`...
-* `templates`: Browse and dump bundled starter pipeline...
 * `vault`: Vault inspection utilities.
 * `evidence`: Show and verify local run evidence manifests.
 * `report`: Render, summarize, and compare local...
-* `strategies`: Enumerate and inspect the engine&#x27;s...
-* `providers`: Enumerate and inspect the engine&#x27;s...
-* `checksums`: List the engine&#x27;s registered checksum...
-* `validators`: List the engine&#x27;s registered job-level...
 * `project`: Manage a local .decoy/ workspace.
 * `catalog`: LOCAL metadata catalog for datasets, runs,...
 * `jobs`: LOCAL run history from the DuckDB catalog.
@@ -306,7 +304,7 @@ Examples:
   decoy init --yes
     Skip confirmation when overwriting an existing file.
 
-See also: decoy validate config, decoy run, decoy scan, decoy templates list.
+See also: decoy validate config, decoy run, decoy scan, decoy list templates.
 
 
 ## `decoy demo`
@@ -378,7 +376,7 @@ Examples:
   decoy explain
     No topic -- list every topic with its summary.
 
-See also: decoy --help, decoy templates list.
+See also: decoy --help, decoy list templates.
 
 
 ## `decoy info`
@@ -406,7 +404,7 @@ Examples:
   decoy info --json
     Emit version + counts of bundled topics and templates as JSON.
 
-See also: decoy --help, decoy explain, decoy templates list.
+See also: decoy --help, decoy explain, decoy list templates.
 
 
 ## `decoy schema`
@@ -438,7 +436,94 @@ Examples:
   decoy schema --json
     Wrap the schema in the standard {command, status, schema} envelope.
 
-See also: decoy validate, decoy templates list.
+See also: decoy validate, decoy list templates.
+
+
+## `decoy list`
+
+List the contents of one engine registry.
+
+One verb over the live registries: strategies, providers, checksums,
+validators, templates, and regulatory disguise bundles.
+
+**Usage**:
+
+```console
+$ decoy list [OPTIONS] KIND
+```
+
+**Arguments**:
+
+* `KIND`: What to list: strategies|providers|checksums|validators|templates|disguises.  [required]
+
+**Options**:
+
+* `--json`: Emit the listing as a JSON envelope instead of a table.
+* `-q, --quiet`: Suppress stdout. Errors still go to stderr.
+* `-v, --verbose`: Enable debug-level CLI logs on stderr.
+* `--help`: Show this message and exit.
+
+Examples:
+
+  decoy list strategies
+    Every registered mask strategy with its class.
+
+  decoy list providers --json
+    Every generation provider as JSON.
+
+  decoy list disguises
+    The regulatory Disguise bundles (hipaa, gdpr, ...) with rule counts.
+
+Kinds: strategies, providers, checksums, validators, templates, disguises.
+
+See also: decoy show, decoy explain.
+
+
+## `decoy show`
+
+Show detail for one reference item.
+
+`show strategy|provider|template NAME` gives per-item detail; `show schema`
+prints the PipelineConfig JSON Schema (`--output` writes it to a file).
+Note: `decoy scan show SCAN FIELD` is a different `show` -- it reports a
+field from a saved scan, not a reference item.
+
+**Usage**:
+
+```console
+$ decoy show [OPTIONS] KIND [NAME]
+```
+
+**Arguments**:
+
+* `KIND`: What to show: strategy|provider|template (needs NAME), or schema.  [required]
+* `[NAME]`: Which item to show. Required for strategy/provider/template; omit for schema.
+
+**Options**:
+
+* `-o, --output PATH`: (schema only) Write the schema to this file instead of stdout.
+* `--json`: Emit a JSON record instead of human output.
+* `-q, --quiet`: Suppress stdout. Errors still go to stderr.
+* `-v, --verbose`: Enable debug-level CLI logs on stderr.
+* `--help`: Show this message and exit.
+
+Examples:
+
+  decoy show strategy fpe
+    Details for one mask strategy.
+
+  decoy show provider person_name --json
+    One provider's capability matrix as JSON.
+
+  decoy show template hipaa > pipeline.yaml
+    Dump one bundled template to stdout.
+
+  decoy show schema -o decoy.schema.json
+    Write the PipelineConfig JSON Schema to a file.
+
+Kinds: strategy, provider, template (NAME required); schema (no NAME).
+
+See also: decoy list, decoy validate.
 
 
 ## `decoy doctor`
@@ -1105,92 +1190,6 @@ or more fail-severity findings); 1 EXIT_USAGE for missing files;
 See also: decoy scan, decoy run, decoy explain exit-codes.
 
 
-## `decoy templates`
-
-Browse and dump bundled starter pipeline templates.
-
-**Usage**:
-
-```console
-$ decoy templates [OPTIONS] COMMAND [ARGS]...
-```
-
-**Options**:
-
-* `--help`: Show this message and exit.
-
-**Commands**:
-
-* `list`: List every bundled pipeline template.
-* `show`: Print one bundled template to stdout.
-
-### `decoy templates list`
-
-List every bundled pipeline template.
-
-**Usage**:
-
-```console
-$ decoy templates list [OPTIONS]
-```
-
-**Options**:
-
-* `--json`: Emit a JSON list of {name, summary} objects instead of a table.
-* `-q, --quiet`: Suppress stdout. Errors still go to stderr.
-* `-v, --verbose`: Enable debug-level CLI logs on stderr.
-* `--help`: Show this message and exit.
-
-Examples:
-
-  decoy templates list
-    Print every template with a one-line summary.
-
-  decoy templates list --json
-    Same data as JSON for scripting.
-
-See also: decoy templates show, decoy init.
-
-
-### `decoy templates show`
-
-Print one bundled template to stdout.
-
-Default mode prints raw YAML so it pipes cleanly to a file:
-`decoy templates show hipaa &gt; pipeline.yaml`. Wrap in --json when a
-script needs the metadata too.
-
-**Usage**:
-
-```console
-$ decoy templates show [OPTIONS] NAME
-```
-
-**Arguments**:
-
-* `NAME`: Which template to print. Tab-completes from the bundled set.  [required]
-
-**Options**:
-
-* `--json`: Wrap the body in a JSON envelope instead of printing raw YAML.
-* `-q, --quiet`: Suppress stdout. Errors still go to stderr.
-* `-v, --verbose`: Enable debug-level CLI logs on stderr.
-* `--help`: Show this message and exit.
-
-Examples:
-
-  decoy templates show hipaa
-    Print the HIPAA pipeline YAML to stdout.
-
-  decoy templates show pci > pipeline.yaml
-    Save the PCI template directly to a file.
-
-  decoy templates show hipaa > pipeline.yaml
-    Save the HIPAA template, then validate it with `decoy validate config pipeline.yaml`.
-
-See also: decoy templates list, decoy init.
-
-
 ## `decoy vault`
 
 Vault inspection utilities. `info` summarises a vault without full decode.
@@ -1670,256 +1669,6 @@ Methodology: pandas.Series.nunique() / .isnull().sum() for column-level
 counts (pandas v2.x). No novel statistical method is used.
 
 See also: decoy report compare (manifest-level), decoy jobs list.
-
-
-## `decoy strategies`
-
-Enumerate and inspect the engine&#x27;s registered mask strategies.
-
-**Usage**:
-
-```console
-$ decoy strategies [OPTIONS] COMMAND [ARGS]...
-```
-
-**Options**:
-
-* `--help`: Show this message and exit.
-
-**Commands**:
-
-* `list`: List every registered mask strategy in the...
-* `inspect`: Show details for one registered mask...
-
-### `decoy strategies list`
-
-List every registered mask strategy in the engine.
-
-**Usage**:
-
-```console
-$ decoy strategies list [OPTIONS]
-```
-
-**Options**:
-
-* `--json`: Emit a JSON list of registered strategies instead of a table.
-* `-q, --quiet`: Suppress stdout. Errors still go to stderr.
-* `-v, --verbose`: Enable debug-level CLI logs on stderr.
-* `--help`: Show this message and exit.
-
-Examples:
-
-  decoy strategies list
-    Print every registered mask strategy with its class name.
-
-  decoy strategies list --json
-    Same data as JSON for CI or support tooling.
-
-See also: decoy strategies inspect, decoy providers list.
-
-
-### `decoy strategies inspect`
-
-Show details for one registered mask strategy.
-
-**Usage**:
-
-```console
-$ decoy strategies inspect [OPTIONS] NAME
-```
-
-**Arguments**:
-
-* `NAME`: Strategy name to inspect.  [required]
-
-**Options**:
-
-* `--json`: Emit a JSON record instead of a panel.
-* `-q, --quiet`: Suppress stdout. Errors still go to stderr.
-* `-v, --verbose`: Enable debug-level CLI logs on stderr.
-* `--help`: Show this message and exit.
-
-Examples:
-
-  decoy strategies inspect fpe
-    Show parameters and behavior for the FPE strategy.
-
-  decoy strategies inspect geo_generalize --json
-    Same data as JSON.
-
-See also: decoy strategies list.
-
-
-## `decoy providers`
-
-Enumerate and inspect the engine&#x27;s registered generation providers.
-
-**Usage**:
-
-```console
-$ decoy providers [OPTIONS] COMMAND [ARGS]...
-```
-
-**Options**:
-
-* `--help`: Show this message and exit.
-
-**Commands**:
-
-* `list`: List every registered generation provider...
-* `inspect`: Show capability details for one registered...
-
-### `decoy providers list`
-
-List every registered generation provider in the engine.
-
-**Usage**:
-
-```console
-$ decoy providers list [OPTIONS]
-```
-
-**Options**:
-
-* `--json`: Emit a JSON list of registered providers instead of a table.
-* `-q, --quiet`: Suppress stdout. Errors still go to stderr.
-* `-v, --verbose`: Enable debug-level CLI logs on stderr.
-* `--help`: Show this message and exit.
-
-Examples:
-
-  decoy providers list
-    Print every registered provider with backend type and poolable flag.
-
-  decoy providers list --json
-    Same data as JSON.
-
-See also: decoy providers inspect, decoy strategies list.
-
-
-### `decoy providers inspect`
-
-Show capability details for one registered provider.
-
-**Usage**:
-
-```console
-$ decoy providers inspect [OPTIONS] NAME
-```
-
-**Arguments**:
-
-* `NAME`: Provider name to inspect.  [required]
-
-**Options**:
-
-* `--json`: Emit a JSON record instead of a panel.
-* `-q, --quiet`: Suppress stdout. Errors still go to stderr.
-* `-v, --verbose`: Enable debug-level CLI logs on stderr.
-* `--help`: Show this message and exit.
-
-Examples:
-
-  decoy providers inspect person_name
-    Show capability matrix for the person_name provider.
-
-  decoy providers inspect synthetic_ssn --json
-    Same data as JSON.
-
-See also: decoy providers list.
-
-
-## `decoy checksums`
-
-List the engine&#x27;s registered checksum schemes (SP-04).
-
-**Usage**:
-
-```console
-$ decoy checksums [OPTIONS] COMMAND [ARGS]...
-```
-
-**Options**:
-
-* `--help`: Show this message and exit.
-
-**Commands**:
-
-* `list`: List every registered checksum scheme in...
-
-### `decoy checksums list`
-
-List every registered checksum scheme in the engine (SP-04).
-
-**Usage**:
-
-```console
-$ decoy checksums list [OPTIONS]
-```
-
-**Options**:
-
-* `--json`: Emit a JSON list of checksum scheme names.
-* `-q, --quiet`: Suppress stdout. Errors still go to stderr.
-* `-v, --verbose`: Enable debug-level CLI logs on stderr.
-* `--help`: Show this message and exit.
-
-Examples:
-
-  decoy checksums list
-    Print every registered checksum scheme.
-
-  decoy checksums list --json
-    Same data as JSON.
-
-See also: decoy validators list.
-
-
-## `decoy validators`
-
-List the engine&#x27;s registered job-level validators (SP-05).
-
-**Usage**:
-
-```console
-$ decoy validators [OPTIONS] COMMAND [ARGS]...
-```
-
-**Options**:
-
-* `--help`: Show this message and exit.
-
-**Commands**:
-
-* `list`: List every registered job-level validator...
-
-### `decoy validators list`
-
-List every registered job-level validator in the engine (SP-05).
-
-**Usage**:
-
-```console
-$ decoy validators list [OPTIONS]
-```
-
-**Options**:
-
-* `--json`: Emit a JSON list of validator names.
-* `-q, --quiet`: Suppress stdout. Errors still go to stderr.
-* `-v, --verbose`: Enable debug-level CLI logs on stderr.
-* `--help`: Show this message and exit.
-
-Examples:
-
-  decoy validators list
-    Print every registered job-level validator.
-
-  decoy validators list --json
-    Same data as JSON.
-
-See also: decoy checksums list.
 
 
 ## `decoy project`

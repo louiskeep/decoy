@@ -103,7 +103,7 @@ def explain_topics() -> list[str]:
 
 
 def template_names() -> list[str]:
-    """Tab-complete `decoy templates show <name>` values."""
+    """Tab-complete `decoy show template <name>` values."""
     try:
         from decoy.templates import template_names as _names
 

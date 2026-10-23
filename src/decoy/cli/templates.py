@@ -1,9 +1,10 @@
-"""`decoy templates` -- list and dump bundled starter pipelines.
+"""Bundled starter-pipeline readers (dispatched from `decoy list templates`
+and `decoy show template NAME`).
 
 Lets users see what templates ship without running `decoy init`, and
 pipe a template directly to a file:
 
-    decoy templates show hipaa > pipeline.yaml
+    decoy show template hipaa > pipeline.yaml
 
 The same templates back the preset prompts in `decoy init`.
 """
@@ -20,41 +21,6 @@ from decoy.templates import get_template, list_templates, template_names
 from decoy.ui.output import OutputMode, emit_json, setup_output
 from decoy.ui.table import make_table
 from decoy.ui.theme import accent, code, error, hint
-
-templates_app = typer.Typer(
-    name="templates",
-    help="Browse and dump bundled starter pipeline templates.",
-    no_args_is_help=True,
-)
-
-
-_LIST_EPILOG = """\
-Examples:
-
-  decoy templates list
-    Print every template with a one-line summary.
-
-  decoy templates list --json
-    Same data as JSON for scripting.
-
-See also: decoy templates show, decoy init.
-"""
-
-
-_SHOW_EPILOG = """\
-Examples:
-
-  decoy templates show hipaa
-    Print the HIPAA pipeline YAML to stdout.
-
-  decoy templates show pci > pipeline.yaml
-    Save the PCI template directly to a file.
-
-  decoy templates show hipaa > pipeline.yaml
-    Save the HIPAA template, then validate it with `decoy validate config pipeline.yaml`.
-
-See also: decoy templates list, decoy init.
-"""
 
 
 def _list(
@@ -78,7 +44,7 @@ def _list(
         emit_json(
             state,
             {
-                "command": "templates list",
+                "command": "list templates",
                 "status": "ok",
                 "templates": [
                     {"name": t.name, "summary": t.summary} for t in templates
@@ -99,7 +65,7 @@ def _list(
     state.console.print(
         hint("Tip:"),
         "dump one to stdout with",
-        code("decoy templates show <name>") + ".",
+        code("decoy show template <name>") + ".",
     )
 
 
@@ -124,7 +90,7 @@ def _show(
     """Print one bundled template to stdout.
 
     Default mode prints raw YAML so it pipes cleanly to a file:
-    `decoy templates show hipaa > pipeline.yaml`. Wrap in --json when a
+    `decoy show template hipaa > pipeline.yaml`. Wrap in --json when a
     script needs the metadata too.
     """
     state = setup_output(json_, quiet, verbose)
@@ -136,7 +102,7 @@ def _show(
             emit_json(
                 state,
                 {
-                    "command": "templates show",
+                    "command": "show template",
                     "status": "error",
                     "name": name,
                     "error": f"unknown template {name!r}",
@@ -154,7 +120,7 @@ def _show(
                     " ",
                     hint("hint:"),
                     "list every template with",
-                    code("decoy templates list") + ".",
+                    code("decoy list templates") + ".",
                 )
         raise typer.Exit(code=EXIT_USAGE)
 
@@ -162,7 +128,7 @@ def _show(
         emit_json(
             state,
             {
-                "command": "templates show",
+                "command": "show template",
                 "status": "ok",
                 "name": template.name,
                 "summary": template.summary,
@@ -176,11 +142,7 @@ def _show(
 
     # Default mode: raw YAML to stdout. Skipping state.console.print here
     # keeps Rich from wrapping/highlighting the YAML body so users can pipe
-    # it straight into a file with `decoy templates show hipaa > p.yaml`.
+    # it straight into a file with `decoy show template hipaa > p.yaml`.
     sys.stdout.write(template.body)
     if not template.body.endswith("\n"):
         sys.stdout.write("\n")
-
-
-templates_app.command(name="list", epilog=_LIST_EPILOG)(_list)
-templates_app.command(name="show", epilog=_SHOW_EPILOG)(_show)

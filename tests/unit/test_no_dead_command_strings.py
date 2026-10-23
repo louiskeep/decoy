@@ -41,6 +41,17 @@ DEAD_STRINGS = (
     "storm fields",
     "storm show",
     "storm diff",
+    # S3b: the `strategies`/`providers`/`checksums`/`validators` sub-apps and the
+    # `templates` sub-app folded into `decoy list KIND` / `decoy show KIND`. The
+    # removed top-level invocation strings are dead. `decoy templates` catches
+    # both `templates list` and `templates show`; it does NOT match the live
+    # `decoy list templates` / `decoy show template` forms (no "decoy templates"
+    # substring in either).
+    "decoy strategies",
+    "decoy providers",
+    "decoy checksums",
+    "decoy validators",
+    "decoy templates",
 )
 
 

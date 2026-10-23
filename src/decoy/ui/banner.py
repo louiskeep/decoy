@@ -52,7 +52,7 @@ def render_banner(state: OutputState) -> None:
     quickstart.add_row("First run:", code("decoy demo"))
     quickstart.add_row("Scaffold:", code("decoy init"))
     quickstart.add_row("Topics:", code("decoy explain modes"))
-    quickstart.add_row("Templates:", code("decoy templates list"))
+    quickstart.add_row("Templates:", code("decoy list templates"))
     body.add_row(quickstart)
 
     title = Text.assemble(("decoy ", "accent"), (f"v{__version__}", "code"))

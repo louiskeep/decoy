@@ -28,7 +28,7 @@ Examples:
   decoy schema --json
     Wrap the schema in the standard {command, status, schema} envelope.
 
-See also: decoy validate, decoy templates list.
+See also: decoy validate, decoy list templates.
 """
 
 SCHEMA_EPILOG = _SCHEMA_EPILOG

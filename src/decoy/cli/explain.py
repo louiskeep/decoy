@@ -87,13 +87,13 @@ _TOPICS: dict[str, _Topic] = {
             "A Disguise is a named set of (column-pattern -> transform) defaults. Two ship today:\n\n"
             "  default   The fallback. Generic name/email/SSN handling.\n"
             "  hipaa     The 18 PHI identifiers from 45 CFR 164.514(b)(2) -- Safe Harbor.\n\n"
-            "Pick a Disguise by hand via `decoy templates show hipaa` (gets the pipeline shape\n"
+            "Pick a Disguise by hand via `decoy show template hipaa` (gets the pipeline shape\n"
             "you'd start from) or by browsing the engine source under decoy_engine.disguises.\n\n"
             "The V1 FORECAST recommender (which scored Disguises against a STORM scan and drafted\n"
             "a pipeline) was retired under storm-reframe-C (2026-05-30); pick the Disguise by\n"
             "hand from the templates set for now."
         ),
-        see_also=("decoy templates show hipaa", "decoy explain transforms"),
+        see_also=("decoy show template hipaa", "decoy explain transforms"),
     ),
     "output": _Topic(
         name="output",
@@ -134,22 +134,22 @@ _TOPICS: dict[str, _Topic] = {
             "  explain keys`.\n\n"
             "Mode is inferred per-table from `columns` (mask) vs `generate_columns`\n"
             "(generate); a single pipeline can mix both kinds (FC-1, 2026-06-02).\n\n"
-            "Pick a template to start from: `decoy templates show minimal`.\n\n"
+            "Pick a template to start from: `decoy show template minimal`.\n\n"
             "Legacy V1 shape (REJECTED by `decoy validate` since storm-reframe-C,\n"
             "2026-05-30): `version: '1.0'`, `input:`, `output:`, `masking_rules:`.\n"
             "Old YAML on disk must be re-authored to the V2 shape above; the\n"
             "graph builder in decoy-platform's web UI emits V2 directly.\n\n"
             "Validate any pipeline before running it: `decoy validate config pipeline.yaml`."
         ),
-        see_also=("decoy validate config --help", "decoy templates list"),
+        see_also=("decoy validate config --help", "decoy list templates"),
     ),
     "yaml": _Topic(
         name="yaml",
         summary="How to author a Decoy YAML file without starting from scratch.",
         body=(
             "Start from a template, edit paths, validate, then run on a small fixture:\n\n"
-            "  decoy templates list\n"
-            "  decoy templates show minimal > pipeline.yaml\n"
+            "  decoy list templates\n"
+            "  decoy show template minimal > pipeline.yaml\n"
             "  decoy validate config pipeline.yaml\n"
             "  decoy run pipeline.yaml\n\n"
             "Pick one top-level mode:\n"
@@ -169,7 +169,7 @@ _TOPICS: dict[str, _Topic] = {
             "Full guide in the docs hub:\n"
             "  decoy-platform/docs/guides/cli-yaml-workflows.md"
         ),
-        see_also=("decoy explain pipeline", "decoy templates list", "decoy validate config --help"),
+        see_also=("decoy explain pipeline", "decoy list templates", "decoy validate config --help"),
     ),
     "storm": _Topic(
         name="storm",
@@ -184,7 +184,7 @@ _TOPICS: dict[str, _Topic] = {
             "Run it before writing a masking pipeline. The output JSON gives you the column-by-column\n"
             "PII signal the operator uses to pick a Disguise template + tune the mask."
         ),
-        see_also=("decoy scan --help", "decoy templates list"),
+        see_also=("decoy scan --help", "decoy list templates"),
     ),
     "keys": _Topic(
         name="keys",
@@ -430,7 +430,7 @@ _TOPICS: dict[str, _Topic] = {
             "the rc file after install. Test with:\n\n"
             "  decoy run --mode <Tab>\n"
             "  decoy explain <Tab>\n"
-            "  decoy templates show <Tab>\n\n"
+            "  decoy show template <Tab>\n\n"
             "If completion stops working after a Decoy upgrade, re-run --install-completion to\n"
             "refresh the script. Custom completers cache lookups in-process; they're cheap."
         ),
@@ -488,7 +488,7 @@ Examples:
   decoy explain
     No topic -- list every topic with its summary.
 
-See also: decoy --help, decoy templates list.
+See also: decoy --help, decoy list templates.
 """
 
 

@@ -42,10 +42,8 @@ _ROOT_HELP_OMITTED = frozenset(
         "doctor",
         "vault",
         "evidence",
-        "strategies",
-        "providers",
-        "checksums",
-        "validators",
+        # S3b: the four registry sub-apps folded into `list`/`show`, which ARE
+        # advertised in the root help (`decoy list templates` / `show template`).
         # S3a: `storm` is down to the lone `storm integrity` (post-run,
         # transient until `report integrity` in S4) and is deliberately kept
         # out of the quick-start root help; `decoy scan` is the advertised verb.
@@ -67,10 +65,8 @@ _README_TABLE_OMITTED = frozenset(
         "vault",
         "evidence",
         "report",
-        "strategies",
-        "providers",
-        "checksums",
-        "validators",
+        # S3b: the four registry sub-apps folded into `list`/`show`; the README
+        # table advertises `decoy list templates` / `decoy show template`.
         "project",
         "catalog",
         "jobs",

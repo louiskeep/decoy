@@ -1,15 +1,17 @@
-"""Unit tests for the SP-19 cockpit commands (anti-drift registry correspondence).
+"""Unit tests for the SP-19 cockpit readers (anti-drift registry correspondence).
 
-The key invariant for each list command: the CLI output must reflect the
-REAL engine registry at runtime, not a hardcoded list. These tests import
-the engine registries directly and assert that the CLI JSON output
-contains exactly the same keys/names as the registry.
+S3b: the readers are now dispatched through `decoy list KIND` / `decoy show
+KIND NAME` (the former `strategies`/`providers`/`checksums`/`validators`
+sub-apps are gone). The invariant is unchanged -- CLI output must reflect the
+REAL engine registry at runtime, not a hardcoded list -- and these tests also
+pin the NEW JSON envelope `command` strings ("list strategies", "show
+strategy", ...), not just the registry correspondence.
 
 Anti-drift assertions:
-- strategies list: output names == SCALAR_HANDLERS.keys()
-- providers list: output names == registry.known_providers()
-- checksums list: output schemes == _KNOWN_SCHEMES
-- validators list: output validators == _REGISTRY.keys()
+- list strategies: output names == SCALAR_HANDLERS.keys()
+- list providers: output names == registry.known_providers()
+- list checksums: output schemes == _KNOWN_SCHEMES
+- list validators: output validators == _REGISTRY.keys()
 
 Known members from previous sprints are checked by name to guard against
 accidental removal (geo_generalize from SP-08, npi from SP-04, no_orphan_children
@@ -28,7 +30,7 @@ runner = CliRunner()
 
 
 # ---------------------------------------------------------------------------
-# strategies list -- anti-drift
+# list strategies -- anti-drift
 # ---------------------------------------------------------------------------
 
 
@@ -36,9 +38,10 @@ def test_strategies_list_json_matches_engine_registry():
     """CLI output names == SCALAR_HANDLERS keys (anti-drift)."""
     from decoy_engine.execution._strategies import SCALAR_HANDLERS
 
-    result = runner.invoke(app, ["strategies", "list", "--json"])
+    result = runner.invoke(app, ["list", "strategies", "--json"])
     assert result.exit_code == 0, result.output
     payload = _json.loads(result.stdout)
+    assert payload["command"] == "list strategies"
     assert payload["status"] == "ok"
     cli_names = {s["name"] for s in payload["strategies"]}
     engine_names = set(SCALAR_HANDLERS.keys())
@@ -52,7 +55,7 @@ def test_strategies_list_json_matches_engine_registry():
 
 def test_strategies_list_contains_known_members():
     """geo_generalize (SP-08), fpe, faker, redact are in the registry."""
-    result = runner.invoke(app, ["strategies", "list", "--json"])
+    result = runner.invoke(app, ["list", "strategies", "--json"])
     payload = _json.loads(result.stdout)
     cli_names = {s["name"] for s in payload["strategies"]}
     for expected in ("geo_generalize", "fpe", "faker", "redact", "passthrough"):
@@ -63,20 +66,21 @@ def test_strategies_list_count_matches_registry():
     """The count field in the JSON must equal the SCALAR_HANDLERS size."""
     from decoy_engine.execution._strategies import SCALAR_HANDLERS
 
-    result = runner.invoke(app, ["strategies", "list", "--json"])
+    result = runner.invoke(app, ["list", "strategies", "--json"])
     payload = _json.loads(result.stdout)
     assert payload["count"] == len(SCALAR_HANDLERS)
 
 
 # ---------------------------------------------------------------------------
-# strategies inspect
+# show strategy
 # ---------------------------------------------------------------------------
 
 
 def test_strategies_inspect_known_strategy_json():
-    result = runner.invoke(app, ["strategies", "inspect", "fpe", "--json"])
+    result = runner.invoke(app, ["show", "strategy", "fpe", "--json"])
     assert result.exit_code == 0, result.output
     payload = _json.loads(result.stdout)
+    assert payload["command"] == "show strategy"
     assert payload["status"] == "ok"
     assert payload["name"] == "fpe"
     assert payload["class"]
@@ -84,22 +88,23 @@ def test_strategies_inspect_known_strategy_json():
 
 
 def test_strategies_inspect_geo_generalize_json():
-    result = runner.invoke(app, ["strategies", "inspect", "geo_generalize", "--json"])
+    result = runner.invoke(app, ["show", "strategy", "geo_generalize", "--json"])
     assert result.exit_code == 0, result.output
     payload = _json.loads(result.stdout)
     assert payload["name"] == "geo_generalize"
 
 
 def test_strategies_inspect_unknown_exits_1():
-    result = runner.invoke(app, ["strategies", "inspect", "no_such_strategy", "--json"])
+    result = runner.invoke(app, ["show", "strategy", "no_such_strategy", "--json"])
     assert result.exit_code == 1
     payload = _json.loads(result.stdout)
+    assert payload["command"] == "show strategy"
     assert payload["status"] == "error"
     assert "known" in payload
 
 
 # ---------------------------------------------------------------------------
-# providers list -- anti-drift
+# list providers -- anti-drift
 # ---------------------------------------------------------------------------
 
 
@@ -110,9 +115,10 @@ def test_providers_list_json_matches_engine_registry():
     registry = get_default_registry()
     engine_names = registry.known_providers()
 
-    result = runner.invoke(app, ["providers", "list", "--json"])
+    result = runner.invoke(app, ["list", "providers", "--json"])
     assert result.exit_code == 0, result.output
     payload = _json.loads(result.stdout)
+    assert payload["command"] == "list providers"
     assert payload["status"] == "ok"
     cli_names = {p["name"] for p in payload["providers"]}
     assert cli_names == engine_names, (
@@ -125,7 +131,7 @@ def test_providers_list_json_matches_engine_registry():
 
 def test_providers_list_contains_known_members():
     """person_name, synthetic_ssn, uuid are in the provider registry."""
-    result = runner.invoke(app, ["providers", "list", "--json"])
+    result = runner.invoke(app, ["list", "providers", "--json"])
     payload = _json.loads(result.stdout)
     cli_names = {p["name"] for p in payload["providers"]}
     for expected in ("person_name", "synthetic_ssn", "uuid"):
@@ -137,20 +143,21 @@ def test_providers_list_count_matches_registry():
     from decoy_engine.providers_v2 import get_default_registry
 
     registry = get_default_registry()
-    result = runner.invoke(app, ["providers", "list", "--json"])
+    result = runner.invoke(app, ["list", "providers", "--json"])
     payload = _json.loads(result.stdout)
     assert payload["count"] == len(registry.known_providers())
 
 
 # ---------------------------------------------------------------------------
-# providers inspect
+# show provider
 # ---------------------------------------------------------------------------
 
 
 def test_providers_inspect_known_provider_json():
-    result = runner.invoke(app, ["providers", "inspect", "person_name", "--json"])
+    result = runner.invoke(app, ["show", "provider", "person_name", "--json"])
     assert result.exit_code == 0, result.output
     payload = _json.loads(result.stdout)
+    assert payload["command"] == "show provider"
     assert payload["status"] == "ok"
     assert payload["name"] == "person_name"
     assert "backend_type" in payload
@@ -159,15 +166,16 @@ def test_providers_inspect_known_provider_json():
 
 
 def test_providers_inspect_unknown_exits_1():
-    result = runner.invoke(app, ["providers", "inspect", "no_such_provider", "--json"])
+    result = runner.invoke(app, ["show", "provider", "no_such_provider", "--json"])
     assert result.exit_code == 1
     payload = _json.loads(result.stdout)
+    assert payload["command"] == "show provider"
     assert payload["status"] == "error"
     assert "known" in payload
 
 
 # ---------------------------------------------------------------------------
-# checksums list -- anti-drift
+# list checksums -- anti-drift
 # ---------------------------------------------------------------------------
 
 
@@ -175,9 +183,10 @@ def test_checksums_list_json_matches_engine_registry():
     """CLI schemes == _KNOWN_SCHEMES (anti-drift)."""
     from decoy_engine.checksums import _KNOWN_SCHEMES
 
-    result = runner.invoke(app, ["checksums", "list", "--json"])
+    result = runner.invoke(app, ["list", "checksums", "--json"])
     assert result.exit_code == 0, result.output
     payload = _json.loads(result.stdout)
+    assert payload["command"] == "list checksums"
     assert payload["status"] == "ok"
     cli_schemes = set(payload["schemes"])
     assert cli_schemes == set(_KNOWN_SCHEMES), (
@@ -190,7 +199,7 @@ def test_checksums_list_json_matches_engine_registry():
 
 def test_checksums_list_contains_npi_and_vin():
     """npi (SP-04) and vin are in the checksum registry."""
-    result = runner.invoke(app, ["checksums", "list", "--json"])
+    result = runner.invoke(app, ["list", "checksums", "--json"])
     payload = _json.loads(result.stdout)
     cli_schemes = set(payload["schemes"])
     assert "npi" in cli_schemes, "npi must be in checksums list (SP-04)"
@@ -199,7 +208,7 @@ def test_checksums_list_contains_npi_and_vin():
 
 
 # ---------------------------------------------------------------------------
-# validators list -- anti-drift
+# list validators -- anti-drift
 # ---------------------------------------------------------------------------
 
 
@@ -207,9 +216,10 @@ def test_validators_list_json_matches_engine_registry():
     """CLI validator names == _REGISTRY.keys() (anti-drift)."""
     from decoy_engine.validators._registry import _REGISTRY
 
-    result = runner.invoke(app, ["validators", "list", "--json"])
+    result = runner.invoke(app, ["list", "validators", "--json"])
     assert result.exit_code == 0, result.output
     payload = _json.loads(result.stdout)
+    assert payload["command"] == "list validators"
     assert payload["status"] == "ok"
     cli_names = set(payload["validators"])
     engine_names = set(_REGISTRY.keys())
@@ -223,7 +233,7 @@ def test_validators_list_json_matches_engine_registry():
 
 def test_validators_list_contains_known_members():
     """no_orphan_children (SP-05), fk_intact, and luhn are in the validator registry."""
-    result = runner.invoke(app, ["validators", "list", "--json"])
+    result = runner.invoke(app, ["list", "validators", "--json"])
     payload = _json.loads(result.stdout)
     cli_names = set(payload["validators"])
     assert "no_orphan_children" in cli_names, (
@@ -311,33 +321,33 @@ def test_doctor_hard_req_missing_exits_nonzero(monkeypatch):
 
 
 def test_strategies_list_human_output():
-    result = runner.invoke(app, ["strategies", "list"])
+    result = runner.invoke(app, ["list", "strategies"])
     assert result.exit_code == 0
     assert "fpe" in result.stdout
     assert "geo_generalize" in result.stdout
 
 
 def test_strategies_list_quiet():
-    result = runner.invoke(app, ["strategies", "list", "--quiet"])
+    result = runner.invoke(app, ["list", "strategies", "--quiet"])
     assert result.exit_code == 0
     assert result.stdout == ""
 
 
 def test_providers_list_human_output():
-    result = runner.invoke(app, ["providers", "list"])
+    result = runner.invoke(app, ["list", "providers"])
     assert result.exit_code == 0
     assert "person_name" in result.stdout
 
 
 def test_checksums_list_human_output():
-    result = runner.invoke(app, ["checksums", "list"])
+    result = runner.invoke(app, ["list", "checksums"])
     assert result.exit_code == 0
     assert "luhn" in result.stdout
     assert "npi" in result.stdout
 
 
 def test_validators_list_human_output():
-    result = runner.invoke(app, ["validators", "list"])
+    result = runner.invoke(app, ["list", "validators"])
     assert result.exit_code == 0
     assert "luhn" in result.stdout
     assert "fk_intact" in result.stdout

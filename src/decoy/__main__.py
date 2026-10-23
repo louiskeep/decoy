@@ -9,14 +9,7 @@ import typer
 
 from decoy import __version__
 from decoy.cli.catalog import catalog_app
-from decoy.cli.cockpit import (
-    DOCTOR_EPILOG,
-    checksums_app,
-    doctor,
-    providers_app,
-    strategies_app,
-    validators_app,
-)
+from decoy.cli.cockpit import DOCTOR_EPILOG, doctor
 from decoy.cli.demo import DEMO_EPILOG
 from decoy.cli.demo import _demo as demo_command
 from decoy.cli.evidence import evidence_app
@@ -29,6 +22,7 @@ from decoy.cli.info import info as info_command
 from decoy.cli.init import INIT_EPILOG, init_command
 from decoy.cli.jobs import jobs_app
 from decoy.cli.project import project_app
+from decoy.cli.reference import LIST_EPILOG, SHOW_EPILOG, list_, show
 from decoy.cli.report import report_app
 from decoy.cli.run import RUN_EPILOG
 from decoy.cli.run import run as run_command
@@ -38,7 +32,6 @@ from decoy.cli.schema import schema as schema_command
 from decoy.cli.storm import storm_app
 from decoy.cli.subset import SUBSET_EPILOG
 from decoy.cli.subset import subset as subset_command
-from decoy.cli.templates import templates_app
 from decoy.cli.unmask import UNMASK_EPILOG
 from decoy.cli.unmask import unmask as unmask_command
 from decoy.cli.validate import validate_app
@@ -60,7 +53,8 @@ Try one of:
   decoy unmask pipeline.yaml masked.csv   Recover fpe columns from a masked file.
   decoy fit source.csv             Fit a distribution snapshot for statistical generation.
   decoy init                       Scaffold a starter pipeline interactively.
-  decoy templates list             Browse bundled pipeline templates.
+  decoy list templates             Browse bundled pipeline templates.
+  decoy show template hipaa        Dump one bundled template to stdout.
   decoy explain modes              Plain-English topic help. `explain` lists topics.
   decoy info                       Branded splash + quick-start hints.
   decoy project init               Create a local .decoy/ workspace (local only).
@@ -112,14 +106,11 @@ app.command(name="info", epilog=INFO_EPILOG)(info_command)
 app.command(name="schema", epilog=SCHEMA_EPILOG)(schema_command)
 app.add_typer(scan_app, name="scan")
 app.add_typer(storm_app, name="storm")
-app.add_typer(templates_app, name="templates")
 app.add_typer(vault_app, name="vault")
 app.add_typer(evidence_app, name="evidence")
 app.add_typer(report_app, name="report")
-app.add_typer(strategies_app, name="strategies")
-app.add_typer(providers_app, name="providers")
-app.add_typer(checksums_app, name="checksums")
-app.add_typer(validators_app, name="validators")
+app.command(name="list", epilog=LIST_EPILOG)(list_)
+app.command(name="show", epilog=SHOW_EPILOG)(show)
 app.command(name="doctor", epilog=DOCTOR_EPILOG)(doctor)
 app.add_typer(project_app, name="project")
 app.add_typer(catalog_app, name="catalog")

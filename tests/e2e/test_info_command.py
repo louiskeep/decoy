@@ -26,7 +26,7 @@ def test_info_default_renders_banner_with_version_and_quickstart():
     # Quick-start hints surfaced from the banner.
     assert "decoy scan" in result.stdout
     assert "decoy demo" in result.stdout
-    assert "decoy templates list" in result.stdout
+    assert "decoy list templates" in result.stdout
 
 
 def test_info_json_emits_metadata():
@@ -48,5 +48,5 @@ def test_info_quiet_produces_empty_stdout():
 def test_root_help_advertises_new_commands():
     result = runner.invoke(app, ["--help"])
     assert result.exit_code == 0
-    for cmd in ("explain", "info", "templates"):
+    for cmd in ("explain", "info", "list"):
         assert cmd in result.stdout, f"--help missing {cmd}"

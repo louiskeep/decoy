@@ -105,7 +105,8 @@ declared under `targets:` in the YAML.
 | `decoy validate distribution <source> <output>` | Recompute distribution fidelity between a source and an output CSV. |
 | `decoy run <path>`               | Execute a pipeline: read sources, mask, write targets.                        |
 | `decoy scan <path>`              | Profile a source file: distributions, PII candidates, cardinality hints.      |
-| `decoy templates list`           | List the bundled pipeline templates.                                         |
+| `decoy list templates`           | List the bundled pipeline templates.                                         |
+| `decoy show template <name>`     | Dump one bundled template to stdout (e.g. `decoy show template hipaa`).      |
 | `decoy explain <topic>`          | In-CLI reference (exit codes, providers, strategies).                         |
 
 Run `decoy --help` for the full surface, or `decoy <command> --help` for
