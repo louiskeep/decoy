@@ -6,10 +6,10 @@ Try one of:
   decoy demo                       30-second end-to-end walkthrough.
   decoy storm analyze data.csv     Profile a dataset for PII and risk.
   decoy profile data.csv           Dataset shape, field stats, PII candidates (suggestions).
+  decoy validate pipeline.yaml     Run the whole pre-run gate (config + compile + preflight).
   decoy validate compile pipeline.yaml --explain  Explain per-column strategy and compile decisions.
   decoy run pipeline.yaml          Run a masking or generation pipeline.
   decoy subset pipeline.yaml --dry-run   Preview a FK-aware referential subset.
-  decoy validate config pipeline.yaml  Check a YAML pipeline before running.
   decoy unmask pipeline.yaml masked.csv   Recover fpe columns from a masked file.
   decoy fit source.csv             Fit a distribution snapshot for statistical generation.
   decoy init                       Scaffold a starter pipeline interactively.
@@ -50,7 +50,7 @@ $ decoy [OPTIONS] COMMAND [ARGS]...
 * `doctor`: Check engine and dependency health.
 * `profile`: Profile a source dataset: shape, field...
 * `subset`: Cut a referentially-complete FK-aware...
-* `validate`: Pre-run validation gate: schema + config...
+* `validate`: Pre-run validation gate.
 * `storm`: Dataset analysis -- the STORM event.
 * `templates`: Browse and dump bundled starter pipeline...
 * `vault`: Vault inspection utilities.
@@ -603,7 +603,7 @@ See also: decoy run, decoy validate, decoy validate preflight.
 
 ## `decoy validate`
 
-Pre-run validation gate: schema + config checks (`config`), plan compilation + checks (`compile`), source/capacity readiness (`preflight`), and post-run distribution fidelity (`distribution`).
+Pre-run validation gate. `decoy validate CONFIG` runs the whole gate (config + compile + preflight) and emits one report + one exit code. Subcommands run a single layer: schema + config checks (`config`), plan compilation + checks (`compile`), source/capacity readiness (`preflight`), and post-run distribution fidelity (`distribution`).
 
 **Usage**:
 
@@ -616,6 +616,10 @@ $ decoy validate [OPTIONS] COMMAND [ARGS]...
 * `--help`: Show this message and exit.
 
 Examples:
+
+  decoy validate pipeline.yaml
+    Run the whole pre-run gate (config + compile + preflight): one report
+    grouped by layer, one aggregated exit code.
 
   decoy validate config pipeline.yaml
     Schema + config-only checks (fast, no source read).

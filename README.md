@@ -75,7 +75,7 @@ Scaffold your first pipeline against your own CSV. Two paths:
 # the YAML with `# REVIEW:` comments above every auto-inferred entry.
 decoy init customers.csv --output pipeline.yaml
 # read the REVIEW comments + edit anything you disagree with
-decoy validate config pipeline.yaml
+decoy validate pipeline.yaml
 decoy run pipeline.yaml
 ```
 
@@ -83,12 +83,14 @@ decoy run pipeline.yaml
 # Template-driven: scaffold from a bundled preset (minimal, hipaa, pci, gdpr).
 decoy init --preset minimal --output pipeline.yaml
 # edit pipeline.yaml: point `sources.people.path` at your CSV
-decoy validate config pipeline.yaml
+decoy validate pipeline.yaml
 decoy run pipeline.yaml
 ```
 
-`decoy validate config` checks the YAML against the engine's pipeline
-schema without touching your data. `decoy validate distribution` recomputes
+`decoy validate pipeline.yaml` runs the whole pre-run gate -- config schema,
+plan compile, and source/capacity preflight -- in one pass, with one report
+grouped by layer and one aggregated exit code. `decoy validate config` runs
+the fast schema-only subset; `decoy validate distribution` recomputes
 distribution fidelity between a source and an output CSV after a run.
 `decoy run` runs the pipeline and writes the masked output to the path
 declared under `targets:` in the YAML.
@@ -99,7 +101,7 @@ declared under `targets:` in the YAML.
 |-----------------------------------|-------------------------------------------------------------------------------|
 | `decoy demo`                     | Run a packaged end-to-end mask on synthetic input. Good first call.           |
 | `decoy init [file]`              | Scaffold a starter `pipeline.yaml`. With a file: column-aware via STORM. Without: prompt for preset (`minimal`, `gdpr`, ...). |
-| `decoy validate config <path>`   | Validate a pipeline YAML against the engine schema. Exits non-zero on error.  |
+| `decoy validate <path>`          | Run the whole pre-run gate (config + compile + preflight): one report, one exit code. |
 | `decoy validate distribution <source> <output>` | Recompute distribution fidelity between a source and an output CSV. |
 | `decoy run <path>`               | Execute a pipeline: read sources, mask, write targets.                        |
 | `decoy storm analyze <path>`     | Profile a source file: distributions, PII candidates, cardinality hints.      |

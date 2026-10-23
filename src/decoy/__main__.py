@@ -55,10 +55,10 @@ Try one of:
   decoy demo                       30-second end-to-end walkthrough.
   decoy storm analyze data.csv     Profile a dataset for PII and risk.
   decoy profile data.csv           Dataset shape, field stats, PII candidates (suggestions).
+  decoy validate pipeline.yaml     Run the whole pre-run gate (config + compile + preflight).
   decoy validate compile pipeline.yaml --explain  Explain per-column strategy and compile decisions.
   decoy run pipeline.yaml          Run a masking or generation pipeline.
   decoy subset pipeline.yaml --dry-run   Preview a FK-aware referential subset.
-  decoy validate config pipeline.yaml  Check a YAML pipeline before running.
   decoy unmask pipeline.yaml masked.csv   Recover fpe columns from a masked file.
   decoy fit source.csv             Fit a distribution snapshot for statistical generation.
   decoy init                       Scaffold a starter pipeline interactively.

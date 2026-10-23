@@ -55,10 +55,51 @@ from typing import Any
 
 import typer
 import yaml as _yaml
+from typer.core import TyperGroup
 
-from decoy.cli.exit_codes import EXIT_FINDINGS, EXIT_USAGE, EXIT_WARNINGS
+from decoy.cli.exit_codes import EXIT_CAPACITY, EXIT_FINDINGS, EXIT_USAGE, EXIT_WARNINGS
 from decoy.ui.output import OutputMode, emit_json, setup_output
-from decoy.ui.theme import code, error, hint, success, warn
+from decoy.ui.theme import accent, code, error, hint, success, warn
+
+# ---------------------------------------------------------------------------
+# Default-command group: `decoy validate CONFIG` (no subcommand) runs the gate
+# ---------------------------------------------------------------------------
+
+
+class _DefaultCommandGroup(TyperGroup):
+    """A Click group that dispatches to a hidden default command when the first
+    positional token is NOT a registered subcommand.
+
+    `validate` is a Click group, so its first token is normally resolved as a
+    subcommand name. To honor the redesign's bare `decoy validate pipeline.yaml`
+    (run the whole pre-run gate), a first token that is not a known subcommand
+    and not an option is routed to the hidden `_gate` command, which carries the
+    CONFIG argument and the gate flags. `decoy validate` with no args still shows
+    help (no_args_is_help), and `validate config|compile|preflight|distribution`
+    resolve as normal subcommands.
+
+    Mechanism (no new dependency): the vendored-Click `resolve_command` is the
+    single choke point every non-help dispatch flows through; we override it to
+    fall back to the default command, keeping ALL args (the first token is the
+    CONFIG path for `_gate`). `list_commands` hides `_gate` from help, the
+    generated reference, and shell completion while `get_command` can still
+    resolve it for dispatch.
+    """
+
+    default_cmd_name = "_gate"
+
+    def resolve_command(self, ctx, args):  # type: ignore[override]
+        if args:
+            token = args[0]
+            if token not in self.commands and not token.startswith("-"):
+                cmd = self.get_command(ctx, self.default_cmd_name)
+                if cmd is not None:
+                    # Keep every arg: `token` is the CONFIG positional for `_gate`.
+                    return self.default_cmd_name, cmd, args
+        return super().resolve_command(ctx, args)
+
+    def list_commands(self, ctx):  # type: ignore[override]
+        return [n for n in super().list_commands(ctx) if n != self.default_cmd_name]
 
 # Grade -> minimum overall_score, mirroring the engine's own grade
 # thresholds (decoy_engine.quality.report._GRADE_THRESHOLDS: A >= 0.95,
@@ -72,6 +113,10 @@ _GRADE_MIN_SCORE: dict[str, float] = {"A": 0.95, "B": 0.85, "C": 0.70, "D": 0.50
 
 _VALIDATE_EPILOG = """\
 Examples:
+
+  decoy validate pipeline.yaml
+    Run the whole pre-run gate (config + compile + preflight): one report
+    grouped by layer, one aggregated exit code.
 
   decoy validate config pipeline.yaml
     Schema + config-only checks (fast, no source read).
@@ -91,8 +136,11 @@ See also: decoy run, decoy fit.
 
 validate_app = typer.Typer(
     name="validate",
+    cls=_DefaultCommandGroup,
     help=(
-        "Pre-run validation gate: schema + config checks (`config`), plan "
+        "Pre-run validation gate. `decoy validate CONFIG` runs the whole gate "
+        "(config + compile + preflight) and emits one report + one exit code. "
+        "Subcommands run a single layer: schema + config checks (`config`), plan "
         "compilation + checks (`compile`), source/capacity readiness "
         "(`preflight`), and post-run distribution fidelity (`distribution`)."
     ),
@@ -756,8 +804,367 @@ def _render_distribution_report(
         state.console.print(success("OK"), "no policy violations.")
 
 
+# ---------------------------------------------------------------------------
+# `decoy validate CONFIG` -- the default pre-run gate (config + compile + preflight)
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class _GateFinding:
+    """One finding in the aggregate gate report, tagged by its layer.
+
+    layer    in {config, compile, preflight}
+    severity in {error, warning}  (a passing check contributes no finding)
+    """
+
+    layer: str
+    severity: str
+    code: str
+    message: str
+    location: str | None = None
+
+
+# Canonical layer order for the grouped human report.
+_GATE_LAYERS: tuple[tuple[str, str], ...] = (
+    ("config", "Config"),
+    ("compile", "Compile"),
+    ("preflight", "Preflight"),
+)
+
+
+def _run_config_base(config: Path) -> tuple[dict[str, Any] | None, list[_GateFinding]]:
+    """The shared config layer: YAML parse + schema validate + the profile-free
+    plan-compile checks, composed exactly as `validate config` composes them.
+
+    `run_config_only_checks` is called here EXACTLY ONCE for the whole gate
+    (F5 dedup): compile_plan re-validates a superset of these checks internally
+    on the success path, but the engine's `run_config_only_checks` entrypoint
+    itself fires only on this call.
+
+    Returns `(raw, [])` when the config is valid, or `(None, findings)` with the
+    config-layer error(s) when it fails to parse / schema-validate / pass the
+    config-only checks. A None result means compile/preflight cannot run (they
+    both need a valid config), so the caller short-circuits with EXIT_USAGE.
+    """
+    import decoy_engine
+    from decoy_engine import ConfigError, PipelineConfig, PipelineValidationError
+    from decoy_engine.plan import PlanCompileError
+    from pydantic import ValidationError
+
+    findings: list[_GateFinding] = []
+
+    try:
+        raw = _yaml.safe_load(config.read_text(encoding="utf-8"))
+    except _yaml.YAMLError as exc:
+        findings.append(_GateFinding("config", "error", "yaml.parse_error", f"YAML parse error: {exc}"))
+        return None, findings
+
+    if raw is None:
+        findings.append(_GateFinding("config", "error", "yaml.empty", "Pipeline YAML is empty."))
+        return None, findings
+
+    if not isinstance(raw, dict):
+        findings.append(
+            _GateFinding(
+                "config",
+                "error",
+                "yaml.not_mapping",
+                f"Pipeline YAML must be a YAML mapping (object), not {type(raw).__name__}.",
+            )
+        )
+        return None, findings
+
+    try:
+        PipelineConfig.model_validate(raw)
+    except ValidationError as exc:
+        for e in exc.errors():
+            loc_parts = [str(p) for p in e.get("loc", ())]
+            location = ".".join(loc_parts) if loc_parts else None
+            findings.append(
+                _GateFinding(
+                    "config", "error", e.get("type", "validation_error"), e.get("msg", str(e)), location
+                )
+            )
+        return None, findings
+    except (PipelineValidationError, ConfigError) as exc:
+        findings.append(_GateFinding("config", "error", "pipeline.validation_error", str(exc)))
+        return None, findings
+
+    # Looked up on the module (not a `from ... import` binding) so a test can
+    # spy the single call via `decoy_engine.run_config_only_checks`.
+    try:
+        decoy_engine.run_config_only_checks(raw)
+    except PlanCompileError as exc:
+        from decoy.cli.extras import plan_compile_error_fields
+
+        err_code, message = plan_compile_error_fields(exc)
+        findings.append(_GateFinding("config", "error", err_code, message))
+        return None, findings
+
+    return raw, findings
+
+
+def _run_compile_layer(raw: dict[str, Any]) -> list[_GateFinding]:
+    """The compile layer: a no-profile compile and its plan-compile checks,
+    composed from the same helpers `validate compile --no-profile` uses (the
+    H2 unique-cardinality guard, the empty sentinel profile, `compile_plan`,
+    and the H1 checks-skipped attachment). No check logic is reimplemented.
+
+    Returns compile-layer findings (an error on a compile failure; warnings for
+    any plan-compile warnings). Never raises on a compile error -- the gate runs
+    all layers and aggregates rather than short-circuiting here.
+    """
+    from decoy_engine import __version__ as engine_version
+    from decoy_engine.plan import PlanCompileError, compile_plan
+
+    from decoy.cli.plan import (
+        NO_PROFILE_SKIPPED_CHECKS,
+        attach_checks_skipped,
+        empty_profile_for_no_profile,
+        find_first_unique_column_path,
+    )
+
+    findings: list[_GateFinding] = []
+
+    # H2 guard (reused from the `compile` command): --no-profile cannot run the
+    # pool-capacity pre-flight, so a cardinality_mode: unique column is refused.
+    unique_column_path = find_first_unique_column_path(raw)
+    if unique_column_path is not None:
+        findings.append(
+            _GateFinding(
+                "compile",
+                "error",
+                "no_profile_unique_incompatible",
+                "--no-profile is incompatible with cardinality_mode: unique "
+                f"(offending column: {unique_column_path}). The basic_uniqueness_pre_flight "
+                "check requires profile data; run `decoy validate compile CONFIG "
+                "--profile <profile.json>`, or remove the unique cardinality_mode.",
+                unique_column_path,
+            )
+        )
+        return findings
+
+    profile = empty_profile_for_no_profile(raw, engine_version)
+    try:
+        plan = compile_plan(raw, profile, decoy_engine_version=engine_version)
+    except PlanCompileError as exc:
+        from decoy.cli.extras import plan_compile_error_fields
+
+        err_code, message = plan_compile_error_fields(exc)
+        findings.append(
+            _GateFinding("compile", "error", err_code, message, location=exc.path or None)
+        )
+        return findings
+    except Exception as exc:  # mirrors `compile`'s own broad compile-error catch
+        findings.append(_GateFinding("compile", "error", "compile_error", str(exc)))
+        return findings
+
+    plan = attach_checks_skipped(plan, NO_PROFILE_SKIPPED_CHECKS)
+    for w in plan.plan_compile.warnings:
+        findings.append(_GateFinding("compile", "warning", "compile_warning", w))
+    return findings
+
+
+def _run_preflight_layer(raw: dict[str, Any], config: Path) -> tuple[list[_GateFinding], bool]:
+    """The preflight layer: source/file readiness, target-overwrite advisory,
+    out-of-core-FK capacity, and native companion/eligibility -- the exact check
+    functions `validate preflight` runs for its steps 4-7, reused as-is (steps
+    1-3 are the shared config base, already run once).
+
+    Returns `(findings, capacity_insufficient)`: passing checks contribute no
+    finding; a `fail` maps to an error and a `warn` to a warning. The capacity
+    fan-in impossibility sets `capacity_insufficient`, which the caller uses for
+    the EXIT_CAPACITY precedence.
+    """
+    from decoy.cli.preflight import (
+        _check_capacity,
+        _check_native,
+        _check_source_files,
+        _check_target_overwrite,
+        _PreflightAccumulator,
+    )
+
+    acc = _PreflightAccumulator()
+    _check_source_files(raw, config.parent, acc)
+    _check_target_overwrite(raw, acc)
+    _check_capacity(raw, config, acc)
+    _check_native(raw, acc)
+
+    findings: list[_GateFinding] = []
+    for c in acc.checks:
+        if c.status == "pass":
+            continue
+        severity = "error" if c.status == "fail" else "warning"
+        findings.append(
+            _GateFinding("preflight", severity, c.code or c.name, c.message, c.location)
+        )
+    return findings, acc.capacity_insufficient
+
+
+def _gate(
+    config: Path = typer.Argument(
+        ...,
+        exists=True,
+        dir_okay=False,
+        readable=True,
+        help="Path to the YAML pipeline config to run the whole pre-run gate against.",
+    ),
+    json_: bool = typer.Option(
+        False,
+        "--json",
+        help="Emit one aggregate JSON envelope on stdout (command/status/messages).",
+    ),
+    quiet: bool = typer.Option(
+        False,
+        "--quiet",
+        "-q",
+        help="Suppress stdout. Errors still go to stderr; exit code carries the result.",
+    ),
+    verbose: bool = typer.Option(
+        False,
+        "--verbose",
+        "-v",
+        help="Enable debug-level CLI logs on stderr.",
+    ),
+    fail_on_warning: bool = typer.Option(
+        False,
+        "--fail-on-warning",
+        help="Exit non-zero (EXIT_WARNINGS) when any advisory warning fires across the gate.",
+    ),
+) -> None:
+    """Run the whole pre-run gate: config + compile + preflight in one pass.
+
+    This is `decoy validate CONFIG` with no subcommand. It runs the shared
+    config base once (YAML parse + schema + the profile-free plan-compile
+    checks); if that fails it reports the error and exits EXIT_USAGE without
+    running compile/preflight. Otherwise it runs BOTH the compile layer and the
+    preflight layer, aggregates every finding into one report grouped by layer,
+    and exits by precedence: a capacity fan-in refusal -> EXIT_CAPACITY (it
+    outranks a co-occurring compile failure); any other failure -> EXIT_USAGE;
+    warnings with --fail-on-warning -> EXIT_WARNINGS; otherwise 0.
+
+    The subcommands (`config`, `compile`, `preflight`, `distribution`) run a
+    single layer each and keep their own output and exit semantics.
+    """
+    state = setup_output(json_, quiet, verbose)
+    config_str = str(config)
+
+    raw, config_findings = _run_config_base(config)
+    if raw is None:
+        # Config base failed: compile/preflight cannot run. Short-circuit.
+        _emit_gate(state, config_findings, config_str, fail_on_warning, ran_layers={"config"})
+        raise typer.Exit(code=EXIT_USAGE)
+
+    compile_findings = _run_compile_layer(raw)
+    preflight_findings, capacity_insufficient = _run_preflight_layer(raw, config)
+    findings = config_findings + compile_findings + preflight_findings
+
+    _emit_gate(
+        state,
+        findings,
+        config_str,
+        fail_on_warning,
+        ran_layers={"config", "compile", "preflight"},
+    )
+
+    # Exit-code precedence (highest first).
+    if capacity_insufficient:
+        # A hard capacity FAIL always exits EXIT_CAPACITY, outranking a
+        # co-occurring compile failure (both appear in the report).
+        raise typer.Exit(code=EXIT_CAPACITY)
+    if any(f.severity == "error" for f in findings):
+        raise typer.Exit(code=EXIT_USAGE)
+    if fail_on_warning and any(f.severity == "warning" for f in findings):
+        raise typer.Exit(code=EXIT_WARNINGS)
+    # else EXIT_OK (implicit clean return)
+
+
+def _emit_gate(
+    state: Any,
+    findings: list[_GateFinding],
+    config_str: str,
+    fail_on_warning: bool,
+    ran_layers: set[str],
+) -> None:
+    """Render the aggregate gate result: a grouped human report, or ONE JSON
+    envelope `{command, status, config, messages:[{layer, severity, code,
+    message, location}]}`.
+
+    Coarser by design than `validate preflight --json`: no structured
+    capacity/native_companion blocks, just the flat `messages` list.
+    """
+    has_error = any(f.severity == "error" for f in findings)
+    has_warning = any(f.severity == "warning" for f in findings)
+
+    if state.mode is OutputMode.json:
+        if has_error:
+            status = "error"
+        elif has_warning and fail_on_warning:
+            status = "warn"
+        else:
+            status = "ok"
+        envelope: dict[str, Any] = {
+            "command": "validate",
+            "status": status,
+            "config": config_str,
+            "messages": [
+                {
+                    "layer": f.layer,
+                    "severity": f.severity,
+                    "code": f.code,
+                    "message": f.message,
+                    "location": f.location,
+                }
+                for f in findings
+            ],
+        }
+        emit_json(state, envelope)
+        return
+
+    if state.mode is OutputMode.quiet:
+        return
+
+    # Human-readable: group by layer, in canonical order. Only layers that
+    # actually ran are shown (so a config short-circuit does not claim
+    # compile/preflight "passed" when they never ran).
+    for key, label in _GATE_LAYERS:
+        if key not in ran_layers:
+            continue
+        layer_findings = [f for f in findings if f.layer == key]
+        errs = [f for f in layer_findings if f.severity == "error"]
+        warns = [f for f in layer_findings if f.severity == "warning"]
+        if not errs and not warns:
+            state.console.print(success("OK"), f"{label}: passed")
+            continue
+        state.console.print(accent(f"{label}:"))
+        # markup=False throughout: a finding message is not authored markup --
+        # it can carry a user path or an install hint like `decoy-cli[ner]`.
+        for f in errs:
+            loc_hint = f" ({f.location})" if f.location else ""
+            state.err_console.print(error("  fail:"), f.message + loc_hint, markup=False)
+        for f in warns:
+            loc_hint = f" ({f.location})" if f.location else ""
+            state.err_console.print(warn("  warning:"), f.message + loc_hint, markup=False)
+
+    if has_error:
+        state.err_console.print(
+            error("FAIL"), code(config_str), hint("- fix the errors above, then rerun.")
+        )
+        return
+
+    state.console.print(success("OK"), code(config_str))
+    if has_warning and fail_on_warning:
+        state.err_console.print(
+            warn("warning:"), "warnings present and --fail-on-warning is set."
+        )
+
+
 validate_app.command(name="config", epilog=_CONFIG_EPILOG)(config)
 validate_app.command(name="distribution", epilog=_DISTRIBUTION_EPILOG)(distribution)
+# The hidden default command: `decoy validate CONFIG` (no subcommand) routes
+# here via `_DefaultCommandGroup`. Hidden so it stays out of help / the
+# generated reference / completion, while the group can still dispatch to it.
+validate_app.command(name="_gate", hidden=True)(_gate)
 
 # S2: the top-level `compile` and `preflight` commands were re-parented under
 # `validate` (and `plan` was folded into `validate compile`). Their bodies
