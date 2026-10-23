@@ -174,24 +174,26 @@ jobs:
         # package, not the source tree.
         run: .smoke/bin/decoy demo --json
 
-      - name: decoy templates list --json (smoke 3a)
+      - name: decoy list templates --json (smoke 3a)
         # Confirms the bundled templates set is registered + packaged
         # (package-data) in the wheel, and the listing surfaces no V1
-        # graph template.
-        run: .smoke/bin/decoy templates list --json
+        # graph template. (S3b redesign: the old `templates list` sub-app
+        # folded into the unified `list <kind>` verb.)
+        run: .smoke/bin/decoy list templates --json
 
       - name: decoy run against the bundled minimal template (smoke 3b)
         # The canonical run cell: take a tmp CSV in, write a masked CSV
-        # out. Reads the template from `decoy templates show minimal`
+        # out. Reads the template from `decoy show template minimal`
         # (default mode already prints raw YAML; there is no `--raw`
         # flag), NOT from the repo's `examples/` (those are repo-only,
         # not wheel-shipped -- the smoke must only touch what the wheel
-        # actually ships).
+        # actually ships). (S3b redesign: `templates show` folded into
+        # the unified `show <kind> <name>` verb.)
         run: |
           set -euo pipefail
           mkdir -p smoke_run
           printf 'first_name,last_name,email,ssn,account_status\nAda,Lovelace,ada@example.com,000-00-0000,active\n' > smoke_run/input.csv
-          .smoke/bin/decoy templates show minimal > smoke_run/pipeline.yaml
+          .smoke/bin/decoy show template minimal > smoke_run/pipeline.yaml
           cd smoke_run
           ../.smoke/bin/decoy run pipeline.yaml
           test -s output.csv
