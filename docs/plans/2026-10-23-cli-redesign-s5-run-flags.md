@@ -8,6 +8,16 @@ documentation, testing.
 
 Risk: R2 (additive CLI flags surfacing existing engine kwargs; no engine change; feature-branch; no merge).
 
+Plan-gate review incorporated (GO-WITH-REVISIONS, 2026-10-23): the escalation was confirmed JUSTIFIED on all
+three pieces (not over-cautious). Fixes folded in: P1-1 `--explain-plan` surfaces the EXECUTION-ROUTE
+decision (`quality_metrics["execution_plan"]`), NOT a per-column rationale — no parity claim with `validate
+compile --explain`; P1-2 enforce is a result FIELD (`failed_checks`), not an exception — the CLI maps it to
+`EXIT_FINDINGS` after the write; P2-3 reject `--chunked` + any flag as `EXIT_USAGE` (chunked path returns no
+ExecutionResult); P2-4 word `--fidelity` as a quick inline check, not grade-parity with `report fidelity`;
+P2-5 test corrections. (Advisory for the owner follow-up: the engine has `storm/recommendations.py
+get_default_strategy(detector_id)` — a per-detector smart-default mask table — which could power a narrower
+engine-sourced `scan`→starter-masks later; it is not a disguise/regime recommender and is itself unexported.)
+
 ## Scope change from the sprint doc (read first)
 
 The sprint doc's S5 was "disguises end-to-end (`init --preset` for 10 bundles, `scan --suggest`) + `run`
@@ -37,44 +47,64 @@ slice ships `init --preset <all>` + `scan --suggest` + `run --pin`. `list disgui
 
 ## Guarantee (what S5 builds)
 
-`decoy run` surfaces the report-shaped engine kwargs it already accepts, as clean flags:
-- `run --explain-plan` → `run_pipeline(explain_plan=True)`: print the per-column/table plan rationale after
-  the run (the same explanation `validate compile --explain` gives pre-run), from the `ExecutionResult`.
-- `run --fidelity` → `run_pipeline(fidelity_report=True)`: compute + render the distribution-fidelity report
-  inline. REPORT-ONLY (a low grade never fails the run), matching the engine contract.
-- `run --post-validate` → `run_pipeline(post_validation=True)`: run the job-level validators and render the
-  results. `run --post-validate-enforce` → `post_validation_enforce=True`: a failing validator makes the run
-  exit `EXIT_FINDINGS` (4). Default off; report-only unless `--enforce`.
+`decoy run` surfaces the report-shaped engine kwargs it already accepts, as clean flags (all default off,
+all reading `ExecutionResult.quality_metrics`):
+- `run --explain-plan` → `run_pipeline(explain_plan=True)`: render the **execution-route decision** from
+  `quality_metrics["execution_plan"]` = `{mode, reason, rejections}` (why sequential vs full_frame vs
+  out_of_core). **NOT** the per-column masking rationale — that comes from `compile_plan` and is what
+  `validate compile --explain` gives pre-run; `run_pipeline` does not produce it, so S5 does NOT claim
+  parity (P1-1). Stamped even for pure-generate runs (classify_job runs whenever `explain_plan` is set).
+- `run --fidelity` → `run_pipeline(fidelity_report=True)`: render the inline distribution-fidelity report
+  from `quality_metrics["fidelity_reports"]` (per-mask-table, marginal-only, report-only — a low grade never
+  fails the run). A QUICK inline check; not grade-parity with the fuller post-hoc `report fidelity` (P2-4).
+- `run --post-validate` → `run_pipeline(post_validation=True)`: render the job-level validator results from
+  `quality_metrics` (`failed_checks`, `quality_summary`). `run --post-validate-enforce` →
+  `post_validation_enforce=True`: the engine does NOT fail the job (it only stamps `failed_checks` +
+  `post_validation_enforce`; _pipeline.py:190-199) — the CLI does the mapping: after `_write_mask_outputs`,
+  `if enforce and result.quality_metrics.get("failed_checks"): raise typer.Exit(EXIT_FINDINGS)` (P1-2).
+  `--enforce` implies `--post-validate`.
 
-All three pass through to existing `run_pipeline` kwargs (`execution/_pipeline.py:122,135,123-128`); the CLI
-adds flags + renders the result fields. No engine change; no data behavior in the CLI.
+All pass through to existing `run_pipeline` kwargs (`execution/_pipeline.py:123/124/127/135`); the CLI adds
+flags + renders `quality_metrics` fields. No engine change; no data behavior in the CLI.
 
 Non-goals: the disguise wiring (escalated above); `run --pin` (engine export); any change to the default run
 behavior (all three flags default off).
 
 ## Design notes
 
-House style on touched code. No new abstraction — three boolean flags on the existing `run` command, passed
-to the existing `run_pipeline` call, with small render helpers for the explain/fidelity/post-validation
-result sections (data comes from `ExecutionResult`; the CLI only formats). Reuse `validate compile
---explain`'s rationale renderer if the explain payload shape matches.
+House style on touched code. No new abstraction — four boolean flags on the existing `run` command, passed
+to the existing `run_pipeline` call, with small render helpers for the execution-route / fidelity /
+post-validation sections (data comes from `ExecutionResult.quality_metrics`; the CLI only formats). Do NOT
+reuse `validate compile --explain`'s per-column rationale renderer — the payloads differ (route decision vs
+column rationale, P1-1); write a small dedicated route renderer.
 
 ## Slice (single)
 
 - Add `--explain-plan`, `--fidelity`, `--post-validate`, `--post-validate-enforce` to `cli/run.py`'s `run`
-  command; pass the matching kwargs into the existing `run_pipeline(...)` call; after a successful run,
-  render each requested section (explain rationale; fidelity grade/summary; validator results) in human mode
-  and include them in the `--json` envelope. `--post-validate-enforce` maps a failing validator result to
-  `EXIT_FINDINGS` (reuse `cli.exit_codes.EXIT_FINDINGS`); `--enforce` implies `--post-validate`.
-- Confirm the `ExecutionResult` actually carries the explain/fidelity/post-validation outputs when the
-  kwargs are set (read the engine result shape; if a field is absent, STOP and report — do not fabricate a
-  renderer for data the engine doesn't return).
-- Help/epilog: document the three flags with examples; `run --fidelity` cross-links `report fidelity`
-  (inline vs post-hoc). Regen `docs/cli-reference.md`; keep the three doc sentries green.
-- Tests: `run --explain-plan` prints the rationale + `--json` carries it; `run --fidelity` renders a grade
-  and does NOT fail on a low grade; `run --post-validate` renders validator results (exit 0); `run
-  --post-validate-enforce` exits `EXIT_FINDINGS` when a validator fails and 0 when all pass; the default
-  `run` (no flags) is byte-for-byte unchanged (regression net).
+  command; pass the matching kwargs into the existing non-chunked `run_pipeline(...)` call (run.py ~660-668);
+  after the run, render each requested section from `result.quality_metrics` (route `execution_plan`;
+  `fidelity_reports`; `failed_checks`/`quality_summary`) in human mode and in the `--json` envelope (run.py
+  already has a success envelope ~946-962 + `render_card` ~968-985 to extend).
+- **Enforce mapping (P1-2):** the engine does NOT raise/fail on an enforced validator failure — it only
+  stamps `quality_metrics["failed_checks"]` + `["post_validation_enforce"]`. So, AFTER `_write_mask_outputs`
+  (run.py ~679, the masking already succeeded), do:
+  `if post_validation_enforce and result.quality_metrics.get("failed_checks"): raise typer.Exit(EXIT_FINDINGS)`
+  (import `EXIT_FINDINGS` from `cli.exit_codes`). `--enforce` implies `--post-validate`.
+- **`--chunked` interaction (P2-3):** these flags only flow into the non-chunked path; `_run_chunked_mask`
+  (run.py ~647-656) returns no `ExecutionResult`. Reject `--chunked` combined with any of the four flags as
+  `EXIT_USAGE` with a clear message (mirror the existing `_ChunkedGenerateError` pattern ~run.py:564) — do
+  NOT silently no-op.
+- Help/epilog: document the four flags with examples; make clear `--explain-plan` shows the EXECUTION ROUTE
+  (not per-column rationale — point to `validate compile --explain` for that) and `--fidelity` is a QUICK
+  inline marginal check (point to `report fidelity` for the fuller post-hoc grade). Regen
+  `docs/cli-reference.md`; keep the three doc sentries green.
+- Tests: `run --explain-plan` renders the `execution_plan` fields (mode/reason/rejections) + `--json` carries
+  them (assert on route fields, NOT a per-column rationale); a pure-GENERATE `--explain-plan` run still
+  stamps a non-empty `execution_plan`; `run --fidelity` renders a fidelity section and does NOT fail on a low
+  grade; `run --post-validate` renders validator results (exit 0); `run --post-validate-enforce` exits
+  `EXIT_FINDINGS` ONLY when `failed_checks` is non-empty (and 0 when all pass), with the output files still
+  written; `--chunked` + any flag → `EXIT_USAGE`; the default `run` (no flags) is byte-for-byte unchanged
+  (regression net).
 
 ## Verification
 
