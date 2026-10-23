@@ -135,6 +135,13 @@ def test_show_schema_output_writes_file(tmp_path):
     assert "$defs" in parsed or "properties" in parsed
 
 
+def test_show_schema_rejects_stray_name():
+    """`show schema` takes no NAME; a stray positional is a clean usage error."""
+    result = runner.invoke(app, ["show", "schema", "hipaa"])
+    assert result.exit_code == 1
+    assert "no NAME" in result.output or "takes no" in result.output
+
+
 # ---------------------------------------------------------------------------
 # per-kind validation
 # ---------------------------------------------------------------------------

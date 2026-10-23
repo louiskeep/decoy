@@ -251,6 +251,14 @@ def show(
     """
     if kind == "schema":
         # schema takes no NAME and uniquely accepts --output. Concrete bools.
+        if name is not None:
+            state = setup_output(json_, quiet, verbose)
+            msg = f"`show schema` takes no NAME (got {name!r}); use `show schema [--output FILE]`."
+            if state.mode is OutputMode.json:
+                emit_json(state, {"command": "show schema", "status": "error", "error": msg})
+            else:
+                state.err_console.print(error("error:"), msg)
+            raise typer.Exit(code=EXIT_USAGE)
         _schema(output=output, json_=json_, quiet=quiet, verbose=verbose)
         return
 

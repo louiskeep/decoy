@@ -194,3 +194,22 @@ test-strength on the new `scan` compose + the `list`/`show` dispatch.
 Plan-gate review before DEVELOP (confirm: detectors/disguises deferral; the transient lone `storm
 integrity`; the extracted default-group; `show` only for kinds with a detail view). On GO: build S3a then
 S3b, each self-check + verify, then one independent review of the S3 diff, then DOCUMENT. No merge to main.
+
+## Build status (2026-10-23)
+
+- **S3a `scan` — DONE** (`f5ffee9`): merged profile+storm-analyze; honesty (H4) + privacy (H5) preserved;
+  `--layout` (H6); `--rows` bounded default + persist-only-on-`--output` + `--output -` (H7); shared
+  default-group factory (M1); full dead-string sweep (H1). Verified live.
+- **S3b `list`/`show` — DONE** (`61c29c5`): six `list` kinds incl. `list disguises` (H8, reads
+  `load_disguises`, shows `hipaa`); `show KIND [NAME]` (M2) + no-detail helpful message (L3); reused bodies'
+  envelopes repointed (M3); sub-apps deleted.
+- **S3 independent review — ACCEPT** (5 low/advisory). **L1 remediated**: `show schema STRAYNAME` now errors
+  cleanly (EXIT_USAGE) instead of ignoring the arg (+ test). Recorded advisory follow-ups (not blocking,
+  pre-GA): L2 historical "storm analyze" prose in a few docstrings (grep gate forbids only the
+  `decoy `-prefixed form, which is clean); L3 `scan diff --strict` uses EXIT_USAGE(1) for drift (ported
+  verbatim; a dedicated drift exit code is a later consideration); L4 stale `test_storm_analyze_*` function
+  names in `test_storm_sp16.py` (cosmetic); L5 "none detected" wording at zero PII candidates (optional
+  "none flagged").
+
+**S3 CLOSED** (merge-ready on the branch; not merged — PO-gated). Suite 1142 pass/5 skip; ruff clean; all
+three doc sentries green; no engine behavior change.
