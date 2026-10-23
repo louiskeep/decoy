@@ -67,9 +67,6 @@ _README_TABLE_OMITTED = frozenset(
         "report",
         # S3b: the four registry sub-apps folded into `list`/`show`; the README
         # table advertises `decoy list templates` / `decoy show template`.
-        "project",
-        "catalog",
-        "jobs",
         # S3a: `storm` is down to the transient lone `storm integrity`; the
         # README table advertises `decoy scan` instead.
         "storm",

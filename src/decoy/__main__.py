@@ -8,7 +8,6 @@ through `if __name__ == "__main__":`.
 import typer
 
 from decoy import __version__
-from decoy.cli.catalog import catalog_app
 from decoy.cli.cockpit import DOCTOR_EPILOG, doctor
 from decoy.cli.demo import DEMO_EPILOG
 from decoy.cli.demo import _demo as demo_command
@@ -20,8 +19,6 @@ from decoy.cli.fit import fit as fit_command
 from decoy.cli.info import INFO_EPILOG
 from decoy.cli.info import info as info_command
 from decoy.cli.init import INIT_EPILOG, init_command
-from decoy.cli.jobs import jobs_app
-from decoy.cli.project import project_app
 from decoy.cli.reference import LIST_EPILOG, SHOW_EPILOG, list_, show
 from decoy.cli.report import report_app
 from decoy.cli.run import RUN_EPILOG
@@ -57,11 +54,8 @@ Try one of:
   decoy show template hipaa        Dump one bundled template to stdout.
   decoy explain modes              Plain-English topic help. `explain` lists topics.
   decoy info                       Branded splash + quick-start hints.
-  decoy project init               Create a local .decoy/ workspace (local only).
-  decoy catalog list               List the local metadata catalog entries.
-  decoy jobs list                  List local run history from the DuckDB catalog.
-  decoy report show <run-id>       Render the evidence report for a cataloged run.
-  decoy report diff <id-a> <id-b>  Data-level compare between two local runs.
+  decoy report show evidence.json  Render the evidence report from an evidence manifest file.
+  decoy report diff a.json b.json  Data-level compare between two evidence manifests.
 
 Run `decoy --install-completion` to enable shell tab completion.
 """
@@ -112,9 +106,6 @@ app.add_typer(report_app, name="report")
 app.command(name="list", epilog=LIST_EPILOG)(list_)
 app.command(name="show", epilog=SHOW_EPILOG)(show)
 app.command(name="doctor", epilog=DOCTOR_EPILOG)(doctor)
-app.add_typer(project_app, name="project")
-app.add_typer(catalog_app, name="catalog")
-app.add_typer(jobs_app, name="jobs")
 app.command(name="subset", epilog=SUBSET_EPILOG)(subset_command)
 
 

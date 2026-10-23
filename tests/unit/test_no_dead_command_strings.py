@@ -52,6 +52,13 @@ DEAD_STRINGS = (
     "decoy checksums",
     "decoy validators",
     "decoy templates",
+    # S4a: the project/catalog/jobs persistence subsystem was deleted and the
+    # CLI is now stateless. The trailing space keeps `decoy report ...` (the
+    # live post-run surface) from matching; none of these three has a
+    # surviving `decoy ...` form.
+    "decoy project",
+    "decoy catalog",
+    "decoy jobs",
 )
 
 

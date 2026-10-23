@@ -1,11 +1,15 @@
 """``decoy report`` -- render, summarize, and compare local evidence manifests (SP-18).
 
-Three subcommands operating on evidence manifests produced by
-``decoy run --evidence-out <path>`` (SP-17, ``cli-local-1`` schema):
+Subcommands operating on evidence manifests produced by
+``decoy run --evidence-out <path>`` (SP-17, ``cli-local-1`` schema). Every
+command is file-first: it reads only the evidence manifest path(s) it is
+given (and, for ``diff``, the output data files those manifests reference).
 
   render    -- Write an HTML or Markdown report to a file.
   summarize -- Print a concise Rich summary to the terminal.
   compare   -- Compare two manifests and report changes.
+  show      -- Summarize or render one evidence manifest.
+  diff      -- Data-level compare of two evidence manifests' outputs.
 
 RAW-VALUE ISOLATION (Dennis review note, cli-first-capability-guide.md L534-538):
 
@@ -20,11 +24,6 @@ RAW-VALUE ISOLATION (Dennis review note, cli-first-capability-guide.md L534-538)
 
   What is intentionally excluded is stated in each report footer so reviewers
   know the omission is deliberate.
-
-Deferred (not built here):
-  - ``report show <run-id>`` -- needs the run-history store (SP-17b/catalog).
-  - ``jobs list/show/watch`` -- needs run-history + live telemetry (SP-18b).
-  - ``compare source.csv masked.csv`` -- data-level compare (SP-18b/19).
 """
 
 from __future__ import annotations
@@ -1219,38 +1218,34 @@ def compare_data(
 
 
 # ---------------------------------------------------------------------------
-# CLI: report show <run-id>
+# CLI: report show MANIFEST
 # ---------------------------------------------------------------------------
 
 _SHOW_EPILOG = """\
 Examples:
 
-  decoy report show <run-id>
-    Resolve the run from the catalog and print a summary of its evidence.
+  decoy report show evidence.json
+    Print a summary of the evidence manifest to the terminal.
 
-  decoy report show <run-id> --format html --output report.html
-    Write a full HTML report for the run's evidence.
+  decoy report show evidence.json --format html --output report.html
+    Write a full HTML report from the evidence manifest.
 
-  decoy report show <run-id> --json
+  decoy report show evidence.json --json
     Emit the raw evidence manifest as structured JSON.
 
-Resolution path:
-  catalog run entry id -> metadata.evidence_path -> load manifest -> render.
-
 Requirements:
-  - A .decoy/ workspace must exist (run `decoy project init`).
-  - The run entry must have an evidence_path (run with `--evidence-out`).
+  - An evidence manifest JSON produced by `decoy run --evidence-out`.
 
-LOCAL ONLY: reads from the local DuckDB catalog and local evidence files.
-
-See also: decoy jobs list, decoy report summarize, decoy report render.
+See also: decoy report summarize, decoy report render.
 """
 
 
 def _show(
-    run_id: str = typer.Argument(
+    evidence_file: Path = typer.Argument(
         ...,
-        help="Run catalog id (or prefix, min 4 chars) from `decoy jobs list`.",
+        exists=False,
+        dir_okay=False,
+        help="Path to an evidence manifest JSON (from `decoy run --evidence-out`).",
     ),
     format_: str = typer.Option(
         None,
@@ -1269,47 +1264,18 @@ def _show(
     json_: bool = typer.Option(False, "--json", help="Emit the evidence manifest as JSON."),
     quiet: bool = typer.Option(False, "--quiet", "-q", help="Suppress stdout."),
     verbose: bool = typer.Option(False, "--verbose", "-v", help="Enable debug-level logs."),
-    workspace: str | None = typer.Option(
-        None,
-        "--workspace",
-        help="Workspace root (default: search upward from cwd). Overrides DECOY_WORKSPACE_ROOT.",
-    ),
 ) -> None:
-    """Render the evidence report for a cataloged local run.
+    """Render the evidence report from an evidence manifest file.
 
-    Resolves the run from the catalog, loads its evidence manifest, and
-    renders it using the same format as `decoy report summarize` (terminal)
-    or `decoy report render` (file output with --format and --output).
+    Loads the evidence manifest at the given path and renders it using the
+    same format as `decoy report summarize` (terminal) or `decoy report
+    render` (file output with --format and --output).
 
-    Requires the run to have been started with `decoy run --evidence-out`.
-    LOCAL ONLY: does not connect to the platform server.
+    Reads only the file it is given; never connects to a server or catalog.
     """
-    from decoy.cli.catalog import _catalog_db, _require_workspace
-    from decoy.cli.jobs import _entry_to_run_dict, _lookup_run
     from decoy.ui.theme import code, error, success, warn
 
     state = setup_output(json_, quiet, verbose)
-    root = _require_workspace(workspace, "report show", state)
-
-    with _catalog_db(root, "report show", state) as conn:
-        entry = _lookup_run(run_id, conn, "report show", state)
-
-    run = _entry_to_run_dict(entry)
-    evidence_path_str = run.get("evidence_path")
-
-    if not evidence_path_str:
-        msg = (
-            f"Run {run_id!r} has no evidence path. "
-            "Re-run with `decoy run pipeline.yaml --evidence-out evidence.json` "
-            "to capture evidence, then register the run."
-        )
-        if state.mode is OutputMode.json:
-            emit_json(state, {"command": "report show", "status": "error", "error": msg})
-        elif state.mode is not OutputMode.quiet:
-            state.err_console.print(error("error:"), msg)
-        raise typer.Exit(code=EXIT_USAGE)
-
-    evidence_file = Path(evidence_path_str)
     manifest = _load_manifest(evidence_file, state, "report show")
 
     # --json: emit the full manifest
@@ -1319,8 +1285,7 @@ def _show(
             {
                 "command": "report show",
                 "status": "ok",
-                "run_id": run["id"],
-                "evidence_path": evidence_path_str,
+                "evidence_file": str(evidence_file),
                 "manifest": manifest,
             },
         )
@@ -1370,7 +1335,6 @@ def _show(
     fp_display = (pipeline_fp[:23] + "...") if len(pipeline_fp) > 23 else pipeline_fp
 
     facts: list[tuple[str, str]] = [
-        ("Catalog run id", (run["id"][:16] + "...") if len(run["id"]) > 16 else run["id"]),
         ("Schema version", schema_v),
         ("Producer", producer),
         ("Run ID", (manifest_run_id[:16] + "...") if len(manifest_run_id) > 16 else manifest_run_id),
@@ -1387,7 +1351,7 @@ def _show(
         state,
         command="decoy report show",
         facts=facts,
-        next_hint=f"decoy report show {run_id} --format html --output report.html",
+        next_hint=f"decoy report show {evidence_file} --format html --output report.html",
         status="warn" if warnings_list else "ok",
     )
 
@@ -1406,16 +1370,17 @@ def _show(
 
 
 # ---------------------------------------------------------------------------
-# CLI: report diff <run-id-a> <run-id-b>
+# CLI: report diff MANIFEST_A MANIFEST_B
 # ---------------------------------------------------------------------------
 
 _DIFF_EPILOG = """\
 Examples:
 
-  decoy report diff <run-id-a> <run-id-b>
-    Compare the output data files of two local runs at the data level.
+  decoy report diff a.json b.json
+    Compare the output data files referenced by two evidence manifests at the
+    data level.
 
-  decoy report diff <run-id-a> <run-id-b> --json
+  decoy report diff a.json b.json --json
     Emit structured JSON with per-table row-count and column-level deltas.
 
 What diff compares:
@@ -1429,7 +1394,7 @@ What diff does NOT compare:
   - Pipeline config changes (use `decoy report compare` for manifest-level diff)
 
 Scope and limitations:
-  - Requires both runs to have evidence files (`decoy run --evidence-out`).
+  - Takes two evidence manifest JSON files (`decoy run --evidence-out`).
   - Requires the output files referenced in the evidence manifests to still
     exist at their recorded paths.
   - Compares aggregate counts only -- not a full row-by-row diff.
@@ -1437,73 +1402,46 @@ Scope and limitations:
 Methodology: pandas.Series.nunique() / .isnull().sum() for column-level
 counts (pandas v2.x). No novel statistical method is used.
 
-See also: decoy report compare (manifest-level), decoy jobs list.
+See also: decoy report compare (manifest-level).
 """
 
 
 def _diff(
-    run_id_a: str = typer.Argument(
+    evidence_file_a: Path = typer.Argument(
         ...,
-        help="Catalog run id (or prefix) for the first run.",
+        exists=False,
+        dir_okay=False,
+        help="Path to the first evidence manifest JSON.",
     ),
-    run_id_b: str = typer.Argument(
+    evidence_file_b: Path = typer.Argument(
         ...,
-        help="Catalog run id (or prefix) for the second run.",
+        exists=False,
+        dir_okay=False,
+        help="Path to the second evidence manifest JSON.",
     ),
     json_: bool = typer.Option(False, "--json", help="Emit structured JSON."),
     quiet: bool = typer.Option(False, "--quiet", "-q", help="Suppress stdout."),
     verbose: bool = typer.Option(False, "--verbose", "-v", help="Enable debug-level logs."),
-    workspace: str | None = typer.Option(
-        None,
-        "--workspace",
-        help="Workspace root (default: search upward from cwd). Overrides DECOY_WORKSPACE_ROOT.",
-    ),
 ) -> None:
-    """Compare output data files from two local runs at the data level.
+    """Compare output data files from two evidence manifests at the data level.
 
-    Resolves both run ids from the catalog, loads their evidence manifests,
-    reads the output data files referenced in the manifests, and compares:
+    Loads both evidence manifests, reads the output data files referenced in
+    them, and compares:
       - Per-table row counts
       - Schema (columns added/removed/type-changed)
       - Per-column null-count and unique-count deltas
 
     EVIDENCE-SAFE: only aggregate counts are reported -- no raw values.
     See `decoy report compare` for manifest-level (fingerprint) comparison.
-    LOCAL ONLY: does not connect to the platform server.
+    Reads only the files it is given; never connects to a server or catalog.
     """
-    from decoy.cli.catalog import _catalog_db, _require_workspace
-    from decoy.cli.jobs import _entry_to_run_dict, _lookup_run
     from decoy.ui.table import make_table
     from decoy.ui.theme import code, error, hint, success, warn
 
     state = setup_output(json_, quiet, verbose)
-    root = _require_workspace(workspace, "report diff", state)
 
-    with _catalog_db(root, "report diff", state) as conn:
-        entry_a = _lookup_run(run_id_a, conn, "report diff", state)
-        entry_b = _lookup_run(run_id_b, conn, "report diff", state)
-
-    run_a = _entry_to_run_dict(entry_a)
-    run_b = _entry_to_run_dict(entry_b)
-
-    # Require evidence paths for both runs
-    def _get_evidence(run: dict[str, Any], label: str) -> dict[str, Any]:
-        ev_path = run.get("evidence_path")
-        if not ev_path:
-            msg = (
-                f"Run {label!r} has no evidence path. "
-                "Re-run with `decoy run --evidence-out evidence.json` to capture evidence."
-            )
-            if state.mode is OutputMode.json:
-                emit_json(state, {"command": "report diff", "status": "error", "error": msg})
-            elif state.mode is not OutputMode.quiet:
-                state.err_console.print(error("error:"), msg)
-            raise typer.Exit(code=EXIT_USAGE)
-        manifest = _load_manifest(Path(ev_path), state, "report diff")
-        return manifest
-
-    manifest_a = _get_evidence(run_a, run_id_a)
-    manifest_b = _get_evidence(run_b, run_id_b)
+    manifest_a = _load_manifest(evidence_file_a, state, "report diff")
+    manifest_b = _load_manifest(evidence_file_b, state, "report diff")
 
     out_fps_a: dict[str, Any] = manifest_a.get("output_fingerprints") or {}
     out_fps_b: dict[str, Any] = manifest_b.get("output_fingerprints") or {}
@@ -1540,13 +1478,12 @@ def _diff(
         payload: dict[str, Any] = {
             "command": "report diff",
             "status": "ok",
-            "run_id_a": run_a["id"],
-            "run_id_b": run_b["id"],
+            "evidence_file_a": str(evidence_file_a),
+            "evidence_file_b": str(evidence_file_b),
             "any_data_change": diff_result["any_data_change"],
             "table_deltas": diff_result["table_deltas"],
             "scope": (
-                "data-level aggregate counts only; raw values not included. "
-                "LOCAL ONLY -- does not reflect platform state."
+                "data-level aggregate counts only; raw values not included."
             ),
         }
         emit_json(state, payload)
@@ -1576,9 +1513,9 @@ def _diff(
     state.console.print(
         warn("data changes detected"),
         "between",
-        code(run_id_a[:8] + "..."),
+        code(str(evidence_file_a)),
         "and",
-        code(run_id_b[:8] + "..."),
+        code(str(evidence_file_b)),
     )
     state.console.print("")
 
