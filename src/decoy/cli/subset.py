@@ -36,6 +36,7 @@ from typing import Any
 import typer
 import yaml as _yaml
 
+from decoy.cli._yaml_errors import sanitize_yaml_error
 from decoy.cli.exit_codes import EXIT_RUNTIME, EXIT_USAGE
 from decoy.ui.output import OutputMode, emit_json, setup_output
 from decoy.ui.table import make_table
@@ -156,7 +157,7 @@ def subset(
     try:
         raw = _yaml.safe_load(config.read_text(encoding="utf-8"))
     except _yaml.YAMLError as exc:
-        _fail_usage(state, config_str, code_="yaml.parse_error", message=f"YAML parse error: {exc}")
+        _fail_usage(state, config_str, code_="yaml.parse_error", message=sanitize_yaml_error(exc))
         raise typer.Exit(code=EXIT_USAGE)
 
     if raw is None:

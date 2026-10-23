@@ -43,6 +43,7 @@ from typing import Any
 
 import typer
 
+from decoy.cli._yaml_errors import sanitize_yaml_error
 from decoy.cli.evidence import _render_manifest_card, verify_manifest
 from decoy.cli.exit_codes import EXIT_FINDINGS, EXIT_RUNTIME, EXIT_USAGE
 from decoy.ui.output import OutputMode, OutputState, emit_json, setup_output
@@ -1773,6 +1774,10 @@ def _fidelity(
         try:
             raw_cfg = _yaml.safe_load(pipeline_config.read_text(encoding="utf-8"))
             config_dict = PipelineConfig.model_validate(raw_cfg).model_dump()
+        except _yaml.YAMLError as exc:
+            # YAMLError carries the offending source line verbatim; sanitize it.
+            _emit_error(sanitize_yaml_error(exc))
+            raise typer.Exit(code=EXIT_USAGE)
         except Exception as exc:
             _emit_error(f"could not parse --config {pipeline_config}: {exc}")
             raise typer.Exit(code=EXIT_USAGE)
@@ -1781,6 +1786,9 @@ def _fidelity(
     if policy is not None:
         try:
             policy_config = _yaml.safe_load(policy.read_text(encoding="utf-8")) or {}
+        except _yaml.YAMLError as exc:
+            _emit_error(sanitize_yaml_error(exc))
+            raise typer.Exit(code=EXIT_USAGE)
         except Exception as exc:
             _emit_error(f"could not parse --policy {policy}: {exc}")
             raise typer.Exit(code=EXIT_USAGE)
@@ -2029,7 +2037,12 @@ def _integrity(
             import yaml as _yaml
             from decoy_engine import PipelineConfig
 
-            raw = _yaml.safe_load(config.read_text(encoding="utf-8"))
+            try:
+                raw = _yaml.safe_load(config.read_text(encoding="utf-8"))
+            except _yaml.YAMLError as exc:
+                # The outer handler renders str(exc); a raw YAMLError there would
+                # echo the offending source line. Re-raise a pre-sanitized message.
+                raise ValueError(sanitize_yaml_error(exc)) from None
             config_dict = PipelineConfig.model_validate(raw).model_dump()
             # Pick the first declared table name. Mixed-mode configs
             # can declare multiple; the CLI verb today handles a single
@@ -2266,7 +2279,7 @@ def _vault(
     try:
         raw = _yaml.safe_load(config.read_text(encoding="utf-8"))
     except _yaml.YAMLError as exc:
-        _emit_error(f"YAML parse error in {config}: {exc}")
+        _emit_error(sanitize_yaml_error(exc))
         raise typer.Exit(code=EXIT_USAGE)
     if not isinstance(raw, dict):
         _emit_error(

@@ -65,6 +65,7 @@ import typer
 import yaml as _yaml
 from rich.text import Text
 
+from decoy.cli._yaml_errors import sanitize_yaml_error
 from decoy.cli.exit_codes import EXIT_CAPACITY, EXIT_USAGE, EXIT_WARNINGS
 from decoy.ui.output import OutputMode, emit_json, setup_output
 from decoy.ui.theme import code, error, hint, success, warn
@@ -695,7 +696,7 @@ def preflight(
     try:
         raw = _yaml.safe_load(config.read_text(encoding="utf-8"))
     except _yaml.YAMLError as exc:
-        acc.add_fail(name="yaml.parse_error", message=f"YAML parse error: {exc}")
+        acc.add_fail(name="yaml.parse_error", message=sanitize_yaml_error(exc))
         _emit_preflight_result(state, acc, config_str, fail_on_warning)
         raise typer.Exit(code=EXIT_USAGE)
 

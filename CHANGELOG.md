@@ -60,8 +60,16 @@ It returns once the engine validator is hardened and released.
   not surfaced.
 - **The surface drift sentry now guards the hidden default-command handlers.**
   `scan` and `validate` dispatch a bare positional to a hidden handler whose
-  flags no other sentry watched; their option surface is now pinned so a flag
-  change there is a reviewed edit.
+  flags no other sentry watched; their option surface is now pinned (every
+  spelling, aliases included) so a flag change there is a reviewed edit.
+- **A YAML parse error no longer echoes the offending config line.** PyYAML's
+  error text quotes the line it failed on, so a malformed config whose broken
+  line held a secret leaked that secret into the message. Every command that
+  parses a config (`run`, `validate`, `validate config`, `validate preflight`,
+  `compile`, `subset`, `unmask`, `report fidelity`/`integrity`) now reports a
+  sanitized message with only the line/column and a fixed classification. A new
+  sentry asserts a secret-bearing malformed config never appears in any output
+  stream.
 
 ### Fixed (CLI reads sources by declared format, 2026-09-30)
 

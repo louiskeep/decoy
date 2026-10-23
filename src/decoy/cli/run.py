@@ -25,6 +25,7 @@ from rich.text import Text
 from decoy import __version__ as _cli_version
 from decoy import _native_gate
 from decoy.cli._sources import iter_source_chunks, read_source
+from decoy.cli._yaml_errors import sanitize_yaml_error
 from decoy.cli.exit_codes import EXIT_CAPACITY, EXIT_FINDINGS, EXIT_RUNTIME, EXIT_USAGE
 from decoy.cli.extras import (
     MissingExtraError,
@@ -514,7 +515,13 @@ def run(
                 # YAML error surfaces through the normal error path.
                 import yaml as _yaml
 
-                raw = _yaml.safe_load(config.read_text(encoding="utf-8"))
+                try:
+                    raw = _yaml.safe_load(config.read_text(encoding="utf-8"))
+                except _yaml.YAMLError as exc:
+                    # A raw YAMLError rides str(exc) through the run-level
+                    # handler and echoes the offending source line (which may
+                    # hold a secret). Re-raise a pre-sanitized EXIT_USAGE error.
+                    raise _ConfigValidationError(sanitize_yaml_error(exc)) from None
 
             # DE-02 secret-disclosure ROOT guard: validate the RAW YAML
             # `mask_secret_ref` BEFORE PipelineConfig.model_validate(raw). A

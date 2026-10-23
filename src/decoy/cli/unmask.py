@@ -19,6 +19,7 @@ from pathlib import Path
 import typer
 import yaml as _yaml
 
+from decoy.cli._yaml_errors import sanitize_yaml_error
 from decoy.cli.exit_codes import EXIT_RUNTIME, EXIT_USAGE
 from decoy.ui.output import OutputMode, emit_json, setup_output
 from decoy.ui.theme import code, error, hint, success, warn
@@ -140,7 +141,7 @@ def unmask(
     try:
         raw = _yaml.safe_load(config.read_text(encoding="utf-8"))
     except _yaml.YAMLError as exc:
-        _emit_error(f"YAML parse error: {exc}")
+        _emit_error(sanitize_yaml_error(exc))
         raise typer.Exit(code=EXIT_USAGE)
     if not isinstance(raw, dict):
         _emit_error(

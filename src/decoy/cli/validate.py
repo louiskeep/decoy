@@ -50,6 +50,7 @@ import typer
 import yaml as _yaml
 
 from decoy.cli._default_group import make_default_group
+from decoy.cli._yaml_errors import sanitize_yaml_error
 from decoy.cli.exit_codes import EXIT_CAPACITY, EXIT_USAGE, EXIT_WARNINGS
 from decoy.ui.output import OutputMode, emit_json, setup_output
 from decoy.ui.theme import accent, code, error, hint, success, warn
@@ -253,7 +254,7 @@ def config(
     try:
         raw = _yaml.safe_load(config.read_text(encoding="utf-8"))
     except _yaml.YAMLError as exc:
-        acc.add_error(code="yaml.parse_error", message=f"YAML parse error: {exc}")
+        acc.add_error(code="yaml.parse_error", message=sanitize_yaml_error(exc))
         _emit_result(state, acc, config_str, checks_run=None, fail_on_warning=fail_on_warning)
         raise typer.Exit(code=EXIT_USAGE)
 
@@ -437,7 +438,7 @@ def _run_config_base(config: Path) -> tuple[dict[str, Any] | None, list[_GateFin
     try:
         raw = _yaml.safe_load(config.read_text(encoding="utf-8"))
     except _yaml.YAMLError as exc:
-        findings.append(_GateFinding("config", "error", "yaml.parse_error", f"YAML parse error: {exc}"))
+        findings.append(_GateFinding("config", "error", "yaml.parse_error", sanitize_yaml_error(exc)))
         return None, findings
 
     if raw is None:

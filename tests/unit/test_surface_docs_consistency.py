@@ -22,6 +22,8 @@ import inspect
 import re
 from pathlib import Path
 
+import pytest
+
 from decoy.__main__ import _ROOT_HELP, app
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -295,42 +297,47 @@ def test_no_standalone_out_flag_in_source() -> None:
 # ---------------------------------------------------------------------------
 
 
-def _default_command_flags() -> dict[str, list[str]]:
-    """Return {group name: option/arg surface of its hidden default handler}.
+def _handler_surface(callback: object) -> list[str]:
+    """The option/arg surface of one command callback, in signature order.
 
-    The surface is the first param declaration of each callback parameter
-    (`--flag` for an option, `<arg:name>` for a positional), in signature
-    order, read straight off the live Typer app so it tracks the real handler.
+    Each option contributes ALL its spellings joined with `/`
+    (`--quiet/-q`), not just the primary one, so renaming or dropping a
+    secondary alias is caught. Each positional contributes `<arg:name>`.
     """
-    surface: dict[str, list[str]] = {}
-    for g in app.registered_groups:
-        for c in g.typer_instance.registered_commands:
-            if not (c.name and c.name.startswith("_")):
-                continue
-            decls: list[str] = []
-            for pname, param in inspect.signature(c.callback).parameters.items():
-                param_decls = getattr(param.default, "param_decls", None)
-                decls.append(param_decls[0] if param_decls else f"<arg:{pname}>")
-            surface[g.name] = decls
+    surface: list[str] = []
+    for pname, param in inspect.signature(callback).parameters.items():
+        param_decls = getattr(param.default, "param_decls", None)
+        surface.append("/".join(param_decls) if param_decls else f"<arg:{pname}>")
     return surface
 
 
-# The reviewed surface of each default-command handler. Editing a flag on
-# `_scan`/`_gate` must update this map in the same diff -- that edit IS the
-# drift signal those hidden handlers would otherwise escape.
+def _default_command_flags() -> dict[str, list[str]]:
+    """Return {group name: full option/arg surface of its hidden default handler}."""
+    surface: dict[str, list[str]] = {}
+    for g in app.registered_groups:
+        for c in g.typer_instance.registered_commands:
+            if c.name and c.name.startswith("_"):
+                surface[g.name] = _handler_surface(c.callback)
+    return surface
+
+
+# The reviewed surface of each default-command handler, every spelling pinned.
+# Editing a flag on `_scan`/`_gate` -- including an alias like `-q` or `-o` --
+# must update this map in the same diff; that edit IS the drift signal those
+# hidden handlers would otherwise escape.
 _DEFAULT_COMMAND_FLAGS = {
-    "validate": ["<arg:config>", "--json", "--quiet", "--verbose", "--fail-on-warning"],
+    "validate": ["<arg:config>", "--json", "--quiet/-q", "--verbose/-v", "--fail-on-warning"],
     "scan": [
         "<arg:source>",
         "--show-fields",
         "--rows",
         "--strategy",
-        "--output",
+        "--output/-o",
         "--format",
         "--layout",
         "--json",
-        "--quiet",
-        "--verbose",
+        "--quiet/-q",
+        "--verbose/-v",
     ],
 }
 
@@ -341,5 +348,25 @@ def test_default_command_handlers_match_committed_flag_surface() -> None:
         "changed its flag/argument surface. These handlers are hidden from help, "
         "the generated reference, and the re-render sentry, so this is the only "
         "guard on them. If the change is intended, update _DEFAULT_COMMAND_FLAGS "
-        "to match."
+        "to match (every option spelling, aliases included)."
     )
+
+
+@pytest.mark.parametrize(
+    "mutate",
+    [
+        # Renaming a secondary alias (the gap the first cut of this guard missed).
+        lambda s: [x.replace("/-q", "/--silence") for x in s],
+        # Dropping a secondary alias entirely.
+        lambda s: [x.replace("/-q", "") for x in s],
+        # Adding a new alias.
+        lambda s: [x.replace("--json", "--json/-j") for x in s],
+        # Renaming a primary flag.
+        lambda s: [x.replace("--verbose/", "--chatty/") for x in s],
+    ],
+)
+def test_guard_catches_default_handler_flag_mutations(mutate) -> None:
+    """Every alias/primary add, drop, and rename must diverge from the committed
+    map. This proves the guard has teeth the primary-flag-only snapshot lacked."""
+    mutated = {g: mutate(list(flags)) for g, flags in _DEFAULT_COMMAND_FLAGS.items()}
+    assert mutated != _DEFAULT_COMMAND_FLAGS
