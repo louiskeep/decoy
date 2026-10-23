@@ -18,6 +18,7 @@ after the command path, and a group reference is two tokens, not one.
 
 from __future__ import annotations
 
+import inspect
 import re
 from pathlib import Path
 
@@ -275,4 +276,70 @@ def test_no_standalone_out_flag_in_source() -> None:
     assert not offenders, (
         "Found the standalone `--out` flag token in source; it was renamed to "
         "`--output`/`-o`:\n  " + "\n  ".join(offenders)
+    )
+
+
+# ---------------------------------------------------------------------------
+# Default-command handler surface (drift blind spot).
+#
+# `scan` and `validate` dispatch a bare positional to a hidden handler
+# (`_scan`, `_gate`) that `_DefaultCommandGroup.list_commands` keeps out of
+# group help, the generated `docs/cli-reference.md`, and so the re-render guard
+# in `test_cli_surface.py`. Their flags are therefore the one part of the CLI
+# surface no other sentry watches: add, rename, or drop a flag on those
+# handlers and nothing else fails. This guard reads the handler's real option
+# surface off its callback signature and pins it to a committed map, so a
+# change there is forced to be a reviewed edit here (the same mechanism as the
+# `_*_OMITTED` allowlists above). Surfacing these options in `--help` and the
+# reference is a separate discoverability follow-up, not a drift concern.
+# ---------------------------------------------------------------------------
+
+
+def _default_command_flags() -> dict[str, list[str]]:
+    """Return {group name: option/arg surface of its hidden default handler}.
+
+    The surface is the first param declaration of each callback parameter
+    (`--flag` for an option, `<arg:name>` for a positional), in signature
+    order, read straight off the live Typer app so it tracks the real handler.
+    """
+    surface: dict[str, list[str]] = {}
+    for g in app.registered_groups:
+        for c in g.typer_instance.registered_commands:
+            if not (c.name and c.name.startswith("_")):
+                continue
+            decls: list[str] = []
+            for pname, param in inspect.signature(c.callback).parameters.items():
+                param_decls = getattr(param.default, "param_decls", None)
+                decls.append(param_decls[0] if param_decls else f"<arg:{pname}>")
+            surface[g.name] = decls
+    return surface
+
+
+# The reviewed surface of each default-command handler. Editing a flag on
+# `_scan`/`_gate` must update this map in the same diff -- that edit IS the
+# drift signal those hidden handlers would otherwise escape.
+_DEFAULT_COMMAND_FLAGS = {
+    "validate": ["<arg:config>", "--json", "--quiet", "--verbose", "--fail-on-warning"],
+    "scan": [
+        "<arg:source>",
+        "--show-fields",
+        "--rows",
+        "--strategy",
+        "--output",
+        "--format",
+        "--layout",
+        "--json",
+        "--quiet",
+        "--verbose",
+    ],
+}
+
+
+def test_default_command_handlers_match_committed_flag_surface() -> None:
+    assert _default_command_flags() == _DEFAULT_COMMAND_FLAGS, (
+        "A hidden default-command handler (`scan`/`validate`'s `_scan`/`_gate`) "
+        "changed its flag/argument surface. These handlers are hidden from help, "
+        "the generated reference, and the re-render sentry, so this is the only "
+        "guard on them. If the change is intended, update _DEFAULT_COMMAND_FLAGS "
+        "to match."
     )

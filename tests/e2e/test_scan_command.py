@@ -111,6 +111,36 @@ def test_scan_output_dash_streams_to_stdout(sample_csv: Path) -> None:
 
 
 # ---------------------------------------------------------------------------
+# `--output -` conflicts with the privacy-safe stdout contracts.
+#
+# Regression for the final-gate finding: `--output -` streams the rich,
+# raw-value-bearing profile to stdout, and the stream path used to win
+# unconditionally -- so `--output - -q` leaked the full profile despite quiet,
+# and `--output - --json` emitted that raw artifact instead of the
+# privacy-safe envelope. The combination is now rejected up front (EXIT_USAGE)
+# before the scan runs, so neither mode can leak.
+# ---------------------------------------------------------------------------
+
+
+def test_scan_output_dash_with_json_is_rejected(sample_csv: Path) -> None:
+    result = runner.invoke(app, ["scan", str(sample_csv), "--output", "-", "--json"])
+    assert result.exit_code == 1  # EXIT_USAGE: invalid flag combination
+    payload = _json.loads(result.stdout)
+    assert payload["status"] == "error"
+    assert payload["command"] == "scan"
+    # The raw profile must NOT have streamed: the only stdout is the error envelope.
+    assert "fields" not in payload
+    assert "source_label" not in result.stdout  # the rich artifact's marker key
+
+
+def test_scan_output_dash_with_quiet_is_rejected(sample_csv: Path) -> None:
+    result = runner.invoke(app, ["scan", str(sample_csv), "--output", "-", "-q"])
+    assert result.exit_code == 1  # EXIT_USAGE
+    # Quiet's contract holds: nothing on stdout (the rich profile never streamed).
+    assert result.stdout == ""
+
+
+# ---------------------------------------------------------------------------
 # Privacy-safe field record (H5): no raw aggregates in inline / --json output
 # ---------------------------------------------------------------------------
 

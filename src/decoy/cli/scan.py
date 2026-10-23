@@ -671,6 +671,29 @@ def _scan(
     state = setup_output(json_, quiet, verbose)
     source_str = str(source)
 
+    # Fail closed early: `--output -` streams the rich profile (raw-value-bearing,
+    # like the on-disk artifact) to stdout, which collides with the two stdout
+    # contracts that must stay privacy-safe -- the --json envelope and --quiet's
+    # suppression. Resolve the conflict before scanning rather than letting the
+    # stream path (below) silently win and leak values a -q/--json caller never
+    # asked for.
+    if out is not None and str(out) == "-" and state.mode is not OutputMode.default:
+        msg = (
+            "--output - (stream the scan to stdout) cannot be combined with "
+            f"--{'json' if state.mode is OutputMode.json else 'quiet'}: the "
+            "streamed profile carries raw values and would break that mode's "
+            "stdout contract. Save to a file (--output scan.json), or drop the "
+            "conflicting flag."
+        )
+        if state.mode is OutputMode.json:
+            emit_json(
+                state,
+                {"command": "scan", "status": "error", "source": source_str, "error": msg},
+            )
+        else:  # quiet: the contract is "no stdout", so the error goes to stderr.
+            state.err_console.print(error("error:"), msg)
+        raise typer.Exit(code=EXIT_USAGE)
+
     # Resolve the effective format (explicit flag overrides extension detection).
     effective_fmt: InputFormat = fmt if fmt is not None else _infer_format(source)
 

@@ -952,8 +952,24 @@ def compare_data(
                     ) from _ie
             return pd.read_csv(str(p), dtype=str)
 
-        df_a = _load(path_a)
-        df_b = _load(path_b)
+        try:
+            df_a = _load(path_a)
+            df_b = _load(path_b)
+        except (OSError, ValueError):
+            # The file exists but could not be read (corrupt, truncated, or not
+            # the format its extension claims; a parquet reader raises
+            # ArrowInvalid/ValueError, a bad path raises OSError). Degrade this
+            # table to the same data-unavailable handling as a missing file so
+            # one broken output cannot crash the whole comparison -- the caller
+            # still reports manifest level and --require-data still hard-fails.
+            # The raw parser message is deliberately dropped: it can echo file
+            # bytes or cell values (observability leak rule). A missing parquet
+            # reader surfaces as RuntimeError, which is not caught here and
+            # propagates to the caller's dependency boundary.
+            for p_str in (path_a_str, path_b_str):
+                if p_str not in missing_files:
+                    missing_files.append(p_str)
+            continue
 
         rows_a = len(df_a)
         rows_b = len(df_b)
@@ -1257,7 +1273,7 @@ def _diff(
     if require_data and not data_available:
         if missing_files:
             msg = (
-                "Output files are missing and cannot be compared: "
+                "Output files are missing or unreadable and cannot be compared: "
                 + ", ".join(missing_files)
             )
         else:
@@ -1269,8 +1285,8 @@ def _diff(
             state.err_console.print(
                 " ",
                 hint("note:"),
-                "output files may have been moved or deleted after the run "
-                "completed; drop --require-data for manifest-level only.",
+                "output files may have been moved, deleted, or corrupted after "
+                "the run completed; drop --require-data for manifest-level only.",
             )
         raise typer.Exit(code=EXIT_USAGE)
 

@@ -303,6 +303,89 @@ def test_report_diff_require_data_hard_fails_on_missing(tmp_path: Path) -> None:
 
 
 # ---------------------------------------------------------------------------
+# D6b: a referenced output file EXISTS but is corrupt/unreadable.
+#
+# Regression for the final-gate finding: the data-level boundary caught only a
+# missing parquet READER (RuntimeError), so a corrupt parquet raised
+# ArrowInvalid (a ValueError) straight out of `report diff --json`, crashing
+# with a traceback and producing no JSON. A present-but-unreadable file must
+# degrade exactly like a missing one: manifest-level still reported, data level
+# skipped, and --require-data still hard-fails -- never a crash, never the raw
+# parser message (it can echo file bytes).
+# ---------------------------------------------------------------------------
+
+
+def _write_parquet_evidence(tmp_path: Path, suffix: str) -> Path:
+    """Write a VALID parquet output + its evidence manifest, then return the
+    manifest path. The caller corrupts the parquet afterward to simulate
+    post-run corruption (the manifest was fingerprinted while it was valid)."""
+    import pandas as pd
+
+    src_path = tmp_path / f"in{suffix}.csv"
+    out_path = tmp_path / f"out{suffix}.parquet"
+    pipeline_path = tmp_path / f"pipeline{suffix}.yaml"
+    evidence_path = tmp_path / f"evidence{suffix}.json"
+
+    src_path.write_text("email\nfoo@bar.com\nbaz@qux.com\n", encoding="utf-8")
+    pd.DataFrame({"email": ["a@b.com", "c@d.com"]}).to_parquet(out_path)
+
+    config_dict = _minimal_config(src_path, out_path)
+    config_dict["targets"]["customers"]["format"] = "parquet"
+    pipeline_path.write_text(yaml.dump(config_dict), encoding="utf-8")
+
+    manifest = build_manifest(
+        pipeline_path=pipeline_path,
+        config_dict=config_dict,
+        run_result={"row_counts": {"customers": 2}},
+        cli_version="0.5.0",
+        engine_version="0.4.0",
+    )
+    evidence_path.write_text(_json.dumps(manifest, indent=2), encoding="utf-8")
+    return evidence_path
+
+
+def test_report_diff_corrupt_output_json_degrades(tmp_path: Path) -> None:
+    """A corrupt parquet output degrades `report diff --json` to manifest-level
+    (exit 0, valid JSON, data level skipped) instead of crashing with no JSON."""
+    ev_a = _write_parquet_evidence(tmp_path, "_a")
+    ev_b = _write_parquet_evidence(tmp_path, "_b")
+
+    # Corrupt both outputs AFTER the manifests were fingerprinted.
+    for name in ("out_a.parquet", "out_b.parquet"):
+        (tmp_path / name).write_bytes(b"this is not a parquet file")
+
+    result = runner.invoke(
+        app,
+        ["report", "diff", str(ev_a), str(ev_b), "--json"],
+        catch_exceptions=False,
+    )
+    assert result.exit_code == 0, result.output
+    data = _json.loads(result.stdout)  # fail-before: no JSON at all (ArrowInvalid)
+    assert data["command"] == "report diff"
+    assert data["status"] == "ok"
+    assert data["data_level"] == "skipped"
+    assert data["missing_files"]  # the unreadable outputs land here
+    # The raw parser message must not leak into the envelope.
+    assert "ArrowInvalid" not in result.stdout
+    assert "this is not a parquet" not in result.stdout
+
+
+def test_report_diff_corrupt_output_require_data_hard_fails(tmp_path: Path) -> None:
+    """--require-data still hard-fails when an output file is present but corrupt."""
+    ev_a = _write_parquet_evidence(tmp_path, "_a")
+    ev_b = _write_parquet_evidence(tmp_path, "_b")
+    for name in ("out_a.parquet", "out_b.parquet"):
+        (tmp_path / name).write_bytes(b"this is not a parquet file")
+
+    result = runner.invoke(
+        app,
+        ["report", "diff", str(ev_a), str(ev_b), "--require-data"],
+        catch_exceptions=False,
+    )
+    assert result.exit_code != 0
+
+
+# ---------------------------------------------------------------------------
 # D6c: manifest-level comparison (absorbed `report compare`) always runs
 # ---------------------------------------------------------------------------
 
