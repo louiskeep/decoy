@@ -28,14 +28,24 @@ the first cut; `query`/`run --pin` fast-follow; `report fidelity --privacy` gate
 | S5 ◑ | `run` flags shipped; disguises end-to-end owner-gated | run flags done; compliance wiring escalated | S2, S3 |
 | S6 ◑ | `decoy query` shipped; privacy metrics deferred | query surfaced; `report fidelity --privacy` needs engine export | S4; engine exports |
 
-**Loop complete (2026-10-23):** S1–S4 shipped in full; S5 shipped the `run` flags (disguise end-to-end
-escalated to the owner); S6 shipped `decoy query` (`report fidelity --privacy` deferred). All on branch
-`claude/happy-fermi-44osad`, each slice through plan-gate → build → independent review, merge-ready and NOT
-merged (PO-gated). Owner/engine follow-ups: compliance-template authoring for the ~7 remaining regimes
-(legal review); engine exports for `recommend_disguises` (→ `scan --suggest`), pinned generation
-(→ `run --pin`), and the `quality` compute surface (→ `report fidelity --privacy`); the `report.py` split
-tech-debt; the two S6 LOW advisories; and the ROADMAP-index entry in `decoy-platform` (a platform-repo
-change, flagged not done here).
+**MERGED to main 2026-10-23 (merge `2d4496e`; main green at `6288d70`).** S1–S5 shipped; **S6 `decoy
+query` was HELD OUT** (reverted) because its pre-merge cross-model gate reproduced two HIGH security
+defects rooted in the engine's `run_discovery_sql` (a stacked-write bypass via a string-embedded `--`,
+and arbitrary file read via `read_text()`); `query` returns after the engine validator is hardened and
+released. Build history: each slice went through plan-gate → build → independent review on branch
+`claude/happy-fermi-44osad`; the ship branch `cli-overhaul-ship-s1-s5` added the query revert, four
+security/robustness fixes found at the final gate (scan `--output -` leak, `report diff` corrupt-file
+crash, a YAML-parse secret-leak class across all config commands, the drift-sentry default-handler gap),
+the CHANGELOG, and a post-merge CI-smoke fix (the S3b `list`/`show` rename had not reached the smoke
+workflows). Final gates: Codex GO + dennis GO; full suite 1164 pass / 4 skip.
+
+Owner/engine follow-ups (recorded, not done): engine `run_discovery_sql` hardening → unblocks `query`;
+the broader `str(exc)`/pydantic value-leak class (schema-valid YAML with a wrong-typed secret value);
+the pre-existing non-UTF-8-config crash in sibling commands; compliance-template authoring for the ~7
+remaining regimes (legal); engine exports for `recommend_disguises` (→ `scan --suggest`), pinned
+generation (→ `run --pin`), and the `quality` surface (→ `report fidelity --privacy`); the `report.py`
+split tech-debt; surfacing hidden default-handler options in `--help`/the reference; and the
+ROADMAP-index entry in `decoy-platform`.
 
 Runs in parallel, independently: the **file-format contract** slice
 (`docs/plans/2026-09-30-cli-source-format-dispatch.md`) — it is engine-release-gated and touches the source
