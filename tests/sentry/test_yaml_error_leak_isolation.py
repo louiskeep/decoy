@@ -34,33 +34,31 @@ _WIDE_ENV = {"COLUMNS": "10000"}  # stop Rich truncating the sentinel mid-string
 # Each builder takes the resolved fixture paths and returns the argv to run.
 # Covers every command whose config-parse path routes through
 # sanitize_yaml_error.
-_COMMANDS: dict[str, Callable[[str, str, str, str], list[str]]] = {
-    "validate": lambda cfg, src, out, vault: ["validate", cfg],
-    "validate --json": lambda cfg, src, out, vault: ["validate", cfg, "--json"],
-    "validate config": lambda cfg, src, out, vault: ["validate", "config", cfg, "--json"],
-    "validate preflight": lambda cfg, src, out, vault: ["validate", "preflight", cfg, "--json"],
-    "compile": lambda cfg, src, out, vault: ["compile", cfg, "--json"],
-    "subset": lambda cfg, src, out, vault: ["subset", cfg, "--json"],
-    "unmask": lambda cfg, src, out, vault: ["unmask", cfg, "--vault", vault, "--json"],
-    "run": lambda cfg, src, out, vault: ["run", cfg, "--json"],
-    "report fidelity": lambda cfg, src, out, vault: [
-        "report",
-        "fidelity",
-        src,
-        out,
-        "--config",
-        cfg,
-        "--json",
+# Each builder takes (cfg, src, out) and returns argv. `cfg` is the malformed
+# config; `src`/`out` stand in for any required CSV/masked/vault positionals so
+# the command actually REACHES its config parse (a command that bails on a
+# missing arg first would pass this sentry vacuously). Covers every config/
+# policy parse site routed through sanitize_yaml_error, in text and JSON modes.
+_COMMANDS: dict[str, Callable[[str, str, str], list[str]]] = {
+    "validate (text)": lambda cfg, src, out: ["validate", cfg],
+    "validate --json": lambda cfg, src, out: ["validate", cfg, "--json"],
+    "validate config": lambda cfg, src, out: ["validate", "config", cfg, "--json"],
+    "validate compile": lambda cfg, src, out: ["validate", "compile", cfg, "--json"],
+    "validate preflight": lambda cfg, src, out: ["validate", "preflight", cfg, "--json"],
+    "subset": lambda cfg, src, out: ["subset", cfg, "--dry-run", "--json"],
+    "unmask": lambda cfg, src, out: ["unmask", cfg, out, "--json"],
+    "run": lambda cfg, src, out: ["run", cfg, "--json"],
+    "report fidelity --config": lambda cfg, src, out: [
+        "report", "fidelity", src, out, "--config", cfg, "--json"
     ],
-    "report integrity": lambda cfg, src, out, vault: [
-        "report",
-        "integrity",
-        out,
-        "--source",
-        src,
-        "--config",
-        cfg,
-        "--json",
+    "report fidelity --policy": lambda cfg, src, out: [
+        "report", "fidelity", src, out, "--policy", cfg, "--json"
+    ],
+    "report integrity --config": lambda cfg, src, out: [
+        "report", "integrity", out, "--source", src, "--config", cfg, "--json"
+    ],
+    "report vault --config": lambda cfg, src, out: [
+        "report", "vault", out, "--config", cfg, "--json"
     ],
 }
 
@@ -74,11 +72,17 @@ def test_yaml_parse_error_does_not_leak_source_line(label: str, tmp_path: Path) 
     src.write_text("email\na@b.com\n", encoding="utf-8")
     out = tmp_path / "out.csv"
     out.write_text("email\nx@y.com\n", encoding="utf-8")
-    vault = tmp_path / "vault.bin"  # need not exist; the config parse comes first
 
-    argv = _COMMANDS[label](cfg, str(src), str(out), str(vault))
+    argv = _COMMANDS[label](cfg, str(src), str(out))
     result = runner.invoke(app, argv, env=_WIDE_ENV, catch_exceptions=False)
     combined = (result.stdout or "") + (result.stderr or "")
+    # The secret on the malformed line must never surface...
     assert _SENTINEL not in combined, (
         f"`decoy {' '.join(argv)}` leaked the config source line into its output:\n{combined}"
+    )
+    # ...and the sanitized message MUST have fired, proving the parse path was
+    # actually reached (not a vacuous pass on a missing-arg error upstream).
+    assert "could not parse YAML" in combined, (
+        f"`decoy {' '.join(argv)}` did not reach the sanitized YAML-parse path; "
+        f"the sentry would pass vacuously. Output:\n{combined}"
     )

@@ -353,20 +353,25 @@ def test_default_command_handlers_match_committed_flag_surface() -> None:
 
 
 @pytest.mark.parametrize(
-    "mutate",
+    "decls, expected",
     [
-        # Renaming a secondary alias (the gap the first cut of this guard missed).
-        lambda s: [x.replace("/-q", "/--silence") for x in s],
-        # Dropping a secondary alias entirely.
-        lambda s: [x.replace("/-q", "") for x in s],
-        # Adding a new alias.
-        lambda s: [x.replace("--json", "--json/-j") for x in s],
-        # Renaming a primary flag.
-        lambda s: [x.replace("--verbose/", "--chatty/") for x in s],
+        # Primary flag with a short alias: BOTH spellings captured.
+        (("--quiet", "-q"), "--quiet/-q"),
+        # Renaming the alias changes the captured surface (the gap the first
+        # cut of this guard missed -- a primary-only snapshot could not see it).
+        (("--quiet", "-s"), "--quiet/-s"),
+        # Dropping the alias changes it too.
+        (("--quiet",), "--quiet"),
+        # Adding an alias changes it.
+        (("--json", "-j"), "--json/-j"),
     ],
 )
-def test_guard_catches_default_handler_flag_mutations(mutate) -> None:
-    """Every alias/primary add, drop, and rename must diverge from the committed
-    map. This proves the guard has teeth the primary-flag-only snapshot lacked."""
-    mutated = {g: mutate(list(flags)) for g, flags in _DEFAULT_COMMAND_FLAGS.items()}
-    assert mutated != _DEFAULT_COMMAND_FLAGS
+def test_extractor_captures_every_option_spelling(decls, expected) -> None:
+    """`_handler_surface` must record ALL of an option's spellings, so the
+    committed-surface guard diverges on any alias add/drop/rename. Exercises the
+    real extractor against a synthetic callback whose option decls we control."""
+    import typer
+
+    def _cb(flag: bool = typer.Option(False, *decls)) -> None: ...
+
+    assert _handler_surface(_cb) == [expected]

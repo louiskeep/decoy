@@ -173,8 +173,14 @@ def compile(
     # Parse YAML -- defensive; real parse errors surface here.
     try:
         raw = yaml.safe_load(config.read_text(encoding="utf-8"))
-    except Exception as exc:
+    except yaml.YAMLError as exc:
+        # YAMLError quotes the offending source line; sanitize to coordinates.
         _simple_error(state, config, sanitize_yaml_error(exc))
+        raise typer.Exit(code=EXIT_USAGE)
+    except OSError as exc:
+        # A read failure is a different category; report it as one (the path is
+        # the user's own argument, the exception TYPE is not a data value).
+        _simple_error(state, config, f"could not read {config}: {type(exc).__name__}")
         raise typer.Exit(code=EXIT_USAGE)
 
     if not isinstance(raw, dict):
