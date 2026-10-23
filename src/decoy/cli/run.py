@@ -1317,6 +1317,19 @@ def _write_mask_outputs(config_dict: dict, result, base_dir: Path) -> None:
         if fmt == "fixed_width":
             _write_fixed_width_target(table, entry, path)  # A1
         elif fmt == "parquet" or (fmt is None and suffix == ".parquet"):
+            # B2: reject a type-lossy CSV/delimited -> Parquet conversion (the
+            # text reader yields an all-string frame, so the Parquet carries no
+            # real column types). Typed sources (parquet, fixed_width) are fine.
+            src_fmt = (config_dict.get("sources") or {}).get(table_name, {})
+            src_fmt = src_fmt.get("format") if isinstance(src_fmt, dict) else None
+            if src_fmt in ("csv", "delimited"):
+                typer.echo(
+                    f"target {table_name!r}: a {src_fmt!r} (untyped text) source cannot be "
+                    "written to a Parquet target (all-string schema). Use a typed source "
+                    "or write the target as CSV.",
+                    err=True,
+                )
+                raise typer.Exit(code=EXIT_USAGE)
             import pyarrow.parquet as pq
 
             pq.write_table(table, str(path))

@@ -170,3 +170,33 @@ class TestNonChunkedUnknownFormat:
         cfg = {"targets": {"t": {"type": "file", "format": "orc", "path": str(tmp_path / "o.orc")}}}
         with pytest.raises(typer.Exit):
             _write_mask_outputs(cfg, _Result(), tmp_path)
+
+    def test_csv_source_to_parquet_target_rejected(self, tmp_path: Path):
+        import typer
+
+        from decoy.cli.run import _write_mask_outputs
+
+        class _Result:
+            outputs = {"t": pa.table({"a": ["x"]})}
+
+        cfg = {
+            "sources": {"t": {"type": "file", "format": "csv", "path": "in.csv"}},
+            "targets": {"t": {"type": "file", "format": "parquet", "path": str(tmp_path / "o.parquet")}},
+        }
+        with pytest.raises(typer.Exit):
+            _write_mask_outputs(cfg, _Result(), tmp_path)
+
+    def test_parquet_source_to_parquet_target_allowed(self, tmp_path: Path):
+        from decoy.cli.run import _write_mask_outputs
+
+        out = tmp_path / "o.parquet"
+
+        class _Result:
+            outputs = {"t": pa.table({"a": [1]})}
+
+        cfg = {
+            "sources": {"t": {"type": "file", "format": "parquet", "path": "in.parquet"}},
+            "targets": {"t": {"type": "file", "format": "parquet", "path": str(out)}},
+        }
+        _write_mask_outputs(cfg, _Result(), tmp_path)
+        assert pq.read_table(str(out)).num_rows == 1
