@@ -1,4 +1,4 @@
-"""`decoy preflight` -- local file, source, and schema readiness checks (SP-17).
+"""`decoy validate preflight` -- local file, source, and schema readiness checks (SP-17).
 
 `preflight` helps catch common problems BEFORE running a pipeline. It performs
 local checks that do not require the engine to execute the full pipeline.
@@ -65,23 +65,23 @@ import typer
 import yaml as _yaml
 from rich.text import Text
 
-from decoy.cli.exit_codes import EXIT_CAPACITY, EXIT_USAGE
+from decoy.cli.exit_codes import EXIT_CAPACITY, EXIT_USAGE, EXIT_WARNINGS
 from decoy.ui.output import OutputMode, emit_json, setup_output
 from decoy.ui.theme import code, error, hint, success, warn
 
 _PREFLIGHT_EPILOG = """\
 Examples:
 
-  decoy preflight pipeline.yaml
+  decoy validate preflight pipeline.yaml
     Run local readiness checks: YAML validity, schema, and source file existence.
 
-  decoy preflight pipeline.yaml --local
+  decoy validate preflight pipeline.yaml --local
     Same as above (--local is the explicit form; all checks are local by default).
 
-  decoy preflight pipeline.yaml --json
+  decoy validate preflight pipeline.yaml --json
     Emit a structured JSON result with per-check findings.
 
-  decoy preflight pipeline.yaml --fail-on-warning
+  decoy validate preflight pipeline.yaml --fail-on-warning
     Exit non-zero when advisory warnings fire (e.g. output already exists).
 
 What preflight checks:
@@ -104,8 +104,6 @@ What preflight does NOT check:
 
 See also: decoy validate, decoy run, decoy evidence verify, decoy explain exit-codes.
 """
-
-_WARN_EXIT = 2
 
 
 # ---------------------------------------------------------------------------
@@ -776,7 +774,7 @@ def preflight(
     if acc.has_failures:
         raise typer.Exit(code=EXIT_USAGE)
     if fail_on_warning and acc.has_warnings:
-        raise typer.Exit(code=_WARN_EXIT)
+        raise typer.Exit(code=EXIT_WARNINGS)
 
 
 def _emit_preflight_result(

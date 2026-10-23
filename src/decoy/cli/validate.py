@@ -56,11 +56,9 @@ from typing import Any
 import typer
 import yaml as _yaml
 
-from decoy.cli.exit_codes import EXIT_FINDINGS, EXIT_USAGE
+from decoy.cli.exit_codes import EXIT_FINDINGS, EXIT_USAGE, EXIT_WARNINGS
 from decoy.ui.output import OutputMode, emit_json, setup_output
 from decoy.ui.theme import code, error, hint, success, warn
-
-_WARN_EXIT = 2  # Exit code for --fail-on-warning when warnings exist
 
 # Grade -> minimum overall_score, mirroring the engine's own grade
 # thresholds (decoy_engine.quality.report._GRADE_THRESHOLDS: A >= 0.95,
@@ -76,11 +74,17 @@ _VALIDATE_EPILOG = """\
 Examples:
 
   decoy validate config pipeline.yaml
-    Check a YAML pipeline config before running it.
+    Schema + config-only checks (fast, no source read).
+
+  decoy validate compile pipeline.yaml --explain
+    Compile the plan, run plan-compile checks, explain per-column decisions.
+
+  decoy validate preflight pipeline.yaml
+    Source / file / schema readiness + capacity estimate + native probe.
 
   decoy validate distribution source.csv output.csv
     Recompute distribution fidelity between a pre-mask source and its
-    masked output.
+    masked output (post-run; moving to `report fidelity` in S4).
 
 See also: decoy run, decoy fit.
 """
@@ -88,8 +92,9 @@ See also: decoy run, decoy fit.
 validate_app = typer.Typer(
     name="validate",
     help=(
-        "Validate a pipeline config (`config`) or check distribution "
-        "fidelity between a source and an output (`distribution`)."
+        "Pre-run validation gate: schema + config checks (`config`), plan "
+        "compilation + checks (`compile`), source/capacity readiness "
+        "(`preflight`), and post-run distribution fidelity (`distribution`)."
     ),
     epilog=_VALIDATE_EPILOG,
     no_args_is_help=True,
@@ -360,7 +365,7 @@ def config(
     _emit_result(state, acc, config_str, checks_run=checks_run, fail_on_warning=fail_on_warning)
 
     if fail_on_warning and acc.has_warnings:
-        raise typer.Exit(code=_WARN_EXIT)
+        raise typer.Exit(code=EXIT_WARNINGS)
 
 
 def _emit_result(
@@ -753,6 +758,17 @@ def _render_distribution_report(
 
 validate_app.command(name="config", epilog=_CONFIG_EPILOG)(config)
 validate_app.command(name="distribution", epilog=_DISTRIBUTION_EPILOG)(distribution)
+
+# S2: the top-level `compile` and `preflight` commands were re-parented under
+# `validate` (and `plan` was folded into `validate compile`). Their bodies
+# stay in their own modules; register them here beside config/distribution.
+from decoy.cli.compile_explain import COMPILE_EPILOG  # noqa: E402
+from decoy.cli.compile_explain import compile as _compile_command  # noqa: E402
+from decoy.cli.preflight import PREFLIGHT_EPILOG  # noqa: E402
+from decoy.cli.preflight import preflight as _preflight_command  # noqa: E402
+
+validate_app.command(name="compile", epilog=COMPILE_EPILOG)(_compile_command)
+validate_app.command(name="preflight", epilog=PREFLIGHT_EPILOG)(_preflight_command)
 
 VALIDATE_EPILOG = _VALIDATE_EPILOG
 

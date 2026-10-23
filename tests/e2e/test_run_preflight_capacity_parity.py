@@ -148,7 +148,7 @@ class TestParity:
         parent, child = _parent_child_tables(40)
         config_path = _write_config(tmp_path, parent, child)
 
-        preflight_result = runner.invoke(app, ["preflight", str(config_path)])
+        preflight_result = runner.invoke(app, ["validate", "preflight", str(config_path)])
         assert preflight_result.exit_code == EXIT_OK
         assert "OK" in preflight_result.output
 
@@ -178,7 +178,7 @@ class TestParity:
             "decoy_engine.execution.out_of_core._budget.detect_effective_memory_bytes",
             return_value=ceiling_bytes,
         ):
-            preflight_result = runner.invoke(app, ["preflight", str(config_path)])
+            preflight_result = runner.invoke(app, ["validate", "preflight", str(config_path)])
             run_result = runner.invoke(app, ["run", str(config_path)])
 
         assert preflight_result.exit_code == EXIT_OK
@@ -217,7 +217,7 @@ class TestParity:
             mock.patch.object(engine_exec, "estimate_job_capacity", _boom_estimate),
             mock.patch.object(decoy_engine, "run_pipeline", _boom_run),
         ):
-            preflight_result = runner.invoke(app, ["preflight", str(config_path)])
+            preflight_result = runner.invoke(app, ["validate", "preflight", str(config_path)])
             run_result = runner.invoke(app, ["run", str(config_path)])
 
         assert preflight_result.exit_code == EXIT_CAPACITY
@@ -329,7 +329,7 @@ class TestRealFanInIsReachable:
             "decoy_engine.execution.out_of_core._budget.detect_effective_memory_bytes",
             return_value=1024 * 1024,  # small ceiling -> resolved budget floors at 64 MiB
         ):
-            preflight_result = runner.invoke(app, ["preflight", str(config_path), "--json"])
+            preflight_result = runner.invoke(app, ["validate", "preflight", str(config_path), "--json"])
             run_result = runner.invoke(app, ["run", str(config_path)])
 
         import json as _json

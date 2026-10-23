@@ -1183,8 +1183,8 @@ def _write_chunked_output(
 def _resolve_path(raw_path: str, base_dir: Path) -> Path:
     """Resolve a YAML path against the config's directory.
 
-    Mirrors `decoy plan`'s source-loading behavior: relative paths in the
-    YAML resolve relative to the YAML file's directory, not the CWD.
+    Mirrors `decoy validate compile`'s source-loading behavior: relative paths
+    in the YAML resolve relative to the YAML file's directory, not the CWD.
     Absolute paths pass through unchanged.
     """
     p = Path(raw_path)

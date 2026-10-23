@@ -17,8 +17,6 @@ from decoy.cli.cockpit import (
     strategies_app,
     validators_app,
 )
-from decoy.cli.compile_explain import COMPILE_EPILOG
-from decoy.cli.compile_explain import compile as compile_command
 from decoy.cli.demo import DEMO_EPILOG
 from decoy.cli.demo import _demo as demo_command
 from decoy.cli.evidence import evidence_app
@@ -30,10 +28,6 @@ from decoy.cli.info import INFO_EPILOG
 from decoy.cli.info import info as info_command
 from decoy.cli.init import INIT_EPILOG, init_command
 from decoy.cli.jobs import jobs_app
-from decoy.cli.plan import PLAN_EPILOG
-from decoy.cli.plan import plan as plan_command
-from decoy.cli.preflight import PREFLIGHT_EPILOG
-from decoy.cli.preflight import preflight as preflight_command
 from decoy.cli.profile import PROFILE_EPILOG
 from decoy.cli.profile import profile as profile_command
 from decoy.cli.project import project_app
@@ -61,7 +55,7 @@ Try one of:
   decoy demo                       30-second end-to-end walkthrough.
   decoy storm analyze data.csv     Profile a dataset for PII and risk.
   decoy profile data.csv           Dataset shape, field stats, PII candidates (suggestions).
-  decoy compile pipeline.yaml --explain  Explain per-column strategy and compile decisions.
+  decoy validate compile pipeline.yaml --explain  Explain per-column strategy and compile decisions.
   decoy run pipeline.yaml          Run a masking or generation pipeline.
   decoy subset pipeline.yaml --dry-run   Preview a FK-aware referential subset.
   decoy validate config pipeline.yaml  Check a YAML pipeline before running.
@@ -111,7 +105,6 @@ def _root(
 
 app.command(name="run", epilog=RUN_EPILOG)(run_command)
 app.add_typer(validate_app, name="validate")
-app.command(name="preflight", epilog=PREFLIGHT_EPILOG)(preflight_command)
 app.command(name="unmask", epilog=UNMASK_EPILOG)(unmask_command)
 app.command(name="fit", epilog=FIT_EPILOG)(fit_command)
 app.command(name="init", epilog=INIT_EPILOG)(init_command())
@@ -124,7 +117,6 @@ app.add_typer(templates_app, name="templates")
 app.add_typer(vault_app, name="vault")
 app.add_typer(evidence_app, name="evidence")
 app.add_typer(report_app, name="report")
-app.command(name="plan", epilog=PLAN_EPILOG)(plan_command)
 app.add_typer(strategies_app, name="strategies")
 app.add_typer(providers_app, name="providers")
 app.add_typer(checksums_app, name="checksums")
@@ -133,7 +125,6 @@ app.command(name="doctor", epilog=DOCTOR_EPILOG)(doctor)
 app.add_typer(project_app, name="project")
 app.add_typer(catalog_app, name="catalog")
 app.add_typer(jobs_app, name="jobs")
-app.command(name="compile", epilog=COMPILE_EPILOG)(compile_command)
 app.command(name="profile", epilog=PROFILE_EPILOG)(profile_command)
 app.command(name="subset", epilog=SUBSET_EPILOG)(subset_command)
 

@@ -111,7 +111,7 @@ class TestNerMissingExtraThroughPreflight:
     ) -> None:
         monkeypatch.setattr("decoy_engine.storm.ner.spacy_installed", lambda: False)
         cfg = _ner_pipeline(tmp_path)
-        result = runner.invoke(app, ["preflight", str(cfg)])
+        result = runner.invoke(app, ["validate", "preflight", str(cfg)])
         assert result.exit_code == EXIT_USAGE, result.output
         collapsed = " ".join(result.output.split())
         assert "pip install decoy-cli[ner]" in collapsed, result.output
@@ -122,7 +122,7 @@ class TestNerMissingExtraThroughPreflight:
     ) -> None:
         monkeypatch.setattr("decoy_engine.storm.ner.spacy_installed", lambda: False)
         cfg = _ner_pipeline(tmp_path)
-        result = runner.invoke(app, ["preflight", str(cfg), "--json"])
+        result = runner.invoke(app, ["validate", "preflight", str(cfg), "--json"])
         assert result.exit_code == EXIT_USAGE, result.output
         assert "pip install decoy-cli[ner]" in result.output, result.output
 
@@ -138,7 +138,7 @@ class TestNerMissingExtraThroughCompile:
     ) -> None:
         monkeypatch.setattr("decoy_engine.storm.ner.spacy_installed", lambda: False)
         cfg = _ner_pipeline(tmp_path)
-        result = runner.invoke(app, ["compile", str(cfg)])
+        result = runner.invoke(app, ["validate", "compile", str(cfg)])
         assert result.exit_code == EXIT_USAGE, result.output
         collapsed = " ".join(result.output.split())
         assert "pip install decoy-cli[ner]" in collapsed, result.output
@@ -150,7 +150,7 @@ class TestNerMissingExtraThroughCompile:
     ) -> None:
         monkeypatch.setattr("decoy_engine.storm.ner.spacy_installed", lambda: False)
         cfg = _ner_pipeline(tmp_path)
-        result = runner.invoke(app, ["compile", str(cfg), "--explain"])
+        result = runner.invoke(app, ["validate", "compile", str(cfg), "--explain"])
         assert result.exit_code == EXIT_USAGE, result.output
         collapsed = " ".join(result.output.split())
         assert "pip install decoy-cli[ner]" in collapsed, result.output
@@ -163,7 +163,7 @@ class TestNerMissingExtraThroughCompile:
 
         monkeypatch.setattr("decoy_engine.storm.ner.spacy_installed", lambda: False)
         cfg = _ner_pipeline(tmp_path)
-        result = runner.invoke(app, ["compile", str(cfg), "--json"])
+        result = runner.invoke(app, ["validate", "compile", str(cfg), "--json"])
         assert result.exit_code == EXIT_USAGE, result.output
         payload = json.loads(result.output)
         assert payload["status"] == "error"

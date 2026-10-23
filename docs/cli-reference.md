@@ -6,7 +6,7 @@ Try one of:
   decoy demo                       30-second end-to-end walkthrough.
   decoy storm analyze data.csv     Profile a dataset for PII and risk.
   decoy profile data.csv           Dataset shape, field stats, PII candidates (suggestions).
-  decoy compile pipeline.yaml --explain  Explain per-column strategy and compile decisions.
+  decoy validate compile pipeline.yaml --explain  Explain per-column strategy and compile decisions.
   decoy run pipeline.yaml          Run a masking or generation pipeline.
   decoy subset pipeline.yaml --dry-run   Preview a FK-aware referential subset.
   decoy validate config pipeline.yaml  Check a YAML pipeline before running.
@@ -40,7 +40,6 @@ $ decoy [OPTIONS] COMMAND [ARGS]...
 **Commands**:
 
 * `run`: Run a decoy pipeline from a YAML config.
-* `preflight`: Local pre-run readiness checks for a...
 * `unmask`: Recover fpe-masked columns from a masked...
 * `fit`: Fit a distribution-snapshot/v1 artifact...
 * `init`: Scaffold a starter pipeline YAML through a...
@@ -48,12 +47,10 @@ $ decoy [OPTIONS] COMMAND [ARGS]...
 * `explain`: Explain a Decoy concept in plain English.
 * `info`: Print the Decoy CLI banner with...
 * `schema`: Print the PipelineConfig JSON Schema to...
-* `plan`: Compile a pipeline config into a versioned...
 * `doctor`: Check engine and dependency health.
-* `compile`: Compile a pipeline config and run...
 * `profile`: Profile a source dataset: shape, field...
 * `subset`: Cut a referentially-complete FK-aware...
-* `validate`: Validate a pipeline config (`config`) or...
+* `validate`: Pre-run validation gate: schema + config...
 * `storm`: Dataset analysis -- the STORM event.
 * `templates`: Browse and dump bundled starter pipeline...
 * `vault`: Vault inspection utilities.
@@ -136,81 +133,6 @@ Examples:
     Only notify on a failed run.
 
 See also: decoy validate config, decoy validate distribution, decoy explain chunked, decoy explain vault.
-
-
-## `decoy preflight`
-
-Local pre-run readiness checks for a pipeline config.
-
-Checks file existence, file readability, YAML syntax, schema validity,
-and (v1) the engine&#x27;s out-of-core-FK memory feasibility. The build-floor
-estimate is advisory: an over-budget prediction reports a WARNING with a
-recommended size, not a refusal (`--fail-on-warning` makes it exit
-nonzero). Only a fan-in impossibility exits EXIT_CAPACITY (see `decoy
-explain exit-codes`), distinct from a config problem (EXIT_USAGE). Reports
-findings as pass/warn/fail with structured output available via --json.
-
-This is a LOCAL check only. It does NOT check platform server-side
-conditions, most engine run-time constraints, data quality, vault
-access, secrets availability, or network connectivity. The capacity
-check covers the out-of-core-FK route only -- it does not cover the
-ingestion peak `decoy run` pays before the engine&#x27;s gate runs, or the
-generate path. Use `decoy validate` for pure schema-only checks; use
-this command when you want to confirm source files are present and check
-the job&#x27;s capacity feasibility before starting a run.
-
-**Usage**:
-
-```console
-$ decoy preflight [OPTIONS] CONFIG
-```
-
-**Arguments**:
-
-* `CONFIG`: Path to the YAML pipeline config to check.  [required]
-
-**Options**:
-
-* `--local`: Explicit local mode (all checks are local by default; this flag makes the intent explicit in scripts).
-* `--json`: Emit a structured JSON result on stdout.
-* `-q, --quiet`: Suppress stdout. Errors still go to stderr; exit code carries the result.
-* `-v, --verbose`: Enable debug-level CLI logs on stderr.
-* `--fail-on-warning`: Exit non-zero when any advisory warning fires.
-* `--help`: Show this message and exit.
-
-Examples:
-
-  decoy preflight pipeline.yaml
-    Run local readiness checks: YAML validity, schema, and source file existence.
-
-  decoy preflight pipeline.yaml --local
-    Same as above (--local is the explicit form; all checks are local by default).
-
-  decoy preflight pipeline.yaml --json
-    Emit a structured JSON result with per-check findings.
-
-  decoy preflight pipeline.yaml --fail-on-warning
-    Exit non-zero when advisory warnings fire (e.g. output already exists).
-
-What preflight checks:
-  - YAML syntax and schema (same as `decoy validate`)
-  - Source file existence and readability
-  - Target overwrite risk (advisory warning)
-  - Out-of-core-FK memory capacity (v1; build-floor is advisory, only a fan-in
-    impossibility exits EXIT_CAPACITY -- see: decoy explain exit-codes)
-  - Native companion health, plus a STATIC (config-shape-only) native
-    eligibility possibility -- see: decoy explain native
-
-What preflight does NOT check:
-  - Platform server-side conditions (secrets, RBAC, schedules, network targets)
-  - Engine run-time constraints beyond out-of-core-FK capacity (row counts,
-    provider limits)
-  - The ingestion peak `decoy run` pays before the engine's capacity gate runs,
-    or the generate path (both out of the v1 capacity check's scope)
-  - Data validity or masking quality
-  - Vault or secrets accessibility
-
-See also: decoy validate, decoy run, decoy evidence verify, decoy explain exit-codes.
 
 
 ## `decoy unmask`
@@ -520,51 +442,6 @@ Examples:
 See also: decoy validate, decoy templates list.
 
 
-## `decoy plan`
-
-Compile a pipeline config into a versioned plan artifact.
-
-**Usage**:
-
-```console
-$ decoy plan [OPTIONS] CONFIG
-```
-
-**Arguments**:
-
-* `CONFIG`: Path to the pipeline YAML config to compile.  [required]
-
-**Options**:
-
-* `--profile FILE`: Path to a pre-computed Profile JSON file (from decoy_engine.profile).
-* `--no-profile`: Skip the profile phase; profile-dependent checks land in plan_compile.checks_skipped.
-* `--json`: Emit JSON instead of YAML on stdout. (yaml.safe_load -&gt; json.dumps shape.)
-* `-o, --output PATH`: Write the plan to a file instead of stdout.
-* `--help`: Show this message and exit.
-
-Examples:
-
-  decoy plan pipeline.yaml --no-profile
-    Compile-check the config without loading source data. Faster; some
-    profile-dependent checks are skipped (recorded in
-    plan_compile.checks_skipped on the emitted plan).
-
-  decoy plan pipeline.yaml --profile profile.json
-    Load a pre-computed Profile (JSON) and run all five S1 plan-compile
-    checks.
-
-  decoy plan pipeline.yaml --no-profile --json
-    Emit the plan as JSON (yaml.safe_load -> json.dumps round-trip).
-
-  decoy plan pipeline.yaml --no-profile --output plan.yaml
-    Write the plan to a file instead of stdout.
-
-The fully-automated path (`decoy plan pipeline.yaml` with no profile
-flag) lands once the profile_source orchestration slice ships.
-
-See also: decoy validate, decoy run.
-
-
 ## `decoy doctor`
 
 Check engine and dependency health.
@@ -598,55 +475,6 @@ Examples:
     Silent mode; exit code 0 = healthy, non-zero = hard requirement missing.
 
 See also: decoy --version, decoy info.
-
-
-## `decoy compile`
-
-Compile a pipeline config and run plan-compile checks.
-
-Use --explain to see per-column strategy, params, and rationale for each
-compile decision. Without --explain, shows a compact pass/fail summary.
-
-HONESTY: compile explains what is in the config and what the compiler
-verified. It does not guarantee correctness, PII coverage, or safety.
-
-**Usage**:
-
-```console
-$ decoy compile [OPTIONS] CONFIG
-```
-
-**Arguments**:
-
-* `CONFIG`: Path to the pipeline YAML config to compile.  [required]
-
-**Options**:
-
-* `--explain`: Explain the compiled plan: per-column declared strategy, params, execution order, and rationale. Without this flag, only the compile pass/fail summary is shown.
-* `--json`: Emit structured JSON instead of the styled table output.
-* `-q, --quiet`: Suppress stdout. Exit code carries success or failure.
-* `-v, --verbose`: Enable debug-level CLI logs on stderr.
-* `--help`: Show this message and exit.
-
-Examples:
-
-  decoy compile pipeline.yaml
-    Compile a recipe and show pass/fail for all compile checks.
-
-  decoy compile pipeline.yaml --explain
-    Compile a recipe and show per-column declared strategy, params, and rationale.
-
-  decoy compile pipeline.yaml --explain --json
-    Same as --explain but as structured JSON for scripting or CI.
-
-  decoy compile pipeline.yaml --explain --quiet
-    Silent compile; exit code 0 = all checks passed.
-
-HONESTY: compile --explain explains decisions declared in the config and what the
-compiler verified. It does not guarantee the strategy is correct for the data,
-that all PII is covered, or that the output is safe to share.
-
-See also: decoy validate, decoy plan, decoy storm analyze.
 
 
 ## `decoy profile`
@@ -770,12 +598,12 @@ What this command checks before touching any data:
   - The fan-out budget (max_total_rows / max_table_seed_multiple), BEFORE
     any output directory is created.
 
-See also: decoy run, decoy validate, decoy preflight.
+See also: decoy run, decoy validate, decoy validate preflight.
 
 
 ## `decoy validate`
 
-Validate a pipeline config (`config`) or check distribution fidelity between a source and an output (`distribution`).
+Pre-run validation gate: schema + config checks (`config`), plan compilation + checks (`compile`), source/capacity readiness (`preflight`), and post-run distribution fidelity (`distribution`).
 
 **Usage**:
 
@@ -790,11 +618,17 @@ $ decoy validate [OPTIONS] COMMAND [ARGS]...
 Examples:
 
   decoy validate config pipeline.yaml
-    Check a YAML pipeline config before running it.
+    Schema + config-only checks (fast, no source read).
+
+  decoy validate compile pipeline.yaml --explain
+    Compile the plan, run plan-compile checks, explain per-column decisions.
+
+  decoy validate preflight pipeline.yaml
+    Source / file / schema readiness + capacity estimate + native probe.
 
   decoy validate distribution source.csv output.csv
     Recompute distribution fidelity between a pre-mask source and its
-    masked output.
+    masked output (post-run; moving to `report fidelity` in S4).
 
 See also: decoy run, decoy fit.
 
@@ -803,6 +637,8 @@ See also: decoy run, decoy fit.
 
 * `config`: Validate a decoy pipeline config without...
 * `distribution`: Recompute distribution fidelity between a...
+* `compile`: Compile a pipeline config and run...
+* `preflight`: Local pre-run readiness checks for a...
 
 ### `decoy validate config`
 
@@ -930,6 +766,142 @@ warnings (data-fidelity findings). The two subcommands intentionally use
 different warning exit codes for their different domains.
 
 See also: decoy validate config, decoy fit, decoy run.
+
+
+### `decoy validate compile`
+
+Compile a pipeline config and run plan-compile checks.
+
+Use --explain to see per-column strategy, params, and rationale for each
+compile decision. Without --explain, shows a compact pass/fail summary.
+Use --profile to run the profile-dependent checks, and --output to also
+write the frozen plan artifact (the folded `plan` behavior).
+
+HONESTY: compile explains what is in the config and what the compiler
+verified. It does not guarantee correctness, PII coverage, or safety.
+
+**Usage**:
+
+```console
+$ decoy validate compile [OPTIONS] CONFIG
+```
+
+**Arguments**:
+
+* `CONFIG`: Path to the pipeline YAML config to compile.  [required]
+
+**Options**:
+
+* `--explain`: Explain the compiled plan: per-column declared strategy, params, execution order, and rationale. Without this flag, only the compile pass/fail summary is shown.
+* `--profile FILE`: Path to a pre-computed Profile JSON file. Runs ALL plan-compile checks, including the profile-dependent ones. Without it, --no-profile mode is used (profile-dependent checks are skipped).
+* `--no-profile`: Compile without source data (the default). Profile-dependent checks land in plan_compile.checks_skipped. Incompatible with --profile.
+* `-o, --output PATH`: Also write the frozen plan artifact to this path (absorbs the old `plan` command).
+* `--format TEXT`: On-disk format for the --output artifact: yaml (default) or json.  [default: yaml]
+* `--json`: Emit structured JSON instead of the styled table output.
+* `-q, --quiet`: Suppress stdout. Exit code carries success or failure.
+* `-v, --verbose`: Enable debug-level CLI logs on stderr.
+* `--help`: Show this message and exit.
+
+Examples:
+
+  decoy validate compile pipeline.yaml
+    Compile a recipe and show pass/fail for all compile checks (--no-profile).
+
+  decoy validate compile pipeline.yaml --explain
+    Compile a recipe and show per-column declared strategy, params, and rationale.
+
+  decoy validate compile pipeline.yaml --profile profile.json
+    Load a pre-computed Profile and run ALL plan-compile checks (none skipped).
+
+  decoy validate compile pipeline.yaml --output plan.yaml
+    Also write the frozen plan artifact to plan.yaml (YAML; use --format json for JSON).
+
+  decoy validate compile pipeline.yaml --explain --json
+    Same as --explain but as structured JSON for scripting or CI.
+
+  decoy validate compile pipeline.yaml --explain --quiet
+    Silent compile; exit code 0 = all checks passed.
+
+HONESTY: compile --explain explains decisions declared in the config and what the
+compiler verified. It does not guarantee the strategy is correct for the data,
+that all PII is covered, or that the output is safe to share.
+
+See also: decoy validate, decoy validate config, decoy storm analyze.
+
+
+### `decoy validate preflight`
+
+Local pre-run readiness checks for a pipeline config.
+
+Checks file existence, file readability, YAML syntax, schema validity,
+and (v1) the engine&#x27;s out-of-core-FK memory feasibility. The build-floor
+estimate is advisory: an over-budget prediction reports a WARNING with a
+recommended size, not a refusal (`--fail-on-warning` makes it exit
+nonzero). Only a fan-in impossibility exits EXIT_CAPACITY (see `decoy
+explain exit-codes`), distinct from a config problem (EXIT_USAGE). Reports
+findings as pass/warn/fail with structured output available via --json.
+
+This is a LOCAL check only. It does NOT check platform server-side
+conditions, most engine run-time constraints, data quality, vault
+access, secrets availability, or network connectivity. The capacity
+check covers the out-of-core-FK route only -- it does not cover the
+ingestion peak `decoy run` pays before the engine&#x27;s gate runs, or the
+generate path. Use `decoy validate` for pure schema-only checks; use
+this command when you want to confirm source files are present and check
+the job&#x27;s capacity feasibility before starting a run.
+
+**Usage**:
+
+```console
+$ decoy validate preflight [OPTIONS] CONFIG
+```
+
+**Arguments**:
+
+* `CONFIG`: Path to the YAML pipeline config to check.  [required]
+
+**Options**:
+
+* `--local`: Explicit local mode (all checks are local by default; this flag makes the intent explicit in scripts).
+* `--json`: Emit a structured JSON result on stdout.
+* `-q, --quiet`: Suppress stdout. Errors still go to stderr; exit code carries the result.
+* `-v, --verbose`: Enable debug-level CLI logs on stderr.
+* `--fail-on-warning`: Exit non-zero when any advisory warning fires.
+* `--help`: Show this message and exit.
+
+Examples:
+
+  decoy validate preflight pipeline.yaml
+    Run local readiness checks: YAML validity, schema, and source file existence.
+
+  decoy validate preflight pipeline.yaml --local
+    Same as above (--local is the explicit form; all checks are local by default).
+
+  decoy validate preflight pipeline.yaml --json
+    Emit a structured JSON result with per-check findings.
+
+  decoy validate preflight pipeline.yaml --fail-on-warning
+    Exit non-zero when advisory warnings fire (e.g. output already exists).
+
+What preflight checks:
+  - YAML syntax and schema (same as `decoy validate`)
+  - Source file existence and readability
+  - Target overwrite risk (advisory warning)
+  - Out-of-core-FK memory capacity (v1; build-floor is advisory, only a fan-in
+    impossibility exits EXIT_CAPACITY -- see: decoy explain exit-codes)
+  - Native companion health, plus a STATIC (config-shape-only) native
+    eligibility possibility -- see: decoy explain native
+
+What preflight does NOT check:
+  - Platform server-side conditions (secrets, RBAC, schedules, network targets)
+  - Engine run-time constraints beyond out-of-core-FK capacity (row counts,
+    provider limits)
+  - The ingestion peak `decoy run` pays before the engine's capacity gate runs,
+    or the generate path (both out of the v1 capacity check's scope)
+  - Data validity or masking quality
+  - Vault or secrets accessibility
+
+See also: decoy validate, decoy run, decoy evidence verify, decoy explain exit-codes.
 
 
 ## `decoy storm`

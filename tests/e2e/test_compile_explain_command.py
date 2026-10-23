@@ -62,13 +62,13 @@ def _write_yaml(path: Path, data: dict) -> None:
 
 
 def test_compile_help_includes_explain_flag(tmp_path: Path) -> None:
-    result = runner.invoke(app, ["compile", "--help"])
+    result = runner.invoke(app, ["validate", "compile", "--help"])
     assert result.exit_code == 0
     assert "--explain" in result.stdout
 
 
 def test_compile_help_includes_examples(tmp_path: Path) -> None:
-    result = runner.invoke(app, ["compile", "--help"])
+    result = runner.invoke(app, ["validate", "compile", "--help"])
     assert result.exit_code == 0
     assert "Examples:" in result.stdout
 
@@ -81,7 +81,7 @@ def test_compile_help_includes_examples(tmp_path: Path) -> None:
 def test_compile_explain_exits_0(tmp_path: Path) -> None:
     config_path = tmp_path / "pipeline.yaml"
     _write_yaml(config_path, _minimal_config())
-    result = runner.invoke(app, ["compile", str(config_path), "--explain"])
+    result = runner.invoke(app, ["validate", "compile", str(config_path), "--explain"])
     assert result.exit_code == 0, result.output
 
 
@@ -89,7 +89,7 @@ def test_compile_explain_shows_per_column_strategy(tmp_path: Path) -> None:
     """The explain output must show each column's resolved strategy."""
     config_path = tmp_path / "pipeline.yaml"
     _write_yaml(config_path, _minimal_config())
-    result = runner.invoke(app, ["compile", str(config_path), "--explain"])
+    result = runner.invoke(app, ["validate", "compile", str(config_path), "--explain"])
     assert result.exit_code == 0, result.output
     # All three column strategies must appear
     assert "faker" in result.output
@@ -101,7 +101,7 @@ def test_compile_explain_shows_provider_when_set(tmp_path: Path) -> None:
     """Provider name must appear for columns that declare one."""
     config_path = tmp_path / "pipeline.yaml"
     _write_yaml(config_path, _minimal_config())
-    result = runner.invoke(app, ["compile", str(config_path), "--explain"])
+    result = runner.invoke(app, ["validate", "compile", str(config_path), "--explain"])
     assert result.exit_code == 0, result.output
     assert "person_email" in result.output
 
@@ -110,7 +110,7 @@ def test_compile_explain_shows_column_names(tmp_path: Path) -> None:
     """All column names must appear in the output."""
     config_path = tmp_path / "pipeline.yaml"
     _write_yaml(config_path, _minimal_config())
-    result = runner.invoke(app, ["compile", str(config_path), "--explain"])
+    result = runner.invoke(app, ["validate", "compile", str(config_path), "--explain"])
     assert result.exit_code == 0, result.output
     assert "email" in result.output
     assert "ssn" in result.output
@@ -121,7 +121,7 @@ def test_compile_explain_shows_table_name(tmp_path: Path) -> None:
     """Table name must appear in the explain output."""
     config_path = tmp_path / "pipeline.yaml"
     _write_yaml(config_path, _minimal_config())
-    result = runner.invoke(app, ["compile", str(config_path), "--explain"])
+    result = runner.invoke(app, ["validate", "compile", str(config_path), "--explain"])
     assert result.exit_code == 0, result.output
     assert "customers" in result.output
 
@@ -130,7 +130,7 @@ def test_compile_explain_shows_checks_passed(tmp_path: Path) -> None:
     """Compile checks section must appear in the output."""
     config_path = tmp_path / "pipeline.yaml"
     _write_yaml(config_path, _minimal_config())
-    result = runner.invoke(app, ["compile", str(config_path), "--explain"])
+    result = runner.invoke(app, ["validate", "compile", str(config_path), "--explain"])
     assert result.exit_code == 0, result.output
     # compile checks section must be present
     assert "unknown_provider" in result.output
@@ -143,7 +143,7 @@ def test_compile_explain_honesty_no_guarantee(tmp_path: Path) -> None:
     """
     config_path = tmp_path / "pipeline.yaml"
     _write_yaml(config_path, _minimal_config())
-    result = runner.invoke(app, ["compile", str(config_path), "--explain"])
+    result = runner.invoke(app, ["validate", "compile", str(config_path), "--explain"])
     assert result.exit_code == 0, result.output
     lower = result.output.lower()
     # Must not make safety guarantees
@@ -163,7 +163,7 @@ def test_compile_explain_json_structure(tmp_path: Path) -> None:
     """--json output must have command, status, columns list."""
     config_path = tmp_path / "pipeline.yaml"
     _write_yaml(config_path, _minimal_config())
-    result = runner.invoke(app, ["compile", str(config_path), "--explain", "--json"])
+    result = runner.invoke(app, ["validate", "compile", str(config_path), "--explain", "--json"])
     assert result.exit_code == 0, result.output
     payload = _json.loads(result.stdout)
     assert payload["command"] == "compile explain"
@@ -180,7 +180,7 @@ def test_compile_explain_json_column_fields(tmp_path: Path) -> None:
     """Each column in --json output must have name, strategy, rationale."""
     config_path = tmp_path / "pipeline.yaml"
     _write_yaml(config_path, _minimal_config())
-    result = runner.invoke(app, ["compile", str(config_path), "--explain", "--json"])
+    result = runner.invoke(app, ["validate", "compile", str(config_path), "--explain", "--json"])
     assert result.exit_code == 0, result.output
     payload = _json.loads(result.stdout)
     col = payload["tables"][0]["columns"][0]
@@ -193,7 +193,7 @@ def test_compile_explain_json_rationale_is_declared_in_config(tmp_path: Path) ->
     """Rationale must say 'config' (user-declared), not 'auto-detected' etc."""
     config_path = tmp_path / "pipeline.yaml"
     _write_yaml(config_path, _minimal_config())
-    result = runner.invoke(app, ["compile", str(config_path), "--explain", "--json"])
+    result = runner.invoke(app, ["validate", "compile", str(config_path), "--explain", "--json"])
     assert result.exit_code == 0, result.output
     payload = _json.loads(result.stdout)
     for col in payload["tables"][0]["columns"]:
@@ -208,7 +208,7 @@ def test_compile_explain_json_has_checks(tmp_path: Path) -> None:
     """--json output must have compile_checks with passed/skipped lists."""
     config_path = tmp_path / "pipeline.yaml"
     _write_yaml(config_path, _minimal_config())
-    result = runner.invoke(app, ["compile", str(config_path), "--explain", "--json"])
+    result = runner.invoke(app, ["validate", "compile", str(config_path), "--explain", "--json"])
     assert result.exit_code == 0, result.output
     payload = _json.loads(result.stdout)
     assert "compile_checks" in payload
@@ -228,14 +228,14 @@ def test_compile_no_explain_exits_0(tmp_path: Path) -> None:
     """compile without --explain compiles and shows a plan summary."""
     config_path = tmp_path / "pipeline.yaml"
     _write_yaml(config_path, _minimal_config())
-    result = runner.invoke(app, ["compile", str(config_path)])
+    result = runner.invoke(app, ["validate", "compile", str(config_path)])
     assert result.exit_code == 0, result.output
 
 
 def test_compile_no_explain_shows_ok(tmp_path: Path) -> None:
     config_path = tmp_path / "pipeline.yaml"
     _write_yaml(config_path, _minimal_config())
-    result = runner.invoke(app, ["compile", str(config_path)])
+    result = runner.invoke(app, ["validate", "compile", str(config_path)])
     assert result.exit_code == 0, result.output
     # Should indicate success
     lower = result.output.lower()
@@ -248,14 +248,14 @@ def test_compile_no_explain_shows_ok(tmp_path: Path) -> None:
 
 
 def test_compile_explain_missing_file_exits_nonzero(tmp_path: Path) -> None:
-    result = runner.invoke(app, ["compile", str(tmp_path / "nope.yaml"), "--explain"])
+    result = runner.invoke(app, ["validate", "compile", str(tmp_path / "nope.yaml"), "--explain"])
     assert result.exit_code != 0
 
 
 def test_compile_explain_invalid_yaml_exits_nonzero(tmp_path: Path) -> None:
     bad_yaml = tmp_path / "pipeline.yaml"
     bad_yaml.write_text("{invalid yaml: [}", encoding="utf-8")
-    result = runner.invoke(app, ["compile", str(bad_yaml), "--explain"])
+    result = runner.invoke(app, ["validate", "compile", str(bad_yaml), "--explain"])
     assert result.exit_code != 0
 
 
@@ -263,7 +263,7 @@ def test_compile_explain_json_quiet_mode(tmp_path: Path) -> None:
     """--quiet produces no stdout, exit 0."""
     config_path = tmp_path / "pipeline.yaml"
     _write_yaml(config_path, _minimal_config())
-    result = runner.invoke(app, ["compile", str(config_path), "--explain", "--quiet"])
+    result = runner.invoke(app, ["validate", "compile", str(config_path), "--explain", "--quiet"])
     assert result.exit_code == 0
     assert result.stdout == ""
 
@@ -306,7 +306,7 @@ def test_compile_explain_undeclared_column_rationale(tmp_path: Path) -> None:
     """
     config_path = tmp_path / "pipeline.yaml"
     _write_yaml(config_path, _config_with_undeclared_column())
-    result = runner.invoke(app, ["compile", str(config_path), "--explain", "--json"])
+    result = runner.invoke(app, ["validate", "compile", str(config_path), "--explain", "--json"])
     assert result.exit_code == 0, result.output
     payload = _json.loads(result.stdout)
 

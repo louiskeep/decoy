@@ -10,9 +10,12 @@ of grepping every call site.
 The values below are the public exit-code contract. Their INTEGER VALUES
 are stable across releases (callers in shell scripts, CI pipelines, and Make
 recipes depend on them). The names may evolve; the integers may not. Code 2 is
-reserved/unused: it previously belonged to the `forge` deprecation shim
-(removed pre-GA), and renumbering the higher codes to close the gap would break
-the scriptable contract for no gain, so 2 is simply held open.
+EXIT_WARNINGS: a command ran clean except for advisory warnings and
+`--fail-on-warning` was set (the warning-blocking CI gate). Previously the
+integer belonged to the `forge` deprecation shim (removed pre-GA) and S1 docs
+mislabeled it "reserved/unused"; in fact `validate`/`preflight` already
+returned 2 under `--fail-on-warning`, so S2 promotes it to this public name
+with one meaning across every path.
 
 OSS.4b (2026-06-02) added EXIT_FINDINGS=4 to support `decoy storm integrity`,
 which has a meaningful 4th state distinct from the existing three: the
@@ -23,10 +26,10 @@ pattern: semgrep's exit-code split (0 pass, 1 findings, 2 error); the analog
 here is 0 clean / 4 findings / 3 runtime crash.
 
 The OOM checker v1 (2026-07-24) added EXIT_CAPACITY=5: `decoy run` and
-`decoy preflight` both need a way to say "this job needs more memory than
-the host has" distinctly from a generic engine crash (EXIT_RUNTIME) or a bad
-config (EXIT_USAGE). The value is `5` -- 0, 1, 3, and 4 are pinned and do not
-move, and 2 is reserved/unused (see above).
+`decoy validate preflight` both need a way to say "this job needs more memory
+than the host has" distinctly from a generic engine crash (EXIT_RUNTIME) or a
+bad config (EXIT_USAGE). The value is `5` -- 0, 1, 2, 3, and 4 are pinned and
+do not move (2 is EXIT_WARNINGS, see above).
 
 Reference: README "Exit codes" section + `decoy explain exit-codes`.
 """
@@ -42,9 +45,15 @@ EXIT_USAGE: int = 1
 validation, a path that did not exist, a flag combination that was invalid.
 The fix is in the user's request, not in the CLI itself."""
 
-# Code 2 is reserved/unused. It previously belonged to EXIT_DEPRECATED_SHIM
-# (the `forge` console-script shim, removed pre-GA). The integer is held open
-# rather than reassigned so the higher codes keep their stable values.
+EXIT_WARNINGS: int = 2
+"""The command ran clean except for advisory warnings, and `--fail-on-warning`
+was set. Returned by `decoy validate config`/`validate preflight` (and the
+`validate` aggregate) when no error or failure fired but at least one warning
+did and the caller opted to treat warnings as blocking. Without
+`--fail-on-warning` the same run exits EXIT_OK. (The integer previously
+belonged to the removed `forge` deprecation shim; it is reused here rather
+than held open, since a warning-blocking result is a genuinely distinct state
+from EXIT_OK and EXIT_USAGE.)"""
 
 EXIT_RUNTIME: int = 3
 """The CLI itself blew up at run time: the engine raised an unexpected error,
@@ -63,8 +72,8 @@ EXIT_USAGE (the user gave bad input) and EXIT_RUNTIME (the CLI crashed)."""
 EXIT_CAPACITY: int = 5
 """The job needs more memory than this host (or the budget it was given) has.
 Raised by `decoy run` when the engine's out-of-core-FK memory gate refuses a
-job, and by `decoy preflight` when its capacity check predicts the same
-refusal before the run starts. The fix is a bigger host/cgroup ceiling or a
+job, and by `decoy validate preflight` when its capacity check predicts the
+same refusal before the run starts. The fix is a bigger host/cgroup ceiling or a
 smaller job -- not a config mistake (EXIT_USAGE) and not an engine defect
 (EXIT_RUNTIME).
 
@@ -93,4 +102,5 @@ __all__ = [
     "EXIT_OK",
     "EXIT_RUNTIME",
     "EXIT_USAGE",
+    "EXIT_WARNINGS",
 ]

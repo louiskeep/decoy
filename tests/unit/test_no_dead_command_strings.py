@@ -1,11 +1,16 @@
 """Grep gate: no source string under `src/decoy/` names a deleted command.
 
 The CLI-redesign S1 sprint removed the `storm scan` alias and the `storm test`
-demo command. The CLI-surface drift sentry (`test_cli_surface.py`) covers the
-generated reference, but it does NOT see hand-written help text, epilogs,
-docstrings, or comments. This test closes that gap: the literal substrings
-`storm scan` and `storm test` must appear in no Python source file shipped
-under `src/decoy/`.
+demo command. S2 re-parented `compile`/`preflight` under `validate` and folded
+`plan` into `validate compile`, so the top-level invocation strings `decoy
+compile`, `decoy plan`, and `decoy preflight` (note the trailing space -- the
+nested `decoy validate preflight` / `decoy validate compile` forms are the live
+ones and must NOT trip) are now dead too.
+
+The CLI-surface drift sentry (`test_cli_surface.py`) covers the generated
+reference, but it does NOT see hand-written help text, epilogs, docstrings, or
+comments. This test closes that gap: each dead substring must appear in no
+Python source file shipped under `src/decoy/`.
 
 Tests live under `tests/`, so this file's own mention of those strings (and
 any other test's) is out of scope by construction.
@@ -19,7 +24,16 @@ import pytest
 
 SRC_ROOT = Path(__file__).resolve().parents[2] / "src" / "decoy"
 
-DEAD_STRINGS = ("storm scan", "storm test")
+DEAD_STRINGS = (
+    "storm scan",
+    "storm test",
+    # S2: top-level commands removed / re-parented. The space is load-bearing:
+    # it keeps `decoy validate preflight` and `decoy validate compile` (the
+    # live forms) from matching `decoy preflight` / `decoy compile`.
+    "decoy compile",
+    "decoy plan",
+    "decoy preflight",
+)
 
 
 @pytest.mark.parametrize("dead", DEAD_STRINGS)

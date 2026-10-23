@@ -312,11 +312,11 @@ _TOPICS: dict[str, _Topic] = {
             "above already works with a companion installed by other means (a local\n"
             "build, a hand-copied wheel); the extra lands once a paired release\n"
             "exists, forwarding to the engine's own ABI-pinned `decoy-engine[native]`.\n"
-            "`decoy info` and `decoy preflight` both report companion health without\n"
-            "running anything; preflight also reports a config-shape possibility\n"
-            "line, not a guarantee of the resolved route."
+            "`decoy info` and `decoy validate preflight` both report companion health\n"
+            "without running anything; preflight also reports a config-shape\n"
+            "possibility line, not a guarantee of the resolved route."
         ),
-        see_also=("decoy run --help", "decoy info", "decoy preflight"),
+        see_also=("decoy run --help", "decoy info", "decoy validate preflight"),
     ),
     "substrate": _Topic(
         name="substrate",
@@ -386,14 +386,16 @@ _TOPICS: dict[str, _Topic] = {
         name="exit-codes",
         summary="The process exit codes every `decoy` command returns.",
         body=(
-            "Every `decoy` subcommand returns one of five exit codes. Scripts,\n"
+            "Every `decoy` subcommand returns one of six exit codes. Scripts,\n"
             "Make recipes, and CI pipelines can switch on the integer value.\n\n"
             "  0   Success. The command did what it said. POSIX convention.\n"
             "  1   Usage error. The caller's request was wrong: config did not\n"
             "      validate, a path did not exist, an incompatible flag\n"
             "      combination was passed. The fix is in the user's input.\n"
-            "  2   Reserved/unused. (Previously a deprecated-shim code; held\n"
-            "      open so the higher codes keep their stable values.)\n"
+            "  2   Warnings. The command ran clean except for advisory\n"
+            "      warnings, and --fail-on-warning was set (the warning-\n"
+            "      blocking CI gate). Without --fail-on-warning the same run\n"
+            "      exits 0.\n"
             "  3   Runtime error. The CLI itself failed mid-run: the engine\n"
             "      raised an unexpected error, an output write failed, a\n"
             "      transient I/O problem happened. The fix is in the CLI or\n"
@@ -403,20 +405,20 @@ _TOPICS: dict[str, _Topic] = {
             "      preservation failures). The fix is in the data being\n"
             "      checked, not in the CLI invocation. Pattern source:\n"
             "      semgrep's exit-code split.\n"
-            "  5   Capacity. `decoy run` or `decoy preflight` refused the job\n"
-            "      because it needs more memory than the host (or budget) has\n"
-            "      -- the engine's out-of-core-FK memory gate, either hit\n"
-            "      mid-run or predicted up front. The fix is a bigger\n"
-            "      host/cgroup ceiling or a smaller job. `decoy preflight`\n"
-            "      v1 checks this for the out-of-core-FK route only; it does\n"
+            "  5   Capacity. `decoy run` or `decoy validate preflight` refused\n"
+            "      the job because it needs more memory than the host (or\n"
+            "      budget) has -- the engine's out-of-core-FK memory gate,\n"
+            "      either hit mid-run or predicted up front. The fix is a\n"
+            "      bigger host/cgroup ceiling or a smaller job. `decoy validate\n"
+            "      preflight` v1 checks this for the out-of-core-FK route only; it does\n"
             "      not cover the ingestion peak `decoy run` pays before the\n"
             "      engine gate runs, or the generate path.\n\n"
-            "Integer values are stable across releases (2 is reserved/unused).\n"
-            "The named constants (EXIT_OK / EXIT_USAGE / EXIT_RUNTIME /\n"
-            "EXIT_FINDINGS / EXIT_CAPACITY) live in `decoy.cli.exit_codes` for\n"
-            "callers that import them in Python."
+            "Integer values are stable across releases.\n"
+            "The named constants (EXIT_OK / EXIT_USAGE / EXIT_WARNINGS /\n"
+            "EXIT_RUNTIME / EXIT_FINDINGS / EXIT_CAPACITY) live in\n"
+            "`decoy.cli.exit_codes` for callers that import them in Python."
         ),
-        see_also=("decoy --help", "decoy run --help", "decoy preflight --help"),
+        see_also=("decoy --help", "decoy run --help", "decoy validate preflight --help"),
     ),
     "completion": _Topic(
         name="completion",

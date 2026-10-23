@@ -222,7 +222,7 @@ def static_native_eligibility(config_dict: dict[str, Any]) -> bool:
     or a per-column `when:` gate.
 
     This is the SAME "config-shape half" of the eligibility predicate
-    `decoy preflight`'s labeled-static-possibility line uses (plan approach
+    `decoy validate preflight`'s labeled-static-possibility line uses (plan approach
     4, open question 5): it cannot see the resolved route, the source
     profile, the resident Arrow table, or a live `--vault` writer (that
     needs the caller's own runtime state -- see `pre_execution_gate`'s

@@ -38,9 +38,7 @@ README = REPO_ROOT / "README.md"
 # deliberately kept out of it (full surface is in `decoy --help`).
 _ROOT_HELP_OMITTED = frozenset(
     {
-        "preflight",
         "schema",
-        "plan",
         "doctor",
         "vault",
         "evidence",
@@ -56,14 +54,11 @@ _ROOT_HELP_OMITTED = frozenset(
 # repeat (the table points readers to `decoy --help` for the rest).
 _README_TABLE_OMITTED = frozenset(
     {
-        "preflight",
         "unmask",
         "fit",
         "info",
         "schema",
-        "plan",
         "doctor",
-        "compile",
         "profile",
         "subset",
         "vault",

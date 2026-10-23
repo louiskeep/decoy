@@ -12,9 +12,9 @@ YAML's `subset:` block -- the SAME config surface every other `decoy`
 command reads (`PipelineConfig.model_validate`), per the engine's GATE-1 #5
 decision. There is no separate subset-only CLI flag surface for those.
 
-Modeled on `decoy plan` (dry-run-vs-real distinction, `--output` to redirect
-output) and `decoy preflight` (surfacing a fail-closed report as clean
-per-finding errors instead of a stack trace).
+Modeled on `decoy validate compile` (dry-run-vs-real distinction, `--output`
+to redirect output) and `decoy validate preflight` (surfacing a fail-closed
+report as clean per-finding errors instead of a stack trace).
 
 Dry-run safety UX (GATE-1 #3 "mandatory dry-run/estimate before any real
 run"): `--dry-run` calls `plan_subset`, which never touches `output_dir` and
@@ -71,7 +71,7 @@ What this command checks before touching any data:
   - The fan-out budget (max_total_rows / max_table_seed_multiple), BEFORE
     any output directory is created.
 
-See also: decoy run, decoy validate, decoy preflight.
+See also: decoy run, decoy validate, decoy validate preflight.
 """
 
 

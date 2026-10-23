@@ -1,11 +1,24 @@
-"""`decoy compile [--explain]` -- compile a pipeline recipe and optionally explain
-the resulting plan.
+"""`decoy validate compile [--explain]` -- compile a pipeline recipe, run the
+plan-compile checks, and optionally explain the resulting plan or write the
+frozen plan artifact.
 
-Without --explain: compile the config, run the five S1 plan-compile checks, and
-report pass/fail. Exit 0 when all checks pass; exit EXIT_USAGE on a compile error.
+Without --explain: compile the config, run the plan-compile checks, and report
+pass/fail. Exit 0 when all checks pass; exit EXIT_USAGE on a compile error.
 
 With --explain: same compilation, then render per-column declared strategy and
 params, the table execution order, and the rationale for each decision.
+
+Profile selection (absorbed from the retired top-level `plan` command, S2):
+  --no-profile (default, matching the old `compile`): compile without source
+  data; the profile-dependent checks land in plan_compile.checks_skipped.
+  --profile <profile.json>: load a pre-computed Profile and run ALL plan-compile
+  checks, including the profile-dependent ones.
+
+With --output <path> [--format yaml|json], also write the frozen plan artifact
+to disk (the old top-level `plan` command). The H1 (no check in both checks_passed
+and checks_skipped) and H2 (--no-profile is incompatible with
+cardinality_mode: unique) honesty guards come from `decoy.cli.plan` and are
+reused verbatim here.
 
 HONESTY: this command explains the decisions that were explicitly declared in the
 pipeline config and what the compile checks verified. It does NOT guarantee:
@@ -14,11 +27,9 @@ pipeline config and what the compile checks verified. It does NOT guarantee:
   - the output is safe to share
 
 Use `decoy storm analyze` to inspect the source data before writing a pipeline,
-and `decoy validate` for full config validation.
+and `decoy validate config` for schema-only config validation.
 
 Reuses the engine's compile_plan path. Does NOT reimplement compilation.
-No-profile mode is always used here because --explain is about the config
-decisions, not about source-data-dependent checks.
 """
 
 from __future__ import annotations
@@ -36,23 +47,29 @@ from decoy.ui.theme import accent, code, error, hint, success, warn
 _COMPILE_EPILOG = """\
 Examples:
 
-  decoy compile pipeline.yaml
-    Compile a recipe and show pass/fail for all compile checks.
+  decoy validate compile pipeline.yaml
+    Compile a recipe and show pass/fail for all compile checks (--no-profile).
 
-  decoy compile pipeline.yaml --explain
+  decoy validate compile pipeline.yaml --explain
     Compile a recipe and show per-column declared strategy, params, and rationale.
 
-  decoy compile pipeline.yaml --explain --json
+  decoy validate compile pipeline.yaml --profile profile.json
+    Load a pre-computed Profile and run ALL plan-compile checks (none skipped).
+
+  decoy validate compile pipeline.yaml --output plan.yaml
+    Also write the frozen plan artifact to plan.yaml (YAML; use --format json for JSON).
+
+  decoy validate compile pipeline.yaml --explain --json
     Same as --explain but as structured JSON for scripting or CI.
 
-  decoy compile pipeline.yaml --explain --quiet
+  decoy validate compile pipeline.yaml --explain --quiet
     Silent compile; exit code 0 = all checks passed.
 
 HONESTY: compile --explain explains decisions declared in the config and what the
 compiler verified. It does not guarantee the strategy is correct for the data,
 that all PII is covered, or that the output is safe to share.
 
-See also: decoy validate, decoy plan, decoy storm analyze.
+See also: decoy validate, decoy validate config, decoy storm analyze.
 """
 
 # Rationale templates: strategies come from explicit user declarations in the
@@ -81,6 +98,37 @@ def compile(
             "pass/fail summary is shown."
         ),
     ),
+    profile_path: Path | None = typer.Option(
+        None,
+        "--profile",
+        exists=True,
+        dir_okay=False,
+        readable=True,
+        help=(
+            "Path to a pre-computed Profile JSON file. Runs ALL plan-compile "
+            "checks, including the profile-dependent ones. Without it, "
+            "--no-profile mode is used (profile-dependent checks are skipped)."
+        ),
+    ),
+    no_profile: bool = typer.Option(
+        False,
+        "--no-profile",
+        help=(
+            "Compile without source data (the default). Profile-dependent checks "
+            "land in plan_compile.checks_skipped. Incompatible with --profile."
+        ),
+    ),
+    out: Path | None = typer.Option(
+        None,
+        "--output",
+        "-o",
+        help="Also write the frozen plan artifact to this path (absorbs the old `plan` command).",
+    ),
+    out_format: str = typer.Option(
+        "yaml",
+        "--format",
+        help="On-disk format for the --output artifact: yaml (default) or json.",
+    ),
     json_: bool = typer.Option(
         False,
         "--json",
@@ -97,63 +145,94 @@ def compile(
 
     Use --explain to see per-column strategy, params, and rationale for each
     compile decision. Without --explain, shows a compact pass/fail summary.
+    Use --profile to run the profile-dependent checks, and --output to also
+    write the frozen plan artifact (the folded `plan` behavior).
 
     HONESTY: compile explains what is in the config and what the compiler
     verified. It does not guarantee correctness, PII coverage, or safety.
     """
+    # Profile-fold helpers live in cli/plan.py (the retired `plan` command's
+    # reusable write/H1/H2 helpers); import them rather than reimplement (S2).
+    from decoy.cli.plan import (
+        NO_PROFILE_SKIPPED_CHECKS,
+        attach_checks_skipped,
+        empty_profile_for_no_profile,
+        find_first_unique_column_path,
+        render_plan_artifact,
+    )
+
     state = setup_output(json_, quiet, verbose)
+
+    if profile_path is not None and no_profile:
+        _simple_error(state, config, "--no-profile and --profile are mutually exclusive.")
+        raise typer.Exit(code=EXIT_USAGE)
+
+    if out_format not in ("yaml", "json"):
+        _simple_error(state, config, f"--format must be one of yaml, json; got {out_format!r}.")
+        raise typer.Exit(code=EXIT_USAGE)
 
     # Parse YAML -- defensive; real parse errors surface here.
     try:
         raw = yaml.safe_load(config.read_text(encoding="utf-8"))
     except Exception as exc:
-        if state.mode is OutputMode.json:
-            emit_json(
-                state,
-                {
-                    "command": "compile explain",
-                    "status": "error",
-                    "config": str(config),
-                    "error": f"YAML parse error: {exc}",
-                },
-            )
-        elif state.mode is not OutputMode.quiet:
-            state.err_console.print(error("error:"), f"YAML parse error: {exc}")
+        _simple_error(state, config, f"YAML parse error: {exc}")
         raise typer.Exit(code=EXIT_USAGE)
 
     if not isinstance(raw, dict):
-        msg = f"{config} does not parse to a YAML mapping at the top level."
-        if state.mode is OutputMode.json:
-            emit_json(
-                state,
-                {"command": "compile explain", "status": "error", "config": str(config), "error": msg},
-            )
-        elif state.mode is not OutputMode.quiet:
-            state.err_console.print(error("error:"), msg)
+        _simple_error(state, config, f"{config} does not parse to a YAML mapping at the top level.")
         raise typer.Exit(code=EXIT_USAGE)
+
+    from decoy_engine import __version__ as engine_version
+    from decoy_engine.plan import compile_plan
+    from decoy_engine.profile import profile_from_json
+
+    # Resolve the profile. --profile loads a pre-computed Profile and runs the
+    # full check set; otherwise no-profile mode (the default) uses the empty
+    # sentinel profile and records the profile-dependent checks as skipped.
+    use_profile = profile_path is not None
+    if use_profile:
+        try:
+            profile = profile_from_json(profile_path.read_text(encoding="utf-8"))
+        except (ValueError, KeyError) as exc:
+            _simple_error(
+                state, config, f"--profile {profile_path} did not parse as a Profile JSON: {exc}"
+            )
+            raise typer.Exit(code=EXIT_USAGE) from exc
+        skipped_checks: tuple[str, ...] = ()
+    else:
+        # H2 (reused from cli/plan.py): --no-profile cannot run the
+        # pool-capacity pre-flight, so a cardinality_mode: unique column would
+        # ship a plan whose runtime fails unpredictably. Hard-error here.
+        unique_column_path = find_first_unique_column_path(raw)
+        if unique_column_path is not None:
+            _simple_error(
+                state,
+                config,
+                "--no-profile is incompatible with cardinality_mode: unique "
+                f"(offending column: {unique_column_path}). The "
+                "basic_uniqueness_pre_flight check requires profile data; pass "
+                "--profile <profile.json>, or remove the unique cardinality_mode.",
+            )
+            raise typer.Exit(code=EXIT_USAGE)
+        profile = empty_profile_for_no_profile(raw, engine_version)
+        skipped_checks = NO_PROFILE_SKIPPED_CHECKS
 
     # Compile: validate config, run plan-compile checks.
     try:
-        from datetime import datetime
-
-        from decoy_engine import __version__ as engine_version
-        from decoy_engine.plan import compile_plan
-        from decoy_engine.profile import Profile
-
-        # Build the empty "no profile" sentinel Profile.
-        profile = Profile(
-            schema_version=1,
-            tables=(),
-            relationships=(),
-            profiled_at=datetime(1970, 1, 1, 0, 0, 0),
-            decoy_engine_version=engine_version,
-            profile_seed=None,
-        )
-
-        plan = compile_plan(raw, profile, decoy_engine_version=engine_version, no_profile=True)
+        plan = compile_plan(raw, profile, decoy_engine_version=engine_version)
     except Exception as exc:
         _compile_error(state, config, exc)
         raise typer.Exit(code=EXIT_USAGE)
+
+    # H1 (reused from cli/plan.py): record the profile-dependent checks as
+    # skipped and strip them from checks_passed so no check is claimed both
+    # verified and skipped.
+    if skipped_checks:
+        plan = attach_checks_skipped(plan, skipped_checks)
+
+    # --output: also write the frozen plan artifact (absorbs the old `plan` command).
+    if out is not None:
+        out.write_text(render_plan_artifact(plan, out_format), encoding="utf-8")
 
     # Extract per-column info from the config (strategies come from the user's
     # explicit declarations; compile_plan verifies them but does not change them).
@@ -175,6 +254,8 @@ def compile(
                 "warnings": warnings_list,
             },
         }
+        if out is not None:
+            payload["artifact"] = {"path": str(out), "format": out_format}
         if explain:
             payload["tables"] = tables_info
             payload["ordering"] = [
@@ -201,6 +282,26 @@ def compile(
         _render_explain(state, tables_info, plan)
     else:
         _render_summary(state, checks_passed, checks_skipped, warnings_list)
+
+    if out is not None:
+        state.console.print(hint("Wrote plan artifact:"), code(str(out)))
+
+
+def _simple_error(state, config: Path, msg: str) -> None:
+    """Render a usage error in the compile command's envelope / console style."""
+    if state.mode is OutputMode.json:
+        emit_json(
+            state,
+            {
+                "command": "compile explain",
+                "status": "error",
+                "config": str(config),
+                "error": msg,
+            },
+        )
+    elif state.mode is not OutputMode.quiet:
+        # markup=False: msg can carry user paths / bracketed text.
+        state.err_console.print(error("error:"), msg, markup=False)
 
 
 def _compile_error(state, config: Path, exc: Exception) -> None:
