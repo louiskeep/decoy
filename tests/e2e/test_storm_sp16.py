@@ -86,7 +86,7 @@ def test_storm_analyze_reads_parquet_fixture(parquet_fixture: Path, tmp_path: Pa
     out = tmp_path / "scan.json"
     result = runner.invoke(
         app,
-        ["storm", "analyze", str(parquet_fixture), "--out", str(out)],
+        ["storm", "analyze", str(parquet_fixture), "--output", str(out)],
     )
     assert result.exit_code == 0, f"exit={result.exit_code}\n{result.output}"
     assert out.exists(), "Expected scan output file to be written"
@@ -125,7 +125,7 @@ def test_storm_analyze_reads_fixed_width_with_layout(fwf_fixture: tuple[Path, Pa
             "storm", "analyze",
             str(fwf_path),
             "--layout", str(layout_path),
-            "--out", str(out),
+            "--output", str(out),
         ],
     )
     assert result.exit_code == 0, f"exit={result.exit_code}\n{result.output}"
@@ -216,7 +216,7 @@ def test_storm_analyze_explicit_format_parquet(parquet_fixture: Path, tmp_path: 
             "storm", "analyze",
             str(parquet_fixture),
             "--format", "parquet",
-            "--out", str(out),
+            "--output", str(out),
         ],
     )
     assert result.exit_code == 0, f"exit={result.exit_code}\n{result.output}"
@@ -241,7 +241,7 @@ def test_storm_analyze_explicit_format_delimited(tmp_path: Path):
             "storm", "analyze",
             str(csv_path),
             "--format", "delimited",
-            "--out", str(out),
+            "--output", str(out),
         ],
     )
     assert result.exit_code == 0, f"exit={result.exit_code}\n{result.output}"
@@ -260,7 +260,7 @@ def test_storm_analyze_parquet_extension_auto_detects(parquet_fixture: Path, tmp
     # No --format flag -- extension should be enough
     result = runner.invoke(
         app,
-        ["storm", "analyze", str(parquet_fixture), "--out", str(out)],
+        ["storm", "analyze", str(parquet_fixture), "--output", str(out)],
     )
     assert result.exit_code == 0, f"exit={result.exit_code}\n{result.output}"
     payload = _json.loads(out.read_text())

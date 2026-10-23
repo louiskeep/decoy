@@ -10,9 +10,9 @@ relationship (customers.id -> orders.customer_id), matching the shape the
 engine's own acceptance-test fixtures use.
 
 Assertions:
-S1. --dry-run prints an estimate and writes nothing (no --out dir created).
+S1. --dry-run prints an estimate and writes nothing (no --output dir created).
 S2. --dry-run --json emits a structured estimate envelope.
-S3. A real run (--out) writes filtered Parquet + subset-manifest.json,
+S3. A real run (--output) writes filtered Parquet + subset-manifest.json,
     and the output is referentially complete (no orphan orders).
 S4. Preflight failure (dangling FK column) -> clean error, exit 1, no
     stack trace text, and no output directory created.
@@ -20,11 +20,11 @@ S5. Non-Parquet source is rejected with the exact "convert to Parquet for
     subsetting" phrase (caught at config-validation time, before any
     engine call).
 S6. No raw seed key values leak into --json output for a `keys` mode seed.
-S7. Missing --out (without --dry-run) is a clean usage error, exit 1.
+S7. Missing --output (without --dry-run) is a clean usage error, exit 1.
 S8. Missing `subset:` block is a clean usage error, exit 1.
 S9. Fan-out budget exceeded -> clean error, exit 1, no output directory
     created (hard-fail-before-write contract).
-S10. --help documents the dry-run / --out surface.
+S10. --help documents the dry-run / --output surface.
 """
 
 from __future__ import annotations
@@ -167,7 +167,7 @@ def test_dry_run_json_envelope(tmp_path: Path):
 def test_real_run_writes_referentially_complete_subset(tmp_path: Path):
     p = _sample_subset_config(tmp_path)
     out_dir = tmp_path / "subset_out"
-    result = runner.invoke(app, ["subset", str(p), "--out", str(out_dir)])
+    result = runner.invoke(app, ["subset", str(p), "--output", str(out_dir)])
     assert result.exit_code == 0, result.output
 
     assert (out_dir / "customers.parquet").exists()
@@ -189,7 +189,7 @@ def test_real_run_writes_referentially_complete_subset(tmp_path: Path):
 def test_real_run_json_envelope(tmp_path: Path):
     p = _sample_subset_config(tmp_path)
     out_dir = tmp_path / "subset_out"
-    result = runner.invoke(app, ["subset", str(p), "--out", str(out_dir), "--json"])
+    result = runner.invoke(app, ["subset", str(p), "--output", str(out_dir), "--json"])
     assert result.exit_code == 0, result.output
     data = _json.loads(result.stdout)
     assert data["command"] == "subset"
@@ -217,7 +217,7 @@ def test_preflight_failure_dangling_column_is_clean_error(tmp_path: Path):
     p = _write_config(tmp_path, config)
     out_dir = tmp_path / "subset_out"
 
-    result = runner.invoke(app, ["subset", str(p), "--out", str(out_dir)])
+    result = runner.invoke(app, ["subset", str(p), "--output", str(out_dir)])
     assert result.exit_code != 0
     assert "Traceback" not in result.output
     assert "subset_relationship_column_missing" in result.output
@@ -323,7 +323,7 @@ def test_keys_mode_seed_manifest_does_not_leak_raw_values(tmp_path: Path):
     p = _write_config(tmp_path, config)
     out_dir = tmp_path / "subset_out"
 
-    result = runner.invoke(app, ["subset", str(p), "--out", str(out_dir), "--json"])
+    result = runner.invoke(app, ["subset", str(p), "--output", str(out_dir), "--json"])
     assert result.exit_code == 0, result.output
     manifest_text = (out_dir / "subset-manifest.json").read_text()
     assert f"[[{sentinel_id}" not in manifest_text
@@ -331,7 +331,7 @@ def test_keys_mode_seed_manifest_does_not_leak_raw_values(tmp_path: Path):
 
 
 # ---------------------------------------------------------------------------
-# S7: missing --out (real run) is a clean usage error
+# S7: missing --output (real run) is a clean usage error
 # ---------------------------------------------------------------------------
 
 
@@ -339,7 +339,7 @@ def test_missing_out_without_dry_run_is_usage_error(tmp_path: Path):
     p = _sample_subset_config(tmp_path)
     result = runner.invoke(app, ["subset", str(p)])
     assert result.exit_code != 0
-    assert "--out" in result.output
+    assert "--output" in result.output
     assert "--dry-run" in result.output
 
 
@@ -377,7 +377,7 @@ def test_runtime_error_keeps_its_bracketed_code_prefix(tmp_path: Path, monkeypat
 
     monkeypatch.setattr("decoy_engine.subset.run_subset", _raise)
     p = _sample_subset_config(tmp_path)
-    result = runner.invoke(app, ["subset", str(p), "--out", str(tmp_path / "out")])
+    result = runner.invoke(app, ["subset", str(p), "--output", str(tmp_path / "out")])
     assert result.exit_code != 0
     assert "[subset_closure_violation]" in result.output, result.output
 
@@ -399,7 +399,7 @@ def test_budget_exceeded_is_clean_error_and_writes_nothing(tmp_path: Path):
     p = _write_config(tmp_path, config)
     out_dir = tmp_path / "subset_out"
 
-    result = runner.invoke(app, ["subset", str(p), "--out", str(out_dir)])
+    result = runner.invoke(app, ["subset", str(p), "--output", str(out_dir)])
     assert result.exit_code != 0
     assert "budget" in result.output.lower()
     # Rich wraps long lines in the CliRunner's narrow terminal width; collapse
@@ -431,7 +431,7 @@ def test_budget_exceeded_json(tmp_path: Path):
 
 
 # ---------------------------------------------------------------------------
-# S10: --help documents the dry-run / --out surface
+# S10: --help documents the dry-run / --output surface
 # ---------------------------------------------------------------------------
 
 
@@ -440,30 +440,30 @@ def test_help_documents_dry_run_and_out(tmp_path: Path):
     assert result.exit_code == 0
     output = result.output
     assert "--dry-run" in output
-    assert "--out" in output
+    assert "--output" in output
 
 
 # ---------------------------------------------------------------------------
-# Extra: re-running into a non-empty --out dir is rejected cleanly
+# Extra: re-running into a non-empty --output dir is rejected cleanly
 # ---------------------------------------------------------------------------
 
 
 def test_rerun_into_nonempty_out_dir_is_clean_error(tmp_path: Path):
     p = _sample_subset_config(tmp_path)
     out_dir = tmp_path / "subset_out"
-    first = runner.invoke(app, ["subset", str(p), "--out", str(out_dir)])
+    first = runner.invoke(app, ["subset", str(p), "--output", str(out_dir)])
     assert first.exit_code == 0, first.output
 
-    second = runner.invoke(app, ["subset", str(p), "--out", str(out_dir)])
+    second = runner.invoke(app, ["subset", str(p), "--output", str(out_dir)])
     assert second.exit_code != 0
     assert "Traceback" not in second.output
     assert "subset_output_dir_exists" in second.output or "already exists" in second.output
 
 
 def test_dry_run_out_combo_warns_but_does_not_write(tmp_path: Path):
-    """--dry-run with --out both passed: --out is ignored, nothing is written."""
+    """--dry-run with --output both passed: --output is ignored, nothing is written."""
     p = _sample_subset_config(tmp_path)
     out_dir = tmp_path / "subset_out"
-    result = runner.invoke(app, ["subset", str(p), "--dry-run", "--out", str(out_dir)])
+    result = runner.invoke(app, ["subset", str(p), "--dry-run", "--output", str(out_dir)])
     assert result.exit_code == 0, result.output
     assert not out_dir.exists()

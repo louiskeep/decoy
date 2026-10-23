@@ -4,8 +4,8 @@ TDD: these tests assert CLI behavior. They fail first, then the implementation
 makes them pass.
 
 Assertions:
-P1.  ``report render evidence.json --out report.html`` exits 0; file is created.
-P2.  ``report render evidence.json --format markdown --out report.md`` exits 0.
+P1.  ``report render evidence.json --output report.html`` exits 0; file is created.
+P2.  ``report render evidence.json --format markdown --output report.md`` exits 0.
 P3.  ``report render`` with missing evidence file exits 1.
 P4.  ``report render`` with invalid JSON exits 1.
 P5.  ``report summarize evidence.json`` exits 0; key fields appear in output.
@@ -99,11 +99,11 @@ def _write_evidence(tmp_path: Path, suffix: str = "") -> tuple[Path, dict[str, A
 
 
 def test_report_render_html_exits_0(tmp_path: Path) -> None:
-    """report render --out report.html exits 0 and creates the file."""
+    """report render --output report.html exits 0 and creates the file."""
     evidence_path, _ = _write_evidence(tmp_path)
     out_path = tmp_path / "report.html"
 
-    result = runner.invoke(app, ["report", "render", str(evidence_path), "--out", str(out_path)])
+    result = runner.invoke(app, ["report", "render", str(evidence_path), "--output", str(out_path)])
 
     assert result.exit_code == 0, f"Expected exit 0; got {result.exit_code}. Output:\n{result.output}"
     assert out_path.exists(), "HTML report file was not created"
@@ -117,13 +117,13 @@ def test_report_render_html_exits_0(tmp_path: Path) -> None:
 
 
 def test_report_render_markdown_exits_0(tmp_path: Path) -> None:
-    """report render --format markdown --out report.md exits 0 and creates file."""
+    """report render --format markdown --output report.md exits 0 and creates file."""
     evidence_path, _ = _write_evidence(tmp_path)
     out_path = tmp_path / "report.md"
 
     result = runner.invoke(
         app,
-        ["report", "render", str(evidence_path), "--format", "markdown", "--out", str(out_path)],
+        ["report", "render", str(evidence_path), "--format", "markdown", "--output", str(out_path)],
     )
 
     assert result.exit_code == 0, f"Expected exit 0; got {result.exit_code}. Output:\n{result.output}"
@@ -143,7 +143,7 @@ def test_report_render_missing_evidence_file(tmp_path: Path) -> None:
     out_path = tmp_path / "report.html"
     result = runner.invoke(
         app,
-        ["report", "render", str(tmp_path / "no_such.json"), "--out", str(out_path)],
+        ["report", "render", str(tmp_path / "no_such.json"), "--output", str(out_path)],
     )
     assert result.exit_code != 0
 
@@ -158,7 +158,7 @@ def test_report_render_invalid_json(tmp_path: Path) -> None:
     bad = tmp_path / "bad.json"
     bad.write_text("not json {broken", encoding="utf-8")
     out_path = tmp_path / "report.html"
-    result = runner.invoke(app, ["report", "render", str(bad), "--out", str(out_path)])
+    result = runner.invoke(app, ["report", "render", str(bad), "--output", str(out_path)])
     assert result.exit_code != 0
 
 
@@ -284,7 +284,7 @@ def test_report_render_html_no_external_cdn(tmp_path: Path) -> None:
     """HTML report produced by the CLI must not contain external CDN URLs."""
     evidence_path, _ = _write_evidence(tmp_path)
     out_path = tmp_path / "report.html"
-    runner.invoke(app, ["report", "render", str(evidence_path), "--out", str(out_path)])
+    runner.invoke(app, ["report", "render", str(evidence_path), "--output", str(out_path)])
 
     content = out_path.read_text(encoding="utf-8")
     assert "http://" not in content
@@ -295,7 +295,7 @@ def test_report_render_html_no_external_script(tmp_path: Path) -> None:
     """HTML report must not contain external script src tags."""
     evidence_path, _ = _write_evidence(tmp_path)
     out_path = tmp_path / "report.html"
-    runner.invoke(app, ["report", "render", str(evidence_path), "--out", str(out_path)])
+    runner.invoke(app, ["report", "render", str(evidence_path), "--output", str(out_path)])
 
     content = out_path.read_text(encoding="utf-8").lower()
     assert "<script src" not in content

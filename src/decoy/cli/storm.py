@@ -166,7 +166,7 @@ Examples:
   decoy storm integrity masked.csv --source source.csv --json > report.json
     Pipe the full JobStormReport-shaped JSON for downstream tooling.
 
-  decoy storm integrity masked.csv --source source.csv --out report.json
+  decoy storm integrity masked.csv --source source.csv --output report.json
     Write JSON to file + render a Rich summary on stderr.
 
 Exit codes: 0 clean (no fail/error findings); 4 EXIT_FINDINGS (one
@@ -493,7 +493,8 @@ def _scan(
     ),
     out: Path | None = typer.Option(
         None,
-        "--out",
+        "--output",
+        "-o",
         help="Where to save the scan JSON. Use - for stdout. Default: scan_<timestamp>.json next to the source.",
     ),
     json_: bool = typer.Option(
@@ -1231,7 +1232,8 @@ def _integrity(
     ),
     out: Path | None = typer.Option(
         None,
-        "--out",
+        "--output",
+        "-o",
         help=(
             "Write the JobStormReport JSON to this path. The Rich table "
             "still renders to stderr."
@@ -1356,7 +1358,7 @@ def _integrity(
             )
         elif state.mode is not OutputMode.quiet:
             # Render a 3-row summary table; the per-finding detail
-            # lives in the JSON payload (--json or --out).
+            # lives in the JSON payload (--json or --output).
             table = make_table("Bucket", "Findings", "Severities", title="Storm integrity")
             for bucket in ("residual_pii", "fk_preservation", "policy_validation"):
                 findings = report.get(bucket) or []

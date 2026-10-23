@@ -112,7 +112,7 @@ def test_integrity_returns_jobstormreport_shape(clean_pair: tuple[Path, Path]):
 
 
 def test_integrity_writes_out_file(clean_pair: tuple[Path, Path], tmp_path: Path):
-    """`--out <path>` writes the report JSON to disk; the report is
+    """`--output <path>` writes the report JSON to disk; the report is
     valid JSON and matches the --json output's `report` key."""
     src, masked = clean_pair
     out_path = tmp_path / "report.json"
@@ -124,7 +124,7 @@ def test_integrity_writes_out_file(clean_pair: tuple[Path, Path], tmp_path: Path
             str(masked),
             "--source",
             str(src),
-            "--out",
+            "--output",
             str(out_path),
         ],
     )

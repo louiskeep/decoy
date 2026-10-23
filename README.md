@@ -73,7 +73,7 @@ Scaffold your first pipeline against your own CSV. Two paths:
 ```
 # Column-aware: STORM scans the file, picks a strategy per column, writes
 # the YAML with `# REVIEW:` comments above every auto-inferred entry.
-decoy init customers.csv --out pipeline.yaml
+decoy init customers.csv --output pipeline.yaml
 # read the REVIEW comments + edit anything you disagree with
 decoy validate config pipeline.yaml
 decoy run pipeline.yaml
@@ -81,7 +81,7 @@ decoy run pipeline.yaml
 
 ```
 # Template-driven: scaffold from a bundled preset (minimal, hipaa, pci, gdpr).
-decoy init --preset minimal --out pipeline.yaml
+decoy init --preset minimal --output pipeline.yaml
 # edit pipeline.yaml: point `sources.people.path` at your CSV
 decoy validate config pipeline.yaml
 decoy run pipeline.yaml

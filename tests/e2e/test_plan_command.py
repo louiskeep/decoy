@@ -1,6 +1,6 @@
 """End-to-end tests for `decoy plan`.
 
-Covers: --no-profile path, --profile path, --json, --out, mutually-
+Covers: --no-profile path, --profile path, --json, --output, mutually-
 exclusive flag rejection, the deferred fully-automatic path's clear
 error, and the integration with the planner's five S1 plan-compile
 checks.
@@ -182,7 +182,7 @@ def test_plan_json_emits_parseable_json(tmp_path: Path) -> None:
     assert parsed["seed_protocol_version"] == 7
 
 
-# -- --out writes to file --------------------------------------------
+# -- --output writes to file --------------------------------------------
 
 
 def test_plan_out_writes_to_file(tmp_path: Path) -> None:
@@ -191,12 +191,12 @@ def test_plan_out_writes_to_file(tmp_path: Path) -> None:
     _write_yaml(config_path, _good_config())
 
     result = runner.invoke(
-        app, ["plan", str(config_path), "--no-profile", "--out", str(out_path)]
+        app, ["plan", str(config_path), "--no-profile", "--output", str(out_path)]
     )
     assert result.exit_code == 0, result.stdout
     assert out_path.exists()
     assert "plan_version: 2" in out_path.read_text(encoding="utf-8")
-    # stdout should be silent when --out is used (verify no plan dump on stdout)
+    # stdout should be silent when --output is used (verify no plan dump on stdout)
     assert "plan_version" not in result.stdout
 
 

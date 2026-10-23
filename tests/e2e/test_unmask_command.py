@@ -483,7 +483,7 @@ class TestUnmaskConsoleSurfacesReversedUnverified:
     ) -> None:
         out_cfg = tmp_path / "pipeline.yaml"
         init_result = runner.invoke(
-            app, ["init", str(csv_with_pan), "--out", str(out_cfg), "--quiet"]
+            app, ["init", str(csv_with_pan), "--output", str(out_cfg), "--quiet"]
         )
         assert init_result.exit_code == 0, init_result.output
 

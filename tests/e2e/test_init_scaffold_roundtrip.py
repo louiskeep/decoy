@@ -3,7 +3,7 @@
 The shape pinned here is the operator's golden path:
 
     decoy storm analyze customers.csv          # see what STORM sees
-    decoy init customers.csv --out p.yaml      # scaffold with REVIEW comments
+    decoy init customers.csv --output p.yaml      # scaffold with REVIEW comments
     decoy validate p.yaml                      # engine accepts the schema
     decoy run p.yaml                           # masks the data
     decoy storm integrity customers.masked.csv --source customers.csv
@@ -58,7 +58,7 @@ def test_init_scaffolds_yaml_with_review_comments(csv_with_pii: Path, tmp_path: 
     """The column-aware scaffold writes a YAML with `# REVIEW:` above
     every column entry and pins the provenance header at the top."""
     out = tmp_path / "pipeline.yaml"
-    result = runner.invoke(app, ["init", str(csv_with_pii), "--out", str(out), "--quiet"])
+    result = runner.invoke(app, ["init", str(csv_with_pii), "--output", str(out), "--quiet"])
     assert result.exit_code == 0, result.stdout + result.stderr
     body = out.read_text(encoding="utf-8")
     # Provenance + UX-critical text.
@@ -77,7 +77,7 @@ def test_init_json_mode_reports_column_count(csv_with_pii: Path, tmp_path: Path)
     STORM found in the CSV."""
     out = tmp_path / "pipeline.yaml"
     result = runner.invoke(
-        app, ["init", str(csv_with_pii), "--out", str(out), "--json"]
+        app, ["init", str(csv_with_pii), "--output", str(out), "--json"]
     )
     assert result.exit_code == 0, result.stdout + result.stderr
     payload = _json.loads(result.stdout)
@@ -93,7 +93,7 @@ def test_init_validate_then_run_smoke(csv_with_pii: Path, tmp_path: Path):
     confirm sources/tables/targets are present in the expected shape."""
     out = tmp_path / "pipeline.yaml"
     init_result = runner.invoke(
-        app, ["init", str(csv_with_pii), "--out", str(out), "--quiet"]
+        app, ["init", str(csv_with_pii), "--output", str(out), "--quiet"]
     )
     assert init_result.exit_code == 0
 
@@ -112,9 +112,9 @@ def test_init_validate_then_run_smoke(csv_with_pii: Path, tmp_path: Path):
 
 
 def test_init_stdout_with_dash(csv_with_pii: Path, tmp_path: Path):
-    """`--out -` writes the YAML body to stdout instead of a file."""
+    """`--output -` writes the YAML body to stdout instead of a file."""
     result = runner.invoke(
-        app, ["init", str(csv_with_pii), "--out", "-"]
+        app, ["init", str(csv_with_pii), "--output", "-"]
     )
     assert result.exit_code == 0, result.stdout + result.stderr
     assert "version: 1" in result.stdout
@@ -124,7 +124,7 @@ def test_init_stdout_with_dash(csv_with_pii: Path, tmp_path: Path):
 def test_init_missing_file_exits_usage(tmp_path: Path):
     """A nonexistent positional input file is a usage error."""
     result = runner.invoke(
-        app, ["init", str(tmp_path / "nope.csv"), "--out", str(tmp_path / "p.yaml"), "--quiet"]
+        app, ["init", str(tmp_path / "nope.csv"), "--output", str(tmp_path / "p.yaml"), "--quiet"]
     )
     assert result.exit_code == 1
 
@@ -134,7 +134,7 @@ def test_init_unsupported_extension_exits_usage(tmp_path: Path):
     bogus = tmp_path / "data.json"
     bogus.write_text('{"a": 1}', encoding="utf-8")
     result = runner.invoke(
-        app, ["init", str(bogus), "--out", str(tmp_path / "p.yaml"), "--quiet"]
+        app, ["init", str(bogus), "--output", str(tmp_path / "p.yaml"), "--quiet"]
     )
     assert result.exit_code == 1
 
@@ -145,7 +145,7 @@ def test_init_preset_still_works_unchanged(tmp_path: Path):
     bundled template."""
     out = tmp_path / "pipeline.yaml"
     result = runner.invoke(
-        app, ["init", "--preset", "minimal", "--out", str(out), "--json"]
+        app, ["init", "--preset", "minimal", "--output", str(out), "--json"]
     )
     assert result.exit_code == 0, result.stdout + result.stderr
     payload = _json.loads(result.stdout)

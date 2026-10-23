@@ -360,7 +360,7 @@ $ decoy init [OPTIONS] [INPUT_FILE]
 
 **Options**:
 
-* `--out PATH`: Where to write the pipeline YAML. Use `-` to write to stdout.  [default: pipeline.yaml]
+* `-o, --output PATH`: Where to write the pipeline YAML. Use `-` to write to stdout.  [default: pipeline.yaml]
 * `--preset TEXT`: Skip the preset prompt and use this template directly.
 * `-y, --yes`: Skip overwrite confirmation.
 * `--json`: Skip the wizard; emit a JSON record of what was written.
@@ -373,10 +373,10 @@ Examples:
   decoy init
     Interactive Q&A; writes pipeline.yaml in the current directory.
 
-  decoy init --preset hipaa --out hipaa_pipeline.yaml
+  decoy init --preset hipaa --output hipaa_pipeline.yaml
     Skip the wizard; scaffold from the HIPAA template.
 
-  decoy init customers.csv --out pipeline.yaml
+  decoy init customers.csv --output pipeline.yaml
     Column-aware scaffolding (OSS.4c, 2026-06-02). Runs STORM against
     the file, picks a starter strategy per column from the inference
     table, writes the YAML with `# REVIEW:` comments above every
@@ -539,7 +539,7 @@ $ decoy plan [OPTIONS] CONFIG
 * `--profile FILE`: Path to a pre-computed Profile JSON file (from decoy_engine.profile).
 * `--no-profile`: Skip the profile phase; profile-dependent checks land in plan_compile.checks_skipped.
 * `--json`: Emit JSON instead of YAML on stdout. (yaml.safe_load -&gt; json.dumps shape.)
-* `--out PATH`: Write the plan to a file instead of stdout.
+* `-o, --output PATH`: Write the plan to a file instead of stdout.
 * `--help`: Show this message and exit.
 
 Examples:
@@ -556,7 +556,7 @@ Examples:
   decoy plan pipeline.yaml --no-profile --json
     Emit the plan as JSON (yaml.safe_load -> json.dumps round-trip).
 
-  decoy plan pipeline.yaml --no-profile --out plan.yaml
+  decoy plan pipeline.yaml --no-profile --output plan.yaml
     Write the plan to a file instead of stdout.
 
 The fully-automated path (`decoy plan pipeline.yaml` with no profile
@@ -734,7 +734,7 @@ $ decoy subset [OPTIONS] CONFIG
 
 **Options**:
 
-* `--out PATH`: Output directory for the filtered Parquet + subset-manifest.json. Required unless --dry-run. Must not already exist as a non-empty directory.
+* `-o, --output PATH`: Output directory for the filtered Parquet + subset-manifest.json. Required unless --dry-run. Must not already exist as a non-empty directory.
 * `--dry-run`: Compute the projected per-table row counts and print them WITHOUT materializing anything. No Parquet is written, no output_dir is created or touched. Use this before every real run.
 * `--json`: Emit a structured JSON result on stdout.
 * `-q, --quiet`: Suppress stdout. Errors still go to stderr; exit code carries the result.
@@ -748,12 +748,12 @@ Examples:
     anything. Runs the full preflight + closure estimate. Always do this
     before a real run on data you have not subsetted before.
 
-  decoy subset pipeline.yaml --out subset_out/
+  decoy subset pipeline.yaml --output subset_out/
     Run the subset for real: write filtered Parquet per table plus
     subset-manifest.json into subset_out/. subset_out/ must not already
     exist (or must be empty).
 
-  decoy subset pipeline.yaml --out subset_out/ --json
+  decoy subset pipeline.yaml --output subset_out/ --json
     Same as above, structured JSON result on stdout.
 
 The pipeline YAML must declare a `subset:` block (seeds + optional budget /
@@ -983,7 +983,7 @@ $ decoy storm analyze [OPTIONS] SOURCE
 
 * `--rows INTEGER`: Sample row cap. Default: scan everything.
 * `--strategy [full|head|random]`: Sampling strategy when --rows is set.  [default: head]
-* `--out PATH`: Where to save the scan JSON. Use - for stdout. Default: scan_&lt;timestamp&gt;.json next to the source.
+* `-o, --output PATH`: Where to save the scan JSON. Use - for stdout. Default: scan_&lt;timestamp&gt;.json next to the source.
 * `--json`: Emit the full StormProfile JSON to stdout. No card.
 * `-q, --quiet`: Suppress stdout. Errors still go to stderr.
 * `-v, --verbose`: Enable debug-level CLI logs on stderr.
@@ -1046,7 +1046,7 @@ $ decoy storm integrity [OPTIONS] MASKED
 
 * `--source FILE`: Pre-mask source CSV (ground truth for the integrity check).  [required]
 * `--config FILE`: Optional pipeline.yaml. When passed, policy_validation can compare against the configured masks. Without it the runner still produces residual_pii + fk_preservation findings.
-* `--out PATH`: Write the JobStormReport JSON to this path. The Rich table still renders to stderr.
+* `-o, --output PATH`: Write the JobStormReport JSON to this path. The Rich table still renders to stderr.
 * `--allow-source-mismatch`: Suppress the stderr warning when --source does not match the pipeline&#x27;s declared sources block.
 * `--json`: Emit the full JobStormReport JSON to stdout. No card.
 * `-q, --quiet`: Suppress stdout. Errors still go to stderr.
@@ -1069,7 +1069,7 @@ Examples:
   decoy storm integrity masked.csv --source source.csv --json > report.json
     Pipe the full JobStormReport-shaped JSON for downstream tooling.
 
-  decoy storm integrity masked.csv --source source.csv --out report.json
+  decoy storm integrity masked.csv --source source.csv --output report.json
     Write JSON to file + render a Rich summary on stderr.
 
 Exit codes: 0 clean (no fail/error findings); 4 EXIT_FINDINGS (one
@@ -1535,18 +1535,19 @@ $ decoy report render [OPTIONS] EVIDENCE_FILE
 
 **Options**:
 
-* `--out PATH`: Output file path (e.g. report.html or report.md).  [required]
+* `-o, --output PATH`: Output file path (e.g. report.html or report.md).  [required]
 * `--format TEXT`: Output format: &#x27;html&#x27; (default) or &#x27;markdown&#x27;.  [default: html]
+* `--json`: Emit a JSON record of what was written instead of the human summary.
 * `-q, --quiet`: Suppress stdout. Errors still go to stderr.
 * `-v, --verbose`: Enable debug-level CLI logs on stderr.
 * `--help`: Show this message and exit.
 
 Examples:
 
-  decoy report render evidence.json --out report.html
+  decoy report render evidence.json --output report.html
     Render the manifest as a self-contained offline HTML report.
 
-  decoy report render evidence.json --format markdown --out report.md
+  decoy report render evidence.json --format markdown --output report.md
     Render the manifest as a plain Markdown report.
 
 What the report includes:
@@ -1581,6 +1582,7 @@ $ decoy report summarize [OPTIONS] EVIDENCE_FILE
 
 **Options**:
 
+* `--json`: Emit the evidence manifest as JSON instead of the card.
 * `-q, --quiet`: Suppress stdout. Errors still go to stderr.
 * `-v, --verbose`: Enable debug-level CLI logs on stderr.
 * `--help`: Show this message and exit.
@@ -1657,7 +1659,7 @@ Render the evidence report for a cataloged local run.
 
 Resolves the run from the catalog, loads its evidence manifest, and
 renders it using the same format as `decoy report summarize` (terminal)
-or `decoy report render` (file output with --format and --out).
+or `decoy report render` (file output with --format and --output).
 
 Requires the run to have been started with `decoy run --evidence-out`.
 LOCAL ONLY: does not connect to the platform server.
@@ -1674,8 +1676,8 @@ $ decoy report show [OPTIONS] RUN_ID
 
 **Options**:
 
-* `--format TEXT`: Output format when --out is given: &#x27;html&#x27; or &#x27;markdown&#x27;. Without --out, prints a terminal summary.
-* `--out PATH`: Write the report to this file path (requires --format).
+* `--format TEXT`: Output format when --output is given: &#x27;html&#x27; or &#x27;markdown&#x27;. Without --output, prints a terminal summary.
+* `-o, --output PATH`: Write the report to this file path (requires --format).
 * `--json`: Emit the evidence manifest as JSON.
 * `-q, --quiet`: Suppress stdout.
 * `-v, --verbose`: Enable debug-level logs.
@@ -1687,7 +1689,7 @@ Examples:
   decoy report show <run-id>
     Resolve the run from the catalog and print a summary of its evidence.
 
-  decoy report show <run-id> --format html --out report.html
+  decoy report show <run-id> --format html --output report.html
     Write a full HTML report for the run's evidence.
 
   decoy report show <run-id> --json

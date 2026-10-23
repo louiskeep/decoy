@@ -54,7 +54,7 @@ Examples:
   decoy plan pipeline.yaml --no-profile --json
     Emit the plan as JSON (yaml.safe_load -> json.dumps round-trip).
 
-  decoy plan pipeline.yaml --no-profile --out plan.yaml
+  decoy plan pipeline.yaml --no-profile --output plan.yaml
     Write the plan to a file instead of stdout.
 
 The fully-automated path (`decoy plan pipeline.yaml` with no profile
@@ -92,7 +92,8 @@ def plan(
     ),
     out: Path | None = typer.Option(
         None,
-        "--out",
+        "--output",
+        "-o",
         help="Write the plan to a file instead of stdout.",
     ),
 ) -> None:

@@ -36,10 +36,10 @@ Examples:
   decoy init
     Interactive Q&A; writes pipeline.yaml in the current directory.
 
-  decoy init --preset hipaa --out hipaa_pipeline.yaml
+  decoy init --preset hipaa --output hipaa_pipeline.yaml
     Skip the wizard; scaffold from the HIPAA template.
 
-  decoy init customers.csv --out pipeline.yaml
+  decoy init customers.csv --output pipeline.yaml
     Column-aware scaffolding (OSS.4c, 2026-06-02). Runs STORM against
     the file, picks a starter strategy per column from the inference
     table, writes the YAML with `# REVIEW:` comments above every
@@ -404,7 +404,8 @@ def _init(
     ),
     out: Path = typer.Option(
         Path("pipeline.yaml"),
-        "--out",
+        "--output",
+        "-o",
         help="Where to write the pipeline YAML. Use `-` to write to stdout.",
     ),
     preset: str = typer.Option(

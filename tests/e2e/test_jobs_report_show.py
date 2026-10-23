@@ -16,7 +16,7 @@ RS2. `report show <run-id> --json` exits 0 and emits structured JSON.
 RS3. `report show <run-id>` for a run with no evidence path exits non-zero
      with a clear message (honest about what is missing).
 RS4. `report show` for a missing run-id exits non-zero.
-RS5. `report show <run-id> --format html --out path.html` writes an HTML report.
+RS5. `report show <run-id> --format html --output path.html` writes an HTML report.
 RS6. `report show <run-id>` output includes key manifest fields (run id, schema
      version, pipeline fingerprint).
 RS7. `report show` without a workspace exits non-zero.
@@ -232,12 +232,12 @@ def test_report_show_missing_run_id_exits_nonzero(tmp_path: Path) -> None:
 
 
 # ---------------------------------------------------------------------------
-# RS5: report show --format html --out
+# RS5: report show --format html --output
 # ---------------------------------------------------------------------------
 
 
 def test_report_show_html_out(tmp_path: Path) -> None:
-    """report show <run-id> --format html --out path.html writes an HTML report."""
+    """report show <run-id> --format html --output path.html writes an HTML report."""
     _init_workspace(tmp_path)
     evidence_path, _ = _write_evidence(tmp_path)
     entry_id = _seed_run_entry(tmp_path, evidence_path=str(evidence_path))
@@ -248,7 +248,7 @@ def test_report_show_html_out(tmp_path: Path) -> None:
         [
             "report", "show", entry_id,
             "--format", "html",
-            "--out", str(out_path),
+            "--output", str(out_path),
             "--workspace", str(tmp_path),
         ],
         catch_exceptions=False,

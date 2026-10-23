@@ -597,10 +597,10 @@ def compare_manifests(
 _RENDER_EPILOG = """\
 Examples:
 
-  decoy report render evidence.json --out report.html
+  decoy report render evidence.json --output report.html
     Render the manifest as a self-contained offline HTML report.
 
-  decoy report render evidence.json --format markdown --out report.md
+  decoy report render evidence.json --format markdown --output report.md
     Render the manifest as a plain Markdown report.
 
 What the report includes:
@@ -625,13 +625,19 @@ def _render(
     ),
     out: Path = typer.Option(
         ...,
-        "--out",
+        "--output",
+        "-o",
         help="Output file path (e.g. report.html or report.md).",
     ),
     format_: str = typer.Option(
         "html",
         "--format",
         help="Output format: 'html' (default) or 'markdown'.",
+    ),
+    json_: bool = typer.Option(
+        False,
+        "--json",
+        help="Emit a JSON record of what was written instead of the human summary.",
     ),
     quiet: bool = typer.Option(
         False, "--quiet", "-q", help="Suppress stdout. Errors still go to stderr."
@@ -648,15 +654,16 @@ def _render(
     HTML output is self-contained and offline-capable (no CDN/external JS).
     Markdown output is plain text.
     """
-    state = setup_output(False, quiet, verbose)
+    state = setup_output(json_, quiet, verbose)
     manifest = _load_manifest(evidence_file, state, "report render")
 
     fmt = format_.lower().strip()
     if fmt not in ("html", "markdown", "md"):
-        state.err_console.print(
-            error("error:"),
-            f"unknown format {format_!r}; use 'html' or 'markdown'.",
-        )
+        msg = f"unknown format {format_!r}; use 'html' or 'markdown'."
+        if state.mode is OutputMode.json:
+            emit_json(state, {"command": "report render", "status": "error", "error": msg})
+        else:
+            state.err_console.print(error("error:"), msg)
         raise typer.Exit(code=EXIT_USAGE)
 
     if fmt in ("markdown", "md"):
@@ -667,11 +674,29 @@ def _render(
     try:
         out.write_text(content, encoding="utf-8")
     except OSError as exc:
-        state.err_console.print(error("error:"), f"could not write {out}: {exc}")
+        msg = f"could not write {out}: {exc}"
+        if state.mode is OutputMode.json:
+            emit_json(state, {"command": "report render", "status": "error", "error": msg})
+        else:
+            state.err_console.print(error("error:"), msg)
         raise typer.Exit(code=EXIT_USAGE)
 
+    fmt_label = "Markdown" if fmt in ("markdown", "md") else "HTML"
+
+    if state.mode is OutputMode.json:
+        emit_json(
+            state,
+            {
+                "command": "report render",
+                "status": "ok",
+                "evidence_file": str(evidence_file),
+                "output": str(out),
+                "format": fmt_label.lower(),
+            },
+        )
+        return
+
     if state.mode is not OutputMode.quiet:
-        fmt_label = "Markdown" if fmt in ("markdown", "md") else "HTML"
         state.console.print(
             success("ok"),
             f"{fmt_label} report written to",
@@ -709,6 +734,9 @@ def _summarize(
         dir_okay=False,
         help="Path to a local evidence manifest JSON.",
     ),
+    json_: bool = typer.Option(
+        False, "--json", help="Emit the evidence manifest as JSON instead of the card."
+    ),
     quiet: bool = typer.Option(
         False, "--quiet", "-q", help="Suppress stdout. Errors still go to stderr."
     ),
@@ -725,8 +753,20 @@ def _summarize(
     from decoy.ui.card import render_card
     from decoy.ui.table import make_table
 
-    state = setup_output(False, quiet, verbose)
+    state = setup_output(json_, quiet, verbose)
     manifest = _load_manifest(evidence_file, state, "report summarize")
+
+    if state.mode is OutputMode.json:
+        emit_json(
+            state,
+            {
+                "command": "report summarize",
+                "status": "ok",
+                "evidence_file": str(evidence_file),
+                "manifest": manifest,
+            },
+        )
+        return
 
     if state.mode is OutputMode.quiet:
         return
@@ -762,7 +802,7 @@ def _summarize(
         state,
         command="decoy report summarize",
         facts=facts,
-        next_hint=f"decoy report render {evidence_file} --out report.html",
+        next_hint=f"decoy report render {evidence_file} --output report.html",
         status="warn" if warnings_list else "ok",
     )
 
@@ -1188,7 +1228,7 @@ Examples:
   decoy report show <run-id>
     Resolve the run from the catalog and print a summary of its evidence.
 
-  decoy report show <run-id> --format html --out report.html
+  decoy report show <run-id> --format html --output report.html
     Write a full HTML report for the run's evidence.
 
   decoy report show <run-id> --json
@@ -1216,13 +1256,14 @@ def _show(
         None,
         "--format",
         help=(
-            "Output format when --out is given: 'html' or 'markdown'. "
-            "Without --out, prints a terminal summary."
+            "Output format when --output is given: 'html' or 'markdown'. "
+            "Without --output, prints a terminal summary."
         ),
     ),
     out: Path | None = typer.Option(
         None,
-        "--out",
+        "--output",
+        "-o",
         help="Write the report to this file path (requires --format).",
     ),
     json_: bool = typer.Option(False, "--json", help="Emit the evidence manifest as JSON."),
@@ -1238,7 +1279,7 @@ def _show(
 
     Resolves the run from the catalog, loads its evidence manifest, and
     renders it using the same format as `decoy report summarize` (terminal)
-    or `decoy report render` (file output with --format and --out).
+    or `decoy report render` (file output with --format and --output).
 
     Requires the run to have been started with `decoy run --evidence-out`.
     LOCAL ONLY: does not connect to the platform server.
@@ -1288,7 +1329,7 @@ def _show(
     if state.mode is OutputMode.quiet:
         return
 
-    # --format + --out: write file report
+    # --format + --output: write file report
     if out is not None:
         fmt = (format_ or "html").lower().strip()
         if fmt not in ("html", "markdown", "md"):
@@ -1346,7 +1387,7 @@ def _show(
         state,
         command="decoy report show",
         facts=facts,
-        next_hint=f"decoy report show {run_id} --format html --out report.html",
+        next_hint=f"decoy report show {run_id} --format html --output report.html",
         status="warn" if warnings_list else "ok",
     )
 
