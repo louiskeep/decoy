@@ -28,12 +28,11 @@ from decoy.cli.info import INFO_EPILOG
 from decoy.cli.info import info as info_command
 from decoy.cli.init import INIT_EPILOG, init_command
 from decoy.cli.jobs import jobs_app
-from decoy.cli.profile import PROFILE_EPILOG
-from decoy.cli.profile import profile as profile_command
 from decoy.cli.project import project_app
 from decoy.cli.report import report_app
 from decoy.cli.run import RUN_EPILOG
 from decoy.cli.run import run as run_command
+from decoy.cli.scan import scan_app
 from decoy.cli.schema import SCHEMA_EPILOG
 from decoy.cli.schema import schema as schema_command
 from decoy.cli.storm import storm_app
@@ -53,8 +52,7 @@ Decoy -- data masking and synthetic generation CLI.
 
 Try one of:
   decoy demo                       30-second end-to-end walkthrough.
-  decoy storm analyze data.csv     Profile a dataset for PII and risk.
-  decoy profile data.csv           Dataset shape, field stats, PII candidates (suggestions).
+  decoy scan data.csv              Profile a dataset for PII and re-id risk (candidates as suggestions).
   decoy validate pipeline.yaml     Run the whole pre-run gate (config + compile + preflight).
   decoy validate compile pipeline.yaml --explain  Explain per-column strategy and compile decisions.
   decoy run pipeline.yaml          Run a masking or generation pipeline.
@@ -112,6 +110,7 @@ app.command(name="demo", epilog=DEMO_EPILOG)(demo_command)
 app.command(name="explain", epilog=EXPLAIN_EPILOG)(explain_command)
 app.command(name="info", epilog=INFO_EPILOG)(info_command)
 app.command(name="schema", epilog=SCHEMA_EPILOG)(schema_command)
+app.add_typer(scan_app, name="scan")
 app.add_typer(storm_app, name="storm")
 app.add_typer(templates_app, name="templates")
 app.add_typer(vault_app, name="vault")
@@ -125,7 +124,6 @@ app.command(name="doctor", epilog=DOCTOR_EPILOG)(doctor)
 app.add_typer(project_app, name="project")
 app.add_typer(catalog_app, name="catalog")
 app.add_typer(jobs_app, name="jobs")
-app.command(name="profile", epilog=PROFILE_EPILOG)(profile_command)
 app.command(name="subset", epilog=SUBSET_EPILOG)(subset_command)
 
 

@@ -2,7 +2,7 @@
 
 The shape pinned here is the operator's golden path:
 
-    decoy storm analyze customers.csv          # see what STORM sees
+    decoy scan customers.csv                   # see what STORM sees
     decoy init customers.csv --output p.yaml      # scaffold with REVIEW comments
     decoy validate p.yaml                      # engine accepts the schema
     decoy run p.yaml                           # masks the data

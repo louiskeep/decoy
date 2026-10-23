@@ -46,6 +46,10 @@ _ROOT_HELP_OMITTED = frozenset(
         "providers",
         "checksums",
         "validators",
+        # S3a: `storm` is down to the lone `storm integrity` (post-run,
+        # transient until `report integrity` in S4) and is deliberately kept
+        # out of the quick-start root help; `decoy scan` is the advertised verb.
+        "storm",
     }
 )
 
@@ -59,7 +63,6 @@ _README_TABLE_OMITTED = frozenset(
         "info",
         "schema",
         "doctor",
-        "profile",
         "subset",
         "vault",
         "evidence",
@@ -71,6 +74,9 @@ _README_TABLE_OMITTED = frozenset(
         "project",
         "catalog",
         "jobs",
+        # S3a: `storm` is down to the transient lone `storm integrity`; the
+        # README table advertises `decoy scan` instead.
+        "storm",
     }
 )
 
@@ -183,8 +189,8 @@ def test_extractor_flags_a_phantom() -> None:
     assert _extract_path("bogus --flag") == "bogus"
     assert "bogus" not in VALID_TARGETS
     # A real nested path resolves and is registered.
-    assert _extract_path("storm analyze data.csv") == "storm analyze"
-    assert "storm analyze" in VALID_TARGETS
+    assert _extract_path("storm integrity masked.csv") == "storm integrity"
+    assert "storm integrity" in VALID_TARGETS
     # A top-level leaf does not over-consume its positional arg.
     assert _extract_path("explain modes") == "explain"
 

@@ -104,7 +104,7 @@ declared under `targets:` in the YAML.
 | `decoy validate <path>`          | Run the whole pre-run gate (config + compile + preflight): one report, one exit code. |
 | `decoy validate distribution <source> <output>` | Recompute distribution fidelity between a source and an output CSV. |
 | `decoy run <path>`               | Execute a pipeline: read sources, mask, write targets.                        |
-| `decoy storm analyze <path>`     | Profile a source file: distributions, PII candidates, cardinality hints.      |
+| `decoy scan <path>`              | Profile a source file: distributions, PII candidates, cardinality hints.      |
 | `decoy templates list`           | List the bundled pipeline templates.                                         |
 | `decoy explain <topic>`          | In-CLI reference (exit codes, providers, strategies).                         |
 

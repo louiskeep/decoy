@@ -86,7 +86,7 @@ def test_storm_analyze_reads_parquet_fixture(parquet_fixture: Path, tmp_path: Pa
     out = tmp_path / "scan.json"
     result = runner.invoke(
         app,
-        ["storm", "analyze", str(parquet_fixture), "--output", str(out)],
+        ["scan", str(parquet_fixture), "--output", str(out)],
     )
     assert result.exit_code == 0, f"exit={result.exit_code}\n{result.output}"
     assert out.exists(), "Expected scan output file to be written"
@@ -101,13 +101,13 @@ def test_storm_analyze_parquet_json_output(parquet_fixture: Path):
     """B1 extension: parquet with --json emits a structured envelope."""
     result = runner.invoke(
         app,
-        ["storm", "analyze", str(parquet_fixture), "--json"],
+        ["scan", str(parquet_fixture), "--json"],
     )
     assert result.exit_code == 0, f"exit={result.exit_code}\n{result.output}"
     payload = _json.loads(result.stdout)
-    assert payload["command"] == "storm analyze"
+    assert payload["command"] == "scan"
     assert payload["status"] == "ok"
-    assert payload["profile"]["row_count"] == 3
+    assert payload["row_count"] == 3
 
 
 # ---------------------------------------------------------------------------
@@ -122,7 +122,7 @@ def test_storm_analyze_reads_fixed_width_with_layout(fwf_fixture: tuple[Path, Pa
     result = runner.invoke(
         app,
         [
-            "storm", "analyze",
+            "scan",
             str(fwf_path),
             "--layout", str(layout_path),
             "--output", str(out),
@@ -144,7 +144,7 @@ def test_storm_analyze_fixed_width_json_output(fwf_fixture: tuple[Path, Path]):
     result = runner.invoke(
         app,
         [
-            "storm", "analyze",
+            "scan",
             str(fwf_path),
             "--layout", str(layout_path),
             "--json",
@@ -153,7 +153,7 @@ def test_storm_analyze_fixed_width_json_output(fwf_fixture: tuple[Path, Path]):
     assert result.exit_code == 0, f"exit={result.exit_code}\n{result.output}"
     payload = _json.loads(result.stdout)
     assert payload["status"] == "ok"
-    assert payload["profile"]["row_count"] == 3
+    assert payload["row_count"] == 3
 
 
 # ---------------------------------------------------------------------------
@@ -171,7 +171,7 @@ def test_storm_analyze_fixed_width_without_layout_fails_closed(fwf_fixture: tupl
     # Pass --format fixed-width but NO --layout
     result = runner.invoke(
         app,
-        ["storm", "analyze", str(fwf_path), "--format", "fixed-width"],
+        ["scan", str(fwf_path), "--format", "fixed-width"],
     )
     assert result.exit_code != 0, (
         "Expected non-zero exit when --format fixed-width is used without --layout. "
@@ -191,7 +191,7 @@ def test_storm_analyze_fwf_extension_without_layout_fails_closed(tmp_path: Path)
     fwf_path = tmp_path / "data.fwf"
     fwf_path.write_text("M001Alice     \nM002Bob       \n", encoding="utf-8")
 
-    result = runner.invoke(app, ["storm", "analyze", str(fwf_path)])
+    result = runner.invoke(app, ["scan", str(fwf_path)])
     assert result.exit_code != 0, (
         "Expected non-zero exit when .fwf file has no --layout. "
         f"Got exit {result.exit_code}. output: {result.output}"
@@ -213,7 +213,7 @@ def test_storm_analyze_explicit_format_parquet(parquet_fixture: Path, tmp_path: 
     result = runner.invoke(
         app,
         [
-            "storm", "analyze",
+            "scan",
             str(parquet_fixture),
             "--format", "parquet",
             "--output", str(out),
@@ -238,7 +238,7 @@ def test_storm_analyze_explicit_format_delimited(tmp_path: Path):
     result = runner.invoke(
         app,
         [
-            "storm", "analyze",
+            "scan",
             str(csv_path),
             "--format", "delimited",
             "--output", str(out),
@@ -260,7 +260,7 @@ def test_storm_analyze_parquet_extension_auto_detects(parquet_fixture: Path, tmp
     # No --format flag -- extension should be enough
     result = runner.invoke(
         app,
-        ["storm", "analyze", str(parquet_fixture), "--output", str(out)],
+        ["scan", str(parquet_fixture), "--output", str(out)],
     )
     assert result.exit_code == 0, f"exit={result.exit_code}\n{result.output}"
     payload = _json.loads(out.read_text())
@@ -293,7 +293,7 @@ def test_malformed_layout_missing_width_exits_usage(fwf_data: Path, tmp_path: Pa
     )
     result = runner.invoke(
         app,
-        ["storm", "analyze", str(fwf_data), "--layout", str(layout_path)],
+        ["scan", str(fwf_data), "--layout", str(layout_path)],
     )
     assert result.exit_code == 1, (
         f"Expected exit 1 (usage) for missing 'width', got {result.exit_code}.\n{result.output}"
@@ -319,7 +319,7 @@ def test_malformed_layout_non_int_width_exits_usage(fwf_data: Path, tmp_path: Pa
     )
     result = runner.invoke(
         app,
-        ["storm", "analyze", str(fwf_data), "--layout", str(layout_path)],
+        ["scan", str(fwf_data), "--layout", str(layout_path)],
     )
     assert result.exit_code == 1, (
         f"Expected exit 1 (usage) for non-integer 'width', got {result.exit_code}.\n{result.output}"
@@ -346,7 +346,7 @@ def test_malformed_layout_columns_is_string_exits_usage(fwf_data: Path, tmp_path
     )
     result = runner.invoke(
         app,
-        ["storm", "analyze", str(fwf_data), "--layout", str(layout_path)],
+        ["scan", str(fwf_data), "--layout", str(layout_path)],
     )
     assert result.exit_code == 1, (
         f"Expected exit 1 (usage) for columns as string, got {result.exit_code}.\n{result.output}"
@@ -367,7 +367,7 @@ def test_malformed_layout_empty_file_exits_usage(fwf_data: Path, tmp_path: Path)
     layout_path.write_text("", encoding="utf-8")
     result = runner.invoke(
         app,
-        ["storm", "analyze", str(fwf_data), "--layout", str(layout_path)],
+        ["scan", str(fwf_data), "--layout", str(layout_path)],
     )
     assert result.exit_code == 1, (
         f"Expected exit 1 (usage) for empty layout, got {result.exit_code}.\n{result.output}"

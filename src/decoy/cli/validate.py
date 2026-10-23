@@ -55,51 +55,11 @@ from typing import Any
 
 import typer
 import yaml as _yaml
-from typer.core import TyperGroup
 
+from decoy.cli._default_group import make_default_group
 from decoy.cli.exit_codes import EXIT_CAPACITY, EXIT_FINDINGS, EXIT_USAGE, EXIT_WARNINGS
 from decoy.ui.output import OutputMode, emit_json, setup_output
 from decoy.ui.theme import accent, code, error, hint, success, warn
-
-# ---------------------------------------------------------------------------
-# Default-command group: `decoy validate CONFIG` (no subcommand) runs the gate
-# ---------------------------------------------------------------------------
-
-
-class _DefaultCommandGroup(TyperGroup):
-    """A Click group that dispatches to a hidden default command when the first
-    positional token is NOT a registered subcommand.
-
-    `validate` is a Click group, so its first token is normally resolved as a
-    subcommand name. To honor the redesign's bare `decoy validate pipeline.yaml`
-    (run the whole pre-run gate), a first token that is not a known subcommand
-    and not an option is routed to the hidden `_gate` command, which carries the
-    CONFIG argument and the gate flags. `decoy validate` with no args still shows
-    help (no_args_is_help), and `validate config|compile|preflight|distribution`
-    resolve as normal subcommands.
-
-    Mechanism (no new dependency): the vendored-Click `resolve_command` is the
-    single choke point every non-help dispatch flows through; we override it to
-    fall back to the default command, keeping ALL args (the first token is the
-    CONFIG path for `_gate`). `list_commands` hides `_gate` from help, the
-    generated reference, and shell completion while `get_command` can still
-    resolve it for dispatch.
-    """
-
-    default_cmd_name = "_gate"
-
-    def resolve_command(self, ctx, args):  # type: ignore[override]
-        if args:
-            token = args[0]
-            if token not in self.commands and not token.startswith("-"):
-                cmd = self.get_command(ctx, self.default_cmd_name)
-                if cmd is not None:
-                    # Keep every arg: `token` is the CONFIG positional for `_gate`.
-                    return self.default_cmd_name, cmd, args
-        return super().resolve_command(ctx, args)
-
-    def list_commands(self, ctx):  # type: ignore[override]
-        return [n for n in super().list_commands(ctx) if n != self.default_cmd_name]
 
 # Grade -> minimum overall_score, mirroring the engine's own grade
 # thresholds (decoy_engine.quality.report._GRADE_THRESHOLDS: A >= 0.95,
@@ -136,7 +96,7 @@ See also: decoy run, decoy fit.
 
 validate_app = typer.Typer(
     name="validate",
-    cls=_DefaultCommandGroup,
+    cls=make_default_group("_gate"),
     help=(
         "Pre-run validation gate. `decoy validate CONFIG` runs the whole gate "
         "(config + compile + preflight) and emits one report + one exit code. "

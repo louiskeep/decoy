@@ -26,7 +26,7 @@ pipeline config and what the compile checks verified. It does NOT guarantee:
   - all PII is covered or masked correctly
   - the output is safe to share
 
-Use `decoy storm analyze` to inspect the source data before writing a pipeline,
+Use `decoy scan` to inspect the source data before writing a pipeline,
 and `decoy validate config` for schema-only config validation.
 
 Reuses the engine's compile_plan path. Does NOT reimplement compilation.
@@ -69,7 +69,7 @@ HONESTY: compile --explain explains decisions declared in the config and what th
 compiler verified. It does not guarantee the strategy is correct for the data,
 that all PII is covered, or that the output is safe to share.
 
-See also: decoy validate, decoy validate config, decoy storm analyze.
+See also: decoy validate, decoy validate config, decoy scan.
 """
 
 # Rationale templates: strategies come from explicit user declarations in the
@@ -263,7 +263,7 @@ def compile(
                 "Strategies are declared in the pipeline config by the user. "
                 "compile --explain verifies those declarations; it does not "
                 "guarantee the strategy is correct for the data or that all PII "
-                "is covered. Use decoy storm analyze to inspect source data."
+                "is covered. Use decoy scan to inspect source data."
             )
         emit_json(state, payload)
         return
@@ -425,7 +425,7 @@ def _render_explain(state, tables_info: list[dict], plan) -> None:
         "It does not guarantee the strategy is correct for the data, "
         "that all PII is covered, or that the output is safe to share. "
         "Use",
-        code("decoy storm analyze"),
+        code("decoy scan"),
         "to inspect source data first.",
     )
 

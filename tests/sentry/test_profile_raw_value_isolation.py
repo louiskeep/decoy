@@ -71,7 +71,7 @@ def test_profile_text_output_no_raw_values(tmp_path: Path) -> None:
     _write_sentinel_csv(csv_path)
 
     result = runner.invoke(
-        app, ["profile", str(csv_path), "--show-fields"], env=_WIDE_ENV
+        app, ["scan", str(csv_path), "--show-fields"], env=_WIDE_ENV
     )
     assert result.exit_code == 0, result.output
 
@@ -98,7 +98,7 @@ def test_text_sentry_bites_if_raw_value_injected(tmp_path: Path) -> None:
     csv_path = tmp_path / "data.csv"
     _write_sentinel_csv(csv_path)
 
-    import decoy.cli.profile as profile_mod
+    import decoy.cli.scan as profile_mod
 
     original_safe = profile_mod._safe_field_record
 
@@ -110,7 +110,7 @@ def test_text_sentry_bites_if_raw_value_injected(tmp_path: Path) -> None:
 
     with patch.object(profile_mod, "_safe_field_record", leaky_safe_field_record):
         result = runner.invoke(
-            app, ["profile", str(csv_path), "--show-fields"], env=_WIDE_ENV
+            app, ["scan", str(csv_path), "--show-fields"], env=_WIDE_ENV
         )
 
     assert result.exit_code == 0, result.output
@@ -127,7 +127,7 @@ def test_profile_json_output_no_raw_values(tmp_path: Path) -> None:
     csv_path = tmp_path / "data.csv"
     _write_sentinel_csv(csv_path)
 
-    result = runner.invoke(app, ["profile", str(csv_path), "--show-fields", "--json"])
+    result = runner.invoke(app, ["scan", str(csv_path), "--show-fields", "--json"])
     assert result.exit_code == 0, result.output
 
     payload_str = result.stdout

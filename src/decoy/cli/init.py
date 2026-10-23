@@ -48,7 +48,7 @@ Examples:
   decoy init --yes
     Skip confirmation when overwriting an existing file.
 
-See also: decoy validate config, decoy run, decoy storm analyze, decoy templates list.
+See also: decoy validate config, decoy run, decoy scan, decoy templates list.
 """
 
 

@@ -33,6 +33,14 @@ DEAD_STRINGS = (
     "decoy compile",
     "decoy plan",
     "decoy preflight",
+    # S3a: `profile` + `storm analyze` merged into `decoy scan`; the saved-scan
+    # subcommands moved from `storm` to `scan`. `storm integrity` stays live and
+    # is NOT listed here.
+    "decoy profile",
+    "decoy storm analyze",
+    "storm fields",
+    "storm show",
+    "storm diff",
 )
 
 

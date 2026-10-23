@@ -432,7 +432,7 @@ def test_scan_invalid_data_type_raises():
 
 def test_scan_parity_with_cli_storm_analyze(sample_csv: Path, tmp_path: Path):
     scan_out = tmp_path / "scan.json"
-    result = runner.invoke(app, ["storm", "analyze", str(sample_csv), "--output", str(scan_out)])
+    result = runner.invoke(app, ["scan", str(sample_csv), "--output", str(scan_out)])
     assert result.exit_code == 0, result.stdout
     cli_profile = _json.loads(scan_out.read_text())
 

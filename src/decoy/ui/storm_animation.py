@@ -1,4 +1,4 @@
-"""Storm-themed multi-stage indicator for `decoy storm analyze`.
+"""Storm-themed multi-stage indicator for `decoy scan`.
 
 A fixed multi-line ASCII cumulus silhouette anchors the top of the scene;
 eight rain/lightning frames cycle underneath. The per-stage running marker
@@ -162,7 +162,7 @@ def stormy_multistage(
 ) -> Iterator[_StormyHandle]:
     """Multi-stage indicator with a big cycling storm cloud + per-stage glyph.
 
-    Drop-in replacement for `multistage()` for the `storm analyze`
+    Drop-in replacement for `multistage()` for the `scan`
     command. The handle exposes the same `complete()` so callers can
     swap freely.
     """

@@ -4,8 +4,7 @@ Decoy -- data masking and synthetic generation CLI.
 
 Try one of:
   decoy demo                       30-second end-to-end walkthrough.
-  decoy storm analyze data.csv     Profile a dataset for PII and risk.
-  decoy profile data.csv           Dataset shape, field stats, PII candidates (suggestions).
+  decoy scan data.csv              Profile a dataset for PII and re-id risk (candidates as suggestions).
   decoy validate pipeline.yaml     Run the whole pre-run gate (config + compile + preflight).
   decoy validate compile pipeline.yaml --explain  Explain per-column strategy and compile decisions.
   decoy run pipeline.yaml          Run a masking or generation pipeline.
@@ -48,10 +47,10 @@ $ decoy [OPTIONS] COMMAND [ARGS]...
 * `info`: Print the Decoy CLI banner with...
 * `schema`: Print the PipelineConfig JSON Schema to...
 * `doctor`: Check engine and dependency health.
-* `profile`: Profile a source dataset: shape, field...
 * `subset`: Cut a referentially-complete FK-aware...
 * `validate`: Pre-run validation gate.
-* `storm`: Dataset analysis -- the STORM event.
+* `scan`: Profile a dataset for PII and...
+* `storm`: Masked-file verification -- `integrity`...
 * `templates`: Browse and dump bundled starter pipeline...
 * `vault`: Vault inspection utilities.
 * `evidence`: Show and verify local run evidence manifests.
@@ -307,7 +306,7 @@ Examples:
   decoy init --yes
     Skip confirmation when overwriting an existing file.
 
-See also: decoy validate config, decoy run, decoy storm analyze, decoy templates list.
+See also: decoy validate config, decoy run, decoy scan, decoy templates list.
 
 
 ## `decoy demo`
@@ -340,7 +339,7 @@ Examples:
   decoy demo --json
     Same flow, but emit a JSON summary instead of cards.
 
-See also: decoy storm analyze, decoy run.
+See also: decoy scan, decoy run.
 
 
 ## `decoy explain`
@@ -475,65 +474,6 @@ Examples:
     Silent mode; exit code 0 = healthy, non-zero = hard requirement missing.
 
 See also: decoy --version, decoy info.
-
-
-## `decoy profile`
-
-Profile a source dataset: shape, field stats, PII candidates (as suggestions).
-
-Runs STORM detection on the source file. PII candidates are surfaced as
-SUGGESTIONS for review -- never as authoritative auto-classifications.
-No raw cell values appear in any output mode.
-
-**Usage**:
-
-```console
-$ decoy profile [OPTIONS] SOURCE
-```
-
-**Arguments**:
-
-* `SOURCE`: Path to the source CSV or Parquet file to profile.  [required]
-
-**Options**:
-
-* `--show-fields`: Show per-field detail: dtype, null_rate, distinct_count, PII candidate flag.
-* `--rows INTEGER`: Limit profiling to the first N rows (CSV) or first N rows after loading (Parquet). Use 0 for a full scan of the whole file. Default: 10000.  [default: 10000]
-* `--json`: Emit structured JSON instead of the styled table output.
-* `-q, --quiet`: Suppress stdout. Exit code carries success or failure.
-* `-v, --verbose`: Enable debug-level CLI logs on stderr.
-* `--help`: Show this message and exit.
-
-Examples:
-
-  decoy profile data.csv
-    Profile a CSV: row count, field count, PII candidates (as suggestions).
-    Reads the first 10 000 rows by default (--rows 0 for full scan).
-
-  decoy profile data.csv --rows 0
-    Full scan: profile every row in the file.
-
-  decoy profile data.csv --rows 50000
-    Profile the first 50 000 rows only.
-
-  decoy profile data.csv --show-fields
-    Per-field detail: dtype, null_rate, distinct_count, PII candidate flag.
-
-  decoy profile data.csv --show-fields --json
-    Same as --show-fields but as structured JSON for scripting.
-
-  decoy profile data.parquet
-    Profile a Parquet file (format inferred from extension).
-    Profiles the first 10 000 rows by default; the full file is loaded first.
-
-HONESTY: PII candidates are SUGGESTIONS based on STORM pattern matching.
-They are NOT authoritative classifications. The user reviews each flagged field
-and decides what masking to apply. Decoy never auto-classifies PII.
-
-No raw cell values appear in the output. Field stats include dtype, null_rate,
-distinct_count only.
-
-See also: decoy storm analyze, decoy explain storm, decoy validate.
 
 
 ## `decoy subset`
@@ -830,7 +770,7 @@ HONESTY: compile --explain explains decisions declared in the config and what th
 compiler verified. It does not guarantee the strategy is correct for the data,
 that all PII is covered, or that the output is safe to share.
 
-See also: decoy validate, decoy validate config, decoy storm analyze.
+See also: decoy validate, decoy validate config, decoy scan.
 
 
 ### `decoy validate preflight`
@@ -908,9 +848,185 @@ What preflight does NOT check:
 See also: decoy validate, decoy run, decoy evidence verify, decoy explain exit-codes.
 
 
+## `decoy scan`
+
+Profile a dataset for PII and re-identification risk. `decoy scan SOURCE` scans a CSV/Parquet/fixed-width file (shape, field stats, PII candidates as suggestions, quasi-identifiers, reid risk) and, with `--output scan.json`, saves the scan. Subcommands operate on a saved scan: list fields (`fields`), per-field detail (`show`), compare two scans (`diff`).
+
+**Usage**:
+
+```console
+$ decoy scan [OPTIONS] COMMAND [ARGS]...
+```
+
+**Options**:
+
+* `--help`: Show this message and exit.
+
+Examples:
+
+  decoy scan data.csv
+    Profile a CSV: row/field counts, PII candidates (as suggestions), reid risk.
+    Reads the first 10 000 rows by default (--rows 0 for a full scan).
+
+  decoy scan data.csv --show-fields
+    Per-field detail: dtype, null_rate, distinct_count, PII candidate flag.
+
+  decoy scan data.csv --rows 50000 --strategy random
+    Sample 50K random rows instead of the first 10 000.
+
+  decoy scan data.csv --output scan.json
+    Save the scan to scan.json, then: decoy scan fields scan.json
+
+  decoy scan data.csv --output -
+    Stream the scan JSON to stdout for downstream tooling.
+
+  decoy scan records.fwf --layout layout.yaml
+    Scan a fixed-width file using an explicit column layout.
+    Layout YAML: columns: [{name: id, start: 0, width: 5}, ...]
+
+HONESTY: PII candidates are SUGGESTIONS based on STORM pattern matching. They
+are NOT authoritative classifications. You review each flagged field and decide
+what masking to apply. Decoy never auto-classifies PII.
+
+No raw cell values appear in the inline output. Field stats include dtype,
+null_rate, distinct_count only.
+
+See also: decoy scan fields, decoy scan show, decoy scan diff,
+  decoy explain storm, decoy validate.
+
+
+**Commands**:
+
+* `fields`: List fields from a saved scan, with...
+* `show`: Per-field detail from a saved scan.
+* `diff`: Compare two scans -- catch schema, PII,...
+
+### `decoy scan fields`
+
+List fields from a saved scan, with optional filters.
+
+Print the fields that matter, filter by PII bucket or quasi-identifier
+membership, pipe the result somewhere else. For per-field detail, see
+`decoy scan show`.
+
+**Usage**:
+
+```console
+$ decoy scan fields [OPTIONS] SCAN
+```
+
+**Arguments**:
+
+* `SCAN`: Path to a STORM scan JSON, or `-` for stdin.  [required]
+
+**Options**:
+
+* `--pii [high|med|low|none]`: Filter to fields whose PII score falls in this bucket.
+* `--quasi`: Only fields that participate in any quasi-identifier group.
+* `--json`: Emit the filtered field list as JSON to stdout.
+* `-q, --quiet`: Suppress stdout. Errors still go to stderr.
+* `-v, --verbose`: Enable debug-level CLI logs on stderr.
+* `--help`: Show this message and exit.
+
+Examples:
+
+  decoy scan fields scan.json
+    List every field with PII score, bucket, quasi-identifier flag.
+
+  decoy scan fields scan.json --pii high --quasi
+    Only fields that are high PII *and* part of a quasi-identifier group.
+
+  decoy scan fields scan.json --json | jq '.fields[].name'
+    Pipe just the matching field names somewhere else.
+
+See also: decoy scan, decoy scan show.
+
+
+### `decoy scan show`
+
+Per-field detail from a saved scan.
+
+The drill-down view of one field: PII score + bucket, detector matches,
+sentinel hits, top values, quasi-identifier membership. Read-only.
+
+**Usage**:
+
+```console
+$ decoy scan show [OPTIONS] SCAN FIELD
+```
+
+**Arguments**:
+
+* `SCAN`: Path to a STORM scan JSON, or `-` for stdin.  [required]
+* `FIELD`: Field name to inspect.  [required]
+
+**Options**:
+
+* `--json`: Emit the full field detail as JSON to stdout.
+* `-q, --quiet`: Suppress stdout. Errors still go to stderr.
+* `-v, --verbose`: Enable debug-level CLI logs on stderr.
+* `--help`: Show this message and exit.
+
+Examples:
+
+  decoy scan show scan.json ssn
+    Per-field detail card -- PII score, detectors, sentinels, top values, QI.
+
+  decoy scan show scan.json email --json
+    Same data as a structured JSON envelope.
+
+  decoy scan data.csv --output - | decoy scan show - ssn
+    Pipe a fresh scan straight in.
+
+See also: decoy scan, decoy scan fields.
+
+
+### `decoy scan diff`
+
+Compare two scans -- catch schema, PII, and risk drift.
+
+Designed for CI: run `decoy scan diff baseline.json new.json --strict`
+on every PR to fail the build when a column&#x27;s PII bucket goes up, a new
+high-PII field appears, or a new quasi-identifier group forms. Read-only
+-- the scans are JSON; raw data never enters the CLI.
+
+**Usage**:
+
+```console
+$ decoy scan diff [OPTIONS] OLD NEW
+```
+
+**Arguments**:
+
+* `OLD`: Path to the older STORM scan JSON, or `-` for stdin.  [required]
+* `NEW`: Path to the newer STORM scan JSON, or `-` for stdin.  [required]
+
+**Options**:
+
+* `--strict`: Exit 1 on drift -- any PII bucket bumped up, any new high-PII field, or any new quasi-identifier group.
+* `--json`: Emit the categorized diff as JSON to stdout.
+* `-q, --quiet`: Suppress stdout. Errors still go to stderr.
+* `-v, --verbose`: Enable debug-level CLI logs on stderr.
+* `--help`: Show this message and exit.
+
+Examples:
+
+  decoy scan diff baseline.json new.json
+    Print field-, PII-, QI-, and risk-level differences between two scans.
+
+  decoy scan diff baseline.json new.json --strict
+    Same, but exit 1 on drift (PII bucket bumped up, new high-PII field, or
+    new quasi-identifier group). Wire this into CI.
+
+  decoy scan diff baseline.json new.json --json | jq '.drift'
+    Boolean drift flag for scripting.
+
+See also: decoy scan, decoy scan fields.
+
+
 ## `decoy storm`
 
-Dataset analysis -- the STORM event. `analyze` looks at a file (pre-run); `integrity` verifies a masked file (post-run).
+Masked-file verification -- `integrity` checks a masked file against its pre-mask source (post-run; moves to `report integrity` in S4). Pre-run profiling now lives in `decoy scan`.
 
 **Usage**:
 
@@ -924,73 +1040,7 @@ $ decoy storm [OPTIONS] COMMAND [ARGS]...
 
 **Commands**:
 
-* `analyze`: Scan a dataset and produce a STORM profile.
 * `integrity`: Verify a masked file&#x27;s integrity against...
-* `fields`: List fields from a saved STORM scan, with...
-* `show`: Per-field detail from a saved STORM scan.
-* `diff`: Compare two STORM scans -- catch schema,...
-
-### `decoy storm analyze`
-
-Scan a dataset and produce a STORM profile.
-
-Use this when you&#x27;ve been handed a dataset and want to know what&#x27;s in it
--- which fields are PII, which look like quasi-identifiers, what
-re-identification risk the dataset carries -- before writing a masking
-pipeline. Pass the saved scan JSON to `decoy storm fields` or
-`decoy storm show`.
-
-Supported formats: delimited (CSV/TSV, default), parquet, and fixed-width.
-Fixed-width input requires an explicit --layout spec (column boundaries
-are ambiguous without one). Format is inferred from the file extension
-when --format is not supplied.
-
-**Usage**:
-
-```console
-$ decoy storm analyze [OPTIONS] SOURCE
-```
-
-**Arguments**:
-
-* `SOURCE`: Path to a file to scan (CSV, Parquet, or fixed-width).  [required]
-
-**Options**:
-
-* `--rows INTEGER`: Sample row cap. Default: scan everything.
-* `--strategy [full|head|random]`: Sampling strategy when --rows is set.  [default: head]
-* `-o, --output PATH`: Where to save the scan JSON. Use - for stdout. Default: scan_&lt;timestamp&gt;.json next to the source.
-* `--json`: Emit the full StormProfile JSON to stdout. No card.
-* `-q, --quiet`: Suppress stdout. Errors still go to stderr.
-* `-v, --verbose`: Enable debug-level CLI logs on stderr.
-* `--format [delimited|parquet|fixed-width]`: Input format: delimited (CSV/TSV), parquet, or fixed-width. Default: inferred from file extension. fixed-width always requires --layout.
-* `--layout PATH`: Layout spec (YAML or JSON) for fixed-width input. Required when format is fixed-width. Each column needs &#x27;name&#x27;, &#x27;start&#x27; (0-indexed), and &#x27;width&#x27;.
-* `--help`: Show this message and exit.
-
-Examples:
-
-  decoy storm analyze data.csv
-    Analyze a CSV with default sampling, save scan_<timestamp>.json.
-
-  decoy storm analyze data.csv --rows 50000 --strategy random
-    Sample 50K random rows.
-
-  decoy storm analyze data.csv --json > scan.json
-    Pipe the full StormProfile JSON for downstream tooling.
-
-  decoy storm analyze data.parquet
-    Analyze a Parquet file (format inferred from extension).
-
-  decoy storm analyze data.parquet --format parquet
-    Same, with explicit format flag.
-
-  decoy storm analyze records.fwf --layout layout.yaml
-    Analyze a fixed-width file using an explicit column layout.
-    Layout YAML: columns: [{name: id, start: 0, width: 5}, ...]
-
-See also: decoy storm fields, decoy storm show, decoy storm diff,
-  decoy storm integrity, decoy init, decoy run.
-
 
 ### `decoy storm integrity`
 
@@ -1052,131 +1102,7 @@ Exit codes: 0 clean (no fail/error findings); 4 EXIT_FINDINGS (one
 or more fail-severity findings); 1 EXIT_USAGE for missing files;
 3 EXIT_RUNTIME for unexpected exceptions.
 
-See also: decoy storm analyze, decoy run, decoy explain exit-codes.
-
-
-### `decoy storm fields`
-
-List fields from a saved STORM scan, with optional filters.
-
-The list view of the web FORECAST drill-down -- print the fields that
-matter, filter by PII bucket or quasi-identifier membership, pipe the
-result somewhere else. For per-field detail, see `decoy storm show`.
-
-**Usage**:
-
-```console
-$ decoy storm fields [OPTIONS] SCAN
-```
-
-**Arguments**:
-
-* `SCAN`: Path to a STORM scan JSON, or `-` for stdin.  [required]
-
-**Options**:
-
-* `--pii [high|med|low|none]`: Filter to fields whose PII score falls in this bucket.
-* `--quasi`: Only fields that participate in any quasi-identifier group.
-* `--json`: Emit the filtered field list as JSON to stdout.
-* `-q, --quiet`: Suppress stdout. Errors still go to stderr.
-* `-v, --verbose`: Enable debug-level CLI logs on stderr.
-* `--help`: Show this message and exit.
-
-Examples:
-
-  decoy storm fields scan.json
-    List every field with PII score, bucket, quasi-identifier flag.
-
-  decoy storm fields scan.json --pii high --quasi
-    Only fields that are high PII *and* part of a quasi-identifier group.
-
-  decoy storm fields scan.json --json | jq '.fields[].name'
-    Pipe just the matching field names somewhere else.
-
-See also: decoy storm analyze, decoy storm show.
-
-
-### `decoy storm show`
-
-Per-field detail from a saved STORM scan.
-
-The drill-down view of one field: PII score + bucket, detector matches,
-sentinel hits, top values, quasi-identifier membership. Stays read-only
--- for live exploration use the web FORECAST panel.
-
-**Usage**:
-
-```console
-$ decoy storm show [OPTIONS] SCAN FIELD
-```
-
-**Arguments**:
-
-* `SCAN`: Path to a STORM scan JSON, or `-` for stdin.  [required]
-* `FIELD`: Field name to inspect.  [required]
-
-**Options**:
-
-* `--json`: Emit the full field detail as JSON to stdout.
-* `-q, --quiet`: Suppress stdout. Errors still go to stderr.
-* `-v, --verbose`: Enable debug-level CLI logs on stderr.
-* `--help`: Show this message and exit.
-
-Examples:
-
-  decoy storm show scan.json ssn
-    Per-field detail card -- PII score, detectors, sentinels, top values, QI.
-
-  decoy storm show scan.json email --json
-    Same data as a structured JSON envelope.
-
-  decoy storm analyze data.csv --json | decoy storm show - ssn
-    Pipe a fresh scan straight in.
-
-See also: decoy storm analyze, decoy storm fields.
-
-
-### `decoy storm diff`
-
-Compare two STORM scans -- catch schema, PII, and risk drift.
-
-Designed for CI: run `decoy storm diff baseline.json new.json --strict`
-on every PR to fail the build when a column&#x27;s PII bucket goes up, a new
-high-PII field appears, or a new quasi-identifier group forms. Read-only
--- the scans are JSON; raw data never enters the CLI.
-
-**Usage**:
-
-```console
-$ decoy storm diff [OPTIONS] OLD NEW
-```
-
-**Arguments**:
-
-* `OLD`: Path to the older STORM scan JSON, or `-` for stdin.  [required]
-* `NEW`: Path to the newer STORM scan JSON, or `-` for stdin.  [required]
-
-**Options**:
-
-* `--strict`: Exit 1 on drift -- any PII bucket bumped up, any new high-PII field, or any new quasi-identifier group.
-* `--json`: Emit the categorized diff as JSON to stdout.
-* `-q, --quiet`: Suppress stdout. Errors still go to stderr.
-* `-v, --verbose`: Enable debug-level CLI logs on stderr.
-* `--help`: Show this message and exit.
-
-Examples:
-
-  decoy storm diff baseline.json new.json
-    Print field-, PII-, QI-, and risk-level differences between two scans.
-
-  decoy storm diff baseline.json new.json --strict
-    Same, but exit 1 on drift (PII bucket bumped up, new high-PII field, or
-    new quasi-identifier group). Wire this into CI.
-
-  decoy storm diff baseline.json new.json --json | jq '.drift'
-    Boolean drift flag for scripting.
-
-See also: decoy storm analyze, decoy storm fields.
+See also: decoy scan, decoy run, decoy explain exit-codes.
 
 
 ## `decoy templates`
@@ -2243,9 +2169,9 @@ Sensitivity classes:
 What catalog add does NOT do:
   - It does NOT copy raw source data into DuckDB.
   - It does NOT sync the registration with the platform server.
-  - It does NOT scan or profile the file (use `decoy storm analyze` for that).
+  - It does NOT scan or profile the file (use `decoy scan` for that).
 
-See also: decoy catalog list, decoy catalog show, decoy storm analyze.
+See also: decoy catalog list, decoy catalog show, decoy scan.
 
 
 ### `decoy catalog show`
