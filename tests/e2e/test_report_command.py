@@ -313,3 +313,78 @@ def test_report_summarize_includes_pipeline_fingerprint(tmp_path: Path) -> None:
 
     assert result.exit_code == 0
     assert "sha256:" in result.output
+
+
+# ---------------------------------------------------------------------------
+# S1 envelope coverage: report render/summarize --json (added in S1 slice B1;
+# pin the machine-readable envelope keys + the JSON error path).
+# ---------------------------------------------------------------------------
+
+
+def test_report_render_json_envelope_ok(tmp_path: Path) -> None:
+    """report render --json emits the ok envelope with the documented keys."""
+    evidence_path, _ = _write_evidence(tmp_path)
+    out_path = tmp_path / "report.html"
+    result = runner.invoke(
+        app, ["report", "render", str(evidence_path), "--output", str(out_path), "--json"]
+    )
+
+    assert result.exit_code == 0, f"got {result.exit_code}; output:\n{result.output}"
+    data = _json.loads(result.stdout)
+    assert data == {
+        "command": "report render",
+        "status": "ok",
+        "evidence_file": str(evidence_path),
+        "output": str(out_path),
+        "format": "html",
+    }
+    assert out_path.exists()
+
+
+def test_report_render_json_envelope_invalid_format(tmp_path: Path) -> None:
+    """report render --json with a bad --format emits a JSON error envelope, exit 1."""
+    evidence_path, _ = _write_evidence(tmp_path)
+    out_path = tmp_path / "report.out"
+    result = runner.invoke(
+        app,
+        [
+            "report", "render", str(evidence_path),
+            "--output", str(out_path), "--format", "pdf", "--json",
+        ],
+    )
+
+    assert result.exit_code == 1
+    data = _json.loads(result.stdout)
+    assert data["command"] == "report render"
+    assert data["status"] == "error"
+    assert "pdf" in data["error"]
+    assert not out_path.exists()
+
+
+def test_report_render_json_envelope_unwritable_output(tmp_path: Path) -> None:
+    """report render --json to an unwritable path emits a JSON error envelope, exit 1."""
+    evidence_path, _ = _write_evidence(tmp_path)
+    # Parent directory does not exist -> OSError on write.
+    out_path = tmp_path / "no_such_dir" / "report.html"
+    result = runner.invoke(
+        app, ["report", "render", str(evidence_path), "--output", str(out_path), "--json"]
+    )
+
+    assert result.exit_code == 1
+    data = _json.loads(result.stdout)
+    assert data["command"] == "report render"
+    assert data["status"] == "error"
+    assert data["error"]
+
+
+def test_report_summarize_json_envelope_ok(tmp_path: Path) -> None:
+    """report summarize --json emits the ok envelope carrying the full manifest."""
+    evidence_path, manifest = _write_evidence(tmp_path)
+    result = runner.invoke(app, ["report", "summarize", str(evidence_path), "--json"])
+
+    assert result.exit_code == 0, f"got {result.exit_code}; output:\n{result.output}"
+    data = _json.loads(result.stdout)
+    assert data["command"] == "report summarize"
+    assert data["status"] == "ok"
+    assert data["evidence_file"] == str(evidence_path)
+    assert data["manifest"] == manifest

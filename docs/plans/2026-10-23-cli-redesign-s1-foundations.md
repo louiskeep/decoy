@@ -39,10 +39,12 @@ re-renders `docs/cli-reference.md` from the Typer app and asserts equality).
 
 ## Design notes
 
-House style applies to touched code only. One new structure: a shared CLI-options helper so the output trio
-is defined in **one place** rather than restated per command (one place per fact; single-purpose). It wraps
-the existing `decoy.ui.output.setup_output` / `OutputMode`; it does not introduce a flag argument that
-switches behavior. No other new abstraction.
+House style applies to touched code only. The output trio's *semantics* are single-sourced in
+`decoy.ui.output.setup_output` / `OutputMode` and stay there. BUILD DECISION (2026-10-23, confirmed in S1
+review): no separate "shared CLI-options helper" was extracted — Typer requires options to be declared in
+each command's own signature, so a wrapper would not remove the per-command `typer.Option` declarations and
+would fight the framework idiom. The one-place-per-fact rule is satisfied by `setup_output` owning the
+behavior; the inline declarations are the Typer idiom. No new abstraction.
 
 ## Slices (recoverable; each its own commit, each green before the next)
 
@@ -183,3 +185,9 @@ DOCUMENT (reconcile this plan's status + the sprint doc). No merge to main.
 
 S1 is otherwise complete and shippable; `--force`/overwrite is additive and can land later without
 reworking A/B1/C.
+
+- **S1 independent review — ACCEPT-WITH-FOLLOWUPS**, remediated: the new `report render`/`report summarize`
+  `--json` envelopes are now pinned by e2e tests (ok keys + the JSON error paths); the "shared options
+  helper" design note was resolved to a recorded build decision (inline Typer declarations, semantics
+  single-sourced in `setup_output`); the cosmetic `demo.py` leftover was reworded. Suite 1092 pass/5 skip,
+  ruff clean, reference regen a no-op. **S1 CLOSED** (merge-ready on the branch; not merged — PO-gated).
