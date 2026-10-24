@@ -46,6 +46,7 @@ design decision to hide.
 from __future__ import annotations
 
 import inspect
+import os
 from dataclasses import dataclass
 from typing import Any, Literal
 
@@ -509,12 +510,62 @@ def run_pipeline_kwargs(gate_result: PreGateResult) -> dict[str, bool]:
     return {"unified_slice_enabled": False}
 
 
+# Default thread grant when the caller does not choose: the engine's native-kernel
+# knee (4) capped by the host's cores, the same rule the platform applies at claim.
+# Without a loadable companion the kernels never run, so the grant is 1 and the
+# knob is not even sent.
+_NATIVE_THREAD_KNEE = 4
+
+
+def default_native_threads() -> int:
+    """Threads to grant the compiled kernels when `--threads` is not given."""
+    try:
+        from decoy_engine import native_companion_status
+
+        if not native_companion_status().ok:
+            return 1
+    except Exception:
+        return 1
+    return max(1, min(_NATIVE_THREAD_KNEE, os.cpu_count() or 1))
+
+
+def resolve_native_threads(requested: int | None) -> int:
+    """Validate an explicit `--threads` (a positive int) or pick the default.
+
+    Raises:
+        ValueError: `requested` is not a positive integer.
+    """
+    if requested is None:
+        return default_native_threads()
+    if isinstance(requested, bool) or not isinstance(requested, int) or requested < 1:
+        raise ValueError(f"--threads must be a positive integer; got {requested!r}")
+    return requested
+
+
+def native_threads_kwargs(threads: int) -> dict[str, int]:
+    """`run_pipeline` kwargs carrying the thread grant, capability-detected
+    against the installed engine (an engine without `native_threads` has no
+    multi-thread kernels, so omitting the knob loses nothing). The engine's own
+    default is 1, so 1 is never sent either: the all-default call stays
+    byte-for-byte the call older tests pin."""
+    if threads <= 1:
+        return {}
+    from decoy_engine import run_pipeline
+
+    if "native_threads" not in inspect.signature(run_pipeline).parameters:
+        return {}
+    return {"native_threads": threads}
+
+
 __all__ = [
     "NativeGateError",
     "NativeIntent",
     "PreGateResult",
     "RouteClassification",
     "classify_route",
+    "default_native_threads",
+    "native_threads_kwargs",
+    "resolve_native_threads",
     "is_unified_slice_candidate",
     "post_run_verify",
     "pre_execution_gate",

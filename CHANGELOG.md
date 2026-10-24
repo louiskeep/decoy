@@ -8,6 +8,44 @@ version numbers follow the [versioning policy](docs/release/versioning.md).
 
 ## [Unreleased]
 
+### Fixed (parity C1a/C1b, 2026-10-24)
+
+- **A `format: fixed_width` target is written as fixed-width.** `decoy run`
+  dispatched its writer on the path suffix only, so a declared fixed-width
+  target (with its `layout`) was silently written as CSV. The writer now
+  follows the declared target format and calls the engine's
+  `write_fixed_width`; integer layout columns keep their type through the
+  Arrow-to-pandas hop. A fixed-width target without a `layout` is a usage
+  error at validation, as before.
+- **Validator findings, quarantined rows and row errors are reported.** The
+  engine runs the `validators:` / `quarantine:` blocks inside `run_pipeline`
+  and removes quarantined rows from the written output; the CLI read none of
+  that evidence, so rows vanished with no message. `decoy run` now prints a
+  "Data checks" section (validators run and failing-row counts per validator,
+  rows quarantined and the JSONL path, per-column row-error counts), adds a
+  `data_checks` block to the `--json` envelope, and under `--quiet` still
+  writes one quarantine line to stderr. Counts and identifiers only, never
+  cell values.
+
+### Added (parity C1c: `--threads`, 2026-10-24)
+
+`decoy run --threads N` and `decoy.mask(threads=)` grant N threads to the
+engine's compiled native kernels (`run_pipeline(native_threads=)`). Default:
+min(4, host cores) when the native companion is installed, else 1, matching
+the platform's claim-time rule; the pandas oracle and `--chunked` ignore it.
+The grant is omitted on an engine that predates the knob. The run summary
+shows `Threads` when more than one is granted and the JSON envelope carries
+`native_threads`.
+
+### Removed (parity C1d: `--substrate`, 2026-10-24) -- BREAKING, pre-GA
+
+`decoy run --substrate`, the `DECOY_SUBSTRATE` environment variable,
+`decoy.mask(substrate=)` and the `decoy explain substrate` topic are gone.
+The engine removed caller-chosen substrates (pandas is its only adapter and
+the parity oracle; native kernels are route-chosen), so the flag selected
+nothing. `--chunked` still streams on the pandas chunked path; `decoy explain
+chunked` and `decoy explain native` cover routing.
+
 ### Changed (CLI command-surface redesign, 2026-10-23) -- BREAKING, pre-GA
 
 The `decoy` command surface was redesigned from ~17 top-level commands plus 11

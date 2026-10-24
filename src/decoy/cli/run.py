@@ -5,8 +5,7 @@ Non-chunked runs (the default) go through `run_pipeline`, the engine's
 unified entry point that profiles, compiles, and executes mask + generate
 tables in one call, using the engine's internal `PandasExecutionAdapter`.
 `--chunked` is a separate streaming path (`run_mask_pipeline_chunked`),
-mask-only, which still supports substrate selection via
-`select_execution_adapter`. `graph` and `convert` are V1-only and have
+mask-only, on the engine's pandas adapter. `graph` and `convert` are V1-only and have
 no engine; the choke-point validator rejects them with a typed error
 before this module sees them.
 """
@@ -84,7 +83,7 @@ Examples:
 
   decoy run pipeline.yaml --chunked
     Stream a large single-table mask in bounded memory (pandas chunked path).
-    (Masking uses the pandas substrate. See: decoy explain substrate.)
+    (See: decoy explain chunked.)
 
   decoy run pipeline.yaml --notify webhook:https://hooks.example.com/x
     Notify a webhook after the run reaches its terminal state. Repeatable;
@@ -281,17 +280,14 @@ def run(
             "extra (cryptography)."
         ),
     ),
-    substrate: str = typer.Option(
+    threads: int = typer.Option(
         None,
-        "--substrate",
-        envvar="DECOY_SUBSTRATE",
+        "--threads",
         help=(
-            "Execution substrate for --chunked runs. pandas is the only substrate "
-            "(the default); any other value, including the removed 'polars', is "
-            "rejected with a usage error. Non-chunked (plain) runs always use the "
-            "engine's pandas adapter; this flag and the DECOY_SUBSTRATE env var are "
-            "consulted only for --chunked runs, and setting either on a plain run "
-            "emits a warning to stderr and is otherwise ignored."
+            "Threads granted to the engine's compiled native kernels on this run. "
+            "Default: min(4, host cores) when the native companion is installed, "
+            "else 1. Only the native routes use it; the pandas oracle and --chunked "
+            "ignore it. Must be a positive integer."
         ),
     ),
     key_label: str = typer.Option(
@@ -438,40 +434,20 @@ def run(
                 state.err_console.print(error("error:"), msg)
             raise typer.Exit(code=EXIT_USAGE)
 
-    # Reject an unsupported substrate (e.g. the removed 'polars') up front, on
-    # plain and chunked runs alike: the engine only ships pandas, so a value it
-    # would refuse mid-run is a usage error the user can fix now.
-    if substrate is not None:
-        from decoy_engine.execution import ExecutionError, resolve_substrate
-
-        try:
-            resolve_substrate(substrate)
-        except ExecutionError as exc:
-            msg = str(exc)
-            if state.mode is OutputMode.json:
-                emit_json(
-                    state,
-                    {"command": "run", "status": "error", "config": config_str, "error": msg},
-                )
-            elif state.mode is not OutputMode.quiet:
-                state.err_console.print(error("error:"), msg)
-            raise typer.Exit(code=EXIT_USAGE)
+    try:
+        native_threads = _native_gate.resolve_native_threads(threads)
+    except ValueError as exc:
+        msg = str(exc)
+        if state.mode is OutputMode.json:
+            emit_json(state, {"command": "run", "status": "error", "config": config_str, "error": msg})
+        elif state.mode is not OutputMode.quiet:
+            state.err_console.print(error("error:"), msg)
+        raise typer.Exit(code=EXIT_USAGE)
 
     raw_cfg = _load_raw_config(config)
     yaml_mode = _detect_mode(raw_cfg) or mode.value
 
     resolver = _build_resolver(master_key, key_label, raw_cfg, state)
-
-    # Warn when --substrate (or DECOY_SUBSTRATE) is set on a non-chunked run.
-    # The flag is only consulted on the --chunked path; plain runs hardcode
-    # the engine's PandasExecutionAdapter. Warning to stderr only; do not
-    # suppress in --json mode (json goes to stdout); suppress in --quiet.
-    if substrate is not None and not chunked and state.mode is not OutputMode.quiet:
-        state.err_console.print(
-            warn("warning:"),
-            "--substrate is only consulted for --chunked runs; "
-            "this plain run uses the engine's pandas adapter.",
-        )
 
     # Sentinels for evidence manifest building (set on successful plain run).
     _ev_config_dict: dict | None = None
@@ -762,7 +738,7 @@ def run(
 
             if chunked:
                 resolved_substrate = _run_chunked_mask(
-                    config_dict, config.parent, chunk_size, substrate, vault_writer
+                    config_dict, config.parent, chunk_size, vault_writer=vault_writer
                 )
                 _native_route = _native_gate.classify_route(
                     chunked=True,
@@ -800,6 +776,7 @@ def run(
                     vault_writer=vault_writer,
                     **_report_kwargs,
                     **_native_gate.run_pipeline_kwargs(gate_result),
+                    **_native_gate.native_threads_kwargs(native_threads),
                 )
                 _native_route = _native_gate.classify_route(
                     chunked=False,
@@ -817,8 +794,11 @@ def run(
                 # mapping. The mask has already succeeded and its outputs are
                 # written above; enforce only changes the EXIT CODE, never whether
                 # output is produced (plan P1-2 -- the engine never fails the job).
-                if _report_flags:
-                    _report_quality_metrics = dict(result.quality_metrics)
+                # Captured unconditionally: the data-checks card (validators,
+                # quarantine, row errors) renders whether or not a report flag
+                # was requested, because quarantine removes rows from the
+                # written output and that must never be silent.
+                _report_quality_metrics = dict(result.quality_metrics)
                 if evidence_out is not None:
                     _ev_row_counts = {name: len(tbl) for name, tbl in result.outputs.items()}
                 _ev_timings = result.timings
@@ -1111,6 +1091,8 @@ def run(
                 "state": _native_route.state,
                 "label": _native_route.label,
             }
+        if not chunked:
+            payload["native_threads"] = native_threads
         if _report_flags:
             report: dict = {}
             if explain_plan:
@@ -1122,12 +1104,25 @@ def run(
                 report["quality_summary"] = _qm.get("quality_summary")
                 report["post_validation_enforce"] = post_validate_enforce
             payload["report"] = report
+        _checks = _data_checks(_qm)
+        if _checks is not None:
+            payload["data_checks"] = _checks
         emit_json(state, payload)
         if _enforce_fires:
             raise typer.Exit(code=EXIT_FINDINGS)
         return
 
+    _checks = _data_checks(_qm)
+
     if state.mode is OutputMode.quiet:
+        if _checks is not None and _checks.get("quarantine"):
+            # Quiet suppresses stdout only; a row-removing quarantine is still
+            # reported on stderr so a scripted run never loses rows silently.
+            q = _checks["quarantine"]
+            state.err_console.print(
+                warn("quarantine:"),
+                f"{q['total_quarantined']} row(s) routed to {q['output_path']}",
+            )
         if _enforce_fires:
             raise typer.Exit(code=EXIT_FINDINGS)
         return
@@ -1137,8 +1132,12 @@ def run(
         ("Mode", yaml_mode),
         ("Elapsed", f"{elapsed:.2f}s"),
     ]
+    if _checks is not None and _checks.get("quarantine"):
+        facts.append(("Quarantined", f"{_checks['quarantine']['total_quarantined']} row(s)"))
     if _native_route is not None:
         facts.append(("Route", _native_route.label))
+    if not chunked and native_threads > 1:
+        facts.append(("Threads", str(native_threads)))
     if notify_channels:
         delivered = sum(1 for r in notify_results if r["delivered"])
         facts.append(("Notify", f"{delivered}/{len(notify_results)} delivered"))
@@ -1150,6 +1149,9 @@ def run(
         next_hint=_next_hint_for_run(raw_cfg, mode),
         status="ok",
     )
+
+    if _checks is not None:
+        _render_data_checks(state, _checks)
 
     # S5 report sections (human mode). Rendered below the summary card so the
     # card stays the one-glance result; each is report-only and reads the
@@ -1317,6 +1319,80 @@ def _render_fidelity(state, fidelity_reports: dict | None) -> None:
     )
 
 
+def _data_checks(qm: dict) -> dict | None:
+    """Fold the engine's in-run data-check evidence into one envelope block.
+
+    Reads `quality_metrics["validation"]["validators"]` (the `validators:`
+    block's `ValidationReport`), `["quarantine"]` (the `QuarantineSummary`,
+    present only when rows were removed), `["row_errors"]` (per
+    table.column[trigger] counts) and `["row_error_summary_by_table"]`. All
+    four are counts and identifiers only, never cell values. Returns None when
+    the run produced none of them, so a plain run's output is unchanged.
+    """
+    out: dict = {}
+    validation = (qm.get("validation") or {}).get("validators")
+    if isinstance(validation, dict):
+        per_validator: dict[str, int] = {}
+        for finding in validation.get("findings") or ():
+            key = str((finding or {}).get("validator", "?"))
+            per_validator[key] = per_validator.get(key, 0) + len(
+                (finding or {}).get("failing_row_indices") or ()
+            )
+        out["validators"] = {
+            "run": list(validation.get("validators_run") or ()),
+            "passed": bool(validation.get("passed")),
+            "findings": len(validation.get("findings") or ()),
+            "failing_rows_by_validator": per_validator,
+        }
+    quarantine = qm.get("quarantine")
+    if isinstance(quarantine, dict) and quarantine.get("total_quarantined"):
+        out["quarantine"] = {
+            "output_path": quarantine.get("output_path"),
+            "total_quarantined": int(quarantine.get("total_quarantined") or 0),
+            "counts_by_trigger": dict(quarantine.get("counts_by_trigger") or {}),
+        }
+    row_errors = qm.get("row_errors")
+    if isinstance(row_errors, dict) and row_errors:
+        out["row_errors"] = dict(row_errors)
+    by_table = qm.get("row_error_summary_by_table")
+    if isinstance(by_table, dict) and by_table:
+        out["row_error_summary_by_table"] = by_table
+    return out or None
+
+
+def _render_data_checks(state, checks: dict) -> None:
+    """Human rendering of `_data_checks`: what the validators found, how many
+    rows quarantine removed and where they went, and per-column row-error
+    counts. Identifiers and counts only."""
+    state.console.print()
+    state.console.print(accent("Data checks"))
+    validators = checks.get("validators")
+    if validators:
+        ran = ", ".join(validators["run"]) or "none"
+        if validators["passed"]:
+            state.console.print(success(f"  Validators passed ({ran})."))
+        else:
+            tbl = make_table("Validator", "Failing rows")
+            for name, count in sorted(validators["failing_rows_by_validator"].items()):
+                tbl.add_row(name, str(count))
+            state.console.print(tbl)
+    quarantine = checks.get("quarantine")
+    if quarantine:
+        state.console.print(
+            warn("  Quarantined:"),
+            f"{quarantine['total_quarantined']} row(s) removed from the written output and "
+            f"routed to {quarantine['output_path']}",
+        )
+        for trigger, count in sorted(quarantine["counts_by_trigger"].items()):
+            state.console.print(hint("    "), f"{trigger}: {count}")
+    row_errors = checks.get("row_errors")
+    if row_errors:
+        tbl = make_table("Column [trigger]", "Rows")
+        for key, count in sorted(row_errors.items()):
+            tbl.add_row(key, str(count))
+        state.console.print(tbl)
+
+
 def _render_post_validation(state, qm: dict, *, enforce: bool) -> None:
     """Render the post-execution validator results (--post-validate[-enforce]).
 
@@ -1362,16 +1438,15 @@ def _run_chunked_mask(
     config_dict: dict,
     base_dir: Path,
     chunk_size: int,
-    substrate: str | None = None,
     vault_writer=None,
 ) -> str:
     """WS4 chunked mask path: stream each mask table's source through
     `decoy_engine.run_mask_pipeline_chunked`, writing output per chunk.
 
-    Returns the RESOLVED substrate label (never None): the chunked path has
-    no `ExecutionResult` to read a route from, so the caller's native-route
-    indicator (Phase 3.1) builds its "Route: <substrate> chunked stream"
-    label from this instead of hardcoding "pandas".
+    Returns the adapter label ("pandas"): the chunked path has no
+    `ExecutionResult` to read a route from, so the caller's native-route
+    indicator (Phase 3.1) builds its "Route: pandas chunked stream" label
+    from this.
 
     The engine's `check_chunked_compatibility` rejects anything that is
     not value-keyed (PlanCompileError -> EXIT_USAGE via the H10 typed
@@ -1387,17 +1462,13 @@ def _run_chunked_mask(
     the dtype=str contract of the plain path, so a csv -> parquet run
     produces an all-string schema.
 
-    `substrate` None keeps the chunked default (pandas, the byte-stable
-    contract this mode shipped with); an explicit value selects the
-    adapter via the engine's `select_execution_adapter`."""
+    The engine's pandas adapter is the only chunked adapter."""
     _require_local_io_endpoints(config_dict)
 
     from decoy_engine import __version__ as engine_version
     from decoy_engine import run_mask_pipeline_chunked
-    from decoy_engine.execution import resolve_substrate, select_execution_adapter
 
-    resolved_substrate = resolve_substrate(substrate)
-    adapter = select_execution_adapter(substrate=substrate) if substrate is not None else None
+    resolved_substrate = "pandas"
 
     sources = config_dict.get("sources") or {}
     targets = config_dict.get("targets") or {}
@@ -1420,7 +1491,6 @@ def _run_chunked_mask(
             iter_source_chunks(name, src_spec, base_dir, chunk_size),
             table=name,
             engine_version=engine_version,
-            adapter=adapter,
             vault_writer=vault_writer,
         )
         _write_chunked_output(
@@ -1558,13 +1628,63 @@ def _write_mask_outputs(config_dict: dict, result, base_dir: Path) -> None:
             continue
         path = _resolve_path(raw_path, base_dir)
         path.parent.mkdir(parents=True, exist_ok=True)
-        suffix = path.suffix.lower()
-        if suffix == ".parquet":
-            import pyarrow.parquet as pq
+        _write_target_table(table, entry, path)
 
-            pq.write_table(table, str(path))
-        else:
-            table.to_pandas().to_csv(path, index=False)
+
+def _write_target_table(table, entry: dict, path: Path) -> None:
+    """Write one masked table per the target's DECLARED `format`.
+
+    The schema requires `format` on every file target and a `layout` on a
+    fixed-width one, so the declared format is the only thing consulted;
+    the path suffix is a fallback for a hand-built dict with no `format`.
+    Before this dispatch a `format: fixed_width` target fell through the
+    suffix check and was silently written as CSV.
+    """
+    fmt = entry.get("format")
+    if fmt is None:
+        fmt = "parquet" if path.suffix.lower() == ".parquet" else "csv"
+    if fmt == "parquet":
+        import pyarrow.parquet as pq
+
+        pq.write_table(table, str(path))
+    elif fmt == "fixed_width":
+        from decoy_engine import write_fixed_width
+
+        write_fixed_width(_fixed_width_frame(table, entry["layout"]), entry["layout"], path)
+    else:
+        table.to_pandas().to_csv(path, index=False)
+
+
+def _fixed_width_frame(table, layout: dict):
+    """Arrow -> pandas without widening integers to float.
+
+    `to_pandas()` turns a null-bearing Arrow int column into float64, which the
+    engine's fixed-width writer rejects (fail-closed, never a silent round).
+    Map Arrow integer types to pandas nullable integers instead; an `int`
+    layout column that still arrives as an all-integral float (a masked
+    column the engine returned as float) is narrowed the same way. Anything
+    else is left for the writer to refuse.
+    """
+    import pandas as pd
+    import pyarrow as pa
+
+    nullable = {
+        pa.int8(): pd.Int8Dtype(), pa.int16(): pd.Int16Dtype(),
+        pa.int32(): pd.Int32Dtype(), pa.int64(): pd.Int64Dtype(),
+        pa.uint8(): pd.UInt8Dtype(), pa.uint16(): pd.UInt16Dtype(),
+        pa.uint32(): pd.UInt32Dtype(), pa.uint64(): pd.UInt64Dtype(),
+    }
+    frame = table.to_pandas(types_mapper=nullable.get)
+    for column in layout.get("columns") or []:
+        name = column.get("name") if isinstance(column, dict) else None
+        if column.get("type") != "int" or name not in frame.columns:
+            continue
+        series = frame[name]
+        if pd.api.types.is_float_dtype(series.dtype):
+            present = series.dropna()
+            if (present == present.round()).all():
+                frame[name] = series.astype("Int64")
+    return frame
 
 
 def _dispatch_run_notifications(

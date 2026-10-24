@@ -269,7 +269,7 @@ _TOPICS: dict[str, _Topic] = {
             "not supported with --chunked). Targets are written by file suffix (CSV\n"
             "or Parquet), independently of the source format."
         ),
-        see_also=("decoy run --help", "decoy explain substrate"),
+        see_also=("decoy run --help", "decoy explain native"),
     ),
     "native": _Topic(
         name="native",
@@ -317,25 +317,6 @@ _TOPICS: dict[str, _Topic] = {
             "possibility line, not a guarantee of the resolved route."
         ),
         see_also=("decoy run --help", "decoy info", "decoy validate preflight"),
-    ),
-    "substrate": _Topic(
-        name="substrate",
-        summary="pandas is the only masking substrate; polars was removed.",
-        body=(
-            "Masking runs on pandas. It is the default and the only substrate for\n"
-            "both plain and --chunked runs, via the engine's unified run_pipeline\n"
-            "(V2 path) and its internal PandasExecutionAdapter.\n\n"
-            "The polars masking substrate was removed from the engine: it was\n"
-            "value-equal to pandas and not faster for the per-value keyed-crypto\n"
-            "masking workload. --substrate polars and DECOY_SUBSTRATE=polars now\n"
-            "fail with a usage error (exit 1). (Polars is still used elsewhere in\n"
-            "Decoy for FK subsetting, its genuine strength; that is unaffected.)\n\n"
-            "--substrate and the DECOY_SUBSTRATE env var accept only 'pandas' and\n"
-            "are consulted only for --chunked runs; on a plain run either just\n"
-            "emits a warning to stderr.\n"
-            "(See: decoy explain chunked for when to use --chunked.)"
-        ),
-        see_also=("decoy run --help", "decoy explain chunked"),
     ),
     "differential-privacy": _Topic(
         name="differential-privacy",
@@ -555,7 +536,7 @@ def explain(
     """Explain a Decoy concept in plain English.
 
     Built-in topics: modes, transforms, disguises, output, pipeline, yaml,
-    storm, keys, vault, chunked, substrate, differential-privacy, security,
+    storm, keys, vault, chunked, differential-privacy, security,
     completion. Run with no topic to see the full list.
     """
     state = setup_output(json_, quiet, verbose)

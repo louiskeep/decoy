@@ -13,8 +13,7 @@
      to `decoy storm analyze <same file>` (test_scan_parity_with_cli*).
 
 See src/decoy/api.py for the design notes (why `data`/`out` need staged
-placeholder sources/targets before PipelineConfig validation, and why
-`substrate` must be omitted rather than passed as `None`).
+placeholder sources/targets before PipelineConfig validation).
 """
 
 from __future__ import annotations
