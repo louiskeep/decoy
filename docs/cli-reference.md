@@ -66,15 +66,17 @@ section; flags here only affect CLI-side output.
 **Usage**:
 
 ```console
-$ decoy run [OPTIONS] CONFIG
+$ decoy run [OPTIONS] CONFIGS...
 ```
 
 **Arguments**:
 
-* `CONFIG`: Path to the YAML pipeline config.  [required]
+* `CONFIGS...`: Path to the YAML pipeline config. Several paths run as a batch: each in its own process, --jobs at a time, each with its own run record (see decoy explain progress).  [required]
 
 **Options**:
 
+* `-j, --jobs INTEGER RANGE`: How many configs of a batch run at once (default 1). Ignored for a single config.  [default: 1; x&gt;=1]
+* `--watch`: Batch only: re-render the batch&#x27;s run status every second on a TTY until it finishes.
 * `-m, --mode [mask|generate]`: Operation: mask existing data or generate synthetic data.  [default: mask]
 * `--json`: Emit a structured JSON result on stdout. Progress goes to stderr.
 * `-q, --quiet`: Suppress stdout. Errors still go to stderr; exit code carries success.

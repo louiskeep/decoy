@@ -46,6 +46,7 @@ __all__ = [
     "MaskSecretConfigError",
     "UnsupportedCloudEndpointError",
     "mask",
+    "run",
     "scan",
 ]
 
@@ -329,6 +330,7 @@ def mask(
     out: Any = None,
     native: bool | None = None,
     threads: int | None = None,
+    on_progress: Any = None,
 ) -> "pd.DataFrame | dict[str, pd.DataFrame]":
     """Mask (or generate) data through the same engine path `decoy run` uses.
 
@@ -371,6 +373,10 @@ def mask(
             nothing, if it declares none). A path overrides the single
             declared table's target path. A `dict[str, path]` overrides
             per table by name.
+        on_progress: Optional callable receiving the engine's progress events
+            (`decoy_engine.progress` phases, route, rate samples, terminal) as
+            they happen; identifiers and counts only, never values. A raising
+            callback never changes the result.
         threads: Mirrors the CLI's `--threads`: threads granted to the compiled
             native kernels. `None` picks min(4, host cores) when the companion
             is installed, else 1. Must be a positive integer.
@@ -507,14 +513,15 @@ def mask(
             _native_gate.native_threads_kwargs(_native_gate.resolve_native_threads(threads))
         )
 
-        result = run_pipeline(
-            config_dict,
-            sources,
-            engine_version=engine_version,
-            derive_key=resolver,
-            instance_default_locale=instance_locale,
-            **extra_run_pipeline_kwargs,
-        )
+        with _progress_scope(on_progress):
+            result = run_pipeline(
+                config_dict,
+                sources,
+                engine_version=engine_version,
+                derive_key=resolver,
+                instance_default_locale=instance_locale,
+                **extra_run_pipeline_kwargs,
+            )
 
         route = _native_gate.classify_route(
             chunked=False,
@@ -612,3 +619,87 @@ def scan(
         sample_strategy=strategy_enum.value,
         sample_row_cap=rows,
     )
+
+
+def _progress_scope(on_progress: Any):
+    """Bind `on_progress` as the engine's progress sink for the enclosed call;
+    a no-op when None or on an engine that predates the progress contract."""
+    from contextlib import nullcontext
+
+    if on_progress is None:
+        return nullcontext()
+    try:
+        from decoy_engine.progress import CallbackSink, use_progress
+    except ImportError:  # pragma: no cover - older engine
+        return nullcontext()
+    return use_progress(CallbackSink(on_progress), interval_s=0.5)
+
+
+class RunResult:
+    """One config's outcome from `decoy.run`."""
+
+    def __init__(self, config: Any, output: Any = None, error: BaseException | None = None) -> None:
+        self.config = config
+        self.output = output
+        self.error = error
+
+    @property
+    def ok(self) -> bool:
+        return self.error is None
+
+    def __repr__(self) -> str:
+        state = "ok" if self.ok else f"error={type(self.error).__name__}"
+        return f"RunResult(config={self.config!r}, {state})"
+
+
+def run(
+    configs: Any,
+    *,
+    jobs: int = 1,
+    on_progress: Any = None,
+    **mask_kwargs: Any,
+) -> list[RunResult]:
+    """Run one or several pipeline configs through `mask()`, `jobs` at a time.
+
+    The code-pipeline counterpart of `decoy run a.yaml b.yaml --jobs N`: each
+    config runs on its own thread (the engine's progress binding is per
+    thread, so `on_progress` receives every config's events, each event's
+    `config` attribute telling them apart via the wrapper below). Returns one
+    `RunResult` per config in input order; a failing config records its
+    exception instead of raising, so the others still complete. `mask_kwargs`
+    are forwarded to `mask()` (mask_secret, master_key, key_label, native,
+    threads).
+    """
+    from concurrent.futures import ThreadPoolExecutor
+
+    if isinstance(configs, (str, Path)) or isinstance(configs, dict):
+        configs = [configs]
+    configs = list(configs)
+    if jobs < 1:
+        raise ValueError("jobs must be >= 1")
+
+    def one(cfg: Any) -> RunResult:
+        def forward(event: Any) -> None:
+            if on_progress is not None:
+                on_progress(_TaggedEvent(cfg, event))
+
+        try:
+            out = mask(config=cfg, on_progress=forward if on_progress is not None else None, **mask_kwargs)
+            return RunResult(cfg, output=out)
+        except Exception as exc:  # the caller inspects RunResult.error
+            return RunResult(cfg, error=exc)
+
+    with ThreadPoolExecutor(max_workers=jobs) as pool:
+        return list(pool.map(one, configs))
+
+
+class _TaggedEvent:
+    """An engine progress event plus the config it belongs to (attribute
+    access is forwarded to the event)."""
+
+    def __init__(self, config: Any, event: Any) -> None:
+        self.config = config
+        self.event = event
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self.event, name)

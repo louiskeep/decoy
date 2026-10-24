@@ -36,7 +36,7 @@ See also: decoy run --progress jsonl, decoy explain progress.
 """
 
 
-def _row(rec) -> dict:
+def run_row(rec) -> dict:
     st = rec.status
     return {
         "run_id": st.run_id,
@@ -60,10 +60,7 @@ def _row(rec) -> dict:
     }
 
 
-def _render_list(state, rows: list[dict]) -> None:
-    if not rows:
-        state.console.print(hint("no local runs recorded yet; `decoy run` writes one per run."))
-        return
+def rows_table(rows: list[dict]):
     tbl = make_table("Run id", "State", "Phase", "Table", "Rows", "Rows/s", "Mode", "Config")
     for r in rows:
         tbl.add_row(
@@ -76,7 +73,14 @@ def _render_list(state, rows: list[dict]) -> None:
             r["mode"],
             r["config"],
         )
-    state.console.print(tbl)
+    return tbl
+
+
+def _render_list(state, rows: list[dict]) -> None:
+    if not rows:
+        state.console.print(hint("no local runs recorded yet; `decoy run` writes one per run."))
+        return
+    state.console.print(rows_table(rows))
 
 
 def _render_detail(state, r: dict) -> None:
@@ -107,8 +111,8 @@ def status_command(
     def snapshot() -> list[dict]:
         if run_id is not None:
             rec = _runs.find_run(run_id)
-            return [_row(rec)] if rec is not None else []
-        rows = [_row(r) for r in _runs.list_runs(limit=limit)]
+            return [run_row(rec)] if rec is not None else []
+        rows = [run_row(r) for r in _runs.list_runs(limit=limit)]
         if active:
             rows = [r for r in rows if r["state"] in ("running", "stale")]
         return rows
@@ -125,12 +129,7 @@ def status_command(
     if follow and state.mode is OutputMode.default:
         from rich.live import Live
 
-        def table_for(rows: list[dict]):
-            tbl = make_table("Run id", "State", "Phase", "Table", "Rows", "Rows/s", "Mode", "Config")
-            for r in rows:
-                tbl.add_row(r["run_id"], r["state"], r["phase"] or "", r["table"] or "", f"{r['rows_done']:,}",
-                            "" if r["rows_per_sec"] is None else f"{r['rows_per_sec']:,.0f}", r["mode"], r["config"])
-            return tbl
+        table_for = rows_table
 
         try:
             with Live(table_for(rows), console=state.console, refresh_per_second=4) as live:

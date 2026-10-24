@@ -10,7 +10,7 @@ for `import decoy; decoy.mask(...)` without shelling out to the CLI. See
 `decoy.api` for the implementation -- both wrap the exact same
 decoy_engine entrypoints the CLI commands call.
 
-`mask` / `scan` are resolved lazily (module `__getattr__`, PEP 562) so a
+`mask` / `run` / `scan` are resolved lazily (module `__getattr__`, PEP 562) so a
 bare `import decoy` (e.g. just reading `__version__`) does not eagerly
 pull in typer/pandas/pyarrow/decoy_engine.
 """
@@ -20,6 +20,8 @@ __version__ = "0.1.0"
 _LAZY_API = frozenset(
     {
         "mask",
+        "run",
+        "RunResult",
         "scan",
         "MaskSecretConfigError",
         "ConfigValidationError",

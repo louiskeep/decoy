@@ -8,6 +8,21 @@ version numbers follow the [versioning policy](docs/release/versioning.md).
 
 ## [Unreleased]
 
+### Added (parity C4c/C4d: batch runs and the library `decoy.run`, 2026-10-24)
+
+- **`decoy run a.yaml b.yaml ... --jobs N [--watch]`.** Several configs run
+  as a batch, each in its own child process with its own run record
+  (`<batch-id>-1`, `-2`, ...), `--jobs` at a time (default 1). The exit code is
+  the worst child's; `--json` returns one envelope with every child's result.
+  Two configs that declare the same target path are refused up front;
+  `--vault`, `--evidence-out` and `--progress-file` name one file and are
+  refused for a batch. `--watch` re-renders the batch's run status every
+  second on a TTY.
+- **`decoy.run(configs, jobs=N, on_progress=...)`** runs configs through
+  `decoy.mask()` on a thread pool and returns one `RunResult` per config
+  (a failing config records its exception instead of raising);
+  `decoy.mask(on_progress=...)` receives the engine's progress events.
+
 ### Added (parity C4a/C4b: progress stream, local run records, `decoy status`, 2026-10-24)
 
 - **`decoy run` reports live progress from the engine's new progress contract.**

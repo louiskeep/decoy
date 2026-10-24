@@ -187,12 +187,27 @@ def _load_raw_config(config_path: Path) -> dict | None:
 
 
 def run(
-    config: Path = typer.Argument(
+    configs: list[Path] = typer.Argument(
         ...,
         exists=True,
         dir_okay=False,
         readable=True,
-        help="Path to the YAML pipeline config.",
+        help=(
+            "Path to the YAML pipeline config. Several paths run as a batch: each in its own "
+            "process, --jobs at a time, each with its own run record (see decoy explain progress)."
+        ),
+    ),
+    jobs: int = typer.Option(
+        1,
+        "--jobs",
+        "-j",
+        min=1,
+        help="How many configs of a batch run at once (default 1). Ignored for a single config.",
+    ),
+    watch: bool = typer.Option(
+        False,
+        "--watch",
+        help="Batch only: re-render the batch's run status every second on a TTY until it finishes.",
     ),
     mode: Mode = typer.Option(
         Mode.mask,
@@ -442,6 +457,38 @@ def run(
     section; flags here only affect CLI-side output.
     """
     state = setup_output(json_, quiet, verbose)
+    if len(configs) > 1:
+        raise typer.Exit(
+            code=_run_batch(
+                state,
+                configs,
+                jobs=jobs,
+                watch=watch,
+                run_id=run_id,
+                options=dict(
+                    mode=mode,
+                    master_key=master_key,
+                    mask_secret=mask_secret,
+                    chunked=chunked,
+                    chunk_size=chunk_size,
+                    threads=threads,
+                    key_label=key_label,
+                    notify=notify,
+                    notify_on=notify_on,
+                    native=native,
+                    no_native=no_native,
+                    explain_plan=explain_plan,
+                    fidelity=fidelity,
+                    post_validate=post_validate,
+                    post_validate_enforce=post_validate_enforce,
+                    no_record=no_record,
+                    vault=vault,
+                    evidence_out=evidence_out,
+                    progress_file=progress_file,
+                ),
+            )
+        )
+    config = configs[0]
     config_str = str(config)
 
     # Parse --notify specs BEFORE the run (D3): a bad spec is a usage error
@@ -1939,3 +1986,158 @@ def _count_chunk_rows(table: str, chunks):
     except ImportError:  # pragma: no cover - older engine
         return chunks
     return get_active_channel().count_rows(table, chunks)
+
+
+# ---------------------------------------------------------------------------
+# Batch mode: several configs, --jobs at a time (parity C4c)
+# ---------------------------------------------------------------------------
+
+_BATCH_PER_RUN_ONLY = ("vault", "evidence_out", "progress_file")
+
+
+def _batch_child_argv(config: Path, child_run_id: str, options: dict) -> list[str]:
+    """`python -m decoy run <config> --json --progress none --run-id <id>` plus the
+    pass-through flags; each child is a normal single run in its own process."""
+    argv = [sys.executable, "-m", "decoy", "run", str(config), "--json", "--progress", "none",
+            "--run-id", child_run_id, "--mode", options["mode"].value]
+    if options["master_key"]:
+        argv += ["--master-key", options["master_key"]]
+    if options["mask_secret"]:
+        argv += ["--mask-secret", options["mask_secret"]]
+    if options["key_label"]:
+        argv += ["--key-label", options["key_label"]]
+    if options["chunked"]:
+        argv += ["--chunked", "--chunk-size", str(options["chunk_size"])]
+    if options["threads"] is not None:
+        argv += ["--threads", str(options["threads"])]
+    for spec in options["notify"] or ():
+        argv += ["--notify", spec]
+    if options["notify"]:
+        argv += ["--notify-on", options["notify_on"].value]
+    for flag in ("native", "no_native", "explain_plan", "fidelity", "post_validate", "post_validate_enforce", "no_record"):
+        if options[flag]:
+            argv.append("--" + flag.replace("_", "-"))
+    return argv
+
+
+def _batch_target_paths(config: Path) -> set[str]:
+    raw = _load_raw_config(config) or {}
+    targets = raw.get("targets") or {}
+    out: set[str] = set()
+    if isinstance(targets, dict):
+        for entry in targets.values():
+            if isinstance(entry, dict) and isinstance(entry.get("path"), str):
+                out.add(str(_resolve_path(entry["path"], config.parent)))
+    return out
+
+
+def _run_batch(state, configs: list[Path], *, jobs: int, watch: bool, run_id: str | None, options: dict) -> int:
+    """Run every config as its own child process, `jobs` at a time. The exit
+    code is the worst child's. Two configs that declare the same target path are
+    refused up front (they would race on the file)."""
+    import subprocess
+    from concurrent.futures import ThreadPoolExecutor
+
+    from decoy import runs as _runs
+
+    def usage(msg: str) -> int:
+        if state.mode is OutputMode.json:
+            emit_json(state, {"command": "run", "status": "error", "error": msg})
+        elif state.mode is not OutputMode.quiet:
+            state.err_console.print(error("error:"), msg)
+        return EXIT_USAGE
+
+    for name in _BATCH_PER_RUN_ONLY:
+        if options.get(name):
+            return usage(f"--{name.replace('_', '-')} names one file and cannot be shared by a batch; run those configs one at a time")
+    seen: dict[str, Path] = {}
+    for cfg in configs:
+        for path in _batch_target_paths(cfg):
+            if path in seen and seen[path] != cfg:
+                return usage(f"{cfg} and {seen[path]} both write {path}; a batch cannot run two configs with the same target")
+            seen[path] = cfg
+
+    batch_id = run_id or _runs.new_run_id()
+    children = [(cfg, f"{batch_id}-{i + 1}") for i, cfg in enumerate(configs)]
+
+    def run_child(item: tuple[Path, str]) -> dict:
+        cfg, child_id = item
+        started = time.perf_counter()
+        proc = subprocess.run(_batch_child_argv(cfg, child_id, options), capture_output=True, text=True)
+        envelope: dict | None = None
+        for line in reversed(proc.stdout.splitlines()):
+            if line.startswith("{"):
+                try:
+                    envelope = _json.loads(line)
+                except ValueError:
+                    envelope = None
+                break
+        return {
+            "config": str(cfg),
+            "run_id": child_id,
+            "exit_code": proc.returncode,
+            "elapsed_s": round(time.perf_counter() - started, 3),
+            "result": envelope,
+            "stderr_tail": proc.stderr.strip().splitlines()[-3:] if proc.returncode else [],
+        }
+
+    results: list[dict] = []
+    with ThreadPoolExecutor(max_workers=jobs) as pool:
+        futures = [pool.submit(run_child, item) for item in children]
+        if watch and state.mode is OutputMode.default and state.err_console.is_terminal:
+            _watch_batch(state, [cid for _, cid in children], futures)
+        results = [f.result() for f in futures]
+
+    worst = max((r["exit_code"] for r in results), default=EXIT_OK)
+    if state.mode is OutputMode.json:
+        emit_json(state, {
+            "command": "run",
+            "status": "ok" if worst == EXIT_OK else "error",
+            "batch_id": batch_id,
+            "jobs": jobs,
+            "exit_code": worst,
+            "runs": results,
+        })
+        return worst
+    if state.mode is OutputMode.quiet:
+        return worst
+    tbl = make_table("Config", "Run id", "Exit", "Elapsed")
+    for r in results:
+        tbl.add_row(r["config"], r["run_id"], str(r["exit_code"]), f"{r['elapsed_s']:.2f}s")
+    render_card(
+        state,
+        command="decoy run (batch)",
+        facts=[("Configs", str(len(results))), ("Jobs", str(jobs)), ("Batch id", batch_id),
+               ("Failed", str(sum(1 for r in results if r["exit_code"])))],
+        next_hint=f"decoy status --json   # records {batch_id}-1 .. {batch_id}-{len(results)}",
+        status="ok" if worst == EXIT_OK else "error",
+    )
+    state.console.print(tbl)
+    for r in results:
+        for line in r["stderr_tail"]:
+            state.err_console.print(error(f"[{r['run_id']}]"), line, markup=False)
+    return worst
+
+
+def _watch_batch(state, run_ids: list[str], futures) -> None:
+    """Re-render the batch's run records every second until every child exits."""
+    from rich.live import Live
+
+    from decoy import runs as _runs
+    from decoy.cli.status import rows_table, run_row
+
+    def snapshot():
+        rows = []
+        for rid in run_ids:
+            rec = _runs.find_run(rid)
+            rows.append(run_row(rec) if rec is not None else {"run_id": rid, "state": "pending", "phase": None,
+                        "table": None, "rows_done": 0, "rows_per_sec": None, "mode": "", "config": ""})
+        return rows_table(rows)
+
+    try:
+        with Live(snapshot(), console=state.err_console, refresh_per_second=4, transient=True) as live:
+            while not all(f.done() for f in futures):
+                time.sleep(1.0)
+                live.update(snapshot())
+    except KeyboardInterrupt:
+        raise
