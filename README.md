@@ -20,6 +20,10 @@ machine.
 pip install decoy-cli
 ```
 
+`decoy-cli` is not published to PyPI yet. Until the first signed release
+bundle ships, install from a source checkout with `pip install -e .`
+alongside a checkout of `decoy-engine`.
+
 This installs the `decoy` console script and pulls in `decoy-engine` as a
 dependency. Python 3.10, 3.11, and 3.12 are supported. The base install is
 the full local masker + generator (CSV/Parquet, DuckDB, the pandas/polars/
@@ -55,9 +59,10 @@ raw traceback. `ner` also needs a downloaded spaCy model, a separate step:
 the SDK dependencies for other tooling in the stack, but the CLI's own
 execution path only reads/writes local files, and a config that points a
 `decoy run` source or target at S3/GCS fails closed with a clear error
-rather than silently dropping the job's output. `vault`'s reversible-token
-support has no CLI wiring at all today; the extra is kept only so an
-existing `pip install decoy-cli[vault]` still resolves.
+rather than silently dropping the job's output. The token vault needs no
+extra: `decoy run --vault` and `decoy unmask` are in the base install; the
+`vault` extra is kept only so an existing `pip install decoy-cli[vault]`
+still resolves.
 
 ## Quickstart
 
@@ -108,6 +113,7 @@ declared under `targets:` in the YAML.
 | `decoy list templates`           | List the bundled pipeline templates.                                         |
 | `decoy show template <name>`     | Dump one bundled template to stdout (e.g. `decoy show template hipaa`).      |
 | `decoy explain <topic>`          | In-CLI reference (exit codes, providers, strategies).                         |
+| `decoy status`                   | Active and recent local runs recorded by `decoy run`; `--follow` for a live view. |
 
 Run `decoy --help` for the full surface, or `decoy <command> --help` for
 any subcommand.

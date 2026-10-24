@@ -8,6 +8,77 @@ version numbers follow the [versioning policy](docs/release/versioning.md).
 
 ## [Unreleased]
 
+### Added (parity C4c/C4d: batch runs and the library `decoy.run`, 2026-10-24)
+
+- **`decoy run a.yaml b.yaml ... --jobs N [--watch]`.** Several configs run
+  as a batch, each in its own child process with its own run record
+  (`<batch-id>-1`, `-2`, ...), `--jobs` at a time (default 1). The exit code is
+  the worst child's; `--json` returns one envelope with every child's result.
+  Two configs that declare the same target path are refused up front;
+  `--vault`, `--evidence-out` and `--progress-file` name one file and are
+  refused for a batch. `--watch` re-renders the batch's run status every
+  second on a TTY.
+- **`decoy.run(configs, jobs=N, on_progress=...)`** runs configs through
+  `decoy.mask()` on a thread pool and returns one `RunResult` per config
+  (a failing config records its exception instead of raising);
+  `decoy.mask(on_progress=...)` receives the engine's progress events.
+
+### Added (parity C4a/C4b: progress stream, local run records, `decoy status`, 2026-10-24)
+
+- **`decoy run` reports live progress from the engine's new progress contract.**
+  `--progress auto` (default) drives a live status line on a TTY (phase, table,
+  rows done, rows/s, route); `--progress jsonl` writes one JSON event per line
+  to stderr for CI and orchestrators, alongside `--json`; `--progress-file`
+  appends the same lines to a file. Events carry identifiers and counts only.
+- **Local run records.** Every run writes `$DECOY_HOME/runs/<run-id>/`
+  (default `~/.decoy/runs`): `status.json` (state, phase, table, rows, rate,
+  route, exit code, exception class), `events.jsonl`, a heartbeat and a
+  redacted `run.log`; `--run-id` names it, `--no-record` skips it; the newest
+  50 finished records are kept. Records hold metadata only.
+- **`decoy status [RUN_ID] [--follow] [--active] [--json]`.** Lists active and
+  recent runs from those records; a running record whose process is gone or
+  whose heartbeat expired shows as `stale`, never as succeeded. `--follow`
+  re-renders every second while a run is active. Read-only.
+- `decoy explain progress` describes the stream and the records.
+
+### Fixed (parity C1a/C1b, 2026-10-24)
+
+- **A `format: fixed_width` target is written as fixed-width.** `decoy run`
+  dispatched its writer on the path suffix only, so a declared fixed-width
+  target (with its `layout`) was silently written as CSV. The writer now
+  follows the declared target format and calls the engine's
+  `write_fixed_width`; integer layout columns keep their type through the
+  Arrow-to-pandas hop. A fixed-width target without a `layout` is a usage
+  error at validation, as before.
+- **Validator findings, quarantined rows and row errors are reported.** The
+  engine runs the `validators:` / `quarantine:` blocks inside `run_pipeline`
+  and removes quarantined rows from the written output; the CLI read none of
+  that evidence, so rows vanished with no message. `decoy run` now prints a
+  "Data checks" section (validators run and failing-row counts per validator,
+  rows quarantined and the JSONL path, per-column row-error counts), adds a
+  `data_checks` block to the `--json` envelope, and under `--quiet` still
+  writes one quarantine line to stderr. Counts and identifiers only, never
+  cell values.
+
+### Added (parity C1c: `--threads`, 2026-10-24)
+
+`decoy run --threads N` and `decoy.mask(threads=)` grant N threads to the
+engine's compiled native kernels (`run_pipeline(native_threads=)`). Default:
+min(4, host cores) when the native companion is installed, else 1, matching
+the platform's claim-time rule; the pandas oracle and `--chunked` ignore it.
+The grant is omitted on an engine that predates the knob. The run summary
+shows `Threads` when more than one is granted and the JSON envelope carries
+`native_threads`.
+
+### Removed (parity C1d: `--substrate`, 2026-10-24) -- BREAKING, pre-GA
+
+`decoy run --substrate`, the `DECOY_SUBSTRATE` environment variable,
+`decoy.mask(substrate=)` and the `decoy explain substrate` topic are gone.
+The engine removed caller-chosen substrates (pandas is its only adapter and
+the parity oracle; native kernels are route-chosen), so the flag selected
+nothing. `--chunked` still streams on the pandas chunked path; `decoy explain
+chunked` and `decoy explain native` cover routing.
+
 ### Changed (CLI command-surface redesign, 2026-10-23) -- BREAKING, pre-GA
 
 The `decoy` command surface was redesigned from ~17 top-level commands plus 11

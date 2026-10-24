@@ -54,6 +54,39 @@ def spinner(
         yield
 
 
+class LiveStatusHandle:
+    """A spinner whose text a progress sink can update mid-run."""
+
+    def __init__(self, progress: Progress | None, task_id: int | None, message: str) -> None:
+        self._progress = progress
+        self._task_id = task_id
+        self._base = message
+
+    def update(self, detail: str | None) -> None:
+        if self._progress is None or self._task_id is None:
+            return
+        text = self._base if not detail else f"{self._base} {detail}"
+        self._progress.update(self._task_id, description=text)
+
+
+@contextmanager
+def live_status(state: OutputState, message: str, *, style: str = "dots") -> Iterator[LiveStatusHandle]:
+    """`spinner` with an updatable description, for runs that report progress."""
+    if _disabled(state):
+        yield LiveStatusHandle(None, None, message)
+        return
+    progress = Progress(
+        SpinnerColumn(spinner_name=style),
+        TextColumn("[info]{task.description}[/info]"),
+        TimeElapsedColumn(),
+        console=state.err_console,
+        transient=True,
+    )
+    with progress:
+        task_id = progress.add_task(message, total=None)
+        yield LiveStatusHandle(progress, task_id, message)
+
+
 class _BarHandle:
     def __init__(self, progress: Progress | None, task_id: int | None) -> None:
         self._progress = progress

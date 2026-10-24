@@ -17,3 +17,13 @@ import os
 os.environ.pop("FORCE_COLOR", None)
 os.environ["NO_COLOR"] = "1"
 os.environ["TERM"] = "dumb"
+
+
+import pytest
+
+
+@pytest.fixture(autouse=True)
+def _isolated_decoy_home(tmp_path_factory, monkeypatch):
+    """`decoy run` writes a local run record under $DECOY_HOME/runs; point it at
+    a per-test directory so the suite never touches the developer's ~/.decoy."""
+    monkeypatch.setenv("DECOY_HOME", str(tmp_path_factory.mktemp("decoy-home")))

@@ -117,7 +117,7 @@ def test_feature_topics_are_documented():
     """The recently-shipped run features + DP must each have an explain
     topic so they are discoverable from `decoy explain`."""
     names = set(topic_names())
-    for t in ("vault", "chunked", "substrate", "differential-privacy", "extras"):
+    for t in ("vault", "chunked", "differential-privacy", "extras"):
         assert t in names, f"missing explain topic: {t}"
 
 

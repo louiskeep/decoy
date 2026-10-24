@@ -269,7 +269,30 @@ _TOPICS: dict[str, _Topic] = {
             "not supported with --chunked). Targets are written by file suffix (CSV\n"
             "or Parquet), independently of the source format."
         ),
-        see_also=("decoy run --help", "decoy explain substrate"),
+        see_also=("decoy run --help", "decoy explain native"),
+    ),
+    "progress": _Topic(
+        name="progress",
+        summary="Live progress, JSONL events, and local run records for `decoy status`.",
+        body=(
+            "Every `decoy run` reports the engine's progress events: phases (resolve,\n"
+            "mask or generate per table), the execution route, per-table row counts\n"
+            "and rows/s, and the terminal state. Events carry table names and counts\n"
+            "only, never data values.\n\n"
+            "--progress auto (default) shows a live status line on a TTY and nothing\n"
+            "otherwise. --progress jsonl writes one JSON event per line to stderr, so\n"
+            "CI logs and orchestrators can follow a run without a TTY; it works with\n"
+            "--json (the result envelope stays the one stdout object). --progress-file\n"
+            "appends the same lines to a file.\n\n"
+            "Each run also writes a local record under $DECOY_HOME/runs/<run-id>/\n"
+            "(default ~/.decoy/runs): status.json, events.jsonl, a heartbeat and a\n"
+            "redacted run.log. `decoy status` lists active and recent runs from\n"
+            "those records; a running record whose process is gone or whose heartbeat\n"
+            "expired shows as stale, never as succeeded. --run-id names the record,\n"
+            "--no-record skips it. Records hold metadata only (paths, counts, times,\n"
+            "exit code, exception class), never rows, secrets or config contents."
+        ),
+        see_also=("decoy run --help", "decoy status --help"),
     ),
     "native": _Topic(
         name="native",
@@ -317,25 +340,6 @@ _TOPICS: dict[str, _Topic] = {
             "possibility line, not a guarantee of the resolved route."
         ),
         see_also=("decoy run --help", "decoy info", "decoy validate preflight"),
-    ),
-    "substrate": _Topic(
-        name="substrate",
-        summary="pandas is the only masking substrate; polars was removed.",
-        body=(
-            "Masking runs on pandas. It is the default and the only substrate for\n"
-            "both plain and --chunked runs, via the engine's unified run_pipeline\n"
-            "(V2 path) and its internal PandasExecutionAdapter.\n\n"
-            "The polars masking substrate was removed from the engine: it was\n"
-            "value-equal to pandas and not faster for the per-value keyed-crypto\n"
-            "masking workload. --substrate polars and DECOY_SUBSTRATE=polars now\n"
-            "fail with a usage error (exit 1). (Polars is still used elsewhere in\n"
-            "Decoy for FK subsetting, its genuine strength; that is unaffected.)\n\n"
-            "--substrate and the DECOY_SUBSTRATE env var accept only 'pandas' and\n"
-            "are consulted only for --chunked runs; on a plain run either just\n"
-            "emits a warning to stderr.\n"
-            "(See: decoy explain chunked for when to use --chunked.)"
-        ),
-        see_also=("decoy run --help", "decoy explain chunked"),
     ),
     "differential-privacy": _Topic(
         name="differential-privacy",
@@ -555,7 +559,7 @@ def explain(
     """Explain a Decoy concept in plain English.
 
     Built-in topics: modes, transforms, disguises, output, pipeline, yaml,
-    storm, keys, vault, chunked, substrate, differential-privacy, security,
+    storm, keys, vault, chunked, progress, differential-privacy, security,
     completion. Run with no topic to see the full list.
     """
     state = setup_output(json_, quiet, verbose)
