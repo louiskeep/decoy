@@ -8,6 +8,24 @@ version numbers follow the [versioning policy](docs/release/versioning.md).
 
 ## [Unreleased]
 
+### Added (parity C4a/C4b: progress stream, local run records, `decoy status`, 2026-10-24)
+
+- **`decoy run` reports live progress from the engine's new progress contract.**
+  `--progress auto` (default) drives a live status line on a TTY (phase, table,
+  rows done, rows/s, route); `--progress jsonl` writes one JSON event per line
+  to stderr for CI and orchestrators, alongside `--json`; `--progress-file`
+  appends the same lines to a file. Events carry identifiers and counts only.
+- **Local run records.** Every run writes `$DECOY_HOME/runs/<run-id>/`
+  (default `~/.decoy/runs`): `status.json` (state, phase, table, rows, rate,
+  route, exit code, exception class), `events.jsonl`, a heartbeat and a
+  redacted `run.log`; `--run-id` names it, `--no-record` skips it; the newest
+  50 finished records are kept. Records hold metadata only.
+- **`decoy status [RUN_ID] [--follow] [--active] [--json]`.** Lists active and
+  recent runs from those records; a running record whose process is gone or
+  whose heartbeat expired shows as `stale`, never as succeeded. `--follow`
+  re-renders every second while a run is active. Read-only.
+- `decoy explain progress` describes the stream and the records.
+
 ### Fixed (parity C1a/C1b, 2026-10-24)
 
 - **A `format: fixed_width` target is written as fixed-width.** `decoy run`

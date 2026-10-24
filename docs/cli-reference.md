@@ -9,6 +9,7 @@ Try one of:
   decoy validate compile pipeline.yaml --explain  Explain per-column strategy and compile decisions.
   decoy run pipeline.yaml          Run a masking or generation pipeline.
   decoy subset pipeline.yaml --dry-run   Preview a FK-aware referential subset.
+  decoy status                     Active and recent local runs (live with --follow).
   decoy unmask pipeline.yaml masked.csv   Recover fpe columns from a masked file.
   decoy fit source.csv             Fit a distribution snapshot for statistical generation.
   decoy init                       Scaffold a starter pipeline interactively.
@@ -49,6 +50,7 @@ $ decoy [OPTIONS] COMMAND [ARGS]...
 * `show`: Show detail for one reference item.
 * `doctor`: Check engine and dependency health.
 * `subset`: Cut a referentially-complete FK-aware...
+* `status`: Show active and recent local runs recorded...
 * `validate`: Pre-run validation gate.
 * `scan`: Profile a dataset for PII and...
 * `report`: The post-run surface: show / render /...
@@ -83,6 +85,10 @@ $ decoy run [OPTIONS] CONFIG
 * `--chunk-size INTEGER RANGE`: Rows per chunk in --chunked mode.  [default: 100000; x&gt;=1]
 * `--vault PATH`: Write the token vault (encrypted source-to-masked map for vault: true columns) to this path. The vault plus the config re-identify every vaulted value: store them separately and never alongside the masked output. Needs the engine&#x27;s vault extra (cryptography).
 * `--threads INTEGER`: Threads granted to the engine&#x27;s compiled native kernels on this run. Default: min(4, host cores) when the native companion is installed, else 1. Only the native routes use it; the pandas oracle and --chunked ignore it. Must be a positive integer.
+* `--progress TEXT`: How to show progress: &#x27;auto&#x27; (a live status line on a TTY, nothing otherwise), &#x27;jsonl&#x27; (one JSON event per line on stderr, works without a TTY and alongside --json), or &#x27;none&#x27;. Events carry phases, the route, per-table row counts and rates, and the terminal state; never data values.  [default: auto]
+* `--progress-file PATH`: Append the JSONL progress events to this file (in addition to --progress).
+* `--run-id TEXT`: Identifier for this run&#x27;s local record (default: a UTC stamp plus a random suffix). Records live under $DECOY_HOME/runs (default ~/.decoy/runs) and are what `decoy status` reads.
+* `--no-record`: Do not write a local run record for this run.
 * `--key-label TEXT`: Stable namespace string for the --master-key generation key hierarchy (synthetic generation only, not masking). Required when --master-key is set. Pick something durable (e.g. &#x27;customers_q4&#x27;); changing it produces different generated output. CLI flag only -- PipelineConfig forbids unknown top-level keys, so there is no YAML equivalent.
 * `--evidence-out PATH`: Write a local evidence manifest (JSON) to this path after a successful run. The manifest records pipeline hash, input/output file fingerprints, run metadata, and row counts/timings/warnings where available (these are omitted for --chunked runs). It does NOT contain raw data values. Use `decoy report verify` to check the manifest against current files. See: decoy explain evidence (when available).
 * `--notify TEXT`: Notify a channel after the run reaches its terminal state. Repeatable. Spec is &#x27;kind:target&#x27;: webhook:&lt;url&gt;, slack:&lt;url&gt;, email:&lt;address&gt;. Best-effort: a channel failure never changes the run&#x27;s exit code. Webhook signing key from DECOY_NOTIFY_WEBHOOK_SECRET (unsigned if unset); SMTP from DECOY_NOTIFY_SMTP_HOST/_PORT/_USER/_PASS/_FROM. Nothing is persisted to .decoy/workspace.json -- targets and secrets are flags/env only, never written to disk.
@@ -361,7 +367,7 @@ See also: decoy scan, decoy run.
 Explain a Decoy concept in plain English.
 
 Built-in topics: modes, transforms, disguises, output, pipeline, yaml,
-storm, keys, vault, chunked, differential-privacy, security,
+storm, keys, vault, chunked, progress, differential-privacy, security,
 completion. Run with no topic to see the full list.
 
 **Usage**:
@@ -640,6 +646,47 @@ What this command checks before touching any data:
     any output directory is created.
 
 See also: decoy run, decoy validate, decoy validate preflight.
+
+
+## `decoy status`
+
+Show active and recent local runs recorded by `decoy run`.
+
+**Usage**:
+
+```console
+$ decoy status [OPTIONS] [RUN_ID]
+```
+
+**Arguments**:
+
+* `[RUN_ID]`: Show one run in detail.
+
+**Options**:
+
+* `--json`: Emit JSON on stdout.
+* `-q, --quiet`: Suppress stdout; exit code carries the answer.
+* `-v, --verbose`: Debug-level CLI logs on stderr.
+* `-f, --follow`: Re-render every second while any run is active.
+* `--limit INTEGER RANGE`: How many recent runs to list.  [default: 20; x&gt;=1]
+* `--active`: List only running (or stale) runs.
+* `--help`: Show this message and exit.
+
+Examples:
+
+  decoy status
+    Active and recent local runs, newest first.
+
+  decoy status 20261024T120000-1a2b3c
+    One run in detail: phase, rows, route, exit code, record directory.
+
+  decoy status --follow
+    Re-render every second until no run is active (Ctrl-C to stop).
+
+  decoy status --json
+    The same as a JSON list, for scripts.
+
+See also: decoy run --progress jsonl, decoy explain progress.
 
 
 ## `decoy validate`

@@ -26,6 +26,7 @@ from decoy.cli.scan import scan_app
 from decoy.cli.schema import SCHEMA_EPILOG
 from decoy.cli.schema import schema as schema_command
 from decoy.cli.subset import SUBSET_EPILOG
+from decoy.cli.status import STATUS_EPILOG, status_command
 from decoy.cli.subset import subset as subset_command
 from decoy.cli.unmask import UNMASK_EPILOG
 from decoy.cli.unmask import unmask as unmask_command
@@ -44,6 +45,7 @@ Try one of:
   decoy validate compile pipeline.yaml --explain  Explain per-column strategy and compile decisions.
   decoy run pipeline.yaml          Run a masking or generation pipeline.
   decoy subset pipeline.yaml --dry-run   Preview a FK-aware referential subset.
+  decoy status                     Active and recent local runs (live with --follow).
   decoy unmask pipeline.yaml masked.csv   Recover fpe columns from a masked file.
   decoy fit source.csv             Fit a distribution snapshot for statistical generation.
   decoy init                       Scaffold a starter pipeline interactively.
@@ -102,6 +104,7 @@ app.command(name="list", epilog=LIST_EPILOG)(list_)
 app.command(name="show", epilog=SHOW_EPILOG)(show)
 app.command(name="doctor", epilog=DOCTOR_EPILOG)(doctor)
 app.command(name="subset", epilog=SUBSET_EPILOG)(subset_command)
+app.command(name="status", epilog=STATUS_EPILOG)(status_command)
 
 
 if __name__ == "__main__":

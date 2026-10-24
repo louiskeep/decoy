@@ -113,6 +113,7 @@ declared under `targets:` in the YAML.
 | `decoy list templates`           | List the bundled pipeline templates.                                         |
 | `decoy show template <name>`     | Dump one bundled template to stdout (e.g. `decoy show template hipaa`).      |
 | `decoy explain <topic>`          | In-CLI reference (exit codes, providers, strategies).                         |
+| `decoy status`                   | Active and recent local runs recorded by `decoy run`; `--follow` for a live view. |
 
 Run `decoy --help` for the full surface, or `decoy <command> --help` for
 any subcommand.

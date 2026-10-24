@@ -13,7 +13,9 @@ before this module sees them.
 import binascii
 import json as _json
 import os
+import sys
 import time
+from contextlib import contextmanager
 from datetime import datetime, timezone
 from enum import Enum
 from pathlib import Path
@@ -25,7 +27,7 @@ from decoy import __version__ as _cli_version
 from decoy import _native_gate
 from decoy.cli._sources import iter_source_chunks, read_source
 from decoy.cli._yaml_errors import sanitize_yaml_error
-from decoy.cli.exit_codes import EXIT_CAPACITY, EXIT_FINDINGS, EXIT_RUNTIME, EXIT_USAGE
+from decoy.cli.exit_codes import EXIT_CAPACITY, EXIT_FINDINGS, EXIT_OK, EXIT_RUNTIME, EXIT_USAGE
 from decoy.cli.extras import (
     MissingExtraError,
     UnsupportedCloudEndpointError,
@@ -36,7 +38,7 @@ from decoy.cli.extras import (
 )
 from decoy.ui.card import render_card
 from decoy.ui.output import OutputMode, emit_json, setup_output
-from decoy.ui.progress import spinner
+from decoy.ui.progress import live_status
 from decoy.ui.table import make_table
 from decoy.ui.theme import accent, code, error, hint, success, warn
 
@@ -290,6 +292,35 @@ def run(
             "ignore it. Must be a positive integer."
         ),
     ),
+    progress: str = typer.Option(
+        "auto",
+        "--progress",
+        help=(
+            "How to show progress: 'auto' (a live status line on a TTY, nothing otherwise), "
+            "'jsonl' (one JSON event per line on stderr, works without a TTY and alongside "
+            "--json), or 'none'. Events carry phases, the route, per-table row counts and "
+            "rates, and the terminal state; never data values."
+        ),
+    ),
+    progress_file: Path = typer.Option(
+        None,
+        "--progress-file",
+        help="Append the JSONL progress events to this file (in addition to --progress).",
+    ),
+    run_id: str = typer.Option(
+        None,
+        "--run-id",
+        help=(
+            "Identifier for this run's local record (default: a UTC stamp plus a random "
+            "suffix). Records live under $DECOY_HOME/runs (default ~/.decoy/runs) and are "
+            "what `decoy status` reads."
+        ),
+    ),
+    no_record: bool = typer.Option(
+        False,
+        "--no-record",
+        help="Do not write a local run record for this run.",
+    ),
     key_label: str = typer.Option(
         None,
         "--key-label",
@@ -444,6 +475,14 @@ def run(
             state.err_console.print(error("error:"), msg)
         raise typer.Exit(code=EXIT_USAGE)
 
+    if progress not in ("auto", "jsonl", "none"):
+        msg = f"--progress must be one of auto, jsonl, none; got {progress!r}"
+        if state.mode is OutputMode.json:
+            emit_json(state, {"command": "run", "status": "error", "config": config_str, "error": msg})
+        elif state.mode is not OutputMode.quiet:
+            state.err_console.print(error("error:"), msg)
+        raise typer.Exit(code=EXIT_USAGE)
+
     raw_cfg = _load_raw_config(config)
     yaml_mode = _detect_mode(raw_cfg) or mode.value
 
@@ -472,10 +511,21 @@ def run(
     _report_flags = explain_plan or fidelity or post_validation
     _report_quality_metrics: dict | None = None
 
+    _record = None if no_record else _open_run_record(state, config, yaml_mode, run_id)
+
     _run_started_at = datetime.now(timezone.utc)
     started = time.perf_counter()
     try:
-        with spinner(state, f"Running {yaml_mode}..."):
+        with (
+            live_status(state, f"Running {yaml_mode}...") as _live,
+            _progress_binding(
+                record=_record,
+                live=_live,
+                progress=progress,
+                progress_file=progress_file,
+                config_label=str(config),
+            ),
+        ):
             from decoy_engine import (
                 PipelineConfig,
                 run_pipeline,
@@ -806,13 +856,18 @@ def run(
                 _notify_row_count = sum(len(tbl) for tbl in result.outputs.values())
             if vault_writer is not None:
                 vault_writer.write(vault)
-    except typer.Exit:
+    except typer.Exit as exc:
         # CLI QA fix (2026-06-02, F7): an inner call site that raises
         # typer.Exit (e.g. a library that vendored Typer) has already
         # set its intended exit code. Do not swallow it into the
         # EXIT_RUNTIME catch-all below.
+        _finish_record(_record, "error", getattr(exc, "exit_code", EXIT_RUNTIME), "Exit")
+        raise
+    except KeyboardInterrupt:
+        _finish_record(_record, "interrupted", 130, "KeyboardInterrupt")
         raise
     except Exception as exc:
+        _finish_record(_record, "error", None, type(exc).__name__)
         # Audit H10 (2026-06-12): dispatch on exception type so scripts
         # can tell "your config is wrong" (EXIT_USAGE, per the
         # exit_codes.py contract) from "the run blew up" (EXIT_RUNTIME).
@@ -1027,9 +1082,11 @@ def run(
                 )
         if state.verbose:
             state.err_console.print_exception()
+        _finish_record(_record, "error", _exit_code, type(exc).__name__)
         raise typer.Exit(code=_exit_code)
 
     elapsed = time.perf_counter() - started
+    _finish_record(_record, "ok", EXIT_OK)
 
     # Write evidence manifest if --evidence-out was given. Written for BOTH
     # plain and chunked runs: the input/output fingerprints (the drift-detection
@@ -1093,6 +1150,8 @@ def run(
             }
         if not chunked:
             payload["native_threads"] = native_threads
+        if _record is not None:
+            payload["run_id"] = _record.status.run_id
         if _report_flags:
             report: dict = {}
             if explain_plan:
@@ -1109,6 +1168,7 @@ def run(
             payload["data_checks"] = _checks
         emit_json(state, payload)
         if _enforce_fires:
+            _finish_record(_record, "ok", EXIT_FINDINGS)
             raise typer.Exit(code=EXIT_FINDINGS)
         return
 
@@ -1124,6 +1184,7 @@ def run(
                 f"{q['total_quarantined']} row(s) routed to {q['output_path']}",
             )
         if _enforce_fires:
+            _finish_record(_record, "ok", EXIT_FINDINGS)
             raise typer.Exit(code=EXIT_FINDINGS)
         return
 
@@ -1138,6 +1199,8 @@ def run(
         facts.append(("Route", _native_route.label))
     if not chunked and native_threads > 1:
         facts.append(("Threads", str(native_threads)))
+    if _record is not None:
+        facts.append(("Run id", _record.status.run_id))
     if notify_channels:
         delivered = sum(1 for r in notify_results if r["delivered"])
         facts.append(("Notify", f"{delivered}/{len(notify_results)} delivered"))
@@ -1164,6 +1227,7 @@ def run(
         _render_post_validation(state, _qm, enforce=post_validate_enforce)
 
     if _enforce_fires:
+        _finish_record(_record, "ok", EXIT_FINDINGS)
         raise typer.Exit(code=EXIT_FINDINGS)
 
 
@@ -1486,12 +1550,15 @@ def _run_chunked_mask(
             continue
         out_path = _resolve_path(tgt_spec["path"], base_dir)
 
-        masked_iter = run_mask_pipeline_chunked(
-            config_dict,
-            iter_source_chunks(name, src_spec, base_dir, chunk_size),
-            table=name,
-            engine_version=engine_version,
-            vault_writer=vault_writer,
+        masked_iter = _count_chunk_rows(
+            name,
+            run_mask_pipeline_chunked(
+                config_dict,
+                iter_source_chunks(name, src_spec, base_dir, chunk_size),
+                table=name,
+                engine_version=engine_version,
+                vault_writer=vault_writer,
+            ),
         )
         _write_chunked_output(
             masked_iter, out_path, src_path, src_is_parquet=src_spec.get("format") == "parquet"
@@ -1756,3 +1823,119 @@ def _dispatch_run_notifications(
 # The epilog is wired by __main__ at command registration time; the
 # docstring on `run` stays as the help body.
 RUN_EPILOG = _RUN_EPILOG
+
+
+# ---------------------------------------------------------------------------
+# Local run records + progress binding (parity C4)
+# ---------------------------------------------------------------------------
+
+
+def _open_run_record(state, config: Path, yaml_mode: str, run_id: str | None):
+    """Create this run's record under `$DECOY_HOME/runs`; a record failure never
+    stops the run (warn and continue without one)."""
+    from decoy import runs as _runs
+
+    try:
+        record = _runs.RunRecord.create(config=str(config), mode=yaml_mode, run_id=run_id)
+    except FileExistsError:
+        msg = f"run id {run_id!r} already exists under {_runs.runs_root()}"
+        if state.mode is OutputMode.json:
+            emit_json(state, {"command": "run", "status": "error", "config": str(config), "error": msg})
+        elif state.mode is not OutputMode.quiet:
+            state.err_console.print(error("error:"), msg)
+        raise typer.Exit(code=EXIT_USAGE)
+    except OSError as exc:
+        if state.mode is not OutputMode.quiet:
+            state.err_console.print(
+                warn("warning:"), f"could not create a run record ({type(exc).__name__}); continuing"
+            )
+        return None
+    try:
+        _runs.prune()
+    except OSError:
+        pass
+    return record
+
+
+def _finish_record(record, state_name: str, exit_code: int | None, error_class: str | None = None) -> None:
+    """Mark the record terminal once; a later call may only fill in an exit code
+    the first call did not know yet (the error handler learns the code after it
+    has classified the exception)."""
+    if record is None:
+        return
+    try:
+        if record.status.state in ("ok", "error", "interrupted"):
+            if record.status.exit_code is None and exit_code is not None:
+                record.status.exit_code = exit_code
+                record.save()
+            return
+        record.finish(state_name, exit_code=exit_code, error_class=error_class)
+    except OSError:
+        pass
+
+
+class _LiveSink:
+    """Map engine events onto the live status line (identifiers and counts only)."""
+
+    def __init__(self, live) -> None:
+        self._live = live
+
+    def on_event(self, event) -> None:
+        kind = getattr(event, "kind", None)
+        if kind == "phase" and event.status == "start":
+            where = f" {event.table}" if event.table else ""
+            self._live.update(f"[{event.name}{where}]")
+        elif kind == "rate":
+            self._live.update(f"[{event.table}] {event.rows_done:,} rows ({event.rows_per_sec:,.0f} rows/s)")
+        elif kind == "route":
+            lane = f"/{event.lane}" if event.lane else ""
+            self._live.update(f"[route {event.route}{lane}]")
+
+
+@contextmanager
+def _progress_binding(*, record, live, progress: str, progress_file: Path | None, config_label: str):
+    """Bind the run's progress sinks (record, JSONL stream, live line) as the
+    engine's active progress channel, and keep the record's heartbeat alive.
+    An engine that predates `decoy_engine.progress` gets no binding and the run
+    behaves as before."""
+    from decoy import runs as _runs
+
+    try:
+        from decoy_engine.progress import use_progress
+    except ImportError:  # pragma: no cover - older engine
+        yield
+        return
+    sinks: list = []
+    handles: list = []
+    rid = record.status.run_id if record is not None else None
+    if record is not None:
+        sinks.append(_runs.RunRecordSink(record))
+    if progress == "jsonl":
+        sinks.append(_runs.JsonlStreamSink(sys.stderr, run_id=rid, config=config_label))
+    if progress_file is not None:
+        fh = open(progress_file, "a", encoding="utf-8")  # noqa: SIM115 - closed in finally
+        handles.append(fh)
+        sinks.append(_runs.JsonlStreamSink(fh, run_id=rid, config=config_label))
+    if progress == "auto":
+        sinks.append(_LiveSink(live))
+    sink = _runs.FanoutSink(sinks) if sinks else None
+    try:
+        if record is not None:
+            with _runs.Heartbeat(record), use_progress(sink, interval_s=0.5):
+                yield
+        else:
+            with use_progress(sink, interval_s=0.5):
+                yield
+    finally:
+        for fh in handles:
+            fh.close()
+
+
+def _count_chunk_rows(table: str, chunks):
+    """Account the legacy chunked lane's yielded chunks on the active progress
+    channel (the lane itself predates the progress contract)."""
+    try:
+        from decoy_engine.progress import get_active_channel
+    except ImportError:  # pragma: no cover - older engine
+        return chunks
+    return get_active_channel().count_rows(table, chunks)
