@@ -27,7 +27,14 @@ from decoy import __version__ as _cli_version
 from decoy import _native_gate
 from decoy.cli._sources import iter_source_chunks, read_source
 from decoy.cli._yaml_errors import sanitize_yaml_error
-from decoy.cli.exit_codes import EXIT_CAPACITY, EXIT_FINDINGS, EXIT_OK, EXIT_RUNTIME, EXIT_USAGE
+from decoy.cli.exit_codes import (
+    EXIT_CAPACITY,
+    EXIT_FINDINGS,
+    EXIT_OK,
+    EXIT_RUNTIME,
+    EXIT_USAGE,
+    worst_batch_exit,
+)
 from decoy.cli.extras import (
     MissingExtraError,
     UnsupportedCloudEndpointError,
@@ -1960,7 +1967,7 @@ def _progress_binding(*, record, live, progress: str, progress_file: Path | None
     if progress == "jsonl":
         sinks.append(_runs.JsonlStreamSink(sys.stderr, run_id=rid, config=config_label))
     if progress_file is not None:
-        fh = open(progress_file, "a", encoding="utf-8")  # noqa: SIM115 - closed in finally
+        fh = open(progress_file, "a", encoding="utf-8")
         handles.append(fh)
         sinks.append(_runs.JsonlStreamSink(fh, run_id=rid, config=config_label))
     if progress == "auto":
@@ -2000,8 +2007,9 @@ def _batch_child_argv(config: Path, child_run_id: str, options: dict) -> list[st
     pass-through flags; each child is a normal single run in its own process."""
     argv = [sys.executable, "-m", "decoy", "run", str(config), "--json", "--progress", "none",
             "--run-id", child_run_id, "--mode", options["mode"].value]
-    if options["master_key"]:
-        argv += ["--master-key", options["master_key"]]
+    # --master-key is NOT placed on the child argv: a raw key on a command line is
+    # visible to every local user via `ps`/`/proc`. It is handed to the child
+    # through its environment (DECOY_MASTER_KEY, the option's own envvar) instead.
     if options["mask_secret"]:
         argv += ["--mask-secret", options["mask_secret"]]
     if options["key_label"]:
@@ -2050,10 +2058,13 @@ def _run_batch(state, configs: list[Path], *, jobs: int, watch: bool, run_id: st
     for name in _BATCH_PER_RUN_ONLY:
         if options.get(name):
             return usage(f"--{name.replace('_', '-')} names one file and cannot be shared by a batch; run those configs one at a time")
+    if len(set(configs)) != len(configs):
+        dupes = sorted({str(c) for c in configs if configs.count(c) > 1})
+        return usage(f"the same config is listed more than once ({', '.join(dupes)}); a batch runs each config once, and parallel runs would race on its targets")
     seen: dict[str, Path] = {}
     for cfg in configs:
         for path in _batch_target_paths(cfg):
-            if path in seen and seen[path] != cfg:
+            if path in seen:
                 return usage(f"{cfg} and {seen[path]} both write {path}; a batch cannot run two configs with the same target")
             seen[path] = cfg
 
@@ -2063,7 +2074,13 @@ def _run_batch(state, configs: list[Path], *, jobs: int, watch: bool, run_id: st
     def run_child(item: tuple[Path, str]) -> dict:
         cfg, child_id = item
         started = time.perf_counter()
-        proc = subprocess.run(_batch_child_argv(cfg, child_id, options), capture_output=True, text=True)
+        child_env = os.environ.copy()
+        if options["master_key"]:
+            child_env["DECOY_MASTER_KEY"] = options["master_key"]
+        proc = subprocess.run(
+            _batch_child_argv(cfg, child_id, options),
+            capture_output=True, text=True, env=child_env,
+        )
         envelope: dict | None = None
         for line in reversed(proc.stdout.splitlines()):
             if line.startswith("{"):
@@ -2088,7 +2105,7 @@ def _run_batch(state, configs: list[Path], *, jobs: int, watch: bool, run_id: st
             _watch_batch(state, [cid for _, cid in children], futures)
         results = [f.result() for f in futures]
 
-    worst = max((r["exit_code"] for r in results), default=EXIT_OK)
+    worst = worst_batch_exit(r["exit_code"] for r in results)
     if state.mode is OutputMode.json:
         emit_json(state, {
             "command": "run",

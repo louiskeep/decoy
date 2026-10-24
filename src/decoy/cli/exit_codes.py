@@ -37,6 +37,8 @@ Reference: README "Exit codes" section + `decoy explain exit-codes`.
 
 from __future__ import annotations
 
+from collections.abc import Iterable
+
 EXIT_OK: int = 0
 """Command succeeded. The default exit code for a clean run; matches POSIX
 convention. `typer.Exit()` with no argument also exits 0."""
@@ -97,6 +99,43 @@ FKs into one table at a small budget), not the everyday "job too big for the
 host" the build-floor estimate used to raise -- that estimate is now advisory.
 v1 checks the out-of-core-FK route only; see `decoy explain exit-codes`."""
 
+# ---------------------------------------------------------------------------
+# Batch aggregation
+# ---------------------------------------------------------------------------
+
+# When `decoy run` runs several configs with `--jobs`, the batch surfaces the
+# most SEVERE child's exit code, which is NOT the numerically largest: a child
+# that never completed cleanly (a crash, a capacity refusal, a signal kill)
+# outranks one that completed with findings or warnings. A signal kill arrives
+# as a negative returncode (`-n` for signal `n`) and must never be mistaken for
+# a clean 0.
+_BATCH_SEVERITY: dict[int, int] = {
+    EXIT_OK: 0,
+    EXIT_WARNINGS: 1,
+    EXIT_FINDINGS: 2,
+    EXIT_USAGE: 3,
+    EXIT_CAPACITY: 4,
+    EXIT_RUNTIME: 5,
+}
+_CRASH_SEVERITY = 6  # a signal kill or an unknown non-zero code: the hardest failure
+
+
+def worst_batch_exit(codes: Iterable[int]) -> int:
+    """The exit code a batch reports: the most severe child's. A negative
+    returncode (a child killed by signal `n` has returncode `-n`) is normalized
+    to the conventional ``128 + n`` so a killed child is never reported as a
+    clean 0, and an unknown non-zero code ranks as a hard crash. Ties keep the
+    first most-severe code seen. An empty batch is ``EXIT_OK``."""
+    worst = EXIT_OK
+    worst_rank = 0
+    for code in codes:
+        normalized = code if code >= 0 else 128 - code
+        rank = _BATCH_SEVERITY.get(normalized, _CRASH_SEVERITY) if normalized != EXIT_OK else 0
+        if rank > worst_rank:
+            worst_rank, worst = rank, normalized
+    return worst
+
+
 __all__ = [
     "EXIT_CAPACITY",
     "EXIT_FINDINGS",
@@ -104,4 +143,5 @@ __all__ = [
     "EXIT_RUNTIME",
     "EXIT_USAGE",
     "EXIT_WARNINGS",
+    "worst_batch_exit",
 ]

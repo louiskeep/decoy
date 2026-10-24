@@ -35,9 +35,9 @@ def test_named_constants_have_pinned_integer_values() -> None:
     assert exit_codes.EXIT_RUNTIME == 3
     assert exit_codes.EXIT_FINDINGS == 4
     assert exit_codes.EXIT_CAPACITY == 5
-    # __all__ covers exactly the six public names; any rename of an
-    # existing constant or addition of a new public symbol must update
-    # __all__ deliberately rather than slip through.
+    # __all__ covers exactly the six public constants plus the batch
+    # aggregation helper; any rename of an existing constant or addition of a
+    # new public symbol must update __all__ deliberately rather than slip through.
     assert set(exit_codes.__all__) == {
         "EXIT_OK",
         "EXIT_USAGE",
@@ -45,6 +45,7 @@ def test_named_constants_have_pinned_integer_values() -> None:
         "EXIT_RUNTIME",
         "EXIT_FINDINGS",
         "EXIT_CAPACITY",
+        "worst_batch_exit",
     }
 
 
@@ -72,3 +73,33 @@ def test_no_remaining_literal_typer_exits_in_cli_source() -> None:
         "Replace with the appropriate EXIT_* constant:\n  "
         + "\n  ".join(f"{p.name}:{ln}: {src}" for p, ln, src in offenders)
     )
+
+
+# ── batch aggregation (parity C4c adversarial-review fixes) ──────────────────
+
+from decoy.cli.exit_codes import (  # noqa: E402
+    EXIT_CAPACITY,
+    EXIT_FINDINGS,
+    EXIT_OK,
+    EXIT_RUNTIME,
+    EXIT_WARNINGS,
+    worst_batch_exit,
+)
+
+
+def test_worst_batch_exit_empty_is_ok() -> None:
+    assert worst_batch_exit([]) == EXIT_OK
+
+
+def test_worst_batch_exit_signal_kill_never_reports_success() -> None:
+    # A child OOM-killed (SIGKILL) has returncode -9 alongside a clean sibling;
+    # the batch must not report the clean 0. -9 normalizes to 128+9 = 137.
+    assert worst_batch_exit([-9, EXIT_OK]) == 137
+    assert worst_batch_exit([EXIT_OK, -11]) == 139
+
+
+def test_worst_batch_exit_ranks_crash_above_findings() -> None:
+    # Numeric max would pick FINDINGS(4) over a RUNTIME crash(3); severity must not.
+    assert worst_batch_exit([EXIT_FINDINGS, EXIT_RUNTIME]) == EXIT_RUNTIME
+    assert worst_batch_exit([EXIT_WARNINGS, EXIT_CAPACITY]) == EXIT_CAPACITY
+    assert worst_batch_exit([EXIT_OK, EXIT_WARNINGS]) == EXIT_WARNINGS
