@@ -8,6 +8,15 @@ version numbers follow the [versioning policy](docs/release/versioning.md).
 
 ## [Unreleased]
 
+### Added
+
+- **`decoy run --duckdb-source TABLE=DB_PATH`.** Read a pipeline input table from
+  a DuckDB database file instead of a CSV/Parquet/fixed-width file. Repeatable;
+  the named relation is acquired read-only (the database is never written) to a
+  temporary Parquet, which is masked on the normal parquet path, so native-on and
+  `--chunked` apply unchanged. No raw SQL (the relation name is the handle); no
+  new engine source format. Not supported with `--evidence-out` yet.
+
 ### Changed (CLI command-surface redesign, 2026-10-23) -- BREAKING, pre-GA
 
 The `decoy` command surface was redesigned from ~17 top-level commands plus 11

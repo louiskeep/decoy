@@ -24,6 +24,7 @@ from rich.text import Text
 
 from decoy import __version__ as _cli_version
 from decoy import _native_gate
+from decoy.cli._duckdb_source import DuckDBSourceError, acquire_relation, parse_flag
 from decoy.cli._sources import iter_source_chunks, read_source
 from decoy.cli._yaml_errors import sanitize_yaml_error
 from decoy.cli.exit_codes import EXIT_CAPACITY, EXIT_FINDINGS, EXIT_RUNTIME, EXIT_USAGE
@@ -407,6 +408,22 @@ def run(
             "--chunked."
         ),
     ),
+    duckdb_source: list[str] = typer.Option(
+        [],
+        "--duckdb-source",
+        help=(
+            "Read a pipeline input table from a DuckDB database file instead of "
+            "a CSV/Parquet/fixed-width file. Repeatable; spec is 'TABLE=DB_PATH', "
+            "where TABLE names a table in the pipeline's `tables:` and the "
+            "relation of the same name in the DuckDB file. The relation is "
+            "acquired read-only (the database is never written) to a temporary "
+            "Parquet file, which is then masked on the normal parquet path "
+            "(native-on and --chunked apply unchanged). A flag entry overrides "
+            "any `sources:` entry the YAML declares for TABLE. Not supported with "
+            "--evidence-out yet. Needs no raw SQL: the relation name is the "
+            "handle."
+        ),
+    ),
 ) -> None:
     """Run a decoy pipeline from a YAML config.
 
@@ -472,6 +489,10 @@ def run(
             "--substrate is only consulted for --chunked runs; "
             "this plain run uses the engine's pandas adapter.",
         )
+
+    # Temp dir holding Parquet snapshots acquired from --duckdb-source inputs;
+    # created only when the flag is used, torn down in the run's finally.
+    _duckdb_tmpdir: Path | None = None
 
     # Sentinels for evidence manifest building (set on successful plain run).
     _ev_config_dict: dict | None = None
@@ -553,6 +574,51 @@ def run(
                     "It is a REFERENCE, never the raw secret. "
                     "See: decoy explain keys."
                 )
+
+            # DuckDB-in sources: acquire each flagged relation read-only to a
+            # temp Parquet and rewrite the in-memory source to that Parquet
+            # BEFORE schema validation, so the engine only ever sees a plain
+            # parquet file source (its SourceDescriptor has no duckdb variant).
+            # Mirrors the engine's snapshot-to-Parquet DB-input pattern
+            # (connectors.postgres_snapshot): DuckDB owns the read, masking runs
+            # over the staged Parquet unchanged.
+            if duckdb_source:
+                if evidence_out is not None:
+                    raise DuckDBSourceError(
+                        "--duckdb-source is not supported with --evidence-out yet "
+                        "(the manifest's input fingerprint for a transient snapshot "
+                        "is unspecified); run them separately."
+                    )
+                if not isinstance(raw, dict):
+                    raise DuckDBSourceError("--duckdb-source needs a mapping pipeline config")
+                _raw_sources = raw.get("sources")
+                if _raw_sources is None:
+                    _raw_sources = raw["sources"] = {}
+                elif not isinstance(_raw_sources, dict):
+                    raise DuckDBSourceError(
+                        "pipeline `sources:` must be a mapping to use --duckdb-source"
+                    )
+                _declared = {
+                    t.get("name") for t in (raw.get("tables") or []) if isinstance(t, dict)
+                }
+                import tempfile
+
+                _duckdb_tmpdir = Path(tempfile.mkdtemp(prefix="decoy-duckdb-"))
+                for _spec in duckdb_source:
+                    _tbl, _db = parse_flag(_spec)
+                    if _tbl not in _declared:
+                        raise DuckDBSourceError(
+                            f"--duckdb-source: {_tbl!r} is not a table in the pipeline "
+                            f"`tables:` ({sorted(n for n in _declared if n)})"
+                        )
+                    _parquet = acquire_relation(
+                        _resolve_path(_db, config.parent), _tbl, _duckdb_tmpdir
+                    )
+                    _raw_sources[_tbl] = {
+                        "type": "file",
+                        "format": "parquet",
+                        "path": str(_parquet),
+                    }
 
             # Catch the schema ValidationError NARROWLY here (not in the
             # run-level except) so ONLY user-config validation maps to
@@ -928,6 +994,10 @@ def run(
                         _ChunkedReportFlagError,
                         _VaultUsageError,
                         _MaskSecretUsageError,
+                        # A fixable --duckdb-source flag (bad value, missing DB,
+                        # unknown relation, unreadable database) -- the operator's
+                        # request is wrong, not a runtime crash.
+                        DuckDBSourceError,
                         # CLI install DX: a pipeline step hit an optional
                         # extra that isn't installed -- the operator's
                         # environment is missing a capability their config
@@ -1048,6 +1118,15 @@ def run(
         if state.verbose:
             state.err_console.print_exception()
         raise typer.Exit(code=_exit_code)
+    finally:
+        # Tear down any --duckdb-source Parquet snapshots. Runs on success
+        # (before the summary tail) and on every error path. By here the run
+        # has already consumed the staged Parquet, and --evidence-out is
+        # refused alongside --duckdb-source, so nothing downstream reads it.
+        if _duckdb_tmpdir is not None:
+            import shutil
+
+            shutil.rmtree(_duckdb_tmpdir, ignore_errors=True)
 
     elapsed = time.perf_counter() - started
 
