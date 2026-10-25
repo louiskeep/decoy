@@ -78,17 +78,25 @@ def acquire_relation(db_path: Path, relation: str, dest_dir: Path) -> Path:
             f"--duckdb-source: cannot open {db_path} read-only ({type(exc).__name__})"
         ) from None
     try:
-        found = conn.execute(
-            "SELECT 1 FROM information_schema.tables WHERE lower(table_name) = lower(?) LIMIT 1",
+        row = conn.execute(
+            "SELECT table_name FROM information_schema.tables "
+            "WHERE lower(table_name) = lower(?) LIMIT 1",
             [relation],
         ).fetchone()
-        if not found:
+        if not row:
             raise DuckDBSourceError(
                 f"--duckdb-source: relation {relation!r} not found in {db_path}"
             )
+        # Use the catalog's exact-case name, double-quoted, so a table whose name
+        # is a SQL reserved word (e.g. ``order``) or a case variant reads correctly.
+        # The name comes from the catalog (not the caller), the caller's name
+        # already passed the identifier allowlist, and any embedded quote is
+        # doubled, so this cannot inject.
+        actual = str(row[0])
+        actual_sql = actual.replace('"', '""')
         dest = dest_dir / f"{relation}.parquet"
         dest_sql = str(dest.as_posix()).replace("'", "''")
-        conn.execute(f"COPY (SELECT * FROM {relation}) TO '{dest_sql}' (FORMAT PARQUET)")
+        conn.execute(f"COPY (SELECT * FROM \"{actual_sql}\") TO '{dest_sql}' (FORMAT PARQUET)")
     except DuckDBSourceError:
         raise
     except Exception as exc:

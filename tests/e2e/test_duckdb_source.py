@@ -49,7 +49,8 @@ def _make_duckdb(path: Path, table: str = "people", frame: pd.DataFrame | None =
     con = duckdb.connect(str(path))
     try:
         con.register("df", _frame() if frame is None else frame)
-        con.execute(f"CREATE TABLE {table} AS SELECT * FROM df")
+        # Quote the table identifier so a reserved word (e.g. "order") is a valid name.
+        con.execute(f'CREATE TABLE "{table}" AS SELECT * FROM df')
     finally:
         con.close()
     return path
@@ -263,3 +264,56 @@ def test_duckdb_source_fails_closed_on_broken_companion(
     assert result.exit_code == EXIT_USAGE
     assert "kat-corrupt" in result.output
     assert not (tmp_path / "out.csv").exists()
+
+
+def test_duckdb_source_two_tables(tmp_path: Path):
+    """The flag is repeatable: two --duckdb-source flags feed two tables; both mask."""
+    import yaml
+
+    db1 = _make_duckdb(tmp_path / "a.duckdb", table="people")
+    db2 = _make_duckdb(tmp_path / "b.duckdb", table="staff")
+    cfg = {
+        "version": 1,
+        "global_settings": {"seed": 42},
+        "sources": {},
+        "tables": [
+            {"name": "people", "columns": _COLUMNS},
+            {"name": "staff", "columns": _COLUMNS},
+        ],
+        "targets": {
+            "people": {"type": "file", "format": "csv", "path": str(tmp_path / "people_out.csv")},
+            "staff": {"type": "file", "format": "csv", "path": str(tmp_path / "staff_out.csv")},
+        },
+    }
+    config = tmp_path / "pipeline.yaml"
+    config.write_text(yaml.safe_dump(cfg), encoding="utf-8")
+    result = runner.invoke(
+        app,
+        ["run", str(config), "--duckdb-source", f"people={db1}", "--duckdb-source", f"staff={db2}"],
+    )
+    assert result.exit_code == 0, result.output
+    for out in ("people_out.csv", "staff_out.csv"):
+        got = pd.read_csv(tmp_path / out, dtype=str)
+        assert got["id"].tolist() == ["A00001", "A00002", "A00003"]  # passthrough
+        assert got["name"].tolist() != ["Alice", "Bob", "Carol"]  # masked
+
+
+def test_duckdb_source_reserved_word_table_name(tmp_path: Path):
+    """A table whose name is a SQL reserved word (``order``) reads correctly: the
+    COPY quotes the catalog's exact name, so it is not a parser error."""
+    import yaml
+
+    db = _make_duckdb(tmp_path / "in.duckdb", table="order")
+    cfg = {
+        "version": 1,
+        "global_settings": {"seed": 42},
+        "sources": {},
+        "tables": [{"name": "order", "columns": _COLUMNS}],
+        "targets": {"order": {"type": "file", "format": "csv", "path": str(tmp_path / "out.csv")}},
+    }
+    config = tmp_path / "pipeline.yaml"
+    config.write_text(yaml.safe_dump(cfg), encoding="utf-8")
+    result = runner.invoke(app, ["run", str(config), "--duckdb-source", f"order={db}"])
+    assert result.exit_code == 0, result.output
+    got = pd.read_csv(tmp_path / "out.csv", dtype=str)
+    assert got["name"].tolist() != ["Alice", "Bob", "Carol"]  # masked, read via quoted identifier

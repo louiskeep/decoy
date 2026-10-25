@@ -1,4 +1,4 @@
-# Build plan — DuckDB-in CLI source (B-1 slice)
+# Build plan, DuckDB-in CLI source (B-1 slice)
 
 Status: build plan, PRE-RELEASE (2026-10-24). Part of B-1 (CLI redesign adoption). Additive, pre-GA,
 CLI-repo-only. Awaiting plan-gate (dennis + Codex). Author: Opus (remote worker). NOT built here; Sonnet
@@ -10,14 +10,14 @@ documentation, reuse-first, testing, security.
 ## Premise correction (read first)
 
 The B-1 handoff frames this as "`src/decoy/cli/_sources.py` supports only csv / parquet / fixed_width; add a
-`duckdb` input source" — i.e. a new source format the CLI reads. **That shape is not CLI-only and will fail
+`duckdb` input source", i.e. a new source format the CLI reads. **That shape is not CLI-only and will fail
 at the gate.** The engine owns `sources:` validation: `decoy_engine.config._sources.SourceDescriptor` is a
 closed discriminated union over `type` (`file` / `s3` / `gcs`), each model `extra="forbid"`, and
 `FileSource.format` is `Literal["csv", "parquet", "fixed_width"]` (`config/_sources.py:86`). `run_pipeline`
 validates `config_dict` against this schema before `cli/_sources.read_source` is ever reached, so a
 `type: duckdb` or `format: duckdb` source is rejected at `model_validate`, not dispatched to a new reader.
 Adding a real DuckDB source *format* therefore requires an engine change (a new `SourceDescriptor` variant +
-`_ADMITTED_SOURCE_FORMATS` in `execution/_unified_slice_admission.py:157`) — which is out of the CLI-only
+`_ADMITTED_SOURCE_FORMATS` in `execution/_unified_slice_admission.py:157`), which is out of the CLI-only
 scope the handoff asserts ("entirely in the `decoy` repo, no engine collision").
 
 The CLI-only design below avoids the engine entirely by following the **established DB-input methodology**,
@@ -26,7 +26,7 @@ not by inventing a new source format.
 ## Established solution (cited)
 
 The engine already ships the database-input pattern: `decoy_engine.connectors.postgres_snapshot.
-snapshot_tables_to_parquet` — a read-only DuckDB ATTACH that exports structured relations to an **atomic
+snapshot_tables_to_parquet`, a read-only DuckDB ATTACH that exports structured relations to an **atomic
 Parquet set**, then the normal file-based masking runs over that Parquet unchanged. The platform DuckDB-IO
 plan states the governing principle (Cam 2026-10-22): "Decoy's database support envelope is exactly what
 DuckDB offers natively... Keep database acquisition/publication in narrow, typed primitives... **Reuse
@@ -47,8 +47,8 @@ table(s) come from a DuckDB database file instead of a CSV/Parquet/fixed-width f
 opens `DB_PATH` **read-only**, copies the relation named `TABLE` to a temporary Parquet file (DuckDB owns the
 type mapping, as in postgres_snapshot), rewrites `config_dict["sources"][TABLE]` to
 `{type: file, format: parquet, path: <tmp>}` before validation/run, and the pipeline proceeds exactly as a
-parquet run. Everything downstream — schema validation, native-on eligibility, `--chunked`, output writing,
-evidence — is unchanged because the source the engine sees is an ordinary parquet file.
+parquet run. Everything downstream, schema validation, native-on eligibility, `--chunked`, output writing,
+evidence, is unchanged because the source the engine sees is an ordinary parquet file.
 
 ## Surface
 
@@ -57,7 +57,7 @@ run PIPELINE.yaml --duckdb-source TABLE=DB_PATH [--duckdb-source TABLE2=DB_PATH2
 ```
 - `--duckdb-source TABLE=DB_PATH` (repeatable). `TABLE` must be a simple identifier matching a table declared
   in the pipeline's `tables:`; `DB_PATH` is a `.duckdb` file. The relation read from the DB is the one named
-  `TABLE` (relation name == pipeline table name — the common, unambiguous case).
+  `TABLE` (relation name == pipeline table name, the common, unambiguous case).
 - **Relation-name only in v1 (no raw SQL).** Matching postgres_snapshot's "no raw user SQL / structured
   identifiers", v1 reads a named relation via a parameter-bound identifier, never a user SQL string. This
   removes the SQL-injection / arbitrary-file-read (`read_parquet('/etc/..')`, `ATTACH`) surface entirely.
@@ -78,7 +78,7 @@ New `src/decoy/cli/_duckdb_source.py` (thin, CLI-local; the engine stays narrow)
   TO '<tmp>.parquet' (FORMAT PARQUET)` with the identifier quoted/escaped by DuckDB's own quoting, written to
   a temp file then returned. Read-only connect refuses a DB that would need a write lock and never mutates the
   source. Errors (`duckdb.Error`, missing file, unknown relation, read-only-open failure) are caught and
-  re-raised as a typed CLI usage error with a readable, path-safe message — never a traceback (mirrors S6
+  re-raised as a typed CLI usage error with a readable, path-safe message, never a traceback (mirrors S6
   P1-2 and postgres_snapshot's redacted errors: no connection string, no cell values).
 - Temp Parquet lifecycle: write under a run-scoped temp dir (`tempfile.mkdtemp`), cleaned in a `finally`
   after the run; the atomic-publication posture is the engine primitive's, not re-implemented here (single
@@ -110,7 +110,7 @@ Wiring in `cli/run.py`:
 ## Verification
 
 Full `pytest -q` green; `ruff check`; `mypy` per the repo baseline; regen the CLI reference + run the doc
-sentries (new top-level flag, not a new command, so no README-table sentry entry — confirm
+sentries (new top-level flag, not a new command, so no README-table sentry entry, confirm
 `test_surface_docs_consistency.py` still passes); test-strength on the flag parsing, the read-only guarantee,
 and the typed-error mappings.
 
@@ -131,9 +131,9 @@ and the typed-error mappings.
 3. **Reuse vs CLI-local acquisition.** This plan keeps a thin CLI-local `COPY ... TO parquet` rather than
    adding a generic `duckdb_snapshot` engine primitive. Confirm that's the right boundary (postgres_snapshot
    is Postgres-specific; a generic local-DuckDB snapshot could live in the engine later if the platform needs
-   it too — but that would be an engine task, not this CLI slice).
+   it too, but that would be an engine task, not this CLI slice).
 4. **Scope intent.** Confirm "DuckDB-in" means *read an input table from a DuckDB database file* (this plan),
-   vs. "use DuckDB to read other files" (which the parquet/csv paths already cover) — the handoff is terse.
+   vs. "use DuckDB to read other files" (which the parquet/csv paths already cover), the handoff is terse.
 5. **Premise.** Confirm the engine-schema finding above so B-1's row and the handoff are corrected (no
    `_sources.py` format addition).
 
@@ -141,7 +141,7 @@ and the typed-error mappings.
 
 Plan-gate (dennis + Codex) before DEVELOP, focused on the 5 questions above and the premise correction. On
 GO: Sonnet builds slice 1 then slice 2, self-check + verify, independent review, DOCUMENT. No merge to main
-(orchestrator runs the gates and merges). A cloud worker cannot post the Slack pre-push flag — that step is
+(orchestrator runs the gates and merges). A cloud worker cannot post the Slack pre-push flag, that step is
 the orchestrator's.
 
 cam
