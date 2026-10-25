@@ -46,10 +46,26 @@ design decision to hide.
 from __future__ import annotations
 
 import inspect
+import os
 from dataclasses import dataclass
 from typing import Any, Literal
 
 NativeIntent = Literal["default", "require", "disable"]
+
+# A self-hosted managed bundle (the B-2 launch distribution) sets this marker in
+# its launcher. A managed bundle ships the matched native companion by
+# construction, so under the marker an ABSENT companion on a native-eligible job
+# is a corrupt or tampered runtime, not portable operation: the default intent
+# escalates it from the soft info-and-fallback a bare `pip install` gets to a
+# loud refusal, so the installed CLI never silently drops to the slow path. A
+# present-but-broken companion already refuses regardless of the marker. The
+# marker is read once, here, so both call sites (`decoy run` and `decoy.mask()`)
+# get the same behavior without threading a parameter through each.
+MANAGED_RUNTIME_ENV = "DECOY_MANAGED_RUNTIME"
+
+
+def _managed_runtime() -> bool:
+    return os.environ.get(MANAGED_RUNTIME_ENV, "") not in ("", "0", "false", "False")
 
 # `abi_actual` comes from the companion's own `abi_version()` call -- an
 # installed third-party artifact, not something the engine or CLI controls --
@@ -309,6 +325,7 @@ def pre_execution_gate(
     config_dict: dict[str, Any],
     vault_active: bool = False,
     status: Any = None,
+    managed_runtime: bool | None = None,
 ) -> PreGateResult:
     """Resolve `intent` + the companion probe into what to pass
     `run_pipeline`, before it is ever called. May raise `NativeGateError`
@@ -319,7 +336,11 @@ def pre_execution_gate(
     a live vault writer regardless of config shape, so the default-intent
     scoping below needs this precise runtime fact, not just a `vault: true`
     column marker (`static_native_eligibility` already checks that marker
-    as its own config-shape proxy; this ANDs the exact answer on top)."""
+    as its own config-shape proxy; this ANDs the exact answer on top).
+    `managed_runtime` defaults to detecting the managed-bundle marker from the
+    environment (`MANAGED_RUNTIME_ENV`); pass it explicitly only for tests."""
+    if managed_runtime is None:
+        managed_runtime = _managed_runtime()
     candidate = is_unified_slice_candidate(chunked=chunked, any_generate=any_generate)
 
     if intent == "require":
@@ -392,6 +413,21 @@ def pre_execution_gate(
         # nothing to gate -- collapse to the same no-op as "not a candidate".
         return PreGateResult(unified_slice_enabled=True)
     if status.reason == "absent":
+        if managed_runtime:
+            # Native-on-by-default, loud refusal (B-2): a managed bundle ships
+            # the matched companion, so its absence on a job that would have
+            # used it means a corrupt or tampered runtime. Refuse rather than
+            # silently masking on the slow pandas path. `--no-native`
+            # (intent=="disable", which never reaches here) stays the explicit
+            # opt-out.
+            raise NativeGateError(
+                "this is a managed Decoy runtime, which ships a matched native "
+                "companion, but no companion is installed. That is a corrupt or "
+                "tampered runtime, not a reason to run on the slow path. Reinstall "
+                "with `decoy upgrade` or the install script. (Use --no-native to "
+                "force the pandas path if you must.)",
+                code="native_managed_absent",
+            )
         return PreGateResult(
             unified_slice_enabled=True,
             info_message=(
@@ -510,6 +546,7 @@ def run_pipeline_kwargs(gate_result: PreGateResult) -> dict[str, bool]:
 
 
 __all__ = [
+    "MANAGED_RUNTIME_ENV",
     "NativeGateError",
     "NativeIntent",
     "PreGateResult",

@@ -12,6 +12,7 @@ Try one of:
   decoy unmask pipeline.yaml masked.csv   Recover fpe columns from a masked file.
   decoy fit source.csv             Fit a distribution snapshot for statistical generation.
   decoy init                       Scaffold a starter pipeline interactively.
+  decoy upgrade                    Upgrade the managed runtime (verify + swap). --check to just look.
   decoy list templates             Browse bundled pipeline templates.
   decoy show template hipaa        Dump one bundled template to stdout.
   decoy explain modes              Plain-English topic help. `explain` lists topics.
@@ -31,6 +32,7 @@ $ decoy [OPTIONS] COMMAND [ARGS]...
 **Options**:
 
 * `--version`: Show the decoy CLI version and exit.
+* `--no-update-check`: Suppress the startup &#x27;new version available&#x27; notice for this run.
 * `--install-completion`: Install completion for the current shell.
 * `--show-completion`: Show completion for the current shell, to copy it or customize the installation.
 * `--help`: Show this message and exit.
@@ -41,6 +43,7 @@ $ decoy [OPTIONS] COMMAND [ARGS]...
 * `unmask`: Recover fpe-masked columns from a masked...
 * `fit`: Fit a distribution-snapshot/v1 artifact...
 * `init`: Scaffold a starter pipeline YAML through a...
+* `upgrade`: Upgrade (or check) the managed,...
 * `demo`: Walk through scan -&gt; mask on a bundled...
 * `explain`: Explain a Decoy concept in plain English.
 * `info`: Print the Decoy CLI banner with...
@@ -322,6 +325,40 @@ Examples:
     Skip confirmation when overwriting an existing file.
 
 See also: decoy validate config, decoy run, decoy scan, decoy list templates.
+
+
+## `decoy upgrade`
+
+Upgrade (or check) the managed, self-hosted Decoy runtime.
+
+**Usage**:
+
+```console
+$ decoy upgrade [OPTIONS]
+```
+
+**Options**:
+
+* `--check`: Report whether a newer version exists; install nothing.
+* `--version TEXT`: Install a specific version instead of the latest.
+* `--json`: Emit a JSON record instead of text.
+* `-q, --quiet`: Suppress stdout. Errors still go to stderr.
+* `-v, --verbose`: Enable debug-level CLI logs on stderr.
+* `--help`: Show this message and exit.
+
+Examples:
+
+  decoy upgrade
+    Install the latest matched runtime for this platform (verify, then swap).
+
+  decoy upgrade --check
+    Report whether a newer version is available; install nothing.
+
+  decoy upgrade --version 0.2.0
+    Install a specific version (pinned), for a reproducible environment.
+
+Upgrade manages the self-hosted runtime under ~/.decoy. A bad checksum or
+signature is a hard stop: nothing is installed. See packaging/README.md.
 
 
 ## `decoy demo`

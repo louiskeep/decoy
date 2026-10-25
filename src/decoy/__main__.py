@@ -5,6 +5,9 @@ The Typer app is exported as `app` so the project script in pyproject.toml
 through `if __name__ == "__main__":`.
 """
 
+import os
+import sys
+
 import typer
 
 from decoy import __version__
@@ -29,6 +32,8 @@ from decoy.cli.subset import SUBSET_EPILOG
 from decoy.cli.subset import subset as subset_command
 from decoy.cli.unmask import UNMASK_EPILOG
 from decoy.cli.unmask import unmask as unmask_command
+from decoy.cli.upgrade import UPGRADE_EPILOG
+from decoy.cli.upgrade import upgrade as upgrade_command
 from decoy.cli.validate import validate_app
 
 # Quick-start hints embedded in the root help. Picked up by Typer's
@@ -47,6 +52,7 @@ Try one of:
   decoy unmask pipeline.yaml masked.csv   Recover fpe columns from a masked file.
   decoy fit source.csv             Fit a distribution snapshot for statistical generation.
   decoy init                       Scaffold a starter pipeline interactively.
+  decoy upgrade                    Upgrade the managed runtime (verify + swap). --check to just look.
   decoy list templates             Browse bundled pipeline templates.
   decoy show template hipaa        Dump one bundled template to stdout.
   decoy explain modes              Plain-English topic help. `explain` lists topics.
@@ -72,6 +78,34 @@ def _version_callback(value: bool) -> None:
         raise typer.Exit()
 
 
+def _maybe_print_update_notice() -> None:
+    """Print a one-line 'new version available' notice on interactive startup.
+
+    Fully gated and fail-silent (readiness report 4.3): suppressed with no TTY,
+    under CI, on `--json` / `--quiet`, with `--no-update-check` or the opt-out
+    env var, and on the `upgrade` command itself (which reports this directly).
+    Cache-first with a short-timeout refresh so it never blocks a run, and wrapped
+    so it can never raise into a command. The notice goes to stderr, so it never
+    pollutes stdout a script may be piping."""
+    try:
+        from decoy import _version_endpoint
+
+        argv = sys.argv[1:]
+        if "upgrade" in argv:
+            return
+        line = _version_endpoint.maybe_update_notice(
+            current=__version__,
+            argv=argv,
+            env=dict(os.environ),
+            isatty=sys.stdout.isatty(),
+        )
+        if line:
+            sys.stderr.write(line + "\n")
+    except Exception:
+        # A startup notice must never slow or break a real command.
+        return
+
+
 @app.callback()
 def _root(
     version: bool = typer.Option(
@@ -81,10 +115,16 @@ def _root(
         is_eager=True,
         help="Show the decoy CLI version and exit.",
     ),
+    no_update_check: bool = typer.Option(
+        False,
+        "--no-update-check",
+        help="Suppress the startup 'new version available' notice for this run.",
+    ),
 ) -> None:
     """Decoy CLI."""
     # Forces Typer to treat the app as multi-command even with one subcommand,
     # so users invoke `decoy run ...` not `decoy ...`.
+    _maybe_print_update_notice()
 
 
 app.command(name="run", epilog=RUN_EPILOG)(run_command)
@@ -92,6 +132,7 @@ app.add_typer(validate_app, name="validate")
 app.command(name="unmask", epilog=UNMASK_EPILOG)(unmask_command)
 app.command(name="fit", epilog=FIT_EPILOG)(fit_command)
 app.command(name="init", epilog=INIT_EPILOG)(init_command())
+app.command(name="upgrade", epilog=UPGRADE_EPILOG)(upgrade_command)
 app.command(name="demo", epilog=DEMO_EPILOG)(demo_command)
 app.command(name="explain", epilog=EXPLAIN_EPILOG)(explain_command)
 app.command(name="info", epilog=INFO_EPILOG)(info_command)

@@ -1,0 +1,13 @@
+# Never commit signing key material. Private keys are passed to sign.sh by path
+# and generated outside the tree; this is defense in depth.
+*.key
+*-test.key
+keys/
+# Built bundle artifacts and staging. The committed tree is tooling + the public
+# test key + the version-document contract, never a built 600 MB bundle.
+build/
+dist/
+*.tar.gz
+*.zip
+SHA256SUMS
+SHA256SUMS.sig

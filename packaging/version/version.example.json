@@ -1,0 +1,29 @@
+{
+  "schema_version": 1,
+  "latest": "0.12.0",
+  "min_supported": "0.10.0",
+  "yanked": [],
+  "message": "",
+  "artifacts": {
+    "linux-x86_64": {
+      "url": "https://decoy.dev/cli/0.12.0/decoy-0.12.0-linux-x86_64.tar.gz",
+      "sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+      "sig": "https://decoy.dev/cli/0.12.0/SHA256SUMS.sig"
+    },
+    "linux-aarch64": {
+      "url": "https://decoy.dev/cli/0.12.0/decoy-0.12.0-linux-aarch64.tar.gz",
+      "sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+      "sig": "https://decoy.dev/cli/0.12.0/SHA256SUMS.sig"
+    },
+    "macos-arm64": {
+      "url": "https://decoy.dev/cli/0.12.0/decoy-0.12.0-macos-arm64.tar.gz",
+      "sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+      "sig": "https://decoy.dev/cli/0.12.0/SHA256SUMS.sig"
+    },
+    "windows-x86_64": {
+      "url": "https://decoy.dev/cli/0.12.0/decoy-0.12.0-windows-x86_64.tar.gz",
+      "sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+      "sig": "https://decoy.dev/cli/0.12.0/SHA256SUMS.sig"
+    }
+  }
+}

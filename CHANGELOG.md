@@ -10,6 +10,26 @@ version numbers follow the [versioning policy](docs/release/versioning.md).
 
 ### Added
 
+- **`decoy upgrade` and a self-hosted packaging channel (B-2, launch packaging).**
+  The CLI now ships as a signed, self-contained, per-platform bundle (a standalone
+  CPython plus the matched engine, native companion, and CLI wheels) served from
+  Decoy, not public PyPI. New pieces: a bundle assembler and launcher
+  (`packaging/bundle/`), an installer that verifies a SHA-256 checksum and an
+  ECDSA-P256/SHA-256 signature BEFORE it extracts anything and refuses loudly on a
+  bad verify (`packaging/install/install.sh` + `install.ps1`), a Decoy-hosted
+  version-document contract and client (`packaging/version/`,
+  `decoy._version_endpoint`), and `decoy upgrade`, which re-runs the installer
+  against the version document to land a matched runtime (`--check` reports
+  without installing). A new root `--no-update-check` flag (and the
+  `DECOY_NO_UPDATE_CHECK` env var) suppress the interactive startup notice, which
+  is also suppressed with no TTY, under CI, and on `--json` / `--quiet`. The
+  engine pin is one marked variable (`packaging/pin.env`) the orchestrator swaps
+  when the launch engine is cut.
+- **Native-on-by-default, loud refusal under a managed runtime.** Inside the
+  managed bundle (its launcher sets `DECOY_MANAGED_RUNTIME=1`), a native-eligible
+  run whose companion is missing or broken is a loud, actionable refusal instead
+  of a silent drop to the slow pandas path. A bare `pip install` keeps today's
+  soft info-and-fallback; `--no-native` stays the explicit opt-out.
 - **`decoy run --duckdb-source TABLE=DB_PATH`.** Read a pipeline input table from
   a DuckDB database file instead of a CSV/Parquet/fixed-width file. Repeatable;
   the named relation is acquired read-only (the database is never written) to a

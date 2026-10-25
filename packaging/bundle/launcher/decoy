@@ -1,0 +1,40 @@
+#!/bin/sh
+# Decoy managed-runtime launcher (posix).
+#
+# Installed inside a versioned bundle at <bundle>/bin/decoy and reached through
+# ~/.local/bin/decoy -> ~/.decoy/current/bin/decoy -> versions/<v>/bin/decoy. It
+# resolves its own physical location (through both symlinks) so it always runs
+# the interpreter of the version `current` points at, which is what makes
+# `decoy upgrade` a transparent symlink swap.
+#
+# It sets DECOY_MANAGED_RUNTIME=1 before handing off. That marker is what turns a
+# missing or broken native companion into a loud refusal instead of a silent slow
+# path (decoy._native_gate): a managed bundle ships the matched companion by
+# construction, so its absence means a tampered or corrupt install, never
+# portable operation. A bare `pip install` never sets the marker and keeps the
+# soft fallback.
+set -eu
+
+# Resolve symlinks to the real script path without GNU `readlink -f` (macOS
+# readlink lacks -f). Walk the symlink chain by hand.
+self=$0
+while [ -h "$self" ]; do
+    link=$(ls -ld -- "$self" | sed -e 's/^.*-> //')
+    case $link in
+        /*) self=$link ;;
+        *) self=$(dirname -- "$self")/$link ;;
+    esac
+done
+bin_dir=$(cd -- "$(dirname -- "$self")" && pwd)
+bundle_dir=$(dirname -- "$bin_dir")
+
+venv_python=$bundle_dir/venv/bin/python
+if [ ! -x "$venv_python" ]; then
+    echo "decoy: managed runtime is corrupt: no interpreter at $venv_python." >&2
+    echo "decoy: reinstall with 'decoy upgrade' or the install script." >&2
+    exit 1
+fi
+
+DECOY_MANAGED_RUNTIME=1
+export DECOY_MANAGED_RUNTIME
+exec "$venv_python" -m decoy "$@"

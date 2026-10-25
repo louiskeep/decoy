@@ -1,0 +1,47 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://decoy.dev/cli/version.schema.json",
+  "title": "Decoy CLI version document",
+  "description": "The Decoy-hosted document the CLI reads to learn the current version and where the signed per-target bundles live. It can be served as static JSON behind a CDN. The client sends no data and no identifiers; it only GETs this document. Every field is optional with a defined default so an older CLI reading a newer document degrades cleanly (api-and-compatibility).",
+  "type": "object",
+  "properties": {
+    "schema_version": {
+      "type": "integer",
+      "description": "The document schema version. A client that does not recognize a newer value still reads the fields it knows.",
+      "default": 1
+    },
+    "latest": {
+      "type": "string",
+      "description": "The current recommended CLI version (PEP 440). The startup notice and `decoy upgrade` compare against this."
+    },
+    "min_supported": {
+      "type": "string",
+      "description": "The lowest version still supported (PEP 440). A client below this may show a stronger upgrade prompt. Advisory; omit to impose no floor."
+    },
+    "yanked": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "Versions that were published then withdrawn. A client on a yanked version is advised to upgrade.",
+      "default": []
+    },
+    "message": {
+      "type": "string",
+      "description": "An optional advisory message shown with the notice (e.g. a security-fix note). Plain text."
+    },
+    "artifacts": {
+      "type": "object",
+      "description": "Per-target published bundle for `latest`. Keys are bundle target strings (linux-x86_64, linux-aarch64, windows-x86_64, macos-arm64).",
+      "additionalProperties": {
+        "type": "object",
+        "properties": {
+          "url": { "type": "string", "description": "URL of the per-target bundle tarball." },
+          "sha256": { "type": "string", "description": "SHA-256 of the bundle tarball (hex)." },
+          "sig": { "type": "string", "description": "URL of the detached signature over the SHA256SUMS manifest." }
+        },
+        "required": ["url", "sha256", "sig"]
+      },
+      "default": {}
+    }
+  },
+  "required": ["latest"]
+}
