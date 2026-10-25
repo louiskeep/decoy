@@ -155,50 +155,49 @@ def _default_opener(url: str, timeout: float) -> bytes:
         return resp.read()
 
 
-# The document schema (version.schema.json) travels with the CLI: shipped as
-# package data in the wheel and read from packaging/ in a source checkout. The
-# upgrade path validates against it; the notice path does not.
-_SCHEMA_FILENAME = "version.schema.json"
-_PACKAGE_DIR = Path(__file__).resolve().parent
-
-
-def _schema_path() -> Path | None:
-    candidates = (
-        _PACKAGE_DIR / "_packaging" / _SCHEMA_FILENAME,  # shipped in the wheel
-        _PACKAGE_DIR.parents[1] / "packaging" / "version" / _SCHEMA_FILENAME,  # source tree
-    )
-    for candidate in candidates:
-        if candidate.is_file():
-            return candidate
-    return None
+# The required fields of a published `artifacts[target]` entry. The schema
+# (version.schema.json) marks all three required and all three strings; nothing
+# with a missing or wrong-typed field may reach the installer.
+_REQUIRED_ARTIFACT_FIELDS = ("url", "sha256", "sig")
 
 
 def validate_document(data: Any) -> None:
-    """Validate a decoded version document against `version.schema.json`, raising
+    """Validate a decoded version document against the fixed contract, raising
     `VersionDocumentError` on any violation.
 
     Used only on the executing upgrade path: acceptance requires the response be
-    validated against the schema and fail closed, and a tolerant parse is what
-    would let a garbage `artifacts[target].url` reach the installer. The notice
-    path keeps `parse_document`'s tolerant degrade. jsonschema is a maintained
-    validator (we do not hand-roll one)."""
-    schema_path = _schema_path()
-    if schema_path is None:
-        raise VersionDocumentError(
-            "the version-document schema was not found; refusing to plan an install."
-        )
-    try:
-        schema = json.loads(schema_path.read_text(encoding="utf-8"))
-    except Exception as exc:
-        raise VersionDocumentError(f"could not read the version-document schema: {exc}")
-    import jsonschema
+    validated and fail closed, and a tolerant parse is what would let a garbage
+    `artifacts[target].url` reach the installer. The notice path keeps
+    `parse_document`'s tolerant degrade.
 
-    try:
-        jsonschema.validate(instance=data, schema=schema)
-    except jsonschema.ValidationError as exc:
+    The document is a small, fixed contract, so the shape is checked explicitly
+    rather than with a general schema validator: this mirrors the `required`
+    fields of version.schema.json (`latest` is a string; every published
+    artifact carries a string `url`, `sha256`, and `sig`) and keeps the CLI thin
+    with no extra runtime dependency. The other fields are advisory and
+    forward-compatible, so the executing path leaves them to the tolerant parse."""
+    if not isinstance(data, dict):
+        raise VersionDocumentError("the version document is not a JSON object.")
+    if not isinstance(data.get("latest"), str):
         raise VersionDocumentError(
-            f"the version document does not match the published schema: {exc.message}"
+            "the version document is missing a string `latest`; refusing to plan an install."
         )
+    artifacts = data.get("artifacts")
+    if artifacts is None:
+        return
+    if not isinstance(artifacts, dict):
+        raise VersionDocumentError("the version document `artifacts` is not an object.")
+    for target, entry in artifacts.items():
+        if not isinstance(entry, dict):
+            raise VersionDocumentError(
+                f"the version document artifact for {target!r} is not an object."
+            )
+        for name in _REQUIRED_ARTIFACT_FIELDS:
+            if not isinstance(entry.get(name), str):
+                raise VersionDocumentError(
+                    f"the version document artifact for {target!r} is missing a string "
+                    f"`{name}`; refusing to plan an install."
+                )
 
 
 def fetch_document_validated(
@@ -282,8 +281,7 @@ def compute_update_decision(current: str, document: VersionDocument | None) -> U
     notice_line = None
     if update_available:
         notice_line = (
-            f"decoy {latest} is available (you have {current}). "
-            "Upgrade with `decoy upgrade`."
+            f"decoy {latest} is available (you have {current}). Upgrade with `decoy upgrade`."
         )
     return UpdateDecision(
         current=current,

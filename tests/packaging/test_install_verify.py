@@ -212,6 +212,49 @@ def test_unsupported_target_fails_loudly(tmp_path, channel):
     assert not (home / "versions").exists()
 
 
+def test_failed_extract_does_not_clobber_active_runtime(tmp_path, channel):
+    # The temp-dir-then-swap invariant: a bundle that passes the signature and
+    # checksum but is malformed (no bundle-manifest.json) extracts into a temp
+    # dir and is rejected BEFORE the swap, so re-installing the active version
+    # from such a channel leaves the already-installed runtime fully intact.
+    channel_dir, version, pub = channel
+
+    # A good install: an active runtime is in place.
+    env, home, binp = _install_env(tmp_path, channel_dir, pub)
+    assert _sh(["sh", str(INSTALL_SH), "--version", version], env=env).returncode == 0
+    version_dir = home / "versions" / version
+    manifest = version_dir / "bundle-manifest.json"
+    good_manifest = manifest.read_bytes()
+    current_target = (home / "current").resolve()
+
+    # A signed-but-malformed channel for the SAME version: the tarball verifies
+    # (re-signed with the fixture's key) but carries no bundle-manifest.json.
+    priv = pub.parent / "decoy-release-test.key"
+    assert priv.is_file()
+    bad_version_dir = tmp_path / "bad_channel" / version
+    bad_version_dir.mkdir(parents=True)
+    junk = tmp_path / "junk.txt"
+    junk.write_text("not a bundle\n")
+    with tarfile.open(bad_version_dir / f"decoy-{version}-linux-x86_64.tar.gz", "w:gz") as tf:
+        tf.add(junk, arcname="junk.txt")
+    sign = _sh(["sh", str(SIGN_SH), str(bad_version_dir), str(priv)])
+    assert sign.returncode == 0, sign.stderr
+
+    # Re-install the active version from the bad channel: it must fail after the
+    # extract and before the swap.
+    bad_env, _h, _b = _install_env(tmp_path, bad_version_dir.parent, pub)
+    proc = _sh(["sh", str(INSTALL_SH), "--version", version], env=bad_env)
+    assert proc.returncode != 0
+    assert "malformed" in proc.stderr
+
+    # The active runtime is untouched, and no staging dirs leaked.
+    assert manifest.read_bytes() == good_manifest
+    assert (home / "current").resolve() == current_target
+    assert (binp / "decoy").is_symlink()
+    assert list((home / "versions").glob(".incoming*")) == []
+    assert list((home / "versions").glob(".old*")) == []
+
+
 def test_uninstall_removes_runtime(tmp_path, channel):
     channel_dir, version, pub = channel
     env, home, binp = _install_env(tmp_path, channel_dir, pub)

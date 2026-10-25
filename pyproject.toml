@@ -100,11 +100,6 @@ dependencies = [
     "typer>=0.26.7,<0.27",
     "rich>=13.0",
     "duckdb>=0.9",
-    # The executing `decoy upgrade` path validates the version document against
-    # packaging/version/version.schema.json (shipped as package data) and fails
-    # closed on a malformed shape. jsonschema is a maintained validator; we do
-    # not hand-roll one. The tolerant startup-notice path does not use it.
-    "jsonschema>=4.0",
 ]
 
 [project.optional-dependencies]
@@ -169,9 +164,11 @@ packages = ["src/decoy"]
 # Ship the install scripts and the version-document schema as package data under
 # decoy/_packaging/. The install scripts carry the release public key, so they
 # are the trust anchor: `decoy upgrade` runs the LOCAL copy and never downloads
-# one. The schema backs the fail-closed validation on the upgrade path. These
-# sources live under packaging/ (outside the src/decoy walk), so force-include
-# adds them with no path under src/decoy and no double-add (unlike templates).
+# one. version.schema.json is the published contract the upgrade path's
+# structural validation mirrors (the CLI checks the shape in code, not with a
+# runtime validator, so no jsonschema dependency). These sources live under
+# packaging/ (outside the src/decoy walk), so force-include adds them with no
+# path under src/decoy and no double-add (unlike templates).
 [tool.hatch.build.targets.wheel.force-include]
 "packaging/install/install.sh" = "decoy/_packaging/install.sh"
 "packaging/install/install.ps1" = "decoy/_packaging/install.ps1"
