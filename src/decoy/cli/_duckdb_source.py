@@ -6,8 +6,14 @@ owns the read and the type mapping, Decoy stages the relation to a Parquet file,
 and the normal file-based masking path runs over that Parquet unchanged. The CLI
 never adds a new engine source format (the engine's `SourceDescriptor` stays a
 closed file/s3/gcs union) and never accepts a raw user SQL string -- only a
-structured relation identifier -- so there is no SQL-injection or
-arbitrary-file-read surface.
+structured relation identifier, matched against the catalog and double-quoted --
+so there is no SQL-injection surface from the flag.
+
+Scope note: the relation can be a VIEW, whose definition is trusted SQL authored
+by whoever created the DuckDB file. A hostile view could read other files via
+DuckDB's own file functions. This is the single local operator's own database
+file (they point the flag at it), so this is self-trust, not an external attack
+surface; do not point `--duckdb-source` at an untrusted `.duckdb` file.
 
 Reference: DuckDB Parquet export via `COPY (...) TO ... (FORMAT PARQUET)`
 (https://duckdb.org/docs/stable/sql/statements/copy) over a read-only
@@ -78,9 +84,14 @@ def acquire_relation(db_path: Path, relation: str, dest_dir: Path) -> Path:
             f"--duckdb-source: cannot open {db_path} read-only ({type(exc).__name__})"
         ) from None
     try:
+        # Match only the default (current) schema, so the lookup agrees with the
+        # unqualified COPY below: a table that exists ONLY in a non-default schema
+        # is reported "not found" rather than found-here-but-unreadable-there.
+        # Schema-qualified relation names are not supported (the identifier
+        # allowlist forbids the ``.`` anyway).
         row = conn.execute(
             "SELECT table_name FROM information_schema.tables "
-            "WHERE lower(table_name) = lower(?) LIMIT 1",
+            "WHERE lower(table_name) = lower(?) AND table_schema = current_schema() LIMIT 1",
             [relation],
         ).fetchone()
         if not row:

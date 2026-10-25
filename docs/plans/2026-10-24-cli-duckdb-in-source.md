@@ -1,8 +1,9 @@
 # Build plan, DuckDB-in CLI source (B-1 slice)
 
-Status: build plan, PRE-RELEASE (2026-10-24). Part of B-1 (CLI redesign adoption). Additive, pre-GA,
-CLI-repo-only. Awaiting plan-gate (dennis + Codex). Author: Opus (remote worker). NOT built here; Sonnet
-builds from the gated plan.
+Status: record (2026-10-24). Part of B-1 (CLI redesign adoption). Additive, pre-GA, CLI-repo-only.
+BUILT and gated: dennis GO; Codex GO-WITH-CHANGES with findings remediated (reserved-word / case-variant
+quoting, default-schema-only lookup, malformed-tables crash guard, view-trust scope note, multi-table
+and reserved-word tests). Pending the final merge to main.
 
 Rules consulted: 00-universal, development-loop, autonomous-operation, risk-and-exceptions, scope-discipline,
 documentation, reuse-first, testing, security.

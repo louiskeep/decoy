@@ -267,11 +267,14 @@ def test_duckdb_source_fails_closed_on_broken_companion(
 
 
 def test_duckdb_source_two_tables(tmp_path: Path):
-    """The flag is repeatable: two --duckdb-source flags feed two tables; both mask."""
+    """The flag is repeatable and each flag feeds its OWN table. The two sources
+    carry DISTINCT rows, so a source mix-up (both tables reading one DB) would be
+    caught: each output's passthrough `age` must match ITS source's ages."""
     import yaml
 
-    db1 = _make_duckdb(tmp_path / "a.duckdb", table="people")
-    db2 = _make_duckdb(tmp_path / "b.duckdb", table="staff")
+    staff = pd.DataFrame({"id": [10, 20, 30], "name": ["Dan", "Eve", "Fay"], "age": [20, 40, 60]})
+    db1 = _make_duckdb(tmp_path / "a.duckdb", table="people")  # ages 31, 4, 57
+    db2 = _make_duckdb(tmp_path / "b.duckdb", table="staff", frame=staff)
     cfg = {
         "version": 1,
         "global_settings": {"seed": 42},
@@ -292,10 +295,15 @@ def test_duckdb_source_two_tables(tmp_path: Path):
         ["run", str(config), "--duckdb-source", f"people={db1}", "--duckdb-source", f"staff={db2}"],
     )
     assert result.exit_code == 0, result.output
-    for out in ("people_out.csv", "staff_out.csv"):
-        got = pd.read_csv(tmp_path / out, dtype=str)
-        assert got["id"].tolist() == ["A00001", "A00002", "A00003"]  # passthrough
-        assert got["name"].tolist() != ["Alice", "Bob", "Carol"]  # masked
+    people_out = pd.read_csv(tmp_path / "people_out.csv", dtype=str)
+    staff_out = pd.read_csv(tmp_path / "staff_out.csv", dtype=str)
+    # Passthrough age pins each output to its own source (a mix-up would fail here).
+    assert people_out["age"].tolist() == ["31", "4", "57"]
+    assert staff_out["age"].tolist() == ["20", "40", "60"]
+    # Both masked (name != plaintext), and distinct sources give distinct masked names.
+    assert people_out["name"].tolist() != ["Alice", "Bob", "Carol"]
+    assert staff_out["name"].tolist() != ["Dan", "Eve", "Fay"]
+    assert people_out["name"].tolist() != staff_out["name"].tolist()
 
 
 def test_duckdb_source_reserved_word_table_name(tmp_path: Path):
@@ -317,3 +325,26 @@ def test_duckdb_source_reserved_word_table_name(tmp_path: Path):
     assert result.exit_code == 0, result.output
     got = pd.read_csv(tmp_path / "out.csv", dtype=str)
     assert got["name"].tolist() != ["Alice", "Bob", "Carol"]  # masked, read via quoted identifier
+
+
+def test_duckdb_source_malformed_tables_does_not_crash(tmp_path: Path):
+    """A malformed `tables:` (not a list) must not crash the flag path with a
+    TypeError. With the flag present it fails the same way as without it (schema
+    validation), not a flag-specific usage error or a traceback."""
+    import yaml
+
+    db = _make_duckdb(tmp_path / "in.duckdb")
+    cfg = {
+        "version": 1,
+        "global_settings": {"seed": 42},
+        "sources": {},
+        "tables": 3,  # malformed on purpose
+        "targets": {"people": {"type": "file", "format": "csv", "path": str(tmp_path / "o.csv")}},
+    }
+    config = tmp_path / "p.yaml"
+    config.write_text(yaml.safe_dump(cfg), encoding="utf-8")
+    with_flag = runner.invoke(app, ["run", str(config), "--duckdb-source", f"people={db}"])
+    without = runner.invoke(app, ["run", str(config)])
+    assert with_flag.exit_code == without.exit_code  # the flag does not change the failure mode
+    assert with_flag.exit_code != 0
+    assert "Traceback" not in with_flag.output

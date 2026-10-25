@@ -598,15 +598,23 @@ def run(
                     raise DuckDBSourceError(
                         "pipeline `sources:` must be a mapping to use --duckdb-source"
                     )
+                # Build the declared-table set defensively: a malformed `tables:`
+                # (not a list, or non-string names) must NOT crash here with a
+                # TypeError. When it is malformed, skip the flag's membership check
+                # and let PipelineConfig validation report the bad shape normally.
+                _raw_tables = raw.get("tables")
+                _tables_wellformed = isinstance(_raw_tables, list)
                 _declared = {
-                    t.get("name") for t in (raw.get("tables") or []) if isinstance(t, dict)
+                    t["name"]
+                    for t in (_raw_tables if _tables_wellformed else [])
+                    if isinstance(t, dict) and isinstance(t.get("name"), str)
                 }
                 import tempfile
 
                 _duckdb_tmpdir = Path(tempfile.mkdtemp(prefix="decoy-duckdb-"))
                 for _spec in duckdb_source:
                     _tbl, _db = parse_flag(_spec)
-                    if _tbl not in _declared:
+                    if _tables_wellformed and _tbl not in _declared:
                         raise DuckDBSourceError(
                             f"--duckdb-source: {_tbl!r} is not a table in the pipeline "
                             f"`tables:` ({sorted(n for n in _declared if n)})"
@@ -1341,9 +1349,7 @@ def _render_execution_route(state, execution_plan: dict | None) -> None:
     if not execution_plan:
         # explain_plan was requested but the engine stamped nothing (e.g. a path
         # that produced no decision). Say so rather than render an empty table.
-        state.console.print(
-            hint("  "), "no execution-route decision was recorded for this run."
-        )
+        state.console.print(hint("  "), "no execution-route decision was recorded for this run.")
         return
     state.console.print("  Mode:", code(str(execution_plan.get("mode", "?"))))
     state.console.print("  Reason:", str(execution_plan.get("reason", "?")))
@@ -1355,8 +1361,7 @@ def _render_execution_route(state, execution_plan: dict | None) -> None:
         state.console.print(tbl)
     state.console.print(
         hint("  Note:"),
-        "this is the execution ROUTE decision, not the per-column masking "
-        "rationale. For that, run",
+        "this is the execution ROUTE decision, not the per-column masking rationale. For that, run",
         code("decoy validate compile --explain"),
         "before the run.",
     )
@@ -1373,9 +1378,7 @@ def _render_fidelity(state, fidelity_reports: dict | None) -> None:
     state.console.print()
     state.console.print(accent("Fidelity (quick inline check)"))
     if not fidelity_reports:
-        state.console.print(
-            hint("  "), "no mask-table fidelity report was produced for this run."
-        )
+        state.console.print(hint("  "), "no mask-table fidelity report was produced for this run.")
         return
     tbl = make_table("Table", "Grade", "Overall score")
     for table_name, rep in fidelity_reports.items():
@@ -1409,9 +1412,7 @@ def _render_post_validation(state, qm: dict, *, enforce: bool) -> None:
     failed = qm.get("failed_checks") or []
     summary = qm.get("quality_summary")
     if summary is None:
-        state.console.print(
-            hint("  "), "no post-validation summary was produced for this run."
-        )
+        state.console.print(hint("  "), "no post-validation summary was produced for this run.")
         return
     if not failed:
         state.console.print(success("  All post-validation checks passed."))
@@ -1430,8 +1431,7 @@ def _render_post_validation(state, qm: dict, *, enforce: bool) -> None:
     else:
         state.console.print(
             hint("  Note:"),
-            f"{len(failed)} hard-failed check(s) reported; warn-only, the run "
-            "still exits 0. Use",
+            f"{len(failed)} hard-failed check(s) reported; warn-only, the run still exits 0. Use",
             code("--post-validate-enforce"),
             "to exit with findings.",
         )
