@@ -364,3 +364,42 @@ touched tests ran green here (`tests/unit/test_upgrade_command.py`,
 `tests/unit/test_version_endpoint.py`, `tests/packaging/test_install_verify.py`),
 ruff clean, no em-dash. The engine-dependent suite still cannot run in this
 Python 3.13 container (unchanged limit); the new tests remain engine-free.
+
+## Round 2 completion (re-gate blocker, 2026-10-25)
+
+A re-gate found one new blocker in the round-1 remediation and it is fixed on
+this branch. Still not gated, not merged: the orchestrator re-gates (dennis, then
+Codex final) and merges when green.
+
+- **Blocker: the M3 fix broke the DP certified lane.** M3 added a hard
+  `jsonschema>=4.0` runtime dependency. The `certified-profile` CI job installs
+  the CLI non-editable into a pristine venv and runs `scripts/cert_smoke.py`,
+  which asserts `compute_lock_fingerprint(installed_distribution_set())` equals
+  the frozen fingerprint in `requirements-certified.txt`.
+  `installed_distribution_set()` enumerates every installed distribution with no
+  exclusion list, so the four net-new distributions `jsonschema` pulls in
+  (`jsonschema`, `jsonschema-specifications`, `referencing`, `rpds-py`) change
+  the fingerprint and redden the lane on every push to main.
+- **Fix: structural validation, no jsonschema.** The version document is a
+  small, fixed contract, so `validate_document` now checks the shape explicitly
+  and raises `VersionDocumentError` on any violation: `latest` present and a
+  string, and each `artifacts[target]` an object carrying string `url`, `sha256`,
+  and `sig`. This keeps the executing upgrade path fail-closed (a malformed shape
+  plans no install) with no runtime dependency. The tolerant degrade on the
+  non-executing notice and `--check` paths is unchanged. `jsonschema` is removed
+  from `pyproject.toml` and the module; `version.schema.json` stays the published
+  contract (still shipped as package data) that the structural checks mirror,
+  the CLI just no longer reads it at runtime. This supersedes the round-1
+  "New runtime dependency: jsonschema>=4.0" line above.
+- **LOW: temp-dir-then-swap now has a test.** `test_install_verify.py` gains
+  `test_failed_extract_does_not_clobber_active_runtime`: a verified-but-malformed
+  bundle (no `bundle-manifest.json`) is rejected after extract and before the
+  swap, and the already-installed active runtime is left intact.
+
+The structural validator passes the M3 fail-closed suite (malformed, missing
+`latest`, non-object, wrong-typed `url`, incomplete artifact, bad JSON, network
+error), and the upgrade / endpoint / packaging suites are green; `ruff check`
+clean, `ruff format` applied (pinned 0.15.14), no em-dash. The certified lane
+and engine-dependent suites were not run here (Python 3.13 container); a fresh
+non-editable install now adds no distributions, so the cert fingerprint is
+restored (`requirements-certified.txt` never contained jsonschema).
