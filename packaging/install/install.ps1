@@ -88,6 +88,9 @@ try {
         $Version = $doc.latest
         if (-not $Version) { Die "could not read 'latest' from version.json" }
     }
+    # The version flows into file paths and URL segments; restrict it to a strict
+    # PEP 440 / archive-safe character set before any such use.
+    if ($Version -notmatch '^[0-9A-Za-z.+-]+$') { Die "refusing a malformed version string: '$Version'" }
     Info "version: $Version"
 
     $tarball = "decoy-$Version-$target.tar.gz"
@@ -115,20 +118,37 @@ try {
     if ($expected -ne $actual) { Die "CHECKSUM MISMATCH for $tarball. Refusing to install." }
     Info "checksum OK"
 
-    # Verified. Extract, flip current, place the launcher.
-    $versionDir = Join-Path (Join-Path $InstallHome "versions") $Version
-    if (Test-Path $versionDir) { Remove-Item $versionDir -Recurse -Force }
-    New-Item -ItemType Directory -Path $versionDir | Out-Null
-    & tar -xzf (Join-Path $staging $tarball) -C $versionDir
-    if ($LASTEXITCODE -ne 0) { Die "extraction failed" }
-    if (-not (Test-Path (Join-Path $versionDir "bundle-manifest.json"))) {
-        $inner = Get-ChildItem $versionDir -Directory | Select-Object -First 1
-        if ($inner -and (Test-Path (Join-Path $inner.FullName "bundle-manifest.json"))) {
-            Get-ChildItem $inner.FullName -Force | Move-Item -Destination $versionDir
-            Remove-Item $inner.FullName -Force
+    # Verified. Extract into a temp dir and validate it there, THEN swap it into
+    # the versioned dir, so a failed or partial extract never clobbers an
+    # already-installed (possibly active) runtime.
+    $versionsDir = Join-Path $InstallHome "versions"
+    $versionDir = Join-Path $versionsDir $Version
+    New-Item -ItemType Directory -Path $versionsDir -Force | Out-Null
+    $incoming = Join-Path $versionsDir (".incoming." + [System.Guid]::NewGuid().ToString("N"))
+    New-Item -ItemType Directory -Path $incoming | Out-Null
+    try {
+        & tar -xzf (Join-Path $staging $tarball) -C $incoming
+        if ($LASTEXITCODE -ne 0) { Die "extraction failed" }
+        if (-not (Test-Path (Join-Path $incoming "bundle-manifest.json"))) {
+            $inner = Get-ChildItem $incoming -Directory | Select-Object -First 1
+            if ($inner -and (Test-Path (Join-Path $inner.FullName "bundle-manifest.json"))) {
+                Get-ChildItem $inner.FullName -Force | Move-Item -Destination $incoming
+                Remove-Item $inner.FullName -Force
+            }
         }
+        if (-not (Test-Path (Join-Path $incoming "bundle-manifest.json"))) { Die "bundle is malformed: no bundle-manifest.json after extract" }
+
+        # Swap into place: keep the old dir until the new one is positioned.
+        $oldDir = $null
+        if (Test-Path $versionDir) {
+            $oldDir = Join-Path $versionsDir (".old." + [System.Guid]::NewGuid().ToString("N"))
+            Move-Item -Path $versionDir -Destination $oldDir
+        }
+        Move-Item -Path $incoming -Destination $versionDir
+        if ($oldDir) { Remove-Item $oldDir -Recurse -Force -ErrorAction SilentlyContinue }
+    } finally {
+        if (Test-Path $incoming) { Remove-Item $incoming -Recurse -Force -ErrorAction SilentlyContinue }
     }
-    if (-not (Test-Path (Join-Path $versionDir "bundle-manifest.json"))) { Die "bundle is malformed: no bundle-manifest.json after extract" }
 
     $current = Join-Path $InstallHome "current"
     if (Test-Path $current) { Remove-Item $current -Force -Recurse }

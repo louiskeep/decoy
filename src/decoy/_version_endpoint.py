@@ -85,6 +85,12 @@ class UpdateDecision:
     notice_line: str | None
 
 
+class VersionDocumentError(ValueError):
+    """The version document failed strict validation on the executing upgrade
+    path. The notice path never raises this (it degrades tolerantly); an install
+    does, so a malformed or unexpected shape fails closed before anything runs."""
+
+
 def parse_document(data: Any) -> VersionDocument:
     """Parse a decoded JSON object into a `VersionDocument`, tolerantly.
 
@@ -147,6 +153,75 @@ def _default_opener(url: str, timeout: float) -> bytes:
     # nothing identifies the caller.
     with urllib.request.urlopen(url, timeout=timeout) as resp:
         return resp.read()
+
+
+# The document schema (version.schema.json) travels with the CLI: shipped as
+# package data in the wheel and read from packaging/ in a source checkout. The
+# upgrade path validates against it; the notice path does not.
+_SCHEMA_FILENAME = "version.schema.json"
+_PACKAGE_DIR = Path(__file__).resolve().parent
+
+
+def _schema_path() -> Path | None:
+    candidates = (
+        _PACKAGE_DIR / "_packaging" / _SCHEMA_FILENAME,  # shipped in the wheel
+        _PACKAGE_DIR.parents[1] / "packaging" / "version" / _SCHEMA_FILENAME,  # source tree
+    )
+    for candidate in candidates:
+        if candidate.is_file():
+            return candidate
+    return None
+
+
+def validate_document(data: Any) -> None:
+    """Validate a decoded version document against `version.schema.json`, raising
+    `VersionDocumentError` on any violation.
+
+    Used only on the executing upgrade path: acceptance requires the response be
+    validated against the schema and fail closed, and a tolerant parse is what
+    would let a garbage `artifacts[target].url` reach the installer. The notice
+    path keeps `parse_document`'s tolerant degrade. jsonschema is a maintained
+    validator (we do not hand-roll one)."""
+    schema_path = _schema_path()
+    if schema_path is None:
+        raise VersionDocumentError(
+            "the version-document schema was not found; refusing to plan an install."
+        )
+    try:
+        schema = json.loads(schema_path.read_text(encoding="utf-8"))
+    except Exception as exc:
+        raise VersionDocumentError(f"could not read the version-document schema: {exc}")
+    import jsonschema
+
+    try:
+        jsonschema.validate(instance=data, schema=schema)
+    except jsonschema.ValidationError as exc:
+        raise VersionDocumentError(
+            f"the version document does not match the published schema: {exc.message}"
+        )
+
+
+def fetch_document_validated(
+    url: str,
+    *,
+    timeout: float = DEFAULT_TIMEOUT_SECONDS,
+    opener: Callable[[str, float], bytes] | None = None,
+) -> VersionDocument:
+    """Fetch, schema-validate, and parse the version document for the EXECUTING
+    upgrade path. Unlike `fetch_document` (tolerant, fail-silent for the startup
+    notice), this fails closed: a network error, non-JSON, or a shape the schema
+    rejects raises `VersionDocumentError`, so nothing malformed reaches an
+    install."""
+    try:
+        raw = _default_opener(url, timeout) if opener is None else opener(url, timeout)
+    except Exception as exc:
+        raise VersionDocumentError(f"could not reach the Decoy version endpoint: {exc}")
+    try:
+        data = json.loads(raw.decode("utf-8"))
+    except Exception as exc:
+        raise VersionDocumentError(f"the version document is not valid JSON: {exc}")
+    validate_document(data)
+    return parse_document(data)
 
 
 def _compare(a: str, b: str) -> int | None:
@@ -225,7 +300,14 @@ def compute_update_decision(current: str, document: VersionDocument | None) -> U
 
 
 def _cache_path(home: Path | None = None) -> Path:
-    base = home or Path(os.environ.get("DECOY_INSTALL_HOME", "")) or (Path.home() / ".decoy")
+    # An unset DECOY_INSTALL_HOME must fall back to ~/.decoy. `Path("")` is
+    # `PosixPath('.')`, which is truthy, so an empty env value cannot be treated
+    # as a home or the cache lands in (and litters) the current directory.
+    if home is not None:
+        base = home
+    else:
+        env_home = os.environ.get("DECOY_INSTALL_HOME")
+        base = Path(env_home) if env_home else (Path.home() / ".decoy")
     return base / "update-check.json"
 
 

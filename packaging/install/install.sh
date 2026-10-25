@@ -141,6 +141,12 @@ if [ -z "$VERSION" ]; then
     VERSION=$(json_string_field latest "$staging/version.json")
     [ -n "$VERSION" ] || die "could not read 'latest' from version.json"
 fi
+# The version flows into file paths and URL segments; restrict it to a strict
+# PEP 440 / archive-safe character set before any such use (no path traversal,
+# no shell or URL metacharacters).
+case "$VERSION" in
+    *[!0-9A-Za-z.+-]*) die "refusing a malformed version string: '$VERSION'" ;;
+esac
 info "version: $VERSION"
 
 tarball_name="decoy-$VERSION-$target.tar.gz"
@@ -174,25 +180,38 @@ if [ "$expected" != "$actual" ]; then
 fi
 info "checksum OK"
 
-# Verified. Extract into the versioned dir, then flip `current` atomically so an
-# interrupted install never leaves `current` pointing at a half-written dir.
+# Verified. Extract into a temp dir on the same filesystem and validate it there,
+# THEN swap it into the versioned dir. A failed or partial extract must never
+# clobber an already-installed (possibly active) runtime, so nothing touches
+# $version_dir until a complete, manifest-bearing bundle is in hand.
 versions_dir=$DECOY_INSTALL_HOME/versions
 version_dir=$versions_dir/$VERSION
 mkdir -p "$versions_dir"
-rm -rf -- "$version_dir"
-mkdir -p "$version_dir"
-tar -xzf "$staging/$tarball_name" -C "$version_dir" || die "extraction failed"
+incoming=$(mktemp -d "$versions_dir/.incoming.XXXXXX") || die "could not create an extract dir"
+trap 'rm -rf -- "$staging" "$incoming"' EXIT
+tar -xzf "$staging/$tarball_name" -C "$incoming" || die "extraction failed"
 
 # The tarball may wrap its contents in a single top directory; if so, lift them.
-if [ ! -e "$version_dir/bundle-manifest.json" ]; then
-    inner=$(find "$version_dir" -mindepth 1 -maxdepth 1 -type d | head -n1)
+if [ ! -e "$incoming/bundle-manifest.json" ]; then
+    inner=$(find "$incoming" -mindepth 1 -maxdepth 1 -type d | head -n1)
     if [ -n "$inner" ] && [ -e "$inner/bundle-manifest.json" ]; then
-        mv -- "$inner"/* "$version_dir"/ 2>/dev/null || true
-        mv -- "$inner"/.[!.]* "$version_dir"/ 2>/dev/null || true
+        mv -- "$inner"/* "$incoming"/ 2>/dev/null || true
+        mv -- "$inner"/.[!.]* "$incoming"/ 2>/dev/null || true
         rmdir -- "$inner" 2>/dev/null || true
     fi
 fi
-[ -e "$version_dir/bundle-manifest.json" ] || die "bundle is malformed: no bundle-manifest.json after extract"
+[ -e "$incoming/bundle-manifest.json" ] || die "bundle is malformed: no bundle-manifest.json after extract"
+
+# Swap the validated extract into place. Keep any existing dir until the new one
+# is positioned, so the only window where $version_dir is absent is a rename on
+# the same filesystem (near-atomic), never the whole extraction.
+if [ -e "$version_dir" ]; then
+    old_dir=$versions_dir/.old.$$
+    rm -rf -- "$old_dir"
+    mv -- "$version_dir" "$old_dir"
+fi
+mv -- "$incoming" "$version_dir" || die "could not move the new runtime into place"
+rm -rf -- "${old_dir:-/nonexistent-decoy-old}" 2>/dev/null || true
 
 # Atomic `current` flip via a temp symlink + rename.
 tmp_link=$DECOY_INSTALL_HOME/.current.$$

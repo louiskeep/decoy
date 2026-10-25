@@ -313,3 +313,54 @@ pin when D-4 lands.
 - Scope note: a root `--no-update-check` option was added (required by the update
   channel, readiness report 4.3). It is additive with a safe default; it is the
   one root-surface change beyond the `decoy upgrade` command.
+
+## Remediation (dennis gate NO-GO, 2026-10-25)
+
+A dennis adversarial gate returned NO-GO on the `decoy upgrade` client path. The
+installer core (verify-before-extract, tamper refusals, offline path, native
+loud refusal, single-source pin, committed public-key-only) was unaffected and
+is untouched. Both blockers were real failures of stated acceptance and both
+were untested because the real install path was monkeypatched out of every test.
+Fixed at root on this branch, with the previously missing tests added. Still not
+gated, not merged: the orchestrator re-gates (dennis + Codex) and merges.
+
+- **B1 (blocker) signed downgrade / rollback.** `plan_upgrade` only treated
+  `resolved == current` as up-to-date, so an endpoint serving a `latest` LOWER
+  than installed would install the older (still signature-valid) build: a
+  rollback/replay. Fixed: an unpinned upgrade now PEP-440-compares
+  (`_version_endpoint._compare`) and only moves forward; a served-lower or
+  incomparable `latest` installs nothing. A non-newer build installs only via an
+  explicit `--version`, and a true downgrade even then requires the new
+  `--allow-downgrade`. A yanked resolved version is refused. Tests: unpinned
+  served-lower and incomparable install nothing; pinned downgrade refused without
+  the ack and allowed with it; yanked refused; command-level no-op proof.
+- **B2 (blocker) arbitrary-URL fetch-and-execute of the trust anchor.** The
+  default runner derived a base URL from the network-fetched document and, by
+  default, downloaded and ran `install.sh` from that document-controlled host
+  with no verification, defeating the signing chain (the release pubkey lives in
+  install.sh). Fixed: the install scripts and the version schema now ship as
+  package data under `decoy/_packaging/` (hatch `force-include`); the runner runs
+  the LOCAL copy and never downloads the installer. The artifact URL must be
+  https and share the version endpoint's origin, and `DECOY_INSTALL_BASE_URL` is
+  constrained to that same origin. Test: the real (non-monkeypatched) runner
+  refuses non-https, `file://`, cross-origin artifact URLs and a cross-origin
+  base-URL override, makes no network request, and otherwise runs the local
+  script with the origin-pinned base URL.
+- **M3 version client fails closed.** The executing path now validates the
+  document against `version.schema.json` (jsonschema, shipped as package data)
+  and fails closed before planning an install; the non-executing startup-notice
+  and `--check` paths keep the tolerant degrade.
+- **M4 update-check cache in CWD.** An empty `DECOY_INSTALL_HOME` (`Path("")` is
+  truthy) made the cache land at `./update-check.json`. Fixed to treat an empty
+  value as unset and fall back to `~/.decoy`.
+- **LOWs.** `install.sh` / `install.ps1` now extract into a temp dir and swap
+  into place (a failed extract no longer breaks the active runtime), and validate
+  the version string against `^[0-9A-Za-z.+-]+$` before using it in paths/URLs.
+  `plan_upgrade` now refuses a yanked target (folded into B1).
+
+New runtime dependency: `jsonschema>=4.0` (M3). New root/command surface:
+`decoy upgrade --allow-downgrade` (B1); `docs/cli-reference.md` regenerated. All
+touched tests ran green here (`tests/unit/test_upgrade_command.py`,
+`tests/unit/test_version_endpoint.py`, `tests/packaging/test_install_verify.py`),
+ruff clean, no em-dash. The engine-dependent suite still cannot run in this
+Python 3.13 container (unchanged limit); the new tests remain engine-free.

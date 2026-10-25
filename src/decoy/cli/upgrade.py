@@ -15,11 +15,12 @@ and calls the real installer.
 from __future__ import annotations
 
 import os
+import platform
 import subprocess
-import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable
+from urllib.parse import urlsplit
 
 import typer
 from rich.text import Text
@@ -65,13 +66,20 @@ def plan_upgrade(
     target: str | None,
     document: VersionDocument | None,
     pinned_version: str | None = None,
+    allow_downgrade: bool = False,
 ) -> UpgradePlan:
     """Resolve the version to install and its artifact, or an error. Pure.
 
     A pinned `--version` wins; otherwise the document's `latest`. The artifact is
     the one for this host's target; a missing target or a missing artifact is a
     clear error, not a silent no-op (a user on an unsupported platform must be
-    told, not left on an unchanged install thinking it upgraded)."""
+    told, not left on an unchanged install thinking it upgraded).
+
+    Direction is enforced: an unpinned upgrade only ever moves forward, so a
+    document that serves a `latest` lower than the installed version (a signed
+    rollback/replay) installs nothing. A non-newer build can only be installed by
+    an explicit `--version`, and a true downgrade even then needs
+    `allow_downgrade`. Versions are compared with PEP 440 (`_compare`)."""
     if target is None:
         return UpgradePlan(
             current=current,
@@ -103,14 +111,43 @@ def plan_upgrade(
             up_to_date=False,
             error="the version document names no latest version.",
         )
-    if pinned_version is None and resolved == current:
+    if resolved in document.yanked:
         return UpgradePlan(
             current=current,
             target=target,
             resolved_version=resolved,
-            artifact=document.artifact_for(target),
-            up_to_date=True,
-            error=None,
+            artifact=None,
+            up_to_date=False,
+            error=(
+                f"version {resolved} was withdrawn (yanked) and will not be installed. "
+                "Upgrade to a current version instead."
+            ),
+        )
+    direction = _version_endpoint._compare(resolved, current)
+    if pinned_version is None:
+        # Unpinned: only move forward. Equal, older, or incomparable means there
+        # is nothing newer to install, so a served-lower `latest` is a no-op, not
+        # a downgrade.
+        if direction != 1:
+            return UpgradePlan(
+                current=current,
+                target=target,
+                resolved_version=resolved,
+                artifact=document.artifact_for(target),
+                up_to_date=True,
+                error=None,
+            )
+    elif direction == -1 and not allow_downgrade:
+        return UpgradePlan(
+            current=current,
+            target=target,
+            resolved_version=resolved,
+            artifact=None,
+            up_to_date=False,
+            error=(
+                f"{resolved} is older than the installed {current}. Refusing to downgrade; "
+                "pass --allow-downgrade to install an older build on purpose."
+            ),
         )
     artifact = document.artifact_for(target)
     if artifact is None:
@@ -136,41 +173,92 @@ def plan_upgrade(
 
 
 # The installer runner performs the actual verify-and-swap. It is injected in
-# tests; the default shells out to the install script, which re-does the full
+# tests; the default runs the LOCAL install script, which re-does the full
 # checksum + signature verify before it extracts anything (packaging/install/).
-InstallerRunner = Callable[[str, str, Artifact], None]
+# The runner also takes the version-endpoint URL so it can constrain the download
+# to that same origin. A document must not be able to redirect the install.
+InstallerRunner = Callable[[str, str, Artifact, str], None]
+
+# The install script that ships with this CLI. It carries the release public key,
+# so it IS the trust anchor and must never be fetched from a network location: a
+# document-controlled host could otherwise serve its own script with its own key
+# and defeat the signing chain. Shipped as package data in the wheel and read
+# from packaging/ in a source checkout.
+_PACKAGE_DIR = Path(__file__).resolve().parent.parent
 
 
-def perform_upgrade(plan: UpgradePlan, *, installer_runner: InstallerRunner) -> None:
+def perform_upgrade(
+    plan: UpgradePlan, *, version_url: str, installer_runner: InstallerRunner
+) -> None:
     """Run the installer for a resolved plan. Raises on a plan that is not
-    installable (its `error` set) so a caller never 'upgrades' to nothing."""
+    installable (its `error` set) so a caller never 'upgrades' to nothing.
+    `version_url` is the origin the download is pinned to."""
     if plan.error is not None or plan.resolved_version is None or plan.artifact is None:
         raise RuntimeError(plan.error or "upgrade plan is not installable")
-    installer_runner(plan.resolved_version, plan.target or "", plan.artifact)
+    installer_runner(plan.resolved_version, plan.target or "", plan.artifact, version_url)
 
 
-def _default_installer_runner(version: str, target: str, artifact: Artifact) -> None:
-    """Fetch the install script and run it pinned to `version`.
+def _same_origin(a: str, b: str) -> bool:
+    """True if two URLs share a scheme, host, and port."""
+    pa, pb = urlsplit(a), urlsplit(b)
+    return (pa.scheme, pa.hostname, pa.port) == (pb.scheme, pb.hostname, pb.port)
 
-    The install script does the verify-before-extract; this only locates it (a
-    bundled copy via `DECOY_INSTALL_SCRIPT`, else downloaded from the artifact's
-    host) and invokes it with `--version`. The base URL is derived from the
-    artifact URL so the script fetches the matching bundle set."""
-    script = os.environ.get("DECOY_INSTALL_SCRIPT")
-    base_url = artifact.url.rsplit("/", 2)[0] if "/" in artifact.url else artifact.url
+
+def _local_install_script() -> Path:
+    """Resolve the LOCAL install script, or raise. Never downloads it."""
+    name = "install.ps1" if platform.system() == "Windows" else "install.sh"
+    candidates = []
+    override = os.environ.get("DECOY_INSTALL_SCRIPT")
+    if override:
+        candidates.append(Path(override))  # a local override, still never fetched
+    candidates.append(_PACKAGE_DIR / "_packaging" / name)  # shipped in the wheel
+    candidates.append(_PACKAGE_DIR.parents[1] / "packaging" / "install" / name)  # source tree
+    for candidate in candidates:
+        if candidate.is_file():
+            return candidate
+    raise RuntimeError(
+        "the bundled Decoy install script was not found. Refusing to download it: "
+        "the script carries the release key and must be local. Reinstall the CLI."
+    )
+
+
+def _default_installer_runner(version: str, target: str, artifact: Artifact, version_url: str) -> None:
+    """Run the LOCAL install script pinned to `version`, with the download
+    constrained to the version endpoint's own origin.
+
+    The install script does the verify-before-extract; this locates the local
+    copy (never a download) and invokes it with `--version`. The artifact URL
+    must be https and share the version endpoint's origin, and the base URL the
+    script downloads from is pinned to that origin too, so a compromised or
+    spoofed document cannot point the install at an attacker's host or key."""
+    parsed = urlsplit(artifact.url)
+    if parsed.scheme != "https":
+        raise RuntimeError(
+            f"refusing a non-https artifact URL ({artifact.url!r}); only https is allowed."
+        )
+    if not _same_origin(artifact.url, version_url):
+        raise RuntimeError(
+            f"the artifact origin ({parsed.scheme}://{parsed.netloc}) does not match the "
+            "version endpoint origin. Refusing: a document must not redirect the install."
+        )
+    base_url = artifact.url.rsplit("/", 2)[0]
     env = dict(os.environ)
-    env.setdefault("DECOY_INSTALL_BASE_URL", base_url)
-    if script and Path(script).exists():
-        subprocess.run(["sh", script, "--version", version], check=True, env=env)
-        return
-    import urllib.request
+    override = env.get("DECOY_INSTALL_BASE_URL")
+    if override:
+        if urlsplit(override).scheme != "https" or not _same_origin(override, version_url):
+            raise RuntimeError(
+                "DECOY_INSTALL_BASE_URL must be https and the same origin as the version "
+                "endpoint. Refusing a cross-origin download base."
+            )
+        base_url = override
+    env["DECOY_INSTALL_BASE_URL"] = base_url
 
-    with tempfile.TemporaryDirectory() as tmp:
-        script_path = Path(tmp) / "install.sh"
-        install_url = f"{base_url}/install.sh"
-        with urllib.request.urlopen(install_url, timeout=30) as resp:
-            script_path.write_bytes(resp.read())
-        subprocess.run(["sh", str(script_path), "--version", version], check=True, env=env)
+    script = _local_install_script()
+    if script.suffix == ".ps1":
+        cmd = ["powershell", "-ExecutionPolicy", "Bypass", "-File", str(script), "-Version", version]
+    else:
+        cmd = ["sh", str(script), "--version", version]
+    subprocess.run(cmd, check=True, env=env)
 
 
 def upgrade(
@@ -179,6 +267,11 @@ def upgrade(
     ),
     version: str = typer.Option(
         "", "--version", help="Install a specific version instead of the latest."
+    ),
+    allow_downgrade: bool = typer.Option(
+        False,
+        "--allow-downgrade",
+        help="Permit installing an older version than the one installed (needs --version).",
     ),
     json_: bool = typer.Option(False, "--json", help="Emit a JSON record instead of text."),
     quiet: bool = typer.Option(
@@ -192,15 +285,15 @@ def upgrade(
     state = setup_output(json_, quiet, verbose)
 
     target = _version_endpoint.detect_target()
-    document = _version_endpoint.fetch_document(
+    version_url = (
         os.environ.get(_version_endpoint.UPDATE_URL_ENV) or _version_endpoint.DEFAULT_VERSION_URL
     )
     pinned = version or None
-    plan = plan_upgrade(
-        current=__version__, target=target, document=document, pinned_version=pinned
-    )
 
     if check:
+        # Non-executing: report latest vs current. Tolerant parse is fine here
+        # (nothing is installed from this path).
+        document = _version_endpoint.fetch_document(version_url)
         decision = _version_endpoint.compute_update_decision(__version__, document)
         if state.mode is OutputMode.json:
             emit_json(
@@ -228,6 +321,39 @@ def upgrade(
         else:
             state.console.print(success(f"decoy {__version__} is up to date."))
         return
+
+    # Executing path: the document is validated against the schema and fails
+    # closed, so a malformed or unexpected shape never reaches an install.
+    try:
+        document: VersionDocument | None = _version_endpoint.fetch_document_validated(version_url)
+        doc_error: str | None = None
+    except _version_endpoint.VersionDocumentError as exc:
+        document = None
+        doc_error = str(exc)
+
+    if doc_error is not None:
+        if state.mode is OutputMode.json:
+            emit_json(
+                state,
+                {
+                    "command": "upgrade",
+                    "status": "error",
+                    "current": __version__,
+                    "target": target,
+                    "error": doc_error,
+                },
+            )
+            raise typer.Exit(code=EXIT_USAGE)
+        state.err_console.print(error("upgrade:"), Text(doc_error))
+        raise typer.Exit(code=EXIT_USAGE)
+
+    plan = plan_upgrade(
+        current=__version__,
+        target=target,
+        document=document,
+        pinned_version=pinned,
+        allow_downgrade=allow_downgrade,
+    )
 
     if plan.error is not None:
         if state.mode is OutputMode.json:
@@ -264,7 +390,9 @@ def upgrade(
         return
 
     try:
-        perform_upgrade(plan, installer_runner=_default_installer_runner)
+        perform_upgrade(
+            plan, version_url=version_url, installer_runner=_default_installer_runner
+        )
     except Exception as exc:  # the installer failed; the runtime is unchanged.
         if state.mode is OutputMode.json:
             emit_json(

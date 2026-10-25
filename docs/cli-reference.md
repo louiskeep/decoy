@@ -341,6 +341,7 @@ $ decoy upgrade [OPTIONS]
 
 * `--check`: Report whether a newer version exists; install nothing.
 * `--version TEXT`: Install a specific version instead of the latest.
+* `--allow-downgrade`: Permit installing an older version than the one installed (needs --version).
 * `--json`: Emit a JSON record instead of text.
 * `-q, --quiet`: Suppress stdout. Errors still go to stderr.
 * `-v, --verbose`: Enable debug-level CLI logs on stderr.

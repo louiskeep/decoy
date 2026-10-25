@@ -7,6 +7,9 @@ fetcher, and the comparison / parse / gating are pure.
 from __future__ import annotations
 
 import json
+from pathlib import Path
+
+import pytest
 
 from decoy import _version_endpoint as ve
 
@@ -191,3 +194,91 @@ def test_detect_target_returns_a_known_key_or_none():
     # On this host it is either a supported key or None; never a crash.
     target = ve.detect_target()
     assert target in {None, "linux-x86_64", "linux-aarch64", "macos-arm64", "windows-x86_64"}
+
+
+# --- M3: strict schema validation on the executing upgrade path -------------
+
+
+def test_validate_document_accepts_a_valid_document():
+    data = {
+        "schema_version": 1,
+        "latest": "0.12.0",
+        "artifacts": {
+            "linux-x86_64": {
+                "url": "https://decoy.dev/cli/0.12.0/b.tar.gz",
+                "sha256": "a" * 64,
+                "sig": "https://decoy.dev/cli/0.12.0/SHA256SUMS.sig",
+            }
+        },
+    }
+    ve.validate_document(data)  # no raise
+
+
+def test_validate_document_rejects_missing_latest():
+    with pytest.raises(ve.VersionDocumentError):
+        ve.validate_document({"artifacts": {}})
+
+
+def test_validate_document_rejects_non_object():
+    with pytest.raises(ve.VersionDocumentError):
+        ve.validate_document("not a document")
+
+
+def test_validate_document_rejects_wrong_typed_artifact_url():
+    with pytest.raises(ve.VersionDocumentError):
+        ve.validate_document(
+            {"latest": "1.0.0", "artifacts": {"linux-x86_64": {"url": 123, "sha256": "a", "sig": "b"}}}
+        )
+
+
+def test_validate_document_rejects_incomplete_artifact():
+    # An artifact missing `sig` is exactly the shape that would let a garbage
+    # entry reach the installer; the schema requires all three fields.
+    with pytest.raises(ve.VersionDocumentError):
+        ve.validate_document(
+            {"latest": "1.0.0", "artifacts": {"linux-x86_64": {"url": "u", "sha256": "s"}}}
+        )
+
+
+def test_fetch_document_validated_parses_a_valid_document():
+    payload = json.dumps({"latest": "0.9.0"}).encode()
+    doc = ve.fetch_document_validated("https://x", opener=lambda u, t: payload)
+    assert doc.latest == "0.9.0"
+
+
+def test_fetch_document_validated_fails_closed_on_malformed():
+    with pytest.raises(ve.VersionDocumentError):
+        ve.fetch_document_validated("https://x", opener=lambda u, t: b'{"no_latest": true}')
+
+
+def test_fetch_document_validated_fails_closed_on_bad_json():
+    with pytest.raises(ve.VersionDocumentError):
+        ve.fetch_document_validated("https://x", opener=lambda u, t: b"{not json")
+
+
+def test_fetch_document_validated_fails_closed_on_network_error():
+    def boom(url, timeout):
+        raise OSError("network down")
+
+    with pytest.raises(ve.VersionDocumentError):
+        ve.fetch_document_validated("https://x", opener=boom)
+
+
+# --- M4: the update-check cache never lands in the current directory --------
+
+
+def test_cache_path_falls_back_to_home_when_env_unset(monkeypatch):
+    monkeypatch.delenv("DECOY_INSTALL_HOME", raising=False)
+    assert ve._cache_path() == Path.home() / ".decoy" / "update-check.json"
+
+
+def test_cache_path_treats_empty_env_as_unset(monkeypatch):
+    monkeypatch.setenv("DECOY_INSTALL_HOME", "")
+    path = ve._cache_path()
+    assert path == Path.home() / ".decoy" / "update-check.json"
+    assert path != Path("update-check.json")  # never the current directory
+
+
+def test_cache_path_honours_an_explicit_home(monkeypatch):
+    monkeypatch.setenv("DECOY_INSTALL_HOME", "/opt/decoy-home")
+    assert ve._cache_path() == Path("/opt/decoy-home") / "update-check.json"
