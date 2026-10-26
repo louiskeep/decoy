@@ -32,6 +32,8 @@ from decoy.cli.tokenize import detokenize as detokenize_command
 from decoy.cli.tokenize import tokenize as tokenize_command
 from decoy.cli.unmask import UNMASK_EPILOG
 from decoy.cli.unmask import unmask as unmask_command
+from decoy.cli.upgrade import UPGRADE_EPILOG
+from decoy.cli.upgrade import upgrade as upgrade_command
 from decoy.cli.validate import validate_app
 
 # Quick-start hints embedded in the root help. Picked up by Typer's
@@ -86,10 +88,23 @@ def _root(
         is_eager=True,
         help="Show the decoy CLI version and exit.",
     ),
+    no_update_check: bool = typer.Option(
+        False,
+        "--no-update-check",
+        help="Suppress the 'new version available' startup notice.",
+    ),
 ) -> None:
     """Decoy CLI."""
     # Forces Typer to treat the app as multi-command even with one subcommand,
     # so users invoke `decoy run ...` not `decoy ...`.
+    #
+    # Startup update notice (readiness 4.3): interactive only, once per cadence
+    # window, non-blocking, fail-silent, opt-out. It writes at most one line to
+    # stderr and never affects a command's result. Imported lazily so a bare
+    # `import decoy` / `--version` pays nothing for it.
+    from decoy import _update_check
+
+    _update_check.maybe_print_notice(suppress=no_update_check)
 
 
 app.command(name="run", epilog=RUN_EPILOG)(run_command)
@@ -109,6 +124,7 @@ app.command(name="list", epilog=LIST_EPILOG)(list_)
 app.command(name="show", epilog=SHOW_EPILOG)(show)
 app.command(name="doctor", epilog=DOCTOR_EPILOG)(doctor)
 app.command(name="subset", epilog=SUBSET_EPILOG)(subset_command)
+app.command(name="upgrade", epilog=UPGRADE_EPILOG)(upgrade_command)
 
 
 if __name__ == "__main__":

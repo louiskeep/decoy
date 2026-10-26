@@ -27,6 +27,20 @@ version numbers follow the [versioning policy](docs/release/versioning.md).
   `decoy explain tokenize`. Requires the engine's A-8 token-vault seam, which
   the existing `decoy-engine>=0.7.0` floor already carries (the seam is present
   in engine `main`), so no engine-pin change rides with it.
+- **Self-hosted signed distribution + `decoy upgrade` (CLI-LAUNCH).** The CLI now
+  ships as a signed, self-contained, per-platform bundle served from Decoy (a
+  bundled standalone CPython + the matched engine/native/CLI wheels + a `decoy`
+  launcher on PATH), not public PyPI. `install.sh` / `install.ps1` verify the hosted
+  version document's Ed25519 signature, the bundle's SHA-256 checksum, and the
+  bundle's Ed25519 signature before laying anything down, and run a native-companion
+  self-check that refuses loudly (never a silent slow pandas path) if the companion is
+  missing or ABI-mismatched. `decoy upgrade` re-runs the verified install, swaps the
+  managed runtime atomically, and keeps the previous version for rollback. An
+  interactive, opt-out, fail-silent startup notice reports a newer version
+  (`--no-update-check` / `DECOY_NO_UPDATE_CHECK`). Verify side ships in
+  `decoy.distribution`; the build pipeline + install scripts live in `packaging_tools/`
+  (build host only). Signing reuses the in-repo Ed25519 signed-envelope pattern. See
+  `docs/install.md` and `docs/distribution/`.
 - **`decoy run --duckdb-source TABLE=DB_PATH`.** Read a pipeline input table from
   a DuckDB database file instead of a CSV/Parquet/fixed-width file. Repeatable;
   the named relation is acquired read-only (the database is never written) to a
