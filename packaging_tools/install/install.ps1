@@ -131,14 +131,19 @@ try {
   if (-not (Test-Path $pybin)) { $pybin = Join-Path $bundleRoot.FullName "python\bin\python.exe" }
   if (-not (Test-Path $pybin)) { Die "bundle is missing its interpreter" }
 
-  # The bundled interpreter runs with bytecode writing OFF (-B + PYTHONDONTWRITEBYTECODE):
-  # the manifest signs no caches and the verifier rejects any found on disk, so these
-  # install-time checks must not leave an unsigned __pycache__ behind.
+  # The bundled interpreter runs IMPORT-ISOLATED and bytecode-free (-I -B):
+  #  -I drops the CWD and PYTHONPATH/PYTHON* env from sys.path, so this bootstrap cannot
+  #     be tricked into importing a planted decoy/decoy_engine package from a hostile
+  #     working dir and forging a passing verify/self-check.
+  #  -B keeps bytecode writes off: the manifest signs no caches and the verifier rejects
+  #     any found on disk, so these install-time checks must not leave an unsigned
+  #     __pycache__ behind. -I ignores the env var, so the explicit -B flag guarantees it;
+  #     the export is kept to shield any non-isolated child.
   $env:PYTHONDONTWRITEBYTECODE = "1"
 
-  & $pybin -B -m decoy.distribution.verify_extracted $bundleRoot.FullName
+  & $pybin -I -B -m decoy.distribution.verify_extracted $bundleRoot.FullName
   if ($LASTEXITCODE -ne 0) { Die "bundle manifest verification FAILED -- refusing" }
-  & $pybin -B -m decoy.distribution.selfcheck
+  & $pybin -I -B -m decoy.distribution.selfcheck
   if ($LASTEXITCODE -ne 0) { Die "native companion self-check FAILED -- refusing this install" }
 
   # Identity check (HIGH): a validly-signed but wrong-version/target bundle served at a
@@ -150,21 +155,40 @@ try {
   if ($info.target -ne $target) { Die "refusing: bundle declares target '$($info.target)' but this host is '$target' -- nothing installed" }
   if ($ver -ne "local" -and $info.version -ne $ver) { Die "refusing: bundle declares version '$($info.version)' but '$ver' was requested (resolution mismatch) -- versions\$ver left untouched" }
 
+  # Promote stage-beside, never destroy-then-replace (mirror install.sh and the Python
+  # installer): the existing runtime is NEVER removed before the replacement is in place.
+  # A same-version repair moves the original ASIDE as a retained backup, moves the
+  # replacement in, points `current`, then reclaims the backup; a failure at any step
+  # restores the original, so an interrupted re-install of the active version can never
+  # leave the host with no working runtime.
   $dest = Join-Path $versions $ver
-  if (Test-Path $dest) { Remove-Item $dest -Recurse -Force }
-  Move-Item $bundleRoot.FullName $dest
+  $backup = Join-Path $versions (".backup.$ver." + $PID)
+  if (Test-Path $backup) { Remove-Item $backup -Recurse -Force }
+  if (Test-Path $dest) { Move-Item $dest $backup }
+  try {
+    Move-Item $bundleRoot.FullName $dest
+  } catch {
+    if (Test-Path $backup) { Move-Item $backup $dest }
+    Die "could not promote the new runtime into versions\$ver -- the previous runtime is intact"
+  }
   # Recompute the interpreter path AFTER the move: $pybin pointed into the quarantine dir,
   # which no longer exists once the bundle is promoted to $dest.
   $pybin = Join-Path $dest "python\python.exe"
   if (-not (Test-Path $pybin)) { $pybin = Join-Path $dest "python\bin\python.exe" }
   $env:DECOY_HOME = $DecoyHome
-  & $pybin -B -m decoy.distribution.layout_point $ver
-  if ($LASTEXITCODE -ne 0) { Die "could not point 'current' at $ver" }
+  & $pybin -I -B -m decoy.distribution.layout_point $ver
+  if ($LASTEXITCODE -ne 0) {
+    # Activation failed: restore the retained original over the unvalidated replacement.
+    if (Test-Path $backup) { Remove-Item $dest -Recurse -Force; Move-Item $backup $dest }
+    Die "could not point 'current' at $ver -- the previous runtime is intact"
+  }
+  if (Test-Path $backup) { Remove-Item $backup -Recurse -Force }
 
   New-Item -ItemType Directory -Force -Path $BinDir | Out-Null
-  # current\decoy is the POSIX launcher; on Windows run the interpreter directly, with
-  # bytecode writing off (matches the POSIX launcher).
-  $shim = "@echo off`r`nset PYTHONDONTWRITEBYTECODE=1`r`n`"$DecoyHome\current\python\python.exe`" -B -m decoy %*`r`n"
+  # current\decoy is the POSIX launcher; on Windows run the interpreter directly, import-
+  # isolated and bytecode-free (-I -B, matching the POSIX launcher): -I stops a planted
+  # decoy package in the CWD/PYTHONPATH from shadowing the signed runtime.
+  $shim = "@echo off`r`nset PYTHONDONTWRITEBYTECODE=1`r`n`"$DecoyHome\current\python\python.exe`" -I -B -m decoy %*`r`n"
   Set-Content -Path (Join-Path $BinDir "decoy.cmd") -Value $shim -NoNewline
 
   Info "installed decoy $ver -> $dest"

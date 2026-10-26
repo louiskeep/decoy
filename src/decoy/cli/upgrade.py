@@ -104,7 +104,10 @@ def upgrade(
     # download, so a version-endpoint outage never blocks rolling back to already-verified
     # bits. Resolved BEFORE any fetch. `--force` is excluded on purpose: a forced reinstall
     # is a repair -- it must re-download and re-verify, not swap to the retained runtime.
-    if version is not None and not force and installer.local_version_present(version, home):
+    # `--check` is excluded too: it is READ-ONLY (report whether a newer version exists),
+    # so it must never activate -- i.e. swap `current` and rewrite the launcher. It falls
+    # through to the check-and-report branch below.
+    if version is not None and not force and not check and installer.local_version_present(version, home):
         try:
             outcome = installer.activate_local_version(version, home=home, expected_public_pem=pubkey)
         except installer.InstallError as exc:

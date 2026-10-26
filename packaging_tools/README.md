@@ -16,7 +16,7 @@ carries only the verify side, in `decoy.distribution`.
 | `build_bundle.py`          | deterministic per-target bundle assembler                        |
 | `make_version_document.py` | assemble + sign the hosted version document                      |
 | `install/install.sh`       | POSIX installer (shipped to users)                               |
-| `install/install.ps1`      | Windows installer (shipped to users)                             |
+| `install/install.ps1`      | Windows installer (gated off this cycle; not shipped -- kept corrected for re-enablement) |
 | `install/uninstall.sh`     | POSIX uninstaller                                                 |
 | `smoke_install.py`         | end-to-end acceptance smoke                                       |
 
@@ -94,7 +94,7 @@ python -m packaging_tools.smoke_install \
     --python <standalone-cpython-dir> --wheels <wheels-with-closure> --work /tmp/decoy-smoke
 ```
 
-Builds a real signed bundle, serves it locally (bound to 0.0.0.0, LAN-only), and asserts:
+Builds a real signed bundle, serves it locally (bound to 127.0.0.1, loopback only), and asserts:
 clean install + `decoy --version` + `decoy run`; checksum refusal on a tampered byte;
 signature refusal on a corrupted signature; a loud native self-check refusal when the
 companion is removed; and a real `decoy upgrade` 0.1.0 -> 0.2.0. The
