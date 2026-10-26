@@ -43,6 +43,9 @@ _ROOT_HELP_OMITTED = frozenset(
     {
         "schema",
         "doctor",
+        # CLI-launch: `upgrade` manages the self-hosted install; a power command
+        # kept out of the first-run quick-start (full surface is in `decoy --help`).
+        "upgrade",
         # S3b: the four registry sub-apps folded into `list`/`show`, which ARE
         # advertised in the root help (`decoy list templates` / `show template`).
         # S4b: `vault`, `evidence`, and `storm` are gone -- their verbs folded
@@ -62,6 +65,7 @@ _README_TABLE_OMITTED = frozenset(
         "schema",
         "doctor",
         "subset",
+        "upgrade",
         # S3b: the four registry sub-apps folded into `list`/`show`; the README
         # table advertises `decoy list templates` / `decoy show template`.
         # S4b: `vault`, `evidence`, and `storm` are gone (folded into `decoy

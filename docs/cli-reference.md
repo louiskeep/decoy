@@ -31,6 +31,7 @@ $ decoy [OPTIONS] COMMAND [ARGS]...
 **Options**:
 
 * `--version`: Show the decoy CLI version and exit.
+* `--no-update-check`: Suppress the &#x27;new version available&#x27; startup notice.
 * `--install-completion`: Install completion for the current shell.
 * `--show-completion`: Show completion for the current shell, to copy it or customize the installation.
 * `--help`: Show this message and exit.
@@ -49,6 +50,7 @@ $ decoy [OPTIONS] COMMAND [ARGS]...
 * `show`: Show detail for one reference item.
 * `doctor`: Check engine and dependency health.
 * `subset`: Cut a referentially-complete FK-aware...
+* `upgrade`: Upgrade (or pin) the managed Decoy runtime...
 * `validate`: Pre-run validation gate.
 * `scan`: Profile a dataset for PII and...
 * `report`: The post-run surface: show / render /...
@@ -641,6 +643,41 @@ What this command checks before touching any data:
     any output directory is created.
 
 See also: decoy run, decoy validate, decoy validate preflight.
+
+
+## `decoy upgrade`
+
+Upgrade (or pin) the managed Decoy runtime from the Decoy-hosted channel.
+
+**Usage**:
+
+```console
+$ decoy upgrade [OPTIONS]
+```
+
+**Options**:
+
+* `--version TEXT`: Install this exact version instead of latest.
+* `--check`: Only report if a newer version exists.
+* `--force`: Reinstall even if already current.
+* `--json`: Emit a JSON result.
+* `-q, --quiet`: Suppress stdout.
+* `-v, --verbose`: Debug logs on stderr.
+* `--help`: Show this message and exit.
+
+Examples:
+
+  decoy upgrade
+    Upgrade to the latest release if one is available.
+
+  decoy upgrade --check
+    Report whether a newer version exists; change nothing.
+
+  decoy upgrade --version 0.2.0
+    Install a specific version (downgrade or pin).
+
+Verification: the version document and the bundle are both checked against the pinned
+release key before anything is swapped. A bad signature or checksum refuses the upgrade.
 
 
 ## `decoy validate`

@@ -26,7 +26,9 @@ Installable Typer/Rich CLI that wraps `decoy-engine` for local validation, runs,
 
 | Path | What Lives Here |
 |---|---|
-| `src/decoy/cli/` | `run`, `validate`, `plan`, `storm`, `init`, `demo`, `explain`, `info`, `templates` commands |
+| `src/decoy/cli/` | `run`, `validate`, `plan`, `storm`, `init`, `demo`, `explain`, `info`, `upgrade`, `templates` commands |
+| `src/decoy/distribution/` | Shipped verify + update machinery (Ed25519 verify, bundle manifest, version-document contract, `~/.decoy` layout, native self-check, `decoy upgrade` installer core) |
+| `packaging_tools/` | Build-host release pipeline (bundle assembler, signing, install scripts, version-document generator, smoke) -- NOT shipped in the wheel |
 | `src/decoy/ui/` | Theme, output state, progress, tables, cards |
 | `src/decoy/templates/` | Packaged YAML templates |
 | `examples/` | Example YAML configs |
