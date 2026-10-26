@@ -20,6 +20,18 @@ walk defends against.
 The reverse walk still rejects any on-disk path (file OR symlink) not in the signed
 manifest: a forward-only check would verify clean even if an attacker ADDED an unlisted
 file.
+
+Bytecode caches: a correct bundle ships ZERO ``__pycache__``/``.pyc``/``.pyo`` (the
+build strips them and the managed runtime launches with bytecode writing OFF, so none
+are ever written). The source is signed and verified; a cache is not. Python's default
+timestamp-based cache invalidation authenticates a ``.pyc`` only against the source's
+mtime+size, NOT a cryptographic hash, so a forged cache whose header matches the
+(unchanged, signed) source is loaded and executed in place of that source. Excluding
+caches from the manifest while leaving them on disk therefore lets a tampered runtime
+verify clean and then run substituted bytecode. So caches are excluded from the signed
+payload (a correct bundle has none to sign) AND the reverse walk now REJECTS any cache
+found on disk as tampering -- there is no benign reason for one to exist in a managed
+runtime, and refusing closes the "verify-clean, execute-forged" bypass.
 """
 
 from __future__ import annotations
@@ -41,14 +53,16 @@ def _is_unsafe_rel(path_str: str) -> bool:
     return os.path.isabs(path_str) or ".." in Path(path_str).parts
 
 
-def _is_regenerable(rel: str) -> bool:
-    """True for interpreter-written bytecode caches. These CANNOT be part of a stable
-    signed manifest: Python regenerates ``__pycache__/*.pyc`` on first run (and their
-    bytes vary by interpreter patchlevel), and it writes them even during the install's
-    own verify/self-check steps. Integrity rests on the signed ``.py`` SOURCE, which
-    Python validates each cached ``.pyc`` against before loading it; a planted ``.pyc``
-    whose source hash does not match is ignored by the interpreter. So they are excluded
-    from both sides of the manifest rather than flagged as tampering."""
+def _is_bytecode_cache(rel: str) -> bool:
+    """True for a Python bytecode cache path (``__pycache__/*`` or a ``.pyc``/``.pyo``).
+
+    These are never part of the signed manifest: a correct bundle ships none (the build
+    strips them; the managed runtime launches with bytecode writing OFF). The old
+    assumption that Python validates a cached ``.pyc`` against a source HASH is false for
+    the default timestamp-based invalidation -- it checks only the source mtime+size, so
+    a forged cache with a matching header executes in place of the signed source. Hence
+    compute excludes them (nothing to sign) and verify treats any found on disk as
+    tampering (see the reverse walk)."""
     parts = PurePosixPath(rel).parts
     return "__pycache__" in parts or rel.endswith((".pyc", ".pyo"))
 
@@ -105,13 +119,13 @@ def _walk_entries(root: Path, ignore: set[str]):
             p = base / name
             if p.is_symlink():
                 rel = p.relative_to(root).as_posix()
-                if rel not in ignore and not _is_regenerable(rel):
+                if rel not in ignore and not _is_bytecode_cache(rel):
                     collected.append((rel, p))
                 dirnames.remove(name)
         for name in filenames:
             p = base / name
             rel = p.relative_to(root).as_posix()
-            if rel not in ignore and not _is_regenerable(rel):
+            if rel not in ignore and not _is_bytecode_cache(rel):
                 collected.append((rel, p))
     return sorted(collected, key=lambda t: t[0])
 
@@ -144,11 +158,13 @@ def verify_manifest(
 ) -> list[dict[str, str]]:
     """Return a list of problems ([] = clean). Each: {path, problem}. problem is one of
     'missing' | 'size' | 'hash' | 'unexpected' | 'symlink' | 'link-target' |
-    'link-escape' | 'not-a-link' | 'unsafe_path' | 'unreadable'.
+    'link-escape' | 'not-a-link' | 'unsafe_path' | 'unreadable' | 'bytecode-cache'.
 
     Forward: every signed entry present + correct (hash for files, matching safe target
-    for links). Reverse: every on-disk file/symlink must be in the signed manifest.
-    Fails closed on an un-enumerable directory."""
+    for links). Reverse: every on-disk file/symlink must be in the signed manifest, and
+    any bytecode cache (``__pycache__``/``.pyc``/``.pyo``) found on disk is rejected as
+    tampering (a correct managed runtime ships none and writes none). Fails closed on an
+    un-enumerable directory."""
     root = Path(root)
     problems: list[dict[str, str]] = []
     listed: set[str] = set()
@@ -197,8 +213,12 @@ def verify_manifest(
 
     for dirpath, dirnames, filenames in os.walk(root, followlinks=False, onerror=_on_walk_error):
         base = Path(dirpath)
-        # __pycache__ holds interpreter-written bytecode (regenerable, never signed); do
-        # not descend into it and do not flag its contents as unexpected.
+        # A __pycache__ dir is unsigned bytecode: a correct runtime ships none and writes
+        # none (bytecode writing is OFF). Any found on disk is tampering -- flag it and do
+        # not descend (one entry per cache dir is enough; its contents are all suspect).
+        for name in [d for d in dirnames if d == "__pycache__"]:
+            rel = (base / name).relative_to(root).as_posix()
+            problems.append({"path": rel, "problem": "bytecode-cache"})
         dirnames[:] = [d for d in dirnames if d != "__pycache__"]
         for name in list(dirnames):
             p = base / name
@@ -210,7 +230,11 @@ def verify_manifest(
         for name in filenames:
             p = base / name
             rel = p.relative_to(root).as_posix()
-            if rel in ignore_set or _is_regenerable(rel):
+            if rel in ignore_set:
+                continue
+            if _is_bytecode_cache(rel):
+                # A stray .pyc/.pyo outside __pycache__ -- same tampering risk.
+                problems.append({"path": rel, "problem": "bytecode-cache"})
                 continue
             if rel not in listed:
                 problems.append({"path": rel, "problem": "unexpected"})

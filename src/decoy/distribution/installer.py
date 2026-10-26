@@ -57,11 +57,95 @@ class InstallOutcome:
     rolled_back: bool
 
 
+@dataclass(frozen=True)
+class _Staged:
+    """State of a completed promotion so a post-swap failure can be undone. ``backup`` is
+    the displaced prior runtime (same-version repair only), retained until the replacement
+    is validated; None for a different-version install (the prior runtime is a separate
+    version dir that was never touched)."""
+
+    dest: Path
+    backup: Path | None
+
+
+def _promote_staged(bundle_root: Path, dest: Path, versions: Path) -> "_Staged":
+    """Promote the validated ``bundle_root`` to ``dest``, keeping any existing runtime at
+    ``dest`` recoverable until the caller confirms the replacement is good.
+
+    Different-version install (``dest`` absent): a plain atomic rename into place.
+    Same-version repair (``dest`` present): stage the replacement beside ``dest``, move
+    the original ASIDE (retained as a backup), then move the replacement in. The original
+    survives every step; if the final move fails it is put straight back, so a crash or
+    error mid-promotion never leaves the live runtime missing. All renames are within
+    ``versions`` (one filesystem), so each is atomic."""
+    staged = versions / f".staged.{dest.name}.{os.getpid()}"
+    if staged.exists():
+        shutil.rmtree(staged)
+    shutil.move(str(bundle_root), str(staged))
+    if not dest.exists():
+        os.replace(staged, dest)
+        return _Staged(dest=dest, backup=None)
+    backup = versions / f".backup.{dest.name}.{os.getpid()}"
+    if backup.exists():
+        shutil.rmtree(backup)
+    os.replace(dest, backup)
+    try:
+        os.replace(staged, dest)
+    except OSError as exc:
+        os.replace(backup, dest)  # restore the original; nothing was lost
+        shutil.rmtree(staged, ignore_errors=True)
+        raise InstallError(
+            f"failed to promote the new runtime into versions/{dest.name}: {exc}; "
+            "the previous runtime was restored and is intact"
+        ) from exc
+    return _Staged(dest=dest, backup=backup)
+
+
+def _restore_backup(staged: "_Staged") -> None:
+    """Undo a same-version promotion: swap the retained original back over the
+    replacement. No-op for a different-version install (no backup was taken; its rollback
+    is a pointer swap to the untouched prior version dir)."""
+    if staged.backup is None:
+        return
+    failed = staged.dest.with_name(f".failed.{staged.dest.name}.{os.getpid()}")
+    os.replace(staged.dest, failed)
+    os.replace(staged.backup, staged.dest)
+    shutil.rmtree(failed, ignore_errors=True)
+
+
+def _reclaim_backup(staged: "_Staged") -> None:
+    """Drop the retained original once the replacement is validated."""
+    if staged.backup is not None:
+        shutil.rmtree(staged.backup, ignore_errors=True)
+
+
 def _urllib_download(url: str) -> bytes:
     import urllib.request
 
     with urllib.request.urlopen(url) as resp:
         return resp.read()
+
+
+def _no_bytecode_env() -> dict[str, str]:
+    """Env for spawning the bundled interpreter so it writes NO bytecode caches into the
+    managed runtime. The bundle manifest does not sign ``__pycache__``/``.pyc`` and the
+    verifier rejects any found on disk (see `decoy.distribution.manifest`), so install-
+    and activation-time self-checks must not leave caches behind that a later
+    verify/rollback would then refuse."""
+    env = dict(os.environ)
+    env["PYTHONDONTWRITEBYTECODE"] = "1"
+    return env
+
+
+def _selfcheck(python_bin: Path) -> subprocess.CompletedProcess:
+    """Run the bundle's native self-check through its own interpreter, with bytecode
+    writing off (``-B`` + env) so the check never writes an unsigned cache."""
+    return subprocess.run(
+        [str(python_bin), "-B", "-m", "decoy.distribution.selfcheck"],
+        capture_output=True,
+        text=True,
+        env=_no_bytecode_env(),
+    )
 
 
 def _extract_bundle(tar_bytes: bytes, dest: Path) -> Path:
@@ -158,9 +242,7 @@ def activate_local_version(
             )
     if run_self_check:
         python_bin = dest / "python" / "bin" / "python3"
-        proc = subprocess.run(
-            [str(python_bin), "-m", "decoy.distribution.selfcheck"], capture_output=True, text=True
-        )
+        proc = _selfcheck(python_bin)
         if proc.returncode != 0:
             raise InstallError(
                 "refusing to activate: native self-check failed for the local runtime: "
@@ -179,12 +261,16 @@ def activate_local_version(
 
 
 def _bundle_declared_target(bundle_root: Path) -> str | None:
+    """The target the extracted bundle declares (BUNDLE_INFO.json, falling back to the
+    signed manifest). None if neither is readable, which the caller treats as a refusal."""
     import json
 
-    try:
-        return json.loads((bundle_root / _BUNDLE_INFO).read_text(encoding="utf-8")).get("target")
-    except (OSError, ValueError, TypeError):
-        return None
+    for name in (_BUNDLE_INFO, manifest_mod.MANIFEST_NAME):
+        try:
+            return json.loads((bundle_root / name).read_text(encoding="utf-8"))["target"]
+        except (OSError, ValueError, KeyError, TypeError):
+            continue
+    return None
 
 
 def install_version(
@@ -270,22 +356,19 @@ def install_version(
 
         # 5) native self-check through the NEW bundle's interpreter (loud refusal)
         if run_self_check:
-            proc = subprocess.run(
-                [str(python_bin), "-m", "decoy.distribution.selfcheck"],
-                capture_output=True,
-                text=True,
-            )
+            proc = _selfcheck(python_bin)
             if proc.returncode != 0:
                 raise InstallError(
                     "native companion self-check failed for the new bundle -- refusing: "
                     + (proc.stderr.strip() or "no detail")
                 )
 
-        # Fail-closed defense in depth: the extracted bundle must DECLARE the version we
-        # asked for. Without this, a wrong-version download (e.g. latest bits resolved
-        # for a pinned older version) would overwrite -- and destroy -- the retained
-        # versions/<version> rollback runtime with mislabeled bits. Checked BEFORE the
-        # destructive rmtree, so a mismatch never touches an existing version dir.
+        # Fail-closed defense in depth: the extracted bundle must DECLARE the version AND
+        # the target we asked for. Without this, a wrong-version OR wrong-target download
+        # (e.g. latest bits resolved for a pinned older version, or another platform's
+        # bundle served at a pinned URL) would overwrite -- and destroy -- the retained
+        # versions/<version> rollback runtime with mislabeled bits. Checked BEFORE any
+        # promotion, so a mismatch never touches an existing version dir.
         declared = _bundle_declared_version(bundle_root)
         if declared != version:
             raise InstallError(
@@ -293,19 +376,30 @@ def install_version(
                 f"{declared!r} but {version!r} was requested (resolution mismatch); "
                 f"versions/{version} on disk is left untouched"
             )
+        declared_target = _bundle_declared_target(bundle_root)
+        if declared_target != target:
+            raise InstallError(
+                f"refusing to install: the downloaded bundle declares target "
+                f"{declared_target!r} but this host is {target!r} (resolution mismatch); "
+                f"versions/{version} on disk is left untouched"
+            )
 
+        # Promote the validated bundle, RETAINING any existing versions/<version> runtime
+        # until the replacement is in place (and, below, until post-swap validation
+        # passes). A same-version forced reinstall must never delete the live runtime
+        # before its replacement is good -- a failure mid-promotion would otherwise leave
+        # no runtime, and the post-swap "rollback" would land on the replacement because
+        # the original was already gone.
         dest = layout.version_dir(version, home)
-        if dest.exists():
-            shutil.rmtree(dest)
-        shutil.move(str(bundle_root), str(dest))
+        previous = layout.read_current_version(home)
+        staged = _promote_staged(bundle_root, dest, versions)
     finally:
         shutil.rmtree(incoming, ignore_errors=True)
 
     # 6) atomic swap, keeping the previous for rollback
-    previous = layout.read_current_version(home)
     layout.atomic_point_current_at(version, home)
 
-    # 7) post-swap validation; roll back current on failure
+    # 7) post-swap validation; on failure restore the prior runtime AND the pointer
     rolled_back = False
     if post_swap_validate is not None:
         try:
@@ -313,14 +407,18 @@ def install_version(
         except Exception:
             ok = False
         if not ok:
+            _restore_backup(staged)  # same-version repair: swap the original bits back in
             if previous is not None:
                 layout.atomic_point_current_at(previous, home)
             rolled_back = True
-            raise InstallError(
-                f"post-upgrade validation failed; rolled back to {previous!r}. "
-                f"The new runtime {version} remains on disk but is not active."
+            kept = (
+                f"restored the previous {version} runtime (the live runtime is intact)"
+                if staged.backup is not None
+                else f"The new runtime {version} remains on disk but is not active"
             )
+            raise InstallError(f"post-upgrade validation failed; rolled back to {previous!r}. {kept}.")
 
+    _reclaim_backup(staged)  # replacement validated -> drop the retained original
     _write_launcher_shim(home)
     return InstallOutcome(
         version=version,
@@ -353,7 +451,9 @@ def prune_old_versions(home: Path | None = None, *, keep: int = 2) -> list[str]:
     if not versions.is_dir():
         return []
     current = layout.read_current_version(home)
-    entries = [d.name for d in versions.iterdir() if d.is_dir() and not d.name.startswith(".incoming")]
+    # Skip transient promotion dirs (.incoming/.staged/.backup/.failed); only real
+    # version dirs are prune candidates.
+    entries = [d.name for d in versions.iterdir() if d.is_dir() and not d.name.startswith(".")]
 
     def _key(name: str):
         try:

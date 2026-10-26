@@ -28,6 +28,7 @@ import tarfile
 from pathlib import Path
 
 import pytest
+import typer
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
@@ -46,6 +47,9 @@ from decoy.distribution import (
     version_document as vd,
 )
 
+# tests/unit/test_distribution.py -> repo root (for packaging_tools, not pip-installed).
+REPO_ROOT = Path(__file__).resolve().parents[2]
+
 
 # --------------------------------------------------------------------------- keys
 @pytest.fixture
@@ -60,6 +64,18 @@ def keypair():
 
 def _sign_b64(key: Ed25519PrivateKey, data: bytes) -> str:
     return base64.b64encode(key.sign(data)).decode("ascii")
+
+
+@pytest.fixture(autouse=True)
+def _isolate_launcher_paths(tmp_path, monkeypatch):
+    """Isolate the managed-runtime home AND the launcher dir into this test's tmp_path for
+    EVERY test, so no installer test writes to the real ~/.decoy or ~/.local/bin. Prior
+    installer tests isolated DECOY_HOME but not DECOY_BIN_DIR, so running the suite wrote a
+    real ~/.local/bin/decoy shim pointing into a pytest temp dir. A test may still override
+    DECOY_HOME to a sub-path (its own setenv runs after this fixture and wins); the
+    launcher dir is always confined here regardless."""
+    monkeypatch.setenv("DECOY_HOME", str(tmp_path / "_managed_home"))
+    monkeypatch.setenv("DECOY_BIN_DIR", str(tmp_path / "_managed_bin"))
 
 
 # ------------------------------------------------------------------------- signing
@@ -136,17 +152,26 @@ def test_manifest_detects_content_tamper(tmp_path):
     assert any(p["path"] == "decoy" and p["problem"] == "hash" for p in problems)
 
 
-def test_manifest_detects_unexpected_and_ignores_pycache(tmp_path):
+def test_manifest_rejects_bytecode_cache_and_unexpected(tmp_path):
     root = tmp_path / "b"
     root.mkdir()
     _make_tree(root)
     man = manifest_mod.compute_manifest(root, version="0.1.0", target="t")
-    # regenerable bytecode: added after signing, must NOT be flagged
+    # A correct bundle ships no caches and the manifest signs none.
+    assert manifest_mod.verify_manifest(man, root) == []
+    # A __pycache__ planted after signing is NOT benign: Python's timestamp-based
+    # invalidation would load a forged .pyc in place of the signed source, so verify
+    # must REJECT it (the HIGH-1 "verify-clean, execute-forged" bypass).
     pc = root / "python" / "lib" / "__pycache__"
     pc.mkdir(parents=True)
     (pc / "mod.cpython-312.pyc").write_bytes(b"bytecode")
-    assert manifest_mod.verify_manifest(man, root) == []
-    # a real unexpected file IS flagged
+    problems = manifest_mod.verify_manifest(man, root)
+    assert any(p["path"] == "python/lib/__pycache__" and p["problem"] == "bytecode-cache" for p in problems)
+    # A stray .pyc outside __pycache__ is rejected too.
+    (root / "python" / "stray.pyc").write_bytes(b"bytecode")
+    problems = manifest_mod.verify_manifest(man, root)
+    assert any(p["path"] == "python/stray.pyc" and p["problem"] == "bytecode-cache" for p in problems)
+    # a real unexpected file IS still flagged
     (root / "python" / "planted.so").write_bytes(b"x")
     problems = manifest_mod.verify_manifest(man, root)
     assert any(p["problem"] == "unexpected" for p in problems)
@@ -209,7 +234,7 @@ def test_version_document_degrades_on_garbage():
         ("Linux", "aarch64", "linux-aarch64"),
         ("Darwin", "arm64", "macos-arm64"),
         ("Darwin", "x86_64", None),  # Intel mac unsupported at launch
-        ("Windows", "AMD64", "windows-x86_64"),
+        ("Windows", "AMD64", None),  # Windows gated off the advertised matrix this cycle
         ("Linux", "riscv64", None),
     ],
 )
@@ -463,18 +488,26 @@ def test_verify_extracted_flags_problems(tmp_path, keypair):
 
 
 # ------------------------------------------- pinned-version resolution + rollback (B2)
-def _serve_bundle(serve_dir: Path, version: str, key: Ed25519PrivateKey, *, declared: str | None = None) -> str:
+def _serve_bundle(
+    serve_dir: Path,
+    version: str,
+    key: Ed25519PrivateKey,
+    *,
+    declared: str | None = None,
+    declared_target: str = "linux-x86_64",
+) -> str:
     """Build a signed bundle for ``version`` at serve_dir/<version>/ and return its file://
-    URL. ``declared`` overrides the version the bundle DECLARES (to simulate a resolution
-    mismatch where the bytes served at one version path belong to another)."""
+    URL. ``declared`` overrides the version the bundle DECLARES and ``declared_target`` the
+    target it DECLARES (to simulate a resolution mismatch where the bytes served at one
+    version/target path actually belong to another)."""
     dv = declared or version
     stage = serve_dir / f"_stage-{version}" / f"decoy-{version}-linux-x86_64"
     stage.mkdir(parents=True)
     _make_tree(stage)
     (stage / "BUNDLE_INFO.json").write_text(
-        json.dumps({"schema_version": "cli-bundle-info/v1", "version": dv, "target": "linux-x86_64"})
+        json.dumps({"schema_version": "cli-bundle-info/v1", "version": dv, "target": declared_target})
     )
-    man = manifest_mod.compute_manifest(stage, version=dv, target="linux-x86_64")
+    man = manifest_mod.compute_manifest(stage, version=dv, target=declared_target)
     mb = signing.canonical_bytes(man)
     (stage / manifest_mod.MANIFEST_NAME).write_bytes(mb)
     (stage / manifest_mod.MANIFEST_SIG_NAME).write_text(_sign_b64(key, mb))
@@ -579,3 +612,290 @@ def test_activate_local_version_is_a_swap_not_a_download(tmp_path, monkeypatch, 
     assert outcome.version == "0.1.0"
     assert layout.read_current_version() == "0.1.0"
     assert layout.version_dir("0.2.0").is_dir()  # the version we rolled back FROM is kept
+
+
+# -------------------------------------------------------- HIGH 1: bytecode cache bypass
+def test_activate_local_refuses_forged_bytecode_cache(tmp_path, monkeypatch, keypair):
+    """A retained runtime with a substituted ``.pyc`` must REFUSE activation. Python's
+    timestamp-based cache invalidation would otherwise load the forged bytecode in place
+    of the signed source, so `verify_extracted` (which now rejects any cache on disk)
+    makes activation fail closed instead of running substituted bytecode."""
+    key, pub = keypair
+    monkeypatch.setenv("DECOY_HOME", str(tmp_path / "home"))
+    serve = tmp_path / "serve"
+    url = _serve_bundle(serve, "0.1.0", key)
+    doc_bytes, doc_sig = _doc_for_latest(serve, "0.1.0", url, key)
+    installer.install_version(
+        version_doc_bytes=doc_bytes, version_doc_sig_b64=doc_sig, expected_public_pem=pub,
+        target="linux-x86_64", home=layout.decoy_home(), download=_file_download,
+        run_self_check=False, post_swap_validate=lambda cur: True,
+    )
+    dest = layout.version_dir("0.1.0")
+    # Substitute a forged bytecode cache into the retained runtime (the signed source is
+    # left untouched -- the exact bypass the Codex gate reproduced).
+    pc = dest / "python" / "lib" / "__pycache__"
+    pc.mkdir(parents=True)
+    (pc / "evil.cpython-312.pyc").write_bytes(b"forged bytecode")
+    with pytest.raises(installer.InstallError, match=r"verification|bytecode-cache"):
+        installer.activate_local_version(
+            "0.1.0", home=layout.decoy_home(), expected_public_pem=pub, run_self_check=False
+        )
+
+
+# ------------------------------------------- HIGH 2: wrong-version/target replacement
+def test_installer_target_mismatch_refuses_without_touching_dest(tmp_path, monkeypatch, keypair):
+    """A validly-signed bundle for ANOTHER platform served at this target's URL must be
+    refused BEFORE any deletion, leaving the retained versions/<version> intact."""
+    key, pub = keypair
+    monkeypatch.setenv("DECOY_HOME", str(tmp_path / "home"))
+    serve = tmp_path / "serve"
+    # Bytes served at the linux-x86_64 slot that DECLARE linux-aarch64.
+    url = _serve_bundle(serve, "0.1.0", key, declared_target="linux-aarch64")
+    doc_bytes, doc_sig = _doc_for_latest(serve, "0.1.0", url, key)
+    dest = layout.version_dir("0.1.0")
+    dest.mkdir(parents=True)
+    (dest / "KEEP_ME").write_text("real 0.1.0 runtime")
+    with pytest.raises(installer.InstallError, match="declares target"):
+        installer.install_version(
+            version_doc_bytes=doc_bytes, version_doc_sig_b64=doc_sig, expected_public_pem=pub,
+            target="linux-x86_64", home=layout.decoy_home(), download=_file_download,
+            run_self_check=False,
+        )
+    assert (dest / "KEEP_ME").read_text() == "real 0.1.0 runtime"
+
+
+def test_install_sh_refuses_wrong_version_without_touching_dest(tmp_path, keypair):
+    """The SHELL installer (install.sh) must enforce the same identity check: a signed
+    bundle that DECLARES a different version than requested is refused before the
+    destructive promotion, leaving the pre-seeded versions/<version> intact. Driven over
+    the offline (DECOY_LOCAL_BUNDLE) path so it needs no network/proxy."""
+    import subprocess as sp
+
+    key, pub = keypair
+    work = tmp_path / "w"
+    work.mkdir()
+    # A signed bundle DECLARING 0.2.0, but we will request --version 0.1.0.
+    stage = work / "decoy-0.1.0-linux-x86_64"
+    stage.mkdir()
+    _make_tree(stage)
+    # The interpreter must be executable for install.sh's `[ -x ]` guard + self-check.
+    (stage / "python" / "bin" / "python3.12").chmod(0o755)
+    # Canonical (compact) JSON: install.sh reads BUNDLE_INFO with a grep that expects the
+    # compact "key":"value" form the build writes.
+    (stage / "BUNDLE_INFO.json").write_bytes(
+        signing.canonical_bytes({"schema_version": "cli-bundle-info/v1", "version": "0.2.0", "target": "linux-x86_64"})
+    )
+    man = manifest_mod.compute_manifest(stage, version="0.2.0", target="linux-x86_64")
+    mb = signing.canonical_bytes(man)
+    (stage / manifest_mod.MANIFEST_NAME).write_bytes(mb)
+    (stage / manifest_mod.MANIFEST_SIG_NAME).write_text(_sign_b64(key, mb))
+    tarball = work / "decoy-0.1.0-linux-x86_64.tar.gz"
+    _deterministic_targz(stage, tarball)
+    tarball.with_name(tarball.name + ".sha256").write_text(
+        f"{manifest_mod.sha256_file(tarball)}  {tarball.name}\n"
+    )
+    tarball.with_name(tarball.name + ".sig").write_text(_sign_b64(key, tarball.read_bytes()))
+
+    pub_pem = work / "pub.pem"
+    pub_pem.write_text(pub)
+    home = work / "home"
+    dest = home / "versions" / "0.1.0"
+    dest.mkdir(parents=True)
+    (dest / "KEEP_ME").write_text("real 0.1.0 runtime")
+
+    install_sh = REPO_ROOT / "packaging_tools" / "install" / "install.sh"
+    env = dict(os.environ, DECOY_HOME=str(home), DECOY_BIN_DIR=str(work / "bin"),
+               DECOY_RELEASE_PUBKEY_FILE=str(pub_pem), DECOY_LOCAL_BUNDLE=str(tarball))
+    r = sp.run(["sh", str(install_sh), "--version", "0.1.0"], env=env, capture_output=True, text=True)
+    assert r.returncode != 0, r.stdout + r.stderr
+    assert "declares version" in r.stderr
+    assert (dest / "KEEP_ME").read_text() == "real 0.1.0 runtime"  # untouched
+
+
+# ------------------------------------------- HIGH 3: same-version reinstall rollback safety
+def test_same_version_force_post_swap_failure_preserves_runtime(tmp_path, monkeypatch, keypair):
+    """A same-version forced reinstall whose post-swap validation FAILS must restore the
+    ORIGINAL runtime bits (not leave the user on the unvalidated replacement, and not a
+    missing runtime). The original is retained until validation passes."""
+    key, pub = keypair
+    monkeypatch.setenv("DECOY_HOME", str(tmp_path / "home"))
+    serve = tmp_path / "serve"
+    url = _serve_bundle(serve, "0.1.0", key)
+    doc_bytes, doc_sig = _doc_for_latest(serve, "0.1.0", url, key)
+    installer.install_version(
+        version_doc_bytes=doc_bytes, version_doc_sig_b64=doc_sig, expected_public_pem=pub,
+        target="linux-x86_64", home=layout.decoy_home(), download=_file_download,
+        run_self_check=False, post_swap_validate=lambda cur: True,
+    )
+    dest = layout.version_dir("0.1.0")
+    (dest / "LIVE_MARK").write_text("original live 0.1.0")  # marks the original bits
+
+    # Forced same-version reinstall (dest exists); post-swap fails -> restore original.
+    with pytest.raises(installer.InstallError, match=r"rolled back|intact"):
+        installer.install_version(
+            version_doc_bytes=doc_bytes, version_doc_sig_b64=doc_sig, expected_public_pem=pub,
+            target="linux-x86_64", home=layout.decoy_home(), download=_file_download,
+            run_self_check=False, post_swap_validate=lambda cur: False,
+        )
+    assert layout.read_current_version() == "0.1.0"
+    assert (layout.version_dir("0.1.0") / "LIVE_MARK").read_text() == "original live 0.1.0"
+
+
+def test_same_version_promotion_failure_preserves_runtime(tmp_path, monkeypatch, keypair):
+    """If promotion itself fails mid-swap (the replacement cannot be moved into place),
+    the retained original is put straight back -- a crash never leaves a missing runtime."""
+    key, pub = keypair
+    monkeypatch.setenv("DECOY_HOME", str(tmp_path / "home"))
+    serve = tmp_path / "serve"
+    url = _serve_bundle(serve, "0.1.0", key)
+    doc_bytes, doc_sig = _doc_for_latest(serve, "0.1.0", url, key)
+    installer.install_version(
+        version_doc_bytes=doc_bytes, version_doc_sig_b64=doc_sig, expected_public_pem=pub,
+        target="linux-x86_64", home=layout.decoy_home(), download=_file_download,
+        run_self_check=False, post_swap_validate=lambda cur: True,
+    )
+    dest = layout.version_dir("0.1.0")
+    (dest / "LIVE_MARK").write_text("original live 0.1.0")
+
+    real_replace = os.replace
+
+    def selective_replace(src, dst):
+        # Fail only the staged -> dest promotion; allow dest -> backup and the
+        # backup -> dest restore (identified by their dot-prefixed temp names).
+        if Path(src).name.startswith(".staged.") and Path(dst).name == "0.1.0":
+            raise OSError("injected promotion failure")
+        return real_replace(src, dst)
+
+    monkeypatch.setattr(installer.os, "replace", selective_replace)
+    with pytest.raises(installer.InstallError, match=r"restored|intact"):
+        installer.install_version(
+            version_doc_bytes=doc_bytes, version_doc_sig_b64=doc_sig, expected_public_pem=pub,
+            target="linux-x86_64", home=layout.decoy_home(), download=_file_download,
+            run_self_check=False, post_swap_validate=lambda cur: True,
+        )
+    # The original bits are back in place (reading uses open(), not the patched os.replace).
+    assert (layout.version_dir("0.1.0") / "LIVE_MARK").read_text() == "original live 0.1.0"
+
+
+# ----------------------------------------------------- HIGH 4: Windows gated off matrix
+def test_windows_gated_off_advertised_matrix():
+    """Windows is removed from the advertised matrix this cycle: it is not a supported
+    target and the host does not resolve to one (loud refusal), so no Windows artifact is
+    ever advertised (make_version_document iterates SUPPORTED_TARGETS)."""
+    assert "windows-x86_64" not in targets.SUPPORTED_TARGETS
+    assert targets.detect_target("Windows", "AMD64") is None
+    assert set(targets.SUPPORTED_TARGETS) == {"linux-x86_64", "linux-aarch64", "macos-arm64"}
+
+
+def test_build_bundle_refuses_windows_target(tmp_path, monkeypatch):
+    """The assembler refuses to build a target outside the advertised matrix, so a
+    Windows bundle cannot be produced to serve."""
+    monkeypatch.syspath_prepend(str(REPO_ROOT))
+    from packaging_tools import build_bundle
+
+    rc = build_bundle.main([
+        "--version", "0.1.0", "--target", "windows-x86_64",
+        "--python", str(tmp_path / "py"), "--wheels", str(tmp_path / "wh"),
+        "--out", str(tmp_path / "out"),
+    ])
+    assert rc == 2
+    assert not (tmp_path / "out").exists()  # refused before assembling anything
+
+
+# ------------------------------------------------- LOW 2: pin path isolates the signature
+def test_installer_pin_flipped_byte_refuses_on_signature(tmp_path, monkeypatch, keypair):
+    """On the PIN path the sidecar checksum is best-effort, so the Ed25519 signature is the
+    sole trust anchor. With no sidecar, a flipped byte must refuse specifically on
+    SIGNATURE (not checksum) -- isolating the signature branch."""
+    key, pub = keypair
+    monkeypatch.setenv("DECOY_HOME", str(tmp_path / "home"))
+    serve = tmp_path / "serve"
+    latest_url = _serve_bundle(serve, "0.2.0", key)
+    pin_url = _serve_bundle(serve, "0.1.0", key)
+    tar = Path(pin_url[len("file://"):])
+    b = tar.read_bytes()
+    tar.write_bytes(b[:-1] + bytes([b[-1] ^ 0xFF]))  # flip a byte
+    tar.with_name(tar.name + ".sha256").unlink()  # no checksum fallback on the pin path
+    doc_bytes, doc_sig = _doc_for_latest(serve, "0.2.0", latest_url, key)
+
+    with pytest.raises(installer.InstallError, match="signature invalid"):
+        installer.install_version(
+            version_doc_bytes=doc_bytes, version_doc_sig_b64=doc_sig, expected_public_pem=pub,
+            target="linux-x86_64", home=layout.decoy_home(), pin_version="0.1.0",
+            base_url=f"file://{serve}", download=_file_download, run_self_check=False,
+        )
+
+
+# --------------------------------------- MEDIUM 1 / LOW 1: upgrade network + --force routing
+def _call_upgrade(**kwargs):
+    """Invoke the `decoy upgrade` command function with explicit args (bypassing Typer)."""
+    from decoy.cli import upgrade as upg
+
+    defaults = dict(version=None, check=False, force=False, url=None, json_=False, quiet=True, verbose=False)
+    defaults.update(kwargs)
+    return upg.upgrade(**defaults)
+
+
+def test_upgrade_resolves_local_before_network(tmp_path, monkeypatch):
+    """`decoy upgrade --version <local>` activates the retained runtime WITHOUT touching
+    the version endpoint, so an endpoint outage never blocks a local rollback."""
+    from decoy.cli import upgrade as upg
+
+    monkeypatch.setattr(upg, "_managed_home", lambda: tmp_path / "home")
+    monkeypatch.setattr(upg.release_key, "pinned_public_pem", lambda: "PUBKEY")
+    monkeypatch.setattr(upg.installer, "local_version_present", lambda v, h: True)
+    activated = {}
+
+    def fake_activate(version, home, expected_public_pem):
+        activated["v"] = version
+        return installer.InstallOutcome(version, "linux-x86_64", Path("x"), "0.2.0", False)
+
+    monkeypatch.setattr(upg.installer, "activate_local_version", fake_activate)
+
+    def forbidden(url):
+        raise AssertionError("network must not be touched for a local activation")
+
+    monkeypatch.setattr(upg, "_fetch", forbidden)
+    with pytest.raises(typer.Exit) as ei:
+        _call_upgrade(version="0.1.0")
+    assert ei.value.exit_code == 0
+    assert activated["v"] == "0.1.0"
+
+
+def test_upgrade_force_local_reinstalls_not_swap(tmp_path, monkeypatch):
+    """`decoy upgrade --version <local> --force` is a repair: it re-downloads and
+    re-verifies (install_version) instead of swapping to the retained local bits."""
+    from decoy.cli import upgrade as upg
+
+    monkeypatch.setattr(upg, "_managed_home", lambda: tmp_path / "home")
+    monkeypatch.setattr(upg.release_key, "pinned_public_pem", lambda: "PUBKEY")
+    monkeypatch.setattr(upg.installer, "local_version_present", lambda v, h: True)
+
+    def must_not_activate(*a, **k):
+        raise AssertionError("--force must reinstall, not swap to the local runtime")
+
+    monkeypatch.setattr(upg.installer, "activate_local_version", must_not_activate)
+    monkeypatch.setattr(upg, "_fetch", lambda url: b"{}")
+    monkeypatch.setattr(upg.vd, "verify_document", lambda *a, **k: True)
+    monkeypatch.setattr(upg.vd, "parse_document", lambda data: {"latest": "0.1.0"})
+    monkeypatch.setattr(upg.vd, "newer_available", lambda cur, doc: False)
+    seen = {}
+
+    def fake_install(**k):
+        seen["pin"] = k.get("pin_version")
+        return installer.InstallOutcome("0.1.0", "linux-x86_64", Path("x"), "0.1.0", False)
+
+    monkeypatch.setattr(upg.installer, "install_version", fake_install)
+    with pytest.raises(typer.Exit) as ei:
+        _call_upgrade(version="0.1.0", force=True, url="http://x/version.json")
+    assert ei.value.exit_code == 0
+    assert seen["pin"] == "0.1.0"  # reinstall of the pinned version, not a local swap
+
+
+# ------------------------------------------------------- MEDIUM 2: no public network bind
+def test_smoke_serve_binds_loopback_only():
+    """The install smoke must bind its release-serving HTTP listener to loopback, never to
+    all interfaces (no public network bind)."""
+    src = (REPO_ROOT / "packaging_tools" / "smoke_install.py").read_text(encoding="utf-8")
+    assert '("127.0.0.1", 0)' in src  # binds loopback
+    assert '("0.0.0.0"' not in src  # never binds all interfaces
