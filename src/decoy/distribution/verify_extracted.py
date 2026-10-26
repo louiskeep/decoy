@@ -45,7 +45,7 @@ def verify_extracted(bundle_root: Path, *, expected_public_pem: str | None = Non
     try:
         manifest = json.loads(man_bytes)
     except ValueError as exc:
-        return problems + [f"manifest is not valid JSON: {exc}"]
+        return [*problems, f"manifest is not valid JSON: {exc}"]
     if manifest.get("schema_version") != manifest_mod.MANIFEST_SCHEMA_VERSION:
         problems.append(f"unexpected manifest schema: {manifest.get('schema_version')!r}")
 

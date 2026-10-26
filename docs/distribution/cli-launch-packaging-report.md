@@ -4,6 +4,39 @@
 Not merged (the orchestrator gates: dennis then Codex). Risk tier R2 (supply-chain /
 release machinery): independent review required, no author self-certification.
 
+## Remediation round 1 (post-gate)
+
+Two gate-blocking defects and one declaration were fixed at the source:
+
+- **BLOCKER 1 (lint gate red).** The ported platform `# noqa: S310/S202/BLE001` idioms
+  were unused under this repo's narrower ruff `select` (`E,F,I,B,RUF`), so RUF100 and a
+  few other rules reddened CI. Fixed: `ruff check src tests` with the pinned
+  `ruff==0.15.14` now exits 0 (removed the pointless noqas, made a `pytest.raises(match=)`
+  pattern raw, renamed an unused unpack, split semicolon statements). `packaging_tools/`
+  (outside the CI scope) was also made lint-clean.
+- **BLOCKER 2 (`decoy upgrade --version <older>` destroyed the rollback runtime).** The
+  Python installer resolved only the latest artifact, so a pinned older version downloaded
+  the latest bits and overwrote `versions/<older>`. Fixed three ways: (1) the Python path
+  resolves a pinned non-latest version by the published URL convention, exactly like
+  `install.sh`; (2) a fail-closed guard reads the extracted bundle's declared version and
+  refuses BEFORE the destructive `rmtree` if it does not equal the requested version, so a
+  resolution mismatch can never destroy an existing version dir; (3) the rollback path is
+  now a local atomic `current`-pointer swap to the retained runtime
+  (`installer.activate_local_version`) with no download or overwrite, and the
+  `decoy upgrade` rollback hint points at it. New tests cover pin-older-installs-real-bits,
+  pin-mismatch-refuses-without-touching-dest, and activate-is-a-swap-not-a-download.
+- **MEDIUM (undeclared direct deps).** `cryptography` and `packaging` are imported at CLI
+  startup but were only transitive; added `cryptography>=42` and `packaging>=21.0` to
+  `[project] dependencies` (floors matching the engine's). The certified closure
+  (`requirements-certified.txt`) already pins both at satisfying versions
+  (`cryptography==49.0.0`, `packaging==26.2`), so the resolved closure and its DP
+  fingerprint are unchanged and the frozen file is correctly left byte-identical (editing
+  it would break the fingerprint; a legitimate re-derive would reproduce it).
+
+Re-verified: `ruff check src tests` exits 0; `tests/unit` + `tests/sentry` green (414
+passed); and the end-to-end smoke is `RESULT: ALL PASS` (install + version + run, checksum
+refusal, signature refusal, loud native refusal, real `decoy upgrade` 0.1.0 -> 0.2.0).
+
 Scope delivered: the signed, self-contained CLI distribution machinery for the V1 R1 cut
 -- bundle builder, signing, install scripts, version-endpoint contract, and
 `decoy upgrade`. CLI features are unchanged (the CLI is feature-current on the adopted

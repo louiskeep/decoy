@@ -31,12 +31,16 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable
 
-from decoy.distribution import layout, manifest as manifest_mod
+from decoy.distribution import layout, verify_extracted
+from decoy.distribution import manifest as manifest_mod
 from decoy.distribution import targets as targets_mod
-from decoy.distribution import verify_extracted, version_document as vd
+from decoy.distribution import version_document as vd
 
 Downloader = Callable[[str], bytes]
 PostSwapValidator = Callable[[Path], bool]
+
+# The per-bundle metadata file the assembler writes (packaging_tools/build_bundle.py).
+_BUNDLE_INFO = "BUNDLE_INFO.json"
 
 
 class InstallError(RuntimeError):
@@ -56,7 +60,7 @@ class InstallOutcome:
 def _urllib_download(url: str) -> bytes:
     import urllib.request
 
-    with urllib.request.urlopen(url) as resp:  # noqa: S310 -- https release endpoint
+    with urllib.request.urlopen(url) as resp:
         return resp.read()
 
 
@@ -95,10 +99,92 @@ def _extract_bundle(tar_bytes: bytes, dest: Path) -> Path:
         # recent 3.8-3.11 patch levels) is a second line that rejects absolute/escaping
         # paths and out-of-tree links. Fall back on a runtime too old to know it.
         try:
-            tar.extractall(dest, filter="data")  # noqa: S202
+            tar.extractall(dest, filter="data")
         except TypeError:
-            tar.extractall(dest)  # noqa: S202
+            tar.extractall(dest)
     return dest / next(iter(tops))
+
+
+def _try_download_sha(download: Downloader, url: str) -> str | None:
+    """Best-effort fetch of a ``.sha256`` sidecar; returns its hex digest or None. A
+    missing sidecar is not fatal (the Ed25519 signature is the real trust anchor)."""
+    try:
+        parts = download(url).decode("ascii").split()
+    except Exception:
+        return None
+    return parts[0] if parts else None
+
+
+def _bundle_declared_version(bundle_root: Path) -> str | None:
+    """The version the extracted bundle declares (BUNDLE_INFO.json, falling back to the
+    signed manifest). None if neither is readable, which the caller treats as a refusal."""
+    import json
+
+    for name, key in ((_BUNDLE_INFO, "version"), (manifest_mod.MANIFEST_NAME, "version")):
+        try:
+            return json.loads((bundle_root / name).read_text(encoding="utf-8"))[key]
+        except (OSError, ValueError, KeyError, TypeError):
+            continue
+    return None
+
+
+def local_version_present(version: str, home: Path | None = None) -> bool:
+    """Whether ``versions/<version>`` is already installed on disk (a retained runtime,
+    e.g. the rollback target)."""
+    return layout.version_dir(version, home or layout.decoy_home()).is_dir()
+
+
+def activate_local_version(
+    version: str,
+    home: Path | None = None,
+    *,
+    expected_public_pem: str | None = None,
+    run_self_check: bool = True,
+) -> InstallOutcome:
+    """Point ``current`` at an already-installed ``versions/<version>`` via an atomic
+    symlink swap -- the local rollback path (no download, no overwrite). Re-verifies the
+    on-disk runtime (manifest + native self-check) before activating, so a corrupted or
+    companion-stripped retained runtime is refused rather than activated."""
+    home = home or layout.decoy_home()
+    dest = layout.version_dir(version, home)
+    if not dest.is_dir():
+        raise InstallError(f"version {version} is not installed locally")
+    if expected_public_pem is not None:
+        problems = verify_extracted.verify_extracted(dest, expected_public_pem=expected_public_pem)
+        if problems:
+            raise InstallError(
+                "refusing to activate: local runtime failed verification: "
+                + "; ".join(problems[:5])
+            )
+    if run_self_check:
+        python_bin = dest / "python" / "bin" / "python3"
+        proc = subprocess.run(
+            [str(python_bin), "-m", "decoy.distribution.selfcheck"], capture_output=True, text=True
+        )
+        if proc.returncode != 0:
+            raise InstallError(
+                "refusing to activate: native self-check failed for the local runtime: "
+                + (proc.stderr.strip() or "no detail")
+            )
+    previous = layout.read_current_version(home)
+    layout.atomic_point_current_at(version, home)
+    _write_launcher_shim(home)
+    return InstallOutcome(
+        version=version,
+        target=_bundle_declared_target(dest) or (targets_mod.detect_target() or "local"),
+        version_dir=dest,
+        previous_version=previous,
+        rolled_back=False,
+    )
+
+
+def _bundle_declared_target(bundle_root: Path) -> str | None:
+    import json
+
+    try:
+        return json.loads((bundle_root / _BUNDLE_INFO).read_text(encoding="utf-8")).get("target")
+    except (OSError, ValueError, TypeError):
+        return None
 
 
 def install_version(
@@ -109,6 +195,7 @@ def install_version(
     target: str | None = None,
     home: Path | None = None,
     pin_version: str | None = None,
+    base_url: str | None = None,
     download: Downloader | None = None,
     run_self_check: bool = True,
     post_swap_validate: PostSwapValidator | None = None,
@@ -129,17 +216,37 @@ def install_version(
     if vd.is_yanked(doc, version):
         raise InstallError(f"version {version} is yanked -- refusing")
 
-    # 2) select artifact + download
-    art = vd.select_artifact(doc, target)
-    if art is None:
-        raise InstallError(f"version document lists no bundle for target {target}")
-    tar_bytes = download(art["url"])
-    sig_b64 = download(art["sig"]).decode("ascii").strip()
+    # 2) resolve the bundle URL for the REQUESTED version (not blindly the latest),
+    #    then download. The v1 document carries only the latest release's artifacts, so
+    #    a pinned non-latest version resolves by the published URL convention -- the same
+    #    scheme install.sh uses -- from the base the version document was served under.
+    expected_sha: str | None
+    if version == doc.get("latest"):
+        art = vd.select_artifact(doc, target)
+        if art is None:
+            raise InstallError(f"version document lists no bundle for target {target}")
+        url, sig_url, expected_sha = art["url"], art["sig"], art["sha256"]
+    else:
+        if not base_url:
+            raise InstallError(
+                f"cannot resolve pinned version {version}: the version document lists "
+                "only the latest release and no base URL was given to resolve older bundles"
+            )
+        name = f"decoy-{version}-{target}.tar.gz"
+        url = f"{base_url.rstrip('/')}/{version}/{name}"
+        sig_url = url + ".sig"
+        # The signature is the trust anchor; the sidecar sha is a best-effort corruption
+        # check (it is unsigned, like install.sh's pinned path).
+        expected_sha = _try_download_sha(download, url + ".sha256")
 
-    # 3) checksum (from the signed document) then signature (the trust anchor)
-    got_sha = manifest_mod.sha256_bytes(tar_bytes)
-    if got_sha != art["sha256"]:
-        raise InstallError(f"bundle checksum mismatch (expected {art['sha256']} got {got_sha})")
+    tar_bytes = download(url)
+    sig_b64 = download(sig_url).decode("ascii").strip()
+
+    # 3) checksum (when known) then signature (the trust anchor, always enforced)
+    if expected_sha is not None:
+        got_sha = manifest_mod.sha256_bytes(tar_bytes)
+        if got_sha != expected_sha:
+            raise InstallError(f"bundle checksum mismatch (expected {expected_sha} got {got_sha})")
     from decoy.distribution import signing
 
     if not signing.verify_detached(tar_bytes, sig_b64, expected_public_pem=expected_public_pem):
@@ -174,6 +281,19 @@ def install_version(
                     + (proc.stderr.strip() or "no detail")
                 )
 
+        # Fail-closed defense in depth: the extracted bundle must DECLARE the version we
+        # asked for. Without this, a wrong-version download (e.g. latest bits resolved
+        # for a pinned older version) would overwrite -- and destroy -- the retained
+        # versions/<version> rollback runtime with mislabeled bits. Checked BEFORE the
+        # destructive rmtree, so a mismatch never touches an existing version dir.
+        declared = _bundle_declared_version(bundle_root)
+        if declared != version:
+            raise InstallError(
+                f"refusing to install: the downloaded bundle declares version "
+                f"{declared!r} but {version!r} was requested (resolution mismatch); "
+                f"versions/{version} on disk is left untouched"
+            )
+
         dest = layout.version_dir(version, home)
         if dest.exists():
             shutil.rmtree(dest)
@@ -190,7 +310,7 @@ def install_version(
     if post_swap_validate is not None:
         try:
             ok = post_swap_validate(layout.current_link(home))
-        except Exception:  # noqa: BLE001 -- a raising validator is a failed validation
+        except Exception:
             ok = False
         if not ok:
             if previous is not None:
@@ -240,7 +360,7 @@ def prune_old_versions(home: Path | None = None, *, keep: int = 2) -> list[str]:
             from packaging.version import Version
 
             return (1, Version(name))
-        except Exception:  # noqa: BLE001
+        except Exception:
             return (0, name)
 
     ordered = sorted(entries, key=_key, reverse=True)

@@ -108,6 +108,16 @@ dependencies = [
     "typer>=0.26.7,<0.27",
     "rich>=13.0",
     "duckdb>=0.9",
+    # Declared directly (not merely transitive through decoy-engine): the
+    # self-hosted distribution machinery imports both at CLI startup. `packaging`
+    # (PEP 440 version compare) is imported at module top by
+    # decoy.distribution.version_document, pulled in on every `decoy` invocation
+    # via __main__ -> cli.upgrade. `cryptography` (Ed25519 verify) backs
+    # decoy.distribution.signing (used by `decoy upgrade`). Floors match the
+    # engine's own (`packaging>=21.0`, `cryptography>=42`), so a minimal env that
+    # lacks either breaks the whole CLI, not just upgrade.
+    "packaging>=21.0",
+    "cryptography>=42",
 ]
 
 [project.optional-dependencies]

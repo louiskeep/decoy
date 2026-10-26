@@ -184,8 +184,13 @@ else
     SIGURL=$(json_artifact_field "$VDOC" "$TARGET" sig)
     [ -n "$URL" ] && [ -n "$EXPECT_SHA" ] && [ -n "$SIGURL" ] || die "version document lists no bundle for $TARGET"
   else
-    # Pinned to a non-latest version: construct URLs by convention; checksum comes from
-    # the published .sha256 sidecar (the bundle's own .sig remains the trust anchor).
+    # Pinned to a non-latest version: the signed version document carries only the
+    # latest release's checksum, so construct URLs by convention and take the checksum
+    # from the published .sha256 sidecar below. That sidecar is UNSIGNED, so for a pin
+    # the Ed25519 signature (verified against the pinned key, always) is the sole trust
+    # anchor; the sidecar is only a best-effort corruption check and is skipped if its
+    # fetch fails. "flipped byte refuses on checksum" is therefore a guarantee of the
+    # latest path (signed checksum); on a pin, a flipped byte refuses on SIGNATURE.
     URL="$BASE_URL/$VERSION/decoy-$VERSION-$TARGET.tar.gz"
     SIGURL="$URL.sig"
     EXPECT_SHA=""
