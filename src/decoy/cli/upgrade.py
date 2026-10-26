@@ -99,6 +99,20 @@ def upgrade(
         state.err_console.print(error("error:"), str(exc))
         raise typer.Exit(code=EXIT_USAGE) from exc
 
+    # Local rollback must not depend on the network. An explicit `--version <v>` that is
+    # already installed on disk is activated via an atomic `current`-pointer swap with no
+    # download, so a version-endpoint outage never blocks rolling back to already-verified
+    # bits. Resolved BEFORE any fetch. `--force` is excluded on purpose: a forced reinstall
+    # is a repair -- it must re-download and re-verify, not swap to the retained runtime.
+    if version is not None and not force and installer.local_version_present(version, home):
+        try:
+            outcome = installer.activate_local_version(version, home=home, expected_public_pem=pubkey)
+        except installer.InstallError as exc:
+            state.err_console.print(error("error:"), str(exc))
+            raise typer.Exit(code=EXIT_RUNTIME) from exc
+        _report_outcome(state, outcome, "activated")
+        raise typer.Exit(code=EXIT_OK)
+
     doc_url = url or _DEFAULT_VERSION_URL
     try:
         doc_bytes = _fetch(doc_url)
@@ -139,44 +153,46 @@ def upgrade(
             return False
         return out.returncode == 0 and (target_version in out.stdout)
 
+    # A local activation was already handled before the network fetch (above). Everything
+    # that reaches here downloads + re-verifies: a plain/latest upgrade, a pinned
+    # not-yet-installed version, and a `--force` reinstall (a repair, even of a version
+    # already on disk -- so a same-version `--force` re-downloads and re-verifies rather
+    # than swapping to the retained bits).
     try:
-        if version is not None and installer.local_version_present(version, home):
-            # A pinned version already on disk (the rollback case): swap `current` to the
-            # retained runtime atomically, no download and no overwrite -- so rolling back
-            # never re-fetches or destroys the bits it is rolling back to.
-            outcome = installer.activate_local_version(version, home=home, expected_public_pem=pubkey)
-            action = "activated"
-        else:
-            # The base the version document was served under; a pinned non-latest version
-            # resolves <base>/<version>/decoy-<version>-<target>.tar.gz (install.sh scheme).
-            base_url = doc_url.rsplit("/", 1)[0]
-            outcome = installer.install_version(
-                version_doc_bytes=doc_bytes,
-                version_doc_sig_b64=doc_sig,
-                expected_public_pem=pubkey,
-                home=home,
-                pin_version=version,
-                base_url=base_url,
-                download=_fetch,
-                post_swap_validate=_post_swap,
-            )
-            action = "upgraded"
+        # The base the version document was served under; a pinned non-latest version
+        # resolves <base>/<version>/decoy-<version>-<target>.tar.gz (install.sh scheme).
+        base_url = doc_url.rsplit("/", 1)[0]
+        outcome = installer.install_version(
+            version_doc_bytes=doc_bytes,
+            version_doc_sig_b64=doc_sig,
+            expected_public_pem=pubkey,
+            home=home,
+            pin_version=version,
+            base_url=base_url,
+            download=_fetch,
+            post_swap_validate=_post_swap,
+        )
     except installer.InstallError as exc:
         state.err_console.print(error("error:"), str(exc))
         raise typer.Exit(code=EXIT_RUNTIME) from exc
 
+    _report_outcome(state, outcome, "upgraded")
+    raise typer.Exit(code=EXIT_OK)
+
+
+def _report_outcome(state, outcome, action: str) -> None:
+    """Emit the install/activation result (JSON or human), with the rollback hint."""
     if state.mode is OutputMode.json:
         emit_json(state, {
             "current": outcome.version, "previous": outcome.previous_version,
             "target": outcome.target, "action": action,
         })
-    else:
-        state.console.print(
-            success(f"{action}:"),
-            f"decoy {outcome.previous_version or '(none)'} -> {outcome.version} ({outcome.target}).",
-        )
-        # The rollback hint points at the retained previous runtime; `decoy upgrade
-        # --version <previous>` activates it in place (local swap), it does not re-download.
-        if outcome.previous_version and outcome.previous_version != outcome.version:
-            state.console.print(" ", hint("rollback:"), f"decoy upgrade --version {outcome.previous_version}")
-    raise typer.Exit(code=EXIT_OK)
+        return
+    state.console.print(
+        success(f"{action}:"),
+        f"decoy {outcome.previous_version or '(none)'} -> {outcome.version} ({outcome.target}).",
+    )
+    # The rollback hint points at the retained previous runtime; `decoy upgrade
+    # --version <previous>` activates it in place (local swap), it does not re-download.
+    if outcome.previous_version and outcome.previous_version != outcome.version:
+        state.console.print(" ", hint("rollback:"), f"decoy upgrade --version {outcome.previous_version}")

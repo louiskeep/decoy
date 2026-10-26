@@ -4,6 +4,71 @@
 Not merged (the orchestrator gates: dennis then Codex). Risk tier R2 (supply-chain /
 release machinery): independent review required, no author self-certification.
 
+## Remediation round 2 (post cross-model Codex gate)
+
+The cross-model Codex gate found four HIGH and three MEDIUM defects; all were fixed at the
+source with named regressions (unit suite now 425 passed; lint clean on `src tests` and
+`packaging_tools`).
+
+- **HIGH 1 -- unsigned bytecode bypassed rollback integrity.** The manifest excluded all
+  `__pycache__`/`.pyc`, and Python's default timestamp-based cache invalidation
+  authenticates a `.pyc` only against the source's mtime+size (not a hash), so a forged
+  cache whose header matched the signed source executed in its place while
+  `verify_manifest(...) == []`. Fixed two ways: the managed runtime now launches with
+  bytecode writing OFF (`-B` + `PYTHONDONTWRITEBYTECODE`, inherited by children -- the
+  launcher and every install/activate self-check), and `verify_manifest` now REJECTS any
+  `__pycache__`/`.pyc`/`.pyo` found on disk as tampering (a correct cache-free runtime
+  verifies clean). Regressions: `test_manifest_rejects_bytecode_cache_and_unexpected`
+  (manifest level) and `test_activate_local_refuses_forged_bytecode_cache` (a substituted
+  `.pyc` in a retained runtime makes activation refuse).
+- **HIGH 2 -- installers permitted wrong-version/target replacement.** Round 1 fixed only
+  the Python path. The declared **version AND target** identity check now runs before any
+  deletion in EVERY installer: `install.sh` and `install.ps1` read the signed
+  `BUNDLE_INFO.json` and refuse a mismatch before `rm`/`Remove-Item`, and the Python path
+  gained the target check beside its existing version check. Regressions:
+  `test_installer_target_mismatch_refuses_without_touching_dest` (Python) and
+  `test_install_sh_refuses_wrong_version_without_touching_dest` (shell, offline path, real
+  Ed25519 via openssl). (`install.ps1`'s check is corrected at the source but the target is
+  gated off this cycle -- see HIGH 4 -- so it is not an advertised/executed path and has no
+  live pwsh regression; this is called out below.)
+- **HIGH 3 -- same-version forced reinstall destroyed the rollback target.** The Python
+  installer removed the destination before promoting, so `decoy upgrade --force` when
+  already current could leave no runtime and a post-swap "rollback" landing on the
+  replacement. Promotion now stages the validated replacement beside the original, moves
+  the original ASIDE (retained), moves the replacement in, and reclaims the original only
+  after post-swap validation passes; a failed promotion or post-swap validation restores
+  the original bits. Regressions:
+  `test_same_version_force_post_swap_failure_preserves_runtime` and
+  `test_same_version_promotion_failure_preserves_runtime`.
+- **HIGH 4 -- Windows lifecycle could not complete.** `install.ps1` executed the
+  interpreter from its pre-move location, and the `current`-symlink + POSIX-launcher model
+  is not verifiable on Windows here (no Windows runner / `pwsh`). Per the launch rule,
+  Windows is **gated off the advertised matrix** this cycle (removed from
+  `SUPPORTED_TARGETS`; `detect_target`/both installers refuse on Windows; `build_bundle`
+  refuses the target; the version document advertises no Windows artifact). The ps1 body
+  was also corrected at the source (path recomputed after promotion; identity check; `-B`)
+  for re-enablement. Decision + re-enable checklist:
+  `docs/distribution/decisions/2026-10-26-windows-target-gated.md`. Regressions:
+  `test_windows_gated_off_advertised_matrix`, `test_build_bundle_refuses_windows_target`,
+  and the updated `test_detect_target`.
+- **MEDIUM 1 -- local rollback depended on the network.** `decoy upgrade --version <local>`
+  now resolves + activates an already-installed version BEFORE any endpoint fetch, so an
+  outage never blocks rolling back to verified local bits. Regression:
+  `test_upgrade_resolves_local_before_network` (network call monkeypatched to assert it is
+  never reached).
+- **MEDIUM 2 -- smoke bound all interfaces.** `smoke_install.py` now binds `127.0.0.1`
+  explicitly. Regression: `test_smoke_serve_binds_loopback_only`.
+- **MEDIUM 3 -- pin test overwrote the user's launcher.** A shared autouse fixture now
+  isolates `DECOY_BIN_DIR` (and `DECOY_HOME`) for every installer test, so the suite never
+  writes outside its temp dirs.
+
+Also folded in the two dennis LOWs: `decoy upgrade --version <local> --force` now routes to
+a real reinstall/repair (download + re-verify), not the local swap
+(`test_upgrade_force_local_reinstalls_not_swap`); and a pinned-path flipped-byte test
+asserts refusal specifically on SIGNATURE (`test_installer_pin_flipped_byte_refuses_on_signature`).
+
+Not merged; the orchestrator re-gates (dennis then Codex) on push.
+
 ## Remediation round 1 (post-gate)
 
 Two gate-blocking defects and one declaration were fixed at the source:
@@ -85,8 +150,11 @@ Per-target tarball `decoy-<version>-<target>.tar.gz` containing `python/` (a
 python-build-standalone CPython), the matched `decoy-engine` + `decoy-engine-native` +
 `decoy-cli` wheels installed into it, a `decoy` launcher (`python -m decoy`, resolves the
 bundle via the `current` symlink), `BUNDLE_INFO.json`, and a signed `manifest.json`.
-Targets: `linux-x86_64`, `linux-aarch64`, `macos-arm64`, `windows-x86_64` (the native
-matrix). ~600-650 MB installed / ~290 MB compressed. Reproducible archive bytes.
+Targets: `linux-x86_64`, `linux-aarch64`, `macos-arm64`. `windows-x86_64` is in the native
+wheel matrix but GATED OFF the advertised distribution matrix this cycle (lifecycle
+unverified -- see the round-2 note and
+`docs/distribution/decisions/2026-10-26-windows-target-gated.md`). ~600-650 MB installed /
+~290 MB compressed. Reproducible archive bytes.
 
 ## Signing + verification path (one scheme, three verifiers)
 Ed25519 via `cryptography`, reusing the in-repo signed-envelope pattern (cited). The
@@ -126,10 +194,12 @@ unit suite (381 passed) and the sentry suite (29 passed) green. Surface drift gu
 regenerated (`docs/cli-reference.md`; `upgrade` added to the surface-omission allowlists).
 
 ## Decisions that need Cam
-1. **Windows signature tooling.** `install.ps1` verifies Ed25519 via `openssl` on PATH
-   (Git-for-Windows ships it) and refuses if absent -- consistent with the loud-refusal
-   rule but a prerequisite. Alternative: a bundled/pinned `minisign`. (install.ps1 is
-   written and reviewable but was not executed in this Linux smoke.)
+1. **Windows target (gated off this cycle).** `windows-x86_64` is off the advertised
+   matrix until its install/upgrade/rollback lifecycle is verified end to end on a real
+   Windows runner (no Windows/`pwsh` here). The re-enable checklist and the signature-
+   tooling sub-decision (`openssl` on PATH vs a bundled `minisign`) live in
+   `docs/distribution/decisions/2026-10-26-windows-target-gated.md`. The ps1 body is
+   corrected and reviewable for that day but inert while gated.
 2. **macOS Intel (x86_64):** unsupported at launch (not in the matrix). Rosetta-on-arm64
    or adding the target are the alternatives.
 3. **Download host + key-custody store + release cadence:** static site + CDN vs object

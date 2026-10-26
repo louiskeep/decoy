@@ -43,8 +43,16 @@ _LAUNCHER = """\
 # (pwd -P follows the `current` symlink to the real versions/<v> dir), then runs
 # the bundled interpreter as `python -m decoy`. Never relies on a pip console-script
 # shebang, which would embed the build-host path.
+#
+# Bytecode writing is OFF (-B and PYTHONDONTWRITEBYTECODE, inherited by child
+# processes): the runtime must never create a __pycache__/.pyc beside the signed,
+# verified source, because an unsigned cache is not covered by the bundle manifest and
+# Python's default timestamp-based cache invalidation would load a forged .pyc in place
+# of the source. With writing off, a correct runtime stays cache-free, so every import
+# compiles from the signed source and `verify_extracted` (which rejects any cache found
+# on disk) stays authoritative for rollback/activation.
 here=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd -P)
-exec "$here/python/bin/python3" -m decoy "$@"
+PYTHONDONTWRITEBYTECODE=1 exec "$here/python/bin/python3" -B -m decoy "$@"
 """
 
 
@@ -230,6 +238,18 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--out", required=True, help="output dir for the bundle + archive")
     ap.add_argument("--sign", action="store_true", help="sign manifest + tarball with the release key")
     args = ap.parse_args(argv)
+
+    # Only assemble targets in the advertised matrix. Windows is gated off this cycle
+    # (POSIX-shaped runtime, lifecycle unverified); building one would produce an
+    # unrunnable advertised path. See decoy.distribution.targets.
+    from decoy.distribution import targets as targets_mod
+
+    if args.target not in targets_mod.SUPPORTED_TARGETS:
+        supported = ", ".join(targets_mod.SUPPORTED_TARGETS)
+        sys.stderr.write(
+            f"refusing to build: {args.target!r} is not in the advertised matrix ({supported})\n"
+        )
+        return 2
 
     key = None
     if args.sign:

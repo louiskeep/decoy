@@ -39,8 +39,13 @@ version numbers follow the [versioning policy](docs/release/versioning.md).
   interactive, opt-out, fail-silent startup notice reports a newer version
   (`--no-update-check` / `DECOY_NO_UPDATE_CHECK`). Verify side ships in
   `decoy.distribution`; the build pipeline + install scripts live in `packaging_tools/`
-  (build host only). Signing reuses the in-repo Ed25519 signed-envelope pattern. See
-  `docs/install.md` and `docs/distribution/`.
+  (build host only). Signing reuses the in-repo Ed25519 signed-envelope pattern. The
+  managed runtime runs with bytecode writing off and the bundle manifest rejects any
+  on-disk `__pycache__`/`.pyc`, so a forged cache can never execute past verification.
+  Launch targets: `linux-x86_64`, `linux-aarch64`, `macos-arm64`; `windows-x86_64` is
+  gated off the advertised matrix until its lifecycle is verified end to end (see
+  `docs/distribution/decisions/2026-10-26-windows-target-gated.md`). See `docs/install.md`
+  and `docs/distribution/`.
 - **`decoy run --duckdb-source TABLE=DB_PATH`.** Read a pipeline input table from
   a DuckDB database file instead of a CSV/Parquet/fixed-width file. Repeatable;
   the named relation is acquired read-only (the database is never written) to a

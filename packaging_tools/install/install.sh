@@ -65,7 +65,10 @@ detect_target() {
         # macOS Intel is intentionally unsupported at launch (not in the matrix).
         *) echo "" ;;
       esac ;;
-    MINGW*|MSYS*|CYGWIN*|Windows_NT) echo windows-x86_64 ;;
+    # Windows is gated off the advertised matrix this cycle (POSIX-shaped managed
+    # runtime; the Windows lifecycle is unverified). Refuse rather than install an
+    # unrunnable path. See docs/distribution/decisions/2026-10-26-windows-target-gated.md.
+    MINGW*|MSYS*|CYGWIN*|Windows_NT) echo "" ;;
     *) echo "" ;;
   esac
 }
@@ -138,7 +141,7 @@ need tar
 need mktemp
 
 TARGET=$(detect_target)
-[ -n "$TARGET" ] || die "unsupported platform ($(uname -s)/$(uname -m)). Supported: linux-x86_64, linux-aarch64, macos-arm64, windows-x86_64. (macOS Intel is not supported at launch.)"
+[ -n "$TARGET" ] || die "unsupported platform ($(uname -s)/$(uname -m)). Supported: linux-x86_64, linux-aarch64, macos-arm64. (macOS Intel and Windows are not supported at launch.)"
 info "target: $TARGET"
 
 WORK=$(mktemp -d)
@@ -228,19 +231,42 @@ BUNDLE_ROOT=$(find "$INCOMING" -mindepth 1 -maxdepth 1 -type d | head -n1)
 PYBIN="$BUNDLE_ROOT/python/bin/python3"
 [ -x "$PYBIN" ] || die "bundle is missing its interpreter"
 
+# The bundled interpreter runs with bytecode writing OFF (-B + PYTHONDONTWRITEBYTECODE):
+# the manifest does not sign caches and the verifier rejects any found on disk, so these
+# install-time checks must not leave an unsigned __pycache__ behind. (See
+# decoy.distribution.manifest.)
+export PYTHONDONTWRITEBYTECODE=1
+
 # 3a) manifest verify (defense in depth: the signature already established trust; this
-#     catches a truncated/altered extraction). Reuses the shipped verifier.
-"$PYBIN" -m decoy.distribution.verify_extracted "$BUNDLE_ROOT" || die "bundle manifest verification FAILED -- refusing"
+#     catches a truncated/altered extraction OR a planted bytecode cache). Reuses the
+#     shipped verifier.
+"$PYBIN" -B -m decoy.distribution.verify_extracted "$BUNDLE_ROOT" || die "bundle manifest verification FAILED -- refusing"
 
 # 3b) native-present self-check: LOUD refusal if the companion is missing/mismatched.
-"$PYBIN" -m decoy.distribution.selfcheck || die "native companion self-check FAILED -- refusing this install"
+"$PYBIN" -B -m decoy.distribution.selfcheck || die "native companion self-check FAILED -- refusing this install"
+
+# 3c) identity check (HIGH: a validly-signed but wrong-version/target bundle served at a
+#     pinned URL must NOT overwrite the retained versions/<version> runtime). Compare the
+#     bundle's DECLARED version + target (BUNDLE_INFO.json, signed into the manifest)
+#     against what was requested, BEFORE any deletion. A mismatch refuses untouched.
+BINFO="$BUNDLE_ROOT/BUNDLE_INFO.json"
+[ -f "$BINFO" ] || die "bundle is missing BUNDLE_INFO.json; cannot verify its identity -- refusing"
+DECLARED_VERSION=$(json_top_string "$BINFO" version)
+DECLARED_TARGET=$(json_top_string "$BINFO" target)
+[ -n "$DECLARED_VERSION" ] && [ -n "$DECLARED_TARGET" ] || die "bundle BUNDLE_INFO.json has no version/target -- refusing"
+[ "$DECLARED_TARGET" = "$TARGET" ] || die "refusing: bundle declares target '$DECLARED_TARGET' but this host is '$TARGET' -- nothing installed"
+# When a specific version was requested (every path except an offline bundle with no
+# --version, where VERSION is the literal 'local'), the bytes must declare it.
+if [ "$VERSION" != "local" ]; then
+  [ "$DECLARED_VERSION" = "$VERSION" ] || die "refusing: bundle declares version '$DECLARED_VERSION' but '$VERSION' was requested (resolution mismatch) -- versions/$VERSION left untouched"
+fi
 
 # 4) promote into place + flip `current` atomically (reuses the tested layout helper).
 DEST="$VERSIONS/$VERSION"
 rm -rf "$DEST"
 mv "$BUNDLE_ROOT" "$DEST"
 rm -rf "$INCOMING"
-DECOY_HOME="$DECOY_HOME" "$DEST/python/bin/python3" -m decoy.distribution.layout_point "$VERSION" \
+DECOY_HOME="$DECOY_HOME" "$DEST/python/bin/python3" -B -m decoy.distribution.layout_point "$VERSION" \
   || die "could not point 'current' at $VERSION"
 
 # 5) launcher shim on PATH -> the current runtime.

@@ -1,15 +1,23 @@
 """The supported per-platform target ids, and detection of the running host's target.
 
-The authoritative target list is `decoy-engine/docs/native/supported-matrix.md`: the
-four targets the native wheel matrix (`native-companion.yml`) already builds and
-parity-smokes. A host that maps to no target is a LOUD refusal at install, never a
-partial or slow install (the launch rule: native-on by default, no silent fallback).
+The authoritative advertised matrix is the set of targets the version document lists
+and the build assembles. A host that maps to no target is a LOUD refusal at install,
+never a partial or slow install (the launch rule: native-on by default, no silent
+fallback).
 
-Open decision for the lane (carried from the packaging spec): macOS Intel (x86_64)
-is unsupported at launch -- it is not in the native wheel matrix. The alternatives
-(Rosetta on the arm64 build, or adding the target) are a Cam decision; until then a
-macOS x86_64 host refuses with a clear message rather than silently running an arm64
-bundle it cannot execute.
+Targets intentionally NOT in the advertised matrix at launch (both refuse with a clear
+message rather than running bits the host cannot complete a lifecycle on):
+
+- **macOS Intel (x86_64):** not in the native wheel matrix. Rosetta-on-arm64 or adding
+  the target are a Cam decision.
+- **Windows (x86_64):** GATED OFF this cycle. The managed-runtime model is POSIX-shaped
+  (a `current` symlink swap + a `python/bin/python3` launcher), and the Windows install/
+  upgrade/rollback lifecycle could not be verified end to end in this remediation cycle
+  (no Windows runner available). Per the launch rule we refuse rather than advertise an
+  unrunnable path. See `docs/distribution/decisions/2026-10-26-windows-target-gated.md`.
+  Removing it here is the single lever: `make_version_document` iterates this dict, so no
+  Windows artifact is advertised, and `detect_target` returns None on Windows, so the
+  installers refuse at target detection.
 """
 
 from __future__ import annotations
@@ -20,7 +28,6 @@ import platform
 SUPPORTED_TARGETS: dict[str, str] = {
     "linux-x86_64": "Linux x86_64 (glibc, manylinux_2_28+)",
     "linux-aarch64": "Linux aarch64 (glibc, manylinux_2_28+)",
-    "windows-x86_64": "Windows x86_64",
     "macos-arm64": "macOS arm64 (Apple Silicon)",
 }
 
@@ -55,7 +62,6 @@ def detect_target(system: str | None = None, machine: str | None = None) -> str 
         # unsupported at launch -- see the module docstring.
         if arch == "arm64":
             return "macos-arm64"
-    elif system == "windows":
-        if arch == "x86_64":
-            return "windows-x86_64"
+    # Windows is gated off the advertised matrix this cycle (see the module docstring);
+    # a Windows host returns None here and the installer refuses loudly.
     return None
