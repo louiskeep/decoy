@@ -88,18 +88,22 @@ dependencies = [
     # 0.7.0 is the first engine that exports `read_fixed_width`
     # (which the CLI's source reader calls for `format: fixed_width`
     # sources) and `FixedWidthParseError` (which its parse failures raise).
+    # It also carries the A-8 keyed token-vault seam -- `run_pipeline`'s
+    # `token_vault_writer` kwarg and the `tokenize` mask strategy -- that the
+    # `decoy tokenize` / `decoy detokenize` verbs here require, so nothing in
+    # this CLI needs an engine newer than 0.7.0.
     #
-    # D-4 matched launch pin (2026-10-26): the floor above was a loose
-    # `>=0.7.0`; D-4 freezes a DP-certified launch engine and a MATCHED CLI
-    # pin against it. Engine 0.15.0 is that build (tagged `v0.15.0`): the
-    # first with the A-8 keyed token-vault seam -- `run_pipeline`'s
-    # `token_vault_writer` kwarg and the `tokenize` mask strategy -- which the
-    # `decoy tokenize` / `decoy detokenize` verbs here require. Pinned exactly
-    # (`==0.15.0`), not floored, to match the platform repin
-    # (`decoy-engine==0.15.0`, platform PR #105) so the whole launch surface
-    # resolves one engine build. Bump this and the platform pin together when
-    # the launch engine is re-cut.
-    "decoy-engine==0.15.0",
+    # Floored, not hard-pinned. Pre-launch, decoy `main` and the CLI-launch
+    # branch both deliberately track the engine at `@main`, whose SOURCE
+    # pyproject is stamped `version = "0.7.0"` (only the `v0.15.0` git TAG
+    # stamps 0.15.0, and the engine is not on PyPI yet). CI installs the engine
+    # from `git+https://github.com/louiskeep/decoy-engine@main`, so a hard
+    # `==0.15.0` pin is unsatisfiable here: `pip install -e ".[dev]"` and the
+    # wheel smoke both resolve the engine as 0.7.0 and go red. The DP-certified
+    # hard launch pin to a frozen engine tag is a coordinated D-4 change across
+    # decoy main and the CI install refs, not this feature branch's job; keep
+    # the floor matching main until that lands.
+    "decoy-engine>=0.7.0",
     # Pin the typer minor: `typer utils docs` metavar rendering differs across
     # typer minors (0.26.x emits `TEXT`/`FILE`; 0.27.x emits `<str>`/`<file>`),
     # and docs/cli-reference.md is committed and checked by the test_cli_surface

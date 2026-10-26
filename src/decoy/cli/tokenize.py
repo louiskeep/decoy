@@ -296,7 +296,12 @@ def tokenize(
     # job-seed-keyed (forgeable) tokens. The engine pin guarantees it; probe
     # anyway and refuse rather than leak an unkeyed artifact on a broken install.
     try:
-        import decoy_engine.keyprovider  # noqa: F401
+        # Importing the name doubles as the keyprovider presence probe (an
+        # ImportError means a pre-DE-02 engine) and binds MaskSecretError for
+        # the run_pipeline failure handler below, which maps a well-shaped but
+        # unresolvable secret (missing env var, unreadable/short file) to a
+        # clean coded usage error instead of the catch-all.
+        from decoy_engine.keyprovider import MaskSecretError
     except ImportError as exc:
         _emit_error(
             "a mask secret is configured but the installed decoy-engine is too old "
@@ -307,7 +312,11 @@ def tokenize(
 
     from decoy.cli.run import _load_sources_from_config, _write_mask_outputs
 
+    # Whether the vault file already existed: a failed run only removes a file
+    # THIS run created (see the finally), never a re-run's pre-existing vault.
+    vault_preexisted = vault.exists()
     token_vault: LocalTokenVault | None = None
+    committed = False
     try:
         with spinner(state, "Tokenizing..."):
             sources = _load_sources_from_config(config_dict, config.parent)
@@ -321,15 +330,24 @@ def tokenize(
                 token_vault_writer=token_vault,
             )
             _write_mask_outputs(config_dict, result, config.parent)
-            # Make the mapping durable only now that the run succeeded AND the
-            # output is written -- a failure before here leaves no partial vault.
-            token_vault.commit()
             vault_count = token_vault.count()
             row_count = sum(len(tbl) for tbl in result.outputs.values())
+            # Make the mapping durable only now that the run succeeded AND the
+            # output is written -- a failure before here leaves no partial vault.
+            # commit() is the last fallible statement so `committed` is an exact
+            # "mappings are on disk" flag for the finally's cleanup.
+            token_vault.commit()
+            committed = True
     except TokenVaultError as exc:
         _emit_error(f"{exc.code}: {exc.message}")
         raise typer.Exit(code=EXIT_USAGE)
-    except (PlanCompileError, ExecutionError, ConfigError) as exc:
+    except (PlanCompileError, ExecutionError, ConfigError, MaskSecretError) as exc:
+        # MaskSecretError (missing_mask_secret / weak_mask_secret / bad_secret_ref)
+        # is a fixable operator problem, not a runtime crash: a shape-valid secret
+        # ref that cannot resolve. Its message is value-free by construction (the
+        # engine redacts; it names the env var / path, never the secret), so the
+        # same coded `{code}: {message}` surface the other engine errors get is
+        # safe here.
         _emit_error(f"{getattr(exc, 'code', type(exc).__name__)}: {getattr(exc, 'message', exc)}")
         raise typer.Exit(code=EXIT_USAGE)
     except typer.Exit:
@@ -340,12 +358,21 @@ def tokenize(
         # embed a source cell value. Surface the type only -- never the message.
         _emit_error(
             f"tokenize failed with an unexpected {type(exc).__name__}; the run was "
-            "aborted and no partial output or vault was written."
+            "aborted before the vault was committed, so it holds no mappings from "
+            "this run. Discard any output files this run produced."
         )
         raise typer.Exit(code=EXIT_RUNTIME) from exc
     finally:
         if token_vault is not None:
             token_vault.close()
+        # LocalTokenVault(create=True) writes the file + schema up front, so a
+        # run that fails before commit leaves an empty vault on disk even though
+        # its rows were discarded. Remove that file when THIS run created it and
+        # nothing was committed, so a failed tokenize leaves no empty vault to
+        # mistake for output. A pre-existing vault (a re-run) is kept: its prior
+        # mappings are intact and only this run's uncommitted rows were dropped.
+        if not committed and not vault_preexisted and vault.exists():
+            vault.unlink(missing_ok=True)
 
     columns = [{"table": t, "column": c, "namespace": ns} for (t, c, ns) in tok_cols]
     if state.mode is OutputMode.json:

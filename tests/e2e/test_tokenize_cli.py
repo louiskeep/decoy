@@ -24,7 +24,7 @@ import yaml
 from typer.testing import CliRunner
 
 from decoy.__main__ import app
-from decoy.cli.exit_codes import EXIT_USAGE
+from decoy.cli.exit_codes import EXIT_RUNTIME, EXIT_USAGE
 
 runner = CliRunner()
 
@@ -307,6 +307,94 @@ class TestFailClosed:
         )
         assert result.exit_code == 0, result.output
         assert vault.exists()
+
+    def test_unresolvable_secret_gives_a_coded_error(
+        self, tmp_path: Path, monkeypatch
+    ) -> None:
+        """LOW: a shape-valid --mask-secret that cannot resolve (here an unset env
+        var) is a clean coded MaskSecretError at EXIT_USAGE, not the catch-all
+        'unexpected MaskSecretError' at EXIT_RUNTIME. The message stays value-free
+        (the engine names the env var, never the secret) and no empty vault is
+        left behind."""
+        monkeypatch.delenv("DECOY_TEST_UNSET_MASK_SECRET", raising=False)
+        cfg = _pipeline(tmp_path, _TOKENIZE_COLS, with_secret=False)
+        vault = tmp_path / "tokens.db"
+        result = runner.invoke(
+            app,
+            ["tokenize", str(cfg), "--vault", str(vault),
+             "--mask-secret", "env:DECOY_TEST_UNSET_MASK_SECRET"],
+        )
+        assert result.exit_code == EXIT_USAGE, result.output
+        assert "missing_mask_secret" in result.output
+        assert "unexpected" not in result.output  # not the catch-all
+        assert not vault.exists()
+
+    def test_weak_secret_gives_a_coded_error(self, tmp_path: Path) -> None:
+        """LOW: a resolvable but <32-byte secret is a coded weak_mask_secret at
+        EXIT_USAGE (value-free: a byte count, never the secret), not the
+        catch-all. The reported length is the only secret-derived fact."""
+        weak = tmp_path / "weak.secret"
+        weak.write_text("deadbeef", encoding="utf-8")  # 4 bytes decoded, < 32
+        cfg = _pipeline(tmp_path, _TOKENIZE_COLS, with_secret=False)
+        vault = tmp_path / "tokens.db"
+        result = runner.invoke(
+            app,
+            ["tokenize", str(cfg), "--vault", str(vault), "--mask-secret", f"file:{weak}"],
+        )
+        assert result.exit_code == EXIT_USAGE, result.output
+        assert "weak_mask_secret" in result.output
+        assert "unexpected" not in result.output
+
+    def test_failed_run_leaves_no_empty_vault(self, tmp_path: Path) -> None:
+        """LOW: the vault file is created before run_pipeline, so a run that fails
+        after creation (here a tokenize column absent from the source) must not
+        leave an empty vault on disk to be mistaken for output. The catch-all
+        message no longer claims 'no output was written' it cannot guarantee."""
+        cols = [
+            {"name": "id", "strategy": "passthrough"},
+            {"name": "ghost", "strategy": "tokenize", "namespace": "people.ghost"},
+        ]
+        cfg = _pipeline(tmp_path, cols)
+        vault = tmp_path / "tokens.db"
+        result = runner.invoke(app, ["tokenize", str(cfg), "--vault", str(vault)])
+        assert result.exit_code == EXIT_RUNTIME, result.output
+        assert not vault.exists()  # empty vault removed on failure
+        # Normalize Rich's line wrapping before matching the message phrase.
+        assert "aborted before the vault was committed" in " ".join(result.output.split())
+
+    def test_failed_run_keeps_a_preexisting_vault(
+        self, tmp_path: Path, monkeypatch
+    ) -> None:
+        """LOW: cleanup removes only a vault THIS run created. A second run that
+        fails must leave an earlier run's real vault (and its mappings) intact, so
+        the fix never deletes an operator's existing vault on a later failure."""
+        monkeypatch.delenv("DECOY_TEST_UNSET_MASK_SECRET_2", raising=False)
+        cfg_ok = _pipeline(tmp_path, _TOKENIZE_COLS)
+        vault = tmp_path / "tokens.db"
+        first = runner.invoke(app, ["tokenize", str(cfg_ok), "--vault", str(vault)])
+        assert first.exit_code == 0, first.output
+        assert vault.exists()
+
+        # A second run against the SAME vault that fails at secret resolution
+        # (unset env var) must not delete the pre-existing vault.
+        cfg_fail = _pipeline(tmp_path, _TOKENIZE_COLS, with_secret=False, out_name="t2.csv")
+        second = runner.invoke(
+            app,
+            ["tokenize", str(cfg_fail), "--vault", str(vault),
+             "--mask-secret", "env:DECOY_TEST_UNSET_MASK_SECRET_2"],
+        )
+        assert second.exit_code == EXIT_USAGE, second.output
+        assert vault.exists()  # pre-existing vault kept
+
+        # The earlier run's mappings are intact: detokenize still reverses its
+        # output from the vault the failed run left untouched.
+        rev = runner.invoke(
+            app,
+            ["detokenize", str(cfg_ok), str(tmp_path / "tokenized.csv"), "--vault", str(vault)],
+        )
+        assert rev.exit_code == 0, rev.output
+        recovered = pd.read_csv(tmp_path / "tokenized.detokenized.csv", dtype=str)
+        assert "a@x.com" in list(recovered["email"])
 
 
 class TestSecretRequired:
