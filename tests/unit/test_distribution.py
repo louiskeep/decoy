@@ -899,3 +899,236 @@ def test_smoke_serve_binds_loopback_only():
     src = (REPO_ROOT / "packaging_tools" / "smoke_install.py").read_text(encoding="utf-8")
     assert '("127.0.0.1", 0)' in src  # binds loopback
     assert '("0.0.0.0"' not in src  # never binds all interfaces
+
+
+# ================================================= round 3 (Codex round-2 findings) =====
+
+# ----- HIGH 1: unsigned code must not shadow the signed runtime (import isolation) -------
+def test_managed_launches_pass_import_isolation_flag():
+    """Every managed-interpreter invocation -- the shipped bundle launcher AND the install-
+    and activation-time verifier/self-checks -- must pass `-I` (isolated mode) alongside
+    `-B`, so a hostile CWD or PYTHONPATH cannot shadow the signed runtime with a planted
+    `decoy`/`decoy_engine` package. Mechanical guard: an edit that drops `-I` from any of
+    these sites is caught here."""
+    launcher = (REPO_ROOT / "packaging_tools" / "build_bundle.py").read_text(encoding="utf-8")
+    assert '-I -B -m decoy "$@"' in launcher  # the shipped runtime entry point
+
+    inst = (REPO_ROOT / "src" / "decoy" / "distribution" / "installer.py").read_text(encoding="utf-8")
+    assert '"-I", "-B", "-m", "decoy.distribution.selfcheck"' in inst  # install + activation self-check
+
+    sh = (REPO_ROOT / "packaging_tools" / "install" / "install.sh").read_text(encoding="utf-8")
+    assert "-I -B -m decoy.distribution.verify_extracted" in sh
+    assert "-I -B -m decoy.distribution.selfcheck" in sh
+    assert "-I -B -m decoy.distribution.layout_point" in sh
+
+    ps = (REPO_ROOT / "packaging_tools" / "install" / "install.ps1").read_text(encoding="utf-8")
+    assert "-I -B -m decoy.distribution.verify_extracted" in ps
+    assert "-I -B -m decoy.distribution.selfcheck" in ps
+    assert "-I -B -m decoy.distribution.layout_point" in ps
+    assert "-I -B -m decoy %*" in ps  # the Windows launcher shim
+
+
+def _plant_hostile_decoy(pkg_parent: Path, marker: Path) -> None:
+    """Write a `decoy/__init__.py` under ``pkg_parent`` that records its own execution by
+    creating ``marker`` on import -- a stand-in for attacker code that runs if an unsigned
+    `decoy` package on the CWD / PYTHONPATH is ever imported in place of the signed one."""
+    (pkg_parent / "decoy").mkdir(parents=True, exist_ok=True)
+    (pkg_parent / "decoy" / "__init__.py").write_text(
+        "import pathlib\n"
+        f"pathlib.Path({str(marker)!r}).write_text('executed')\n",
+        encoding="utf-8",
+    )
+
+
+_IMPORT_DECOY_PROG = (
+    "import sys\n"
+    "try:\n"
+    "    import decoy\n"
+    "    sys.stdout.write(getattr(decoy, '__file__', '') or '')\n"
+    "except Exception as exc:\n"
+    "    sys.stdout.write('IMPORTERROR:' + type(exc).__name__)\n"
+)
+
+
+def test_import_isolation_blocks_hostile_cwd_and_pythonpath(tmp_path):
+    """Functional proof of the `-I` property the launcher/self-checks rely on: a planted
+    `decoy` package in the working directory AND one on PYTHONPATH must NOT execute when
+    the interpreter runs isolated. The planted code writes a marker on import; under `-I`
+    no marker appears (and any real `decoy` that does import resolves from OUTSIDE the
+    hostile dirs). Negative controls WITHOUT `-I` show both plants are real, so this guard
+    cannot silently rot into a no-op."""
+    import subprocess as sp
+
+    hostile_cwd = tmp_path / "downloaded_project"
+    cwd_marker = tmp_path / "pwned_from_cwd"
+    _plant_hostile_decoy(hostile_cwd, cwd_marker)
+
+    hostile_pp = tmp_path / "evil_pythonpath"
+    pp_marker = tmp_path / "pwned_from_pythonpath"
+    _plant_hostile_decoy(hostile_pp, pp_marker)
+
+    neutral = tmp_path / "neutral"
+    neutral.mkdir()
+
+    def _reset_markers() -> None:
+        for m in (cwd_marker, pp_marker):
+            if m.exists():
+                m.unlink()
+
+    # 1) ISOLATED: both hostile vectors present at once. `-I` must keep both off sys.path.
+    _reset_markers()
+    env = dict(os.environ, PYTHONPATH=str(hostile_pp), DECOY_PWNED="1")
+    iso = sp.run(
+        [sys.executable, "-I", "-B", "-c", _IMPORT_DECOY_PROG],
+        cwd=str(hostile_cwd), env=env, capture_output=True, text=True,
+    )
+    assert not cwd_marker.exists(), "hostile CWD `decoy` executed under -I"
+    assert not pp_marker.exists(), "hostile PYTHONPATH `decoy` executed under -I"
+    # If a real decoy is importable isolated, it must come from neither hostile dir.
+    if not iso.stdout.startswith("IMPORTERROR"):
+        assert str(hostile_cwd) not in iso.stdout
+        assert str(hostile_pp) not in iso.stdout
+
+    # 2) NEGATIVE CONTROL A (no -I, run from the hostile project): the CWD plant executes.
+    _reset_markers()
+    sp.run(
+        [sys.executable, "-B", "-c", _IMPORT_DECOY_PROG],
+        cwd=str(hostile_cwd), env=dict(os.environ), capture_output=True, text=True,
+    )
+    assert cwd_marker.exists(), "the CWD plant is not real; the isolation test is vacuous"
+
+    # 3) NEGATIVE CONTROL B (no -I, neutral CWD, hostile PYTHONPATH): the PYTHONPATH plant executes.
+    _reset_markers()
+    sp.run(
+        [sys.executable, "-B", "-c", _IMPORT_DECOY_PROG],
+        cwd=str(neutral), env=dict(os.environ, PYTHONPATH=str(hostile_pp)),
+        capture_output=True, text=True,
+    )
+    assert pp_marker.exists(), "the PYTHONPATH plant is not real; the isolation test is vacuous"
+
+
+# ----- HIGH 2: the SHELL installer must stage-beside, never destroy-before-promote -------
+def test_install_sh_promotion_failure_preserves_active_runtime(tmp_path, keypair):
+    """install.sh must not delete the active versions/<version> runtime before the
+    replacement is promoted. Inject a promotion failure (the activation step fails) while a
+    runtime for that version is already installed and active, and assert the ORIGINAL bits
+    survive -- not a missing runtime, and not only the quarantined replacement that the EXIT
+    trap would then also remove. Driven over the offline (DECOY_LOCAL_BUNDLE) path."""
+    import subprocess as sp
+
+    host_target = targets.detect_target()
+    if host_target is None:
+        pytest.skip("no supported bundle target for this host")
+
+    key, pub = keypair
+    work = tmp_path / "w"
+    work.mkdir()
+
+    # A validly-signed replacement bundle whose interpreter PASSES verify/self-check but
+    # FAILS the `layout_point` activation step (so promotion happens, then activation fails).
+    stage = work / f"decoy-0.1.0-{host_target}"
+    stage.mkdir()
+    _make_tree(stage)
+    dispatch = (
+        "#!/bin/sh\n"
+        "case \"$*\" in\n"
+        "  *layout_point*) exit 7 ;;\n"
+        "  *) exit 0 ;;\n"
+        "esac\n"
+    )
+    (stage / "python" / "bin" / "python3.12").write_text(dispatch)
+    (stage / "python" / "bin" / "python3.12").chmod(0o755)
+    (stage / "BUNDLE_INFO.json").write_bytes(
+        signing.canonical_bytes(
+            {"schema_version": "cli-bundle-info/v1", "version": "0.1.0", "target": host_target}
+        )
+    )
+    man = manifest_mod.compute_manifest(stage, version="0.1.0", target=host_target)
+    mb = signing.canonical_bytes(man)
+    (stage / manifest_mod.MANIFEST_NAME).write_bytes(mb)
+    (stage / manifest_mod.MANIFEST_SIG_NAME).write_text(_sign_b64(key, mb))
+    tarball = work / f"decoy-0.1.0-{host_target}.tar.gz"
+    _deterministic_targz(stage, tarball)
+    tarball.with_name(tarball.name + ".sha256").write_text(
+        f"{manifest_mod.sha256_file(tarball)}  {tarball.name}\n"
+    )
+    tarball.with_name(tarball.name + ".sig").write_text(_sign_b64(key, tarball.read_bytes()))
+
+    pub_pem = work / "pub.pem"
+    pub_pem.write_text(pub)
+
+    # Pre-seed an installed + active 0.1.0 runtime (the working bits that must survive).
+    home = work / "home"
+    versions = home / "versions"
+    dest = versions / "0.1.0"
+    dest.mkdir(parents=True)
+    (dest / "LIVE_MARK").write_text("original live 0.1.0 runtime")
+    (home / "current").symlink_to(Path("versions") / "0.1.0")
+
+    install_sh = REPO_ROOT / "packaging_tools" / "install" / "install.sh"
+    env = dict(os.environ, DECOY_HOME=str(home), DECOY_BIN_DIR=str(work / "bin"),
+               DECOY_RELEASE_PUBKEY_FILE=str(pub_pem), DECOY_LOCAL_BUNDLE=str(tarball))
+    r = sp.run(["sh", str(install_sh), "--version", "0.1.0"], env=env, capture_output=True, text=True)
+
+    assert r.returncode != 0, r.stdout + r.stderr  # the injected activation failure refuses
+    assert "intact" in r.stderr  # the refusal states the previous runtime was preserved
+    # The original working bits survived (restored from the retained backup), not destroyed.
+    assert (dest / "LIVE_MARK").read_text() == "original live 0.1.0 runtime"
+    # No orphaned promotion scratch dirs are left behind.
+    leftovers = [d.name for d in versions.iterdir() if d.name.startswith(".")]
+    assert leftovers == [], leftovers
+
+
+# ----- MEDIUM: `decoy upgrade --check --version <installed>` must be read-only -----------
+def test_upgrade_check_version_is_read_only(tmp_path, monkeypatch, keypair):
+    """`decoy upgrade --check --version <installed>` must NOT activate the local runtime
+    (swap `current`, rewrite the launcher): `--check` reports only. Regression for the
+    round-2 local-before-network fast path having run AHEAD of the `--check` guard."""
+    from decoy.cli import upgrade as upg
+
+    key, pub = keypair
+    monkeypatch.setenv("DECOY_HOME", str(tmp_path / "home"))
+    monkeypatch.setenv("DECOY_BIN_DIR", str(tmp_path / "bin"))
+    home = layout.decoy_home()
+    serve = tmp_path / "serve"
+
+    # Install 0.1.0 then 0.2.0 so `current` -> 0.2.0 and 0.1.0 is a retained local runtime.
+    urls: dict[str, str] = {}
+    for ver in ("0.1.0", "0.2.0"):
+        urls[ver] = _serve_bundle(serve, ver, key)
+        doc_bytes, doc_sig = _doc_for_latest(serve, ver, urls[ver], key)
+        installer.install_version(
+            version_doc_bytes=doc_bytes, version_doc_sig_b64=doc_sig, expected_public_pem=pub,
+            target="linux-x86_64", home=home, download=_file_download,
+            run_self_check=False, post_swap_validate=lambda cur: True,
+        )
+    assert layout.read_current_version(home) == "0.2.0"
+    launcher = tmp_path / "bin" / "decoy"
+    before_launcher = launcher.read_text()
+
+    # A signed doc whose latest is the installed current version (no newer available).
+    doc2, sig2 = _doc_for_latest(serve, "0.2.0", urls["0.2.0"], key)
+
+    def fake_fetch(u: str) -> bytes:
+        return sig2.encode("ascii") if u.endswith(".sig") else doc2
+
+    monkeypatch.setattr(upg, "_managed_home", lambda: home)
+    monkeypatch.setattr(upg.release_key, "pinned_public_pem", lambda: pub)
+    monkeypatch.setattr(upg, "_fetch", fake_fetch)
+
+    # Spy on activation: `--check` must never call it, even for an installed --version.
+    real_activate = upg.installer.activate_local_version
+    calls: list[str] = []
+
+    def spy_activate(version, *a, **k):
+        calls.append(version)
+        return real_activate(version, *a, **k)
+
+    monkeypatch.setattr(upg.installer, "activate_local_version", spy_activate)
+
+    with pytest.raises(typer.Exit) as ei:
+        _call_upgrade(version="0.1.0", check=True, url="http://host/cli/version.json")
+    assert ei.value.exit_code == 0
+    assert calls == [], "`--check` must not activate the local runtime"
+    assert layout.read_current_version(home) == "0.2.0"  # pointer unchanged
+    assert launcher.read_text() == before_launcher  # launcher unchanged

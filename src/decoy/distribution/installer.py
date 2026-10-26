@@ -74,10 +74,18 @@ def _promote_staged(bundle_root: Path, dest: Path, versions: Path) -> "_Staged":
 
     Different-version install (``dest`` absent): a plain atomic rename into place.
     Same-version repair (``dest`` present): stage the replacement beside ``dest``, move
-    the original ASIDE (retained as a backup), then move the replacement in. The original
-    survives every step; if the final move fails it is put straight back, so a crash or
-    error mid-promotion never leaves the live runtime missing. All renames are within
-    ``versions`` (one filesystem), so each is atomic."""
+    the original ASIDE (retained as a backup), then move the replacement in. If the final
+    move raises, the original is put straight back, so an ERROR mid-promotion never leaves
+    the live runtime missing. All renames are within ``versions`` (one filesystem), so
+    each is atomic.
+
+    Caveat (interruption, not error): a hard crash or SIGKILL in the one-rename window
+    after the original is moved to the backup but before the replacement lands leaves
+    ``current`` pointing at a now-missing ``dest``. The original is NOT lost -- it is
+    retained at ``versions/.backup.<version>.<pid>`` -- but there is no automatic
+    recovery from here; restoring it is a manual ``mv`` of that backup dir back to
+    ``versions/<version>``. (This is the same narrow interruption window install.sh
+    has.)"""
     staged = versions / f".staged.{dest.name}.{os.getpid()}"
     if staged.exists():
         shutil.rmtree(staged)
@@ -138,10 +146,17 @@ def _no_bytecode_env() -> dict[str, str]:
 
 
 def _selfcheck(python_bin: Path) -> subprocess.CompletedProcess:
-    """Run the bundle's native self-check through its own interpreter, with bytecode
-    writing off (``-B`` + env) so the check never writes an unsigned cache."""
+    """Run the bundle's native self-check through its own interpreter, import-isolated
+    and bytecode-free (``-I -B`` + env).
+
+    ``-I`` drops the CWD/script dir from ``sys.path`` and ignores ``PYTHONPATH``/
+    ``PYTHON*`` env, so a hostile working directory or environment at install/activation
+    time cannot shadow the signed runtime with a planted ``decoy``/``decoy_engine``
+    package and forge a passing self-check. ``-B`` stops bytecode writes so the check
+    never leaves an unsigned ``__pycache__`` the manifest does not cover (``-I`` ignores
+    the env var, so the explicit flag is what guarantees it here)."""
     return subprocess.run(
-        [str(python_bin), "-B", "-m", "decoy.distribution.selfcheck"],
+        [str(python_bin), "-I", "-B", "-m", "decoy.distribution.selfcheck"],
         capture_output=True,
         text=True,
         env=_no_bytecode_env(),

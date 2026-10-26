@@ -44,15 +44,25 @@ _LAUNCHER = """\
 # the bundled interpreter as `python -m decoy`. Never relies on a pip console-script
 # shebang, which would embed the build-host path.
 #
-# Bytecode writing is OFF (-B and PYTHONDONTWRITEBYTECODE, inherited by child
-# processes): the runtime must never create a __pycache__/.pyc beside the signed,
-# verified source, because an unsigned cache is not covered by the bundle manifest and
-# Python's default timestamp-based cache invalidation would load a forged .pyc in place
-# of the source. With writing off, a correct runtime stays cache-free, so every import
-# compiles from the signed source and `verify_extracted` (which rejects any cache found
-# on disk) stays authoritative for rollback/activation.
+# The managed interpreter runs IMPORT-ISOLATED and bytecode-free: -I -B.
+#
+# -I (isolated mode) drops the current working directory and the script dir from
+# sys.path and ignores PYTHONPATH/PYTHON* env, so running `decoy` from inside a
+# downloaded project that ships its own `decoy/` package (or a planted top-level
+# module) cannot shadow the signed, verified runtime: imports resolve only from the
+# bundle's own site. Without -I, a hostile CWD or PYTHONPATH would execute attacker
+# code in place of the signed installation.
+#
+# -B stops bytecode writes: the runtime must never create a __pycache__/.pyc beside
+# the signed, verified source, because an unsigned cache is not covered by the bundle
+# manifest and Python's default timestamp-based cache invalidation would load a forged
+# .pyc in place of the source. With writing off, every import compiles from the signed
+# source and `verify_extracted` (which rejects any cache found on disk) stays
+# authoritative for rollback/activation. -I ignores the PYTHONDONTWRITEBYTECODE env
+# var, so the explicit -B flag is what guarantees this for the managed interpreter; the
+# env export below still shields any non-isolated child process.
 here=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd -P)
-PYTHONDONTWRITEBYTECODE=1 exec "$here/python/bin/python3" -B -m decoy "$@"
+PYTHONDONTWRITEBYTECODE=1 exec "$here/python/bin/python3" -I -B -m decoy "$@"
 """
 
 
