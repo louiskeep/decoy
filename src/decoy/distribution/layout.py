@@ -39,6 +39,17 @@ def version_dir(version: str, home: Path | None = None) -> Path:
     return versions_dir(home) / version
 
 
+def slot_version(slot_name: str) -> str:
+    """The semantic version a ``versions/`` slot directory encodes.
+
+    A slot is normally named exactly ``<version>``. A same-version repair must not mutate
+    the live ``versions/<version>`` in place, so it stages the fresh bits into a distinct
+    ``versions/<version>+<build>`` and flips ``current`` to that; this strips the build
+    suffix we add (decoy versions carry no PEP 440 local segment of their own) to recover
+    the semantic version the slot holds."""
+    return slot_name.split("+", 1)[0]
+
+
 def current_link(home: Path | None = None) -> Path:
     return (home or decoy_home()) / "current"
 
@@ -63,17 +74,20 @@ def read_current_version(home: Path | None = None) -> str | None:
     return Path(target).name
 
 
-def atomic_point_current_at(version: str, home: Path | None = None) -> None:
-    """Point ``current`` at ``versions/<version>`` atomically.
+def atomic_point_current_at(slot: str, home: Path | None = None) -> None:
+    """Point ``current`` at ``versions/<slot>`` atomically.
 
-    A symlink cannot be retargeted in place, so write a temp link beside it and
-    ``os.replace`` it over ``current``: replace is atomic on POSIX, so a concurrent
-    reader sees either the old or the new target, never a missing link. The target is
-    stored RELATIVE (``versions/<version>``) so the whole ``~/.decoy`` tree can be moved
-    without breaking the link."""
+    ``slot`` is the version-dir name to make live -- normally ``<version>``, or a
+    ``<version>+<build>`` repair slot (see ``slot_version``). A symlink cannot be
+    retargeted in place, so write a temp link beside it and ``os.replace`` it over
+    ``current``: replace is atomic on POSIX, so a concurrent reader sees either the old or
+    the new target, never a missing link. This is the ONLY operation that makes a staged
+    runtime live, which is why staging a fresh dir plus this flip needs no move-aside,
+    backup, or restore. The target is stored RELATIVE (``versions/<slot>``) so the whole
+    ``~/.decoy`` tree can be moved without breaking the link."""
     home = home or decoy_home()
     link = current_link(home)
-    rel_target = os.path.join("versions", version)
+    rel_target = os.path.join("versions", slot)
     tmp = home / f".current.{os.getpid()}.tmp"
     if tmp.is_symlink() or tmp.exists():
         tmp.unlink()

@@ -81,6 +81,20 @@ $target = Resolve-Target
 if (-not $target) { Die "Windows is not a supported target at launch (gated off the advertised matrix this cycle; see docs/distribution/decisions/2026-10-26-windows-target-gated.md). No install performed." }
 Info "target: $target"
 
+# First-install-only bootstrap (Cam decision), mirroring install.sh. This script lays down
+# a FRESH runtime and REFUSES to replace an existing one: it never moves aside, deletes, or
+# overwrites a managed runtime, so it has no backup/restore recovery to get wrong. All
+# same-version repair and every upgrade go through `decoy upgrade`, which stages a fresh
+# version dir and flips `current` atomically. Refuse before any download or extraction.
+$versions = Join-Path $DecoyHome "versions"
+$hasVersionDir = (Test-Path $versions) -and @(Get-ChildItem $versions -Directory -ErrorAction SilentlyContinue | Where-Object { -not $_.Name.StartsWith(".") }).Count -gt 0
+if ((Test-Path (Join-Path $DecoyHome "current")) -or $hasVersionDir) {
+  Info "an existing Decoy runtime is installed at $DecoyHome."
+  Info "this bootstrap installs only; it will NOT replace an existing runtime."
+  Info "to upgrade or repair, run:  decoy upgrade        (repair: decoy upgrade --force)"
+  Die "refusing to overwrite an existing install"
+}
+
 $work = New-Item -ItemType Directory -Path (Join-Path $env:TEMP ("decoy-install-" + [guid]::NewGuid()))
 try {
   $pub = Join-Path $work "pub.pem"
@@ -119,7 +133,8 @@ try {
   if (-not (Verify-Sig $tarball "$tarball.sig" $pub)) { Die "bundle signature INVALID -- refusing (possible tampering)" }
   Info "bundle signature verified"
 
-  $versions = Join-Path $DecoyHome "versions"
+  # $versions was set above, where the first-install-only guard already refused any
+  # existing runtime.
   New-Item -ItemType Directory -Force -Path $versions | Out-Null
   $incoming = Join-Path $versions (".incoming." + [guid]::NewGuid())
   New-Item -ItemType Directory -Force -Path $incoming | Out-Null
@@ -147,42 +162,34 @@ try {
   if ($LASTEXITCODE -ne 0) { Die "native companion self-check FAILED -- refusing this install" }
 
   # Identity check (HIGH): a validly-signed but wrong-version/target bundle served at a
-  # pinned URL must NOT overwrite the retained versions\<version> runtime. Compare the
-  # bundle's DECLARED version + target against what was requested, BEFORE any deletion.
+  # pinned URL must NOT be installed as if it were the requested one. Compare the bundle's
+  # DECLARED version + target against what was requested, BEFORE any slot is created.
   $binfo = Join-Path $bundleRoot.FullName "BUNDLE_INFO.json"
   if (-not (Test-Path $binfo)) { Die "bundle is missing BUNDLE_INFO.json; cannot verify its identity -- refusing" }
   $info = Get-Content $binfo -Raw | ConvertFrom-Json
   if ($info.target -ne $target) { Die "refusing: bundle declares target '$($info.target)' but this host is '$target' -- nothing installed" }
   if ($ver -ne "local" -and $info.version -ne $ver) { Die "refusing: bundle declares version '$($info.version)' but '$ver' was requested (resolution mismatch) -- versions\$ver left untouched" }
 
-  # Promote stage-beside, never destroy-then-replace (mirror install.sh and the Python
-  # installer): the existing runtime is NEVER removed before the replacement is in place.
-  # A same-version repair moves the original ASIDE as a retained backup, moves the
-  # replacement in, points `current`, then reclaims the backup; a failure at any step
-  # restores the original, so an interrupted re-install of the active version can never
-  # leave the host with no working runtime.
+  # First-install-only: the guard above refused any existing runtime, so versions\$ver is
+  # absent and this is a plain move into place -- never a destroy-then-replace. The single
+  # atomic `current` flip (layout_point) is the only thing that goes live; an interruption
+  # before it leaves nothing installed, after it leaves the new runtime live. No move-aside,
+  # backup, or restore. (Same-version repair + upgrade are `decoy upgrade`'s job.)
   $dest = Join-Path $versions $ver
-  $backup = Join-Path $versions (".backup.$ver." + $PID)
-  if (Test-Path $backup) { Remove-Item $backup -Recurse -Force }
-  if (Test-Path $dest) { Move-Item $dest $backup }
-  try {
-    Move-Item $bundleRoot.FullName $dest
-  } catch {
-    if (Test-Path $backup) { Move-Item $backup $dest }
-    Die "could not promote the new runtime into versions\$ver -- the previous runtime is intact"
-  }
+  if (Test-Path $dest) { Die "versions\$ver already present -- run 'decoy upgrade --force' to repair; refusing" }
+  Move-Item $bundleRoot.FullName $dest
   # Recompute the interpreter path AFTER the move: $pybin pointed into the quarantine dir,
-  # which no longer exists once the bundle is promoted to $dest.
+  # which no longer exists once the bundle is placed at $dest.
   $pybin = Join-Path $dest "python\python.exe"
   if (-not (Test-Path $pybin)) { $pybin = Join-Path $dest "python\bin\python.exe" }
   $env:DECOY_HOME = $DecoyHome
   & $pybin -I -B -m decoy.distribution.layout_point $ver
   if ($LASTEXITCODE -ne 0) {
-    # Activation failed: restore the retained original over the unvalidated replacement.
-    if (Test-Path $backup) { Remove-Item $dest -Recurse -Force; Move-Item $backup $dest }
-    Die "could not point 'current' at $ver -- the previous runtime is intact"
+    # Activation failed on a first install: nothing prior was touched, so drop the fresh
+    # version dir (leaving `current` absent) and refuse. Nothing to restore.
+    Remove-Item $dest -Recurse -Force -ErrorAction SilentlyContinue
+    Die "could not point 'current' at $ver -- nothing installed"
   }
-  if (Test-Path $backup) { Remove-Item $backup -Recurse -Force }
 
   New-Item -ItemType Directory -Force -Path $BinDir | Out-Null
   # current\decoy is the POSIX launcher; on Windows run the interpreter directly, import-

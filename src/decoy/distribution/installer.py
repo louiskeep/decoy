@@ -13,8 +13,18 @@ Flow (mirrors install.sh):
      signature against the pinned key (the trust anchor);
   4. quarantine-extract; verify the in-bundle signed manifest (forward + reverse);
   5. run the new bundle's native-present self-check (loud refusal);
-  6. flip ``current`` atomically to the new version, keeping the previous for rollback;
-  7. post-swap validation; on any failure after the swap, roll ``current`` back.
+  6. stage the verified bits into a FRESH ``versions/`` slot (never mutating an existing
+     ``versions/<version>`` in place), then flip ``current`` atomically to it;
+  7. post-swap validation; on failure flip ``current`` back; once live, reclaim the old
+     same-version slot.
+
+A ``versions/<version>`` directory is never replaced in place (Cam decision): a first or
+different-version install renames the bits into the absent ``versions/<version>``, and a
+same-version repair stages them into a distinct ``versions/<version>+<build>`` and flips
+to that, leaving the live runtime untouched until the flip. The flip is the one atomic
+state change, so there is no move-aside, backup, restore, or signal-trap recovery to get
+wrong: an interruption at any point leaves either the old runtime live (flip not reached)
+or the new one (flip done), never a missing ``current``.
 
 The downloader + the optional post-swap validator are injected so the whole flow is
 unit-testable offline and a failure can be injected at step 7 to exercise rollback.
@@ -57,74 +67,51 @@ class InstallOutcome:
     rolled_back: bool
 
 
-@dataclass(frozen=True)
-class _Staged:
-    """State of a completed promotion so a post-swap failure can be undone. ``backup`` is
-    the displaced prior runtime (same-version repair only), retained until the replacement
-    is validated; None for a different-version install (the prior runtime is a separate
-    version dir that was never touched)."""
+def _fresh_same_version_slot(versions: Path, version: str) -> Path:
+    """A ``versions/<version>+<build>`` dir that does not yet exist, for staging a
+    same-version repair WITHOUT touching the live ``versions/<version>``. The ``+<build>``
+    suffix keeps the semantic version readable (``layout.slot_version`` strips it) while
+    guaranteeing a distinct directory to flip to."""
+    n = 0
+    while True:
+        n += 1
+        candidate = versions / f"{version}+{os.getpid()}.{n}"
+        if not candidate.exists():
+            return candidate
 
-    dest: Path
-    backup: Path | None
 
+def _promote_staged(bundle_root: Path, version: str, versions: Path) -> Path:
+    """Rename the validated ``bundle_root`` into a FRESH ``versions/`` slot and return it.
 
-def _promote_staged(bundle_root: Path, dest: Path, versions: Path) -> "_Staged":
-    """Promote the validated ``bundle_root`` to ``dest``, keeping any existing runtime at
-    ``dest`` recoverable until the caller confirms the replacement is good.
-
-    Different-version install (``dest`` absent): a plain atomic rename into place.
-    Same-version repair (``dest`` present): stage the replacement beside ``dest``, move
-    the original ASIDE (retained as a backup), then move the replacement in. If the final
-    move raises, the original is put straight back, so an ERROR mid-promotion never leaves
-    the live runtime missing. All renames are within ``versions`` (one filesystem), so
-    each is atomic.
-
-    Caveat (interruption, not error): a hard crash or SIGKILL in the one-rename window
-    after the original is moved to the backup but before the replacement lands leaves
-    ``current`` pointing at a now-missing ``dest``. The original is NOT lost -- it is
-    retained at ``versions/.backup.<version>.<pid>`` -- but there is no automatic
-    recovery from here; restoring it is a manual ``mv`` of that backup dir back to
-    ``versions/<version>``. (This is the same narrow interruption window install.sh
-    has.)"""
-    staged = versions / f".staged.{dest.name}.{os.getpid()}"
-    if staged.exists():
-        shutil.rmtree(staged)
-    shutil.move(str(bundle_root), str(staged))
-    if not dest.exists():
-        os.replace(staged, dest)
-        return _Staged(dest=dest, backup=None)
-    backup = versions / f".backup.{dest.name}.{os.getpid()}"
-    if backup.exists():
-        shutil.rmtree(backup)
-    os.replace(dest, backup)
+    Never mutates an existing ``versions/<version>`` in place: a first or different-version
+    install renames the bits into the absent ``versions/<version>``; a same-version repair
+    renames them into a distinct ``versions/<version>+<build>`` so the live runtime is
+    untouched until the caller's atomic flip confirms the replacement (and the old slot is
+    reclaimed afterward). The rename is within ``versions`` (one filesystem), so it is
+    atomic; a failure leaves the existing runtime live and the staged bits in the
+    quarantine dir, with no move-aside/backup/restore to unwind."""
+    dest = versions / version
+    target = dest if not dest.exists() else _fresh_same_version_slot(versions, version)
     try:
-        os.replace(staged, dest)
+        os.replace(bundle_root, target)
     except OSError as exc:
-        os.replace(backup, dest)  # restore the original; nothing was lost
-        shutil.rmtree(staged, ignore_errors=True)
         raise InstallError(
-            f"failed to promote the new runtime into versions/{dest.name}: {exc}; "
-            "the previous runtime was restored and is intact"
+            f"could not stage the new runtime into versions/{target.name}: {exc}; "
+            "the existing runtime is intact"
         ) from exc
-    return _Staged(dest=dest, backup=backup)
+    return target
 
 
-def _restore_backup(staged: "_Staged") -> None:
-    """Undo a same-version promotion: swap the retained original back over the
-    replacement. No-op for a different-version install (no backup was taken; its rollback
-    is a pointer swap to the untouched prior version dir)."""
-    if staged.backup is None:
-        return
-    failed = staged.dest.with_name(f".failed.{staged.dest.name}.{os.getpid()}")
-    os.replace(staged.dest, failed)
-    os.replace(staged.backup, staged.dest)
-    shutil.rmtree(failed, ignore_errors=True)
-
-
-def _reclaim_backup(staged: "_Staged") -> None:
-    """Drop the retained original once the replacement is validated."""
-    if staged.backup is not None:
-        shutil.rmtree(staged.backup, ignore_errors=True)
+def _reclaim_superseded(versions: Path, version: str, live_slot: str) -> None:
+    """Drop every other ``versions/`` slot that holds ``version`` once ``live_slot`` is the
+    live one, so a same-version repair leaves exactly one slot for the version. Reclamation
+    is not time-critical and never touches a different version's slot (those are the
+    retained rollback targets)."""
+    for entry in versions.iterdir():
+        if entry.name.startswith(".") or entry.name == live_slot:
+            continue
+        if layout.slot_version(entry.name) == version:
+            shutil.rmtree(entry, ignore_errors=True)
 
 
 def _urllib_download(url: str) -> bytes:
@@ -381,9 +368,8 @@ def install_version(
         # Fail-closed defense in depth: the extracted bundle must DECLARE the version AND
         # the target we asked for. Without this, a wrong-version OR wrong-target download
         # (e.g. latest bits resolved for a pinned older version, or another platform's
-        # bundle served at a pinned URL) would overwrite -- and destroy -- the retained
-        # versions/<version> rollback runtime with mislabeled bits. Checked BEFORE any
-        # promotion, so a mismatch never touches an existing version dir.
+        # bundle served at a pinned URL) would be staged + flipped to as mislabeled bits.
+        # Checked BEFORE any staging, so a mismatch never creates a slot or touches disk.
         declared = _bundle_declared_version(bundle_root)
         if declared != version:
             raise InstallError(
@@ -399,22 +385,25 @@ def install_version(
                 f"versions/{version} on disk is left untouched"
             )
 
-        # Promote the validated bundle, RETAINING any existing versions/<version> runtime
-        # until the replacement is in place (and, below, until post-swap validation
-        # passes). A same-version forced reinstall must never delete the live runtime
-        # before its replacement is good -- a failure mid-promotion would otherwise leave
-        # no runtime, and the post-swap "rollback" would land on the replacement because
-        # the original was already gone.
-        dest = layout.version_dir(version, home)
+        # Stage the validated bits into a FRESH slot. An existing versions/<version> is
+        # never mutated in place: a same-version repair stages a distinct
+        # versions/<version>+<build> instead, so the live runtime is untouched right up to
+        # the atomic flip below. Nothing is moved aside, so there is nothing to restore.
         previous = layout.read_current_version(home)
-        staged = _promote_staged(bundle_root, dest, versions)
+        slot = _promote_staged(bundle_root, version, versions)
     finally:
         shutil.rmtree(incoming, ignore_errors=True)
 
-    # 6) atomic swap, keeping the previous for rollback
-    layout.atomic_point_current_at(version, home)
+    # 6) THE atomic flip: point `current` at the freshly staged slot. This is the only
+    #    operation that makes the new runtime live. Before it, the prior runtime is still
+    #    live; the flip is all-or-nothing (a temp symlink os.replace'd over `current`), so
+    #    an interruption (INT/TERM/HUP/KILL) at any point leaves EITHER the prior runtime
+    #    live (flip not reached) OR the new one (flip done), never a missing `current`.
+    layout.atomic_point_current_at(slot.name, home)
 
-    # 7) post-swap validation; on failure restore the prior runtime AND the pointer
+    # 7) post-swap validation; on failure flip `current` back to the prior runtime (still
+    #    on disk -- a same-version repair never touched versions/<version>, a different
+    #    version is its own untouched slot) and drop the unvalidated replacement.
     rolled_back = False
     if post_swap_validate is not None:
         try:
@@ -422,23 +411,27 @@ def install_version(
         except Exception:
             ok = False
         if not ok:
-            _restore_backup(staged)  # same-version repair: swap the original bits back in
             if previous is not None:
                 layout.atomic_point_current_at(previous, home)
+            same_version_repair = slot.name != version
+            if same_version_repair:
+                shutil.rmtree(slot, ignore_errors=True)
             rolled_back = True
             kept = (
                 f"restored the previous {version} runtime (the live runtime is intact)"
-                if staged.backup is not None
+                if same_version_repair
                 else f"The new runtime {version} remains on disk but is not active"
             )
             raise InstallError(f"post-upgrade validation failed; rolled back to {previous!r}. {kept}.")
 
-    _reclaim_backup(staged)  # replacement validated -> drop the retained original
+    # Replacement is live: reclaim any older slot still holding this version (a same-version
+    # repair's prior dir). A different version's slot is left as the rollback target.
+    _reclaim_superseded(versions, version, slot.name)
     _write_launcher_shim(home)
     return InstallOutcome(
         version=version,
         target=target,
-        version_dir=layout.version_dir(version, home),
+        version_dir=slot,
         previous_version=previous,
         rolled_back=rolled_back,
     )

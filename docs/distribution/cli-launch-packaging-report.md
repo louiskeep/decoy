@@ -4,6 +4,59 @@
 Not merged (the orchestrator gates: dennis then Codex). Risk tier R2 (supply-chain /
 release machinery): independent review required, no author self-certification.
 
+## Remediation round 4 (post round-3 Codex gate) -- SIMPLIFY the shell transaction
+
+Round 3's cross-model Codex gate found that the shell installer's transactional promotion
+had grown a new bug each time it was hardened (round 2: destructive delete; round 3: a
+failed restore deleting the backup, and an EXIT-only trap that catchable signals skip).
+Per Cam's decision the fix this round is to **stop hardening the in-place replacement and
+remove it entirely**: a `versions/<v>/` directory is NEVER mutated in place.
+
+- **Never replace a version dir in place (the primitive).** Every install, reinstall, and
+  repair stages the fresh bits into a FRESH directory and makes them live by the one atomic
+  symlink flip (`layout.atomic_point_current_at` -- a temp symlink `os.replace`'d over
+  `current`). A first/different-version install renames into the absent `versions/<v>`; a
+  same-version repair stages into a distinct `versions/<v>+<build>`, flips to it, then
+  reclaims the old dir (reclamation is not time-critical and needs no backup/restore). The
+  Python installer's move-aside/backup/restore machinery (`_promote_staged` + the old
+  `_restore_backup`/`_reclaim_backup`) is gone; `installer.py` now just stages a fresh slot
+  and the single flip decides everything.
+- **HIGH 1 (shell recovery deleted the backup after a failed restore) -- eliminated by
+  construction.** There is no backup and no restore because nothing is replaced in place.
+  Regression: `test_same_version_staging_failure_before_flip_preserves_runtime` -- an
+  injected failure DURING staging (before the flip) leaves the existing runtime live and
+  untouched.
+- **HIGH 2 (the interruption safety net only trapped EXIT) -- eliminated by construction.**
+  Staging a fresh dir never touches `current`; the only state change is the atomic flip,
+  which cannot half-complete, so an interruption (INT/TERM/HUP/KILL) at any point leaves
+  EITHER the old runtime live (flip not reached) OR the new one (flip done), never a
+  missing `current`. No signal trap is needed (the shell keeps an EXIT-only trap purely to
+  drop its temp dir). Regression:
+  `test_same_version_flip_is_atomic_never_missing_current`.
+- **The shell bootstrap is first-install-only (refuse-and-redirect).** `install.sh` /
+  `install.ps1` lay down a fresh runtime and REFUSE to replace an existing one, directing
+  all same-version repair and upgrades through `decoy upgrade` (the Python path, which uses
+  the stage-fresh + atomic-flip above). The bootstrap never deletes or overwrites an
+  existing runtime, so it has nothing to recover. Regression:
+  `test_install_sh_refuses_when_already_installed` (existing runtime left untouched, nothing
+  staged); the first-install identity check is retained as
+  `test_install_sh_refuses_wrong_version_without_installing_anything`.
+- **MEDIUM (the import-isolation positive case was vacuous).** The positive case ran
+  `sys.executable -I` (not the packaged launcher), permitted `ImportError`, and never
+  asserted success, so it passed even with no usable Decoy install. It now runs the actual
+  launcher invocation (`-I -B`) against a bundle-resident `decoy` (a venv whose own site
+  holds the signed package -- how the real bundle's interpreter imports under `-I`) from a
+  hostile CWD + PYTHONPATH, and asserts it SUCCEEDS, imports `decoy` from INSIDE the bundle
+  (expected origin + version), and leaves no attack marker. The negative controls are kept.
+  (`test_import_isolation_runs_bundle_decoy_and_blocks_hostile_cwd_and_pythonpath`.)
+- **LOW (PowerShell recovery).** `install.ps1` is given the same refuse-and-redirect now
+  (refuse an existing install, plain first-install placement, no backup/restore), so there
+  is nothing to recover there either. Windows stays gated off the advertised matrix.
+
+This supersedes round 2's HIGH 3 (the stage-beside/backup/restore mechanism described
+below) and renames its shell identity regression. Not merged; the orchestrator re-gates
+(dennis then Codex) on push.
+
 ## Remediation round 2 (post cross-model Codex gate)
 
 The cross-model Codex gate found four HIGH and three MEDIUM defects; all were fixed at the
