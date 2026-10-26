@@ -83,7 +83,13 @@ atomically. The previous version stays on disk, so a rollback is:
 decoy upgrade --version <previous-version>
 ```
 
-A failed post-upgrade validation rolls the `current` pointer back automatically.
+When that version is still installed locally (the common rollback case), this is an
+atomic `current`-pointer swap back to the retained runtime: no download, and it never
+overwrites the bits it is rolling back to. A version not present locally is downloaded
+and verified by the published URL convention, and is installed only if the downloaded
+bundle actually declares that version (a resolution mismatch refuses without touching any
+existing version directory). A failed post-upgrade validation rolls the `current` pointer
+back automatically.
 
 ## Update notice
 

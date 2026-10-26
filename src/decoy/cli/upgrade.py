@@ -68,7 +68,7 @@ def _managed_home() -> Path | None:
 def _fetch(url: str) -> bytes:
     import urllib.request
 
-    with urllib.request.urlopen(url, timeout=30) as resp:  # noqa: S310
+    with urllib.request.urlopen(url, timeout=30) as resp:
         return resp.read()
 
 
@@ -103,7 +103,7 @@ def upgrade(
     try:
         doc_bytes = _fetch(doc_url)
         doc_sig = _fetch(doc_url + ".sig").decode("ascii").strip()
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         state.err_console.print(error("error:"), f"could not reach the version endpoint: {exc}")
         raise typer.Exit(code=EXIT_RUNTIME) from exc
 
@@ -135,20 +135,32 @@ def upgrade(
         launcher = current / "decoy"
         try:
             out = subprocess.run([str(launcher), "--version"], capture_output=True, text=True, timeout=60)
-        except Exception:  # noqa: BLE001
+        except Exception:
             return False
         return out.returncode == 0 and (target_version in out.stdout)
 
     try:
-        outcome = installer.install_version(
-            version_doc_bytes=doc_bytes,
-            version_doc_sig_b64=doc_sig,
-            expected_public_pem=pubkey,
-            home=home,
-            pin_version=version,
-            download=_fetch,
-            post_swap_validate=_post_swap,
-        )
+        if version is not None and installer.local_version_present(version, home):
+            # A pinned version already on disk (the rollback case): swap `current` to the
+            # retained runtime atomically, no download and no overwrite -- so rolling back
+            # never re-fetches or destroys the bits it is rolling back to.
+            outcome = installer.activate_local_version(version, home=home, expected_public_pem=pubkey)
+            action = "activated"
+        else:
+            # The base the version document was served under; a pinned non-latest version
+            # resolves <base>/<version>/decoy-<version>-<target>.tar.gz (install.sh scheme).
+            base_url = doc_url.rsplit("/", 1)[0]
+            outcome = installer.install_version(
+                version_doc_bytes=doc_bytes,
+                version_doc_sig_b64=doc_sig,
+                expected_public_pem=pubkey,
+                home=home,
+                pin_version=version,
+                base_url=base_url,
+                download=_fetch,
+                post_swap_validate=_post_swap,
+            )
+            action = "upgraded"
     except installer.InstallError as exc:
         state.err_console.print(error("error:"), str(exc))
         raise typer.Exit(code=EXIT_RUNTIME) from exc
@@ -156,13 +168,15 @@ def upgrade(
     if state.mode is OutputMode.json:
         emit_json(state, {
             "current": outcome.version, "previous": outcome.previous_version,
-            "target": outcome.target, "action": "upgraded",
+            "target": outcome.target, "action": action,
         })
     else:
         state.console.print(
-            success("upgraded:"),
+            success(f"{action}:"),
             f"decoy {outcome.previous_version or '(none)'} -> {outcome.version} ({outcome.target}).",
         )
-        if outcome.previous_version:
+        # The rollback hint points at the retained previous runtime; `decoy upgrade
+        # --version <previous>` activates it in place (local swap), it does not re-download.
+        if outcome.previous_version and outcome.previous_version != outcome.version:
             state.console.print(" ", hint("rollback:"), f"decoy upgrade --version {outcome.previous_version}")
     raise typer.Exit(code=EXIT_OK)

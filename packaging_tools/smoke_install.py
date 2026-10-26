@@ -77,6 +77,7 @@ def _build_cli_wheel(version: str, wheels: Path) -> None:
     the ``__version__`` literal in src/decoy/__init__.py (what ``decoy --version`` and
     the update check read). A real release bumps both; this mirrors that."""
     import re
+
     import tomllib
 
     pyproject = REPO_ROOT / "pyproject.toml"
@@ -281,7 +282,8 @@ def _make_no_native_bundle(work: Path, dist: Path, key_path: Path) -> Path:
 
     from cryptography.hazmat.primitives import serialization as _ser
 
-    from decoy.distribution import manifest as m, signing
+    from decoy.distribution import manifest as m
+    from decoy.distribution import signing
     from packaging_tools.build_bundle import _deterministic_tar_gz
     from packaging_tools.sign_release import sign_bytes, sign_file
 

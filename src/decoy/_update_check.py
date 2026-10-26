@@ -29,7 +29,8 @@ import time
 from pathlib import Path
 
 from decoy import __version__
-from decoy.distribution import layout, version_document as vd
+from decoy.distribution import layout
+from decoy.distribution import version_document as vd
 
 _DEFAULT_VERSION_URL = "https://decoy.dev/cli/version.json"
 _CADENCE_SECONDS = 24 * 60 * 60  # at most one network check per day
@@ -48,7 +49,7 @@ def _interactive() -> bool:
         return False
     try:
         return sys.stderr.isatty() and sys.stdout.isatty()
-    except Exception:  # noqa: BLE001
+    except Exception:
         return False
 
 
@@ -59,7 +60,7 @@ def _cache_path() -> Path:
 def _read_cache() -> dict | None:
     try:
         return json.loads(_cache_path().read_text(encoding="utf-8"))
-    except Exception:  # noqa: BLE001
+    except Exception:
         return None
 
 
@@ -71,7 +72,7 @@ def _write_cache(latest: str | None) -> None:
             json.dumps({"checked_at": int(time.time()), "latest": latest}),
             encoding="utf-8",
         )
-    except Exception:  # noqa: BLE001
+    except Exception:
         pass
 
 
@@ -84,12 +85,12 @@ def _fetch_latest(url: str) -> str | None:
 
     try:
         req = urllib.request.Request(url, headers={})  # no identifying headers
-        with urllib.request.urlopen(req, timeout=_FETCH_TIMEOUT) as resp:  # noqa: S310
+        with urllib.request.urlopen(req, timeout=_FETCH_TIMEOUT) as resp:
             data = resp.read()
         payload = vd.parse_document(data)
         latest = payload.get("latest")
         return latest if isinstance(latest, str) else None
-    except Exception:  # noqa: BLE001
+    except Exception:
         return None
 
 
@@ -128,5 +129,5 @@ def maybe_print_notice(*, suppress: bool = False, stream=None) -> bool:
             "Upgrade with: decoy upgrade\n"
         )
         return True
-    except Exception:  # noqa: BLE001 -- advisory; must never break a command
+    except Exception:
         return False
