@@ -37,14 +37,19 @@ from decoy.ui.theme import code, error, hint, success, warn
 _TOKENIZE_EPILOG = """\
 Examples:
 
-  decoy tokenize pipeline.yaml --vault tokens.db
+  decoy tokenize pipeline.yaml --vault tokens.db --mask-secret env:DECOY_MASK_SECRET
     Run the pipeline, replacing every `strategy: tokenize` column with a
     deterministic surrogate, and write the (namespace, plaintext) -> token
-    mapping to the local vault tokens.db.
+    mapping to the local vault tokens.db. The mask secret (env:NAME or
+    file:/PATH to a >=32-byte secret) keys the tokens.
 
-  decoy tokenize pipeline.yaml --vault tokens.db --mask-secret env:DECOY_MASK_SECRET
-    Derive the tokens from a keyed mask secret (env:NAME or file:/PATH to a
-    >=32-byte secret) instead of the pipeline seed.
+  decoy tokenize pipeline.yaml --vault tokens.db
+    The same run when the YAML already sets global_settings.mask_secret_ref.
+
+A mask secret is REQUIRED (--mask-secret OR global_settings.mask_secret_ref, in
+exactly one place): tokenize fails closed without one, because tokens keyed on
+the public pipeline seed are forgeable offline -- anyone with the config could
+recompute them without the vault.
 
 Each `strategy: tokenize` column needs an explicit `namespace:` in the YAML
 (the token is keyed on it, so different namespaces tokenize apart). Tokens are
@@ -70,7 +75,9 @@ Examples:
     Disambiguate when the config tokenizes more than one table.
 
 The config supplies each tokenize column's namespace; the vault supplies the
-reverse mapping. A missing vault, a vault that is not a decoy token vault, or a
+reverse mapping. The tokenized file is read in the format tokenize wrote it (CSV
+or Parquet, chosen by its extension), and the recovered file is written in that
+same format. A missing vault, a vault that is not a decoy token vault, or a
 token that is not in the vault under the column's namespace (a wrong vault or
 wrong namespace) fails closed -- no output is written -- rather than emit a
 value it cannot vouch for.
@@ -109,10 +116,13 @@ def tokenize(
         None,
         "--mask-secret",
         help=(
-            "env:NAME or file:/PATH pointing at a >=32-byte mask secret to key "
-            "the tokens from, instead of the pipeline seed. Sets "
-            "'global_settings.mask_secret_ref' for this run; an error if the YAML "
-            "already sets it. Explicit flag only (no env var)."
+            "env:NAME or file:/PATH pointing at a >=32-byte mask secret to key the "
+            "tokens from. REQUIRED unless the YAML sets "
+            "global_settings.mask_secret_ref: tokenize fails closed without an "
+            "effective secret, because seed-derived tokens are forgeable offline "
+            "from the public pipeline seed. Sets 'global_settings.mask_secret_ref' "
+            "for this run; an error if the YAML already sets it. Explicit flag only "
+            "(no env var)."
         ),
     ),
     json_: bool = typer.Option(
@@ -138,8 +148,10 @@ def tokenize(
     Replaces every `strategy: tokenize` column with a deterministic surrogate
     (derived by the engine, keyed on the column namespace) and records the
     reverse mapping in the local vault so `decoy detokenize` can recover the
-    originals. Exits 0 on success, 1 on a config/usage error, 3 on a runtime
-    failure.
+    originals. A mask secret is required (--mask-secret or
+    global_settings.mask_secret_ref); without one the tokens would derive from
+    the public pipeline seed and be forgeable offline, so tokenize fails closed.
+    Exits 0 on success, 1 on a config/usage error, 3 on a runtime failure.
     """
     state = setup_output(json_, quiet, verbose)
     config_str = str(config)
@@ -171,6 +183,27 @@ def tokenize(
         raise typer.Exit(code=EXIT_USAGE)
     if not isinstance(raw, dict):
         _emit_error(f"Pipeline YAML must be a YAML mapping (object), not {type(raw).__name__}.")
+        raise typer.Exit(code=EXIT_USAGE)
+
+    # DE-02 secret-disclosure ROOT guard (mirrors decoy.cli.run): validate the
+    # RAW YAML global_settings / mask_secret_ref BEFORE PipelineConfig.model_validate.
+    # A wrong-type mask_secret_ref would otherwise ride a Pydantic ValidationError
+    # (which echoes input_value, i.e. the secret) into str(exc) below, leaking it.
+    # Redacted here so no ref value ever reaches Pydantic's diagnostics.
+    _raw_gs = raw.get("global_settings")
+    if _raw_gs is not None and not isinstance(_raw_gs, dict):
+        _emit_error(
+            "global_settings must be a mapping (a YAML block of key: value "
+            f"pairs), not a {type(_raw_gs).__name__}."
+        )
+        raise typer.Exit(code=EXIT_USAGE)
+    _raw_ref = _raw_gs.get("mask_secret_ref") if isinstance(_raw_gs, dict) else None
+    if _raw_ref is not None and not _is_valid_mask_secret_ref(_raw_ref):
+        _emit_error(
+            "Invalid global_settings.mask_secret_ref: expected an 'env:NAME' or "
+            "'file:/PATH' reference to a >=32-byte secret. It is a REFERENCE, "
+            "never the raw secret. See: decoy explain keys."
+        )
         raise typer.Exit(code=EXIT_USAGE)
 
     # --mask-secret injects the same global_settings.mask_secret_ref slot the
@@ -238,6 +271,40 @@ def tokenize(
         )
         raise typer.Exit(code=EXIT_USAGE)
 
+    # BLOCKER (B-1): tokenize is ALWAYS keyed. `decoy run` may fall back to the
+    # PUBLIC 8-byte job seed pre-GA, but for tokenize that fallback is fatal: with
+    # no secret every token is tok_ + derive(job_seed, namespace, NFC(plaintext)),
+    # and job_seed is public, so anyone holding the output plus the config can
+    # recompute the tokens offline and re-identify low-entropy values WITHOUT the
+    # vault -- the exact "only the vault reverses it" promise tokenize makes. So
+    # require an effective mask secret and fail closed (coded) when none is set,
+    # ahead of the engine's GA hard-error. Both input paths are already
+    # format-validated (the flag above; the YAML by the ROOT guard), so a present
+    # ref is well-formed here; PRESENCE is what is checked.
+    effective_ref = (config_dict.get("global_settings") or {}).get("mask_secret_ref")
+    if effective_ref is None:
+        _emit_error(
+            "tokenize_requires_secret: tokenize needs a mask secret so tokens are "
+            "not derivable from the public pipeline seed. Pass --mask-secret "
+            "env:NAME (or file:/PATH to a >=32-byte secret), or set "
+            "global_settings.mask_secret_ref in the config.",
+            hint_text="decoy tokenize pipeline.yaml --vault tokens.db --mask-secret env:DECOY_MASK_SECRET",
+        )
+        raise typer.Exit(code=EXIT_USAGE)
+    # Defense-in-depth: a mask_secret_ref is only honored by a DE-02 engine; one
+    # without the keyprovider module would SILENTLY IGNORE the ref and emit
+    # job-seed-keyed (forgeable) tokens. The engine pin guarantees it; probe
+    # anyway and refuse rather than leak an unkeyed artifact on a broken install.
+    try:
+        import decoy_engine.keyprovider  # noqa: F401
+    except ImportError as exc:
+        _emit_error(
+            "a mask secret is configured but the installed decoy-engine is too old "
+            "to honor it (no DE-02 keyprovider); it would silently emit UNKEYED "
+            "(forgeable) tokens. Upgrade decoy-engine."
+        )
+        raise typer.Exit(code=EXIT_USAGE) from exc
+
     from decoy.cli.run import _load_sources_from_config, _write_mask_outputs
 
     token_vault: LocalTokenVault | None = None
@@ -267,9 +334,15 @@ def tokenize(
         raise typer.Exit(code=EXIT_USAGE)
     except typer.Exit:
         raise
-    except Exception as exc:  # runtime failure, not a usage problem
-        _emit_error(f"tokenize failed: {type(exc).__name__}: {exc}"[:500])
-        raise typer.Exit(code=EXIT_RUNTIME)
+    except Exception as exc:  # unexpected runtime failure, not a usage problem
+        # Never echo the exception text: engine tokenize errors are value-free
+        # today, but a future non-vault error (e.g. a pandas codec error) could
+        # embed a source cell value. Surface the type only -- never the message.
+        _emit_error(
+            f"tokenize failed with an unexpected {type(exc).__name__}; the run was "
+            "aborted and no partial output or vault was written."
+        )
+        raise typer.Exit(code=EXIT_RUNTIME) from exc
     finally:
         if token_vault is not None:
             token_vault.close()
@@ -317,7 +390,7 @@ def detokenize(
         exists=True,
         dir_okay=False,
         readable=True,
-        help="The tokenized CSV produced by `decoy tokenize` for one table.",
+        help="The tokenized file produced by `decoy tokenize` for one table (CSV or Parquet, by extension).",
     ),
     vault: Path = typer.Option(
         ...,
@@ -336,7 +409,7 @@ def detokenize(
         None,
         "--output",
         "-o",
-        help="Where to write the recovered CSV. Default: <tokenized>.detokenized.csv next to the input.",
+        help="Where to write the recovered file (format by extension). Default: <tokenized>.detokenized.<ext> next to the input, in the same format tokenize wrote (CSV or Parquet).",
     ),
     json_: bool = typer.Option(
         False,
@@ -359,7 +432,9 @@ def detokenize(
     """Restore tokenized columns from a local vault using the pipeline config.
 
     Reverses every `strategy: tokenize` column by looking each token back up in
-    the vault under the column's namespace. A missing or wrong vault, or a token
+    the vault under the column's namespace. The tokenized file is read in the
+    format tokenize wrote it (CSV or Parquet, by extension) and the recovered
+    file is written in that same format. A missing or wrong vault, or a token
     the vault does not hold under that namespace, fails closed (no output is
     written). Exits 0 on success, 1 on a config/usage or fail-closed error, 3 on
     a runtime failure.
@@ -452,11 +527,24 @@ def detokenize(
 
     import pandas as pd
 
+    # Read the tokenized file in the format `decoy tokenize` wrote it. tokenize
+    # writes each target by its path extension (_write_mask_outputs branches on
+    # the same suffix), so a `.parquet` target reverses as Parquet and anything
+    # else as CSV. CSV is read all-text so a token matches the vault byte-for-byte;
+    # Parquet columns are already typed (tokens are strings), so no dtype coercion.
+    in_is_parquet = tokenized.suffix.lower() == ".parquet"
     try:
-        df = pd.read_csv(tokenized, dtype=str)
+        df = pd.read_parquet(tokenized) if in_is_parquet else pd.read_csv(tokenized, dtype=str)
     except Exception as exc:
-        _emit_error(f"could not read {tokenized}: {exc}")
-        raise typer.Exit(code=EXIT_USAGE)
+        # Coded + value-free: a read failure here is a wrong or corrupt file, not a
+        # leakable cell value. Surface the expected format only -- never the raw
+        # codec error, which a CSV/Parquet decoder can echo file bytes into.
+        _emit_error(
+            f"detokenize_unreadable_target: could not read {tokenized} as "
+            f"{'Parquet' if in_is_parquet else 'CSV'}. detokenize reads the file in "
+            "the format tokenize wrote it (by extension: .parquet, otherwise CSV)."
+        )
+        raise typer.Exit(code=EXIT_USAGE) from exc
 
     try:
         token_vault = LocalTokenVault(vault, create=False)
@@ -516,12 +604,23 @@ def detokenize(
     for col, values in recovered.items():
         df[col] = values
 
-    out_path = output if output is not None else tokenized.with_suffix(".detokenized.csv")
+    out_path = (
+        output
+        if output is not None
+        else tokenized.with_suffix(".detokenized.parquet" if in_is_parquet else ".detokenized.csv")
+    )
     try:
-        df.to_csv(out_path, index=False)
+        # Output format follows the output path's extension: the default matches
+        # the input (Parquet in -> Parquet out), and an explicit -o picks by its
+        # own suffix.
+        if out_path.suffix.lower() == ".parquet":
+            df.to_parquet(out_path, index=False)
+        else:
+            df.to_csv(out_path, index=False)
     except Exception as exc:
-        _emit_error(f"could not write {out_path}: {exc}")
-        raise typer.Exit(code=EXIT_RUNTIME)
+        # Value-free: a write failure is a path/permission problem, not a cell value.
+        _emit_error(f"could not write {out_path}.")
+        raise typer.Exit(code=EXIT_RUNTIME) from exc
 
     present = [e for e in entries if e["status"] != "column_missing"]
     if state.mode is OutputMode.json:

@@ -28,6 +28,24 @@ from decoy.cli.exit_codes import EXIT_USAGE
 
 runner = CliRunner()
 
+# A throwaway >=32-byte mask secret (64 hex chars = 32 bytes), written to a file
+# and referenced via `file:` so every tokenize run is keyed. tokenize REQUIRES a
+# mask secret (B-1 BLOCKER): without one the tokens derive from the public job
+# seed and are forgeable offline, so the fixture always supplies one.
+_MASK_SECRET_HEX = "a" * 64
+
+
+def _mask_secret_ref(tmp_path: Path) -> str:
+    """Write the shared test mask secret and return its `file:` ref.
+
+    Written at a fixed path per tmp_path so two `_pipeline` calls in one test
+    share the SAME secret (determinism tests depend on that: a different secret
+    would key different tokens)."""
+    secret = tmp_path / "mask.secret"
+    if not secret.exists():
+        secret.write_text(_MASK_SECRET_HEX, encoding="utf-8")
+    return f"file:{secret}"
+
 
 def _pipeline(
     tmp_path: Path,
@@ -35,17 +53,22 @@ def _pipeline(
     *,
     emails: list[str] | None = None,
     out_name: str = "tokenized.csv",
+    out_format: str = "csv",
+    with_secret: bool = True,
 ) -> Path:
     emails = emails or ["a@x.com", "b@y.com", "a@x.com"]
     src = tmp_path / "in.csv"
     pd.DataFrame({"id": list(range(len(emails))), "email": emails}).to_csv(src, index=False)
+    global_settings: dict = {"seed": 42}
+    if with_secret:
+        global_settings["mask_secret_ref"] = _mask_secret_ref(tmp_path)
     cfg = {
         "version": 1,
-        "global_settings": {"seed": 42},
+        "global_settings": global_settings,
         "sources": {"people": {"type": "file", "format": "csv", "path": str(src)}},
         "tables": [{"name": "people", "columns": columns}],
         "targets": {
-            "people": {"type": "file", "format": "csv", "path": str(tmp_path / out_name)}
+            "people": {"type": "file", "format": out_format, "path": str(tmp_path / out_name)}
         },
     }
     p = tmp_path / "pipeline.yaml"
@@ -176,7 +199,7 @@ class TestNamespaceDistinctness:
         ).to_csv(src, index=False)
         cfg = {
             "version": 1,
-            "global_settings": {"seed": 42},
+            "global_settings": {"seed": 42, "mask_secret_ref": _mask_secret_ref(tmp_path)},
             "sources": {"people": {"type": "file", "format": "csv", "path": str(src)}},
             "tables": [{"name": "people", "columns": cols}],
             "targets": {
@@ -259,6 +282,102 @@ class TestFailClosed:
         result = runner.invoke(app, ["tokenize", str(cfg), "--vault", str(tmp_path / "t.db")])
         assert result.exit_code == EXIT_USAGE
         assert "namespace" in result.output
+
+    def test_tokenize_without_secret_fails_closed(self, tmp_path: Path) -> None:
+        """B-1 BLOCKER: no mask secret (flag or YAML) is a coded refusal, not an
+        unkeyed run -- a seed-keyed token is offline-forgeable (see
+        TestSecretRequired), so tokenize must never produce one."""
+        cfg = _pipeline(tmp_path, _TOKENIZE_COLS, with_secret=False)
+        vault = tmp_path / "tokens.db"
+        result = runner.invoke(app, ["tokenize", str(cfg), "--vault", str(vault)])
+        assert result.exit_code == EXIT_USAGE
+        assert "tokenize_requires_secret" in result.output
+        # Fail closed: no vault, no output.
+        assert not vault.exists()
+        assert not (tmp_path / "tokenized.csv").exists()
+
+    def test_mask_secret_flag_satisfies_the_requirement(self, tmp_path: Path) -> None:
+        """A YAML with no mask_secret_ref is accepted when --mask-secret supplies
+        the effective secret (the flag injects the same slot)."""
+        cfg = _pipeline(tmp_path, _TOKENIZE_COLS, with_secret=False)
+        vault = tmp_path / "tokens.db"
+        ref = _mask_secret_ref(tmp_path)
+        result = runner.invoke(
+            app, ["tokenize", str(cfg), "--vault", str(vault), "--mask-secret", ref]
+        )
+        assert result.exit_code == 0, result.output
+        assert vault.exists()
+
+
+class TestSecretRequired:
+    def test_seed_only_forgery_no_longer_reproduces_the_token(self, tmp_path: Path) -> None:
+        """The regression for the B-1 BLOCKER. An attacker holding only the
+        tokenized output plus the config (public seed 42, no vault) recomputes the
+        token the UNKEYED path would have produced:
+        `tok_ + derive(job_seed, namespace, NFC(plaintext))[:32]`. With a real
+        mask secret the token is keyed on the secret, not the public seed, so the
+        offline recompute no longer matches -- re-identification needs the vault."""
+        import unicodedata
+
+        from decoy_engine.determinism import derive
+        from decoy_engine.plan import job_seed_for_config
+
+        cfg = _pipeline(tmp_path, _TOKENIZE_COLS, emails=["victim@example.com"])
+        vault = tmp_path / "tokens.db"
+        result = runner.invoke(app, ["tokenize", str(cfg), "--vault", str(vault)])
+        assert result.exit_code == 0, result.output
+        actual = pd.read_csv(tmp_path / "tokenized.csv", dtype=str)["email"][0]
+
+        job_seed = job_seed_for_config({"global_settings": {"seed": 42}})
+        forged = (
+            "tok_"
+            + derive(
+                job_seed,
+                "people.email",
+                unicodedata.normalize("NFC", "victim@example.com").encode("utf-8"),
+            ).hex()[:32]
+        )
+        assert actual.startswith("tok_")
+        assert actual != forged, "keyed token must not equal the public-seed forgery"
+
+
+class TestFormats:
+    def test_parquet_target_round_trips(self, tmp_path: Path) -> None:
+        """B-1 MEDIUM: tokenize writes the target in the config format (here
+        Parquet, by path suffix); detokenize must read it back in that same
+        format and reverse it, not fail on a hardcoded CSV read."""
+        cfg = _pipeline(
+            tmp_path, _TOKENIZE_COLS, out_name="tokenized.parquet", out_format="parquet"
+        )
+        vault = tmp_path / "tokens.db"
+        result = runner.invoke(app, ["tokenize", str(cfg), "--vault", str(vault)])
+        assert result.exit_code == 0, result.output
+        out = pd.read_parquet(tmp_path / "tokenized.parquet")
+        assert all(str(v).startswith("tok_") for v in out["email"])
+
+        result = runner.invoke(
+            app,
+            ["detokenize", str(cfg), str(tmp_path / "tokenized.parquet"), "--vault", str(vault)],
+        )
+        assert result.exit_code == 0, result.output
+        recovered = pd.read_parquet(tmp_path / "tokenized.detokenized.parquet")
+        assert list(recovered["email"]) == ["a@x.com", "b@y.com", "a@x.com"]
+
+    def test_detokenize_unreadable_target_fails_closed(self, tmp_path: Path) -> None:
+        """A file that is not readable in its claimed format fails closed with a
+        coded error (no raw codec exception, which could echo file bytes), and
+        writes nothing."""
+        cfg = _pipeline(tmp_path, _TOKENIZE_COLS)
+        vault = tmp_path / "tokens.db"
+        runner.invoke(app, ["tokenize", str(cfg), "--vault", str(vault)])
+        bad = tmp_path / "corrupt.parquet"
+        bad.write_bytes(b"not a parquet file")
+        result = runner.invoke(
+            app, ["detokenize", str(cfg), str(bad), "--vault", str(vault)]
+        )
+        assert result.exit_code == EXIT_USAGE
+        assert "detokenize_unreadable_target" in result.output
+        assert not (tmp_path / "corrupt.detokenized.parquet").exists()
 
 
 class TestJsonAndSafety:

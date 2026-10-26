@@ -93,8 +93,10 @@ class LocalTokenVault:
         try:
             # isolation_level="" keeps Python's implicit-transaction behavior:
             # the first write opens a transaction that stays open until an
-            # explicit commit(), which is exactly the fail-closed contract.
-            self._conn = sqlite3.connect(str(path))
+            # explicit commit(), which is exactly the fail-closed contract. It is
+            # the sqlite3 default, but passed explicitly so the contract does not
+            # ride a library default the comment would otherwise misstate.
+            self._conn = sqlite3.connect(str(path), isolation_level="")
         except sqlite3.Error as exc:
             raise TokenVaultError(
                 code="vault_open_error",
