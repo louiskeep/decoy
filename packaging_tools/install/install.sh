@@ -144,26 +144,40 @@ TARGET=$(detect_target)
 [ -n "$TARGET" ] || die "unsupported platform ($(uname -s)/$(uname -m)). Supported: linux-x86_64, linux-aarch64, macos-arm64. (macOS Intel and Windows are not supported at launch.)"
 info "target: $TARGET"
 
+# First-install-only bootstrap (Cam decision). This script lays down a FRESH runtime and
+# REFUSES to replace an existing one: it never moves aside, deletes, or overwrites a
+# managed runtime, so it has no backup/restore/signal-trap recovery to get wrong. All
+# same-version repair and every upgrade go through `decoy upgrade`, which stages a fresh
+# version dir and flips `current` atomically (decoy.distribution.installer). Refuse early,
+# before any download or extraction, so an existing install is never even partially touched.
+VERSIONS="$DECOY_HOME/versions"
+has_version_dir() {
+  [ -d "$VERSIONS" ] || return 1
+  for _d in "$VERSIONS"/*/; do
+    # A glob with no match leaves the literal pattern, which -d rejects; default globbing
+    # also excludes dot dirs, so .incoming/.staging never count as an existing install.
+    if [ -d "$_d" ]; then
+      return 0
+    fi
+  done
+  return 1
+}
+if [ -e "$DECOY_HOME/current" ] || [ -L "$DECOY_HOME/current" ] || has_version_dir; then
+  info "an existing Decoy runtime is installed at $DECOY_HOME."
+  info "this bootstrap installs only; it will NOT replace an existing runtime."
+  info "to upgrade or repair, run:  decoy upgrade        (repair: decoy upgrade --force)"
+  info "to remove it first, run:    sh install.sh uninstall"
+  die "refusing to overwrite an existing install"
+fi
+
 WORK=$(mktemp -d)
 INCOMING=""
-DEST=""
-BACKUP=""
 cleanup() {
-  # Clean the temp workdir AND any quarantine dir on every exit, so a refusal never
-  # leaves a half-extracted runtime behind.
+  # First-install-only: nothing existing is ever moved aside, so cleanup just drops the
+  # temp workdir and any quarantine dir. There is no backup/restore window to recover, so
+  # an EXIT-only trap is enough -- an interruption can at worst leak a temp dir, never
+  # strand `current` (which is only ever changed by the single atomic flip below).
   rm -rf "$WORK" "${INCOMING:-/nonexistent}"
-  # Promotion safety net: if a hard interruption hit the one-rename window after the
-  # original was moved to the backup but before the replacement landed, `current` would
-  # point at a missing versions/<version>. Each promotion rename is atomic, so DEST is
-  # either fully present (replacement landed -> the backup is stale, drop it) or absent
-  # (restore the retained original). Never delete a backup while DEST is missing.
-  if [ -n "${BACKUP:-}" ] && [ -d "$BACKUP" ]; then
-    if [ -n "${DEST:-}" ] && [ ! -e "$DEST" ]; then
-      mv "$BACKUP" "$DEST" 2>/dev/null || rm -rf "$BACKUP"
-    else
-      rm -rf "$BACKUP"
-    fi
-  fi
 }
 trap cleanup EXIT
 
@@ -236,8 +250,8 @@ verify_sig "$TARBALL" "$SIGFILE" "$PUBKEY" || die "bundle signature INVALID -- r
 info "bundle signature verified"
 
 # 3) quarantine-extract, then promote. Nothing is laid down live until every check
-#    above passed and the native self-check below passes.
-VERSIONS="$DECOY_HOME/versions"
+#    above passed and the native self-check below passes. ($VERSIONS was set above, where
+#    the first-install-only guard already refused any existing runtime.)
 mkdir -p "$VERSIONS"
 INCOMING="$VERSIONS/.incoming.$$"
 rm -rf "$INCOMING"; mkdir -p "$INCOMING"
@@ -268,9 +282,10 @@ export PYTHONDONTWRITEBYTECODE=1
 "$PYBIN" -I -B -m decoy.distribution.selfcheck || die "native companion self-check FAILED -- refusing this install"
 
 # 3c) identity check (HIGH: a validly-signed but wrong-version/target bundle served at a
-#     pinned URL must NOT overwrite the retained versions/<version> runtime). Compare the
+#     pinned URL must NOT be installed as if it were the requested one). Compare the
 #     bundle's DECLARED version + target (BUNDLE_INFO.json, signed into the manifest)
-#     against what was requested, BEFORE any deletion. A mismatch refuses untouched.
+#     against what was requested, BEFORE any slot is created. A mismatch refuses, having
+#     laid down nothing.
 BINFO="$BUNDLE_ROOT/BUNDLE_INFO.json"
 [ -f "$BINFO" ] || die "bundle is missing BUNDLE_INFO.json; cannot verify its identity -- refusing"
 DECLARED_VERSION=$(json_top_string "$BINFO" version)
@@ -283,38 +298,23 @@ if [ "$VERSION" != "local" ]; then
   [ "$DECLARED_VERSION" = "$VERSION" ] || die "refusing: bundle declares version '$DECLARED_VERSION' but '$VERSION' was requested (resolution mismatch) -- versions/$VERSION left untouched"
 fi
 
-# 4) promote into place + flip `current` atomically (reuses the tested layout helper).
-#    Stage-beside, never a destroy-then-replace: mirror the Python installer
-#    (decoy.distribution.installer._promote_staged). The existing runtime is NEVER
-#    deleted before the replacement is in place. A same-version repair moves the original
-#    ASIDE as a retained backup, moves the replacement in, points `current`, then reclaims
-#    the backup; a failure at any step restores the original, so an interrupted re-install
-#    of the active version can never leave the host with no working runtime. All moves are
-#    renames within $VERSIONS (one filesystem), so each is atomic.
+# 4) place the fresh runtime + flip `current` atomically (reuses the tested layout helper).
+#    First-install-only: the guard above refused any existing runtime, so versions/$VERSION
+#    is absent and this is a plain rename into place -- never a destroy-then-replace. The
+#    single atomic `current` flip (layout_point) is the only thing that goes live, so an
+#    interruption before it leaves nothing installed and after it leaves the new runtime
+#    live; there is no move-aside, backup, or restore window. (Same-version repair + upgrade
+#    are `decoy upgrade`'s job: it stages a fresh versions/<version>+<build> and flips.)
 DEST="$VERSIONS/$VERSION"
-BACKUP="$VERSIONS/.backup.$VERSION.$$"
-rm -rf "$BACKUP"
-if [ -e "$DEST" ]; then
-  mv "$DEST" "$BACKUP" || die "could not move the existing runtime aside -- versions/$VERSION left in place"
-fi
-if ! mv "$BUNDLE_ROOT" "$DEST"; then
-  # The replacement did not land; the original rename is atomic, so DEST is absent. Put
-  # the retained original straight back (if we moved one), then refuse.
-  if [ -d "$BACKUP" ]; then mv "$BACKUP" "$DEST"; fi
-  die "could not promote the new runtime into versions/$VERSION -- the previous runtime is intact"
-fi
+[ -e "$DEST" ] && die "versions/$VERSION already present -- run 'decoy upgrade --force' to repair; refusing"
+mv "$BUNDLE_ROOT" "$DEST" || die "could not place the new runtime at versions/$VERSION -- nothing installed"
 rm -rf "$INCOMING"
 if ! DECOY_HOME="$DECOY_HOME" "$DEST/python/bin/python3" -I -B -m decoy.distribution.layout_point "$VERSION"; then
-  # Activation failed: restore the retained original over the unvalidated replacement so a
-  # working runtime survives (a bare reclaim of the backup here would strand `current`).
-  if [ -d "$BACKUP" ]; then
-    rm -rf "$DEST"
-    mv "$BACKUP" "$DEST"
-  fi
-  die "could not point 'current' at $VERSION -- the previous runtime is intact"
+  # Activation failed on a first install: no prior runtime was touched, so drop the fresh
+  # version dir (leaving `current` as it was -- absent) and refuse. Nothing to restore.
+  rm -rf "$DEST"
+  die "could not point 'current' at $VERSION -- nothing installed"
 fi
-# Replacement is in place and `current` points at it: drop the retained original.
-rm -rf "$BACKUP"
 
 # 5) launcher shim on PATH -> the current runtime.
 mkdir -p "$DECOY_BIN_DIR"
