@@ -45,9 +45,15 @@ function Die($msg) { Write-Error "decoy install: $msg"; exit 1 }
 function Info($msg) { Write-Host "decoy install: $msg" }
 
 function Resolve-Target {
-  # Windows: only x86_64 is in the matrix today.
-  $arch = $env:PROCESSOR_ARCHITECTURE
-  if ($arch -eq "AMD64") { return "windows-x86_64" }
+  # Windows is GATED OFF the advertised matrix this cycle. The managed-runtime model is
+  # POSIX-shaped (a `current` symlink swap + a python/bin/python3 launcher) and the
+  # Windows install/upgrade/rollback lifecycle could not be verified end to end in this
+  # remediation cycle (no Windows runner). Per the launch rule we refuse rather than
+  # advertise an unrunnable path. See
+  # docs/distribution/decisions/2026-10-26-windows-target-gated.md.
+  # To re-enable: return "windows-x86_64" for AMD64 here, re-add it to
+  # decoy.distribution.targets.SUPPORTED_TARGETS + the build, and verify the lifecycle
+  # end to end (the install body below is kept corrected for that day).
   return ""
 }
 
@@ -72,7 +78,7 @@ if ($Uninstall) {
 }
 
 $target = Resolve-Target
-if (-not $target) { Die "unsupported platform ($env:PROCESSOR_ARCHITECTURE). Supported on Windows: windows-x86_64." }
+if (-not $target) { Die "Windows is not a supported target at launch (gated off the advertised matrix this cycle; see docs/distribution/decisions/2026-10-26-windows-target-gated.md). No install performed." }
 Info "target: $target"
 
 $work = New-Item -ItemType Directory -Path (Join-Path $env:TEMP ("decoy-install-" + [guid]::NewGuid()))
@@ -125,21 +131,40 @@ try {
   if (-not (Test-Path $pybin)) { $pybin = Join-Path $bundleRoot.FullName "python\bin\python.exe" }
   if (-not (Test-Path $pybin)) { Die "bundle is missing its interpreter" }
 
-  & $pybin -m decoy.distribution.verify_extracted $bundleRoot.FullName
+  # The bundled interpreter runs with bytecode writing OFF (-B + PYTHONDONTWRITEBYTECODE):
+  # the manifest signs no caches and the verifier rejects any found on disk, so these
+  # install-time checks must not leave an unsigned __pycache__ behind.
+  $env:PYTHONDONTWRITEBYTECODE = "1"
+
+  & $pybin -B -m decoy.distribution.verify_extracted $bundleRoot.FullName
   if ($LASTEXITCODE -ne 0) { Die "bundle manifest verification FAILED -- refusing" }
-  & $pybin -m decoy.distribution.selfcheck
+  & $pybin -B -m decoy.distribution.selfcheck
   if ($LASTEXITCODE -ne 0) { Die "native companion self-check FAILED -- refusing this install" }
+
+  # Identity check (HIGH): a validly-signed but wrong-version/target bundle served at a
+  # pinned URL must NOT overwrite the retained versions\<version> runtime. Compare the
+  # bundle's DECLARED version + target against what was requested, BEFORE any deletion.
+  $binfo = Join-Path $bundleRoot.FullName "BUNDLE_INFO.json"
+  if (-not (Test-Path $binfo)) { Die "bundle is missing BUNDLE_INFO.json; cannot verify its identity -- refusing" }
+  $info = Get-Content $binfo -Raw | ConvertFrom-Json
+  if ($info.target -ne $target) { Die "refusing: bundle declares target '$($info.target)' but this host is '$target' -- nothing installed" }
+  if ($ver -ne "local" -and $info.version -ne $ver) { Die "refusing: bundle declares version '$($info.version)' but '$ver' was requested (resolution mismatch) -- versions\$ver left untouched" }
 
   $dest = Join-Path $versions $ver
   if (Test-Path $dest) { Remove-Item $dest -Recurse -Force }
   Move-Item $bundleRoot.FullName $dest
+  # Recompute the interpreter path AFTER the move: $pybin pointed into the quarantine dir,
+  # which no longer exists once the bundle is promoted to $dest.
+  $pybin = Join-Path $dest "python\python.exe"
+  if (-not (Test-Path $pybin)) { $pybin = Join-Path $dest "python\bin\python.exe" }
   $env:DECOY_HOME = $DecoyHome
-  & $pybin -m decoy.distribution.layout_point $ver
+  & $pybin -B -m decoy.distribution.layout_point $ver
   if ($LASTEXITCODE -ne 0) { Die "could not point 'current' at $ver" }
 
   New-Item -ItemType Directory -Force -Path $BinDir | Out-Null
-  # current\decoy is the POSIX launcher; on Windows run the interpreter directly.
-  $shim = "@echo off`r`n`"$DecoyHome\current\python\python.exe`" -m decoy %*`r`n"
+  # current\decoy is the POSIX launcher; on Windows run the interpreter directly, with
+  # bytecode writing off (matches the POSIX launcher).
+  $shim = "@echo off`r`nset PYTHONDONTWRITEBYTECODE=1`r`n`"$DecoyHome\current\python\python.exe`" -B -m decoy %*`r`n"
   Set-Content -Path (Join-Path $BinDir "decoy.cmd") -Value $shim -NoNewline
 
   Info "installed decoy $ver -> $dest"

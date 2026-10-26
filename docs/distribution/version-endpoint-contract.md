@@ -43,11 +43,16 @@ re-serialization step.
   "artifacts": {
     "linux-x86_64":  {"url": "...", "sha256": "<hex>", "sig": "<url>"},
     "linux-aarch64": {"url": "...", "sha256": "<hex>", "sig": "<url>"},
-    "macos-arm64":   {"url": "...", "sha256": "<hex>", "sig": "<url>"},
-    "windows-x86_64":{"url": "...", "sha256": "<hex>", "sig": "<url>"}
+    "macos-arm64":   {"url": "...", "sha256": "<hex>", "sig": "<url>"}
   }
 }
 ```
+
+The advertised targets are exactly `decoy.distribution.targets.SUPPORTED_TARGETS`
+(the document generator iterates it). `windows-x86_64` is GATED OFF this cycle and so
+carries no artifact (see
+`docs/distribution/decisions/2026-10-26-windows-target-gated.md`); a Windows host
+refuses at target detection rather than installing an unrunnable path.
 
 | Field           | Meaning                                                                 |
 | --------------- | ----------------------------------------------------------------------- |

@@ -18,11 +18,7 @@ Linux / macOS:
 curl -LsSf https://decoy.dev/cli/install.sh | sh
 ```
 
-Windows (PowerShell):
-
-```powershell
-irm https://decoy.dev/cli/install.ps1 | iex
-```
+Windows is **not supported at launch** (see Supported platforms below).
 
 Then restart your shell (or add the printed directory to `PATH`) and check:
 
@@ -41,11 +37,13 @@ companion.
 | `linux-x86_64`  | glibc, manylinux_2_28+                   |
 | `linux-aarch64` | glibc, manylinux_2_28+                   |
 | `macos-arm64`   | Apple Silicon                            |
-| `windows-x86_64`| Windows 10+                              |
 
 macOS Intel (x86_64) is **not supported at launch** (it is not in the native wheel
-matrix). On an unsupported platform the installer refuses with a clear message rather
-than installing a slow or broken runtime.
+matrix). Windows (x86_64) is **gated off this cycle** until its install/upgrade/rollback
+lifecycle is verified end to end (see
+`docs/distribution/decisions/2026-10-26-windows-target-gated.md`). On an unsupported
+platform the installer refuses with a clear message rather than installing a slow or
+broken runtime.
 
 A full install is roughly 600-650 MB on disk (the bundled interpreter plus pandas /
 Polars / DuckDB / PyArrow and the native companion).

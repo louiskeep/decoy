@@ -1,7 +1,7 @@
 """End-to-end smoke for the CLI distribution machinery (CLI-launch acceptance).
 
-Builds a real signed linux bundle, serves it from a local HTTP server (LAN-only,
-bound to 0.0.0.0 per the dev constraint), and drives the full install + upgrade flow
+Builds a real signed linux bundle, serves it from a local HTTP server (bound to
+loopback only, never a public interface), and drives the full install + upgrade flow
 against the acceptance checklist, asserting each outcome:
 
   1. install on a clean target, then `decoy --version` and a real `decoy run` succeed;
@@ -34,7 +34,6 @@ import contextlib
 import http.server
 import os
 import shutil
-import socket
 import subprocess
 import sys
 import threading
@@ -121,14 +120,17 @@ def _make_version_doc(dist: Path, out: Path, base_url: str, version: str, key: P
 
 @contextlib.contextmanager
 def _serve(directory: Path):
-    """A local HTTP server bound to 0.0.0.0 (LAN-only dev), yielding the loopback URL."""
+    """A local HTTP server bound to LOOPBACK only, yielding its URL.
+
+    The smoke serves release bytes that must never be reachable off-box: bind 127.0.0.1
+    explicitly so the listener is not exposed on any other interface, rather than binding
+    0.0.0.0 and relying on the caller to stay LAN-local."""
     handler = lambda *a, **k: http.server.SimpleHTTPRequestHandler(*a, directory=str(directory), **k)  # noqa: E731
-    httpd = http.server.ThreadingHTTPServer(("0.0.0.0", 0), handler)
+    httpd = http.server.ThreadingHTTPServer(("127.0.0.1", 0), handler)
     port = httpd.socket.getsockname()[1]
     t = threading.Thread(target=httpd.serve_forever, daemon=True)
     t.start()
-    host = socket.gethostbyname(socket.gethostname())
-    _log(f"serving {directory} at http://0.0.0.0:{port}/ (Network URL: http://{host}:{port}/)")
+    _log(f"serving {directory} at http://127.0.0.1:{port}/ (loopback only)")
     try:
         yield f"http://127.0.0.1:{port}"
     finally:
