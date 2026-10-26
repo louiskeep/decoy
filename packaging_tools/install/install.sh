@@ -146,9 +146,26 @@ info "target: $TARGET"
 
 WORK=$(mktemp -d)
 INCOMING=""
-# Clean the temp workdir AND any quarantine dir on every exit, so a refusal never
-# leaves a half-extracted runtime behind.
-trap 'rm -rf "$WORK" "${INCOMING:-/nonexistent}"' EXIT
+DEST=""
+BACKUP=""
+cleanup() {
+  # Clean the temp workdir AND any quarantine dir on every exit, so a refusal never
+  # leaves a half-extracted runtime behind.
+  rm -rf "$WORK" "${INCOMING:-/nonexistent}"
+  # Promotion safety net: if a hard interruption hit the one-rename window after the
+  # original was moved to the backup but before the replacement landed, `current` would
+  # point at a missing versions/<version>. Each promotion rename is atomic, so DEST is
+  # either fully present (replacement landed -> the backup is stale, drop it) or absent
+  # (restore the retained original). Never delete a backup while DEST is missing.
+  if [ -n "${BACKUP:-}" ] && [ -d "$BACKUP" ]; then
+    if [ -n "${DEST:-}" ] && [ ! -e "$DEST" ]; then
+      mv "$BACKUP" "$DEST" 2>/dev/null || rm -rf "$BACKUP"
+    else
+      rm -rf "$BACKUP"
+    fi
+  fi
+}
+trap cleanup EXIT
 
 # Pinned key -> PEM file (test override allowed).
 PUBKEY="$WORK/pub.pem"
@@ -231,19 +248,24 @@ BUNDLE_ROOT=$(find "$INCOMING" -mindepth 1 -maxdepth 1 -type d | head -n1)
 PYBIN="$BUNDLE_ROOT/python/bin/python3"
 [ -x "$PYBIN" ] || die "bundle is missing its interpreter"
 
-# The bundled interpreter runs with bytecode writing OFF (-B + PYTHONDONTWRITEBYTECODE):
-# the manifest does not sign caches and the verifier rejects any found on disk, so these
-# install-time checks must not leave an unsigned __pycache__ behind. (See
-# decoy.distribution.manifest.)
+# The bundled interpreter runs IMPORT-ISOLATED and bytecode-free (-I -B):
+#  -I drops the CWD and PYTHONPATH/PYTHON* env from sys.path, so this bootstrap -- which
+#     the user may curl|sh from inside any directory -- cannot be tricked into importing a
+#     planted decoy/decoy_engine package from a hostile working dir and forging a passing
+#     verify/self-check. Imports resolve only from the bundle's own site.
+#  -B keeps bytecode writes off: the manifest does not sign caches and the verifier rejects
+#     any found on disk, so these install-time checks must not leave an unsigned __pycache__
+#     behind. -I ignores the env var, so the explicit -B flag is what guarantees this; the
+#     export is kept to shield any non-isolated child. (See decoy.distribution.manifest.)
 export PYTHONDONTWRITEBYTECODE=1
 
 # 3a) manifest verify (defense in depth: the signature already established trust; this
 #     catches a truncated/altered extraction OR a planted bytecode cache). Reuses the
 #     shipped verifier.
-"$PYBIN" -B -m decoy.distribution.verify_extracted "$BUNDLE_ROOT" || die "bundle manifest verification FAILED -- refusing"
+"$PYBIN" -I -B -m decoy.distribution.verify_extracted "$BUNDLE_ROOT" || die "bundle manifest verification FAILED -- refusing"
 
 # 3b) native-present self-check: LOUD refusal if the companion is missing/mismatched.
-"$PYBIN" -B -m decoy.distribution.selfcheck || die "native companion self-check FAILED -- refusing this install"
+"$PYBIN" -I -B -m decoy.distribution.selfcheck || die "native companion self-check FAILED -- refusing this install"
 
 # 3c) identity check (HIGH: a validly-signed but wrong-version/target bundle served at a
 #     pinned URL must NOT overwrite the retained versions/<version> runtime). Compare the
@@ -262,12 +284,37 @@ if [ "$VERSION" != "local" ]; then
 fi
 
 # 4) promote into place + flip `current` atomically (reuses the tested layout helper).
+#    Stage-beside, never a destroy-then-replace: mirror the Python installer
+#    (decoy.distribution.installer._promote_staged). The existing runtime is NEVER
+#    deleted before the replacement is in place. A same-version repair moves the original
+#    ASIDE as a retained backup, moves the replacement in, points `current`, then reclaims
+#    the backup; a failure at any step restores the original, so an interrupted re-install
+#    of the active version can never leave the host with no working runtime. All moves are
+#    renames within $VERSIONS (one filesystem), so each is atomic.
 DEST="$VERSIONS/$VERSION"
-rm -rf "$DEST"
-mv "$BUNDLE_ROOT" "$DEST"
+BACKUP="$VERSIONS/.backup.$VERSION.$$"
+rm -rf "$BACKUP"
+if [ -e "$DEST" ]; then
+  mv "$DEST" "$BACKUP" || die "could not move the existing runtime aside -- versions/$VERSION left in place"
+fi
+if ! mv "$BUNDLE_ROOT" "$DEST"; then
+  # The replacement did not land; the original rename is atomic, so DEST is absent. Put
+  # the retained original straight back (if we moved one), then refuse.
+  if [ -d "$BACKUP" ]; then mv "$BACKUP" "$DEST"; fi
+  die "could not promote the new runtime into versions/$VERSION -- the previous runtime is intact"
+fi
 rm -rf "$INCOMING"
-DECOY_HOME="$DECOY_HOME" "$DEST/python/bin/python3" -B -m decoy.distribution.layout_point "$VERSION" \
-  || die "could not point 'current' at $VERSION"
+if ! DECOY_HOME="$DECOY_HOME" "$DEST/python/bin/python3" -I -B -m decoy.distribution.layout_point "$VERSION"; then
+  # Activation failed: restore the retained original over the unvalidated replacement so a
+  # working runtime survives (a bare reclaim of the backup here would strand `current`).
+  if [ -d "$BACKUP" ]; then
+    rm -rf "$DEST"
+    mv "$BACKUP" "$DEST"
+  fi
+  die "could not point 'current' at $VERSION -- the previous runtime is intact"
+fi
+# Replacement is in place and `current` points at it: drop the retained original.
+rm -rf "$BACKUP"
 
 # 5) launcher shim on PATH -> the current runtime.
 mkdir -p "$DECOY_BIN_DIR"
