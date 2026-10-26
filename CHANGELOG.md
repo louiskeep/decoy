@@ -10,12 +10,36 @@ version numbers follow the [versioning policy](docs/release/versioning.md).
 
 ### Added
 
+- **`decoy tokenize` / `decoy detokenize` (reversible tokenization, B-1).** A
+  local, single-operator tokenization pair over the engine's keyed token-vault
+  seam (A-8). `decoy tokenize pipeline.yaml --vault tokens.db` runs a masking
+  job whose `strategy: tokenize` columns are replaced by deterministic
+  surrogates; the engine derives each token (keyed, HKDF-SHA256) and the CLI
+  persists the `(namespace, plaintext) -> token` mapping in a local SQLite
+  vault. `decoy detokenize pipeline.yaml tokenized.csv --vault tokens.db`
+  reverses it from that vault. Tokens are deterministic (same plaintext +
+  namespace -> same token; the vault is authoritative), and the same plaintext
+  under two namespaces gets two distinct tokens. There is NO auth model (local
+  tool; the multi-user de-tokenize authorization is the platform's job).
+  `--mask-secret env:NAME|file:/PATH` keys the tokens from a secret instead of
+  the pipeline seed. Fail-closed: a missing vault, a non-vault file, or a token
+  absent under the column's namespace writes no output. See
+  `decoy explain tokenize`. Requires the engine's A-8 token-vault seam, so this
+  lands with the engine pin below.
 - **`decoy run --duckdb-source TABLE=DB_PATH`.** Read a pipeline input table from
   a DuckDB database file instead of a CSV/Parquet/fixed-width file. Repeatable;
   the named relation is acquired read-only (the database is never written) to a
   temporary Parquet, which is masked on the normal parquet path, so native-on and
   `--chunked` apply unchanged. No raw SQL (the relation name is the handle); no
   new engine source format. Not supported with `--evidence-out` yet.
+
+### Changed (engine pin, D-4 matched launch, 2026-10-26)
+
+- **Pinned `decoy-engine==0.15.0`** (was a loose `>=0.7.0` floor). D-4 freezes a
+  DP-certified launch engine and a matched CLI pin against it; 0.15.0 is that
+  build (the first with the A-8 token-vault seam the `tokenize`/`detokenize`
+  verbs require) and matches the platform repin (`decoy-engine==0.15.0`). Bump
+  this and the platform pin together when the launch engine is re-cut.
 
 ### Changed (CLI command-surface redesign, 2026-10-23) -- BREAKING, pre-GA
 

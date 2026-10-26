@@ -252,6 +252,39 @@ _TOPICS: dict[str, _Topic] = {
         ),
         see_also=("decoy run --help", "decoy unmask --help", "decoy explain keys"),
     ),
+    "tokenize": _Topic(
+        name="tokenize",
+        summary="Reversible tokenization with a local vault -- `decoy tokenize` / `decoy detokenize`.",
+        body=(
+            "Tokenization replaces a column's values with deterministic surrogates\n"
+            "(tokens) and keeps the mapping in a local vault so you can reverse it\n"
+            "later. Unlike fpe (a keyed bijection the config alone reverses), a token\n"
+            "carries no recoverable value on its own -- only the vault reverses it.\n\n"
+            "Mark the columns in the YAML and give each an explicit namespace:\n\n"
+            "  columns:\n"
+            "    - name: email\n"
+            "      strategy: tokenize\n"
+            "      namespace: customers.email\n\n"
+            "Then run the pair:\n\n"
+            "  decoy tokenize pipeline.yaml --vault tokens.db\n"
+            "  decoy detokenize pipeline.yaml tokenized.csv --vault tokens.db\n\n"
+            "Tokens are deterministic: the same value under the same namespace always\n"
+            "maps to the same token, and the vault is authoritative -- re-running\n"
+            "against the same vault reuses stored tokens. The namespace keys the token,\n"
+            "so the same value under two namespaces gets two distinct tokens (the\n"
+            "namespaces cannot be linked through a shared token). Pass --mask-secret\n"
+            "(env:NAME or file:/PATH to a >=32-byte secret) to key the tokens from a\n"
+            "secret instead of the pipeline seed.\n\n"
+            "This is a single-operator LOCAL tool: reversing is gated only by having\n"
+            "the vault file, with no user/permission model. A missing vault, a file\n"
+            "that is not a decoy token vault, or a token absent from the vault under\n"
+            "the column's namespace fails closed -- detokenize writes nothing rather than\n"
+            "emit a value it cannot vouch for. The vault is the one place the\n"
+            "value-to-token mapping lives: store it separately from the output and\n"
+            "treat it as sensitive."
+        ),
+        see_also=("decoy tokenize --help", "decoy detokenize --help", "decoy explain vault"),
+    ),
     "chunked": _Topic(
         name="chunked",
         summary="Stream large inputs through `decoy run --chunked` without loading them whole.",
