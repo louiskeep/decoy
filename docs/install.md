@@ -67,15 +67,22 @@ installer requires it and refuses rather than skip signature verification.
 
 ## Upgrading
 
+The one-line installer is **first-install-only**: it lays down a fresh runtime and refuses
+to replace an existing one (re-running it on an installed host prints a notice and points
+you here). Every upgrade and same-version repair goes through `decoy upgrade`:
+
 ```sh
 decoy upgrade          # upgrade to the latest release if one is available
 decoy upgrade --check  # report only; change nothing
 decoy upgrade --version 0.2.0   # install a specific version (pin or downgrade)
+decoy upgrade --force  # reinstall/repair the current version from verified bits
 ```
 
 `decoy upgrade` re-runs the same verified install against the hosted version endpoint,
-lays the new runtime down beside the current one, and swaps the `current` pointer
-atomically. The previous version stays on disk, so a rollback is:
+stages the new runtime in a fresh version directory beside the current one, and swaps the
+`current` pointer atomically. It never replaces a version directory in place -- a
+same-version repair stages a distinct directory and flips to it, then reclaims the old one
+-- so an interrupted upgrade always leaves a working runtime. The previous version stays on disk, so a rollback is:
 
 ```sh
 decoy upgrade --version <previous-version>
@@ -109,7 +116,8 @@ DECOY_LOCAL_BUNDLE=/path/to/decoy-<version>-<target>.tar.gz sh install.sh
 ```
 
 The installer verifies the checksum and signature from the local sidecars exactly as it
-would for a download. The update check degrades silently with no network.
+would for a download. This is a first install only (like the online bootstrap, it refuses
+to replace an existing runtime). The update check degrades silently with no network.
 
 ## Uninstall
 

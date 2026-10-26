@@ -664,11 +664,11 @@ def test_installer_target_mismatch_refuses_without_touching_dest(tmp_path, monke
     assert (dest / "KEEP_ME").read_text() == "real 0.1.0 runtime"
 
 
-def test_install_sh_refuses_wrong_version_without_touching_dest(tmp_path, keypair):
-    """The SHELL installer (install.sh) must enforce the same identity check: a signed
-    bundle that DECLARES a different version than requested is refused before the
-    destructive promotion, leaving the pre-seeded versions/<version> intact. Driven over
-    the offline (DECOY_LOCAL_BUNDLE) path so it needs no network/proxy."""
+def test_install_sh_refuses_wrong_version_without_installing_anything(tmp_path, keypair):
+    """The SHELL installer (install.sh) enforces the identity check on its first-install
+    path: a signed bundle that DECLARES a different version than requested is refused before
+    any slot is created, so NOTHING is laid down (no versions/<version>, no `current`).
+    Driven over the offline (DECOY_LOCAL_BUNDLE) path so it needs no network/proxy."""
     import subprocess as sp
 
     key, pub = keypair
@@ -698,10 +698,7 @@ def test_install_sh_refuses_wrong_version_without_touching_dest(tmp_path, keypai
 
     pub_pem = work / "pub.pem"
     pub_pem.write_text(pub)
-    home = work / "home"
-    dest = home / "versions" / "0.1.0"
-    dest.mkdir(parents=True)
-    (dest / "KEEP_ME").write_text("real 0.1.0 runtime")
+    home = work / "home"  # no existing install: the first-install path reaches the check
 
     install_sh = REPO_ROOT / "packaging_tools" / "install" / "install.sh"
     env = dict(os.environ, DECOY_HOME=str(home), DECOY_BIN_DIR=str(work / "bin"),
@@ -709,72 +706,148 @@ def test_install_sh_refuses_wrong_version_without_touching_dest(tmp_path, keypai
     r = sp.run(["sh", str(install_sh), "--version", "0.1.0"], env=env, capture_output=True, text=True)
     assert r.returncode != 0, r.stdout + r.stderr
     assert "declares version" in r.stderr
-    assert (dest / "KEEP_ME").read_text() == "real 0.1.0 runtime"  # untouched
+    assert not (home / "versions" / "0.1.0").exists()  # nothing laid down
+    assert not (home / "current").exists()
 
 
-# ------------------------------------------- HIGH 3: same-version reinstall rollback safety
-def test_same_version_force_post_swap_failure_preserves_runtime(tmp_path, monkeypatch, keypair):
-    """A same-version forced reinstall whose post-swap validation FAILS must restore the
-    ORIGINAL runtime bits (not leave the user on the unvalidated replacement, and not a
-    missing runtime). The original is retained until validation passes."""
-    key, pub = keypair
-    monkeypatch.setenv("DECOY_HOME", str(tmp_path / "home"))
-    serve = tmp_path / "serve"
+# --------------- same-version repair: stage a FRESH slot + atomic flip, never in place ----
+# Cam decision (round 4): a same-version reinstall/repair NEVER mutates versions/<version>
+# in place. It stages the fresh bits into a distinct versions/<version>+<build>, flips
+# `current` to it atomically, then reclaims the old dir. HIGH 1 (failed-restore loses a
+# runtime) and HIGH 2 (lost signal trap strands `current`) are eliminated BY CONSTRUCTION:
+# there is no move-aside, backup, restore, or signal-trap recovery, because the live
+# versions/<version> is untouched until the single all-or-nothing flip.
+def _install_0_1_0(home, key, pub, serve):
     url = _serve_bundle(serve, "0.1.0", key)
     doc_bytes, doc_sig = _doc_for_latest(serve, "0.1.0", url, key)
     installer.install_version(
         version_doc_bytes=doc_bytes, version_doc_sig_b64=doc_sig, expected_public_pem=pub,
-        target="linux-x86_64", home=layout.decoy_home(), download=_file_download,
+        target="linux-x86_64", home=home, download=_file_download,
         run_self_check=False, post_swap_validate=lambda cur: True,
     )
-    dest = layout.version_dir("0.1.0")
-    (dest / "LIVE_MARK").write_text("original live 0.1.0")  # marks the original bits
-
-    # Forced same-version reinstall (dest exists); post-swap fails -> restore original.
-    with pytest.raises(installer.InstallError, match=r"rolled back|intact"):
-        installer.install_version(
-            version_doc_bytes=doc_bytes, version_doc_sig_b64=doc_sig, expected_public_pem=pub,
-            target="linux-x86_64", home=layout.decoy_home(), download=_file_download,
-            run_self_check=False, post_swap_validate=lambda cur: False,
-        )
-    assert layout.read_current_version() == "0.1.0"
-    assert (layout.version_dir("0.1.0") / "LIVE_MARK").read_text() == "original live 0.1.0"
+    return doc_bytes, doc_sig
 
 
-def test_same_version_promotion_failure_preserves_runtime(tmp_path, monkeypatch, keypair):
-    """If promotion itself fails mid-swap (the replacement cannot be moved into place),
-    the retained original is put straight back -- a crash never leaves a missing runtime."""
+def _reinstall_0_1_0(home, pub, doc_bytes, doc_sig, *, post_swap=lambda cur: True):
+    return installer.install_version(
+        version_doc_bytes=doc_bytes, version_doc_sig_b64=doc_sig, expected_public_pem=pub,
+        target="linux-x86_64", home=home, download=_file_download,
+        run_self_check=False, post_swap_validate=post_swap,
+    )
+
+
+def test_same_version_repair_stages_fresh_slot_and_reclaims(tmp_path, monkeypatch, keypair):
+    """Happy path: a same-version reinstall stages the fresh bits into a distinct
+    versions/<version>+<build> slot, flips `current` to it, and reclaims the old dir -- so
+    exactly one slot holds the version afterward and versions/<version> was never mutated
+    in place."""
     key, pub = keypair
     monkeypatch.setenv("DECOY_HOME", str(tmp_path / "home"))
-    serve = tmp_path / "serve"
-    url = _serve_bundle(serve, "0.1.0", key)
-    doc_bytes, doc_sig = _doc_for_latest(serve, "0.1.0", url, key)
-    installer.install_version(
-        version_doc_bytes=doc_bytes, version_doc_sig_b64=doc_sig, expected_public_pem=pub,
-        target="linux-x86_64", home=layout.decoy_home(), download=_file_download,
-        run_self_check=False, post_swap_validate=lambda cur: True,
-    )
-    dest = layout.version_dir("0.1.0")
-    (dest / "LIVE_MARK").write_text("original live 0.1.0")
+    monkeypatch.setenv("DECOY_BIN_DIR", str(tmp_path / "bin"))
+    home = layout.decoy_home()
+    doc_bytes, doc_sig = _install_0_1_0(home, key, pub, tmp_path / "serve")
+    assert layout.read_current_version(home) == "0.1.0"
+
+    outcome = _reinstall_0_1_0(home, pub, doc_bytes, doc_sig)
+
+    live = layout.read_current_version(home)
+    assert live != "0.1.0", "repair must stage a distinct slot, not reuse versions/0.1.0"
+    assert layout.slot_version(live) == "0.1.0"
+    assert outcome.version == "0.1.0"  # the semantic version, not the slot name
+    assert (home / "current").resolve().is_dir()  # `current` resolves to a real runtime
+    # Reclaimed: exactly one slot remains for 0.1.0 and the old plain dir is gone.
+    versions = layout.versions_dir(home)
+    slots = [d.name for d in versions.iterdir() if d.is_dir() and not d.name.startswith(".")]
+    assert slots == [live]
+    assert not layout.version_dir("0.1.0", home).exists()
+
+
+def test_same_version_staging_failure_before_flip_preserves_runtime(tmp_path, monkeypatch, keypair):
+    """HIGH 1 regression: an injected failure DURING staging (before the flip) leaves the
+    existing runtime live and untouched. Nothing was moved aside, so there is nothing to
+    restore and nothing to lose."""
+    key, pub = keypair
+    monkeypatch.setenv("DECOY_HOME", str(tmp_path / "home"))
+    home = layout.decoy_home()
+    doc_bytes, doc_sig = _install_0_1_0(home, key, pub, tmp_path / "serve")
+    (layout.version_dir("0.1.0", home) / "LIVE_MARK").write_text("original live 0.1.0")
 
     real_replace = os.replace
 
-    def selective_replace(src, dst):
-        # Fail only the staged -> dest promotion; allow dest -> backup and the
-        # backup -> dest restore (identified by their dot-prefixed temp names).
-        if Path(src).name.startswith(".staged.") and Path(dst).name == "0.1.0":
-            raise OSError("injected promotion failure")
+    def failing_stage(src, dst):
+        # Fail only the rename that stages the fresh same-version slot (its name carries the
+        # +<build> suffix); leave every other os.replace (e.g. the `current` flip) alone.
+        if "+" in Path(dst).name:
+            raise OSError("injected staging failure")
         return real_replace(src, dst)
 
-    monkeypatch.setattr(installer.os, "replace", selective_replace)
-    with pytest.raises(installer.InstallError, match=r"restored|intact"):
-        installer.install_version(
-            version_doc_bytes=doc_bytes, version_doc_sig_b64=doc_sig, expected_public_pem=pub,
-            target="linux-x86_64", home=layout.decoy_home(), download=_file_download,
-            run_self_check=False, post_swap_validate=lambda cur: True,
-        )
-    # The original bits are back in place (reading uses open(), not the patched os.replace).
-    assert (layout.version_dir("0.1.0") / "LIVE_MARK").read_text() == "original live 0.1.0"
+    monkeypatch.setattr(installer.os, "replace", failing_stage)
+    with pytest.raises(installer.InstallError, match="intact"):
+        _reinstall_0_1_0(home, pub, doc_bytes, doc_sig)
+
+    # The flip was never reached: `current` still resolves to the untouched original bits.
+    assert layout.read_current_version(home) == "0.1.0"
+    assert (home / "current").resolve().is_dir()
+    assert (layout.version_dir("0.1.0", home) / "LIVE_MARK").read_text() == "original live 0.1.0"
+
+
+def test_same_version_flip_is_atomic_never_missing_current(tmp_path, monkeypatch, keypair):
+    """HIGH 2 regression: the only state change a repair makes live is the single atomic
+    `current` flip, so an interruption (INT/TERM/HUP/KILL) at the flip boundary leaves
+    EITHER the old runtime live (flip not reached) OR the new one (flip done) -- never a
+    missing `current`. No signal trap is needed because there is no dangling-`current`
+    window to recover from."""
+    key, pub = keypair
+    monkeypatch.setenv("DECOY_HOME", str(tmp_path / "home"))
+    monkeypatch.setenv("DECOY_BIN_DIR", str(tmp_path / "bin"))
+    home = layout.decoy_home()
+    doc_bytes, doc_sig = _install_0_1_0(home, key, pub, tmp_path / "serve")
+    (layout.version_dir("0.1.0", home) / "LIVE_MARK").write_text("original live 0.1.0")
+
+    # Interruption AT the flip (stand-in for a TERM/HUP/INT/KILL that aborts the process
+    # right at the symlink swap): the flip does not happen.
+    real_flip = layout.atomic_point_current_at
+
+    def interrupt_at_flip(slot, home=None):
+        raise KeyboardInterrupt("interrupted at the flip boundary")
+
+    monkeypatch.setattr(installer.layout, "atomic_point_current_at", interrupt_at_flip)
+    with pytest.raises(KeyboardInterrupt):
+        _reinstall_0_1_0(home, pub, doc_bytes, doc_sig)
+    monkeypatch.setattr(installer.layout, "atomic_point_current_at", real_flip)
+
+    # Flip not reached -> `current` still resolves to the old, working runtime.
+    assert layout.read_current_version(home) == "0.1.0"
+    assert (home / "current").resolve().is_dir()
+    assert (layout.version_dir("0.1.0", home) / "LIVE_MARK").read_text() == "original live 0.1.0"
+
+    # Flip done (no interruption) -> `current` now resolves to the fresh repair slot.
+    outcome = _reinstall_0_1_0(home, pub, doc_bytes, doc_sig)
+    live = layout.read_current_version(home)
+    assert live != "0.1.0" and layout.slot_version(live) == "0.1.0"
+    assert (home / "current").resolve().is_dir()
+    assert outcome.version == "0.1.0"
+
+
+def test_same_version_force_post_swap_failure_preserves_runtime(tmp_path, monkeypatch, keypair):
+    """A same-version forced reinstall whose post-swap validation FAILS flips `current`
+    back to the original runtime (which the stage-fresh approach never touched) and drops
+    the unvalidated replacement -- the user is never left on bad bits or a missing runtime."""
+    key, pub = keypair
+    monkeypatch.setenv("DECOY_HOME", str(tmp_path / "home"))
+    home = layout.decoy_home()
+    doc_bytes, doc_sig = _install_0_1_0(home, key, pub, tmp_path / "serve")
+    (layout.version_dir("0.1.0", home) / "LIVE_MARK").write_text("original live 0.1.0")
+
+    with pytest.raises(installer.InstallError, match=r"rolled back|intact"):
+        _reinstall_0_1_0(home, pub, doc_bytes, doc_sig, post_swap=lambda cur: False)
+
+    assert layout.read_current_version(home) == "0.1.0"
+    assert (layout.version_dir("0.1.0", home) / "LIVE_MARK").read_text() == "original live 0.1.0"
+    # The unvalidated replacement slot was dropped: only the original 0.1.0 dir remains.
+    versions = layout.versions_dir(home)
+    slots = [d.name for d in versions.iterdir() if d.is_dir() and not d.name.startswith(".")]
+    assert slots == ["0.1.0"]
 
 
 # ----------------------------------------------------- HIGH 4: Windows gated off matrix
@@ -950,14 +1023,34 @@ _IMPORT_DECOY_PROG = (
 )
 
 
-def test_import_isolation_blocks_hostile_cwd_and_pythonpath(tmp_path):
-    """Functional proof of the `-I` property the launcher/self-checks rely on: a planted
-    `decoy` package in the working directory AND one on PYTHONPATH must NOT execute when
-    the interpreter runs isolated. The planted code writes a marker on import; under `-I`
-    no marker appears (and any real `decoy` that does import resolves from OUTSIDE the
-    hostile dirs). Negative controls WITHOUT `-I` show both plants are real, so this guard
+def _make_bundle_runtime(parent: Path) -> tuple[Path, Path]:
+    """A managed-runtime stand-in: a venv whose own site-packages holds the signed `decoy`
+    (copied from this repo), returning (interpreter, decoy __init__ path). `-I` keeps the
+    interpreter's OWN site on sys.path while dropping CWD + PYTHONPATH, so this is exactly
+    how the real bundle's interpreter imports its signed `decoy` even when isolated. (The
+    full 600 MB bundle is assembled + run end to end by packaging_tools/smoke_install.py.)"""
+    import shutil
+    import venv
+
+    runtime = parent / "runtime"
+    venv.EnvBuilder(with_pip=False).create(runtime)
+    site = next(runtime.glob("lib/python*/site-packages"))
+    shutil.copytree(REPO_ROOT / "src" / "decoy", site / "decoy")
+    return runtime / "bin" / "python3", site / "decoy" / "__init__.py"
+
+
+def test_import_isolation_runs_bundle_decoy_and_blocks_hostile_cwd_and_pythonpath(tmp_path):
+    """Functional proof of the `-I` property the launcher/self-checks rely on, both halves.
+
+    POSITIVE: the actual launcher invocation (`-I -B`) run from a hostile CWD with a hostile
+    PYTHONPATH must SUCCEED, import `decoy` from INSIDE the managed runtime (not either
+    planted package), and report the bundle's own version/origin -- not merely tolerate an
+    ImportError. NEGATIVE controls WITHOUT `-I` show both plants are real, so the guard
     cannot silently rot into a no-op."""
     import subprocess as sp
+
+    bundle_py, bundle_decoy_init = _make_bundle_runtime(tmp_path)
+    import decoy as _decoy  # the repo copy; the bundle holds an identical copy
 
     hostile_cwd = tmp_path / "downloaded_project"
     cwd_marker = tmp_path / "pwned_from_cwd"
@@ -975,19 +1068,22 @@ def test_import_isolation_blocks_hostile_cwd_and_pythonpath(tmp_path):
             if m.exists():
                 m.unlink()
 
-    # 1) ISOLATED: both hostile vectors present at once. `-I` must keep both off sys.path.
+    # 1) POSITIVE: the bundle's interpreter, run isolated the way the launcher runs it, with
+    #    both hostile vectors present. It must SUCCEED and import the bundle's own decoy.
     _reset_markers()
+    prog = "import decoy, sys; sys.stdout.write(decoy.__file__ + '\\n' + decoy.__version__ + '\\n')"
     env = dict(os.environ, PYTHONPATH=str(hostile_pp), DECOY_PWNED="1")
     iso = sp.run(
-        [sys.executable, "-I", "-B", "-c", _IMPORT_DECOY_PROG],
+        [str(bundle_py), "-I", "-B", "-c", prog],
         cwd=str(hostile_cwd), env=env, capture_output=True, text=True,
     )
+    assert iso.returncode == 0, f"isolated launch failed to run the bundle decoy: {iso.stderr}"
+    origin, version = iso.stdout.splitlines()[:2]
+    assert origin == str(bundle_decoy_init)  # imported from INSIDE the bundle, not a plant
+    assert str(hostile_cwd) not in origin and str(hostile_pp) not in origin
+    assert version == _decoy.__version__  # the bundle's own version
     assert not cwd_marker.exists(), "hostile CWD `decoy` executed under -I"
     assert not pp_marker.exists(), "hostile PYTHONPATH `decoy` executed under -I"
-    # If a real decoy is importable isolated, it must come from neither hostile dir.
-    if not iso.stdout.startswith("IMPORTERROR"):
-        assert str(hostile_cwd) not in iso.stdout
-        assert str(hostile_pp) not in iso.stdout
 
     # 2) NEGATIVE CONTROL A (no -I, run from the hostile project): the CWD plant executes.
     _reset_markers()
@@ -1007,57 +1103,28 @@ def test_import_isolation_blocks_hostile_cwd_and_pythonpath(tmp_path):
     assert pp_marker.exists(), "the PYTHONPATH plant is not real; the isolation test is vacuous"
 
 
-# ----- HIGH 2: the SHELL installer must stage-beside, never destroy-before-promote -------
-def test_install_sh_promotion_failure_preserves_active_runtime(tmp_path, keypair):
-    """install.sh must not delete the active versions/<version> runtime before the
-    replacement is promoted. Inject a promotion failure (the activation step fails) while a
-    runtime for that version is already installed and active, and assert the ORIGINAL bits
-    survive -- not a missing runtime, and not only the quarantined replacement that the EXIT
-    trap would then also remove. Driven over the offline (DECOY_LOCAL_BUNDLE) path."""
+# ----- HIGH 1 + HIGH 2: the SHELL installer is first-install-only (refuse-and-redirect) ---
+def test_install_sh_refuses_when_already_installed(tmp_path, keypair):
+    """install.sh never replaces an existing runtime: it is a first-install bootstrap that
+    REFUSES when a managed runtime is already present and redirects repair/upgrade to
+    `decoy upgrade`. This eliminates HIGH 1 (a failed restore losing a runtime) and HIGH 2
+    (a lost signal trap stranding `current`) BY CONSTRUCTION -- with no in-place
+    replacement there is no backup/restore and no promotion window to interrupt. The refusal
+    happens before any download or extraction, so the live runtime is left exactly as it was
+    and nothing is staged."""
     import subprocess as sp
 
     host_target = targets.detect_target()
     if host_target is None:
         pytest.skip("no supported bundle target for this host")
 
-    key, pub = keypair
+    _key, pub = keypair
     work = tmp_path / "w"
     work.mkdir()
-
-    # A validly-signed replacement bundle whose interpreter PASSES verify/self-check but
-    # FAILS the `layout_point` activation step (so promotion happens, then activation fails).
-    stage = work / f"decoy-0.1.0-{host_target}"
-    stage.mkdir()
-    _make_tree(stage)
-    dispatch = (
-        "#!/bin/sh\n"
-        "case \"$*\" in\n"
-        "  *layout_point*) exit 7 ;;\n"
-        "  *) exit 0 ;;\n"
-        "esac\n"
-    )
-    (stage / "python" / "bin" / "python3.12").write_text(dispatch)
-    (stage / "python" / "bin" / "python3.12").chmod(0o755)
-    (stage / "BUNDLE_INFO.json").write_bytes(
-        signing.canonical_bytes(
-            {"schema_version": "cli-bundle-info/v1", "version": "0.1.0", "target": host_target}
-        )
-    )
-    man = manifest_mod.compute_manifest(stage, version="0.1.0", target=host_target)
-    mb = signing.canonical_bytes(man)
-    (stage / manifest_mod.MANIFEST_NAME).write_bytes(mb)
-    (stage / manifest_mod.MANIFEST_SIG_NAME).write_text(_sign_b64(key, mb))
-    tarball = work / f"decoy-0.1.0-{host_target}.tar.gz"
-    _deterministic_targz(stage, tarball)
-    tarball.with_name(tarball.name + ".sha256").write_text(
-        f"{manifest_mod.sha256_file(tarball)}  {tarball.name}\n"
-    )
-    tarball.with_name(tarball.name + ".sig").write_text(_sign_b64(key, tarball.read_bytes()))
-
     pub_pem = work / "pub.pem"
     pub_pem.write_text(pub)
 
-    # Pre-seed an installed + active 0.1.0 runtime (the working bits that must survive).
+    # Pre-seed an installed + active runtime (the working bits that must survive untouched).
     home = work / "home"
     versions = home / "versions"
     dest = versions / "0.1.0"
@@ -1067,16 +1134,17 @@ def test_install_sh_promotion_failure_preserves_active_runtime(tmp_path, keypair
 
     install_sh = REPO_ROOT / "packaging_tools" / "install" / "install.sh"
     env = dict(os.environ, DECOY_HOME=str(home), DECOY_BIN_DIR=str(work / "bin"),
-               DECOY_RELEASE_PUBKEY_FILE=str(pub_pem), DECOY_LOCAL_BUNDLE=str(tarball))
-    r = sp.run(["sh", str(install_sh), "--version", "0.1.0"], env=env, capture_output=True, text=True)
+               DECOY_RELEASE_PUBKEY_FILE=str(pub_pem))
+    r = sp.run(["sh", str(install_sh)], env=env, capture_output=True, text=True)
 
-    assert r.returncode != 0, r.stdout + r.stderr  # the injected activation failure refuses
-    assert "intact" in r.stderr  # the refusal states the previous runtime was preserved
-    # The original working bits survived (restored from the retained backup), not destroyed.
+    assert r.returncode != 0, r.stdout + r.stderr  # refuses to overwrite an existing install
+    assert "existing" in r.stderr.lower()
+    assert "decoy upgrade" in r.stderr  # redirects repair/upgrade to the Python path
+    # The live runtime is untouched and `current` still resolves to it.
     assert (dest / "LIVE_MARK").read_text() == "original live 0.1.0 runtime"
-    # No orphaned promotion scratch dirs are left behind.
-    leftovers = [d.name for d in versions.iterdir() if d.name.startswith(".")]
-    assert leftovers == [], leftovers
+    assert (home / "current").resolve() == dest.resolve()
+    # Nothing was staged: no new slots, no quarantine/scratch dirs.
+    assert sorted(d.name for d in versions.iterdir()) == ["0.1.0"]
 
 
 # ----- MEDIUM: `decoy upgrade --check --version <installed>` must be read-only -----------
