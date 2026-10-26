@@ -41,7 +41,7 @@ def check_native_present() -> SelfCheckResult:
     or wrongly-assembled bundle, which must fail closed."""
     try:
         import decoy_engine
-    except Exception as exc:  # noqa: BLE001 -- a broken import is itself a failed check
+    except Exception as exc:
         return SelfCheckResult(False, "engine-import-failed", str(exc)[:200])
 
     probe = getattr(decoy_engine, "native_companion_status", None)
@@ -53,7 +53,7 @@ def check_native_present() -> SelfCheckResult:
         )
     try:
         status = probe()
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         return SelfCheckResult(False, "probe-raised", str(exc)[:200])
 
     if getattr(status, "ok", False) and getattr(status, "present", False):
@@ -64,7 +64,7 @@ def check_native_present() -> SelfCheckResult:
         from decoy import _native_gate
 
         abi_actual = _native_gate.sanitize_abi(getattr(status, "abi_actual", None))
-    except Exception:  # noqa: BLE001
+    except Exception:
         abi_actual = "?"
     reason = getattr(status, "reason", "unknown")
     detail = (

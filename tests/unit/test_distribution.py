@@ -34,11 +34,15 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 from decoy.distribution import (
     installer,
     layout,
-    manifest as manifest_mod,
     release_key,
     signing,
     targets,
     verify_extracted,
+)
+from decoy.distribution import (
+    manifest as manifest_mod,
+)
+from decoy.distribution import (
     version_document as vd,
 )
 
@@ -343,12 +347,12 @@ def test_installer_happy_path(tmp_path, monkeypatch, keypair):
 def test_installer_rejects_bad_bundle_signature(tmp_path, monkeypatch, keypair):
     key, pub = keypair
     monkeypatch.setenv("DECOY_HOME", str(tmp_path / "home"))
-    doc_bytes, doc_sig, download, tar_bytes, sha = _synthetic_release(tmp_path, key, pub)
+    doc_bytes, doc_sig, download, tar_bytes, _sha = _synthetic_release(tmp_path, key, pub)
     # Corrupt the served tarball so its signature no longer matches.
     bad = tmp_path / "serve" / "decoy-0.1.0-linux-x86_64.tar.gz"
     bad.write_bytes(tar_bytes[:-1] + bytes([tar_bytes[-1] ^ 0xFF]))
 
-    with pytest.raises(installer.InstallError, match="signature invalid|checksum mismatch"):
+    with pytest.raises(installer.InstallError, match=r"signature invalid|checksum mismatch"):
         installer.install_version(
             version_doc_bytes=doc_bytes, version_doc_sig_b64=doc_sig,
             expected_public_pem=pub, target="linux-x86_64",
@@ -360,8 +364,10 @@ def test_installer_rejects_checksum_mismatch(tmp_path, monkeypatch, keypair):
     key, pub = keypair
     monkeypatch.setenv("DECOY_HOME", str(tmp_path / "home"))
     # Hand-build a document whose declared sha256 is wrong but still signed.
-    serve = tmp_path / "serve"; serve.mkdir()
-    stage = tmp_path / "decoy-0.1.0-linux-x86_64"; stage.mkdir()
+    serve = tmp_path / "serve"
+    serve.mkdir()
+    stage = tmp_path / "decoy-0.1.0-linux-x86_64"
+    stage.mkdir()
     _make_tree(stage)
     man = manifest_mod.compute_manifest(stage, version="0.1.0", target="linux-x86_64")
     (stage / manifest_mod.MANIFEST_NAME).write_bytes(signing.canonical_bytes(man))
@@ -454,3 +460,122 @@ def test_verify_extracted_flags_problems(tmp_path, keypair):
     # tamper a file -> problem reported
     (stage / "decoy").write_text("tampered")
     assert verify_extracted.verify_extracted(stage, expected_public_pem=pub)
+
+
+# ------------------------------------------- pinned-version resolution + rollback (B2)
+def _serve_bundle(serve_dir: Path, version: str, key: Ed25519PrivateKey, *, declared: str | None = None) -> str:
+    """Build a signed bundle for ``version`` at serve_dir/<version>/ and return its file://
+    URL. ``declared`` overrides the version the bundle DECLARES (to simulate a resolution
+    mismatch where the bytes served at one version path belong to another)."""
+    dv = declared or version
+    stage = serve_dir / f"_stage-{version}" / f"decoy-{version}-linux-x86_64"
+    stage.mkdir(parents=True)
+    _make_tree(stage)
+    (stage / "BUNDLE_INFO.json").write_text(
+        json.dumps({"schema_version": "cli-bundle-info/v1", "version": dv, "target": "linux-x86_64"})
+    )
+    man = manifest_mod.compute_manifest(stage, version=dv, target="linux-x86_64")
+    mb = signing.canonical_bytes(man)
+    (stage / manifest_mod.MANIFEST_NAME).write_bytes(mb)
+    (stage / manifest_mod.MANIFEST_SIG_NAME).write_text(_sign_b64(key, mb))
+    vdir = serve_dir / version
+    vdir.mkdir(parents=True, exist_ok=True)
+    tarball = vdir / f"decoy-{version}-linux-x86_64.tar.gz"
+    _deterministic_targz(stage, tarball)
+    (tarball.with_name(tarball.name + ".sha256")).write_text(
+        f"{manifest_mod.sha256_file(tarball)}  {tarball.name}\n"
+    )
+    (tarball.with_name(tarball.name + ".sig")).write_text(_sign_b64(key, tarball.read_bytes()))
+    return f"file://{tarball}"
+
+
+def _file_download(url: str) -> bytes:
+    return Path(url[len("file://"):]).read_bytes()
+
+
+def _doc_for_latest(serve_dir: Path, latest: str, latest_url: str, key: Ed25519PrivateKey):
+    doc = vd.build_document(
+        latest=latest, min_supported="0.1.0",
+        artifacts={"linux-x86_64": {
+            "url": latest_url,
+            "sha256": manifest_mod.sha256_bytes(_file_download(latest_url)),
+            "sig": latest_url + ".sig",
+        }},
+    )
+    data = vd.canonical_document_bytes(doc)
+    return data, _sign_b64(key, data)
+
+
+def test_installer_pin_older_installs_real_older_bits(tmp_path, monkeypatch, keypair):
+    """`decoy upgrade --version <older>` against a doc whose latest is newer installs the
+    REAL older bundle (resolved by URL convention), not the latest bits mislabeled."""
+    key, pub = keypair
+    monkeypatch.setenv("DECOY_HOME", str(tmp_path / "home"))
+    serve = tmp_path / "serve"
+    latest_url = _serve_bundle(serve, "0.2.0", key)
+    _serve_bundle(serve, "0.1.0", key)
+    doc_bytes, doc_sig = _doc_for_latest(serve, "0.2.0", latest_url, key)
+
+    outcome = installer.install_version(
+        version_doc_bytes=doc_bytes, version_doc_sig_b64=doc_sig, expected_public_pem=pub,
+        target="linux-x86_64", home=layout.decoy_home(), pin_version="0.1.0",
+        base_url=f"file://{serve}", download=_file_download, run_self_check=False,
+        post_swap_validate=lambda cur: True,
+    )
+    assert outcome.version == "0.1.0"
+    installed = layout.version_dir("0.1.0")
+    declared = json.loads((installed / "BUNDLE_INFO.json").read_text())["version"]
+    assert declared == "0.1.0"  # the REAL older bits, not latest mislabeled
+
+
+def test_installer_pin_version_mismatch_refuses_without_touching_dest(tmp_path, monkeypatch, keypair):
+    """If resolution yields a bundle that declares a different version than requested, the
+    install refuses BEFORE the destructive rmtree, leaving versions/<version> intact (the
+    retained rollback runtime is never destroyed)."""
+    key, pub = keypair
+    monkeypatch.setenv("DECOY_HOME", str(tmp_path / "home"))
+    serve = tmp_path / "serve"
+    latest_url = _serve_bundle(serve, "0.2.0", key)
+    # Serve bits at the 0.1.0 path that DECLARE 0.2.0 (the mismatch the guard must catch).
+    _serve_bundle(serve, "0.1.0", key, declared="0.2.0")
+    doc_bytes, doc_sig = _doc_for_latest(serve, "0.2.0", latest_url, key)
+
+    # Pre-seed the retained previous runtime with a sentinel that must survive.
+    dest = layout.version_dir("0.1.0")
+    dest.mkdir(parents=True)
+    sentinel = dest / "KEEP_ME"
+    sentinel.write_text("real 0.1.0 runtime")
+
+    with pytest.raises(installer.InstallError, match="declares version"):
+        installer.install_version(
+            version_doc_bytes=doc_bytes, version_doc_sig_b64=doc_sig, expected_public_pem=pub,
+            target="linux-x86_64", home=layout.decoy_home(), pin_version="0.1.0",
+            base_url=f"file://{serve}", download=_file_download, run_self_check=False,
+        )
+    assert sentinel.exists() and sentinel.read_text() == "real 0.1.0 runtime"
+
+
+def test_activate_local_version_is_a_swap_not_a_download(tmp_path, monkeypatch, keypair):
+    """The rollback path: activate an already-installed version via an atomic swap, with
+    no download, leaving the other version's dir intact."""
+    key, pub = keypair
+    monkeypatch.setenv("DECOY_HOME", str(tmp_path / "home"))
+    monkeypatch.setenv("DECOY_BIN_DIR", str(tmp_path / "bin"))
+    serve = tmp_path / "serve"
+    for v in ("0.1.0", "0.2.0"):
+        url = _serve_bundle(serve, v, key)
+        doc_bytes, doc_sig = _doc_for_latest(serve, v, url, key)
+        installer.install_version(
+            version_doc_bytes=doc_bytes, version_doc_sig_b64=doc_sig, expected_public_pem=pub,
+            target="linux-x86_64", home=layout.decoy_home(), download=_file_download,
+            run_self_check=False, post_swap_validate=lambda cur: True,
+        )
+    assert layout.read_current_version() == "0.2.0"
+    assert installer.local_version_present("0.1.0", layout.decoy_home())
+
+    outcome = installer.activate_local_version(
+        "0.1.0", home=layout.decoy_home(), expected_public_pem=pub, run_self_check=False
+    )
+    assert outcome.version == "0.1.0"
+    assert layout.read_current_version() == "0.1.0"
+    assert layout.version_dir("0.2.0").is_dir()  # the version we rolled back FROM is kept
