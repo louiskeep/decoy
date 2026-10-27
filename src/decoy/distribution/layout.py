@@ -64,14 +64,42 @@ def launcher_bin_dir() -> Path:
     return Path(os.environ.get("DECOY_BIN_DIR", str(Path.home() / ".local" / "bin")))
 
 
-def read_current_version(home: Path | None = None) -> str | None:
-    """The version ``current`` points at, or None if there is no live runtime."""
-    link = current_link(home)
+def read_current_slot(home: Path | None = None) -> str | None:
+    """The raw ``versions/`` slot name ``current`` points at (internal identity: may be a
+    ``<version>+<build>`` repair slot), or None if there is no live runtime."""
     try:
-        target = os.readlink(link)
+        target = os.readlink(current_link(home))
     except OSError:
         return None
     return Path(target).name
+
+
+def read_current_version(home: Path | None = None) -> str | None:
+    """The SEMANTIC version of the live runtime, or None. Slot identity never leaks into
+    user-facing output or rollback hints; use ``read_current_slot`` for the directory."""
+    slot = read_current_slot(home)
+    return None if slot is None else slot_version(slot)
+
+
+def slots_for_version(version: str, home: Path | None = None) -> list[str]:
+    """Every real ``versions/`` slot holding ``version``, live slot first, then newest."""
+    versions = versions_dir(home)
+    if not versions.is_dir():
+        return []
+    live = read_current_slot(home)
+    found = [
+        d for d in versions.iterdir()
+        if d.is_dir() and not d.name.startswith(".") and slot_version(d.name) == version
+    ]
+    found.sort(key=lambda d: (d.name != live, -d.stat().st_mtime_ns, d.name))
+    return [d.name for d in found]
+
+
+def resolve_slot(version: str, home: Path | None = None) -> str | None:
+    """The retained slot that satisfies the semantic ``version`` (the live one if it
+    matches), or None when no slot holds it."""
+    slots = slots_for_version(version, home)
+    return slots[0] if slots else None
 
 
 def atomic_point_current_at(slot: str, home: Path | None = None) -> None:

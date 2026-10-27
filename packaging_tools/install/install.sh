@@ -165,7 +165,22 @@ has_version_dir() {
 if [ -e "$DECOY_HOME/current" ] || [ -L "$DECOY_HOME/current" ] || has_version_dir; then
   info "an existing Decoy runtime is installed at $DECOY_HOME."
   info "this bootstrap installs only; it will NOT replace an existing runtime."
-  info "to upgrade or repair, run:  decoy upgrade        (repair: decoy upgrade --force)"
+  # Print a command that runs NOW: an interrupted first install can leave versions/<v>
+  # with no `current` and no PATH launcher, where a bare `decoy upgrade` is not found.
+  RECOVER=""
+  if [ -x "$DECOY_HOME/current/decoy" ]; then
+    RECOVER="$DECOY_HOME/current/decoy"
+  else
+    for _d in "$VERSIONS"/*/; do
+      if [ -x "${_d}decoy" ]; then RECOVER="${_d}decoy"; break; fi
+    done
+  fi
+  if [ -n "$RECOVER" ]; then
+    info "to upgrade, run:  \"$RECOVER\" upgrade"
+    info "to repair, run:   \"$RECOVER\" upgrade --force"
+  else
+    info "no runnable runtime was found under $VERSIONS; remove it first with: sh install.sh uninstall"
+  fi
   info "to remove it first, run:    sh install.sh uninstall"
   die "refusing to overwrite an existing install"
 fi
@@ -298,31 +313,20 @@ if [ "$VERSION" != "local" ]; then
   [ "$DECLARED_VERSION" = "$VERSION" ] || die "refusing: bundle declares version '$DECLARED_VERSION' but '$VERSION' was requested (resolution mismatch) -- versions/$VERSION left untouched"
 fi
 
-# 4) place the fresh runtime + flip `current` atomically (reuses the tested layout helper).
-#    First-install-only: the guard above refused any existing runtime, so versions/$VERSION
-#    is absent and this is a plain rename into place -- never a destroy-then-replace. The
-#    single atomic `current` flip (layout_point) is the only thing that goes live, so an
-#    interruption before it leaves nothing installed and after it leaves the new runtime
-#    live; there is no move-aside, backup, or restore window. (Same-version repair + upgrade
+# 4) place the fresh runtime + flip `current` + write the PATH launcher, all under the SAME
+#    per-installation lock `decoy upgrade` takes (decoy.distribution.lock), so a bootstrap
+#    and an upgrade/repair can never interleave. The shell has no portable flock, so the
+#    bundled interpreter runs the critical section: under the lock it re-checks that no
+#    runtime exists (the early guard above is only a fast refusal), renames the verified
+#    bundle into versions/$VERSION, flips `current` atomically, and writes the launcher by
+#    temp-file + rename. Nothing existing is ever replaced; an interruption before the flip
+#    leaves nothing live and after it the new runtime live. (Same-version repair + upgrade
 #    are `decoy upgrade`'s job: it stages a fresh versions/<version>+<build> and flips.)
 DEST="$VERSIONS/$VERSION"
-[ -e "$DEST" ] && die "versions/$VERSION already present -- run 'decoy upgrade --force' to repair; refusing"
-mv "$BUNDLE_ROOT" "$DEST" || die "could not place the new runtime at versions/$VERSION -- nothing installed"
+DECOY_HOME="$DECOY_HOME" DECOY_BIN_DIR="$DECOY_BIN_DIR" \
+  "$PYBIN" -I -B -m decoy.distribution.first_install "$BUNDLE_ROOT" "$VERSION" \
+  || die "could not install $VERSION (existing runtime, concurrent install, or placement failure) -- nothing was replaced"
 rm -rf "$INCOMING"
-if ! DECOY_HOME="$DECOY_HOME" "$DEST/python/bin/python3" -I -B -m decoy.distribution.layout_point "$VERSION"; then
-  # Activation failed on a first install: no prior runtime was touched, so drop the fresh
-  # version dir (leaving `current` as it was -- absent) and refuse. Nothing to restore.
-  rm -rf "$DEST"
-  die "could not point 'current' at $VERSION -- nothing installed"
-fi
-
-# 5) launcher shim on PATH -> the current runtime.
-mkdir -p "$DECOY_BIN_DIR"
-cat > "$DECOY_BIN_DIR/decoy" <<EOF
-#!/bin/sh
-exec "$DECOY_HOME/current/decoy" "\$@"
-EOF
-chmod 0755 "$DECOY_BIN_DIR/decoy"
 
 info "installed decoy $VERSION -> $DEST"
 info "launcher: $DECOY_BIN_DIR/decoy"
