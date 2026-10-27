@@ -265,3 +265,24 @@ Built against the adopted stateless CLI surface (B-1, already on `decoy` main:
 run/validate/scan/report/list/show/... no project/catalog/jobs). `decoy query` (S6) is out
 of R1 as decided. The native wheel matrix was consumed, not rebuilt (a companion wheel was
 built locally only to feed the smoke).
+
+## Round 5 (Codex round-4 findings)
+
+- **Single-flight installation lock.** Every runtime mutation (stage, flip, post-swap
+  validation, rollback, reclaim, prune, local activation) runs under one `flock` on
+  `<home>/.install.lock` (`distribution/lock.py`); a held lock refuses with "another
+  install/upgrade/repair is in progress" instead of queueing, and the kernel drops it if
+  the holder dies. `install.sh` runs its placement through `distribution/first_install.py`
+  so the bootstrap takes the same lock. Regression:
+  `test_overlapping_repairs_are_single_flight_and_never_delete_the_live_slot` (two processes,
+  file-handshake interleaving, no sleeps for ordering).
+- **Semantic version vs slot identity.** `layout.read_current_version` and
+  `InstallOutcome` report semantic versions; `read_current_slot` is the raw directory.
+  Local rollback resolves a semantic request to the retained slot
+  (`layout.resolve_slot`), rollback hints appear only for retained destinations
+  (`InstallOutcome.rollback_version`), and pruning counts semantic versions.
+- **Isolation test runs the generated launcher** (`build_bundle._LAUNCHER`) from a hostile
+  CWD and PYTHONPATH; stripping `-I` from the same launcher is the negative control.
+- **Launcher shim** is replaced by temp file + `os.replace`, or left alone when correct.
+- **Interrupted first install** prints an absolute-path recovery command.
+

@@ -197,5 +197,5 @@ def _report_outcome(state, outcome, action: str) -> None:
     )
     # The rollback hint points at the retained previous runtime; `decoy upgrade
     # --version <previous>` activates it in place (local swap), it does not re-download.
-    if outcome.previous_version and outcome.previous_version != outcome.version:
-        state.console.print(" ", hint("rollback:"), f"decoy upgrade --version {outcome.previous_version}")
+    if outcome.rollback_version:
+        state.console.print(" ", hint("rollback:"), f"decoy upgrade --version {outcome.rollback_version}")
