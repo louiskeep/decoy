@@ -77,7 +77,7 @@ jobs:
         # After OSS.7 publishes, swap to `pip install decoy-engine`.
         run: |
           .smoke/bin/pip install --upgrade pip
-          .smoke/bin/pip install "git+https://github.com/louiskeep/decoy-engine@main"
+          .smoke/bin/pip install "git+https://github.com/louiskeep/decoy-engine@v0.15.1"
 
       - name: Install the freshly-built decoy wheel
         run: .smoke/bin/pip install dist/*.whl

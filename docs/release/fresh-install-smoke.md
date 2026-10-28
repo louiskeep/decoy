@@ -44,7 +44,7 @@ python -m venv .smoke
 #    Once OSS.7 lands the publish pipeline, swap to:
 #       .smoke/bin/pip install decoy-engine
 .smoke/bin/pip install --upgrade pip
-.smoke/bin/pip install "git+https://github.com/louiskeep/decoy-engine@main"
+.smoke/bin/pip install "git+https://github.com/louiskeep/decoy-engine@v0.15.1"
 
 # 5. Install the freshly-built decoy wheel.
 .smoke/bin/pip install dist/*.whl
@@ -84,7 +84,7 @@ python -m venv .smoke
 
 # 4. Install the engine from the sibling repo (pre-publish window).
 .\.smoke\Scripts\pip.exe install --upgrade pip
-.\.smoke\Scripts\pip.exe install "git+https://github.com/louiskeep/decoy-engine@main"
+.\.smoke\Scripts\pip.exe install "git+https://github.com/louiskeep/decoy-engine@v0.15.1"
 
 # 5. Install the freshly-built decoy wheel.
 Get-ChildItem dist\*.whl | ForEach-Object {
@@ -112,7 +112,7 @@ After a successful run, append an entry to [`docs/release/smoke-log.md`](smoke-l
 
 ## Failure modes seen in practice
 
-- **Engine resolution timeout**: the `git+https://github.com/louiskeep/decoy-engine@main` install step hits a transient GitHub error. Re-run; this is not a real failure.
+- **Engine resolution timeout**: the `git+https://github.com/louiskeep/decoy-engine@v0.15.1` install step hits a transient GitHub error. Re-run; this is not a real failure.
 - **Wheel build fails on Python 3.13+**: out of scope; OSS.1 pins 3.10-3.12.
 - **`decoy show template minimal` writes color codes to stdout**: default mode (no flags) is already raw YAML -- Rich highlighting is intentionally skipped so the output pipes cleanly to a file (see the command's docstring in `src/decoy/cli/templates.py`). There is no `--raw` flag; do not add `--raw` to the command (Typer will reject it with "No such option"; this was a real bug in this runbook + `release-smoke.yml` until the S3 fresh-install-smoke gate caught it by actually running the flow). If default-mode output still carries color codes, the bug is in `decoy show template`; file an issue and do not work around with `sed`.
 - **`decoy show template minimal --json` doesn't decode as plain YAML**: `--json` wraps the body in a JSON envelope (`{"command": ..., "body": "<yaml>"}`); it is not a substitute for the default raw-YAML mode. Use no flag for the smoke's pipeline.yaml redirect.

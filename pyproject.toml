@@ -85,10 +85,18 @@ dependencies = [
     # the DP fit path calls. 0.6.0 is the first with the `cloud` extra: the `cloud`/`ner`/`ml`/`vault` pass-through extras above resolve
     # against an engine old enough to lack `[cloud]` under the prior 0.5.0
     # floor, so `decoy-cli[cloud]` could silently install nothing extra.
-    # 0.7.0 is the first engine that exports `read_fixed_width`
-    # (which the CLI's source reader calls for `format: fixed_width`
-    # sources) and `FixedWidthParseError` (which its parse failures raise).
-    "decoy-engine>=0.7.0",
+    # 0.15.1 (stamp fd51be10) is the first release that carries what the CLI
+    # needs together: `read_fixed_width` / `FixedWidthParseError` (0.7.0) and
+    # the A-8 token-vault seam -- `run_pipeline`'s `token_vault_writer` kwarg,
+    # the `TokenVaultWriter` Protocol (decoy_engine/execution/_adapter.py) and
+    # the `tokenize` strategy (decoy_engine/execution/_strategies/_tokenize.py)
+    # -- that `decoy tokenize` / `decoy detokenize` require. A 0.7.0-0.14.x
+    # engine lacks that kwarg, so every tokenize run would die with TypeError.
+    #
+    # Hard-pinned to the same engine release the platform vault (B-6) pins. The
+    # engine is not on PyPI, so CI and the smoke docs install the `v0.15.1`
+    # git tag (engine `main` is stamped 0.7.0 and would not satisfy `==0.15.1`).
+    "decoy-engine==0.15.1",
     # Pin the typer minor: `typer utils docs` metavar rendering differs across
     # typer minors (0.26.x emits `TEXT`/`FILE`; 0.27.x emits `<str>`/`<file>`),
     # and docs/cli-reference.md is committed and checked by the test_cli_surface

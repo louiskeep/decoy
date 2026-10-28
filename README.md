@@ -55,9 +55,16 @@ raw traceback. `ner` also needs a downloaded spaCy model, a separate step:
 the SDK dependencies for other tooling in the stack, but the CLI's own
 execution path only reads/writes local files, and a config that points a
 `decoy run` source or target at S3/GCS fails closed with a clear error
-rather than silently dropping the job's output. `vault`'s reversible-token
-support has no CLI wiring at all today; the extra is kept only so an
-existing `pip install decoy-cli[vault]` still resolves.
+rather than silently dropping the job's output.
+
+Reversible tokenization is wired: `decoy tokenize <pipeline>` replaces each
+`strategy: tokenize` column with a deterministic surrogate and records the
+(namespace, plaintext) -> token mapping in a local SQLite vault, and `decoy
+detokenize <pipeline> <file>` reverses it from that vault. A mask secret is
+required (via `--mask-secret` or `global_settings.mask_secret_ref`). The vault
+is the full re-identification map and is cleartext at rest (created `0600`), so
+keep it off shared storage and treat it as sensitive. The `vault` extra is a
+compatibility alias that installs nothing extra; the commands need no extra.
 
 ## Quickstart
 
@@ -103,6 +110,8 @@ declared under `targets:` in the YAML.
 | `decoy init [file]`              | Scaffold a starter `pipeline.yaml`. With a file: column-aware via STORM. Without: prompt for preset (`minimal`, `gdpr`, ...). |
 | `decoy validate <path>`          | Run the whole pre-run gate (config + compile + preflight): one report, one exit code. |
 | `decoy run <path>`               | Execute a pipeline: read sources, mask, write targets.                        |
+| `decoy tokenize <path>`          | Run the pipeline, replace each `strategy: tokenize` column with a deterministic surrogate, and record the mapping in a local vault. Needs a mask secret. |
+| `decoy detokenize <path> <file>` | Reverse a tokenized file from its vault. Fails closed on a missing/wrong vault or namespace. |
 | `decoy scan <path>`              | Profile a source file: distributions, PII candidates, cardinality hints.      |
 | `decoy report show <evidence.json>` | The post-run surface: show / verify / fidelity / integrity / diff / vault over run artifacts. |
 | `decoy list templates`           | List the bundled pipeline templates.                                         |

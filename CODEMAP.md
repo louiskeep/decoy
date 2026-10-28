@@ -26,7 +26,8 @@ Installable Typer/Rich CLI that wraps `decoy-engine` for local validation, runs,
 
 | Path | What Lives Here |
 |---|---|
-| `src/decoy/cli/` | `run`, `validate`, `plan`, `storm`, `init`, `demo`, `explain`, `info`, `templates` commands |
+| `src/decoy/cli/` | `run`, `validate`, `plan`, `storm`, `init`, `demo`, `explain`, `info`, `templates`, `tokenize`/`detokenize` commands |
+| `src/decoy/cli/_token_vault.py` | Local SQLite token vault (the engine's `TokenVaultWriter` seam, B-1) |
 | `src/decoy/ui/` | Theme, output state, progress, tables, cards |
 | `src/decoy/templates/` | Packaged YAML templates |
 | `examples/` | Example YAML configs |
@@ -42,6 +43,7 @@ Installable Typer/Rich CLI that wraps `decoy-engine` for local validation, runs,
 | CLI role guide | [AGENTS.md](AGENTS.md) (summary) |
 | Command registration | `src/decoy/__main__.py` |
 | Run command | `src/decoy/cli/run.py` |
+| Tokenize / detokenize | `src/decoy/cli/tokenize.py` (store: `_token_vault.py`) |
 | Validate command | `src/decoy/cli/validate.py` |
 | STORM command | `src/decoy/cli/storm.py` |
 | Plan command | `src/decoy/cli/plan.py` |

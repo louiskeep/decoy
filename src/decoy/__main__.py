@@ -27,6 +27,9 @@ from decoy.cli.schema import SCHEMA_EPILOG
 from decoy.cli.schema import schema as schema_command
 from decoy.cli.subset import SUBSET_EPILOG
 from decoy.cli.subset import subset as subset_command
+from decoy.cli.tokenize import DETOKENIZE_EPILOG, TOKENIZE_EPILOG
+from decoy.cli.tokenize import detokenize as detokenize_command
+from decoy.cli.tokenize import tokenize as tokenize_command
 from decoy.cli.unmask import UNMASK_EPILOG
 from decoy.cli.unmask import unmask as unmask_command
 from decoy.cli.validate import validate_app
@@ -45,6 +48,8 @@ Try one of:
   decoy run pipeline.yaml          Run a masking or generation pipeline.
   decoy subset pipeline.yaml --dry-run   Preview a FK-aware referential subset.
   decoy unmask pipeline.yaml masked.csv   Recover fpe columns from a masked file.
+  decoy tokenize pipeline.yaml --vault tokens.db   Reversible tokenization: mask tokenize columns + write a local vault.
+  decoy detokenize pipeline.yaml tokenized.csv --vault tokens.db   Reverse a tokenized file from the local vault.
   decoy fit source.csv             Fit a distribution snapshot for statistical generation.
   decoy init                       Scaffold a starter pipeline interactively.
   decoy list templates             Browse bundled pipeline templates.
@@ -90,6 +95,8 @@ def _root(
 app.command(name="run", epilog=RUN_EPILOG)(run_command)
 app.add_typer(validate_app, name="validate")
 app.command(name="unmask", epilog=UNMASK_EPILOG)(unmask_command)
+app.command(name="tokenize", epilog=TOKENIZE_EPILOG)(tokenize_command)
+app.command(name="detokenize", epilog=DETOKENIZE_EPILOG)(detokenize_command)
 app.command(name="fit", epilog=FIT_EPILOG)(fit_command)
 app.command(name="init", epilog=INIT_EPILOG)(init_command())
 app.command(name="demo", epilog=DEMO_EPILOG)(demo_command)

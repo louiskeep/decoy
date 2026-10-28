@@ -10,6 +10,23 @@ version numbers follow the [versioning policy](docs/release/versioning.md).
 
 ### Added
 
+- **`decoy tokenize` / `decoy detokenize` (reversible tokenization, B-1).** A
+  local, single-operator tokenization pair over the engine's keyed token-vault
+  seam (A-8). `decoy tokenize pipeline.yaml --vault tokens.db` runs a masking
+  job whose `strategy: tokenize` columns are replaced by deterministic
+  surrogates; the engine derives each token (keyed, HKDF-SHA256) and the CLI
+  persists the `(namespace, plaintext) -> token` mapping in a local SQLite
+  vault. `decoy detokenize pipeline.yaml tokenized.csv --vault tokens.db`
+  reverses it from that vault. Tokens are deterministic (same plaintext +
+  namespace -> same token; the vault is authoritative), and the same plaintext
+  under two namespaces gets two distinct tokens. There is NO auth model (local
+  tool; the multi-user de-tokenize authorization is the platform's job).
+  `--mask-secret env:NAME|file:/PATH` keys the tokens from a secret instead of
+  the pipeline seed. Fail-closed: a missing vault, a non-vault file, or a token
+  absent under the column's namespace writes no output. See
+  `decoy explain tokenize`. Requires the engine's A-8 token-vault seam, which
+  the existing `decoy-engine>=0.7.0` floor already carries (the seam is present
+  in engine `main`), so no engine-pin change rides with it.
 - **`decoy run --duckdb-source TABLE=DB_PATH`.** Read a pipeline input table from
   a DuckDB database file instead of a CSV/Parquet/fixed-width file. Repeatable;
   the named relation is acquired read-only (the database is never written) to a

@@ -10,6 +10,8 @@ Try one of:
   decoy run pipeline.yaml          Run a masking or generation pipeline.
   decoy subset pipeline.yaml --dry-run   Preview a FK-aware referential subset.
   decoy unmask pipeline.yaml masked.csv   Recover fpe columns from a masked file.
+  decoy tokenize pipeline.yaml --vault tokens.db   Reversible tokenization: mask tokenize columns + write a local vault.
+  decoy detokenize pipeline.yaml tokenized.csv --vault tokens.db   Reverse a tokenized file from the local vault.
   decoy fit source.csv             Fit a distribution snapshot for statistical generation.
   decoy init                       Scaffold a starter pipeline interactively.
   decoy list templates             Browse bundled pipeline templates.
@@ -39,6 +41,8 @@ $ decoy [OPTIONS] COMMAND [ARGS]...
 
 * `run`: Run a decoy pipeline from a YAML config.
 * `unmask`: Recover fpe-masked columns from a masked...
+* `tokenize`: Run a tokenize masking job, writing the...
+* `detokenize`: Restore tokenized columns from a local...
 * `fit`: Fit a distribution-snapshot/v1 artifact...
 * `init`: Scaffold a starter pipeline YAML through a...
 * `demo`: Walk through scan -&gt; mask on a bundled...
@@ -205,6 +209,128 @@ seed: treat it as a key; the vault file is a re-identification map,
 store it separately from the masked output.
 
 See also: decoy run, decoy explain strategies.
+
+
+## `decoy tokenize`
+
+Run a tokenize masking job, writing the token mapping to a local vault.
+
+Replaces every `strategy: tokenize` column with a deterministic surrogate
+(derived by the engine, keyed on the column namespace) and records the
+reverse mapping in the local vault so `decoy detokenize` can recover the
+originals. A mask secret is required (--mask-secret or
+global_settings.mask_secret_ref); without one the tokens would derive from
+the public pipeline seed and be forgeable offline, so tokenize fails closed.
+Exits 0 on success, 1 on a config/usage error, 3 on a runtime failure.
+
+**Usage**:
+
+```console
+$ decoy tokenize [OPTIONS] CONFIG
+```
+
+**Arguments**:
+
+* `CONFIG`: Path to the YAML pipeline config (with `strategy: tokenize` columns).  [required]
+
+**Options**:
+
+* `--vault PATH`: Local token vault file to write the (namespace, plaintext) -&gt; token mapping to (created if absent). Required: tokenize fails closed without a vault. Store it separately from the output; it re-identifies every tokenized value.  [required]
+* `--mask-secret TEXT`: env:NAME or file:/PATH pointing at a &gt;=32-byte mask secret to key the tokens from. REQUIRED unless the YAML sets global_settings.mask_secret_ref: tokenize fails closed without an effective secret, because seed-derived tokens are forgeable offline from the public pipeline seed. Sets &#x27;global_settings.mask_secret_ref&#x27; for this run; an error if the YAML already sets it. Explicit flag only (no env var).
+* `--json`: Emit a structured JSON result on stdout. Errors still go to stderr.
+* `-q, --quiet`: Suppress stdout. Errors still go to stderr; exit code carries the result.
+* `-v, --verbose`: Enable debug-level CLI logs on stderr.
+* `--help`: Show this message and exit.
+
+Examples:
+
+  decoy tokenize pipeline.yaml --vault tokens.db --mask-secret env:DECOY_MASK_SECRET
+    Run the pipeline, replacing every `strategy: tokenize` column with a
+    deterministic surrogate, and write the (namespace, plaintext) -> token
+    mapping to the local vault tokens.db. The mask secret (env:NAME or
+    file:/PATH to a >=32-byte secret) keys the tokens.
+
+  decoy tokenize pipeline.yaml --vault tokens.db
+    The same run when the YAML already sets global_settings.mask_secret_ref.
+
+A mask secret is REQUIRED (--mask-secret OR global_settings.mask_secret_ref, in
+exactly one place): tokenize fails closed without one, because tokens keyed on
+the public pipeline seed are forgeable offline -- anyone with the config could
+recompute them without the vault.
+
+Each `strategy: tokenize` column needs an explicit `namespace:` in the YAML
+(the token is keyed on it, so different namespaces tokenize apart). Tokens are
+deterministic: the same plaintext under the same namespace always maps to the
+same token, and the vault is authoritative -- re-running against the same vault
+reuses stored tokens. Reverse a tokenized file with `decoy detokenize`. Store
+the vault separately from the output and treat it as sensitive.
+
+At rest the vault is cleartext (not encrypted): decoy creates it 0600 (and a
+newly created parent directory 0700) as the mitigation. The file is the whole
+re-identification map, so keep it off shared storage and out of backups.
+
+See also: decoy detokenize, decoy run, decoy explain tokenize.
+
+
+## `decoy detokenize`
+
+Restore tokenized columns from a local vault using the pipeline config.
+
+Reverses every `strategy: tokenize` column by looking each token back up in
+the vault under the column&#x27;s namespace. The tokenized file is read in the
+format tokenize wrote it (CSV or Parquet, by extension) and the recovered
+file is written in that same format. A missing or wrong vault, or a token
+the vault does not hold under that namespace, fails closed (no output is
+written). Exits 0 on success, 1 on a config/usage or fail-closed error, 3 on
+a runtime failure.
+
+**Usage**:
+
+```console
+$ decoy detokenize [OPTIONS] CONFIG TOKENIZED
+```
+
+**Arguments**:
+
+* `CONFIG`: The pipeline config the tokenize run used (carries each column&#x27;s namespace).  [required]
+* `TOKENIZED`: The tokenized file produced by `decoy tokenize` for one table (CSV or Parquet, by extension).  [required]
+
+**Options**:
+
+* `--vault PATH`: The local token vault `decoy tokenize` wrote. Required: detokenize fails closed without it.  [required]
+* `--table TEXT`: Which config table the file belongs to. Required when the config tokenizes more than one table.
+* `-o, --output PATH`: Where to write the recovered file (format by extension). Default: &lt;tokenized&gt;.detokenized.&lt;ext&gt; next to the input, in the same format tokenize wrote (CSV or Parquet).
+* `--json`: Emit a structured JSON result on stdout. Errors still go to stderr.
+* `-q, --quiet`: Suppress stdout. Errors still go to stderr; exit code carries the result.
+* `-v, --verbose`: Enable debug-level CLI logs on stderr.
+* `--help`: Show this message and exit.
+
+Examples:
+
+  decoy detokenize pipeline.yaml tokenized.csv --vault tokens.db
+    Restore every tokenize column in tokenized.csv from the local vault,
+    writing tokenized.detokenized.csv.
+
+  decoy detokenize pipeline.yaml tokenized.csv --vault tokens.db -o recovered.csv
+    Choose the output path.
+
+  decoy detokenize pipeline.yaml tokenized.csv --vault tokens.db --table accounts
+    Disambiguate when the config tokenizes more than one table.
+
+The config supplies each tokenize column's namespace; the vault supplies the
+reverse mapping. The tokenized file is read in the format tokenize wrote it (CSV
+or Parquet, chosen by its extension), and the recovered file is written in that
+same format. A missing vault, a vault that is not a decoy token vault, or a
+token that is not in the vault under the column's namespace (a wrong vault or
+wrong namespace) fails closed -- no output is written -- rather than emit a
+value it cannot vouch for. So does a file missing any tokenize column the
+config declares for the table, and an already-existing default output
+(<tokenized>.detokenized.<ext>); pass -o to choose a path deliberately.
+
+The recovered file is cleartext PII. Decoy does not chmod run outputs (this one
+is written at your default umask, unlike the 0600 vault): protect it yourself.
+
+See also: decoy tokenize, decoy explain tokenize.
 
 
 ## `decoy fit`
