@@ -505,6 +505,25 @@ def detokenize(
         _emit_error(f"Pipeline YAML must be a YAML mapping (object), not {type(raw).__name__}.")
         raise typer.Exit(code=EXIT_USAGE)
 
+    # Same raw secret-reference guard as tokenize: a wrong-type mask_secret_ref
+    # must not ride a Pydantic ValidationError (which echoes input_value) into
+    # the error text.
+    _raw_gs = raw.get("global_settings")
+    if _raw_gs is not None and not isinstance(_raw_gs, dict):
+        _emit_error(
+            "global_settings must be a mapping (a YAML block of key: value "
+            f"pairs), not a {type(_raw_gs).__name__}."
+        )
+        raise typer.Exit(code=EXIT_USAGE)
+    _raw_ref = _raw_gs.get("mask_secret_ref") if isinstance(_raw_gs, dict) else None
+    if _raw_ref is not None and not _is_valid_mask_secret_ref(_raw_ref):
+        _emit_error(
+            "Invalid global_settings.mask_secret_ref: expected an 'env:NAME' or "
+            "'file:/PATH' reference to a >=32-byte secret. It is a REFERENCE, "
+            "never the raw secret. See: decoy explain keys."
+        )
+        raise typer.Exit(code=EXIT_USAGE)
+
     from decoy_engine import PipelineConfig
     from decoy_engine.errors import ConfigError
     from decoy_engine.plan import PlanCompileError

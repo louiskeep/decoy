@@ -1,6 +1,6 @@
 """Local token-vault store for `decoy tokenize` / `decoy detokenize` (B-1).
 
-The engine's `tokenize` mask strategy (A-8 token-vault seam, engine >=0.7.0) derives a
+The engine's `tokenize` mask strategy (A-8 token-vault seam, engine ==0.15.1) derives a
 deterministic surrogate per value and hands the `(plaintext, token)` pair to a
 platform-injected writer; the engine holds no vault itself (library code does
 not know its callers). This module is the CLI-side, single-operator, LOCAL
@@ -10,15 +10,15 @@ plaintext back up by `(namespace, token)`.
 
 Established methodology (CLAUDE.md core rule). There is NO hand-rolled crypto
 here: the engine owns the token derivation (HKDF-SHA256 `derive`, see
-`decoy_engine.execution._strategies._tokenize`) and the NFC normalization of
+`decoy_engine/execution/_strategies/_tokenize.py`) and the NFC normalization of
 the plaintext key; this store only persists exactly what the engine hands to
 `put` and returns it on `lookup_existing` / `reverse`. Persistence uses the
 stdlib `sqlite3` embedded store -- the established local, atomic,
 single-file key-value substrate -- rather than a bespoke on-disk format. The
 protocol surface (`lookup_existing(namespace, plaintext)` / `put(namespace,
-plaintext, token)`) mirrors the engine's `TokenVaultWriter` Protocol
-byte-for-byte, so the engine treats this store as the opaque callback it
-expects.
+plaintext, token)`) matches the engine's `TokenVaultWriter` Protocol
+(`decoy_engine/execution/_adapter.py`), so the engine treats this store as the
+opaque callback it expects.
 
 Identity boundary. The vault is authoritative for identity: once a
 `(namespace, plaintext)` pair has a token, the strategy REUSES it, so a value's

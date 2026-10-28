@@ -97,28 +97,19 @@ def test_keywords_present() -> None:
 
 
 def test_engine_dependency_pinned() -> None:
-    """The CLI declares the minimum engine version it was tested against.
-    A bare `decoy-engine` with no version (or downgrading the floor) is
-    a release-process bug."""
+    """The CLI hard-pins the engine release that carries the A-8 token-vault
+    seam. A bare or floored `decoy-engine` is a release-process bug: a
+    0.7.0-0.14.x engine lacks `token_vault_writer`, so tokenize would TypeError."""
     data = _load()
     deps = data["project"]["dependencies"]
     engine_deps = [d for d in deps if d.startswith("decoy-engine")]
     assert len(engine_deps) == 1, f"expected exactly one decoy-engine dep, got {engine_deps}"
-    # Assert the exact minimum, not merely that *a* floor exists -- a bare
-    # `>=` check would let a silent downgrade (e.g. `decoy-engine>=0.1.0`)
-    # slip through. 0.7.0 is the first engine that carries both the public
-    # `read_fixed_width` reader and the A-8 token-vault seam the tokenize/
-    # detokenize verbs use (see the pin rationale in pyproject.toml). It stays
-    # a FLOOR, not a hard `==` pin: pre-launch, decoy main and the CLI-launch
-    # branch track the engine at `@main` (source version 0.7.0), and CI
-    # installs it from `@main`, so a hard `==0.15.0` pin would be unsatisfiable.
-    # The DP-certified hard launch pin is a coordinated D-4 change, not this
-    # branch's; raise the floor in lockstep when it legitimately rises.
+    # Exact pin, shared with the platform vault (B-6); see pyproject.toml.
     from packaging.requirements import Requirement
 
     req = Requirement(engine_deps[0])
     floors = [s for s in req.specifier if s.operator in (">=", "==")]
-    assert [str(s) for s in floors] == [">=0.7.0"], (
-        f"decoy-engine floor must be exactly >=0.7.0 (public read_fixed_width "
-        f"marker + A-8 token-vault seam); got specifier {str(req.specifier)!r}"
+    assert [str(s) for s in floors] == ["==0.15.1"], (
+        f"decoy-engine must be pinned exactly ==0.15.1 (A-8 token-vault seam); "
+        f"got specifier {str(req.specifier)!r}"
     )
