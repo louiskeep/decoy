@@ -9,6 +9,11 @@ detokenize relies on.
 
 from __future__ import annotations
 
+import os
+import sqlite3
+import stat
+import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -140,3 +145,91 @@ def test_iter_tokenize_columns_reads_strategy_and_namespace() -> None:
 def test_iter_tokenize_columns_yields_empty_namespace_when_missing() -> None:
     cfg = {"tables": [{"name": "t", "columns": [{"name": "c", "strategy": "tokenize"}]}]}
     assert list(iter_tokenize_columns(cfg, "t")) == [("c", "")]
+
+
+# -- at-rest permissions (0600 file, 0700 created parent) -------------------
+
+posix_only = pytest.mark.skipif(os.name != "posix", reason="POSIX file modes")
+
+
+def _mode(p: Path) -> int:
+    return stat.S_IMODE(p.stat().st_mode)
+
+
+@posix_only
+def test_new_vault_is_0600_under_a_permissive_umask(tmp_path: Path) -> None:
+    """Umask 0022 would leave a plain sqlite3.connect() file 0644, so only a real
+    chmod yields 0600. Run in a subprocess so the umask never leaks into the
+    test session."""
+    vp = tmp_path / "t.db"
+    code = (
+        "import os, sys\n"
+        "from pathlib import Path\n"
+        "from decoy.cli._token_vault import LocalTokenVault\n"
+        "os.umask(0o022)\n"
+        "v = LocalTokenVault(Path(sys.argv[1]), create=True)\n"
+        "v.put('ns', 'a', 'tok_1'); v.commit(); v.close()\n"
+    )
+    subprocess.run([sys.executable, "-c", code, str(vp)], check=True)
+    assert _mode(vp) == 0o600
+
+
+@posix_only
+def test_reopen_repairs_a_0644_vault(tmp_path: Path) -> None:
+    vp = tmp_path / "t.db"
+    with LocalTokenVault(vp, create=True):
+        pass
+    vp.chmod(0o644)
+    with LocalTokenVault(vp, create=True):
+        pass
+    assert _mode(vp) == 0o600
+
+
+@posix_only
+def test_created_parent_is_0700_and_preexisting_parent_untouched(tmp_path: Path) -> None:
+    old = tmp_path / "shared"
+    old.mkdir()
+    old.chmod(0o755)
+    with LocalTokenVault(old / "t.db", create=True):
+        pass
+    assert _mode(old) == 0o755
+
+    new = tmp_path / "fresh"
+    prev = os.umask(0o022)
+    try:
+        with LocalTokenVault(new / "t.db", create=True):
+            pass
+    finally:
+        os.umask(prev)
+    assert _mode(new) == 0o700
+
+
+@posix_only
+def test_chmod_failure_aborts_before_any_schema_write(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    vp = tmp_path / "t.db"
+
+    def boom(*_a: object, **_k: object) -> None:
+        raise PermissionError("denied")
+
+    monkeypatch.setattr(os, "chmod", boom)
+    with pytest.raises(TokenVaultError) as exc:
+        LocalTokenVault(vp, create=True)
+    assert exc.value.code == "vault_permission_error"
+    # No schema or data was written: the file is still the empty placeholder.
+    assert vp.stat().st_size == 0
+
+
+def test_schema_version_mismatch_fails_closed(tmp_path: Path) -> None:
+    vp = tmp_path / "t.db"
+    with LocalTokenVault(vp, create=True) as v:
+        v.put("ns", "a", "tok_1")
+        v.commit()
+    conn = sqlite3.connect(str(vp))
+    conn.execute("UPDATE meta SET value='999' WHERE key='schema_version'")
+    conn.commit()
+    conn.close()
+    with pytest.raises(TokenVaultError) as exc:
+        LocalTokenVault(vp, create=False)
+    assert exc.value.code == "vault_schema_mismatch"

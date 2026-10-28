@@ -1,6 +1,6 @@
 """Local token-vault store for `decoy tokenize` / `decoy detokenize` (B-1).
 
-The engine's `tokenize` mask strategy (A-8, engine 0.15.0) derives a
+The engine's `tokenize` mask strategy (A-8 token-vault seam, engine >=0.7.0) derives a
 deterministic surrogate per value and hands the `(plaintext, token)` pair to a
 platform-injected writer; the engine holds no vault itself (library code does
 not know its callers). This module is the CLI-side, single-operator, LOCAL
@@ -30,11 +30,14 @@ token.
 SECURITY: the vault file is the one place the plaintext-to-token mapping lives.
 This module never prints or logs a plaintext or a token; callers surface counts
 and column/namespace names only. Treat the file as sensitive -- it
-re-identifies every tokenized value.
+re-identifies every tokenized value. It is cleartext at rest by design (no
+encryption); the file is created 0600 (and a newly created parent dir 0700) as
+the at-rest mitigation.
 """
 
 from __future__ import annotations
 
+import os
 import sqlite3
 from collections.abc import Iterator
 from pathlib import Path
@@ -89,7 +92,27 @@ class LocalTokenVault:
                 ),
             )
         if create:
-            path.parent.mkdir(parents=True, exist_ok=True)
+            parent = path.parent
+            # Restrict only a directory THIS call creates; a pre-existing parent
+            # may be a shared user directory we must not re-permission.
+            parent_is_new = not parent.exists()
+            parent.mkdir(parents=True, exist_ok=True)
+            if parent_is_new:
+                self._restrict(parent, 0o700)
+            # Create the file 0600 up front so it is never briefly world-readable
+            # under the process umask, then chmod on every create-path open to
+            # repair a vault an earlier build left 0644. An empty file is a valid
+            # new SQLite database. This precedes ALL schema/data writes: SQLite can
+            # spill dirty pages mid-transaction, so protection cannot wait for
+            # commit().
+            try:
+                os.close(os.open(path, os.O_RDWR | os.O_CREAT, 0o600))
+            except OSError as exc:
+                raise TokenVaultError(
+                    code="vault_open_error",
+                    message=f"could not create token vault {path!s}: {type(exc).__name__}.",
+                ) from exc
+            self._restrict(path, 0o600)
         try:
             # isolation_level="" keeps Python's implicit-transaction behavior:
             # the first write opens a transaction that stays open until an
@@ -103,6 +126,24 @@ class LocalTokenVault:
                 message=f"could not open token vault {path!s}: {type(exc).__name__}.",
             ) from exc
         self._ensure_schema(create=create)
+
+    def _restrict(self, target: Path, mode: int) -> None:
+        """chmod `target`, aborting the open if the restriction cannot be applied.
+
+        The vault holds a cleartext re-identification map; proceeding with
+        unrestricted perms would silently defeat its only at-rest protection.
+        """
+        try:
+            os.chmod(target, mode)
+        except OSError as exc:
+            raise TokenVaultError(
+                code="vault_permission_error",
+                message=(
+                    f"could not restrict permissions on {target!s} to "
+                    f"{mode:04o}: {type(exc).__name__}; refusing to write the "
+                    "token vault."
+                ),
+            ) from exc
 
     def _ensure_schema(self, *, create: bool) -> None:
         cur = self._conn.cursor()

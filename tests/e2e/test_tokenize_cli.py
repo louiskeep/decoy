@@ -17,6 +17,7 @@ Acceptance pinned here:
 from __future__ import annotations
 
 import json
+import sqlite3
 from pathlib import Path
 
 import pandas as pd
@@ -518,3 +519,186 @@ class TestHelp:
         result = runner.invoke(app, ["detokenize", "--help"])
         assert result.exit_code == 0
         assert "tokenize" in result.output
+
+
+_RAW_SECRET = "RAWSECRETSENTINEL" + "z" * 20
+
+
+def _tokenize_two_columns(tmp_path: Path) -> tuple[Path, Path]:
+    """Config with two tokenize columns and its tokenized output + vault."""
+    cols = [
+        {"name": "id", "strategy": "passthrough"},
+        {"name": "email", "strategy": "tokenize", "namespace": "ns.one"},
+        {"name": "email2", "strategy": "tokenize", "namespace": "ns.two"},
+    ]
+    src = tmp_path / "in.csv"
+    pd.DataFrame(
+        {"id": [0, 1], "email": ["a@x.com", "b@y.com"], "email2": ["a@x.com", "b@y.com"]}
+    ).to_csv(src, index=False)
+    cfg = {
+        "version": 1,
+        "global_settings": {"seed": 42, "mask_secret_ref": _mask_secret_ref(tmp_path)},
+        "sources": {"people": {"type": "file", "format": "csv", "path": str(src)}},
+        "tables": [{"name": "people", "columns": cols}],
+        "targets": {
+            "people": {"type": "file", "format": "csv", "path": str(tmp_path / "tokenized.csv")}
+        },
+    }
+    p = tmp_path / "pipeline.yaml"
+    p.write_text(yaml.safe_dump(cfg), encoding="utf-8")
+    vault = tmp_path / "tokens.db"
+    res = runner.invoke(app, ["tokenize", str(p), "--vault", str(vault)])
+    assert res.exit_code == 0, res.output
+    return p, vault
+
+
+class TestOutputNotClobbered:
+    def test_existing_default_output_is_refused(self, tmp_path: Path) -> None:
+        cfg = _pipeline(tmp_path, _TOKENIZE_COLS)
+        vault = tmp_path / "tokens.db"
+        runner.invoke(app, ["tokenize", str(cfg), "--vault", str(vault)])
+        existing = tmp_path / "tokenized.detokenized.csv"
+        existing.write_bytes(b"precious")
+        result = runner.invoke(
+            app, ["detokenize", str(cfg), str(tmp_path / "tokenized.csv"), "--vault", str(vault)]
+        )
+        assert result.exit_code == EXIT_USAGE, result.output
+        assert "detokenize_output_exists" in result.output
+        assert existing.read_bytes() == b"precious"
+
+    def test_same_stem_different_extension_does_not_clobber(self, tmp_path: Path) -> None:
+        cfg = _pipeline(tmp_path, _TOKENIZE_COLS)
+        vault = tmp_path / "tokens.db"
+        runner.invoke(app, ["tokenize", str(cfg), "--vault", str(vault)])
+        csv_in = tmp_path / "tokenized.csv"
+        # Reader treats every non-Parquet extension as CSV; give the .tsv a
+        # different (valid) body so a clobber would change the first output.
+        tsv_in = tmp_path / "tokenized.tsv"
+        tsv_in.write_text("\n".join(csv_in.read_text().splitlines()[:2]) + "\n")
+        first = runner.invoke(
+            app, ["detokenize", str(cfg), str(csv_in), "--vault", str(vault)]
+        )
+        assert first.exit_code == 0, first.output
+        out = tmp_path / "tokenized.detokenized.csv"
+        before = out.read_bytes()
+        second = runner.invoke(
+            app, ["detokenize", str(cfg), str(tsv_in), "--vault", str(vault)]
+        )
+        assert second.exit_code == EXIT_USAGE, second.output
+        assert "detokenize_output_exists" in second.output
+        assert out.read_bytes() == before
+
+    def test_explicit_output_may_overwrite(self, tmp_path: Path) -> None:
+        cfg = _pipeline(tmp_path, _TOKENIZE_COLS)
+        vault = tmp_path / "tokens.db"
+        runner.invoke(app, ["tokenize", str(cfg), "--vault", str(vault)])
+        out = tmp_path / "chosen.csv"
+        out.write_text("old")
+        result = runner.invoke(
+            app,
+            ["detokenize", str(cfg), str(tmp_path / "tokenized.csv"),
+             "--vault", str(vault), "-o", str(out)],
+        )
+        assert result.exit_code == 0, result.output
+        assert "a@x.com" in out.read_text()
+
+
+class TestRequireAllColumns:
+    def test_missing_declared_column_fails_closed(self, tmp_path: Path) -> None:
+        cfg, vault = _tokenize_two_columns(tmp_path)
+        tokenized = tmp_path / "tokenized.csv"
+        # email resolves from a valid vault; only email2 is absent.
+        pd.read_csv(tokenized, dtype=str).drop(columns=["email2"]).to_csv(
+            tmp_path / "partial.csv", index=False
+        )
+        result = runner.invoke(
+            app, ["detokenize", str(cfg), str(tmp_path / "partial.csv"), "--vault", str(vault)]
+        )
+        assert result.exit_code == EXIT_USAGE, result.output
+        assert "detokenize_column_missing" in result.output
+        assert "email2" in result.output
+        assert not (tmp_path / "partial.detokenized.csv").exists()
+
+
+class TestNoLeakOnErrorPaths:
+    """Sentinels (plaintexts, tokens, the mask secret, a raw secret ref) must not
+    surface in ANY error path of either verb, human or JSON."""
+
+    def _sentinels(self, tmp_path: Path) -> list[str]:
+        toks = pd.read_csv(tmp_path / "tokenized.csv", dtype=str)
+        return ["a@x.com", "b@y.com", _MASK_SECRET_HEX, *toks["email"], *toks["email2"]]
+
+    @staticmethod
+    def _assert_clean(result, sentinels: list[str]) -> None:
+        text = result.output + (result.stderr if result.stderr_bytes else "")
+        for s in sentinels:
+            assert s not in text, "leaked a sentinel value"
+
+    def test_detokenize_error_paths(self, tmp_path: Path) -> None:
+        cfg, vault = _tokenize_two_columns(tmp_path)
+        sentinels = self._sentinels(tmp_path)
+        tokenized = tmp_path / "tokenized.csv"
+
+        junk = tmp_path / "junk.db"
+        junk.write_bytes(b"not a sqlite db")
+        stale = tmp_path / "stale.db"
+        stale.write_bytes(vault.read_bytes())
+        conn = sqlite3.connect(str(stale))
+        conn.execute("UPDATE meta SET value='999' WHERE key='schema_version'")
+        conn.commit()
+        conn.close()
+        partial = tmp_path / "partial.csv"
+        pd.read_csv(tokenized, dtype=str).drop(columns=["email2"]).to_csv(partial, index=False)
+        wrong_ns = yaml.safe_load(cfg.read_text())
+        wrong_ns["tables"][0]["columns"][1]["namespace"] = "ns.WRONG"
+        wrong_cfg = tmp_path / "wrong.yaml"
+        wrong_cfg.write_text(yaml.safe_dump(wrong_ns))
+        # Schema-invalid configs that carry a raw secret in the value: the
+        # pydantic ValidationError path must not echo it.
+        bad_cfgs = []
+        for i, gs in enumerate(
+            ({"mask_secret_ref": [_RAW_SECRET]}, {"mask_secret": _RAW_SECRET})
+        ):
+            raw = yaml.safe_load(cfg.read_text())
+            raw["global_settings"].pop("mask_secret_ref")
+            raw["global_settings"].update(gs)
+            bad = tmp_path / f"bad{i}.yaml"
+            bad.write_text(yaml.safe_dump(raw))
+            bad_cfgs.append(bad)
+        (tmp_path / "tokenized.detokenized.csv").write_text("x")
+
+        cases = [
+            [str(cfg), str(tokenized), "--vault", str(vault)],  # output exists
+            [str(cfg), str(partial), "--vault", str(vault)],  # missing column
+            [str(cfg), str(tokenized), "--vault", str(stale), "-o", str(tmp_path / "o1.csv")],
+            [str(cfg), str(tokenized), "--vault", str(junk), "-o", str(tmp_path / "o2.csv")],
+            [str(wrong_cfg), str(tokenized), "--vault", str(vault), "-o", str(tmp_path / "o3.csv")],
+            *(
+                [str(b), str(tokenized), "--vault", str(vault), "-o", str(tmp_path / f"b{b.stem}.csv")]
+                for b in bad_cfgs
+            ),
+        ]
+        for args in cases:
+            for extra in ([], ["--json"]):
+                result = runner.invoke(app, ["detokenize", *args, *extra])
+                assert result.exit_code != 0, result.output
+                self._assert_clean(result, [*sentinels, _RAW_SECRET])
+
+    def test_tokenize_error_paths(self, tmp_path: Path) -> None:
+        cfg, _vault = _tokenize_two_columns(tmp_path)
+        sentinels = self._sentinels(tmp_path)
+        bad_ref = yaml.safe_load(cfg.read_text())
+        bad_ref["global_settings"]["mask_secret_ref"] = f"literal:{_RAW_SECRET}"
+        bad_ref_cfg = tmp_path / "badref.yaml"
+        bad_ref_cfg.write_text(yaml.safe_dump(bad_ref))
+        weak = tmp_path / "weak.secret"
+        weak.write_text("short")
+        for args in (
+            [str(bad_ref_cfg), "--vault", str(tmp_path / "v1.db")],
+            [str(cfg), "--vault", str(tmp_path / "v2.db"), "--mask-secret", f"file:{weak}"],
+            [str(cfg), "--vault", str(tmp_path / "v3.db"), "--mask-secret", f"literal:{_RAW_SECRET}"],
+        ):
+            for extra in ([], ["--json"]):
+                result = runner.invoke(app, ["tokenize", *args, *extra])
+                assert result.exit_code != 0, result.output
+                self._assert_clean(result, [*sentinels, _RAW_SECRET])

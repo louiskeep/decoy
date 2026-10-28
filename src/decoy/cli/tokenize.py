@@ -58,6 +58,10 @@ same token, and the vault is authoritative -- re-running against the same vault
 reuses stored tokens. Reverse a tokenized file with `decoy detokenize`. Store
 the vault separately from the output and treat it as sensitive.
 
+At rest the vault is cleartext (not encrypted): decoy creates it 0600 (and a
+newly created parent directory 0700) as the mitigation. The file is the whole
+re-identification map, so keep it off shared storage and out of backups.
+
 See also: decoy detokenize, decoy run, decoy explain tokenize.
 """
 
@@ -80,7 +84,12 @@ or Parquet, chosen by its extension), and the recovered file is written in that
 same format. A missing vault, a vault that is not a decoy token vault, or a
 token that is not in the vault under the column's namespace (a wrong vault or
 wrong namespace) fails closed -- no output is written -- rather than emit a
-value it cannot vouch for.
+value it cannot vouch for. So does a file missing any tokenize column the
+config declares for the table, and an already-existing default output
+(<tokenized>.detokenized.<ext>); pass -o to choose a path deliberately.
+
+The recovered file is cleartext PII. Decoy does not chmod run outputs (this one
+is written at your default umask, unlike the 0600 vault): protect it yourself.
 
 See also: decoy tokenize, decoy explain tokenize.
 """
@@ -543,6 +552,22 @@ def detokenize(
         )
         raise typer.Exit(code=EXIT_USAGE)
 
+    in_is_parquet = tokenized.suffix.lower() == ".parquet"
+    out_path = (
+        output
+        if output is not None
+        else tokenized.with_suffix(".detokenized.parquet" if in_is_parquet else ".detokenized.csv")
+    )
+    # Only the DEFAULT name is guarded: it is derived, so two inputs differing
+    # only in final extension (a.csv / a.tsv) or a re-run would silently clobber
+    # recovered PII. An explicit --output is the operator's deliberate choice.
+    if output is None and out_path.exists():
+        _emit_error(
+            f"detokenize_output_exists: {out_path} already exists; refusing to "
+            "overwrite it. Move it aside or pass --output.",
+        )
+        raise typer.Exit(code=EXIT_USAGE)
+
     columns = list(iter_tokenize_columns(config_dict, target_table))
     missing_ns = [c for (c, ns) in columns if not ns]
     if missing_ns:
@@ -559,7 +584,6 @@ def detokenize(
     # the same suffix), so a `.parquet` target reverses as Parquet and anything
     # else as CSV. CSV is read all-text so a token matches the vault byte-for-byte;
     # Parquet columns are already typed (tokens are strings), so no dtype coercion.
-    in_is_parquet = tokenized.suffix.lower() == ".parquet"
     try:
         df = pd.read_parquet(tokenized) if in_is_parquet else pd.read_csv(tokenized, dtype=str)
     except Exception as exc:
@@ -572,6 +596,17 @@ def detokenize(
             "the format tokenize wrote it (by extension: .parquet, otherwise CSV)."
         )
         raise typer.Exit(code=EXIT_USAGE) from exc
+
+    # A declared tokenize column absent from the file would be left unreversed
+    # while the run reports success; fail closed like a token miss instead.
+    absent = [c for (c, _ns) in columns if c not in df.columns]
+    if absent:
+        _emit_error(
+            "detokenize_column_missing: the input does not contain these configured "
+            f"tokenize columns: {', '.join(absent)}; no output written. Check that "
+            "the file and --table match the tokenize run."
+        )
+        raise typer.Exit(code=EXIT_USAGE)
 
     try:
         token_vault = LocalTokenVault(vault, create=False)
@@ -588,9 +623,6 @@ def detokenize(
     recovered: dict[str, list] = {}
     try:
         for col, ns in columns:
-            if col not in df.columns:
-                entries.append({"column": col, "namespace": ns, "status": "column_missing"})
-                continue
             col_miss = 0
             reversed_count = 0
             out_values: list = []
@@ -631,11 +663,6 @@ def detokenize(
     for col, values in recovered.items():
         df[col] = values
 
-    out_path = (
-        output
-        if output is not None
-        else tokenized.with_suffix(".detokenized.parquet" if in_is_parquet else ".detokenized.csv")
-    )
     try:
         # Output format follows the output path's extension: the default matches
         # the input (Parquet in -> Parquet out), and an explicit -o picks by its
@@ -649,7 +676,6 @@ def detokenize(
         _emit_error(f"could not write {out_path}.")
         raise typer.Exit(code=EXIT_RUNTIME) from exc
 
-    present = [e for e in entries if e["status"] != "column_missing"]
     if state.mode is OutputMode.json:
         emit_json(
             state,
@@ -667,14 +693,9 @@ def detokenize(
     if state.mode is OutputMode.quiet:
         return
 
-    total_reversed = sum(e.get("reversed", 0) for e in present)
+    total_reversed = sum(e.get("reversed", 0) for e in entries)
     state.console.print(success("OK"), code(str(out_path)))
-    state.console.print(f"  {len(present)} column(s) reversed, {total_reversed} value(s).")
-    for e in entries:
-        if e["status"] == "column_missing":
-            state.console.print(
-                " ", warn("note:"), f"{e['column']}: not in this file, skipped."
-            )
+    state.console.print(f"  {len(entries)} column(s) reversed, {total_reversed} value(s).")
 
 
 TOKENIZE_EPILOG = _TOKENIZE_EPILOG

@@ -265,6 +265,10 @@ same token, and the vault is authoritative -- re-running against the same vault
 reuses stored tokens. Reverse a tokenized file with `decoy detokenize`. Store
 the vault separately from the output and treat it as sensitive.
 
+At rest the vault is cleartext (not encrypted): decoy creates it 0600 (and a
+newly created parent directory 0700) as the mitigation. The file is the whole
+re-identification map, so keep it off shared storage and out of backups.
+
 See also: decoy detokenize, decoy run, decoy explain tokenize.
 
 
@@ -319,7 +323,12 @@ or Parquet, chosen by its extension), and the recovered file is written in that
 same format. A missing vault, a vault that is not a decoy token vault, or a
 token that is not in the vault under the column's namespace (a wrong vault or
 wrong namespace) fails closed -- no output is written -- rather than emit a
-value it cannot vouch for.
+value it cannot vouch for. So does a file missing any tokenize column the
+config declares for the table, and an already-existing default output
+(<tokenized>.detokenized.<ext>); pass -o to choose a path deliberately.
+
+The recovered file is cleartext PII. Decoy does not chmod run outputs (this one
+is written at your default umask, unlike the 0600 vault): protect it yourself.
 
 See also: decoy tokenize, decoy explain tokenize.
 
