@@ -174,13 +174,20 @@ class TestDeterminism:
         assert list(a) == list(b)
 
     def test_rerun_against_same_vault_reuses_tokens(self, tmp_path: Path) -> None:
-        cfg = _pipeline(tmp_path, _TOKENIZE_COLS)
         vault = tmp_path / "tokens.db"
-        runner.invoke(app, ["tokenize", str(cfg), "--vault", str(vault)])
-        first = list(pd.read_csv(tmp_path / "tokenized.csv", dtype=str)["email"])
-        # Re-run against the SAME vault: stored tokens are reused, output stable.
-        runner.invoke(app, ["tokenize", str(cfg), "--vault", str(vault)])
-        second = list(pd.read_csv(tmp_path / "tokenized.csv", dtype=str)["email"])
+        cfg1 = _pipeline(tmp_path, _TOKENIZE_COLS, out_name="run1.csv")
+        first_run = runner.invoke(app, ["tokenize", str(cfg1), "--vault", str(vault)])
+        assert first_run.exit_code == 0, first_run.output
+        first = list(pd.read_csv(tmp_path / "run1.csv", dtype=str)["email"])
+        # Re-run against the SAME vault but a FRESH output path: the second run
+        # must reproduce the first run's tokens from the stored mapping, not just
+        # reread the first run's output file. Both runs must succeed.
+        cfg2 = _pipeline(tmp_path, _TOKENIZE_COLS, out_name="run2.csv")
+        second_run = runner.invoke(app, ["tokenize", str(cfg2), "--vault", str(vault)])
+        assert second_run.exit_code == 0, second_run.output
+        second = list(pd.read_csv(tmp_path / "run2.csv", dtype=str)["email"])
+        # Real surrogates (not passthrough plaintext), identical across runs.
+        assert all(v.startswith("tok_") for v in second)
         assert first == second
 
 

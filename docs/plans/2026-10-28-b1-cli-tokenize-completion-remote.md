@@ -1,6 +1,6 @@
 # B-1 CLI tokenize/detokenize + local vault: completion plan for a remote worker
 
-Status: plan
+Status: shipped (merged via PR #64)
 Feature: F09 (cross-job identity domains), CLI surface, single-operator local.
 Tier: R2 (security-sensitive: a reversible PII vault, cleartext at rest). Plan gate chain: Dennis -> Codex.
 (NOT crypto-MAJOR: token derivation is engine-owned; the CLI side is SQLite persistence + file perms, no crypto design. No Gemini stage.)
