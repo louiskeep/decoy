@@ -1,0 +1,145 @@
+# F43 Slice 0 fail-before evidence
+baseline: 574aa1e9ec2b95f9ba8af5eb8112c1a3c0fcf434 (production tree untouched; only tests/ + vendored schema added)
+engine: decoy-engine==0.15.1 (v0.15.1, fd51be10)
+python: Python 3.12.3  pytest: pytest 9.2.0
+date: 2026-10-29T22:46:23Z
+
+
+## Summary: 113 failed, 1 passed, 3 collection errors (A1-A10 suites, baseline src)
+The single pass is test_offline_guard_really_denies_network (a negative control for the offline test env, independent of F43 code).
+
+### Failures by file (count of FAILED/ERROR lines)
+      1 ERROR tests/unit/test_ci_locations.py
+      1 ERROR tests/unit/test_ci_manifest.py
+      1 ERROR tests/unit/test_ci_reporting.py
+     15 FAILED tests/e2e/test_ci_exit_codes.py
+      6 FAILED tests/e2e/test_ci_precommit.py
+      7 FAILED tests/e2e/test_ci_sarif.py
+     22 FAILED tests/e2e/test_ci_staged_scan.py
+     53 FAILED tests/sentry/test_ci_output_isolation.py
+     10 FAILED tests/unit/test_ci_templates.py
+
+### Failure causes (all are 'feature absent')
+- 'No such command ci' (exit 2) from the real CLI process: every e2e + sentry cell
+- ModuleNotFoundError: decoy.ci (3 unit-test collection errors)
+- Missing .pre-commit-hooks.yaml / integrations/{github-actions,gitlab}/decoy-ci.yml / docs schema + example
+
+### Raw pytest tail
+FAILED tests/unit/test_ci_templates.py::test_github_permissions_are_least_privilege
+FAILED tests/unit/test_ci_templates.py::test_github_uses_are_immutable_pins
+FAILED tests/unit/test_ci_templates.py::test_github_check_step_is_exactly_the_documented_contract
+FAILED tests/unit/test_ci_templates.py::test_github_upload_is_a_distinct_explicit_step_and_decoy_never_uploads
+FAILED tests/unit/test_ci_templates.py::test_github_artifact_paths_are_fixed
+FAILED tests/unit/test_ci_templates.py::test_gitlab_hidden_job_runs_only_the_documented_command
+FAILED tests/unit/test_ci_templates.py::test_no_hidden_network_comment_or_install_behavior[path0]
+FAILED tests/unit/test_ci_templates.py::test_no_hidden_network_comment_or_install_behavior[path1]
+FAILED tests/unit/test_ci_templates.py::test_gitlab_template_does_not_claim_annotation_conversion
+FAILED tests/unit/test_ci_templates.py::test_extracted_commands_run_against_a_real_fixture
+FAILED tests/e2e/test_ci_sarif.py::test_clean_pipeline_emits_schema_valid_sarif_with_no_results
+FAILED tests/e2e/test_ci_sarif.py::test_clean_sarif_written_to_a_file_is_identical_and_stdout_stays_empty
+FAILED tests/e2e/test_ci_sarif.py::test_real_engine_finding_maps_to_the_exact_key_and_moves_with_it
+FAILED tests/e2e/test_ci_sarif.py::test_pipeline_in_a_subdirectory_uses_a_repo_relative_uri
+FAILED tests/e2e/test_ci_sarif.py::test_finding_without_a_provable_logical_path_has_no_location
+FAILED tests/e2e/test_ci_sarif.py::test_missing_required_key_degrades_to_no_region_not_a_wrong_one
+FAILED tests/e2e/test_ci_sarif.py::test_same_command_json_and_markdown_describe_the_same_report
+FAILED tests/e2e/test_ci_exit_codes.py::test_clean_validation_is_ok - Asserti...
+FAILED tests/e2e/test_ci_exit_codes.py::test_staged_only_manifest_with_nothing_staged_is_noop
+FAILED tests/e2e/test_ci_exit_codes.py::test_staged_hit_is_findings_exit_four
+FAILED tests/e2e/test_ci_exit_codes.py::test_real_evidence_mismatch_is_findings_exit_four
+FAILED tests/e2e/test_ci_exit_codes.py::test_unreadable_evidence_manifest_is_refused
+FAILED tests/e2e/test_ci_exit_codes.py::test_drift_blocking_and_non_blocking
+FAILED tests/e2e/test_ci_exit_codes.py::test_one_clean_check_then_a_real_git_failure_is_partial_exit_three
+FAILED tests/e2e/test_ci_exit_codes.py::test_malformed_manifest_is_refused - ...
+FAILED tests/e2e/test_ci_exit_codes.py::test_missing_manifest_is_refused_not_a_crash
+FAILED tests/e2e/test_ci_exit_codes.py::test_non_empty_regression_selection_fails_closed
+FAILED tests/e2e/test_ci_exit_codes.py::test_over_limit_staged_scan_is_partial_exit_usage_never_clean
+FAILED tests/e2e/test_ci_exit_codes.py::test_validation_warning_blocks_only_when_configured
+FAILED tests/e2e/test_ci_exit_codes.py::test_validation_error_keeps_the_existing_validate_exit
+FAILED tests/e2e/test_ci_exit_codes.py::test_capacity_refusal_exits_capacity
+FAILED tests/e2e/test_ci_exit_codes.py::test_precommit_context_narrows_validation_and_says_so
+FAILED tests/e2e/test_ci_staged_scan.py::test_staged_canary_blocks_even_when_the_worktree_is_clean
+FAILED tests/e2e/test_ci_staged_scan.py::test_dirty_worktree_with_clean_index_passes
+FAILED tests/e2e/test_ci_staged_scan.py::test_hit_counts_are_aggregated_per_pattern_and_path
+FAILED tests/e2e/test_ci_staged_scan.py::test_rename_with_modification_mixed_with_add_and_modify_stays_aligned
+FAILED tests/e2e/test_ci_staged_scan.py::test_staged_entries_expose_the_post_image_blob_ids
+FAILED tests/e2e/test_ci_staged_scan.py::test_deleted_file_is_not_scanned - A...
+FAILED tests/e2e/test_ci_staged_scan.py::test_files_outside_pattern_scope_are_ignored
+FAILED tests/e2e/test_ci_staged_scan.py::test_glob_semantics - AssertionError...
+FAILED tests/e2e/test_ci_staged_scan.py::test_symlink_in_scope_is_refused_not_followed
+FAILED tests/e2e/test_ci_staged_scan.py::test_submodule_in_scope_is_refused
+FAILED tests/e2e/test_ci_staged_scan.py::test_unmerged_index_is_refused - Ass...
+FAILED tests/e2e/test_ci_staged_scan.py::test_binary_and_non_utf8_blobs_yield_file_level_findings
+FAILED tests/e2e/test_ci_staged_scan.py::test_unusual_filenames_survive_nul_separated_parsing_and_uri_encoding
+FAILED tests/e2e/test_ci_staged_scan.py::test_per_file_and_total_byte_caps_are_partial_not_clean
+FAILED tests/e2e/test_ci_staged_scan.py::test_hits_in_the_scanned_subset_are_still_reported_when_a_limit_trips
+FAILED tests/e2e/test_ci_staged_scan.py::test_manifest_may_lower_the_file_cap
+FAILED tests/e2e/test_ci_staged_scan.py::test_finding_group_cap - AssertionEr...
+FAILED tests/e2e/test_ci_staged_scan.py::test_git_timeout_is_a_runtime_failure_not_a_clean_scan
+FAILED tests/e2e/test_ci_staged_scan.py::test_no_staged_files_is_a_noop - Ass...
+FAILED tests/e2e/test_ci_staged_scan.py::test_scan_executes_no_repository_configured_program
+FAILED tests/e2e/test_ci_staged_scan.py::test_scan_from_a_subdirectory_reports_repo_relative_uris
+FAILED tests/e2e/test_ci_staged_scan.py::test_copy_entries_use_the_two_field_form_too[C]
+FAILED tests/e2e/test_ci_precommit.py::test_provider_manifest_has_the_required_hook_contract
+FAILED tests/e2e/test_ci_precommit.py::test_provider_manifest_validates_with_pre_commit_itself
+FAILED tests/e2e/test_ci_precommit.py::test_hook_blocks_a_staged_seeded_identifier_and_prints_no_value
+FAILED tests/e2e/test_ci_precommit.py::test_hook_passes_a_clean_staged_fixture
+FAILED tests/e2e/test_ci_precommit.py::test_hook_reads_the_index_not_the_worktree
+FAILED tests/e2e/test_ci_precommit.py::test_hook_with_nothing_staged_is_a_clean_noop
+FAILED tests/sentry/test_ci_output_isolation.py::test_no_canary_or_identifying_substring_reaches_any_byte[stdout-clean-json]
+FAILED tests/sentry/test_ci_output_isolation.py::test_no_canary_or_identifying_substring_reaches_any_byte[stdout-clean-sarif]
+FAILED tests/sentry/test_ci_output_isolation.py::test_no_canary_or_identifying_substring_reaches_any_byte[stdout-clean-markdown]
+FAILED tests/sentry/test_ci_output_isolation.py::test_no_canary_or_identifying_substring_reaches_any_byte[stdout-finding-json]
+FAILED tests/sentry/test_ci_output_isolation.py::test_no_canary_or_identifying_substring_reaches_any_byte[stdout-finding-sarif]
+FAILED tests/sentry/test_ci_output_isolation.py::test_no_canary_or_identifying_substring_reaches_any_byte[stdout-finding-markdown]
+FAILED tests/sentry/test_ci_output_isolation.py::test_no_canary_or_identifying_substring_reaches_any_byte[stdout-refused-json]
+FAILED tests/sentry/test_ci_output_isolation.py::test_no_canary_or_identifying_substring_reaches_any_byte[stdout-refused-sarif]
+FAILED tests/sentry/test_ci_output_isolation.py::test_no_canary_or_identifying_substring_reaches_any_byte[stdout-refused-markdown]
+FAILED tests/sentry/test_ci_output_isolation.py::test_no_canary_or_identifying_substring_reaches_any_byte[stdout-partial-json]
+FAILED tests/sentry/test_ci_output_isolation.py::test_no_canary_or_identifying_substring_reaches_any_byte[stdout-partial-sarif]
+FAILED tests/sentry/test_ci_output_isolation.py::test_no_canary_or_identifying_substring_reaches_any_byte[stdout-partial-markdown]
+FAILED tests/sentry/test_ci_output_isolation.py::test_no_canary_or_identifying_substring_reaches_any_byte[file-clean-json]
+FAILED tests/sentry/test_ci_output_isolation.py::test_no_canary_or_identifying_substring_reaches_any_byte[file-clean-sarif]
+FAILED tests/sentry/test_ci_output_isolation.py::test_no_canary_or_identifying_substring_reaches_any_byte[file-clean-markdown]
+FAILED tests/sentry/test_ci_output_isolation.py::test_no_canary_or_identifying_substring_reaches_any_byte[file-finding-json]
+FAILED tests/sentry/test_ci_output_isolation.py::test_no_canary_or_identifying_substring_reaches_any_byte[file-finding-sarif]
+FAILED tests/sentry/test_ci_output_isolation.py::test_no_canary_or_identifying_substring_reaches_any_byte[file-finding-markdown]
+FAILED tests/sentry/test_ci_output_isolation.py::test_no_canary_or_identifying_substring_reaches_any_byte[file-refused-json]
+FAILED tests/sentry/test_ci_output_isolation.py::test_no_canary_or_identifying_substring_reaches_any_byte[file-refused-sarif]
+FAILED tests/sentry/test_ci_output_isolation.py::test_no_canary_or_identifying_substring_reaches_any_byte[file-refused-markdown]
+FAILED tests/sentry/test_ci_output_isolation.py::test_no_canary_or_identifying_substring_reaches_any_byte[file-partial-json]
+FAILED tests/sentry/test_ci_output_isolation.py::test_no_canary_or_identifying_substring_reaches_any_byte[file-partial-sarif]
+FAILED tests/sentry/test_ci_output_isolation.py::test_no_canary_or_identifying_substring_reaches_any_byte[file-partial-markdown]
+FAILED tests/sentry/test_ci_output_isolation.py::test_no_canary_or_identifying_substring_reaches_any_byte[verbose-stdout-clean-json]
+FAILED tests/sentry/test_ci_output_isolation.py::test_no_canary_or_identifying_substring_reaches_any_byte[verbose-stdout-clean-sarif]
+FAILED tests/sentry/test_ci_output_isolation.py::test_no_canary_or_identifying_substring_reaches_any_byte[verbose-stdout-clean-markdown]
+FAILED tests/sentry/test_ci_output_isolation.py::test_no_canary_or_identifying_substring_reaches_any_byte[verbose-stdout-finding-json]
+FAILED tests/sentry/test_ci_output_isolation.py::test_no_canary_or_identifying_substring_reaches_any_byte[verbose-stdout-finding-sarif]
+FAILED tests/sentry/test_ci_output_isolation.py::test_no_canary_or_identifying_substring_reaches_any_byte[verbose-stdout-finding-markdown]
+FAILED tests/sentry/test_ci_output_isolation.py::test_no_canary_or_identifying_substring_reaches_any_byte[verbose-stdout-refused-json]
+FAILED tests/sentry/test_ci_output_isolation.py::test_no_canary_or_identifying_substring_reaches_any_byte[verbose-stdout-refused-sarif]
+FAILED tests/sentry/test_ci_output_isolation.py::test_no_canary_or_identifying_substring_reaches_any_byte[verbose-stdout-refused-markdown]
+FAILED tests/sentry/test_ci_output_isolation.py::test_no_canary_or_identifying_substring_reaches_any_byte[verbose-stdout-partial-json]
+FAILED tests/sentry/test_ci_output_isolation.py::test_no_canary_or_identifying_substring_reaches_any_byte[verbose-stdout-partial-sarif]
+FAILED tests/sentry/test_ci_output_isolation.py::test_no_canary_or_identifying_substring_reaches_any_byte[verbose-stdout-partial-markdown]
+FAILED tests/sentry/test_ci_output_isolation.py::test_no_canary_or_identifying_substring_reaches_any_byte[verbose-file-clean-json]
+FAILED tests/sentry/test_ci_output_isolation.py::test_no_canary_or_identifying_substring_reaches_any_byte[verbose-file-clean-sarif]
+FAILED tests/sentry/test_ci_output_isolation.py::test_no_canary_or_identifying_substring_reaches_any_byte[verbose-file-clean-markdown]
+FAILED tests/sentry/test_ci_output_isolation.py::test_no_canary_or_identifying_substring_reaches_any_byte[verbose-file-finding-json]
+FAILED tests/sentry/test_ci_output_isolation.py::test_no_canary_or_identifying_substring_reaches_any_byte[verbose-file-finding-sarif]
+FAILED tests/sentry/test_ci_output_isolation.py::test_no_canary_or_identifying_substring_reaches_any_byte[verbose-file-finding-markdown]
+FAILED tests/sentry/test_ci_output_isolation.py::test_no_canary_or_identifying_substring_reaches_any_byte[verbose-file-refused-json]
+FAILED tests/sentry/test_ci_output_isolation.py::test_no_canary_or_identifying_substring_reaches_any_byte[verbose-file-refused-sarif]
+FAILED tests/sentry/test_ci_output_isolation.py::test_no_canary_or_identifying_substring_reaches_any_byte[verbose-file-refused-markdown]
+FAILED tests/sentry/test_ci_output_isolation.py::test_no_canary_or_identifying_substring_reaches_any_byte[verbose-file-partial-json]
+FAILED tests/sentry/test_ci_output_isolation.py::test_no_canary_or_identifying_substring_reaches_any_byte[verbose-file-partial-sarif]
+FAILED tests/sentry/test_ci_output_isolation.py::test_no_canary_or_identifying_substring_reaches_any_byte[verbose-file-partial-markdown]
+FAILED tests/sentry/test_ci_output_isolation.py::test_exception_prose_is_never_echoed
+FAILED tests/sentry/test_ci_output_isolation.py::test_debug_log_flag_is_hidden_from_help_and_the_cli_reference
+FAILED tests/sentry/test_ci_output_isolation.py::test_debug_log_flag_is_never_passed_by_any_shipped_artifact
+FAILED tests/sentry/test_ci_output_isolation.py::test_debug_log_is_only_created_when_explicitly_given_and_never_reaches_streams
+FAILED tests/sentry/test_ci_output_isolation.py::test_debug_log_refuses_stdout_and_the_report_path
+ERROR tests/unit/test_ci_manifest.py
+ERROR tests/unit/test_ci_locations.py
+ERROR tests/unit/test_ci_reporting.py
+
+113 failed, 1 passed, 3 errors in 97.01s (0:01:37)
