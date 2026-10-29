@@ -460,16 +460,54 @@ def test_installer_rolls_back_on_post_swap_failure(tmp_path, monkeypatch, keypai
     assert layout.version_dir("0.2.0").exists()  # new runtime kept for inspection
 
 
-def test_upgrade_managed_home_detection(monkeypatch):
-    """`decoy upgrade` recognizes a managed runtime by its own interpreter prefix
-    (<home>/versions/<ver>/python), independent of DECOY_HOME, and refuses a pip/dev
-    install (no `versions` ancestor)."""
+def _managed_layout(root: Path, slot: str = "0.3.0") -> Path:
+    """A precise bundle layout: <home>/versions/<slot>/{python,manifest.json} + `current`."""
+    home = root / ".decoy"
+    (home / "versions" / slot / "python").mkdir(parents=True)
+    (home / "versions" / slot / manifest_mod.MANIFEST_NAME).write_text("{}", encoding="utf-8")
+    layout.atomic_point_current_at(slot, home)
+    return home
+
+
+def test_upgrade_managed_home_detection(monkeypatch, tmp_path):
+    """A managed runtime is the exact bundle layout + identity, not an ancestor name."""
     from decoy.cli import upgrade
 
-    monkeypatch.setattr(sys, "prefix", "/opt/x/.decoy/versions/0.3.0/python")
-    assert upgrade._managed_home() == Path("/opt/x/.decoy")
+    home = _managed_layout(tmp_path)
+    monkeypatch.setattr(sys, "prefix", str(home / "versions" / "0.3.0" / "python"))
+    assert upgrade._managed_home() == home.resolve()
     monkeypatch.setattr(sys, "prefix", "/usr")
     assert upgrade._managed_home() is None
+
+
+def test_pyenv_prefix_is_not_managed(monkeypatch, tmp_path):
+    prefix = tmp_path / ".pyenv" / "versions" / "3.12.7"
+    prefix.mkdir(parents=True)
+    monkeypatch.setattr(sys, "prefix", str(prefix))
+    assert layout.managed_home() is None
+    # Even a pyenv-shaped path with a python dir and a stray `current` is not a bundle.
+    (tmp_path / ".pyenv" / "versions" / "3.12.7" / "python").mkdir()
+    monkeypatch.setattr(sys, "prefix", str(prefix / "python"))
+    assert layout.managed_home() is None
+
+
+def test_venv_nested_in_a_bundle_or_unmarked_slot_is_not_managed(monkeypatch, tmp_path):
+    home = _managed_layout(tmp_path)
+    nested = home / "versions" / "0.3.0" / "python" / "dev-venv"
+    nested.mkdir()
+    monkeypatch.setattr(sys, "prefix", str(nested))
+    assert layout.managed_home() is None
+    # Right shape but no bundle manifest => not a Decoy bundle.
+    (home / "versions" / "0.3.0" / manifest_mod.MANIFEST_NAME).unlink()
+    monkeypatch.setattr(sys, "prefix", str(home / "versions" / "0.3.0" / "python"))
+    assert layout.managed_home() is None
+
+
+def test_unmarked_home_without_current_is_not_managed(monkeypatch, tmp_path):
+    home = _managed_layout(tmp_path)
+    (home / "current").unlink()
+    monkeypatch.setattr(sys, "prefix", str(home / "versions" / "0.3.0" / "python"))
+    assert layout.managed_home() is None
 
 
 def test_verify_extracted_flags_problems(tmp_path, keypair):
@@ -849,6 +887,46 @@ def test_same_version_force_post_swap_failure_preserves_runtime(tmp_path, monkey
     versions = layout.versions_dir(home)
     slots = [d.name for d in versions.iterdir() if d.is_dir() and not d.name.startswith(".")]
     assert slots == ["0.1.0"]
+
+
+def test_failed_validation_with_absent_current_never_deletes_the_active_slot(tmp_path, monkeypatch, keypair):
+    """An interrupted FIRST install leaves versions/0.1.0 with NO `current`. A repair then
+    flips to a fresh slot; if validation fails there is no previous runtime to restore, so
+    the failed slot must not be deleted while `current` still points at it (dangling link +
+    a false "intact" message). `current` goes back to absent and retained bits survive."""
+    key, pub = keypair
+    monkeypatch.setenv("DECOY_HOME", str(tmp_path / "home"))
+    home = layout.decoy_home()
+    doc_bytes, doc_sig = _install_0_1_0(home, key, pub, tmp_path / "serve")
+    (layout.version_dir("0.1.0", home) / "LIVE_MARK").write_text("retained bits")
+    (home / "current").unlink()
+
+    with pytest.raises(installer.InstallError) as ei:
+        _reinstall_0_1_0(home, pub, doc_bytes, doc_sig, post_swap=lambda cur: False)
+
+    msg = str(ei.value)
+    assert "inactive" in msg and "intact" not in msg and "rolled back" not in msg
+    link = home / "current"
+    assert not link.is_symlink() and not link.exists()  # absent, not dangling
+    assert (layout.version_dir("0.1.0", home) / "LIVE_MARK").read_text() == "retained bits"
+    for d in layout.versions_dir(home).iterdir():
+        if d.is_dir() and not d.name.startswith("."):
+            assert d.exists()
+
+
+def test_failed_first_install_leaves_no_live_runtime_and_keeps_bits(tmp_path, monkeypatch, keypair):
+    key, pub = keypair
+    monkeypatch.setenv("DECOY_HOME", str(tmp_path / "home"))
+    home = layout.decoy_home()
+    doc_bytes, doc_sig = _install_0_1_0(home, key, pub, tmp_path / "serve")
+    import shutil as _sh
+
+    (home / "current").unlink()
+    _sh.rmtree(layout.version_dir("0.1.0", home))
+    with pytest.raises(installer.InstallError, match="inactive"):
+        _reinstall_0_1_0(home, pub, doc_bytes, doc_sig, post_swap=lambda cur: False)
+    assert not (home / "current").is_symlink()
+    assert layout.version_dir("0.1.0", home).is_dir()
 
 
 # ----------------------------------------------------- HIGH 4: Windows gated off matrix

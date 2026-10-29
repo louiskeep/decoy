@@ -370,6 +370,8 @@ def _managed_python(tmp_path: Path) -> Path:
 
     prefix = tmp_path / "home" / "versions" / "0.0.1" / "python"
     venv.EnvBuilder(with_pip=False).create(prefix)
+    (prefix.parent / "manifest.json").write_text("{}", encoding="utf-8")
+    layout.atomic_point_current_at("0.0.1", tmp_path / "home")
     site = next(prefix.glob("lib/python*/site-packages"))
     paths = {
         str(Path(decoy.__file__).resolve().parents[1]),
@@ -429,3 +431,77 @@ def test_selfcheck_result_shape_is_what_the_guard_consumes():
     assert runtime_guard.refusal_message(selfcheck.SelfCheckResult(True, "present-ok", "x")) is None
     msg = runtime_guard.refusal_message(selfcheck.SelfCheckResult(False, "native-unavailable", "boom"))
     assert msg and "boom" in msg
+
+
+def _enable_interactive_update_check(monkeypatch, tmp_path):
+    """Make the startup notice WOULD-fire: interactive, no opt-out, no cache, and a trap on
+    every network entry point so any probe fails the test loudly."""
+    from decoy import _update_check
+
+    monkeypatch.delenv("DECOY_NO_UPDATE_CHECK", raising=False)
+    monkeypatch.delenv("CI", raising=False)
+    monkeypatch.setenv("DECOY_HOME", str(tmp_path / "_cache_home"))
+    monkeypatch.setattr(_update_check, "_interactive", lambda: True)
+    touched: list[str] = []
+
+    def _trap(url, *a, **k):
+        touched.append(url)
+        raise AssertionError(f"network touched: {url}")
+
+    monkeypatch.setattr(_update_check, "_fetch_latest", _trap)
+    import urllib.request
+
+    monkeypatch.setattr(urllib.request, "urlopen", _trap)
+    return touched
+
+
+def _invoke_with_update_check(*args):
+    from typer.testing import CliRunner
+
+    from decoy.__main__ import app
+
+    return CliRunner().invoke(app, list(args))
+
+
+def test_placeholder_key_refuses_through_root_callback_with_update_check_enabled(monkeypatch, tmp_path):
+    from decoy.cli import upgrade as upg
+
+    touched = _enable_interactive_update_check(monkeypatch, tmp_path)
+    monkeypatch.delenv("DECOY_RELEASE_PUBKEY_FILE", raising=False)
+    monkeypatch.setattr(upg, "_managed_home", lambda: tmp_path)
+    monkeypatch.setattr(upg, "_fetch", lambda url: touched.append(url) or (_ for _ in ()).throw(AssertionError(url)))
+    _fake_probe(monkeypatch, _Status(True, True, "present-ok"))
+    res = _invoke_with_update_check("upgrade")
+    assert res.exit_code == EXIT_USAGE
+    assert "no pinned release key" in res.output
+    assert touched == []
+
+
+def test_local_rollback_through_root_callback_touches_no_network_first(monkeypatch, tmp_path):
+    from decoy.cli import upgrade as upg
+    from decoy.distribution import installer
+
+    touched = _enable_interactive_update_check(monkeypatch, tmp_path)
+    order: list[str] = []
+    monkeypatch.setenv("DECOY_RELEASE_PUBKEY_FILE", str(tmp_path / "k.pem"))
+    (tmp_path / "k.pem").write_text("pem", encoding="utf-8")
+    monkeypatch.setattr(upg, "_managed_home", lambda: tmp_path)
+    monkeypatch.setattr(upg, "_fetch", lambda url: touched.append(url) or (_ for _ in ()).throw(AssertionError(url)))
+    monkeypatch.setattr(installer, "local_version_present", lambda v, h: True)
+    out = installer.InstallOutcome(
+        version="0.1.0", target="linux-x86_64", version_dir=tmp_path, previous_version="0.2.0",
+        rolled_back=False, rollback_version=None,
+    )
+    monkeypatch.setattr(installer, "activate_local_version", lambda *a, **k: order.append("LOCAL_ACTIVATION") or out)
+    _fake_probe(monkeypatch, _Status(True, True, "present-ok"))
+    res = _invoke_with_update_check("upgrade", "--version", "0.1.0")
+    assert res.exit_code == 0, res.output
+    assert order == ["LOCAL_ACTIVATION"] and touched == []
+
+
+def test_startup_notice_suppressed_when_pinned_key_is_placeholder(monkeypatch, tmp_path):
+    touched = _enable_interactive_update_check(monkeypatch, tmp_path)
+    monkeypatch.delenv("DECOY_RELEASE_PUBKEY_FILE", raising=False)
+    monkeypatch.setattr(layout, "managed_home", lambda: None)
+    assert _invoke_with_update_check("info").exit_code == 0
+    assert touched == []

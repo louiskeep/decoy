@@ -465,11 +465,24 @@ def install_version(
             except Exception:
                 ok = False
             if not ok:
+                # Switch `current` away from the failed slot FIRST; only a slot that is no
+                # longer live may be deleted. With no previous runtime (an interrupted first
+                # install left `current` absent) there is nothing to flip back to, so restore
+                # the absent state by unlinking the symlink and keep whatever is retained.
                 if previous_slot is not None:
                     layout.atomic_point_current_at(previous_slot, home)
+                else:
+                    with contextlib.suppress(FileNotFoundError):
+                        layout.current_link(home).unlink()
                 same_version_repair = slot.name != version
-                if same_version_repair:
+                if same_version_repair and layout.read_current_slot(home) != slot.name:
                     shutil.rmtree(slot, ignore_errors=True)
+                if previous_slot is None:
+                    raise InstallError(
+                        f"post-install validation failed; the new runtime {version} was left "
+                        "inactive (there was no previous runtime to restore, so no runtime is "
+                        "live -- rerun `decoy upgrade --force` or the install script)."
+                    )
                 rolled_back = True
                 kept = (
                     f"restored the previous {version} runtime (the live runtime is intact)"
