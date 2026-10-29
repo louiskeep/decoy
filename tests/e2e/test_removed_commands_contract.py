@@ -34,8 +34,11 @@ REMOVED_ARGVS = [
 @pytest.mark.parametrize("argv", REMOVED_ARGVS, ids=[" ".join(a) for a in REMOVED_ARGVS])
 def test_removed_command_is_an_unknown_command(argv: list[str]) -> None:
     result = runner.invoke(app, argv)
-    assert result.exit_code != 0, f"{argv} unexpectedly succeeded"
+    assert result.exit_code == 2, f"{argv}: expected a clean usage exit, got {result.exit_code}"
     assert "no such command" in result.output.lower(), result.output
+    # A clean error, never a crash: no traceback and no uncaught exception.
+    assert "Traceback" not in result.output, result.output
+    assert result.exception is None or isinstance(result.exception, SystemExit)
 
 
 def test_explain_storm_topic_is_gone() -> None:

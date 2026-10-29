@@ -105,9 +105,10 @@ def test_scan_output_dash_streams_to_stdout(sample_csv: Path) -> None:
     result = runner.invoke(app, ["pre-scan", str(sample_csv), "--output", "-"])
     assert result.exit_code == 0, result.output
     payload = _json.loads(result.stdout)
-    # The streamed artifact is the engine's richer profile dict.
+    # The streamed artifact is the value-free projection, not the rich profile.
     assert payload["row_count"] == 5
-    assert payload["source_label"] == "sample.csv"
+    assert "source_label" not in payload
+    assert all("top_values" not in f for f in payload["fields"])
 
 
 # ---------------------------------------------------------------------------

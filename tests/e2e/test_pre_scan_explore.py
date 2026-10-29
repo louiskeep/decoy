@@ -163,7 +163,7 @@ def test_pre_scan_fields_csv_input_emits_scan_first_hint(tmp_path: Path):
     assert result.exit_code == 1
     # Error messages land on stderr; Click 8.2 stopped mixing into stdout.
     # `result.output` includes both streams.
-    assert "patients.csv" in result.output
+    assert "patients.csv" not in result.output  # paths are never echoed
     assert "raw data" in result.output
     # The hint includes the literal scan command the user should run.
     assert "decoy pre-scan" in result.output
@@ -201,8 +201,10 @@ def test_pre_scan_show_renders_field_card(scan_file: Path):
 def test_pre_scan_show_includes_top_values_table(scan_file: Path):
     result = runner.invoke(app, ["pre-scan", "show", str(scan_file), "first_name"])
     assert result.exit_code == 0
-    assert "Top values" in result.stdout
-    assert "Alice" in result.stdout
+    # Values stay in the saved file: `show` prints a value-free card.
+    assert "Top values" not in result.stdout
+    assert "Alice" not in result.stdout
+    assert "withheld" in result.stdout
 
 
 def test_pre_scan_show_includes_qi_membership(scan_file: Path):
@@ -215,8 +217,8 @@ def test_pre_scan_show_includes_qi_membership(scan_file: Path):
 def test_pre_scan_show_includes_sentinels_table(scan_file: Path):
     result = runner.invoke(app, ["pre-scan", "show", str(scan_file), "ssn"])
     assert result.exit_code == 0
-    assert "Sentinel" in result.stdout
-    assert "000-00-0000" in result.stdout
+    assert "Sentinels" in result.stdout
+    assert "000-00-0000" not in result.stdout
 
 
 def test_pre_scan_show_unknown_field_exits_with_did_you_mean(scan_file: Path):
@@ -255,7 +257,7 @@ def test_pre_scan_show_unknown_field_json_emits_error_envelope(scan_file: Path):
     payload = _json.loads(result.stdout)
     assert payload["command"] == "pre-scan show"
     assert payload["status"] == "error"
-    assert payload["field"] == "wat"
+    assert "field" not in payload  # the rejected value is never echoed
 
 
 def test_pre_scan_show_accepts_envelope_shape(tmp_path: Path):
@@ -288,6 +290,6 @@ def test_pre_scan_show_csv_input_emits_scan_first_hint(tmp_path: Path):
     result = runner.invoke(app, ["pre-scan", "show", str(csv), "first_name"])
     assert result.exit_code == 1
     # Error messages land on stderr; use combined output.
-    assert "patients.csv" in result.output
+    assert "patients.csv" not in result.output  # paths are never echoed
     assert "raw data" in result.output
     assert "decoy pre-scan" in result.output

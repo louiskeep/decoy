@@ -23,7 +23,9 @@ from pathlib import Path
 from typing import Any
 
 import typer
+from typer.core import TyperGroup
 
+from decoy.cli import _value_free as vf
 from decoy.cli._yaml_errors import sanitize_yaml_error
 from decoy.cli.exit_codes import EXIT_FINDINGS, EXIT_RUNTIME, EXIT_USAGE
 from decoy.ui.output import OutputMode, emit_json, setup_output
@@ -44,29 +46,9 @@ _INTEGRITY_NOTE = (
     "release decision or a guarantee that no sensitive data remains."
 )
 
-class _IntegrityUsageError(Exception):
-    """A bad-input failure whose message is already safe to print."""
-
-
-def _safe_error(exc: Exception) -> str:
-    """Describe an exception without echoing its message.
-
-    Engine, pandas and pydantic messages can embed raw cell values; only the
-    type name (and, for config validation, the offending field paths) is safe.
-    """
-    errors = getattr(exc, "errors", None)
-    if callable(errors):
-        try:
-            locs = sorted({".".join(str(p) for p in e.get("loc", ())) or "<root>" for e in errors()})
-        except Exception:
-            locs = []
-        if locs:
-            return f"{type(exc).__name__} at: {', '.join(locs)}"
-    return type(exc).__name__
-
-
 post_scan_app = typer.Typer(
     name="post-scan",
+    cls=vf.value_free_usage_errors(TyperGroup),
     help=(
         "Check a transformed output against its source: integrity (residual "
         "PII / FK / policy findings) and fidelity (distribution similarity). "
@@ -255,43 +237,25 @@ def _fidelity(
     import yaml as _yaml
 
     state = setup_output(json_, quiet, verbose)
-    source_str = str(source)
-    output_str = str(output)
 
-    def _emit_error(message: str) -> None:
-        if state.mode is OutputMode.json:
-            emit_json(
-                state,
-                {
-                    "command": "post-scan fidelity",
-                    "status": "error",
-                    "source": source_str,
-                    "output": output_str,
-                    "error": message,
-                },
-            )
-        elif state.mode is not OutputMode.quiet:
-            state.err_console.print(error("error:"), message)
+    def _fail(code: str, message: str, exit_code: int = EXIT_USAGE) -> None:
+        vf.fail(state, "post-scan fidelity", code, message, exit_code=exit_code)
 
     joint_pairs: list[tuple[str, str]] = []
     for spec in joint:
         parts = [p.strip() for p in spec.split(",") if p.strip()]
         if len(parts) != 2:
-            _emit_error(f"--joint expects 'colA,colB'; got {spec!r}.")
-            raise typer.Exit(code=EXIT_USAGE)
+            _fail(vf.CODE_USAGE, "--joint expects 'colA,colB'.")
         joint_pairs.append((parts[0], parts[1]))
 
     if min_grade is not None and min_score is not None:
-        _emit_error("specify only one of --min-grade / --min-score, not both.")
-        raise typer.Exit(code=EXIT_USAGE)
+        _fail(vf.CODE_USAGE, "specify only one of --min-grade / --min-score, not both.")
 
     if min_grade is not None and min_grade.upper() not in _GRADE_MIN_SCORE:
-        _emit_error(f"--min-grade must be one of A, B, C, D; got {min_grade!r}.")
-        raise typer.Exit(code=EXIT_USAGE)
+        _fail(vf.CODE_USAGE, "--min-grade must be one of A, B, C, D.")
 
     if mode not in ("report", "warn", "fail"):
-        _emit_error(f"--mode must be one of report, warn, fail; got {mode!r}.")
-        raise typer.Exit(code=EXIT_USAGE)
+        _fail(vf.CODE_USAGE, "--mode must be one of report, warn, fail.")
 
     strategy_map: dict[str, str] = {}
     if pipeline_config is not None:
@@ -302,25 +266,20 @@ def _fidelity(
             config_dict = PipelineConfig.model_validate(raw_cfg).model_dump()
         except _yaml.YAMLError as exc:
             # YAMLError carries the offending source line verbatim; sanitize it.
-            _emit_error(sanitize_yaml_error(exc))
-            raise typer.Exit(code=EXIT_USAGE)
+            _fail(vf.CODE_CONFIG_INVALID, sanitize_yaml_error(exc))
         except Exception as exc:
-            _emit_error(f"could not parse --config {pipeline_config}: {_safe_error(exc)}")
-            raise typer.Exit(code=EXIT_USAGE)
+            _fail(vf.CODE_CONFIG_INVALID, f"could not parse --config ({vf.exc_label(exc)}).")
         strategy_map = _build_strategy_map(config_dict)
 
     if policy is not None:
         try:
             policy_config = _yaml.safe_load(policy.read_text(encoding="utf-8")) or {}
         except _yaml.YAMLError as exc:
-            _emit_error(sanitize_yaml_error(exc))
-            raise typer.Exit(code=EXIT_USAGE)
+            _fail(vf.CODE_CONFIG_INVALID, sanitize_yaml_error(exc))
         except Exception as exc:
-            _emit_error(f"could not parse --policy {policy}: {_safe_error(exc)}")
-            raise typer.Exit(code=EXIT_USAGE)
+            _fail(vf.CODE_CONFIG_INVALID, f"could not parse --policy ({vf.exc_label(exc)}).")
         if not isinstance(policy_config, dict):
-            _emit_error(f"--policy {policy} must be a YAML/JSON mapping.")
-            raise typer.Exit(code=EXIT_USAGE)
+            _fail(vf.CODE_CONFIG_INVALID, "--policy must be a YAML/JSON mapping.")
     else:
         thresholds: dict[str, Any] = {}
         if min_score is not None:
@@ -335,13 +294,11 @@ def _fidelity(
     try:
         src_df = pd.read_csv(source)
     except Exception as exc:
-        _emit_error(f"could not read {source}: {_safe_error(exc)}")
-        raise typer.Exit(code=EXIT_USAGE)
+        _fail(vf.CODE_INPUT_UNREADABLE, f"could not read the source file ({vf.exc_label(exc)}).")
     try:
         out_df = pd.read_csv(output)
     except Exception as exc:
-        _emit_error(f"could not read {output}: {_safe_error(exc)}")
-        raise typer.Exit(code=EXIT_USAGE)
+        _fail(vf.CODE_INPUT_UNREADABLE, f"could not read the output file ({vf.exc_label(exc)}).")
 
     try:
         report = compute_quality_report(
@@ -353,8 +310,7 @@ def _fidelity(
         policy_result = apply_quality_policy(report, policy_config, strategy_map=strategy_map)
     except Exception as exc:
         # A measurement that could not run is a failure, never a clean pass.
-        _emit_error(f"fidelity measurement failed: {_safe_error(exc)}")
-        raise typer.Exit(code=EXIT_RUNTIME)
+        _fail(vf.CODE_CHECK_FAILED, f"fidelity measurement failed: {vf.exc_label(exc)}", EXIT_RUNTIME)
 
     if report_out is not None:
         report_out.write_text(
@@ -560,8 +516,9 @@ def _integrity(
     from decoy.ui.table import make_table
 
     state = setup_output(json_, quiet, verbose)
-    masked_str = str(masked)
-    source_str = str(source)
+
+    def _fail(code: str, message: str, exit_code: int = EXIT_USAGE) -> None:
+        vf.fail(state, "post-scan integrity", code, message, exit_code=exit_code)
 
     try:
         from decoy_engine.verification import run_post_mask
@@ -580,13 +537,14 @@ def _integrity(
             except _yaml.YAMLError as exc:
                 # The outer handler renders str(exc); a raw YAMLError there would
                 # echo the offending source line. Re-raise a pre-sanitized message.
-                raise _IntegrityUsageError(sanitize_yaml_error(exc)) from None
+                _fail(vf.CODE_CONFIG_INVALID, sanitize_yaml_error(exc))
             try:
                 config_dict = PipelineConfig.model_validate(raw).model_dump()
             except Exception as exc:
-                raise _IntegrityUsageError(
-                    f"could not validate --config {config.name}: {_safe_error(exc)}"
-                ) from None
+                _fail(
+                    vf.CODE_CONFIG_INVALID,
+                    f"could not validate --config ({vf.exc_label(exc)}).",
+                )
             # Pick the first declared table name. Mixed-mode configs
             # can declare multiple; the CLI verb today handles a single
             # source/masked pair, so we anchor on the first table the
@@ -605,9 +563,9 @@ def _integrity(
             ):
                 state.err_console.print(
                     hint("warning:"),
-                    f"--source {source_str} does not match pipeline "
-                    f"input.path {declared_path}; proceeding with --source "
-                    "as ground truth (suppress with --allow-source-mismatch).",
+                    "--source does not match the pipeline's declared input.path; "
+                    "proceeding with --source as ground truth "
+                    "(suppress with --allow-source-mismatch).",
                 )
         else:
             # No config: synthesize a minimal dict. The runner's
@@ -644,8 +602,6 @@ def _integrity(
                 {
                     "command": "post-scan integrity",
                     "status": "ok" if exit_code == 0 else "findings",
-                    "masked": masked_str,
-                    "source": source_str,
                     "note": _INTEGRITY_NOTE,
                     "report": report,
                 },
@@ -690,58 +646,11 @@ def _integrity(
     except typer.Exit:
         raise
     except FileNotFoundError:
-        error_text = "could not open an input file (not found)."
-        if state.mode is OutputMode.json:
-            emit_json(
-                state,
-                {
-                    "command": "post-scan integrity",
-                    "status": "error",
-                    "masked": masked_str,
-                    "source": source_str,
-                    "error": error_text,
-                },
-            )
-        elif state.mode is not OutputMode.quiet:
-            state.err_console.print(error("error:"), error_text)
-        raise typer.Exit(code=EXIT_USAGE)
-    except _IntegrityUsageError as exc:
-        if state.mode is OutputMode.json:
-            emit_json(
-                state,
-                {
-                    "command": "post-scan integrity",
-                    "status": "error",
-                    "masked": masked_str,
-                    "source": source_str,
-                    "error": str(exc),
-                },
-            )
-        elif state.mode is not OutputMode.quiet:
-            state.err_console.print(error("error:"), str(exc))
-        raise typer.Exit(code=EXIT_USAGE)
+        _fail(vf.CODE_INPUT_UNREADABLE, "could not open an input file (not found).")
     except Exception as exc:
-        # Type name only: engine/pandas messages can embed raw cell values.
-        error_text = f"integrity check failed: {type(exc).__name__}"
-        if state.mode is OutputMode.json:
-            emit_json(
-                state,
-                {
-                    "command": "post-scan integrity",
-                    "status": "error",
-                    "masked": masked_str,
-                    "source": source_str,
-                    "error": error_text,
-                },
-            )
-        elif state.mode is not OutputMode.quiet:
-            state.err_console.print(error("error:"), error_text)
-            state.err_console.print(
-                " ", hint("hint:"), "rerun with --verbose for the full traceback.",
-            )
-        if state.verbose:
-            state.err_console.print_exception()
-        raise typer.Exit(code=EXIT_RUNTIME)
+        # Type name only, no traceback even with --verbose: engine/pandas
+        # messages and frames can embed raw cell values.
+        _fail(vf.CODE_CHECK_FAILED, f"integrity check failed: {vf.exc_label(exc)}", EXIT_RUNTIME)
 
 
 post_scan_app.command(name="integrity", epilog=_INTEGRITY_EPILOG)(_integrity)
