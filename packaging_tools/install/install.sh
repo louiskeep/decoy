@@ -223,9 +223,25 @@ else
   verify_sig "$VDOC" "$VDOC.sig" "$PUBKEY" || die "version-document signature INVALID -- refusing (possible tampering)"
   info "version document signature verified"
 
+  # The signature only proves WHO signed it; refuse a document of any other schema, as
+  # `decoy upgrade` does (version_document.parse_document).
+  [ "$(json_top_string "$VDOC" schema_version)" = "cli-version-document/v1" ] \
+    || die "version document has an unexpected schema_version -- refusing"
+
   LATEST=$(json_top_string "$VDOC" latest)
   [ -n "$LATEST" ] || die "version document has no 'latest'"
   VERSION="${PIN_VERSION:-$LATEST}"
+  # Yank enforcement (parity with installer.install_version / is_yanked): a version the
+  # SIGNED document lists as yanked is refused, whether it is latest or an explicit pin.
+  # The version is constrained to a PEP 440-safe charset first so it is a literal in the
+  # membership test below, never a pattern.
+  case "$VERSION" in
+    ''|*[!0-9A-Za-z.+!_-]*) die "invalid version string: $VERSION" ;;
+  esac
+  YANKED_LIST=$(grep -o '"yanked":\[[^]]*\]' "$VDOC" | head -n1 || true)
+  case "$YANKED_LIST" in
+    *"\"$VERSION\""*) die "version $VERSION is yanked -- refusing" ;;
+  esac
 
   if [ "$VERSION" = "$LATEST" ]; then
     URL=$(json_artifact_field "$VDOC" "$TARGET" url)
@@ -240,6 +256,9 @@ else
     # anchor; the sidecar is only a best-effort corruption check and is skipped if its
     # fetch fails. "flipped byte refuses on checksum" is therefore a guarantee of the
     # latest path (signed checksum); on a pin, a flipped byte refuses on SIGNATURE.
+    # Likewise the offline DECOY_LOCAL_BUNDLE path has no version document: its mandatory
+    # .sha256 sidecar is unsigned corruption detection only, and yank status cannot be
+    # checked (no network by design) -- the pinned-key signature is still enforced.
     URL="$BASE_URL/$VERSION/decoy-$VERSION-$TARGET.tar.gz"
     SIGURL="$URL.sig"
     EXPECT_SHA=""
@@ -293,13 +312,10 @@ export PYTHONDONTWRITEBYTECODE=1
 #     shipped verifier.
 "$PYBIN" -I -B -m decoy.distribution.verify_extracted "$BUNDLE_ROOT" || die "bundle manifest verification FAILED -- refusing"
 
-# 3b) native-present self-check: LOUD refusal if the companion is missing/mismatched.
-"$PYBIN" -I -B -m decoy.distribution.selfcheck || die "native companion self-check FAILED -- refusing this install"
-
-# 3c) identity check (HIGH: a validly-signed but wrong-version/target bundle served at a
+# 3b) identity check (HIGH: a validly-signed but wrong-version/target bundle served at a
 #     pinned URL must NOT be installed as if it were the requested one). Compare the
 #     bundle's DECLARED version + target (BUNDLE_INFO.json, signed into the manifest)
-#     against what was requested, BEFORE any slot is created. A mismatch refuses, having
+#     against what was requested, BEFORE the bundle's interpreter runs its self-check and BEFORE any slot is created. A mismatch refuses, having
 #     laid down nothing.
 BINFO="$BUNDLE_ROOT/BUNDLE_INFO.json"
 [ -f "$BINFO" ] || die "bundle is missing BUNDLE_INFO.json; cannot verify its identity -- refusing"
@@ -312,6 +328,9 @@ DECLARED_TARGET=$(json_top_string "$BINFO" target)
 if [ "$VERSION" != "local" ]; then
   [ "$DECLARED_VERSION" = "$VERSION" ] || die "refusing: bundle declares version '$DECLARED_VERSION' but '$VERSION' was requested (resolution mismatch) -- versions/$VERSION left untouched"
 fi
+
+# 3c) native-present self-check: LOUD refusal if the companion is missing/mismatched.
+"$PYBIN" -I -B -m decoy.distribution.selfcheck || die "native companion self-check FAILED -- refusing this install"
 
 # 4) place the fresh runtime + flip `current` + write the PATH launcher, all under the SAME
 #    per-installation lock `decoy upgrade` takes (decoy.distribution.lock), so a bootstrap

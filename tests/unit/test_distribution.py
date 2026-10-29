@@ -1303,13 +1303,13 @@ def test_overlapping_repairs_are_single_flight_and_never_delete_the_live_slot(tm
             str(tmp_path / "doc.json"), str(tmp_path / "doc.sig")]
     ready, release = tmp_path / "a_ready", tmp_path / "a_release"
 
-    a = sp.Popen(base + [str(ready), str(release)], stdout=sp.PIPE, stderr=sp.PIPE, text=True)
+    a = sp.Popen([*base, str(ready), str(release)], stdout=sp.PIPE, stderr=sp.PIPE, text=True)
     try:
         _wait_for(ready)
         a_slot = _assert_working_runtime(home)
         assert a_slot != "0.1.0"  # A is flipped to its repair slot, original still retained
 
-        b = sp.run(base + ["-", "-"], capture_output=True, text=True)
+        b = sp.run([*base, "-", "-"], capture_output=True, text=True)
         assert b.returncode == 3 and "in progress" in b.stdout, b.stdout + b.stderr
         with pytest.raises(installer.InstallError, match="in progress"):
             installer.activate_local_version("0.1.0", home=home, expected_public_pem=pub, run_self_check=False)
@@ -1330,7 +1330,7 @@ def test_overlapping_repairs_are_single_flight_and_never_delete_the_live_slot(tm
     assert [d.name for d in layout.versions_dir(home).iterdir()] == [live]
 
     # Once A is done the lock is free: B's repair now succeeds and still leaves one runtime.
-    b2 = sp.run(base + ["-", "-"], capture_output=True, text=True)
+    b2 = sp.run([*base, "-", "-"], capture_output=True, text=True)
     assert b2.returncode == 0, b2.stdout + b2.stderr
     assert layout.slot_version(_assert_working_runtime(home)) == "0.1.0"
 

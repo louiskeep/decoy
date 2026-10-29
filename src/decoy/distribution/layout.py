@@ -54,6 +54,27 @@ def current_link(home: Path | None = None) -> Path:
     return (home or decoy_home()) / "current"
 
 
+def managed_home() -> Path | None:
+    """The managed-runtime home IFF this interpreter is a bundled-runtime interpreter.
+
+    A managed interpreter lives at ``<home>/versions/<slot>/python``, so it locates its own
+    home from ``sys.prefix`` (nearest ancestor named ``versions`` -> its parent). Deriving
+    it from the running interpreter, not ``DECOY_HOME``, keeps a custom-home install
+    working when the env var is unset. None for a pip/dev install (no ``versions``
+    ancestor), which is what keeps the pip/dev import contract separate from the managed
+    run-time guard."""
+    import sys
+
+    try:
+        prefix = Path(sys.prefix).resolve()
+    except OSError:
+        return None
+    for anc in prefix.parents:
+        if anc.name == "versions":
+            return anc.parent
+    return None
+
+
 def cache_dir(home: Path | None = None) -> Path:
     return (home or decoy_home()) / "cache"
 

@@ -81,6 +81,7 @@ def _version_callback(value: bool) -> None:
 
 @app.callback()
 def _root(
+    ctx: typer.Context,
     version: bool = typer.Option(
         False,
         "--version",
@@ -103,6 +104,15 @@ def _root(
     # stderr and never affects a command's result. Imported lazily so a bare
     # `import decoy` / `--version` pays nothing for it.
     from decoy import _update_check
+    from decoy.cli.exit_codes import EXIT_RUNTIME
+    from decoy.distribution import runtime_guard
+
+    # Managed runtime only: a companion removed or ABI-mismatched after install is a loud
+    # refusal at run time too, not just at install (`upgrade` stays runnable to repair it).
+    refusal = runtime_guard.enforce(ctx.invoked_subcommand)
+    if refusal is not None:
+        typer.echo(f"decoy: {refusal}", err=True)
+        raise typer.Exit(code=EXIT_RUNTIME)
 
     _update_check.maybe_print_notice(suppress=no_update_check)
 
