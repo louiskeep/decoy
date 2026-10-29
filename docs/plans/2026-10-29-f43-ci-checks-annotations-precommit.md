@@ -370,7 +370,8 @@ exit_code = one of 0..5 from decoy.cli.exit_codes
 checks[] = {id, kind, status, reason_code, finding_count}
 findings[] = {
   rule_id, level(error|warning|note), safe_message_id,
-  check_id, optional SourceLocation(uri,start_line,start_column,end_line,end_column)
+  check_id, optional SourceLocation(uri,start_line,start_column,end_line,end_column),
+  fingerprint_inputs = {rule_id, normalized_repo_relative_path?, logical_config_path?}
 }
 ```
 
@@ -380,8 +381,9 @@ findings[] = {
 - validates `rule_id`, `check_id`, and `safe_message_id` against bounded token grammars;
 - maps `safe_message_id` to fixed authored text such as “Selected validation rule failed” or
   “Configured sensitive pattern matched staged content”;
-- accepts only repository-relative URI plus positive numeric region; and
-- sorts/deduplicates by `(check_id, rule_id, uri, line, column)`.
+- accepts only repository-relative URI plus positive numeric region;
+- sorts/deduplicates by `(check_id, rule_id, uri, line, column)`; and
+- derives a stable, value-free fingerprint from `(rule_id, normalized repo-relative path, logical config path)` for `partialFingerprints`, so a finding tracks across line moves; the fingerprint inputs are tokens/paths only and carry no scalar value.
 
 Adapters may retain raw messages only inside their existing direct-command renderer. The F43
 adapter passes code, severity, and logical path to the safe factory and discards raw prose before
@@ -395,9 +397,15 @@ SARIF projection:
 
 - root `$schema` is the official OASIS Errata 01 schema URI; `version` is `2.1.0`; one run;
 - `tool.driver.name = "Decoy"`, `semanticVersion` is the installed CLI version, and
-  `rules[]` is the sorted unique rule registry for this run;
+  `rules[]` is the sorted unique rule registry for this run: EVERY `ruleId` used by a result
+  MUST have a matching `rules[]` object carrying `id` (equal to the `ruleId`) and
+  `shortDescription.text` derived from its `safe_message_id`. A result whose `ruleId` has no
+  `rules[]` entry is a build-failing projection error, since SARIF 2.1.0 requires the rule to be
+  defined in the driver;
 - each finding becomes one result with `ruleId`, mapped SARIF `level`, fixed
-  `message.text`, and at most one location;
+  `message.text`, a `partialFingerprints` map with a versioned primary key (`primary/v1`)
+  computed from the finding's value-free fingerprint inputs (so code-scanning tools track an
+  alert across line moves instead of churning it as new/fixed), and at most one location;
 - `artifactLocation.uri` is percent-encoded repository-relative POSIX form. Do not emit an
   absolute `file://` URI, workspace path, `uriBaseId` requiring a leaked base, or path outside
   the repository;
@@ -407,6 +415,13 @@ SARIF projection:
   exception objects, and attachments; and
 - clean execution still emits a schema-valid run with `results: []`. SARIF output format does
   not change the process exit selected by the runner.
+
+Debuggability escape hatch (never on the safe path): a hidden `--unsafe-debug-log PATH` may write
+a separate, unstructured text file with raw exception and subprocess prose for local diagnosis. It
+is never written to stdout/stderr, is never emitted as a CI-template artifact, and the CLI help and
+docs warn prominently that its contents are unsafe, may contain secrets or sample values, and must
+not be parsed or uploaded. This keeps the single safe `SafeFinding`/`SafeCiReport` boundary intact
+so a developer diagnosing an orchestration failure is never tempted to weaken it.
 
 ### 4.3 Outcome and exit aggregation
 
@@ -491,7 +506,12 @@ mocked past the boundary it claims to prove.
    assert exact repo-relative URI, `ruleId`, start line, and start column. Move the bad key in a
    second fixture and assert the region moves. Assert there is no snippet. When F16 supplies a real
    policy-ID finding, add the MASTER forbidden-strategy fixture to this same oracle; do not mock F16
-   in F43.
+   in F43. **Location-free case:** trigger a real engine finding that has no provable logical path
+   (for example a global/config-level error), run `--format sarif`, and assert the run stays
+   schema-valid and that finding's `result` either omits `locations` entirely or emits
+   `locations: []`, never a `locations` entry with a missing `physicalLocation`. Assert the same
+   result still carries valid `partialFingerprints` and that its `ruleId` has a matching
+   `tool.driver.rules[]` entry.
 3. **Exit matrix** (`tests/e2e/test_ci_exit_codes.py`): real clean validation -> 0/`ok`; staged-only
    manifest with no staged matching file -> 0/`noop`; real evidence mismatch or staged hit ->
    4/`findings`; one clean check followed by a forced real Git/runtime failure -> 3/`partial`;
@@ -782,3 +802,30 @@ Code gates are deliberately **Codex first, then Opus-4.8 Dennis, then owner** on
 The pinned guarantee and non-goals bound review. A request to add F12's runner, F16 policy evaluation,
 F18 composition, a Marketplace action, automatic upload/commenting, regex/entropy scanning, or another CI
 vendor is a new reviewed plan, not remediation under F43 v1.
+
+## 12. Gemini plan-gate (2026-10-29): GO-WITH-FIXES, fixes folded
+
+Gemini (google/gemini-2.5-pro) reviewed the plan against the MASTER contract. Verdict GO-WITH-FIXES:
+1 BLOCKER, 2 HIGH, 1 MEDIUM, 1 LOW. All folded (Opus, with provenance):
+
+- **BLOCKER (SARIF `rules[]` population), §4.2:** the plan named the `rules[]` registry but did not
+  require every `ruleId` to have a matching `tool.driver.rules[]` object. Folded: each `ruleId` MUST
+  have a `rules[]` entry carrying `id` + `shortDescription.text` (from `safe_message_id`); a result with
+  an undefined rule is a build-failing projection error. SARIF 2.1.0 requires it.
+- **HIGH (stable fingerprints), §4.2:** no `partialFingerprints`, so alerts churn as new/fixed on line
+  moves. Folded: `SafeFinding` carries value-free `fingerprint_inputs = {rule_id, normalized
+  repo-relative path, logical config path}`; the SARIF projector emits a versioned `primary/v1`
+  `partialFingerprints`.
+- **HIGH (location-free acceptance test), §5 item 2:** only the positive-location case was tested.
+  Folded: added a location-free case asserting a real no-logical-path finding yields schema-valid SARIF
+  with `locations` omitted or `[]` (never a `locations` entry missing `physicalLocation`), plus valid
+  `partialFingerprints` and a matching `rules[]` entry.
+- **MEDIUM (debuggability escape hatch), §4.2:** the strict value-free boundary left no diagnosis path,
+  tempting future boundary-weakening. Folded: a hidden `--unsafe-debug-log PATH` writing a separate
+  unstructured file, never stdout/stderr, never a CI artifact, with a loud unsafe warning.
+- **LOW (pre-commit mode-override notice):** forcing `validation.mode=config` in pre-commit was silent.
+  Folded: when a context forces a narrowing override, emit a human-readable `note` in the report and a
+  `stderr` message ("Running in pre-commit mode; validation narrowed from 'full' to 'config'...") when
+  not writing a machine-readable format to stdout.
+
+Opus-4.8 Dennis repo-grounded plan gate is next.
