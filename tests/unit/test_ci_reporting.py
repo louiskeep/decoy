@@ -107,7 +107,7 @@ def test_a_raw_exception_cannot_stand_in_for_a_token() -> None:
         "",
         "a\\b.yaml",
         "https://example.invalid/x",
-        "a b.yaml\n",
+        "a\u0000b.yaml",
     ],
 )
 def test_locations_must_be_repo_relative_posix(uri: str) -> None:
