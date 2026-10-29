@@ -427,3 +427,24 @@ def test_the_command_is_registered_and_hidden_state_free():
     res = runner.invoke(app, ["local-cleanup", "--help"])
     assert res.exit_code == 0 and "--execute" in res.stdout and "--manifest" in res.stdout
     assert "--force" not in res.stdout and "--yes" not in res.stdout
+
+
+def test_preview_works_without_dir_fd_support_and_still_refuses_symlinks(
+    run, monkeypatch, tmp_path
+):
+    """Platforms without dir_fd/O_NOFOLLOW (e.g. Windows) keep a READ-ONLY preview; execution refuses."""
+    monkeypatch.setattr(lc.io, "safe_open_supported", lambda: False)
+    rep = report(run.invoke("--json"))
+    assert rep["counts"]["eligible"] == 2
+    victim = tmp_path / "victim.txt"
+    victim.write_text("precious")
+    run.a.unlink()
+    os.symlink(victim, run.a)
+    rep = report(run.invoke("--json"))
+    assert rep["counts"]["eligible"] == 1 and "retain_identity_mismatch" in rep["reason_counts"]
+    d = rep["digest"]
+    res = run.invoke(
+        "--execute", "--confirm-digest", d, "--owner-token", "t", "--json", env={lc.TOKEN_ENV: "t"}
+    )
+    assert res.exit_code == 13 and report(res)["refusal"] == "refused_unsafe_platform"
+    assert victim.read_text() == "precious" and run.b.exists()

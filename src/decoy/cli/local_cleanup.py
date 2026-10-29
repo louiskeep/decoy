@@ -13,6 +13,10 @@ recomputed from disk at execution time, so ANY change since the preview (content
 a symlink swap) changes the digest and refuses. Each file is then re-opened without following
 symlinks, compared, and unlinked relative to its parent descriptor.
 
+Trust model: the manifest is the file owner's own evidence. Its hash is an UNKEYED integrity check
+(it catches accidental edits, not a tamperer who recomputes it), so the exact-content, exact-inode and
+allowed-root checks above, not the manifest alone, are what bound the blast radius.
+
 Dry-run-then-force with a content-addressed digest follows git-clean; the contract (reason and exit
 codes, report schema) is the engine's, shared with the platform sweeper.
 """
@@ -112,10 +116,12 @@ def build_inventory(manifest_path: Path, roots: list[Path], max_files: int):
     if not isinstance(outputs, dict):
         return [], {}, False, R.REFUSED_MANIFEST_INVALID, mhash
     protected = _protected(manifest, manifest_path)
+    safe = io.safe_open_supported()
     root_fds: list[int] = []
     try:
-        for r in roots:
-            root_fds.append(io.open_root(r))
+        if safe:
+            for r in roots:
+                root_fds.append(io.open_root(r))
     except OSError:
         for fd in root_fds:
             os.close(fd)
@@ -161,7 +167,9 @@ def build_inventory(manifest_path: Path, roots: list[Path], max_files: int):
                 retain(R.RETAIN_UNREGISTERED)  # not beneath an allowed root: not ours to touch
                 continue
             idx, parts = hit
-            state, ident = io.probe(root_fds[idx], parts)
+            state, ident = (
+                io.probe(root_fds[idx], parts) if safe else io.probe_path(roots[idx], parts)
+            )
             if state is io.Probe.ABSENT:
                 retain(R.RETAIN_IDENTITY_MISMATCH)
             elif state is io.Probe.UNREADABLE:
@@ -176,7 +184,7 @@ def build_inventory(manifest_path: Path, roots: list[Path], max_files: int):
                 retain(R.RETAIN_IDENTITY_MISMATCH, ident.size)  # two outputs naming one file
             else:
                 seen.add((ident.dev, ident.ino))
-                rst = os.fstat(root_fds[idx])
+                rst = os.fstat(root_fds[idx]) if safe else os.stat(roots[idx])
                 token = json.dumps(
                     [
                         ident.sha256,

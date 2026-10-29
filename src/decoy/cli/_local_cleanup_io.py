@@ -50,7 +50,11 @@ class Identity:
 
 def _flags() -> tuple[int, int]:
     base = getattr(os, "O_CLOEXEC", 0)
-    return base | os.O_NOFOLLOW | os.O_DIRECTORY | os.O_RDONLY, base | os.O_NOFOLLOW | os.O_RDONLY
+    nofollow = getattr(os, "O_NOFOLLOW", 0)
+    return (
+        base | nofollow | getattr(os, "O_DIRECTORY", 0) | os.O_RDONLY,
+        base | nofollow | os.O_RDONLY,
+    )
 
 
 def open_root(root: Path) -> int:
@@ -100,6 +104,35 @@ def read_identity(fd: int) -> Identity | None:
     while chunk := os.read(fd, _CHUNK):
         h.update(chunk)
     return Identity(st.st_dev, st.st_ino, st.st_size, st.st_mtime_ns, h.hexdigest())
+
+
+def probe_path(root: Path, parts: tuple[str, ...]) -> tuple[Probe, Identity | None]:
+    """READ-ONLY fallback for platforms without ``dir_fd``/``O_NOFOLLOW`` (preview only; execution
+    refuses there). Every component is ``lstat``-ed and a symlink anywhere is a mismatch."""
+    cur = Path(os.path.realpath(root))
+    try:
+        for name in parts[:-1]:
+            cur = cur / name
+            st = os.lstat(cur)
+            if not stat.S_ISDIR(st.st_mode):
+                return Probe.MISMATCH, None
+        target = cur / parts[-1]
+        st = os.lstat(target)
+        if not stat.S_ISREG(st.st_mode) or st.st_nlink != 1:
+            return Probe.MISMATCH, None
+        h = hashlib.sha256()
+        with open(target, "rb") as fh:
+            while chunk := fh.read(_CHUNK):
+                h.update(chunk)
+        return Probe.MATCH, Identity(
+            st.st_dev, st.st_ino, st.st_size, st.st_mtime_ns, h.hexdigest()
+        )
+    except FileNotFoundError:
+        return Probe.ABSENT, None
+    except PermissionError:
+        return Probe.UNREADABLE, None
+    except OSError:
+        return Probe.MISMATCH, None
 
 
 def probe(root_fd: int, parts: tuple[str, ...]) -> tuple[Probe, Identity | None]:
