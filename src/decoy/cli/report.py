@@ -6,17 +6,15 @@ arguments reference). There is no run catalog or workspace.
 
   show      -- Summarize one evidence manifest (the union card) or render a file.
   render    -- Write an HTML or Markdown report to a file.
-  verify    -- Re-hash the recorded files and report fingerprint drift.
-  fidelity  -- Recompute distribution fidelity between a source and an output.
-  integrity -- Verify a masked file against its pre-mask source (post-mask checks).
+  verify    -- Re-hash the recorded files and report fingerprint drift (an
+               artifact fingerprint check, not a data-privacy check).
   diff      -- Compare two manifests: fingerprints always, data when files exist.
   vault     -- Inspect a vault file written by `decoy run --vault`.
 
 S4b (CLI redesign) folded the former `report summarize` + `report compare`,
-the `evidence` verbs (show/verify), the `validate` distribution check, the
-`storm` integrity check, and `vault info` into this one noun. The relocated
-bodies are reused verbatim; their engine deps stay lazy-imported inside each
-body.
+the `evidence` verbs (show/verify), and `vault info` into this one noun. The
+output data checks (integrity, fidelity) live under `decoy post-scan`
+(`decoy.cli.post_scan`), not here.
 
 RAW-VALUE ISOLATION (Dennis review note, cli-first-capability-guide.md L534-538):
 
@@ -27,10 +25,10 @@ RAW-VALUE ISOLATION (Dennis review note, cli-first-capability-guide.md L534-538)
   The manifest renderers accept a manifest DICT and render it. They do NOT:
     - Read source or output CSV files from disk.
     - Embed raw cell/row values in any report.
-    - Render full STORM profiles or raw diagnostic values.
+    - Render full Pre-scan profiles or raw diagnostic values.
 
   What is intentionally excluded is stated in each report footer so reviewers
-  know the omission is deliberate. (`fidelity`/`integrity` DO read the data
+  know the omission is deliberate. (`decoy post-scan` checks DO read the data
   files they are pointed at, by design -- they report aggregate metrics only.)
 """
 
@@ -45,16 +43,9 @@ import typer
 
 from decoy.cli._yaml_errors import sanitize_yaml_error
 from decoy.cli.evidence import _render_manifest_card, verify_manifest
-from decoy.cli.exit_codes import EXIT_FINDINGS, EXIT_RUNTIME, EXIT_USAGE
+from decoy.cli.exit_codes import EXIT_FINDINGS, EXIT_USAGE
 from decoy.ui.output import OutputMode, OutputState, emit_json, setup_output
-from decoy.ui.theme import accent, code, error, hint, info, risk_high, success, warn
-
-# Grade -> minimum overall_score, mirroring the engine's own grade thresholds
-# (decoy_engine.quality.report._GRADE_THRESHOLDS: A >= 0.95, B >= 0.85,
-# C >= 0.70, D >= 0.50). Moved verbatim with the `fidelity` body from
-# validate.py (S4b): the engine maps score -> grade but exposes no reverse
-# (grade -> score) helper, so `--min-grade` needs its own copy of the table.
-_GRADE_MIN_SCORE: dict[str, float] = {"A": 0.95, "B": 0.85, "C": 0.70, "D": 0.50}
+from decoy.ui.theme import accent, code, error, hint, info, success, warn
 
 # ---------------------------------------------------------------------------
 # Typer app registration
@@ -63,9 +54,10 @@ _GRADE_MIN_SCORE: dict[str, float] = {"A": 0.95, "B": 0.85, "C": 0.70, "D": 0.50
 report_app = typer.Typer(
     name="report",
     help=(
-        "The post-run surface: show / render / verify / fidelity / integrity / "
-        "diff / vault. Operates on files -- evidence manifests produced by "
-        "`decoy run --evidence-out` plus the source/output data they reference."
+        "The post-run surface: show / render / verify / diff / vault. Operates "
+        "on files -- evidence manifests produced by `decoy run --evidence-out` "
+        "plus the source/output data they reference. Output data checks live "
+        "under `decoy post-scan`."
     ),
     no_args_is_help=True,
 )
@@ -625,7 +617,7 @@ What the report includes:
   row counts, masking strategies (names only), node timings, and warnings.
 
 What the report intentionally excludes:
-  Raw row values, PII samples, STORM profile internals, diagnostic values.
+  Raw row values, PII samples, Pre-scan profile internals, diagnostic values.
   The evidence manifest records strategy names and fingerprints only; the
   report renders that safe subset.
 
@@ -666,7 +658,7 @@ def _render(
     """Render an evidence manifest to an HTML or Markdown report file.
 
     The report is built from the manifest only (evidence-safe). Raw row
-    values, PII, and STORM profile internals are never included.
+    values, PII, and Pre-scan profile internals are never included.
 
     HTML output is self-contained and offline-capable (no CDN/external JS).
     Markdown output is plain text.
@@ -1448,7 +1440,7 @@ What verify checks:
 
 What verify does NOT check:
   - Whether the output was produced by the declared pipeline.
-  - Data correctness or masking quality.
+  - Data correctness, masking quality, or privacy (see `decoy post-scan`).
   - Platform audit logs, RBAC, or schedule history.
   - Network, vault, or secrets accessibility.
 
@@ -1490,8 +1482,9 @@ def _verify(
     Exits 0 when all fingerprints match (no drift). Exits non-zero
     (EXIT_FINDINGS) when any fingerprint has changed.
 
-    Distinct from `report integrity` (post-mask residual-PII / FK / policy on
-    a masked file plus `--source`): verify is manifest fingerprint-drift.
+    Distinct from `decoy post-scan integrity` (post-mask residual-PII / FK /
+    policy on a masked file plus `--source`): verify is an artifact
+    fingerprint check only. It says nothing about privacy.
 
     Integrity limit: manifest_hash is an UNKEYED SHA-256 check. It detects
     accidental drift (file changes since the run), NOT a motivated tamperer
@@ -1549,639 +1542,6 @@ def _verify(
         "drift, not adversarial edits. Keyed signing is platform R4 territory.",
     )
     raise typer.Exit(code=EXIT_FINDINGS)
-
-
-# ---------------------------------------------------------------------------
-# CLI: report fidelity SOURCE OUTPUT  (relocated from the `validate` group)
-# ---------------------------------------------------------------------------
-
-_FIDELITY_EPILOG = """\
-Examples:
-
-  decoy report fidelity source.csv output.csv
-    Recompute distribution fidelity between a pre-mask source and its
-    masked output. Report mode (record only): always exits 0.
-
-  decoy report fidelity source.csv output.csv --config pipeline.yaml
-    Pass the pipeline config so intentional loss (hash, bucketize, ...)
-    is not flagged as accidental drift.
-
-  decoy report fidelity source.csv synthetic.csv --generate
-    Row counts are expected to differ (synthetic generation, not masking).
-
-  decoy report fidelity source.csv output.csv --mode fail --min-grade B
-    Exit non-zero (EXIT_FINDINGS) when the overall grade falls below B.
-
-  decoy report fidelity source.csv output.csv --joint state,tier --json
-    Include a (state, tier) joint fidelity score; emit the full
-    quality-report/v1 + policy JSON.
-
-  decoy report fidelity source.csv output.csv --report-out report.json
-    Also write the full report + policy verdict to disk.
-
-Exit codes: 0 pass (or warn without --fail-on-warning); 4 EXIT_FINDINGS
-when the policy verdict is fail, or warn with --fail-on-warning set;
-1 EXIT_USAGE for bad input (missing columns, unreadable CSV, bad flags).
-
-See also: decoy report integrity, decoy fit, decoy run.
-"""
-
-
-def _build_strategy_map(config_dict: dict[str, Any]) -> dict[str, str]:
-    """Flatten column -> strategy across every declared table.
-
-    Mirrors the evidence manifest's strategy-summary loop
-    (`decoy.cli.evidence.build_manifest`). `report fidelity` checks a single
-    source/output CSV pair, not a specific table, so this assumes column names
-    are unique across the pipeline's declared tables; a multi-table config
-    with a repeated column name lets the last table's strategy win. Acceptable
-    for the v1 single source/output scope (D4).
-    """
-    strategy_map: dict[str, str] = {}
-    for table in config_dict.get("tables") or []:
-        if not isinstance(table, dict):
-            continue
-        for col in table.get("columns") or []:
-            if isinstance(col, dict) and col.get("name"):
-                strategy_map[col["name"]] = col.get("strategy", "")
-        for gen_col in table.get("generate_columns") or []:
-            if isinstance(gen_col, dict) and gen_col.get("name"):
-                strategy_map[gen_col["name"]] = "generate"
-    return strategy_map
-
-
-def _fidelity(
-    source: Path = typer.Argument(
-        ...,
-        exists=True,
-        dir_okay=False,
-        readable=True,
-        help="Pre-mask / pre-generate source CSV (ground truth).",
-    ),
-    output: Path = typer.Argument(
-        ...,
-        exists=True,
-        dir_okay=False,
-        readable=True,
-        help="Post-mask / post-generate output CSV to check.",
-    ),
-    joint: list[str] = typer.Option(
-        [],
-        "--joint",
-        help="Column pair 'a,b' to also score jointly (repeatable).",
-    ),
-    generate: bool = typer.Option(
-        False,
-        "--generate",
-        help=(
-            "Output is synthetic generation, not masking: row counts may "
-            "legitimately differ (sets expect_row_parity=False). Default "
-            "assumes masking (row parity expected)."
-        ),
-    ),
-    pipeline_config: Path | None = typer.Option(
-        None,
-        "--config",
-        exists=True,
-        dir_okay=False,
-        readable=True,
-        help=(
-            "Pipeline YAML naming each column's strategy, so intentional "
-            "loss (hash, bucketize, faker, ...) is not flagged as accidental "
-            "drift. Without it, per-column policy checks run on defaults only."
-        ),
-    ),
-    policy: Path | None = typer.Option(
-        None,
-        "--policy",
-        exists=True,
-        dir_okay=False,
-        readable=True,
-        help=(
-            "A quality-policy config (YAML or JSON: mode / thresholds / "
-            "strategy_expectations) overriding --mode / --min-grade / --min-score."
-        ),
-    ),
-    mode: str = typer.Option(
-        "report",
-        "--mode",
-        help=(
-            "report (record only, verdict always pass) | warn (violations "
-            "promote verdict to warn) | fail (violations promote verdict to "
-            "fail). Ignored when --policy sets its own mode."
-        ),
-    ),
-    min_grade: str | None = typer.Option(
-        None,
-        "--min-grade",
-        help="Shorthand: minimum letter grade (A/B/C/D) the overall score must reach.",
-    ),
-    min_score: float | None = typer.Option(
-        None,
-        "--min-score",
-        help="Shorthand: minimum overall_score in [0, 1].",
-    ),
-    fail_on_warning: bool = typer.Option(
-        False,
-        "--fail-on-warning",
-        help="Also exit non-zero (EXIT_FINDINGS) when the policy verdict is 'warn'.",
-    ),
-    report_out: Path | None = typer.Option(
-        None,
-        "--report-out",
-        help="Write the full quality-report/v1 + policy JSON to this path.",
-    ),
-    json_: bool = typer.Option(
-        False,
-        "--json",
-        help="Emit the full quality-report/v1 + policy result as JSON.",
-    ),
-    quiet: bool = typer.Option(
-        False,
-        "--quiet",
-        "-q",
-        help="Suppress stdout. Exit code carries the result.",
-    ),
-    verbose: bool = typer.Option(
-        False,
-        "--verbose",
-        "-v",
-        help="Enable debug-level CLI logs on stderr.",
-    ),
-) -> None:
-    """Recompute distribution fidelity between a source and an output CSV.
-
-    Wraps `decoy_engine.quality.compute_quality_report` +
-    `apply_quality_policy` (report.py:97, policy.py:142): the engine owns
-    every metric and the letter grade; this command computes no fidelity
-    number itself. Reads both CSVs fresh on every invocation (pure,
-    repeatable) -- the CLI's local evidence manifest records file
-    fingerprints but not the raw frames, so recomputing from the two files
-    is the only honest source for this number (BF1).
-
-    Exit codes: 0 when the policy verdict is 'pass' (or 'warn' without
-    --fail-on-warning); EXIT_FINDINGS (4) when the verdict is 'fail', or
-    'warn' with --fail-on-warning set. This mirrors `report integrity`'s
-    exit-code contract -- a data-audit verb that reports findings, not a run
-    that crashed -- rather than EXIT_RUNTIME (reserved for the CLI/engine
-    blowing up unexpectedly).
-    """
-    import yaml as _yaml
-
-    state = setup_output(json_, quiet, verbose)
-    source_str = str(source)
-    output_str = str(output)
-
-    def _emit_error(message: str) -> None:
-        if state.mode is OutputMode.json:
-            emit_json(
-                state,
-                {
-                    "command": "report fidelity",
-                    "status": "error",
-                    "source": source_str,
-                    "output": output_str,
-                    "error": message,
-                },
-            )
-        elif state.mode is not OutputMode.quiet:
-            state.err_console.print(error("error:"), message)
-
-    joint_pairs: list[tuple[str, str]] = []
-    for spec in joint:
-        parts = [p.strip() for p in spec.split(",") if p.strip()]
-        if len(parts) != 2:
-            _emit_error(f"--joint expects 'colA,colB'; got {spec!r}.")
-            raise typer.Exit(code=EXIT_USAGE)
-        joint_pairs.append((parts[0], parts[1]))
-
-    if min_grade is not None and min_score is not None:
-        _emit_error("specify only one of --min-grade / --min-score, not both.")
-        raise typer.Exit(code=EXIT_USAGE)
-
-    if min_grade is not None and min_grade.upper() not in _GRADE_MIN_SCORE:
-        _emit_error(f"--min-grade must be one of A, B, C, D; got {min_grade!r}.")
-        raise typer.Exit(code=EXIT_USAGE)
-
-    if mode not in ("report", "warn", "fail"):
-        _emit_error(f"--mode must be one of report, warn, fail; got {mode!r}.")
-        raise typer.Exit(code=EXIT_USAGE)
-
-    strategy_map: dict[str, str] = {}
-    if pipeline_config is not None:
-        from decoy_engine import PipelineConfig
-
-        try:
-            raw_cfg = _yaml.safe_load(pipeline_config.read_text(encoding="utf-8"))
-            config_dict = PipelineConfig.model_validate(raw_cfg).model_dump()
-        except _yaml.YAMLError as exc:
-            # YAMLError carries the offending source line verbatim; sanitize it.
-            _emit_error(sanitize_yaml_error(exc))
-            raise typer.Exit(code=EXIT_USAGE)
-        except Exception as exc:
-            _emit_error(f"could not parse --config {pipeline_config}: {exc}")
-            raise typer.Exit(code=EXIT_USAGE)
-        strategy_map = _build_strategy_map(config_dict)
-
-    if policy is not None:
-        try:
-            policy_config = _yaml.safe_load(policy.read_text(encoding="utf-8")) or {}
-        except _yaml.YAMLError as exc:
-            _emit_error(sanitize_yaml_error(exc))
-            raise typer.Exit(code=EXIT_USAGE)
-        except Exception as exc:
-            _emit_error(f"could not parse --policy {policy}: {exc}")
-            raise typer.Exit(code=EXIT_USAGE)
-        if not isinstance(policy_config, dict):
-            _emit_error(f"--policy {policy} must be a YAML/JSON mapping.")
-            raise typer.Exit(code=EXIT_USAGE)
-    else:
-        thresholds: dict[str, Any] = {}
-        if min_score is not None:
-            thresholds["overall"] = {"min": min_score}
-        elif min_grade is not None:
-            thresholds["overall"] = {"min": _GRADE_MIN_SCORE[min_grade.upper()]}
-        policy_config = {"mode": mode, "thresholds": thresholds}
-
-    import pandas as pd
-    from decoy_engine.quality import apply_quality_policy, compute_quality_report
-
-    try:
-        src_df = pd.read_csv(source)
-    except Exception as exc:
-        _emit_error(f"could not read {source}: {exc}")
-        raise typer.Exit(code=EXIT_USAGE)
-    try:
-        out_df = pd.read_csv(output)
-    except Exception as exc:
-        _emit_error(f"could not read {output}: {exc}")
-        raise typer.Exit(code=EXIT_USAGE)
-
-    report = compute_quality_report(
-        src_df,
-        out_df,
-        joint_columns=joint_pairs or None,
-        expect_row_parity=not generate,
-    )
-    policy_result = apply_quality_policy(report, policy_config, strategy_map=strategy_map)
-
-    if report_out is not None:
-        report_out.write_text(
-            _json.dumps({**report, "policy": policy_result}, indent=2),
-            encoding="utf-8",
-        )
-
-    verdict = policy_result["verdict"]
-    status = "ok" if verdict == "pass" else verdict
-
-    if state.mode is OutputMode.json:
-        envelope = dict(report)
-        envelope["command"] = "report fidelity"
-        envelope["status"] = status
-        envelope["policy"] = policy_result
-        emit_json(state, envelope)
-    elif state.mode is not OutputMode.quiet:
-        _render_fidelity_report(state, report, policy_result)
-
-    if verdict == "fail" or (verdict == "warn" and fail_on_warning):
-        raise typer.Exit(code=EXIT_FINDINGS)
-
-
-def _render_fidelity_report(
-    state: Any,
-    report: dict[str, Any],
-    policy_result: dict[str, Any],
-) -> None:
-    """Human-readable rendering of a quality-report/v1 + policy result."""
-    from decoy.ui.table import make_table
-
-    grade = report.get("grade", "unavailable")
-    overall = report.get("overall_score")
-    overall_str = f"{overall:.3f}" if isinstance(overall, (int, float)) else "n/a"
-    verdict = policy_result.get("verdict", "pass")
-
-    if verdict == "pass":
-        verdict_text = success(verdict.upper())
-    elif verdict == "warn":
-        verdict_text = warn(verdict.upper())
-    else:
-        verdict_text = error(verdict.upper())
-    state.console.print(verdict_text, f"grade {grade}  overall_score {overall_str}")
-
-    columns = report.get("marginal", {}).get("columns", [])
-    if columns:
-        table = make_table("Column", "Comparable", "Similarity", title="Marginal fidelity")
-        for col in columns:
-            if not isinstance(col, dict):
-                continue
-            sim = col.get("similarity")
-            sim_str = f"{sim:.3f}" if isinstance(sim, (int, float)) else "n/a"
-            table.add_row(
-                str(col.get("column", "?")),
-                "yes" if col.get("comparable") else "no",
-                sim_str,
-            )
-        state.console.print(table)
-
-    joints = report.get("pairwise", {}).get("joints", [])
-    if joints:
-        table = make_table("Joint", "Comparable", "Similarity", title="Pairwise fidelity")
-        for j in joints:
-            if not isinstance(j, dict):
-                continue
-            sim = j.get("similarity")
-            sim_str = f"{sim:.3f}" if isinstance(sim, (int, float)) else "n/a"
-            table.add_row(
-                "x".join(j.get("columns", [])),
-                "yes" if j.get("comparable") else "no",
-                sim_str,
-            )
-        state.console.print(table)
-
-    violations = policy_result.get("violations", [])
-    if violations:
-        table = make_table("Check", "Column", "Expected", "Actual", title="Policy violations")
-        for v in violations:
-            table.add_row(
-                str(v.get("check", "?")),
-                str(v.get("column", "-")),
-                str(v.get("expected", "-")),
-                str(v.get("actual", "-")),
-            )
-        state.console.print(table)
-    elif verdict == "pass":
-        state.console.print(success("OK"), "no policy violations.")
-
-
-# ---------------------------------------------------------------------------
-# CLI: report integrity MASKED --source SRC  (relocated from the `storm` group)
-# ---------------------------------------------------------------------------
-
-_INTEGRITY_EPILOG = """\
-Examples:
-
-  decoy report integrity masked.csv --source source.csv
-    Run all three post-mask checks (residual_pii + fk_preservation +
-    policy_validation) against a masked file with its pre-mask
-    baseline as ground truth. Render a Rich findings table.
-
-  decoy report integrity masked.csv --source source.csv --config pipeline.yaml
-    Same, but load the pipeline YAML so policy_validation can
-    compare against the configured masks. Without --config the
-    runner still produces residual_pii findings; policy_validation
-    is reduced to "no config provided" notes.
-
-  decoy report integrity masked.csv --source source.csv --json > report.json
-    Pipe the full JobStormReport-shaped JSON for downstream tooling.
-
-  decoy report integrity masked.csv --source source.csv --output report.json
-    Write JSON to file + render a Rich summary on stderr.
-
-Exit codes: 0 clean (no fail/error findings); 4 EXIT_FINDINGS (one
-or more fail-severity findings); 1 EXIT_USAGE for missing files;
-3 EXIT_RUNTIME for unexpected exceptions.
-
-See also: decoy report verify, decoy report fidelity, decoy explain exit-codes.
-"""
-
-
-def _integrity(
-    masked: Path = typer.Argument(
-        ...,
-        exists=True,
-        dir_okay=False,
-        readable=True,
-        help="Path to the masked CSV to verify.",
-    ),
-    source: Path = typer.Option(
-        ...,
-        "--source",
-        exists=True,
-        dir_okay=False,
-        readable=True,
-        help="Pre-mask source CSV (ground truth for the integrity check).",
-    ),
-    config: Path | None = typer.Option(
-        None,
-        "--config",
-        exists=True,
-        dir_okay=False,
-        readable=True,
-        help=(
-            "Optional pipeline.yaml. When passed, policy_validation can "
-            "compare against the configured masks. Without it the runner "
-            "still produces residual_pii + fk_preservation findings."
-        ),
-    ),
-    out: Path | None = typer.Option(
-        None,
-        "--output",
-        "-o",
-        help=(
-            "Write the JobStormReport JSON to this path. The Rich table "
-            "still renders to stderr."
-        ),
-    ),
-    allow_source_mismatch: bool = typer.Option(
-        False,
-        "--allow-source-mismatch",
-        help=(
-            "Suppress the stderr warning when --source does not match "
-            "the pipeline's declared sources block."
-        ),
-    ),
-    json_: bool = typer.Option(
-        False,
-        "--json",
-        help="Emit the full JobStormReport JSON to stdout. No card.",
-    ),
-    quiet: bool = typer.Option(
-        False, "--quiet", "-q", help="Suppress stdout. Errors still go to stderr."
-    ),
-    verbose: bool = typer.Option(
-        False, "--verbose", "-v", help="Enable debug-level CLI logs on stderr."
-    ),
-) -> None:
-    """Verify a masked file's integrity against its pre-mask source.
-
-    Wraps `decoy_engine.storm.postmask.run_storm_post_mask`. Runs the
-    three post-mask check buckets (residual_pii, fk_preservation,
-    policy_validation) the platform's mask job already runs when
-    `run_storm: true` is declared in the pipeline; this verb lets the
-    CLI user run the same checks standalone.
-
-    Distinct from `report verify` (manifest fingerprint-drift): integrity is
-    post-mask residual-PII / FK / policy on a masked file plus --source.
-
-    Exit codes: 0 clean; 4 EXIT_FINDINGS on any fail-severity finding;
-    1 EXIT_USAGE for missing files; 3 EXIT_RUNTIME for unexpected
-    exceptions.
-    """
-    import pandas as pd
-
-    from decoy.ui.table import make_table
-
-    state = setup_output(json_, quiet, verbose)
-    masked_str = str(masked)
-    source_str = str(source)
-
-    try:
-        from decoy_engine.storm.postmask import run_storm_post_mask
-
-        source_df = pd.read_csv(source)
-        masked_df = pd.read_csv(masked)
-
-        config_dict: dict
-        table_name: str
-        if config is not None:
-            import yaml as _yaml
-            from decoy_engine import PipelineConfig
-
-            try:
-                raw = _yaml.safe_load(config.read_text(encoding="utf-8"))
-            except _yaml.YAMLError as exc:
-                # The outer handler renders str(exc); a raw YAMLError there would
-                # echo the offending source line. Re-raise a pre-sanitized message.
-                raise ValueError(sanitize_yaml_error(exc)) from None
-            config_dict = PipelineConfig.model_validate(raw).model_dump()
-            # Pick the first declared table name. Mixed-mode configs
-            # can declare multiple; the CLI verb today handles a single
-            # source/masked pair, so we anchor on the first table the
-            # pipeline declared and warn if the user passed a source
-            # that points elsewhere.
-            tables = config_dict.get("tables") or []
-            table_name = tables[0]["name"] if tables else masked.stem
-            declared_sources = config_dict.get("sources") or {}
-            declared_path = None
-            if table_name in declared_sources:
-                declared_path = declared_sources[table_name].get("path")
-            if (
-                declared_path
-                and not allow_source_mismatch
-                and Path(declared_path).resolve() != source.resolve()
-            ):
-                state.err_console.print(
-                    hint("warning:"),
-                    f"--source {source_str} does not match pipeline "
-                    f"input.path {declared_path}; proceeding with --source "
-                    "as ground truth (suppress with --allow-source-mismatch).",
-                )
-        else:
-            # No config: synthesize a minimal dict. The runner's
-            # residual_pii + policy_validation branches degrade
-            # gracefully when relationships + sources + tables are
-            # absent (verified against
-            # decoy_engine.storm.postmask.runner docstring +
-            # tests/unit/storm/test_postmask_runner.py).
-            table_name = masked.stem
-            config_dict = {
-                "version": 1,
-                "global_settings": {"seed": 0},
-                "sources": {},
-                "tables": [],
-                "targets": {},
-                "relationships": [],
-            }
-
-        report = run_storm_post_mask(
-            source_frames={table_name: source_df},
-            output_frames={table_name: masked_df},
-            config=config_dict,
-        )
-
-        if out is not None:
-            out.write_text(_json.dumps(report, indent=2))
-
-        # Decide exit code based on the report's severity counters.
-        fail_count = int(report.get("fail_count") or 0)
-        error_count = int(report.get("error_count") or 0)
-        exit_code = EXIT_FINDINGS if (fail_count + error_count) > 0 else 0
-
-        if state.mode is OutputMode.json:
-            emit_json(
-                state,
-                {
-                    "command": "report integrity",
-                    "status": "ok" if exit_code == 0 else "findings",
-                    "masked": masked_str,
-                    "source": source_str,
-                    "report": report,
-                },
-            )
-        elif state.mode is not OutputMode.quiet:
-            # Render a 3-row summary table; the per-finding detail
-            # lives in the JSON payload (--json or --output).
-            table = make_table("Bucket", "Findings", "Severities", title="Storm integrity")
-            for bucket in ("residual_pii", "fk_preservation", "policy_validation"):
-                findings = report.get(bucket) or []
-                if not findings:
-                    table.add_row(bucket, "0", success("clean"))
-                    continue
-                sevs: dict[str, int] = {}
-                for f in findings:
-                    sev = (f.get("severity") if isinstance(f, dict) else None) or "info"
-                    sevs[sev] = sevs.get(sev, 0) + 1
-                sev_text = ", ".join(f"{k}:{v}" for k, v in sorted(sevs.items()))
-                table.add_row(bucket, str(len(findings)), sev_text)
-            state.console.print(table)
-            counters = (
-                f"pass={report.get('pass_count', 0)}  "
-                f"warning={report.get('warning_count', 0)}  "
-                f"fail={fail_count}  "
-                f"error={error_count}"
-            )
-            state.console.print(counters)
-            if exit_code == 0:
-                state.console.print(success("OK"), "no fail or error findings.")
-            else:
-                state.console.print(
-                    risk_high("FINDINGS"),
-                    f"{fail_count + error_count} fail/error findings; review the report.",
-                )
-
-        if exit_code != 0:
-            raise typer.Exit(code=exit_code)
-
-    except typer.Exit:
-        raise
-    except FileNotFoundError as exc:
-        if state.mode is OutputMode.json:
-            emit_json(
-                state,
-                {
-                    "command": "report integrity",
-                    "status": "error",
-                    "masked": masked_str,
-                    "source": source_str,
-                    "error": str(exc),
-                },
-            )
-        elif state.mode is not OutputMode.quiet:
-            state.err_console.print(error("error:"), str(exc))
-        raise typer.Exit(code=EXIT_USAGE)
-    except Exception as exc:
-        error_text = str(exc)
-        if len(error_text) > 500:
-            error_text = error_text[:500] + "..."
-        if state.mode is OutputMode.json:
-            emit_json(
-                state,
-                {
-                    "command": "report integrity",
-                    "status": "error",
-                    "masked": masked_str,
-                    "source": source_str,
-                    "error": error_text,
-                },
-            )
-        elif state.mode is not OutputMode.quiet:
-            state.err_console.print(error("error:"), error_text)
-            state.err_console.print(
-                " ", hint("hint:"), "rerun with --verbose for the full traceback.",
-            )
-        if state.verbose:
-            state.err_console.print_exception()
-        raise typer.Exit(code=EXIT_RUNTIME)
 
 
 # ---------------------------------------------------------------------------
@@ -2358,8 +1718,6 @@ def _vault(
 report_app.command(name="show", epilog=_SHOW_EPILOG)(_show)
 report_app.command(name="render", epilog=_RENDER_EPILOG)(_render)
 report_app.command(name="verify", epilog=_VERIFY_EPILOG)(_verify)
-report_app.command(name="fidelity", epilog=_FIDELITY_EPILOG)(_fidelity)
-report_app.command(name="integrity", epilog=_INTEGRITY_EPILOG)(_integrity)
 report_app.command(name="diff", epilog=_DIFF_EPILOG)(_diff)
 report_app.command(name="vault", epilog=_VAULT_EPILOG)(_vault)
 

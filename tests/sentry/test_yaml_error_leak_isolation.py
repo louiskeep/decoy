@@ -27,7 +27,7 @@ runner = CliRunner()
 # A distinctive marker on an unterminated YAML flow sequence: the `[` makes
 # safe_load raise a YAMLError whose snippet quotes this whole line.
 _SENTINEL = "YAMLLEAK_SENTINEL_" + "Z" * 12
-_BAD_YAML = f"version: 1\napi_password: [{_SENTINEL}\n"
+_BAD_YAML = f"version: 2\napi_password: [{_SENTINEL}\n"
 _WIDE_ENV = {"COLUMNS": "10000"}  # stop Rich truncating the sentinel mid-string
 
 
@@ -48,14 +48,14 @@ _COMMANDS: dict[str, Callable[[str, str, str], list[str]]] = {
     "subset": lambda cfg, src, out: ["subset", cfg, "--dry-run", "--json"],
     "unmask": lambda cfg, src, out: ["unmask", cfg, out, "--json"],
     "run": lambda cfg, src, out: ["run", cfg, "--json"],
-    "report fidelity --config": lambda cfg, src, out: [
-        "report", "fidelity", src, out, "--config", cfg, "--json"
+    "post-scan fidelity --config": lambda cfg, src, out: [
+        "post-scan", "fidelity", src, out, "--config", cfg, "--json"
     ],
-    "report fidelity --policy": lambda cfg, src, out: [
-        "report", "fidelity", src, out, "--policy", cfg, "--json"
+    "post-scan fidelity --policy": lambda cfg, src, out: [
+        "post-scan", "fidelity", src, out, "--policy", cfg, "--json"
     ],
-    "report integrity --config": lambda cfg, src, out: [
-        "report", "integrity", out, "--source", src, "--config", cfg, "--json"
+    "post-scan integrity --config": lambda cfg, src, out: [
+        "post-scan", "integrity", out, "--source", src, "--config", cfg, "--json"
     ],
     "report vault --config": lambda cfg, src, out: [
         "report", "vault", out, "--config", cfg, "--json"

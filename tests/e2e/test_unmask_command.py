@@ -113,7 +113,7 @@ def _pipeline(tmp_path: Path, *, seed: int = 42) -> Path:
         }
     ).to_csv(src, index=False)
     cfg = {
-        "version": 1,
+        "version": 2,
         "global_settings": {"seed": seed},
         "sources": {"accounts": {"type": "file", "format": "csv", "path": str(src)}},
         "tables": [
@@ -287,7 +287,7 @@ class TestUnmaskVaultError:
         src = tmp_path / "accounts.csv"
         pd.DataFrame({"ssn": ["123-45-6789"]}).to_csv(src, index=False)
         cfg = {
-            "version": 1,
+            "version": 2,
             "global_settings": {"seed": 42},
             "sources": {"accounts": {"type": "file", "format": "csv", "path": str(src)}},
             "tables": [
@@ -529,7 +529,7 @@ def _multitable_cfg(tmp_path: Path) -> tuple[Path, Path]:
     ).to_csv(src, index=False)
     masked = tmp_path / "acc.masked.csv"
     cfg = {
-        "version": 1,
+        "version": 2,
         "global_settings": {"seed": 42},
         "sources": {"accounts": {"type": "file", "format": "csv", "path": str(src)}},
         "tables": [
@@ -599,7 +599,7 @@ class TestUnmaskSummaryIsCompleteCensus:
         # matches (so no key-mismatch error) but no masked value is a key in it.
         def _cfg(src: Path, out: Path) -> dict:
             return {
-                "version": 1,
+                "version": 2,
                 "global_settings": {"seed": 42},
                 "sources": {
                     "accounts": {"type": "file", "format": "csv", "path": str(src)}

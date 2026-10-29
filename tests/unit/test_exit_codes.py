@@ -24,7 +24,7 @@ from decoy.cli import exit_codes
 
 def test_named_constants_have_pinned_integer_values() -> None:
     """Pin the integer-value contract: 0/1/2/3/4/5 are stable across releases.
-    OSS.4b (2026-06-02) added EXIT_FINDINGS=4 for `decoy storm integrity`.
+    OSS.4b (2026-06-02) added EXIT_FINDINGS=4 for `decoy post-scan integrity`.
     The OOM checker v1 (2026-07-24) added EXIT_CAPACITY=5. S2 (2026-10-23)
     promoted code 2 to the public EXIT_WARNINGS -- it was already returned by
     validate/preflight under --fail-on-warning, so S1's "reserved/unused" doc

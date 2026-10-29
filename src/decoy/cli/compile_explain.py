@@ -26,7 +26,7 @@ pipeline config and what the compile checks verified. It does NOT guarantee:
   - all PII is covered or masked correctly
   - the output is safe to share
 
-Use `decoy scan` to inspect the source data before writing a pipeline,
+Use `decoy pre-scan` to inspect the source data before writing a pipeline,
 and `decoy validate config` for schema-only config validation.
 
 Reuses the engine's compile_plan path. Does NOT reimplement compilation.
@@ -70,12 +70,12 @@ HONESTY: compile --explain explains decisions declared in the config and what th
 compiler verified. It does not guarantee the strategy is correct for the data,
 that all PII is covered, or that the output is safe to share.
 
-See also: decoy validate, decoy validate config, decoy scan.
+See also: decoy validate, decoy validate config, decoy pre-scan.
 """
 
 # Rationale templates: strategies come from explicit user declarations in the
 # config. The engine does NOT auto-assign strategies (the old FORECAST recommender
-# was retired under storm-reframe-C, 2026-05-30). The compile checks then VERIFY
+# was retired, 2026-05-30). The compile checks then VERIFY
 # the declared config (provider exists, namespaces consistent, etc.) but do not
 # change any decisions.
 _RATIONALE_DECLARED = "declared in pipeline config"
@@ -274,7 +274,7 @@ def compile(
                 "Strategies are declared in the pipeline config by the user. "
                 "compile --explain verifies those declarations; it does not "
                 "guarantee the strategy is correct for the data or that all PII "
-                "is covered. Use decoy scan to inspect source data."
+                "is covered. Use decoy pre-scan to inspect source data."
             )
         emit_json(state, payload)
         return
@@ -436,7 +436,7 @@ def _render_explain(state, tables_info: list[dict], plan) -> None:
         "It does not guarantee the strategy is correct for the data, "
         "that all PII is covered, or that the output is safe to share. "
         "Use",
-        code("decoy scan"),
+        code("decoy pre-scan"),
         "to inspect source data first.",
     )
 

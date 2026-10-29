@@ -3,7 +3,7 @@
 CLI.2 commit 1 (2026-06-02): rewritten against the V2 PipelineConfig
 choke point. Pre-rewrite the file exercised V1 graph YAML + V1
 `masking_rules` shapes; both are dead under the V2 clean break (S22 /
-storm-reframe-C) and the validator now hard-rejects them. The new
+) and the validator now hard-rejects them. The new
 cells verify (a) a minimal valid V2 PipelineConfig passes, (b) V1
 graph YAML exits 1 with a typed PipelineValidationError, (c) V1
 `masking_rules` configs exit 1 (no `version: 1`), (d) malformed YAML
@@ -38,7 +38,7 @@ def _valid_v2_mask_config(tmp_path: Path) -> dict:
     src = tmp_path / "in.csv"
     pd.DataFrame({"customer_id": ["1", "2"], "name": ["a", "b"]}).to_csv(src, index=False)
     return {
-        "version": 1,
+        "version": 2,
         "global_settings": {"seed": 42},
         "sources": {
             "customers": {"type": "file", "format": "csv", "path": str(src)},
@@ -221,7 +221,7 @@ class TestConfigOnlyPlanChecks:
         import yaml as _y
 
         cfg = {
-            "version": 1,
+            "version": 2,
             "global_settings": {"seed": 1},
             "sources": {"t": {"type": "file", "format": "csv", "path": "./t.csv"}},
             "tables": [{"name": "t", "columns": columns}],

@@ -3,10 +3,10 @@
 Enforces the same privacy discipline as SP-18b's diff command: the profile
 output must NEVER include raw cell values from the source data.
 
-Rationale: STORM profiles contain counts, null rates, and cardinality data.
+Rationale: Pre-scan profiles contain counts, null rates, and cardinality data.
 They must NOT contain top_values, mode_value, min_value, max_value, or any
 other raw aggregates that could reconstruct original values. The profile CLI
-command wraps run_storm but explicitly strips any raw-value fields before
+command wraps profile_columns but explicitly strips any raw-value fields before
 emitting output.
 
 Text-lane implementation note:
@@ -71,7 +71,7 @@ def test_profile_text_output_no_raw_values(tmp_path: Path) -> None:
     _write_sentinel_csv(csv_path)
 
     result = runner.invoke(
-        app, ["scan", str(csv_path), "--show-fields"], env=_WIDE_ENV
+        app, ["pre-scan", str(csv_path), "--show-fields"], env=_WIDE_ENV
     )
     assert result.exit_code == 0, result.output
 
@@ -98,7 +98,7 @@ def test_text_sentry_bites_if_raw_value_injected(tmp_path: Path) -> None:
     csv_path = tmp_path / "data.csv"
     _write_sentinel_csv(csv_path)
 
-    import decoy.cli.scan as profile_mod
+    import decoy.cli.pre_scan as profile_mod
 
     original_safe = profile_mod._safe_field_record
 
@@ -110,7 +110,7 @@ def test_text_sentry_bites_if_raw_value_injected(tmp_path: Path) -> None:
 
     with patch.object(profile_mod, "_safe_field_record", leaky_safe_field_record):
         result = runner.invoke(
-            app, ["scan", str(csv_path), "--show-fields"], env=_WIDE_ENV
+            app, ["pre-scan", str(csv_path), "--show-fields"], env=_WIDE_ENV
         )
 
     assert result.exit_code == 0, result.output
@@ -127,7 +127,7 @@ def test_profile_json_output_no_raw_values(tmp_path: Path) -> None:
     csv_path = tmp_path / "data.csv"
     _write_sentinel_csv(csv_path)
 
-    result = runner.invoke(app, ["scan", str(csv_path), "--show-fields", "--json"])
+    result = runner.invoke(app, ["pre-scan", str(csv_path), "--show-fields", "--json"])
     assert result.exit_code == 0, result.output
 
     payload_str = result.stdout

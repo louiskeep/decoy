@@ -31,7 +31,7 @@ runner = CliRunner()
 def _minimal_config() -> dict:
     """Minimal V2 config that compiles cleanly."""
     return {
-        "version": 1,
+        "version": 2,
         "global_settings": {"seed": 42},
         "sources": {
             "customers": {"type": "file", "format": "csv", "path": "/tmp/x.csv"}
@@ -276,7 +276,7 @@ def test_compile_explain_json_quiet_mode(tmp_path: Path) -> None:
 def _config_with_undeclared_column() -> dict:
     """Config with one column that has no strategy declared (strategy omitted)."""
     return {
-        "version": 1,
+        "version": 2,
         "global_settings": {"seed": 42},
         "sources": {
             "customers": {"type": "file", "format": "csv", "path": "/tmp/x.csv"}
@@ -339,7 +339,7 @@ def test_compile_non_utf8_config_errors_cleanly(tmp_path: Path) -> None:
     """
     bad = tmp_path / "latin1.yaml"
     # 0xFF is not valid UTF-8; decoding the file raises UnicodeDecodeError.
-    bad.write_bytes(b"version: 1\nname: caf\xe9\n")
+    bad.write_bytes(b"version: 2\nname: caf\xe9\n")
 
     result = runner.invoke(app, ["validate", "compile", str(bad), "--json"])
     assert result.exit_code == 1  # EXIT_USAGE, not a crash

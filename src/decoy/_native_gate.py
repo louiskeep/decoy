@@ -218,7 +218,7 @@ def static_native_eligibility(config_dict: dict[str, Any]) -> bool:
     admission gates on companion health for for `_COMPANION_DEPENDENT_
     STRATEGIES`), and none of the config-visible declines
     `cheap_admission`/`resident_contract_admission` check: validators,
-    quarantine, run_storm, a `vault: true` column, table-level `transforms`,
+    quarantine, `post_scan.integrity`, a `vault: true` column, table-level `transforms`,
     or a per-column `when:` gate.
 
     This is the SAME "config-shape half" of the eligibility predicate
@@ -233,6 +233,8 @@ def static_native_eligibility(config_dict: dict[str, Any]) -> bool:
     passthrough-only job never trips on a broken companion it was never
     going to use.
     """
+    from decoy_engine.config import post_scan_integrity_requested
+
     tables = config_dict.get("tables")
     if not isinstance(tables, list) or len(tables) != 1:
         return False
@@ -245,7 +247,7 @@ def static_native_eligibility(config_dict: dict[str, Any]) -> bool:
         return False
     if config_dict.get("quarantine"):
         return False
-    if config_dict.get("run_storm"):
+    if post_scan_integrity_requested(config_dict):
         return False
     if table.get("transforms"):
         return False

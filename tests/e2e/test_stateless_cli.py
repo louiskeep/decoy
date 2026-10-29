@@ -41,7 +41,7 @@ def mask_config(tmp_path: Path) -> Path:
     ).to_csv(src, index=False)
 
     config = {
-        "version": 1,
+        "version": 2,
         "global_settings": {"seed": 42},
         "sources": {
             "customers": {"type": "file", "format": "csv", "path": str(src)},

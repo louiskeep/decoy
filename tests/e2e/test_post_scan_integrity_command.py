@@ -1,9 +1,9 @@
-"""End-to-end tests for `decoy report integrity` (relocated from the storm group, S4b).
+"""End-to-end tests for `decoy post-scan integrity`.
 
-The CLI verb wraps `decoy_engine.storm.postmask.run_storm_post_mask` and
-returns the same JobStormReport-shaped payload the platform persists
-when a mask job declared `run_storm: true`. These cells pin the wire
-shape + the exit-code contract + the deprecation-free help body.
+The CLI verb wraps `decoy_engine.verification.run_post_mask` and returns the
+same `post-scan-integrity/v2` report-shaped payload a mask job produces when it
+declares `post_scan.integrity: true`. These cells pin the wire shape, the
+exit-code contract, the report-only honesty copy, and the no-raw-error rule.
 """
 
 from __future__ import annotations
@@ -52,7 +52,7 @@ def clean_pair(tmp_path: Path) -> tuple[Path, Path]:
 def test_integrity_help_includes_examples():
     """The `--help` body advertises the four invocation examples plus
     the exit-code contract."""
-    result = runner.invoke(app, ["report", "integrity", "--help"])
+    result = runner.invoke(app, ["post-scan", "integrity", "--help"])
     assert result.exit_code == 0
     assert "Examples:" in result.stdout
     assert "Exit codes:" in result.stdout
@@ -65,11 +65,11 @@ def test_integrity_clean_pair_exits_zero(clean_pair: tuple[Path, Path]):
     and reports `status: ok` in --json mode."""
     src, masked = clean_pair
     result = runner.invoke(
-        app, ["report", "integrity", str(masked), "--source", str(src), "--json"]
+        app, ["post-scan", "integrity", str(masked), "--source", str(src), "--json"]
     )
     assert result.exit_code == 0, result.stdout + result.stderr
     payload = _json.loads(result.stdout)
-    assert payload["command"] == "report integrity"
+    assert payload["command"] == "post-scan integrity"
     assert payload["status"] == "ok"
     assert "report" in payload
     report = payload["report"]
@@ -82,14 +82,14 @@ def test_integrity_clean_pair_exits_zero(clean_pair: tuple[Path, Path]):
     assert report.get("error_count", 0) == 0
 
 
-def test_integrity_returns_jobstormreport_shape(clean_pair: tuple[Path, Path]):
-    """The wire shape matches what the platform's JobStormReport.report_json
+def test_integrity_returns_report_shape(clean_pair: tuple[Path, Path]):
+    """The wire shape matches what the platform's post-scan-integrity report.report_json
     column carries: schema_version + 3 finding lists + 4 severity counters
     + pass_failed_with + generated_at. Pin this so a future engine refactor
     can't silently change the public contract."""
     src, masked = clean_pair
     result = runner.invoke(
-        app, ["report", "integrity", str(masked), "--source", str(src), "--json"]
+        app, ["post-scan", "integrity", str(masked), "--source", str(src), "--json"]
     )
     assert result.exit_code == 0
     payload = _json.loads(result.stdout)
@@ -119,7 +119,7 @@ def test_integrity_writes_out_file(clean_pair: tuple[Path, Path], tmp_path: Path
     result = runner.invoke(
         app,
         [
-            "report",
+            "post-scan",
             "integrity",
             str(masked),
             "--source",
@@ -141,7 +141,7 @@ def test_integrity_missing_source_exits_usage(tmp_path: Path):
     pd.DataFrame({"x": [1]}).to_csv(masked, index=False)
     result = runner.invoke(
         app,
-        ["report", "integrity", str(masked), "--source", str(tmp_path / "nope.csv")],
+        ["post-scan", "integrity", str(masked), "--source", str(tmp_path / "nope.csv")],
     )
     # Typer rejects nonexistent --source paths at the click parser layer
     # before the body runs; exit 2 is the click-canonical "usage error"
@@ -157,14 +157,14 @@ def test_integrity_quiet_suppresses_stdout(clean_pair: tuple[Path, Path]):
     src, masked = clean_pair
     result = runner.invoke(
         app,
-        ["report", "integrity", str(masked), "--source", str(src), "--quiet"],
+        ["post-scan", "integrity", str(masked), "--source", str(src), "--quiet"],
     )
     assert result.exit_code == 0
     assert result.stdout == ""
 
 
 class TestExitFourReachable:
-    """Audit H6/C1 (2026-06-12): with the pre-fix engine, `storm
+    """Audit H6/C1 (2026-06-12): with the pre-fix engine, `post-scan
     integrity` could never exit 4 in the no-config path -- residual-PII
     findings capped at 'warning' and real output==source leaks on
     faker-family strategies classified 'info'. The README's documented
@@ -182,7 +182,7 @@ class TestExitFourReachable:
         masked.write_bytes(src.read_bytes())  # mask "ran" but changed nothing
 
         result = runner.invoke(
-            app, ["report", "integrity", str(masked), "--source", str(src), "--json"]
+            app, ["post-scan", "integrity", str(masked), "--source", str(src), "--json"]
         )
         assert result.exit_code == EXIT_FINDINGS, result.output
         payload = _json.loads(result.output)
@@ -202,6 +202,83 @@ class TestExitFourReachable:
         ).to_csv(masked, index=False)
 
         result = runner.invoke(
-            app, ["report", "integrity", str(masked), "--source", str(src), "--json"]
+            app, ["post-scan", "integrity", str(masked), "--source", str(src), "--json"]
         )
         assert result.exit_code == 0, result.output
+
+
+class TestHonestyAndFailureTruth:
+    """Report-only never claims a verdict it did not earn; a check that cannot
+    run is a non-zero exit, never a clean pass; errors never echo raw text."""
+
+    def test_clean_run_is_report_only_not_verified_or_approved(self, clean_pair):
+        src, masked = clean_pair
+        result = runner.invoke(
+            app, ["post-scan", "integrity", str(masked), "--source", str(src)]
+        )
+        assert result.exit_code == 0
+        out = " ".join(result.output.lower().split())
+        assert "report-only" in out
+        assert "not a release decision" in out
+        for banned in ("verified", "release-approved", "safe to release", "compliant"):
+            assert banned not in out
+
+    def test_json_envelope_carries_the_report_only_note_and_schema(self, clean_pair):
+        src, masked = clean_pair
+        result = runner.invoke(
+            app, ["post-scan", "integrity", str(masked), "--source", str(src), "--json"]
+        )
+        payload = _json.loads(result.output)
+        assert "report-only" in payload["note"].lower()
+        assert payload["report"]["schema_version"] == "post-scan-integrity/v2"
+
+    def test_old_config_version_and_key_fail_without_echoing_values(self, clean_pair, tmp_path):
+        src, masked = clean_pair
+        cfg = tmp_path / "old.yaml"
+        cfg.write_text("version: 1\nrun_flag_secret_value: SECRET-ABC-123\n", encoding="utf-8")
+        result = runner.invoke(
+            app,
+            ["post-scan", "integrity", str(masked), "--source", str(src), "--config", str(cfg)],
+        )
+        assert result.exit_code != 0
+        assert "SECRET-ABC-123" not in result.output
+
+    def test_engine_crash_exits_runtime_with_type_name_only(self, clean_pair, monkeypatch):
+        import decoy_engine.verification as verification
+
+        from decoy.cli.exit_codes import EXIT_RUNTIME
+
+        def boom(*_a, **_k):
+            raise RuntimeError("raw cell value SECRET-ABC-123")
+
+        monkeypatch.setattr(verification, "run_post_mask", boom)
+        src, masked = clean_pair
+        result = runner.invoke(
+            app, ["post-scan", "integrity", str(masked), "--source", str(src), "--json"]
+        )
+        assert result.exit_code == EXIT_RUNTIME
+        assert "SECRET-ABC-123" not in result.output
+        payload = _json.loads(result.stdout)
+        assert payload["status"] == "error"
+        assert "RuntimeError" in payload["error"]
+
+    def test_declared_post_scan_integrity_config_is_accepted(self, clean_pair, tmp_path):
+        src, masked = clean_pair
+        cfg = tmp_path / "p.yaml"
+        cfg.write_text(
+            "version: 2\nglobal_settings: {seed: 1}\n"
+            f"sources:\n  data: {{type: file, format: csv, path: {src}}}\n"
+            "tables:\n  - name: data\n    columns:\n      - {name: email, strategy: redact}\n"
+            f"targets:\n  data: {{type: file, format: csv, path: {masked}}}\n"
+            "post_scan:\n  integrity: true\n",
+            encoding="utf-8",
+        )
+        result = runner.invoke(
+            app,
+            [
+                "post-scan", "integrity", str(masked), "--source", str(src),
+                "--config", str(cfg), "--json",
+            ],
+        )
+        assert result.exit_code in (0, EXIT_FINDINGS), result.output
+        assert _json.loads(result.stdout)["command"] == "post-scan integrity"

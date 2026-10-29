@@ -30,7 +30,7 @@ def good_config(tmp_path: Path) -> Path:
     # CLI.3 (2026-06-02): V2 PipelineConfig shape replaces V1 `input:`/
     # `output:`/`masking_rules:` (rejected by the V2 choke point).
     cfg = {
-        "version": 1,
+        "version": 2,
         "global_settings": {"seed": 42},
         "sources": {
             "people": {"type": "file", "format": "csv", "path": str(sample)},

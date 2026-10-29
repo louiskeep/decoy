@@ -1,7 +1,7 @@
-"""STORM detector-id -> mask strategy mapping for `decoy init` scaffolding.
+"""Pre-scan detector-id -> mask strategy mapping for `decoy init` scaffolding.
 
 OSS.4c (2026-06-02). Provides the small static table that `decoy init <file>`
-uses when scaffolding a pipeline.yaml from a STORM scan. Every column the
+uses when scaffolding a pipeline.yaml from a Pre-scan profile. Every column the
 scanner profiled gets ONE strategy entry written into the starter YAML; the
 mapping below names the candidate strategy + provider, AND the REVIEW reason
 the user must read before running the pipeline.
@@ -21,7 +21,7 @@ The table is intentionally SHORT (~20 entries at first cut). The
 project does not promise a strategy for every conceivable detector;
 the long tail falls into the `_FALLBACK` branch and writes a louder
 REVIEW comment so the user knows they have to make the call. The
-table grows as STORM ships new detectors AND we have a good
+table grows as new detectors ship AND we have a good
 default for them.
 
 Wiring: `_infer_strategy_for_column(fs: FieldStats) -> Inference` is
@@ -61,8 +61,8 @@ class Inference:
     deterministic: bool = False
 
 
-# Detector-id -> Inference. Detector ids come from STORM's detectors
-# (`decoy_engine.storm.detectors`). The table is intentionally a
+# Detector-id -> Inference. Detector ids come from the engine's detectors
+# (`decoy_engine.detection.detectors`). The table is intentionally a
 # narrow subset; the long tail goes through `_FALLBACK`.
 #
 # The REVIEW reason is the operator-facing copy that lands in the
@@ -72,12 +72,12 @@ _INFERENCE_TABLE: dict[str, Inference] = {
     "email": Inference(
         strategy="faker",
         provider="person_email",
-        review="STORM detected email addresses. Faker replaces with synthetic emails.",
+        review="Pre-scan detected email addresses. Faker replaces with synthetic emails.",
     ),
     "ssn": Inference(
         strategy="hash",
         review=(
-            "STORM detected SSNs. Hash preserves joinability without exposing the "
+            "Pre-scan detected SSNs. Hash preserves joinability without exposing the "
             "value. If you need real-shape output (333-22-4444), use "
             "provider: synthetic_ssn instead."
         ),
@@ -85,13 +85,13 @@ _INFERENCE_TABLE: dict[str, Inference] = {
     "us_phone": Inference(
         strategy="faker",
         provider="person_phone",
-        review="STORM detected US phone numbers. Faker replaces with synthetic phone.",
+        review="Pre-scan detected US phone numbers. Faker replaces with synthetic phone.",
     ),
     "person_name": Inference(
         strategy="faker",
         provider="person_full_name",
         review=(
-            "STORM detected person names. Faker replaces with synthetic names. "
+            "Pre-scan detected person names. Faker replaces with synthetic names. "
             "If this column is a first OR last name only, swap the provider to "
             "person_first_name or person_last_name."
         ),
@@ -99,7 +99,7 @@ _INFERENCE_TABLE: dict[str, Inference] = {
     "iso_date": Inference(
         strategy="date_shift",
         review=(
-            "STORM detected ISO-format dates. date_shift shifts each date by "
+            "Pre-scan detected ISO-format dates. date_shift shifts each date by "
             "an independent per-value offset in [min_days, max_days] (same "
             "source value always gets the same shift, but shifts are NOT "
             "globally order-preserving across rows). Defaults are "
@@ -109,7 +109,7 @@ _INFERENCE_TABLE: dict[str, Inference] = {
     "us_date": Inference(
         strategy="date_shift",
         review=(
-            "STORM detected US-format dates. date_shift shifts each date by "
+            "Pre-scan detected US-format dates. date_shift shifts each date by "
             "an independent per-value offset in [min_days, max_days] (not "
             "order-preserving across rows). Defaults are -365/+365 days; "
             "tune via provider_config."
@@ -118,7 +118,7 @@ _INFERENCE_TABLE: dict[str, Inference] = {
     "us_zip": Inference(
         strategy="truncate",
         review=(
-            "STORM detected US ZIP codes. truncate to 3 digits matches HIPAA "
+            "Pre-scan detected US ZIP codes. truncate to 3 digits matches HIPAA "
             "Safe Harbor; if your downstream needs full ZIP, use faker + "
             "provider: address_zip instead."
         ),
@@ -126,45 +126,45 @@ _INFERENCE_TABLE: dict[str, Inference] = {
     "address_street": Inference(
         strategy="faker",
         provider="address_street",
-        review="STORM detected street addresses. Faker replaces with synthetic addresses.",
+        review="Pre-scan detected street addresses. Faker replaces with synthetic addresses.",
     ),
     "address_city": Inference(
         strategy="faker",
         provider="address_city",
-        review="STORM detected city names. Faker replaces with synthetic cities.",
+        review="Pre-scan detected city names. Faker replaces with synthetic cities.",
     ),
     "mrn": Inference(
         strategy="hash",
         review=(
-            "STORM detected medical record numbers. Hash preserves joinability. "
+            "Pre-scan detected medical record numbers. Hash preserves joinability. "
             "If you need real-shape output, use provider: synthetic_mrn."
         ),
     ),
     "npi": Inference(
         strategy="hash",
         review=(
-            "STORM detected NPI numbers. Hash preserves joinability. "
+            "Pre-scan detected NPI numbers. Hash preserves joinability. "
             "If you need real-shape output, use provider: synthetic_npi."
         ),
     ),
     "ndc": Inference(
         strategy="hash",
         review=(
-            "STORM detected NDC codes. Hash preserves joinability. "
+            "Pre-scan detected NDC codes. Hash preserves joinability. "
             "If you need real-shape output, use provider: synthetic_ndc."
         ),
     ),
     "icd10": Inference(
         strategy="truncate",
         review=(
-            "STORM detected ICD-10 codes. truncate to 3 chars (category) "
+            "Pre-scan detected ICD-10 codes. truncate to 3 chars (category) "
             "matches HIPAA Safe Harbor."
         ),
     ),
     "pan": Inference(
         strategy="fpe",
         review=(
-            "STORM detected payment card numbers (PAN). fpe (format-preserving "
+            "Pre-scan detected payment card numbers (PAN). fpe (format-preserving "
             "encryption) with charset: digits + validate_luhn: true keeps the "
             "masked output Luhn-valid, matching the bundled PCI template. The "
             "FPE key itself is derived automatically per job/namespace -- no "
@@ -174,26 +174,26 @@ _INFERENCE_TABLE: dict[str, Inference] = {
     "cvv": Inference(
         strategy="redact",
         review=(
-            "STORM detected CVV. PCI DSS 3.3 requires CVV not be stored "
+            "Pre-scan detected CVV. PCI DSS 3.3 requires CVV not be stored "
             "post-authorization; redact removes the value entirely."
         ),
     ),
     "iban": Inference(
         strategy="hash",
         review=(
-            "STORM detected IBANs. Hash preserves joinability. If you need "
+            "Pre-scan detected IBANs. Hash preserves joinability. If you need "
             "real-shape output, use provider: synthetic_iban."
         ),
     ),
     "uuid": Inference(
         strategy="faker",
         provider="uuid",
-        review="STORM detected UUIDs. Faker generates fresh synthetic UUIDs.",
+        review="Pre-scan detected UUIDs. Faker generates fresh synthetic UUIDs.",
     ),
     "ipv4": Inference(
         strategy="redact",
         review=(
-            "STORM detected IPv4 addresses. redact removes the value; if you "
+            "Pre-scan detected IPv4 addresses. redact removes the value; if you "
             "need realistic IP-shaped output for analytics, swap to faker + "
             "provider: random_choice over a known IP range."
         ),
@@ -205,7 +205,7 @@ _INFERENCE_TABLE: dict[str, Inference] = {
 _FALLBACK = Inference(
     strategy="redact",
     review=(
-        "STORM did not flag this column as a known PII type. redact is the "
+        "Pre-scan did not flag this column as a known PII type. redact is the "
         "safe default; replace with passthrough if this column is intentionally "
         "kept verbatim, or pick a more appropriate strategy if your data "
         "carries PII the detectors missed."
@@ -216,14 +216,14 @@ _FALLBACK = Inference(
 # Used when multiple detectors fire on the same column with comparable
 # confidence (e.g. a column that looks like a phone AND a date).
 _AMBIGUOUS_TEMPLATE = (
-    "STORM detected multiple candidate signals ({signals}). The scaffolder "
+    "Pre-scan detected multiple candidate signals ({signals}). The scaffolder "
     "picked {chosen} but the column may need a different strategy; review "
     "before running."
 )
 
 
 def _infer_strategy_for_column(field_stats) -> Inference:
-    """Pick a strategy for one column based on its STORM FieldStats.
+    """Pick a strategy for one column based on its Pre-scan FieldStats.
 
     Decision order:
       1. If the column has at least one detector match with confidence
@@ -239,7 +239,7 @@ def _infer_strategy_for_column(field_stats) -> Inference:
 
     The function reads only public attributes on FieldStats; it does
     not import from decoy_engine. Callers pass the FieldStats they
-    already obtained from run_storm.
+    already obtained from profile_columns.
     """
     matches = getattr(field_stats, "detector_matches", None) or []
     confident_matches = [

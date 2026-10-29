@@ -611,7 +611,7 @@ def _check_native(raw: dict[str, Any], acc: _PreflightAccumulator) -> None:
                 "Native eligibility: not eligible by config shape (needs a single "
                 "non-FK mask table (declared csv, parquet or fixed_width) with at least one hash/categorical/"
                 "bucket_perturb/group_key column, and no validators/quarantine/"
-                "run_storm/vault/transforms/when-gates)."
+                "post_scan.integrity/vault/transforms/when-gates)."
             ),
         )
 

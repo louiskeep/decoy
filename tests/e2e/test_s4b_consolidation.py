@@ -1,9 +1,10 @@
 """E2E guard for the S4b `report` consolidation.
 
-Every post-run verb now lives under `decoy report`; the old homes are gone:
-  - the `evidence`, `vault`, and `storm` top-level groups,
+The run-artifact verbs live under `decoy report`; the old homes are gone:
+  - the `evidence` and `vault` top-level groups,
   - `validate distribution` (validate is purely pre-run now),
   - `report compare` and `report summarize` (folded into `report diff`/`show`).
+The output data checks (integrity, fidelity) live under `decoy post-scan`.
 """
 
 from __future__ import annotations
@@ -16,7 +17,7 @@ from decoy.__main__ import app
 runner = CliRunner()
 
 
-@pytest.mark.parametrize("sub", ["evidence", "vault", "storm"])
+@pytest.mark.parametrize("sub", ["evidence", "vault"])
 def test_removed_top_level_group_is_no_such_command(sub: str) -> None:
     result = runner.invoke(app, [sub], catch_exceptions=False)
     assert result.exit_code != 0
@@ -53,12 +54,14 @@ def test_validate_distribution_is_not_a_subcommand() -> None:
     assert {"config", "compile", "preflight"} <= sub_names
 
 
-def test_report_surface_lists_the_seven_verbs() -> None:
+def test_report_surface_lists_the_five_verbs() -> None:
     result = runner.invoke(app, ["report", "--help"], catch_exceptions=False)
     assert result.exit_code == 0
     out = result.output
-    for verb in ("show", "render", "verify", "fidelity", "integrity", "diff", "vault"):
+    for verb in ("show", "render", "verify", "diff", "vault"):
         assert verb in out, f"{verb} missing from `report --help`:\n{out}"
+    for moved in ("fidelity", "integrity"):
+        assert f"  {moved} " not in out, f"{moved} must live under `post-scan`:\n{out}"
 
 
 def test_validate_help_has_no_distribution() -> None:
@@ -68,6 +71,12 @@ def test_validate_help_has_no_distribution() -> None:
 
 
 def test_report_verbs_render_help() -> None:
-    for verb in ("show", "render", "verify", "fidelity", "integrity", "diff", "vault"):
+    for verb in ("show", "render", "verify", "diff", "vault"):
         result = runner.invoke(app, ["report", verb, "--help"], catch_exceptions=False)
         assert result.exit_code == 0, f"`report {verb} --help` failed:\n{result.output}"
+
+
+def test_post_scan_verbs_render_help() -> None:
+    for verb in ("integrity", "fidelity"):
+        result = runner.invoke(app, ["post-scan", verb, "--help"], catch_exceptions=False)
+        assert result.exit_code == 0, f"`post-scan {verb} --help` failed:\n{result.output}"

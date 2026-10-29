@@ -10,7 +10,7 @@ Both are read against the LIVE Typer app (`decoy.__main__.app`), via
 stale: adding, removing, or re-parenting a command and forgetting to update
 the help/README fails here.
 
-The extractor resolves NESTED command paths (`storm analyze`, `validate
+The extractor resolves NESTED command paths (`pre-scan fields`, `validate
 config`, `report show`) against the registry rather than treating every token
 as a flat command -- an example line carries args, flags, and placeholders
 after the command path, and a group reference is two tokens, not one.
@@ -48,9 +48,9 @@ _ROOT_HELP_OMITTED = frozenset(
         "upgrade",
         # S3b: the four registry sub-apps folded into `list`/`show`, which ARE
         # advertised in the root help (`decoy list templates` / `show template`).
-        # S4b: `vault`, `evidence`, and `storm` are gone -- their verbs folded
-        # into `decoy report` (vault / verify+show / integrity), so they are no
-        # longer registered and must not appear here.
+        # S4b: `vault` and `evidence` are gone -- their verbs folded into
+        # `decoy report` (vault / verify+show), so they are no longer registered
+        # and must not appear here.
     }
 )
 
@@ -68,8 +68,8 @@ _README_TABLE_OMITTED = frozenset(
         "upgrade",
         # S3b: the four registry sub-apps folded into `list`/`show`; the README
         # table advertises `decoy list templates` / `decoy show template`.
-        # S4b: `vault`, `evidence`, and `storm` are gone (folded into `decoy
-        # report`), so they are no longer registered and must not appear here.
+        # S4b: `vault` and `evidence` are gone (folded into `decoy report`), so
+        # they are no longer registered and must not appear here.
         # `report` is now featured in the table (the post-run surface), so it
         # is no longer allowlisted out.
     }
@@ -184,8 +184,8 @@ def test_extractor_flags_a_phantom() -> None:
     assert _extract_path("bogus --flag") == "bogus"
     assert "bogus" not in VALID_TARGETS
     # A real nested path resolves and is registered.
-    assert _extract_path("report integrity masked.csv") == "report integrity"
-    assert "report integrity" in VALID_TARGETS
+    assert _extract_path("post-scan integrity masked.csv") == "post-scan integrity"
+    assert "post-scan integrity" in VALID_TARGETS
     # A top-level leaf does not over-consume its positional arg.
     assert _extract_path("explain modes") == "explain"
 
@@ -326,12 +326,12 @@ def _default_command_flags() -> dict[str, list[str]]:
 
 
 # The reviewed surface of each default-command handler, every spelling pinned.
-# Editing a flag on `_scan`/`_gate` -- including an alias like `-q` or `-o` --
+# Editing a flag on `_pre_scan`/`_gate` -- including an alias like `-q` or `-o` --
 # must update this map in the same diff; that edit IS the drift signal those
 # hidden handlers would otherwise escape.
 _DEFAULT_COMMAND_FLAGS = {
     "validate": ["<arg:config>", "--json", "--quiet/-q", "--verbose/-v", "--fail-on-warning"],
-    "scan": [
+    "pre-scan": [
         "<arg:source>",
         "--show-fields",
         "--rows",

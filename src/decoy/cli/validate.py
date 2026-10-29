@@ -36,8 +36,8 @@ subcommand's body is the pre-promotion `validate()` function, moved unchanged
 
 S4b (CLI redesign): `validate` is now purely PRE-RUN -- it owns
 `config` / `compile` / `preflight` only. The former post-run distribution
-fidelity check relocated to `decoy report fidelity`
-(`decoy.cli.report._fidelity`), beside the other post-run verbs.
+fidelity check relocated to `decoy post-scan fidelity`
+(`decoy.cli.post_scan._fidelity`), beside the other post-run verbs.
 """
 
 from __future__ import annotations
@@ -71,7 +71,7 @@ Examples:
   decoy validate preflight pipeline.yaml
     Source / file / schema readiness + capacity estimate + native probe.
 
-See also: decoy run, decoy fit, decoy report fidelity.
+See also: decoy run, decoy fit, decoy post-scan fidelity.
 """
 
 validate_app = typer.Typer(
@@ -82,7 +82,7 @@ validate_app = typer.Typer(
         "(config + compile + preflight) and emits one report + one exit code. "
         "Subcommands run a single layer: schema + config checks (`config`), plan "
         "compilation + checks (`compile`), and source/capacity readiness "
-        "(`preflight`). Post-run fidelity checks moved to `decoy report fidelity`."
+        "(`preflight`). Post-run fidelity checks moved to `decoy post-scan fidelity`."
     ),
     epilog=_VALIDATE_EPILOG,
     no_args_is_help=True,
@@ -103,7 +103,7 @@ Examples:
   decoy validate config pipeline.yaml --fail-on-warning
     Exit non-zero if any advisory warning fires (e.g. output target exists).
 
-See also: decoy run, decoy report fidelity.
+See also: decoy run, decoy post-scan fidelity.
 """
 
 

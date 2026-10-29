@@ -1,7 +1,7 @@
 """decoy.mask() / decoy.scan() -- the library one-liner API (OSS-launch S6).
 
 Thin wrappers over `decoy_engine`'s existing public entrypoints. They reuse
-the exact CLI helper functions `decoy run` / `decoy scan` call
+the exact CLI helper functions `decoy run` / `decoy pre-scan` call
 (config loading, source loading, mask-secret validation, output writing) so
 `import decoy; decoy.mask(...)` walks the SAME engine path as the CLI --
 same determinism, same keyed-secret fail-closed gate -- never a
@@ -10,8 +10,8 @@ wrapper around decoy-engine; all data logic lives in the engine."
 
     decoy.mask(...)  wraps decoy_engine.run_pipeline  (the call `decoy run`
                       makes for non-chunked runs).
-    decoy.scan(...)  wraps decoy_engine.run_storm     (the call
-                      `decoy scan` makes).
+    decoy.scan(...)  wraps decoy_engine.profile_columns (the Pre-scan call
+                      `decoy pre-scan` makes).
 
 Both accept a config/source shaped exactly like the pipeline YAML `decoy
 run` consumes (a dict with `version`, `global_settings`, `tables`,
@@ -33,13 +33,13 @@ import pyarrow as pa
 
 from decoy import _native_gate
 from decoy.cli.extras import UnsupportedCloudEndpointError
+from decoy.cli.pre_scan import InputFormat, SampleStrategy, _load_data, _parse_layout
+from decoy.cli.pre_scan import _infer_format as _pre_scan_infer_format
 from decoy.cli.run import (
     _is_valid_mask_secret_ref,
     _load_sources_from_config,
     _write_mask_outputs,
 )
-from decoy.cli.scan import InputFormat, SampleStrategy, _load_data, _parse_layout
-from decoy.cli.scan import _infer_format as _storm_infer_format
 
 __all__ = [
     "ConfigValidationError",
@@ -555,9 +555,9 @@ def scan(
     layout: Any = None,
 ):
     """Profile a dataset for PII / re-identification risk, through the same
-    engine path `decoy scan` uses.
+    engine path `decoy pre-scan` uses.
 
-    Wraps `decoy_engine.run_storm` -- exactly what `decoy scan`
+    Wraps `decoy_engine.profile_columns` -- exactly what `decoy pre-scan`
     calls after loading the source into a DataFrame.
 
     Args:
@@ -576,11 +576,11 @@ def scan(
             list (`[{"name": ..., "start": ..., "width": ...}, ...]`).
 
     Returns:
-        A `decoy_engine.StormProfile` -- the same object `decoy scan
+        A `decoy_engine.ColumnProfile` -- the same object `decoy pre-scan
         --output scan.json` serializes. Call `.to_dict()` for the
         JSON-ready shape.
     """
-    from decoy_engine import run_storm
+    from decoy_engine import profile_columns
 
     try:
         strategy_enum = SampleStrategy(strategy)
@@ -598,7 +598,7 @@ def scan(
         label = source_label or "<dataframe>"
     elif isinstance(data, (str, Path)):
         path = Path(data)
-        fmt = InputFormat(format) if format is not None else _storm_infer_format(path)
+        fmt = InputFormat(format) if format is not None else _pre_scan_infer_format(path)
         layout_columns: list[dict] | None
         if isinstance(layout, list):
             layout_columns = layout
@@ -613,7 +613,7 @@ def scan(
             f"data must be a pandas DataFrame or a path (str/Path), got {type(data).__name__}."
         )
 
-    return run_storm(
+    return profile_columns(
         df,
         source_label=label,
         sample_strategy=strategy_enum.value,

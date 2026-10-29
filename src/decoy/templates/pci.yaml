@@ -14,7 +14,7 @@
 # always maps to the same masked PAN (deterministic join survival).
 # CVV is redacted entirely (must never be retained per PCI DSS req 3.2).
 
-version: 1
+version: 2
 
 global_settings:
   seed: 42

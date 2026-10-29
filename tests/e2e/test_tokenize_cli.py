@@ -64,7 +64,7 @@ def _pipeline(
     if with_secret:
         global_settings["mask_secret_ref"] = _mask_secret_ref(tmp_path)
     cfg = {
-        "version": 1,
+        "version": 2,
         "global_settings": global_settings,
         "sources": {"people": {"type": "file", "format": "csv", "path": str(src)}},
         "tables": [{"name": "people", "columns": columns}],
@@ -206,7 +206,7 @@ class TestNamespaceDistinctness:
             {"id": [0, 1], "email": ["a@x.com", "b@y.com"], "email2": ["a@x.com", "b@y.com"]}
         ).to_csv(src, index=False)
         cfg = {
-            "version": 1,
+            "version": 2,
             "global_settings": {"seed": 42, "mask_secret_ref": _mask_secret_ref(tmp_path)},
             "sources": {"people": {"type": "file", "format": "csv", "path": str(src)}},
             "tables": [{"name": "people", "columns": cols}],
@@ -543,7 +543,7 @@ def _tokenize_two_columns(tmp_path: Path) -> tuple[Path, Path]:
         {"id": [0, 1], "email": ["a@x.com", "b@y.com"], "email2": ["a@x.com", "b@y.com"]}
     ).to_csv(src, index=False)
     cfg = {
-        "version": 1,
+        "version": 2,
         "global_settings": {"seed": 42, "mask_secret_ref": _mask_secret_ref(tmp_path)},
         "sources": {"people": {"type": "file", "format": "csv", "path": str(src)}},
         "tables": [{"name": "people", "columns": cols}],

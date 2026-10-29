@@ -2,17 +2,17 @@
 
 The shape pinned here is the operator's golden path:
 
-    decoy scan customers.csv                   # see what STORM sees
+    decoy pre-scan customers.csv                   # see what Pre-scan sees
     decoy init customers.csv --output p.yaml      # scaffold with REVIEW comments
     decoy validate p.yaml                      # engine accepts the schema
     decoy run p.yaml                           # masks the data
-    decoy storm integrity customers.masked.csv --source customers.csv
+    decoy post-scan integrity customers.masked.csv --source customers.csv
 
 If this test starts failing, the friction the user hits when trying out
 the CLI for the first time just went up; investigate the regression
 before merging.
 
-Tests touch a real (tiny) DataFrame and run real STORM scans, but no
+Tests touch a real (tiny) DataFrame and run real Pre-scan scans, but no
 network and no cloud storage. The masked output lands under tmp_path.
 """
 
@@ -34,7 +34,7 @@ runner = CliRunner()
 def csv_with_pii(tmp_path: Path) -> Path:
     """Tiny CSV with two well-known PII detector hits + one neutral column.
 
-    STORM should flag `email` (email detector) and `ssn` (ssn detector),
+    Pre-scan should flag `email` (email detector) and `ssn` (ssn detector),
     leaving `note` to fall through to the redact fallback. That mix
     exercises both branches of `_infer_strategy_for_column`.
     """
@@ -74,7 +74,7 @@ def test_init_scaffolds_yaml_with_review_comments(csv_with_pii: Path, tmp_path: 
 def test_init_json_mode_reports_column_count(csv_with_pii: Path, tmp_path: Path):
     """--json emits a structured record (command, status, source, column_count)
     suitable for piping into another tool. column_count == number of fields
-    STORM found in the CSV."""
+    Pre-scan found in the CSV."""
     out = tmp_path / "pipeline.yaml"
     result = runner.invoke(
         app, ["init", str(csv_with_pii), "--output", str(out), "--json"]
@@ -117,7 +117,7 @@ def test_init_stdout_with_dash(csv_with_pii: Path, tmp_path: Path):
         app, ["init", str(csv_with_pii), "--output", "-"]
     )
     assert result.exit_code == 0, result.stdout + result.stderr
-    assert "version: 1" in result.stdout
+    assert "version: 2" in result.stdout
     assert "# REVIEW:" in result.stdout
 
 

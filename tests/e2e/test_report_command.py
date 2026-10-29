@@ -43,7 +43,7 @@ runner = CliRunner()
 
 def _minimal_config(src_path: Path, out_path: Path) -> dict[str, Any]:
     return {
-        "version": 1,
+        "version": 2,
         "global_settings": {"seed": 42},
         "sources": {
             "customers": {"type": "file", "format": "csv", "path": str(src_path)},

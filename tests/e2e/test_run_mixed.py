@@ -45,7 +45,7 @@ def _mixed_cfg(tmp_path: Path, orders_csv: Path) -> dict:
     generated parent IDs 1-5, the FK join is coherent in the output CSVs.
     """
     return {
-        "version": 1,
+        "version": 2,
         "global_settings": {"seed": 42},
         "sources": {
             "orders": {"type": "file", "format": "csv", "path": str(orders_csv)},
@@ -225,7 +225,7 @@ class TestChunkedGenerateGuard:
     def test_chunked_plus_generate_only_exits_usage(self, tmp_path):
         """Pure-generate config + --chunked must exit 1 with a clear message."""
         cfg = {
-            "version": 1,
+            "version": 2,
             "global_settings": {"seed": 1},
             "tables": [
                 {
@@ -277,7 +277,7 @@ def _mixed_vault_cfg(tmp_path: Path, orders_csv: Path) -> dict:
     the source->masked mapping and unmask can recover it.
     """
     return {
-        "version": 1,
+        "version": 2,
         "global_settings": {"seed": 42},
         "sources": {
             "orders": {"type": "file", "format": "csv", "path": str(orders_csv)},

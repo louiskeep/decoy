@@ -1,15 +1,15 @@
-"""`decoy scan` -- one "look at my data" verb (merges `profile` + `storm analyze`).
+"""`decoy pre-scan` -- profile a source dataset before any transform runs.
 
-`decoy scan SOURCE` profiles a CSV / Parquet / fixed-width file with the engine's
-STORM (Statistical Top-down Risk Mapping) detector and reports dataset shape,
-per-field stats, PII candidates, quasi-identifier groups, and a re-identification
-risk score. Saved-scan operations are subcommands: `scan fields SCAN`,
-`scan show SCAN FIELD`, `scan diff OLD NEW`.
+`decoy pre-scan SOURCE` profiles a CSV / Parquet / fixed-width file with the
+engine's Pre-scan profiler (`decoy_engine.profile_columns`) and reports dataset
+shape, per-field stats, PII candidates, quasi-identifier groups, and a
+re-identification risk score. Saved-profile operations are subcommands:
+`pre-scan fields SCAN`, `pre-scan show SCAN FIELD`, `pre-scan diff OLD NEW`.
 
-This command is the S3a merge of the former top-level `profile` command and the
-`storm analyze` verb. It keeps BOTH commands' capabilities while preserving the
-former profile command's two
-non-negotiable disciplines:
+A pre-scan observes the source only. It never establishes that a transformed
+output is safe; that is a separate Post-scan claim (`decoy post-scan`).
+
+Two non-negotiable disciplines:
 
   HONESTY (H4): PII candidates are framed as SUGGESTIONS the user reviews, never
   as authoritative auto-classification. Output says "suggestion -- review
@@ -23,7 +23,7 @@ non-negotiable disciplines:
   any aggregate that could expose raw cell data. (The `--output` artifact keeps
   the engine's richer `profile.to_dict()`; that is pre-existing and intentional.)
 
-Reuses the engine's `run_storm` function. Does NOT reimplement detection.
+Reuses the engine's `profile_columns` function. Does NOT reimplement detection.
 """
 
 from __future__ import annotations
@@ -40,12 +40,12 @@ from decoy.cli._default_group import make_default_group
 from decoy.cli.exit_codes import EXIT_RUNTIME, EXIT_USAGE
 from decoy.ui.card import render_card
 from decoy.ui.output import OutputMode, OutputState, emit_json, setup_output
-from decoy.ui.storm_animation import stormy_multistage
+from decoy.ui.scan_progress import scan_stages
 from decoy.ui.table import make_table
 from decoy.ui.theme import accent, code, error, hint, risk_high, risk_med, success, warn
 
-_SCAN_GROUP_HELP = (
-    "Profile a dataset for PII and re-identification risk. `decoy scan "
+_PRE_SCAN_GROUP_HELP = (
+    "Profile a dataset for PII and re-identification risk. `decoy pre-scan "
     "SOURCE` scans a CSV/Parquet/fixed-width file (shape, field stats, PII "
     "candidates as suggestions, quasi-identifiers, reid risk) and, with "
     "`--output scan.json`, saves the scan. Subcommands operate on a saved "
@@ -55,7 +55,7 @@ _SCAN_GROUP_HELP = (
 
 
 # PII score threshold to surface a field as a candidate. Mirrors the engine's
-# STORM internal threshold (>=0.6 is a "PII candidate" / "high" bucket).
+# Engine profiler internal threshold (>=0.6 is a "PII candidate" / "high" bucket).
 _PII_CANDIDATE_THRESHOLD = 0.6
 
 
@@ -103,101 +103,101 @@ _BUCKET_RANK: dict[str, int] = {"none": 0, "low": 1, "med": 2, "high": 3}
 _RAW_DATA_SUFFIXES = {".csv", ".tsv", ".txt", ".parquet", ".json.gz", ".jsonl"}
 
 
-_SCAN_EPILOG = """\
+_PRE_SCAN_EPILOG = """\
 Examples:
 
-  decoy scan data.csv
+  decoy pre-scan data.csv
     Profile a CSV: row/field counts, PII candidates (as suggestions), reid risk.
     Reads the first 10 000 rows by default (--rows 0 for a full scan).
 
-  decoy scan data.csv --show-fields
+  decoy pre-scan data.csv --show-fields
     Per-field detail: dtype, null_rate, distinct_count, PII candidate flag.
 
-  decoy scan data.csv --rows 50000 --strategy random
+  decoy pre-scan data.csv --rows 50000 --strategy random
     Sample 50K random rows instead of the first 10 000.
 
-  decoy scan data.csv --output scan.json
-    Save the scan to scan.json, then: decoy scan fields scan.json
+  decoy pre-scan data.csv --output scan.json
+    Save the scan to scan.json, then: decoy pre-scan fields scan.json
 
-  decoy scan data.csv --output -
+  decoy pre-scan data.csv --output -
     Stream the scan JSON to stdout for downstream tooling.
 
-  decoy scan records.fwf --layout layout.yaml
+  decoy pre-scan records.fwf --layout layout.yaml
     Scan a fixed-width file using an explicit column layout.
     Layout YAML: columns: [{name: id, start: 0, width: 5}, ...]
 
-HONESTY: PII candidates are SUGGESTIONS based on STORM pattern matching. They
+HONESTY: PII candidates are SUGGESTIONS based on pattern matching. They
 are NOT authoritative classifications. You review each flagged field and decide
 what masking to apply. Decoy never auto-classifies PII.
 
 No raw cell values appear in the inline output. Field stats include dtype,
 null_rate, distinct_count only.
 
-See also: decoy scan fields, decoy scan show, decoy scan diff,
-  decoy explain storm, decoy validate.
+See also: decoy pre-scan fields, decoy pre-scan show, decoy pre-scan diff,
+  decoy explain pre-scan, decoy validate.
 """
 
 
 _FIELDS_EPILOG = """\
 Examples:
 
-  decoy scan fields scan.json
+  decoy pre-scan fields scan.json
     List every field with PII score, bucket, quasi-identifier flag.
 
-  decoy scan fields scan.json --pii high --quasi
+  decoy pre-scan fields scan.json --pii high --quasi
     Only fields that are high PII *and* part of a quasi-identifier group.
 
-  decoy scan fields scan.json --json | jq '.fields[].name'
+  decoy pre-scan fields scan.json --json | jq '.fields[].name'
     Pipe just the matching field names somewhere else.
 
-See also: decoy scan, decoy scan show.
+See also: decoy pre-scan, decoy pre-scan show.
 """
 
 
 _SHOW_EPILOG = """\
 Examples:
 
-  decoy scan show scan.json ssn
+  decoy pre-scan show scan.json ssn
     Per-field detail card -- PII score, detectors, sentinels, top values, QI.
 
-  decoy scan show scan.json email --json
+  decoy pre-scan show scan.json email --json
     Same data as a structured JSON envelope.
 
-  decoy scan data.csv --output - | decoy scan show - ssn
+  decoy pre-scan data.csv --output - | decoy pre-scan show - ssn
     Pipe a fresh scan straight in.
 
-See also: decoy scan, decoy scan fields.
+See also: decoy pre-scan, decoy pre-scan fields.
 """
 
 
 _DIFF_EPILOG = """\
 Examples:
 
-  decoy scan diff baseline.json new.json
+  decoy pre-scan diff baseline.json new.json
     Print field-, PII-, QI-, and risk-level differences between two scans.
 
-  decoy scan diff baseline.json new.json --strict
+  decoy pre-scan diff baseline.json new.json --strict
     Same, but exit 1 on drift (PII bucket bumped up, new high-PII field, or
     new quasi-identifier group). Wire this into CI.
 
-  decoy scan diff baseline.json new.json --json | jq '.drift'
+  decoy pre-scan diff baseline.json new.json --json | jq '.drift'
     Boolean drift flag for scripting.
 
-See also: decoy scan, decoy scan fields.
+See also: decoy pre-scan, decoy pre-scan fields.
 """
 
 
-scan_app = typer.Typer(
-    name="scan",
-    cls=make_default_group("_scan"),
-    help=_SCAN_GROUP_HELP,
-    epilog=_SCAN_EPILOG,
+pre_scan_app = typer.Typer(
+    name="pre-scan",
+    cls=make_default_group("_pre_scan"),
+    help=_PRE_SCAN_GROUP_HELP,
+    epilog=_PRE_SCAN_EPILOG,
     no_args_is_help=True,
 )
 
 
 # ---------------------------------------------------------------------------
-# Source loaders (format dispatch + sampling). Moved from storm.py with `scan`.
+# Source loaders (format dispatch + sampling).
 # ---------------------------------------------------------------------------
 
 
@@ -367,7 +367,7 @@ def _load_data(
             raise ValueError(
                 f"Fixed-width input requires --layout: column boundaries in {path.name} "
                 "are ambiguous without an explicit layout spec. "
-                "Run: decoy scan <file> --layout <layout.yaml>"
+                "Run: decoy pre-scan <file> --layout <layout.yaml>"
             )
         return _load_fixed_width_with_sampling(path, layout, rows, strategy)
     # Default: delimited (CSV/TSV)
@@ -375,14 +375,14 @@ def _load_data(
 
 
 # ---------------------------------------------------------------------------
-# Saved-scan helpers (used by fields/show/diff). Moved from storm.py.
+# Saved-scan helpers (used by fields/show/diff).
 # ---------------------------------------------------------------------------
 
 
 def _load_scan_dict(scan_path: str) -> dict:
-    """Load a STORM scan JSON file (or stdin when path is `-`).
+    """Load a pre-scan profile JSON file (or stdin when path is `-`).
 
-    Accepts both shapes `decoy scan` produces -- the bare `to_dict()` written
+    Accepts both shapes `decoy pre-scan` produces -- the bare `to_dict()` written
     to disk by `--output FILE`, and the `{"profile": {...}}` envelope some
     tools wrap it in.
     """
@@ -396,7 +396,7 @@ def _load_scan_dict(scan_path: str) -> dict:
         # that catch (FileNotFoundError, JSONDecodeError, OSError) would let a
         # non-UTF-8 scan file crash with a raw traceback and corrupt --json
         # output. Normalise to OSError so the existing handlers emit a clean
-        # error. (QA 2026-06-04 storm-validate-cli F1.)
+        # error.
         raise OSError(f"scan file is not valid UTF-8: {exc}") from exc
     data = _json.loads(raw)
     if "profile" in data and "row_count" not in data:
@@ -466,8 +466,8 @@ def _emit_load_error(
     raw_data = _looks_like_raw_data(scan)
     if raw_data:
         label = Path(scan).name
-        message = f"{label} looks like raw data, not a STORM scan JSON."
-        scan_cmd = f"decoy scan {scan} --output scan.json"
+        message = f"{label} looks like raw data, not a pre-scan profile JSON."
+        scan_cmd = f"decoy pre-scan {scan} --output scan.json"
     elif isinstance(exc, FileNotFoundError):
         message = f"could not open {scan}: file not found."
         scan_cmd = None
@@ -498,7 +498,7 @@ def _emit_load_error(
             state.err_console.print(
                 " ", hint("hint:"),
                 "pass the JSON file produced by",
-                code("decoy scan --output scan.json"),
+                code("decoy pre-scan --output scan.json"),
             )
 
 
@@ -533,7 +533,7 @@ def _safe_field_record(field_stats) -> dict:
 
 
 _PII_NOTE = (
-    "PII candidates are SUGGESTIONS based on STORM pattern matching. "
+    "PII candidates are SUGGESTIONS based on pattern matching. "
     "They are not authoritative classifications. Review each flagged field "
     "and decide what masking to apply. Decoy never auto-classifies PII."
 )
@@ -569,7 +569,7 @@ def _render_pii_honesty(state, pii_candidate_count: int) -> None:
     """The profile-honesty framing block (H4): candidates are suggestions."""
     state.console.print(
         warn("PII candidates:"),
-        f"{pii_candidate_count} field(s) flagged by STORM pattern matching.",
+        f"{pii_candidate_count} field(s) flagged by pattern matching.",
     )
     state.console.print(
         " ",
@@ -586,11 +586,11 @@ def _render_pii_honesty(state, pii_candidate_count: int) -> None:
 
 
 # ---------------------------------------------------------------------------
-# `decoy scan SOURCE` -- the default command (merges profile + storm analyze)
+# `decoy pre-scan SOURCE` -- the default command
 # ---------------------------------------------------------------------------
 
 
-def _scan(
+def _pre_scan(
     source: Path = typer.Argument(
         ...,
         exists=True,
@@ -658,10 +658,10 @@ def _scan(
 ) -> None:
     """Profile a source dataset: shape, field stats, PII candidates, reid risk.
 
-    Runs STORM detection on the source file. PII candidates are surfaced as
+    Runs the Pre-scan profiler on the source file. PII candidates are surfaced as
     SUGGESTIONS for review -- never as authoritative auto-classifications.
     No raw cell values appear in the inline output. Save the scan with
-    `--output scan.json`, then operate on it with `decoy scan fields/show/diff`.
+    `--output scan.json`, then operate on it with `decoy pre-scan fields/show/diff`.
 
     Supported formats: delimited (CSV/TSV, default), parquet, and fixed-width.
     Fixed-width input requires an explicit --layout spec (column boundaries are
@@ -688,7 +688,7 @@ def _scan(
         if state.mode is OutputMode.json:
             emit_json(
                 state,
-                {"command": "scan", "status": "error", "source": source_str, "error": msg},
+                {"command": "pre-scan", "status": "error", "source": source_str, "error": msg},
             )
         else:  # quiet: the contract is "no stdout", so the error goes to stderr.
             state.err_console.print(error("error:"), msg)
@@ -702,12 +702,12 @@ def _scan(
         msg = (
             f"Fixed-width input requires --layout: column boundaries in {source.name} "
             "are ambiguous without an explicit layout spec. "
-            "Run: decoy scan <file> --layout <layout.yaml>"
+            "Run: decoy pre-scan <file> --layout <layout.yaml>"
         )
         if state.mode is OutputMode.json:
             emit_json(
                 state,
-                {"command": "scan", "status": "error", "source": source_str, "error": msg},
+                {"command": "pre-scan", "status": "error", "source": source_str, "error": msg},
             )
         elif state.mode is not OutputMode.quiet:
             state.err_console.print(error("error:"), msg)
@@ -715,7 +715,7 @@ def _scan(
                 " ",
                 hint("hint:"),
                 "provide a layout file:",
-                code(f"decoy scan {source.name} --layout layout.yaml"),
+                code(f"decoy pre-scan {source.name} --layout layout.yaml"),
             )
         raise typer.Exit(code=EXIT_USAGE)
 
@@ -727,7 +727,7 @@ def _scan(
             if state.mode is OutputMode.json:
                 emit_json(
                     state,
-                    {"command": "scan", "status": "error", "source": source_str, "error": msg},
+                    {"command": "pre-scan", "status": "error", "source": source_str, "error": msg},
                 )
             elif state.mode is not OutputMode.quiet:
                 state.err_console.print(error("error:"), msg)
@@ -739,7 +739,7 @@ def _scan(
             if state.mode is OutputMode.json:
                 emit_json(
                     state,
-                    {"command": "scan", "status": "error", "source": source_str, "error": msg},
+                    {"command": "pre-scan", "status": "error", "source": source_str, "error": msg},
                 )
             elif state.mode is not OutputMode.quiet:
                 state.err_console.print(error("error:"), msg)
@@ -751,12 +751,12 @@ def _scan(
     effective_strategy = SampleStrategy.full if rows == 0 else strategy
 
     try:
-        from decoy_engine import run_storm
+        from decoy_engine import profile_columns
 
-        with stormy_multistage(state, ["Load source", "Profile columns", "Summarize"]) as ms:
+        with scan_stages(state, ["Load source", "Profile columns", "Summarize"]) as ms:
             df = _load_data(source, effective_fmt, layout_columns, row_cap, effective_strategy)
             ms.complete()
-            profile = run_storm(
+            profile = profile_columns(
                 df,
                 source_label=source.name,
                 sample_strategy=effective_strategy.value,
@@ -779,7 +779,7 @@ def _scan(
         if state.mode is OutputMode.json:
             emit_json(
                 state,
-                {"command": "scan", "status": "error", "source": source_str, "error": msg},
+                {"command": "pre-scan", "status": "error", "source": source_str, "error": msg},
             )
         elif state.mode is not OutputMode.quiet:
             state.err_console.print(error("error:"), msg)
@@ -806,7 +806,7 @@ def _scan(
 
     if state.mode is OutputMode.json:
         payload: dict = {
-            "command": "scan",
+            "command": "pre-scan",
             "status": "ok",
             "source": source_str,
             "row_count": profile.row_count,
@@ -847,12 +847,12 @@ def _scan(
     next_hint: str | None
     if out_path is not None:
         facts.append(("Saved", str(out_path)))
-        next_hint = f"decoy scan fields {out_path}"
+        next_hint = f"decoy pre-scan fields {out_path}"
     else:
         # Persist-only-on-output: point at the two-step saved-scan flow.
-        next_hint = f"decoy scan {source.name} --output scan.json  (then: decoy scan fields scan.json)"
+        next_hint = f"decoy pre-scan {source.name} --output scan.json  (then: decoy pre-scan fields scan.json)"
 
-    render_card(state, command="decoy scan", facts=facts, next_hint=next_hint, status="ok")
+    render_card(state, command="decoy pre-scan", facts=facts, next_hint=next_hint, status="ok")
 
     if show_fields:
         state.console.print()
@@ -864,13 +864,13 @@ def _scan(
 
 
 # ---------------------------------------------------------------------------
-# `decoy scan fields SCAN` -- list fields from a saved scan (was the storm verb)
+# `decoy pre-scan fields SCAN` -- list fields from a saved scan
 # ---------------------------------------------------------------------------
 
 
 def _fields(
     scan: str = typer.Argument(
-        ..., help="Path to a STORM scan JSON, or `-` for stdin."
+        ..., help="Path to a pre-scan profile JSON, or `-` for stdin."
     ),
     pii: PiiLevel | None = typer.Option(
         None, "--pii",
@@ -894,14 +894,14 @@ def _fields(
 
     Print the fields that matter, filter by PII bucket or quasi-identifier
     membership, pipe the result somewhere else. For per-field detail, see
-    `decoy scan show`.
+    `decoy pre-scan show`.
     """
     state = setup_output(json_, quiet, verbose)
 
     try:
         data = _load_scan_dict(scan)
     except (FileNotFoundError, _json.JSONDecodeError, OSError) as exc:
-        _emit_load_error(state, scan, exc, "scan fields")
+        _emit_load_error(state, scan, exc, "pre-scan fields")
         raise typer.Exit(code=EXIT_USAGE)
 
     fields = data.get("fields", [])
@@ -927,7 +927,7 @@ def _fields(
         emit_json(
             state,
             {
-                "command": "scan fields",
+                "command": "pre-scan fields",
                 "status": "ok",
                 "scan": scan,
                 "matched": len(rows),
@@ -969,17 +969,17 @@ def _fields(
 
     if rows and scan != "-":
         first = rows[0]["name"]
-        state.console.print(hint("Next:"), code(f"decoy scan show {scan} {first}"))
+        state.console.print(hint("Next:"), code(f"decoy pre-scan show {scan} {first}"))
 
 
 # ---------------------------------------------------------------------------
-# `decoy scan show SCAN FIELD` -- per-field detail (was the storm verb)
+# `decoy pre-scan show SCAN FIELD` -- per-field detail
 # ---------------------------------------------------------------------------
 
 
 def _show(
     scan: str = typer.Argument(
-        ..., help="Path to a STORM scan JSON, or `-` for stdin."
+        ..., help="Path to a pre-scan profile JSON, or `-` for stdin."
     ),
     field: str = typer.Argument(..., help="Field name to inspect."),
     json_: bool = typer.Option(
@@ -1002,7 +1002,7 @@ def _show(
     try:
         data = _load_scan_dict(scan)
     except (FileNotFoundError, _json.JSONDecodeError, OSError) as exc:
-        _emit_load_error(state, scan, exc, "scan show")
+        _emit_load_error(state, scan, exc, "pre-scan show")
         raise typer.Exit(code=EXIT_USAGE)
 
     fields = data.get("fields", [])
@@ -1015,7 +1015,7 @@ def _show(
             emit_json(
                 state,
                 {
-                    "command": "scan show",
+                    "command": "pre-scan show",
                     "status": "error",
                     "scan": scan,
                     "field": field,
@@ -1034,7 +1034,7 @@ def _show(
             else:
                 state.err_console.print(
                     " ", hint("hint:"), "list all fields with",
-                    code(f"decoy scan fields {scan}"),
+                    code(f"decoy pre-scan fields {scan}"),
                 )
         raise typer.Exit(code=EXIT_USAGE)
 
@@ -1050,7 +1050,7 @@ def _show(
         emit_json(
             state,
             {
-                "command": "scan show",
+                "command": "pre-scan show",
                 "status": "ok",
                 "scan": scan,
                 "field": matched,
@@ -1091,11 +1091,11 @@ def _show(
 
     next_hint = None
     if scan != "-":
-        next_hint = f"decoy scan fields {scan}"
+        next_hint = f"decoy pre-scan fields {scan}"
 
     render_card(
         state,
-        command="decoy scan show",
+        command="decoy pre-scan show",
         facts=facts,
         next_hint=next_hint,
         status="ok",
@@ -1125,16 +1125,16 @@ def _show(
 
 
 # ---------------------------------------------------------------------------
-# `decoy scan diff OLD NEW` -- compare two saved scans (was the storm verb)
+# `decoy pre-scan diff OLD NEW` -- compare two saved scans
 # ---------------------------------------------------------------------------
 
 
 def _diff(
     old: str = typer.Argument(
-        ..., help="Path to the older STORM scan JSON, or `-` for stdin."
+        ..., help="Path to the older pre-scan profile JSON, or `-` for stdin."
     ),
     new: str = typer.Argument(
-        ..., help="Path to the newer STORM scan JSON, or `-` for stdin."
+        ..., help="Path to the newer pre-scan profile JSON, or `-` for stdin."
     ),
     strict: bool = typer.Option(
         False, "--strict",
@@ -1152,7 +1152,7 @@ def _diff(
 ) -> None:
     """Compare two scans -- catch schema, PII, and risk drift.
 
-    Designed for CI: run `decoy scan diff baseline.json new.json --strict`
+    Designed for CI: run `decoy pre-scan diff baseline.json new.json --strict`
     on every PR to fail the build when a column's PII bucket goes up, a new
     high-PII field appears, or a new quasi-identifier group forms. Read-only
     -- the scans are JSON; raw data never enters the CLI.
@@ -1164,7 +1164,7 @@ def _diff(
             emit_json(
                 state,
                 {
-                    "command": "scan diff",
+                    "command": "pre-scan diff",
                     "status": "error",
                     "error": "only one of OLD or NEW can be `-` (stdin).",
                 },
@@ -1181,12 +1181,12 @@ def _diff(
     try:
         old_data = _load_scan_dict(old)
     except (FileNotFoundError, _json.JSONDecodeError, OSError) as exc:
-        _emit_load_error(state, old, exc, "scan diff")
+        _emit_load_error(state, old, exc, "pre-scan diff")
         raise typer.Exit(code=EXIT_USAGE)
     try:
         new_data = _load_scan_dict(new)
     except (FileNotFoundError, _json.JSONDecodeError, OSError) as exc:
-        _emit_load_error(state, new, exc, "scan diff")
+        _emit_load_error(state, new, exc, "pre-scan diff")
         raise typer.Exit(code=EXIT_USAGE)
 
     old_fields = {
@@ -1259,7 +1259,7 @@ def _diff(
         emit_json(
             state,
             {
-                "command": "scan diff",
+                "command": "pre-scan diff",
                 "status": "ok",
                 "old": old,
                 "new": new,
@@ -1309,13 +1309,13 @@ def _diff(
     status_token = "warn" if drift else "ok"
     next_hint = None
     if pii_increased and new != "-":
-        next_hint = f"decoy scan show {new} {pii_increased[0]['name']}"
+        next_hint = f"decoy pre-scan show {new} {pii_increased[0]['name']}"
     elif new_high_pii and new != "-":
-        next_hint = f"decoy scan show {new} {new_high_pii[0]['name']}"
+        next_hint = f"decoy pre-scan show {new} {new_high_pii[0]['name']}"
 
     render_card(
         state,
-        command="decoy scan diff",
+        command="decoy pre-scan diff",
         facts=facts,
         next_hint=next_hint,
         status=status_token,
@@ -1392,14 +1392,14 @@ def _diff(
         raise typer.Exit(code=EXIT_USAGE)
 
 
-# The hidden default command: `decoy scan SOURCE` (no subcommand) routes here
+# The hidden default command: `decoy pre-scan SOURCE` (no subcommand) routes here
 # via the shared default-command group. Hidden so it stays out of help / the
 # generated reference / completion, while the group can still dispatch to it.
-scan_app.command(name="_scan", hidden=True, epilog=_SCAN_EPILOG)(_scan)
-scan_app.command(name="fields", epilog=_FIELDS_EPILOG)(_fields)
-scan_app.command(name="show", epilog=_SHOW_EPILOG)(_show)
-scan_app.command(name="diff", epilog=_DIFF_EPILOG)(_diff)
+pre_scan_app.command(name="_pre_scan", hidden=True, epilog=_PRE_SCAN_EPILOG)(_pre_scan)
+pre_scan_app.command(name="fields", epilog=_FIELDS_EPILOG)(_fields)
+pre_scan_app.command(name="show", epilog=_SHOW_EPILOG)(_show)
+pre_scan_app.command(name="diff", epilog=_DIFF_EPILOG)(_diff)
 
-SCAN_EPILOG = _SCAN_EPILOG
+SCAN_EPILOG = _PRE_SCAN_EPILOG
 
-__all__ = ["SCAN_EPILOG", "scan_app"]
+__all__ = ["SCAN_EPILOG", "pre_scan_app"]

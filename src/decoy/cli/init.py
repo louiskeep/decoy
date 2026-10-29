@@ -7,7 +7,7 @@ iterate on. The body of every preset comes from `decoy.templates`, so
 same YAML up to input/output path edits.
 
 OSS.4c (2026-06-02) added a column-aware path: `decoy init <file>` runs
-STORM against the input, picks a starter strategy per column from the
+the Pre-scan profiler against the input, picks a starter strategy per column from the
 inference table in `_init_inference.py`, and emits the YAML with
 `# REVIEW:` comments above every auto-inferred entry. Source patterns:
 dbt init (template scaffold + ask user to review) and cookiecutter
@@ -40,15 +40,15 @@ Examples:
     Skip the wizard; scaffold from the HIPAA template.
 
   decoy init customers.csv --output pipeline.yaml
-    Column-aware scaffolding (OSS.4c, 2026-06-02). Runs STORM against
-    the file, picks a starter strategy per column from the inference
+    Column-aware scaffolding (OSS.4c, 2026-06-02). Runs the Pre-scan
+    profiler against the file, picks a starter strategy per column from the inference
     table, writes the YAML with `# REVIEW:` comments above every
     inferred entry. The user must read + edit before running.
 
   decoy init --yes
     Skip confirmation when overwriting an existing file.
 
-See also: decoy validate config, decoy run, decoy scan, decoy list templates.
+See also: decoy validate config, decoy run, decoy pre-scan, decoy list templates.
 """
 
 
@@ -101,7 +101,7 @@ def _rule_count(body: str) -> int:
 
 # --- Column-aware scaffolding (OSS.4c) -------------------------------------
 #
-# `decoy init <file>` scans the input with STORM and writes a starter
+# `decoy init <file>` pre-scans the input and writes a starter
 # pipeline.yaml with one column entry per detected field. The YAML is
 # hand-emitted (no full YAML round-tripper) so REVIEW comments land in
 # the exact positions we need them; the body is smoke-validated through
@@ -120,7 +120,7 @@ multiple init runs.
 
 
 def _load_dataframe(input_file: Path):
-    """Read the user's input file into a pandas DataFrame for STORM.
+    """Read the user's input file into a pandas DataFrame for the profiler.
 
     Supports the two formats the v1 launch covers: CSV and Parquet. The
     file extension is the dispatch hint; this matches the engine's own
@@ -286,7 +286,7 @@ def _build_scaffold_yaml(
 
     return (
         f"{header}\n"
-        "version: 1\n\n"
+        "version: 2\n\n"
         "global_settings:\n"
         "  seed: 42\n\n"
         f"{sources_block}\n"
@@ -304,7 +304,7 @@ def _validate_scaffold(body: str) -> None:
     gate or import path the CLI cannot reach in some embedded contexts;
     in that case the function returns silently and the user's
     `decoy validate config` step picks up any schema issue. This matches the
-    pattern used in `decoy.cli.report._integrity`.
+    pattern used in `decoy.cli.post_scan._integrity`.
     """
     try:
         import yaml
@@ -322,7 +322,7 @@ def _scaffold_from_file(
     state,
     out_is_stdout: bool,
 ) -> tuple[str, int]:
-    """Run STORM against `input_file` and produce the scaffold YAML body.
+    """Run the Pre-scan profiler against `input_file` and produce the scaffold YAML body.
 
     Returns a (yaml_body, column_count) tuple so JSON-mode callers can
     report column_count without re-parsing the body. Callers handle
@@ -347,11 +347,11 @@ def _scaffold_from_file(
         raise typer.Exit(code=EXIT_RUNTIME) from exc
 
     try:
-        from decoy_engine.storm import run_storm
-        profile = run_storm(df, source_label=str(input_file))
+        from decoy_engine import profile_columns
+        profile = profile_columns(df, source_label=str(input_file))
     except Exception as exc:
         if state.mode is not OutputMode.default:
-            state.err_console.print(error("error:"), f"STORM scan failed: {exc}")
+            state.err_console.print(error("error:"), f"pre-scan failed: {type(exc).__name__}")
         raise typer.Exit(code=EXIT_RUNTIME) from exc
 
     column_names = [fs.name for fs in profile.fields]
@@ -396,7 +396,7 @@ def _init(
         None,
         help=(
             "Optional input file (.csv/.tsv/.parquet). When given without "
-            "--preset, runs STORM against the file and scaffolds a "
+            "--preset, runs the Pre-scan profiler against the file and scaffolds a "
             "column-aware pipeline.yaml with `# REVIEW:` comments above "
             "every auto-inferred column."
         ),
@@ -439,7 +439,7 @@ def _init(
     state = setup_output(json_, quiet, verbose)
 
     # Column-aware scaffolding (OSS.4c): an input file without --preset
-    # routes through STORM-driven inference instead of the template path.
+    # routes through Pre-scan-driven inference instead of the template path.
     # If both are given, --preset wins (explicit user override).
     if input_file is not None and preset is None:
         out_is_stdout = str(out) == "-"

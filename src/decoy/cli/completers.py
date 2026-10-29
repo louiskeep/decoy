@@ -81,7 +81,7 @@ def faker_provider_ids() -> list[str]:
 
 # Static set: the modes `decoy run --mode` accepts. Mirrors cli.run.Mode.
 # CLI.1 (2026-06-02): "convert" and "graph" were V1-only modes removed
-# under storm-reframe-C / S22-CL-V1GRAPHRUNNER. The V2 PipelineConfig
+# under S22-CL-V1GRAPHRUNNER. The V2 PipelineConfig
 # choke point accepts only mask + generate.
 RUN_MODES: tuple[str, ...] = ("mask", "generate")
 

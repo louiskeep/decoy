@@ -27,8 +27,8 @@ _REGISTRY: tuple[tuple[str, str], ...] = (
     ("gdpr", "GDPR personal-data masking: name, email, phone, IP address, location."),
     ("generate", "Synthetic-data generation pipeline; no input file required."),
     # CLI.3 (2026-06-02): graph template removed. V1 `mode: graph` was
-    # retired under storm-reframe-C / S22-CL-V1GRAPHRUNNER; the V2 graph
-    # builder UI emits a `version: 1` PipelineConfig from node settings
+    # retired under S22-CL-V1GRAPHRUNNER; the V2 graph
+    # builder UI emits a `version: 2` PipelineConfig from node settings
     # instead of authoring graph-mode YAML by hand.
 )
 

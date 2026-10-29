@@ -1,11 +1,11 @@
 """S1 slice A: the deleted CLI surfaces are actually gone.
 
-Three Typer subcommands (`storm scan`, `storm test`, `jobs watch`) and the
-`forge` console-script shim module were removed in the CLI-redesign S1
-foundations sprint (docs/plans/2026-10-23-cli-redesign-s1-foundations.md).
-This locks the removals in: each subcommand must resolve to a Typer
-"No such command" error (non-zero exit), and the shim module must no longer
-be importable.
+`jobs watch` and the `forge` console-script shim module were removed in the
+CLI-redesign S1 foundations sprint
+(docs/plans/2026-10-23-cli-redesign-s1-foundations.md). This locks the
+removals in: the subcommand must resolve to a Typer "No such command" error
+(non-zero exit), and the shim module must no longer be importable. The
+renamed-away command surfaces are covered in `test_removed_commands_contract.py`.
 """
 
 from __future__ import annotations
@@ -23,8 +23,6 @@ runner = CliRunner()
 @pytest.mark.parametrize(
     "argv",
     [
-        ["storm", "scan"],
-        ["storm", "test"],
         ["jobs", "watch"],
     ],
 )

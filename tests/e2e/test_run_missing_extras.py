@@ -34,7 +34,7 @@ runner = CliRunner()
 
 def _s3_source_pipeline(tmp_path: Path) -> Path:
     cfg = {
-        "version": 1,
+        "version": 2,
         "global_settings": {"seed": 42},
         "sources": {
             "accounts": {
@@ -74,7 +74,7 @@ def _gcs_target_pipeline(tmp_path: Path) -> Path:
     src = tmp_path / "accounts.csv"
     src.write_text("ssn\n123456789\n", encoding="utf-8")
     cfg = {
-        "version": 1,
+        "version": 2,
         "global_settings": {"seed": 42},
         "sources": {
             "accounts": {"type": "file", "format": "csv", "path": str(src)},

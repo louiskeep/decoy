@@ -52,7 +52,7 @@ def test_show_template_dumps_raw_yaml_to_stdout():
     assert result.exit_code == 0
     parsed = yaml.safe_load(result.stdout)
     assert parsed is not None
-    assert parsed.get("version") == 1
+    assert parsed.get("version") == 2
     assert "tables" in parsed
     assert len(parsed["tables"]) >= 1
     assert len(parsed["tables"][0]["columns"]) >= 3

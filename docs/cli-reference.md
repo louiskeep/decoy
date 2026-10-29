@@ -2,9 +2,11 @@
 
 Decoy -- data masking and synthetic generation CLI.
 
+Pipeline phases: Pre-scan (profile / detect) -&gt; Transform (mask / generate) -&gt; Post-scan (check the result).
+
 Try one of:
   decoy demo                       30-second end-to-end walkthrough.
-  decoy scan data.csv              Profile a dataset for PII and re-id risk (candidates as suggestions).
+  decoy pre-scan data.csv          Pre-scan: profile a dataset for PII candidates and re-id risk (suggestions to review).
   decoy validate pipeline.yaml     Run the whole pre-run gate (config + compile + preflight).
   decoy validate compile pipeline.yaml --explain  Explain per-column strategy and compile decisions.
   decoy run pipeline.yaml          Run a masking or generation pipeline.
@@ -18,8 +20,10 @@ Try one of:
   decoy show template hipaa        Dump one bundled template to stdout.
   decoy explain modes              Plain-English topic help. `explain` lists topics.
   decoy info                       Branded splash + quick-start hints.
-  decoy report show evidence.json  Show the evidence manifest (the post-run surface: show/verify/fidelity/integrity/diff/vault).
-  decoy report verify evidence.json  Re-hash the recorded files and report fingerprint drift.
+  decoy post-scan integrity masked.csv --source source.csv  Post-scan: residual-PII / FK / policy findings on a masked file (report-only).
+  decoy post-scan fidelity source.csv output.csv  Post-scan: distribution similarity (a measurement, not a privacy guarantee).
+  decoy report show evidence.json  Show the evidence manifest (the run-artifact surface: show/render/verify/diff/vault).
+  decoy report verify evidence.json  Re-hash the recorded files and report fingerprint drift (not a privacy check).
   decoy report diff a.json b.json  Compare two manifests: fingerprints always, data when the output files exist.
 
 Run `decoy --install-completion` to enable shell tab completion.
@@ -56,7 +60,8 @@ $ decoy [OPTIONS] COMMAND [ARGS]...
 * `subset`: Cut a referentially-complete FK-aware...
 * `upgrade`: Upgrade (or pin) the managed Decoy runtime...
 * `validate`: Pre-run validation gate.
-* `scan`: Profile a dataset for PII and...
+* `pre-scan`: Profile a dataset for PII and...
+* `post-scan`: Check a transformed output against its...
 * `report`: The post-run surface: show / render /...
 
 ## `decoy run`
@@ -96,7 +101,7 @@ $ decoy run [OPTIONS] CONFIG
 * `--native`: Require that a compiled native kernel actually executed. Refuses up front (no run) on --chunked or a generate/mixed config, or on an absent/broken decoy-engine-native companion. Refuses AFTER the run, before any output is written, if the job finished without positive compiled-kernel evidence (e.g. an FK table or a table masked only with passthrough/redact/truncate). Mutually exclusive with --no-native. See: decoy explain native.
 * `--no-native`: Force the legacy pandas adapter, bypassing the unified slice entirely -- the documented rollback for native-on-when-present. Mutually exclusive with --native. See: decoy explain native.
 * `--explain-plan`: After the run, show the EXECUTION ROUTE the engine chose (sequential / full_frame / out_of_core) and why, from the result&#x27;s execution_plan metrics. This is the route decision, NOT the per-column masking rationale -- for that, use `decoy validate compile --explain` (pre-run). Default off; report-only, never changes the exit code. Not supported with --chunked.
-* `--fidelity`: After the run, show a QUICK inline distribution-fidelity check per mask table (marginal grade/score), from the result&#x27;s fidelity_reports metrics. A low grade NEVER fails the run. For the fuller post-hoc grade, use `decoy report fidelity`. Default off; report-only. Not supported with --chunked.
+* `--fidelity`: After the run, show a QUICK inline distribution-fidelity check per mask table (marginal grade/score), from the result&#x27;s fidelity_reports metrics. A low grade NEVER fails the run. For the fuller post-hoc grade, use `decoy post-scan fidelity`. Default off; report-only. Not supported with --chunked.
 * `--post-validate`: After the run, run the post-execution validator suite over the masked output and show its results (findings + quality summary), from the result&#x27;s quality metrics. Warn-only: findings are reported but the run still exits 0. Use --post-validate-enforce to exit with findings. Default off. Not supported with --chunked.
 * `--post-validate-enforce`: Like --post-validate, but exit EXIT_FINDINGS (4) when the validator reports any hard-failed check. The masked output is still written (the mask succeeded; the findings are a data-quality signal). Implies --post-validate. Default off. Not supported with --chunked.
 * `--duckdb-source TEXT`: Read a pipeline input table from a DuckDB database file instead of a CSV/Parquet/fixed-width file. Repeatable; spec is &#x27;TABLE=DB_PATH&#x27;, where TABLE names a table in the pipeline&#x27;s `tables:` and the relation of the same name in the DuckDB file. The relation is acquired read-only (the database is never written) to a temporary Parquet file, which is then masked on the normal parquet path (native-on and --chunked apply unchanged). A flag entry overrides any `sources:` entry the YAML declares for TABLE. Not supported with --evidence-out yet. Needs no raw SQL: the relation name is the handle.
@@ -141,7 +146,7 @@ Examples:
   decoy run pipeline.yaml --fidelity
     After the run, show a quick inline marginal-fidelity check per mask table.
     A low grade never fails the run. For the fuller post-hoc grade, run
-    `decoy report fidelity`.
+    `decoy post-scan fidelity`.
 
   decoy run pipeline.yaml --post-validate
     After the run, run the post-execution validator suite over the masked
@@ -152,7 +157,7 @@ Examples:
     The masked output is still written. (The report flags are not supported
     with --chunked.)
 
-See also: decoy validate compile --explain, decoy report fidelity, decoy validate config, decoy explain chunked, decoy explain vault.
+See also: decoy validate compile --explain, decoy post-scan fidelity, decoy validate config, decoy explain chunked, decoy explain vault.
 
 
 ## `decoy unmask`
@@ -420,7 +425,7 @@ $ decoy init [OPTIONS] [INPUT_FILE]
 
 **Arguments**:
 
-* `[INPUT_FILE]`: Optional input file (.csv/.tsv/.parquet). When given without --preset, runs STORM against the file and scaffolds a column-aware pipeline.yaml with `# REVIEW:` comments above every auto-inferred column.
+* `[INPUT_FILE]`: Optional input file (.csv/.tsv/.parquet). When given without --preset, runs the Pre-scan profiler against the file and scaffolds a column-aware pipeline.yaml with `# REVIEW:` comments above every auto-inferred column.
 
 **Options**:
 
@@ -441,15 +446,15 @@ Examples:
     Skip the wizard; scaffold from the HIPAA template.
 
   decoy init customers.csv --output pipeline.yaml
-    Column-aware scaffolding (OSS.4c, 2026-06-02). Runs STORM against
-    the file, picks a starter strategy per column from the inference
+    Column-aware scaffolding (OSS.4c, 2026-06-02). Runs the Pre-scan
+    profiler against the file, picks a starter strategy per column from the inference
     table, writes the YAML with `# REVIEW:` comments above every
     inferred entry. The user must read + edit before running.
 
   decoy init --yes
     Skip confirmation when overwriting an existing file.
 
-See also: decoy validate config, decoy run, decoy scan, decoy list templates.
+See also: decoy validate config, decoy run, decoy pre-scan, decoy list templates.
 
 
 ## `decoy demo`
@@ -477,12 +482,12 @@ $ decoy demo [OPTIONS]
 Examples:
 
   decoy demo
-    Run the simple scan -> mask walkthrough in ./decoy_demo/.
+    Run the simple pre-scan -> mask walkthrough in ./decoy_demo/.
 
   decoy demo --json
     Same flow, but emit a JSON summary instead of cards.
 
-See also: decoy scan, decoy run.
+See also: decoy pre-scan, decoy run.
 
 
 ## `decoy explain`
@@ -490,7 +495,7 @@ See also: decoy scan, decoy run.
 Explain a Decoy concept in plain English.
 
 Built-in topics: modes, transforms, disguises, output, pipeline, yaml,
-storm, keys, vault, chunked, substrate, differential-privacy, security,
+pre-scan, post-scan, keys, vault, chunked, substrate, differential-privacy, security,
 completion. Run with no topic to see the full list.
 
 **Usage**:
@@ -630,7 +635,7 @@ Show detail for one reference item.
 
 `show strategy|provider|template NAME` gives per-item detail; `show schema`
 prints the PipelineConfig JSON Schema (`--output` writes it to a file).
-Note: `decoy scan show SCAN FIELD` is a different `show` -- it reports a
+Note: `decoy pre-scan show SCAN FIELD` is a different `show` -- it reports a
 field from a saved scan, not a reference item.
 
 **Usage**:
@@ -808,7 +813,7 @@ release key before anything is swapped. A bad signature or checksum refuses the 
 
 ## `decoy validate`
 
-Pre-run validation gate. `decoy validate CONFIG` runs the whole gate (config + compile + preflight) and emits one report + one exit code. Subcommands run a single layer: schema + config checks (`config`), plan compilation + checks (`compile`), and source/capacity readiness (`preflight`). Post-run fidelity checks moved to `decoy report fidelity`.
+Pre-run validation gate. `decoy validate CONFIG` runs the whole gate (config + compile + preflight) and emits one report + one exit code. Subcommands run a single layer: schema + config checks (`config`), plan compilation + checks (`compile`), and source/capacity readiness (`preflight`). Post-run fidelity checks moved to `decoy post-scan fidelity`.
 
 **Usage**:
 
@@ -835,7 +840,7 @@ Examples:
   decoy validate preflight pipeline.yaml
     Source / file / schema readiness + capacity estimate + native probe.
 
-See also: decoy run, decoy fit, decoy report fidelity.
+See also: decoy run, decoy fit, decoy post-scan fidelity.
 
 
 **Commands**:
@@ -888,7 +893,7 @@ Examples:
   decoy validate config pipeline.yaml --fail-on-warning
     Exit non-zero if any advisory warning fires (e.g. output target exists).
 
-See also: decoy run, decoy report fidelity.
+See also: decoy run, decoy post-scan fidelity.
 
 
 ### `decoy validate compile`
@@ -949,7 +954,7 @@ HONESTY: compile --explain explains decisions declared in the config and what th
 compiler verified. It does not guarantee the strategy is correct for the data,
 that all PII is covered, or that the output is safe to share.
 
-See also: decoy validate, decoy validate config, decoy scan.
+See also: decoy validate, decoy validate config, decoy pre-scan.
 
 
 ### `decoy validate preflight`
@@ -1027,14 +1032,14 @@ What preflight does NOT check:
 See also: decoy validate, decoy run, decoy report verify, decoy explain exit-codes.
 
 
-## `decoy scan`
+## `decoy pre-scan`
 
-Profile a dataset for PII and re-identification risk. `decoy scan SOURCE` scans a CSV/Parquet/fixed-width file (shape, field stats, PII candidates as suggestions, quasi-identifiers, reid risk) and, with `--output scan.json`, saves the scan. Subcommands operate on a saved scan: list fields (`fields`), per-field detail (`show`), compare two scans (`diff`).
+Profile a dataset for PII and re-identification risk. `decoy pre-scan SOURCE` scans a CSV/Parquet/fixed-width file (shape, field stats, PII candidates as suggestions, quasi-identifiers, reid risk) and, with `--output scan.json`, saves the scan. Subcommands operate on a saved scan: list fields (`fields`), per-field detail (`show`), compare two scans (`diff`).
 
 **Usage**:
 
 ```console
-$ decoy scan [OPTIONS] COMMAND [ARGS]...
+$ decoy pre-scan [OPTIONS] COMMAND [ARGS]...
 ```
 
 **Options**:
@@ -1043,35 +1048,35 @@ $ decoy scan [OPTIONS] COMMAND [ARGS]...
 
 Examples:
 
-  decoy scan data.csv
+  decoy pre-scan data.csv
     Profile a CSV: row/field counts, PII candidates (as suggestions), reid risk.
     Reads the first 10 000 rows by default (--rows 0 for a full scan).
 
-  decoy scan data.csv --show-fields
+  decoy pre-scan data.csv --show-fields
     Per-field detail: dtype, null_rate, distinct_count, PII candidate flag.
 
-  decoy scan data.csv --rows 50000 --strategy random
+  decoy pre-scan data.csv --rows 50000 --strategy random
     Sample 50K random rows instead of the first 10 000.
 
-  decoy scan data.csv --output scan.json
-    Save the scan to scan.json, then: decoy scan fields scan.json
+  decoy pre-scan data.csv --output scan.json
+    Save the scan to scan.json, then: decoy pre-scan fields scan.json
 
-  decoy scan data.csv --output -
+  decoy pre-scan data.csv --output -
     Stream the scan JSON to stdout for downstream tooling.
 
-  decoy scan records.fwf --layout layout.yaml
+  decoy pre-scan records.fwf --layout layout.yaml
     Scan a fixed-width file using an explicit column layout.
     Layout YAML: columns: [{name: id, start: 0, width: 5}, ...]
 
-HONESTY: PII candidates are SUGGESTIONS based on STORM pattern matching. They
+HONESTY: PII candidates are SUGGESTIONS based on pattern matching. They
 are NOT authoritative classifications. You review each flagged field and decide
 what masking to apply. Decoy never auto-classifies PII.
 
 No raw cell values appear in the inline output. Field stats include dtype,
 null_rate, distinct_count only.
 
-See also: decoy scan fields, decoy scan show, decoy scan diff,
-  decoy explain storm, decoy validate.
+See also: decoy pre-scan fields, decoy pre-scan show, decoy pre-scan diff,
+  decoy explain pre-scan, decoy validate.
 
 
 **Commands**:
@@ -1080,23 +1085,23 @@ See also: decoy scan fields, decoy scan show, decoy scan diff,
 * `show`: Per-field detail from a saved scan.
 * `diff`: Compare two scans -- catch schema, PII,...
 
-### `decoy scan fields`
+### `decoy pre-scan fields`
 
 List fields from a saved scan, with optional filters.
 
 Print the fields that matter, filter by PII bucket or quasi-identifier
 membership, pipe the result somewhere else. For per-field detail, see
-`decoy scan show`.
+`decoy pre-scan show`.
 
 **Usage**:
 
 ```console
-$ decoy scan fields [OPTIONS] SCAN
+$ decoy pre-scan fields [OPTIONS] SCAN
 ```
 
 **Arguments**:
 
-* `SCAN`: Path to a STORM scan JSON, or `-` for stdin.  [required]
+* `SCAN`: Path to a pre-scan profile JSON, or `-` for stdin.  [required]
 
 **Options**:
 
@@ -1109,19 +1114,19 @@ $ decoy scan fields [OPTIONS] SCAN
 
 Examples:
 
-  decoy scan fields scan.json
+  decoy pre-scan fields scan.json
     List every field with PII score, bucket, quasi-identifier flag.
 
-  decoy scan fields scan.json --pii high --quasi
+  decoy pre-scan fields scan.json --pii high --quasi
     Only fields that are high PII *and* part of a quasi-identifier group.
 
-  decoy scan fields scan.json --json | jq '.fields[].name'
+  decoy pre-scan fields scan.json --json | jq '.fields[].name'
     Pipe just the matching field names somewhere else.
 
-See also: decoy scan, decoy scan show.
+See also: decoy pre-scan, decoy pre-scan show.
 
 
-### `decoy scan show`
+### `decoy pre-scan show`
 
 Per-field detail from a saved scan.
 
@@ -1131,12 +1136,12 @@ sentinel hits, top values, quasi-identifier membership. Read-only.
 **Usage**:
 
 ```console
-$ decoy scan show [OPTIONS] SCAN FIELD
+$ decoy pre-scan show [OPTIONS] SCAN FIELD
 ```
 
 **Arguments**:
 
-* `SCAN`: Path to a STORM scan JSON, or `-` for stdin.  [required]
+* `SCAN`: Path to a pre-scan profile JSON, or `-` for stdin.  [required]
 * `FIELD`: Field name to inspect.  [required]
 
 **Options**:
@@ -1148,23 +1153,23 @@ $ decoy scan show [OPTIONS] SCAN FIELD
 
 Examples:
 
-  decoy scan show scan.json ssn
+  decoy pre-scan show scan.json ssn
     Per-field detail card -- PII score, detectors, sentinels, top values, QI.
 
-  decoy scan show scan.json email --json
+  decoy pre-scan show scan.json email --json
     Same data as a structured JSON envelope.
 
-  decoy scan data.csv --output - | decoy scan show - ssn
+  decoy pre-scan data.csv --output - | decoy pre-scan show - ssn
     Pipe a fresh scan straight in.
 
-See also: decoy scan, decoy scan fields.
+See also: decoy pre-scan, decoy pre-scan fields.
 
 
-### `decoy scan diff`
+### `decoy pre-scan diff`
 
 Compare two scans -- catch schema, PII, and risk drift.
 
-Designed for CI: run `decoy scan diff baseline.json new.json --strict`
+Designed for CI: run `decoy pre-scan diff baseline.json new.json --strict`
 on every PR to fail the build when a column&#x27;s PII bucket goes up, a new
 high-PII field appears, or a new quasi-identifier group forms. Read-only
 -- the scans are JSON; raw data never enters the CLI.
@@ -1172,13 +1177,13 @@ high-PII field appears, or a new quasi-identifier group forms. Read-only
 **Usage**:
 
 ```console
-$ decoy scan diff [OPTIONS] OLD NEW
+$ decoy pre-scan diff [OPTIONS] OLD NEW
 ```
 
 **Arguments**:
 
-* `OLD`: Path to the older STORM scan JSON, or `-` for stdin.  [required]
-* `NEW`: Path to the newer STORM scan JSON, or `-` for stdin.  [required]
+* `OLD`: Path to the older pre-scan profile JSON, or `-` for stdin.  [required]
+* `NEW`: Path to the newer pre-scan profile JSON, or `-` for stdin.  [required]
 
 **Options**:
 
@@ -1190,22 +1195,185 @@ $ decoy scan diff [OPTIONS] OLD NEW
 
 Examples:
 
-  decoy scan diff baseline.json new.json
+  decoy pre-scan diff baseline.json new.json
     Print field-, PII-, QI-, and risk-level differences between two scans.
 
-  decoy scan diff baseline.json new.json --strict
+  decoy pre-scan diff baseline.json new.json --strict
     Same, but exit 1 on drift (PII bucket bumped up, new high-PII field, or
     new quasi-identifier group). Wire this into CI.
 
-  decoy scan diff baseline.json new.json --json | jq '.drift'
+  decoy pre-scan diff baseline.json new.json --json | jq '.drift'
     Boolean drift flag for scripting.
 
-See also: decoy scan, decoy scan fields.
+See also: decoy pre-scan, decoy pre-scan fields.
+
+
+## `decoy post-scan`
+
+Check a transformed output against its source: integrity (residual PII / FK / policy findings) and fidelity (distribution similarity). Each check is a separate claim; neither is a release decision.
+
+**Usage**:
+
+```console
+$ decoy post-scan [OPTIONS] COMMAND [ARGS]...
+```
+
+**Options**:
+
+* `--help`: Show this message and exit.
+
+**Commands**:
+
+* `integrity`: Verify a masked file&#x27;s integrity against...
+* `fidelity`: Recompute distribution fidelity between a...
+
+### `decoy post-scan integrity`
+
+Verify a masked file&#x27;s integrity against its pre-mask source.
+
+Wraps `decoy_engine.verification.run_post_mask`. Runs the three
+post-mask check buckets (residual_pii, fk_preservation,
+policy_validation) a pipeline runs when `post_scan.integrity: true` is
+declared; this verb lets the CLI user run the same checks standalone.
+
+Report-only: it records findings, it does not repair the output, and a
+clean result is not a release decision. Distinct from `report verify`
+(manifest fingerprint drift): integrity is post-mask residual-PII / FK /
+policy on a masked file plus --source.
+
+Exit codes: 0 clean; 4 EXIT_FINDINGS on any fail-severity finding;
+1 EXIT_USAGE for missing files; 3 EXIT_RUNTIME for unexpected
+exceptions.
+
+**Usage**:
+
+```console
+$ decoy post-scan integrity [OPTIONS] MASKED
+```
+
+**Arguments**:
+
+* `MASKED`: Path to the masked CSV to verify.  [required]
+
+**Options**:
+
+* `--source FILE`: Pre-mask source CSV (ground truth for the integrity check).  [required]
+* `--config FILE`: Optional pipeline.yaml. When passed, policy_validation can compare against the configured masks. Without it the runner still produces residual_pii + fk_preservation findings.
+* `-o, --output PATH`: Write the post-scan-integrity/v2 JSON to this path. The Rich table still renders to stderr.
+* `--allow-source-mismatch`: Suppress the stderr warning when --source does not match the pipeline&#x27;s declared sources block.
+* `--json`: Emit the full post-scan-integrity/v2 JSON to stdout. No card.
+* `-q, --quiet`: Suppress stdout. Errors still go to stderr.
+* `-v, --verbose`: Enable debug-level CLI logs on stderr.
+* `--help`: Show this message and exit.
+
+Examples:
+
+  decoy post-scan integrity masked.csv --source source.csv
+    Run all three post-mask checks (residual_pii + fk_preservation +
+    policy_validation) against a masked file with its pre-mask
+    baseline as ground truth. Render a Rich findings table.
+
+  decoy post-scan integrity masked.csv --source source.csv --config pipeline.yaml
+    Same, but load the pipeline YAML so policy_validation can
+    compare against the configured masks. Without --config the
+    runner still produces residual_pii findings; policy_validation
+    is reduced to "no config provided" notes.
+
+  decoy post-scan integrity masked.csv --source source.csv --json > report.json
+    Pipe the full post-scan-integrity/v2 report JSON for downstream tooling.
+
+  decoy post-scan integrity masked.csv --source source.csv --output report.json
+    Write JSON to file + render a Rich summary on stderr.
+
+Exit codes: 0 clean (no fail/error findings); 4 EXIT_FINDINGS (one
+or more fail-severity findings); 1 EXIT_USAGE for missing files;
+3 EXIT_RUNTIME for unexpected exceptions.
+
+See also: decoy report verify, decoy post-scan fidelity, decoy explain post-scan,
+  decoy explain exit-codes.
+
+
+### `decoy post-scan fidelity`
+
+Recompute distribution fidelity between a source and an output CSV.
+
+Wraps `decoy_engine.quality.compute_quality_report` +
+`apply_quality_policy` (report.py:97, policy.py:142): the engine owns
+every metric and the letter grade; this command computes no fidelity
+number itself. Reads both CSVs fresh on every invocation (pure,
+repeatable) -- the CLI&#x27;s local evidence manifest records file
+fingerprints but not the raw frames, so recomputing from the two files
+is the only honest source for this number (BF1).
+
+Exit codes: 0 when the policy verdict is &#x27;pass&#x27; (or &#x27;warn&#x27; without
+--fail-on-warning); EXIT_FINDINGS (4) when the verdict is &#x27;fail&#x27;, or
+&#x27;warn&#x27; with --fail-on-warning set. This mirrors `post-scan integrity`&#x27;s
+exit-code contract -- a data-audit verb that reports findings, not a run
+that crashed -- rather than EXIT_RUNTIME (reserved for the CLI/engine
+blowing up unexpectedly).
+
+**Usage**:
+
+```console
+$ decoy post-scan fidelity [OPTIONS] SOURCE OUTPUT
+```
+
+**Arguments**:
+
+* `SOURCE`: Pre-mask / pre-generate source CSV (ground truth).  [required]
+* `OUTPUT`: Post-mask / post-generate output CSV to check.  [required]
+
+**Options**:
+
+* `--joint TEXT`: Column pair &#x27;a,b&#x27; to also score jointly (repeatable).
+* `--generate`: Output is synthetic generation, not masking: row counts may legitimately differ (sets expect_row_parity=False). Default assumes masking (row parity expected).
+* `--config FILE`: Pipeline YAML naming each column&#x27;s strategy, so intentional loss (hash, bucketize, faker, ...) is not flagged as accidental drift. Without it, per-column policy checks run on defaults only.
+* `--policy FILE`: A quality-policy config (YAML or JSON: mode / thresholds / strategy_expectations) overriding --mode / --min-grade / --min-score.
+* `--mode TEXT`: report (record only, verdict always pass) | warn (violations promote verdict to warn) | fail (violations promote verdict to fail). Ignored when --policy sets its own mode.  [default: report]
+* `--min-grade TEXT`: Shorthand: minimum letter grade (A/B/C/D) the overall score must reach.
+* `--min-score FLOAT`: Shorthand: minimum overall_score in [0, 1].
+* `--fail-on-warning`: Also exit non-zero (EXIT_FINDINGS) when the policy verdict is &#x27;warn&#x27;.
+* `--report-out PATH`: Write the full quality-report/v1 + policy JSON to this path.
+* `--json`: Emit the full quality-report/v1 + policy result as JSON.
+* `-q, --quiet`: Suppress stdout. Exit code carries the result.
+* `-v, --verbose`: Enable debug-level CLI logs on stderr.
+* `--help`: Show this message and exit.
+
+Examples:
+
+  decoy post-scan fidelity source.csv output.csv
+    Recompute distribution fidelity between a pre-mask source and its
+    masked output. Report mode (record only): always exits 0.
+
+  decoy post-scan fidelity source.csv output.csv --config pipeline.yaml
+    Pass the pipeline config so intentional loss (hash, bucketize, ...)
+    is not flagged as accidental drift.
+
+  decoy post-scan fidelity source.csv synthetic.csv --generate
+    Row counts are expected to differ (synthetic generation, not masking).
+
+  decoy post-scan fidelity source.csv output.csv --mode fail --min-grade B
+    Exit non-zero (EXIT_FINDINGS) when the overall grade falls below B.
+
+  decoy post-scan fidelity source.csv output.csv --joint state,tier --json
+    Include a (state, tier) joint fidelity score; emit the full
+    quality-report/v1 + policy JSON.
+
+  decoy post-scan fidelity source.csv output.csv --report-out report.json
+    Also write the full report + policy verdict to disk.
+
+Exit codes: 0 pass (or warn without --fail-on-warning); 4 EXIT_FINDINGS
+when the policy verdict is fail, or warn with --fail-on-warning set;
+1 EXIT_USAGE for bad input (missing columns, unreadable CSV, bad flags).
+
+Fidelity measures statistical similarity only; it is not a privacy guarantee.
+
+See also: decoy post-scan integrity, decoy fit, decoy run.
 
 
 ## `decoy report`
 
-The post-run surface: show / render / verify / fidelity / integrity / diff / vault. Operates on files -- evidence manifests produced by `decoy run --evidence-out` plus the source/output data they reference.
+The post-run surface: show / render / verify / diff / vault. Operates on files -- evidence manifests produced by `decoy run --evidence-out` plus the source/output data they reference. Output data checks live under `decoy post-scan`.
 
 **Usage**:
 
@@ -1222,8 +1390,6 @@ $ decoy report [OPTIONS] COMMAND [ARGS]...
 * `show`: Render the evidence report from an...
 * `render`: Render an evidence manifest to an HTML or...
 * `verify`: Verify a local evidence manifest&#x27;s...
-* `fidelity`: Recompute distribution fidelity between a...
-* `integrity`: Verify a masked file&#x27;s integrity against...
 * `diff`: Compare two evidence manifests:...
 * `vault`: Inspect a vault file: report entry count,...
 
@@ -1284,7 +1450,7 @@ See also: decoy report render, decoy report verify.
 Render an evidence manifest to an HTML or Markdown report file.
 
 The report is built from the manifest only (evidence-safe). Raw row
-values, PII, and STORM profile internals are never included.
+values, PII, and Pre-scan profile internals are never included.
 
 HTML output is self-contained and offline-capable (no CDN/external JS).
 Markdown output is plain text.
@@ -1321,7 +1487,7 @@ What the report includes:
   row counts, masking strategies (names only), node timings, and warnings.
 
 What the report intentionally excludes:
-  Raw row values, PII samples, STORM profile internals, diagnostic values.
+  Raw row values, PII samples, Pre-scan profile internals, diagnostic values.
   The evidence manifest records strategy names and fingerprints only; the
   report renders that safe subset.
 
@@ -1339,8 +1505,9 @@ manifest_hash to detect edits to the manifest file itself.
 Exits 0 when all fingerprints match (no drift). Exits non-zero
 (EXIT_FINDINGS) when any fingerprint has changed.
 
-Distinct from `report integrity` (post-mask residual-PII / FK / policy on
-a masked file plus `--source`): verify is manifest fingerprint-drift.
+Distinct from `decoy post-scan integrity` (post-mask residual-PII / FK /
+policy on a masked file plus `--source`): verify is an artifact
+fingerprint check only. It says nothing about privacy.
 
 Integrity limit: manifest_hash is an UNKEYED SHA-256 check. It detects
 accidental drift (file changes since the run), NOT a motivated tamperer
@@ -1381,7 +1548,7 @@ What verify checks:
 
 What verify does NOT check:
   - Whether the output was produced by the declared pipeline.
-  - Data correctness or masking quality.
+  - Data correctness, masking quality, or privacy (see `decoy post-scan`).
   - Platform audit logs, RBAC, or schedule history.
   - Network, vault, or secrets accessibility.
 
@@ -1392,146 +1559,6 @@ manifest and recompute the hash. Keyed signing is platform R4 territory.
 Exit codes: 0 clean; 4 fingerprint drift detected; 1 bad input.
 
 See also: decoy report show, decoy run --evidence-out.
-
-
-### `decoy report fidelity`
-
-Recompute distribution fidelity between a source and an output CSV.
-
-Wraps `decoy_engine.quality.compute_quality_report` +
-`apply_quality_policy` (report.py:97, policy.py:142): the engine owns
-every metric and the letter grade; this command computes no fidelity
-number itself. Reads both CSVs fresh on every invocation (pure,
-repeatable) -- the CLI&#x27;s local evidence manifest records file
-fingerprints but not the raw frames, so recomputing from the two files
-is the only honest source for this number (BF1).
-
-Exit codes: 0 when the policy verdict is &#x27;pass&#x27; (or &#x27;warn&#x27; without
---fail-on-warning); EXIT_FINDINGS (4) when the verdict is &#x27;fail&#x27;, or
-&#x27;warn&#x27; with --fail-on-warning set. This mirrors `report integrity`&#x27;s
-exit-code contract -- a data-audit verb that reports findings, not a run
-that crashed -- rather than EXIT_RUNTIME (reserved for the CLI/engine
-blowing up unexpectedly).
-
-**Usage**:
-
-```console
-$ decoy report fidelity [OPTIONS] SOURCE OUTPUT
-```
-
-**Arguments**:
-
-* `SOURCE`: Pre-mask / pre-generate source CSV (ground truth).  [required]
-* `OUTPUT`: Post-mask / post-generate output CSV to check.  [required]
-
-**Options**:
-
-* `--joint TEXT`: Column pair &#x27;a,b&#x27; to also score jointly (repeatable).
-* `--generate`: Output is synthetic generation, not masking: row counts may legitimately differ (sets expect_row_parity=False). Default assumes masking (row parity expected).
-* `--config FILE`: Pipeline YAML naming each column&#x27;s strategy, so intentional loss (hash, bucketize, faker, ...) is not flagged as accidental drift. Without it, per-column policy checks run on defaults only.
-* `--policy FILE`: A quality-policy config (YAML or JSON: mode / thresholds / strategy_expectations) overriding --mode / --min-grade / --min-score.
-* `--mode TEXT`: report (record only, verdict always pass) | warn (violations promote verdict to warn) | fail (violations promote verdict to fail). Ignored when --policy sets its own mode.  [default: report]
-* `--min-grade TEXT`: Shorthand: minimum letter grade (A/B/C/D) the overall score must reach.
-* `--min-score FLOAT`: Shorthand: minimum overall_score in [0, 1].
-* `--fail-on-warning`: Also exit non-zero (EXIT_FINDINGS) when the policy verdict is &#x27;warn&#x27;.
-* `--report-out PATH`: Write the full quality-report/v1 + policy JSON to this path.
-* `--json`: Emit the full quality-report/v1 + policy result as JSON.
-* `-q, --quiet`: Suppress stdout. Exit code carries the result.
-* `-v, --verbose`: Enable debug-level CLI logs on stderr.
-* `--help`: Show this message and exit.
-
-Examples:
-
-  decoy report fidelity source.csv output.csv
-    Recompute distribution fidelity between a pre-mask source and its
-    masked output. Report mode (record only): always exits 0.
-
-  decoy report fidelity source.csv output.csv --config pipeline.yaml
-    Pass the pipeline config so intentional loss (hash, bucketize, ...)
-    is not flagged as accidental drift.
-
-  decoy report fidelity source.csv synthetic.csv --generate
-    Row counts are expected to differ (synthetic generation, not masking).
-
-  decoy report fidelity source.csv output.csv --mode fail --min-grade B
-    Exit non-zero (EXIT_FINDINGS) when the overall grade falls below B.
-
-  decoy report fidelity source.csv output.csv --joint state,tier --json
-    Include a (state, tier) joint fidelity score; emit the full
-    quality-report/v1 + policy JSON.
-
-  decoy report fidelity source.csv output.csv --report-out report.json
-    Also write the full report + policy verdict to disk.
-
-Exit codes: 0 pass (or warn without --fail-on-warning); 4 EXIT_FINDINGS
-when the policy verdict is fail, or warn with --fail-on-warning set;
-1 EXIT_USAGE for bad input (missing columns, unreadable CSV, bad flags).
-
-See also: decoy report integrity, decoy fit, decoy run.
-
-
-### `decoy report integrity`
-
-Verify a masked file&#x27;s integrity against its pre-mask source.
-
-Wraps `decoy_engine.storm.postmask.run_storm_post_mask`. Runs the
-three post-mask check buckets (residual_pii, fk_preservation,
-policy_validation) the platform&#x27;s mask job already runs when
-`run_storm: true` is declared in the pipeline; this verb lets the
-CLI user run the same checks standalone.
-
-Distinct from `report verify` (manifest fingerprint-drift): integrity is
-post-mask residual-PII / FK / policy on a masked file plus --source.
-
-Exit codes: 0 clean; 4 EXIT_FINDINGS on any fail-severity finding;
-1 EXIT_USAGE for missing files; 3 EXIT_RUNTIME for unexpected
-exceptions.
-
-**Usage**:
-
-```console
-$ decoy report integrity [OPTIONS] MASKED
-```
-
-**Arguments**:
-
-* `MASKED`: Path to the masked CSV to verify.  [required]
-
-**Options**:
-
-* `--source FILE`: Pre-mask source CSV (ground truth for the integrity check).  [required]
-* `--config FILE`: Optional pipeline.yaml. When passed, policy_validation can compare against the configured masks. Without it the runner still produces residual_pii + fk_preservation findings.
-* `-o, --output PATH`: Write the JobStormReport JSON to this path. The Rich table still renders to stderr.
-* `--allow-source-mismatch`: Suppress the stderr warning when --source does not match the pipeline&#x27;s declared sources block.
-* `--json`: Emit the full JobStormReport JSON to stdout. No card.
-* `-q, --quiet`: Suppress stdout. Errors still go to stderr.
-* `-v, --verbose`: Enable debug-level CLI logs on stderr.
-* `--help`: Show this message and exit.
-
-Examples:
-
-  decoy report integrity masked.csv --source source.csv
-    Run all three post-mask checks (residual_pii + fk_preservation +
-    policy_validation) against a masked file with its pre-mask
-    baseline as ground truth. Render a Rich findings table.
-
-  decoy report integrity masked.csv --source source.csv --config pipeline.yaml
-    Same, but load the pipeline YAML so policy_validation can
-    compare against the configured masks. Without --config the
-    runner still produces residual_pii findings; policy_validation
-    is reduced to "no config provided" notes.
-
-  decoy report integrity masked.csv --source source.csv --json > report.json
-    Pipe the full JobStormReport-shaped JSON for downstream tooling.
-
-  decoy report integrity masked.csv --source source.csv --output report.json
-    Write JSON to file + render a Rich summary on stderr.
-
-Exit codes: 0 clean (no fail/error findings); 4 EXIT_FINDINGS (one
-or more fail-severity findings); 1 EXIT_USAGE for missing files;
-3 EXIT_RUNTIME for unexpected exceptions.
-
-See also: decoy report verify, decoy report fidelity, decoy explain exit-codes.
 
 
 ### `decoy report diff`

@@ -65,7 +65,7 @@ def eligible_parquet_config(tmp_path: Path) -> dict:
         src, index=False
     )
     return {
-        "version": 1,
+        "version": 2,
         "global_settings": {"seed": 42},
         "sources": {"customers": {"type": "file", "format": "parquet", "path": str(src)}},
         "tables": [
@@ -89,7 +89,7 @@ def csv_config(tmp_path: Path) -> dict:
     src = tmp_path / "in.csv"
     pd.DataFrame({"id": ["a", "b"], "email": ["a@x.com", "b@x.com"]}).to_csv(src, index=False)
     return {
-        "version": 1,
+        "version": 2,
         "global_settings": {"seed": 42},
         "sources": {"customers": {"type": "file", "format": "csv", "path": str(src)}},
         "tables": [
@@ -142,7 +142,7 @@ def test_mask_native_true_refuses_absent_companion_before_a_missing_source_error
     to open it, so the caller sees the native-companion reason, not a
     generic `FileNotFoundError` that would obscure it."""
     config = {
-        "version": 1,
+        "version": 2,
         "global_settings": {"seed": 42},
         "sources": {
             "customers": {
@@ -253,7 +253,7 @@ def test_mask_native_true_fails_closed_on_runtime_ineligible_candidate(
 
 def test_mask_native_true_on_generate_only_rejected_before_dispatch(tmp_path: Path):
     config = {
-        "version": 1,
+        "version": 2,
         "global_settings": {"seed": 42},
         "tables": [
             {

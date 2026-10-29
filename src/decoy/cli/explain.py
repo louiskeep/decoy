@@ -2,7 +2,7 @@
 
 The CLI ships every topic the user might Google before reaching for
 `--help`: modes, transforms, disguises, output flags, pipeline schema,
-YAML authoring, STORM, master-key flow, and safety boundaries.
+YAML authoring, the Pre-scan / Transform / Post-scan lifecycle, master-key flow, and safety boundaries.
 Each topic renders as a styled Panel with a one-line summary, a body,
 and a `See also:` line. Tab completion suggests topic names; unknown
 topics produce a `did you mean?` hint.
@@ -47,7 +47,7 @@ _TOPICS: dict[str, _Topic] = {
             "2026-06-02; the old top-level `mode:` key was removed). The --mode flag is\n"
             "now only a label for progress/JSON output; it does not override what the\n"
             "tables declare.\n\n"
-            "V1 had two additional modes (graph + convert) that were removed under storm-reframe-C\n"
+            "V1 had two additional modes (graph + convert) that were removed\n"
             "and S22-CL-V1GRAPHRUNNER (2026-05-30). YAML with `mode: graph` or `mode: convert`\n"
             "is rejected by the V2 PipelineConfig validator with a typed error."
         ),
@@ -89,8 +89,8 @@ _TOPICS: dict[str, _Topic] = {
             "  hipaa     The 18 PHI identifiers from 45 CFR 164.514(b)(2) -- Safe Harbor.\n\n"
             "Pick a Disguise by hand via `decoy show template hipaa` (gets the pipeline shape\n"
             "you'd start from) or by browsing the engine source under decoy_engine.disguises.\n\n"
-            "The V1 FORECAST recommender (which scored Disguises against a STORM scan and drafted\n"
-            "a pipeline) was retired under storm-reframe-C (2026-05-30); pick the Disguise by\n"
+            "The V1 FORECAST recommender (which scored Disguises against a Pre-scan profile and drafted\n"
+            "a pipeline) was retired (2026-05-30); pick the Disguise by\n"
             "hand from the templates set for now."
         ),
         see_also=("decoy show template hipaa", "decoy explain transforms"),
@@ -116,10 +116,19 @@ _TOPICS: dict[str, _Topic] = {
     ),
     "pipeline": _Topic(
         name="pipeline",
-        summary="The shape of a decoy pipeline YAML.",
+        summary="The Pre-scan / Transform / Post-scan lifecycle and the shape of a pipeline YAML.",
         body=(
+            "A pipeline runs in three phases, each a separate claim:\n\n"
+            "  Pre-scan    profile the source and flag candidate sensitive fields\n"
+            "              (`decoy pre-scan`). Observes only; never says an output is safe.\n"
+            "  Transform   mask or generate the candidate output (`decoy run`).\n"
+            "  Post-scan   check the result against the source (`decoy post-scan`):\n"
+            "              integrity findings and distribution fidelity. Checks are\n"
+            "              report-only unless you ask for enforcement, and a clean\n"
+            "              report is not a release decision.\n\n"
+            "See `decoy explain pre-scan` and `decoy explain post-scan`.\n\n"
             "V2 PipelineConfig shape (current; `decoy validate` accepts these):\n\n"
-            "  version            1 (integer, not '1.0').\n"
+            "  version            2 (integer, not '1.0'). Version 1 is rejected.\n"
             "  global_settings    seed, default_locale.\n"
             "  sources            dict[name -> {type, format, path}].\n"
             "  tables             list of {name, columns: [{name, strategy, ...}]}\n"
@@ -127,7 +136,10 @@ _TOPICS: dict[str, _Topic] = {
             "                     for generate.\n"
             "  targets            dict[name -> {type, format, path}].\n"
             "  relationships      optional FK relationships across tables.\n"
-            "  namespaces         optional namespace -> declared_by mapping.\n\n"
+            "  namespaces         optional namespace -> declared_by mapping.\n"
+            "  post_scan          optional {integrity: bool}; true runs the Post-scan\n"
+            "                     integrity suite after the transform (default false,\n"
+            "                     report-only).\n\n"
             "  key_label is NOT a YAML field -- PipelineConfig forbids unknown\n"
             "  top-level keys, so a top-level `key_label:` fails validation.\n"
             "  Pass it as `--key-label` on `decoy run` instead. See `decoy\n"
@@ -135,7 +147,7 @@ _TOPICS: dict[str, _Topic] = {
             "Mode is inferred per-table from `columns` (mask) vs `generate_columns`\n"
             "(generate); a single pipeline can mix both kinds (FC-1, 2026-06-02).\n\n"
             "Pick a template to start from: `decoy show template minimal`.\n\n"
-            "Legacy V1 shape (REJECTED by `decoy validate` since storm-reframe-C,\n"
+            "Legacy V1 shape (REJECTED by `decoy validate` since\n"
             "2026-05-30): `version: '1.0'`, `input:`, `output:`, `masking_rules:`.\n"
             "Old YAML on disk must be re-authored to the V2 shape above; the\n"
             "graph builder in decoy-platform's web UI emits V2 directly.\n\n"
@@ -164,27 +176,50 @@ _TOPICS: dict[str, _Topic] = {
             "a CLI flag, not a YAML field -- PipelineConfig forbids unknown top-level keys.\n"
             "For portable keyed MASKING, set `global_settings.mask_secret_ref` instead --\n"
             "see `decoy explain keys`.\n"
-            "Treat STORM scan JSON, reference files, and real input/output files as\n"
+            "Treat Pre-scan profile JSON, reference files, and real input/output files as\n"
             "sensitive artifacts.\n\n"
             "Full guide in the docs hub:\n"
             "  decoy-platform/docs/guides/cli-yaml-workflows.md"
         ),
         see_also=("decoy explain pipeline", "decoy list templates", "decoy validate config --help"),
     ),
-    "storm": _Topic(
-        name="storm",
-        summary="Dataset analysis -- scan a CSV for PII before writing a mask.",
+    "pre-scan": _Topic(
+        name="pre-scan",
+        summary="Pre-scan -- profile a source and flag candidate sensitive fields before writing a mask.",
         body=(
-            "STORM (Statistical Top-down Risk Mapping) scans a dataset and produces a profile:\n"
-            "  - Per-column type, cardinality, null fraction, top values.\n"
-            "  - PII detector hits (regex + named-entity recognition).\n"
+            "Pre-scan (`decoy pre-scan SOURCE`) profiles a dataset and produces:\n"
+            "  - Per-column type, cardinality, null fraction.\n"
+            "  - PII detector candidates (regex + named-entity recognition), as suggestions.\n"
             "  - Sentinel-value flags (the 999s, 99/99/9999s, NA-like literals that pollute stats).\n"
             "  - Quasi-identifier groups (sets of columns that uniquely identify a row).\n"
-            "  - A re-identification risk score, 0-100.\n\n"
-            "Run it before writing a masking pipeline. The output JSON gives you the column-by-column\n"
-            "PII signal the operator uses to pick a Disguise template + tune the mask."
+            "  - A re-identification risk score.\n\n"
+            "Run it before writing a masking pipeline. Detections are candidates for you to\n"
+            "review, not authoritative classifications. Pre-scan observes the source only: it\n"
+            "never establishes that a transformed output is safe (that is Post-scan).\n\n"
+            "Saved profiles: `decoy pre-scan fields|show|diff`."
         ),
-        see_also=("decoy scan --help", "decoy list templates"),
+        see_also=("decoy pre-scan --help", "decoy explain post-scan", "decoy list templates"),
+    ),
+    "post-scan": _Topic(
+        name="post-scan",
+        summary="Post-scan -- check a transformed output against its source.",
+        body=(
+            "Post-scan checks run on the candidate output after Transform. Each is a\n"
+            "separate claim, and a clean result is not a release decision or a\n"
+            "universal 'safe' badge:\n\n"
+            "  integrity  `decoy post-scan integrity MASKED --source SOURCE`\n"
+            "             Residual-PII, FK-preservation and policy findings under the\n"
+            "             post-scan-integrity/v2 schema. Report-only; a zero-finding result\n"
+            "             covers only the checks that ran. In a pipeline, enable the same\n"
+            "             suite with `post_scan.integrity: true`.\n"
+            "  fidelity   `decoy post-scan fidelity SOURCE OUTPUT`\n"
+            "             Distribution similarity between source and output. High similarity\n"
+            "             is a measurement, NOT a privacy guarantee.\n\n"
+            "A check that cannot run exits non-zero; it never reads as a clean pass.\n"
+            "`decoy report verify` is different: it re-hashes recorded artifacts and\n"
+            "detects fingerprint drift. It is not a privacy check."
+        ),
+        see_also=("decoy post-scan --help", "decoy explain pre-scan", "decoy explain exit-codes"),
     ),
     "keys": _Topic(
         name="keys",
@@ -407,7 +442,7 @@ _TOPICS: dict[str, _Topic] = {
             "or evidence packages.\n\n"
             "Keep these artifacts private:\n"
             "  - Raw input files and masked/generated outputs.\n"
-            "  - STORM scan JSON, because it can contain sensitive aggregates and top values.\n"
+            "  - Pre-scan profile JSON, because it can contain sensitive aggregates and top values.\n"
             "  - Master keys and key labels (generation) and mask_secret_ref secrets\n"
             "    (masking) -- see `decoy explain keys`.\n"
             "  - Reference files and categorical policy values.\n\n"
@@ -437,7 +472,7 @@ _TOPICS: dict[str, _Topic] = {
             "      transient I/O problem happened. The fix is in the CLI or\n"
             "      engine, not the user's request.\n"
             "  4   Findings. The CLI ran cleanly but found data issues (e.g.\n"
-            "      `decoy report integrity` flagged residual PII or FK\n"
+            "      `decoy post-scan integrity` flagged residual PII or FK\n"
             "      preservation failures). The fix is in the data being\n"
             "      checked, not in the CLI invocation. Pattern source:\n"
             "      semgrep's exit-code split.\n"
@@ -484,7 +519,7 @@ _TOPICS: dict[str, _Topic] = {
             "          pip install decoy-cli[ner]\n"
             "          Also needs a downloaded model, a separate step:\n"
             "          python -m spacy download en_core_web_sm\n"
-            "  ml      The STORM field-classifier (scikit-learn / lightgbm).\n"
+            "  ml      The Pre-scan field-classifier (scikit-learn / lightgbm).\n"
             "          pip install decoy-cli[ml]\n"
             "  vault   Compatibility alias only; installs nothing extra.\n"
             "          pip install decoy-cli[vault]\n"
@@ -591,7 +626,7 @@ def explain(
     """Explain a Decoy concept in plain English.
 
     Built-in topics: modes, transforms, disguises, output, pipeline, yaml,
-    storm, keys, vault, chunked, substrate, differential-privacy, security,
+    pre-scan, post-scan, keys, vault, chunked, substrate, differential-privacy, security,
     completion. Run with no topic to see the full list.
     """
     state = setup_output(json_, quiet, verbose)

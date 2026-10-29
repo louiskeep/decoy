@@ -1,4 +1,4 @@
-"""End-to-end tests for `decoy scan diff`."""
+"""End-to-end tests for `decoy pre-scan diff`."""
 
 from __future__ import annotations
 
@@ -51,14 +51,14 @@ def baseline(tmp_path: Path) -> Path:
 # -- help + happy paths --------------------------------------------------
 
 
-def test_storm_diff_help_includes_examples():
-    result = runner.invoke(app, ["scan", "diff", "--help"])
+def test_pre_scan_diff_help_includes_examples():
+    result = runner.invoke(app, ["pre-scan", "diff", "--help"])
     assert result.exit_code == 0
     assert "Examples:" in result.stdout
     assert "See also:" in result.stdout
 
 
-def test_storm_diff_identical_scans_reports_no_drift(baseline: Path, tmp_path: Path):
+def test_pre_scan_diff_identical_scans_reports_no_drift(baseline: Path, tmp_path: Path):
     # Compare baseline against a copy of itself.
     copy = _write_scan(
         tmp_path / "copy.json",
@@ -66,7 +66,7 @@ def test_storm_diff_identical_scans_reports_no_drift(baseline: Path, tmp_path: P
         quasi_identifier_groups=[["first_name", "email"]],
         reid_risk_score=50.0,
     )
-    result = runner.invoke(app, ["scan", "diff", str(baseline), str(copy), "--json"])
+    result = runner.invoke(app, ["pre-scan", "diff", str(baseline), str(copy), "--json"])
     assert result.exit_code == 0
     payload = _json.loads(result.stdout)
     assert payload["drift"] is False
@@ -79,7 +79,7 @@ def test_storm_diff_identical_scans_reports_no_drift(baseline: Path, tmp_path: P
 # -- categorized changes ------------------------------------------------
 
 
-def test_storm_diff_detects_added_field(baseline: Path, tmp_path: Path):
+def test_pre_scan_diff_detects_added_field(baseline: Path, tmp_path: Path):
     new = _write_scan(
         tmp_path / "new.json",
         [
@@ -90,7 +90,7 @@ def test_storm_diff_detects_added_field(baseline: Path, tmp_path: Path):
         ],
         quasi_identifier_groups=[["first_name", "email"]],
     )
-    result = runner.invoke(app, ["scan", "diff", str(baseline), str(new), "--json"])
+    result = runner.invoke(app, ["pre-scan", "diff", str(baseline), str(new), "--json"])
     assert result.exit_code == 0
     payload = _json.loads(result.stdout)
     assert [r["name"] for r in payload["changes"]["added"]] == ["ssn"]
@@ -99,13 +99,13 @@ def test_storm_diff_detects_added_field(baseline: Path, tmp_path: Path):
     assert payload["drift"] is True
 
 
-def test_storm_diff_detects_removed_field(baseline: Path, tmp_path: Path):
+def test_pre_scan_diff_detects_removed_field(baseline: Path, tmp_path: Path):
     new = _write_scan(
         tmp_path / "new.json",
         [_field("customer_id", 0.0), _field("first_name", 0.35)],
         quasi_identifier_groups=[],
     )
-    result = runner.invoke(app, ["scan", "diff", str(baseline), str(new), "--json"])
+    result = runner.invoke(app, ["pre-scan", "diff", str(baseline), str(new), "--json"])
     assert result.exit_code == 0
     payload = _json.loads(result.stdout)
     assert [r["name"] for r in payload["changes"]["removed"]] == ["email"]
@@ -113,14 +113,14 @@ def test_storm_diff_detects_removed_field(baseline: Path, tmp_path: Path):
     assert payload["drift"] is False
 
 
-def test_storm_diff_detects_pii_bucket_increase(baseline: Path, tmp_path: Path):
+def test_pre_scan_diff_detects_pii_bucket_increase(baseline: Path, tmp_path: Path):
     new = _write_scan(
         tmp_path / "new.json",
         # email goes from 0.45 (med) to 0.7 (high) -- a bucket bump.
         [_field("customer_id", 0.0), _field("first_name", 0.35), _field("email", 0.7)],
         quasi_identifier_groups=[["first_name", "email"]],
     )
-    result = runner.invoke(app, ["scan", "diff", str(baseline), str(new), "--json"])
+    result = runner.invoke(app, ["pre-scan", "diff", str(baseline), str(new), "--json"])
     assert result.exit_code == 0
     payload = _json.loads(result.stdout)
     assert payload["summary"]["pii_increased"] == 1
@@ -131,14 +131,14 @@ def test_storm_diff_detects_pii_bucket_increase(baseline: Path, tmp_path: Path):
     assert payload["drift"] is True
 
 
-def test_storm_diff_detects_pii_bucket_decrease(baseline: Path, tmp_path: Path):
+def test_pre_scan_diff_detects_pii_bucket_decrease(baseline: Path, tmp_path: Path):
     new = _write_scan(
         tmp_path / "new.json",
         # email goes from 0.45 (med) to 0.0 (none) -- masked away.
         [_field("customer_id", 0.0), _field("first_name", 0.35), _field("email", 0.0)],
         quasi_identifier_groups=[["first_name", "email"]],
     )
-    result = runner.invoke(app, ["scan", "diff", str(baseline), str(new), "--json"])
+    result = runner.invoke(app, ["pre-scan", "diff", str(baseline), str(new), "--json"])
     assert result.exit_code == 0
     payload = _json.loads(result.stdout)
     assert payload["summary"]["pii_decreased"] == 1
@@ -146,7 +146,7 @@ def test_storm_diff_detects_pii_bucket_decrease(baseline: Path, tmp_path: Path):
     assert payload["drift"] is False
 
 
-def test_storm_diff_detects_new_qi_group(baseline: Path, tmp_path: Path):
+def test_pre_scan_diff_detects_new_qi_group(baseline: Path, tmp_path: Path):
     new = _write_scan(
         tmp_path / "new.json",
         [_field("customer_id", 0.0), _field("first_name", 0.35), _field("email", 0.45)],
@@ -155,35 +155,35 @@ def test_storm_diff_detects_new_qi_group(baseline: Path, tmp_path: Path):
             ["customer_id", "first_name"],
         ],
     )
-    result = runner.invoke(app, ["scan", "diff", str(baseline), str(new), "--json"])
+    result = runner.invoke(app, ["pre-scan", "diff", str(baseline), str(new), "--json"])
     assert result.exit_code == 0
     payload = _json.loads(result.stdout)
     assert payload["summary"]["qi_groups_added"] == 1
     assert payload["drift"] is True
 
 
-def test_storm_diff_detects_qi_group_member_change(baseline: Path, tmp_path: Path):
+def test_pre_scan_diff_detects_qi_group_member_change(baseline: Path, tmp_path: Path):
     """A QI group with different members is treated as remove + add."""
     new = _write_scan(
         tmp_path / "new.json",
         [_field("customer_id", 0.0), _field("first_name", 0.35), _field("email", 0.45)],
         quasi_identifier_groups=[["first_name", "customer_id"]],
     )
-    result = runner.invoke(app, ["scan", "diff", str(baseline), str(new), "--json"])
+    result = runner.invoke(app, ["pre-scan", "diff", str(baseline), str(new), "--json"])
     assert result.exit_code == 0
     payload = _json.loads(result.stdout)
     assert payload["summary"]["qi_groups_added"] == 1
     assert payload["summary"]["qi_groups_removed"] == 1
 
 
-def test_storm_diff_reports_reid_risk_delta(baseline: Path, tmp_path: Path):
+def test_pre_scan_diff_reports_reid_risk_delta(baseline: Path, tmp_path: Path):
     new = _write_scan(
         tmp_path / "new.json",
         [_field("customer_id", 0.0), _field("first_name", 0.35), _field("email", 0.45)],
         quasi_identifier_groups=[["first_name", "email"]],
         reid_risk_score=72.0,
     )
-    result = runner.invoke(app, ["scan", "diff", str(baseline), str(new), "--json"])
+    result = runner.invoke(app, ["pre-scan", "diff", str(baseline), str(new), "--json"])
     assert result.exit_code == 0
     payload = _json.loads(result.stdout)
     assert payload["summary"]["reid_risk_delta"] == pytest.approx(22.0)
@@ -192,7 +192,7 @@ def test_storm_diff_reports_reid_risk_delta(baseline: Path, tmp_path: Path):
 # -- --strict + exit codes ----------------------------------------------
 
 
-def test_storm_diff_strict_no_drift_exits_zero(baseline: Path, tmp_path: Path):
+def test_pre_scan_diff_strict_no_drift_exits_zero(baseline: Path, tmp_path: Path):
     copy = _write_scan(
         tmp_path / "copy.json",
         [_field("customer_id", 0.0), _field("first_name", 0.35), _field("email", 0.45)],
@@ -200,24 +200,24 @@ def test_storm_diff_strict_no_drift_exits_zero(baseline: Path, tmp_path: Path):
         reid_risk_score=50.0,
     )
     result = runner.invoke(
-        app, ["scan", "diff", str(baseline), str(copy), "--strict"]
+        app, ["pre-scan", "diff", str(baseline), str(copy), "--strict"]
     )
     assert result.exit_code == 0
 
 
-def test_storm_diff_strict_pii_increase_exits_one(baseline: Path, tmp_path: Path):
+def test_pre_scan_diff_strict_pii_increase_exits_one(baseline: Path, tmp_path: Path):
     new = _write_scan(
         tmp_path / "new.json",
         [_field("customer_id", 0.0), _field("first_name", 0.35), _field("email", 0.7)],
         quasi_identifier_groups=[["first_name", "email"]],
     )
     result = runner.invoke(
-        app, ["scan", "diff", str(baseline), str(new), "--strict"]
+        app, ["pre-scan", "diff", str(baseline), str(new), "--strict"]
     )
     assert result.exit_code == 1
 
 
-def test_storm_diff_strict_quiet_pii_increase_exits_one_silently(
+def test_pre_scan_diff_strict_quiet_pii_increase_exits_one_silently(
     baseline: Path, tmp_path: Path
 ):
     new = _write_scan(
@@ -227,13 +227,13 @@ def test_storm_diff_strict_quiet_pii_increase_exits_one_silently(
     )
     result = runner.invoke(
         app,
-        ["scan", "diff", str(baseline), str(new), "--strict", "--quiet"],
+        ["pre-scan", "diff", str(baseline), str(new), "--strict", "--quiet"],
     )
     assert result.exit_code == 1
     assert result.stdout == ""
 
 
-def test_storm_diff_strict_json_pii_increase_emits_envelope_and_exits_one(
+def test_pre_scan_diff_strict_json_pii_increase_emits_envelope_and_exits_one(
     baseline: Path, tmp_path: Path
 ):
     new = _write_scan(
@@ -243,15 +243,15 @@ def test_storm_diff_strict_json_pii_increase_emits_envelope_and_exits_one(
     )
     result = runner.invoke(
         app,
-        ["scan", "diff", str(baseline), str(new), "--strict", "--json"],
+        ["pre-scan", "diff", str(baseline), str(new), "--strict", "--json"],
     )
     assert result.exit_code == 1
     payload = _json.loads(result.stdout)
-    assert payload["command"] == "scan diff"
+    assert payload["command"] == "pre-scan diff"
     assert payload["drift"] is True
 
 
-def test_storm_diff_strict_pii_decrease_alone_exits_zero(
+def test_pre_scan_diff_strict_pii_decrease_alone_exits_zero(
     baseline: Path, tmp_path: Path
 ):
     new = _write_scan(
@@ -260,7 +260,7 @@ def test_storm_diff_strict_pii_decrease_alone_exits_zero(
         quasi_identifier_groups=[["first_name", "email"]],
     )
     result = runner.invoke(
-        app, ["scan", "diff", str(baseline), str(new), "--strict"]
+        app, ["pre-scan", "diff", str(baseline), str(new), "--strict"]
     )
     # Decreases are an improvement, not drift.
     assert result.exit_code == 0
@@ -269,20 +269,20 @@ def test_storm_diff_strict_pii_decrease_alone_exits_zero(
 # -- output modes -------------------------------------------------------
 
 
-def test_storm_diff_quiet_produces_empty_stdout(baseline: Path, tmp_path: Path):
+def test_pre_scan_diff_quiet_produces_empty_stdout(baseline: Path, tmp_path: Path):
     copy = _write_scan(
         tmp_path / "copy.json",
         [_field("customer_id", 0.0), _field("first_name", 0.35), _field("email", 0.45)],
         quasi_identifier_groups=[["first_name", "email"]],
     )
     result = runner.invoke(
-        app, ["scan", "diff", str(baseline), str(copy), "--quiet"]
+        app, ["pre-scan", "diff", str(baseline), str(copy), "--quiet"]
     )
     assert result.exit_code == 0
     assert result.stdout == ""
 
 
-def test_storm_diff_default_renders_card_and_change_tables(
+def test_pre_scan_diff_default_renders_card_and_change_tables(
     baseline: Path, tmp_path: Path
 ):
     new = _write_scan(
@@ -295,10 +295,10 @@ def test_storm_diff_default_renders_card_and_change_tables(
         ],
         quasi_identifier_groups=[["first_name", "email"]],
     )
-    result = runner.invoke(app, ["scan", "diff", str(baseline), str(new)])
+    result = runner.invoke(app, ["pre-scan", "diff", str(baseline), str(new)])
     assert result.exit_code == 0
     # Card heading.
-    assert "decoy scan diff" in result.stdout
+    assert "decoy pre-scan diff" in result.stdout
     # Change tables -- both should appear.
     assert "PII bucket increased" in result.stdout
     assert "Fields added" in result.stdout
@@ -306,7 +306,7 @@ def test_storm_diff_default_renders_card_and_change_tables(
     assert "email" in result.stdout
 
 
-def test_storm_diff_no_changes_prints_no_drift_line(
+def test_pre_scan_diff_no_changes_prints_no_drift_line(
     baseline: Path, tmp_path: Path
 ):
     copy = _write_scan(
@@ -314,7 +314,7 @@ def test_storm_diff_no_changes_prints_no_drift_line(
         [_field("customer_id", 0.0), _field("first_name", 0.35), _field("email", 0.45)],
         quasi_identifier_groups=[["first_name", "email"]],
     )
-    result = runner.invoke(app, ["scan", "diff", str(baseline), str(copy)])
+    result = runner.invoke(app, ["pre-scan", "diff", str(baseline), str(copy)])
     assert result.exit_code == 0
     assert "No drift detected" in result.stdout
 
@@ -322,38 +322,38 @@ def test_storm_diff_no_changes_prints_no_drift_line(
 # -- error paths --------------------------------------------------------
 
 
-def test_storm_diff_missing_old_exits_user_error(baseline: Path, tmp_path: Path):
+def test_pre_scan_diff_missing_old_exits_user_error(baseline: Path, tmp_path: Path):
     result = runner.invoke(
-        app, ["scan", "diff", str(tmp_path / "nope.json"), str(baseline)]
+        app, ["pre-scan", "diff", str(tmp_path / "nope.json"), str(baseline)]
     )
     assert result.exit_code == 1
 
 
-def test_storm_diff_missing_new_exits_user_error(baseline: Path, tmp_path: Path):
+def test_pre_scan_diff_missing_new_exits_user_error(baseline: Path, tmp_path: Path):
     result = runner.invoke(
-        app, ["scan", "diff", str(baseline), str(tmp_path / "nope.json")]
+        app, ["pre-scan", "diff", str(baseline), str(tmp_path / "nope.json")]
     )
     assert result.exit_code == 1
 
 
-def test_storm_diff_both_stdin_exits_user_error(baseline: Path):
-    result = runner.invoke(app, ["scan", "diff", "-", "-"])
+def test_pre_scan_diff_both_stdin_exits_user_error(baseline: Path):
+    result = runner.invoke(app, ["pre-scan", "diff", "-", "-"])
     assert result.exit_code == 1
     # Error message lands on stderr; Click 8.2 stopped mixing into stdout.
     # `result.output` includes both streams.
     assert "only one of OLD or NEW" in result.output
 
 
-def test_storm_diff_envelope_shape(baseline: Path, tmp_path: Path):
+def test_pre_scan_diff_envelope_shape(baseline: Path, tmp_path: Path):
     new = _write_scan(
         tmp_path / "new.json",
         [_field("customer_id", 0.0), _field("first_name", 0.35), _field("email", 0.45)],
         quasi_identifier_groups=[["first_name", "email"]],
     )
-    result = runner.invoke(app, ["scan", "diff", str(baseline), str(new), "--json"])
+    result = runner.invoke(app, ["pre-scan", "diff", str(baseline), str(new), "--json"])
     assert result.exit_code == 0
     payload = _json.loads(result.stdout)
-    assert payload["command"] == "scan diff"
+    assert payload["command"] == "pre-scan diff"
     assert payload["status"] == "ok"
     assert set(payload["summary"]) == {
         "added", "removed", "pii_increased", "pii_decreased",

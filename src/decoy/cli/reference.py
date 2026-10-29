@@ -246,7 +246,7 @@ def show(
 
     `show strategy|provider|template NAME` gives per-item detail; `show schema`
     prints the PipelineConfig JSON Schema (`--output` writes it to a file).
-    Note: `decoy scan show SCAN FIELD` is a different `show` -- it reports a
+    Note: `decoy pre-scan show SCAN FIELD` is a different `show` -- it reports a
     field from a saved scan, not a reference item.
     """
     if kind == "schema":

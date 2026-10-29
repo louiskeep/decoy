@@ -56,7 +56,7 @@ def _clean_config(tmp_path: Path) -> Path:
     src = tmp_path / "in.csv"
     pd.DataFrame({"email": ["a@b.com", "c@d.com"]}).to_csv(src, index=False)
     cfg = {
-        "version": 1,
+        "version": 2,
         "global_settings": {"seed": 42},
         "sources": {"customers": {"type": "file", "format": "csv", "path": str(src)}},
         "tables": [
@@ -85,7 +85,7 @@ def _clean_config(tmp_path: Path) -> Path:
 def _missing_source_config(tmp_path: Path) -> Path:
     """Valid schema + compiles clean, but the declared source CSV is absent."""
     cfg = {
-        "version": 1,
+        "version": 2,
         "global_settings": {"seed": 42},
         "sources": {
             "customers": {
@@ -133,7 +133,7 @@ def _compile_fail_config(tmp_path: Path, *, with_source: bool = True) -> Path:
     pd.DataFrame({"email": ["a@b.com", "c@d.com"]}).to_csv(src, index=False)
     path = str(src) if with_source else str(tmp_path / "ABSENT.csv")
     cfg = {
-        "version": 1,
+        "version": 2,
         "global_settings": {"seed": 42},
         "sources": {"customers": {"type": "file", "format": "csv", "path": path}},
         "tables": [
@@ -178,7 +178,7 @@ def _fk_config(tmp_path: Path, *, unique_cardinality: bool = False) -> Path:
     if unique_cardinality:
         parent_cols[0]["cardinality_mode"] = "unique"
     cfg = {
-        "version": 1,
+        "version": 2,
         "global_settings": {"seed": 7},
         "sources": {
             "parent": {"type": "file", "path": str(tmp_path / "parent.parquet"), "format": "parquet"},

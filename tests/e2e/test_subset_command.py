@@ -61,7 +61,7 @@ def _write_customers_orders(tmp_path: Path) -> tuple[Path, Path]:
 
 def _base_config(tmp_path: Path, customers_path: Path, orders_path: Path) -> dict:
     return {
-        "version": 1,
+        "version": 2,
         "global_settings": {"seed": 7},
         "sources": {
             "customers": {"type": "file", "format": "parquet", "path": str(customers_path)},

@@ -106,7 +106,7 @@ Examples:
   decoy run pipeline.yaml --fidelity
     After the run, show a quick inline marginal-fidelity check per mask table.
     A low grade never fails the run. For the fuller post-hoc grade, run
-    `decoy report fidelity`.
+    `decoy post-scan fidelity`.
 
   decoy run pipeline.yaml --post-validate
     After the run, run the post-execution validator suite over the masked
@@ -117,7 +117,7 @@ Examples:
     The masked output is still written. (The report flags are not supported
     with --chunked.)
 
-See also: decoy validate compile --explain, decoy report fidelity, decoy validate config, decoy explain chunked, decoy explain vault.
+See also: decoy validate compile --explain, decoy post-scan fidelity, decoy validate config, decoy explain chunked, decoy explain vault.
 """
 
 
@@ -382,7 +382,7 @@ def run(
             "After the run, show a QUICK inline distribution-fidelity check "
             "per mask table (marginal grade/score), from the result's "
             "fidelity_reports metrics. A low grade NEVER fails the run. For "
-            "the fuller post-hoc grade, use `decoy report fidelity`. Default "
+            "the fuller post-hoc grade, use `decoy post-scan fidelity`. Default "
             "off; report-only. Not supported with --chunked."
         ),
     ),
@@ -943,7 +943,7 @@ def run(
         # extra -- still needs EXIT_USAGE classification below with the
         # engine's own message intact.
         try:
-            from decoy_engine.storm.ner import NerUnavailableError as _NerUnavailableError
+            from decoy_engine.detection.ner import NerUnavailableError as _NerUnavailableError
 
             _ner_unavailable_types: tuple = (_NerUnavailableError,)
         except ImportError:
@@ -1373,7 +1373,7 @@ def _render_fidelity(state, fidelity_reports: dict | None) -> None:
     `fidelity_reports` is `quality_metrics["fidelity_reports"]`, a per-mask-table
     `quality-report/v1` block. This is a quick inline glance (letter grade +
     overall score, marginal-only); it NEVER fails the run. The fuller post-hoc
-    grade is `decoy report fidelity` (plan P2-4).
+    grade is `decoy post-scan fidelity` (plan P2-4).
     """
     state.console.print()
     state.console.print(accent("Fidelity (quick inline check)"))
@@ -1394,7 +1394,7 @@ def _render_fidelity(state, fidelity_reports: dict | None) -> None:
         hint("  Note:"),
         "a quick marginal check; a low grade does not fail the run. For the "
         "fuller post-hoc grade, run",
-        code("decoy report fidelity"),
+        code("decoy post-scan fidelity"),
         ".",
     )
 

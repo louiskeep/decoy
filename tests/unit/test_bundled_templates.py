@@ -4,7 +4,7 @@ CLI.3 commit 1 (2026-06-02): every surviving bundled template must pass
 `PipelineConfig.model_validate`. Pre-CLI.3 all five templates were V1
 shape (`version: '1.0'` + `masking_rules:` flat list); the V2 validator
 hard-rejects them. The graph template was hard-deleted alongside the
-storm-reframe-C / S22-CL-V1GRAPHRUNNER engine cleanup.
+ / S22-CL-V1GRAPHRUNNER engine cleanup.
 
 A new template registration must add a cell here OR explicitly opt out
 with a comment naming the V2-incompat reason. Mirrors the canary
@@ -21,7 +21,7 @@ from decoy.templates import get_template, template_names
 
 
 def test_no_graph_template_registered():
-    """The V1 graph template was hard-deleted under CLI.3 (storm-reframe-C
+    """The V1 graph template was hard-deleted under CLI.3 (
     / S22-CL-V1GRAPHRUNNER precedent). Future re-introductions need an
     explicit V2-shape rewrite."""
     assert "graph" not in template_names()

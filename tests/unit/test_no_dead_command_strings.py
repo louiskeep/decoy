@@ -1,7 +1,6 @@
 """Grep gate: no source string under `src/decoy/` names a deleted command.
 
-The CLI-redesign S1 sprint removed the `storm scan` alias and the `storm test`
-demo command. S2 re-parented `compile`/`preflight` under `validate` and folded
+S2 re-parented `compile`/`preflight` under `validate` and folded
 `plan` into `validate compile`, so the top-level invocation strings `decoy
 compile`, `decoy plan`, and `decoy preflight` (note the trailing space -- the
 nested `decoy validate preflight` / `decoy validate compile` forms are the live
@@ -25,22 +24,16 @@ import pytest
 SRC_ROOT = Path(__file__).resolve().parents[2] / "src" / "decoy"
 
 DEAD_STRINGS = (
-    "storm scan",
-    "storm test",
     # S2: top-level commands removed / re-parented. The space is load-bearing:
     # it keeps `decoy validate preflight` and `decoy validate compile` (the
     # live forms) from matching `decoy preflight` / `decoy compile`.
     "decoy compile",
     "decoy plan",
     "decoy preflight",
-    # S3a: `profile` + `storm analyze` merged into `decoy scan`; the saved-scan
-    # subcommands moved from `storm` to `scan`. `storm integrity` stays live and
-    # is NOT listed here.
+    # S3a: `profile` merged into the Pre-scan verb. The Pre-scan / Post-scan
+    # rename's dead spellings are enforced by the residual sentry
+    # (tests/sentry/test_no_residual_removed_surface.py).
     "decoy profile",
-    "decoy storm analyze",
-    "storm fields",
-    "storm show",
-    "storm diff",
     # S3b: the `strategies`/`providers`/`checksums`/`validators` sub-apps and the
     # `templates` sub-app folded into `decoy list KIND` / `decoy show KIND`. The
     # removed top-level invocation strings are dead. `decoy templates` catches
@@ -59,15 +52,12 @@ DEAD_STRINGS = (
     "decoy project",
     "decoy catalog",
     "decoy jobs",
-    # S4b: the `evidence`, `vault`, and `storm` groups and `validate
-    # distribution` folded into `decoy report` (verify+show / vault / integrity
-    # / fidelity). The live forms are `decoy report ...`, which none of these
-    # substrings match. `storm integrity` and `validate distribution` (the
-    # exact nested paths) are dead; `decoy evidence` / `decoy vault` catch
-    # every invocation of those removed groups.
+    # S4b: the `evidence` and `vault` groups and `validate distribution` folded
+    # into `decoy report` (verify+show / vault). `validate distribution` (the
+    # exact nested path) is dead; `decoy evidence` / `decoy vault` catch every
+    # invocation of those removed groups.
     "decoy evidence",
     "decoy vault",
-    "storm integrity",
     "validate distribution",
 )
 

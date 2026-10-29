@@ -1,4 +1,4 @@
-"""End-to-end tests for `decoy scan` (the default profiling command)."""
+"""End-to-end tests for `decoy pre-scan` (the default profiling command)."""
 
 from __future__ import annotations
 
@@ -34,15 +34,15 @@ def sample_csv(tmp_path: Path) -> Path:
     return path
 
 
-def test_storm_analyze_help_includes_examples(tmp_path: Path):
-    result = runner.invoke(app, ["scan", "--help"])
+def test_pre_scan_help_includes_examples(tmp_path: Path):
+    result = runner.invoke(app, ["pre-scan", "--help"])
     assert result.exit_code == 0
     assert "Examples:" in result.stdout
     assert "See also:" in result.stdout
 
 
-def test_storm_fields_non_utf8_scan_prints_clean_error(tmp_path: Path):
-    """QA 2026-06-04 storm-validate-cli F1 (HIGH): a non-UTF-8 scan file must
+def test_pre_scan_fields_non_utf8_scan_prints_clean_error(tmp_path: Path):
+    """QA 2026-06-04 pre-scan-validate-cli F1 (HIGH): a non-UTF-8 scan file must
     produce a clean usage error, not an unhandled UnicodeDecodeError traceback
     (which would also corrupt --json output). UnicodeDecodeError is a
     ValueError, not an OSError, so it is normalised inside _load_scan_dict."""
@@ -50,15 +50,15 @@ def test_storm_fields_non_utf8_scan_prints_clean_error(tmp_path: Path):
 
     bad = tmp_path / "bad_scan.json"
     bad.write_bytes(b"\x80\x81\x82 not valid utf-8")
-    result = runner.invoke(app, ["scan", "fields", str(bad)])
+    result = runner.invoke(app, ["pre-scan", "fields", str(bad)])
     assert result.exit_code == EXIT_USAGE, (result.stdout, result.exception)
     assert not isinstance(result.exception, UnicodeDecodeError)
 
 
-def test_storm_analyze_writes_profile_and_succeeds(sample_csv: Path, tmp_path: Path):
+def test_pre_scan_writes_profile_and_succeeds(sample_csv: Path, tmp_path: Path):
     out_path = tmp_path / "scan.json"
     result = runner.invoke(
-        app, ["scan", str(sample_csv), "--output", str(out_path)]
+        app, ["pre-scan", str(sample_csv), "--output", str(out_path)]
     )
     assert result.exit_code == 0, result.stdout
     assert out_path.exists()
@@ -68,36 +68,36 @@ def test_storm_analyze_writes_profile_and_succeeds(sample_csv: Path, tmp_path: P
     assert payload["source_label"] == "sample.csv"
 
 
-def test_storm_analyze_json_emits_envelope(sample_csv: Path, tmp_path: Path):
+def test_pre_scan_json_emits_envelope(sample_csv: Path, tmp_path: Path):
     out_path = tmp_path / "scan.json"
     result = runner.invoke(
         app,
-        ["scan", str(sample_csv), "--output", str(out_path), "--json"],
+        ["pre-scan", str(sample_csv), "--output", str(out_path), "--json"],
     )
     assert result.exit_code == 0
     payload = _json.loads(result.stdout)
-    assert payload["command"] == "scan"
+    assert payload["command"] == "pre-scan"
     assert payload["status"] == "ok"
     assert payload["row_count"] == 5
 
 
-def test_storm_analyze_quiet_produces_empty_stdout(sample_csv: Path, tmp_path: Path):
+def test_pre_scan_quiet_produces_empty_stdout(sample_csv: Path, tmp_path: Path):
     out_path = tmp_path / "scan.json"
     result = runner.invoke(
         app,
-        ["scan", str(sample_csv), "--output", str(out_path), "--quiet"],
+        ["pre-scan", str(sample_csv), "--output", str(out_path), "--quiet"],
     )
     assert result.exit_code == 0
     assert result.stdout == ""
     assert out_path.exists()
 
 
-def test_storm_analyze_strategy_random_caps_rows(sample_csv: Path, tmp_path: Path):
+def test_pre_scan_strategy_random_caps_rows(sample_csv: Path, tmp_path: Path):
     out_path = tmp_path / "scan.json"
     result = runner.invoke(
         app,
         [
-            "scan",
+            "pre-scan",
             str(sample_csv),
             "--output",
             str(out_path),

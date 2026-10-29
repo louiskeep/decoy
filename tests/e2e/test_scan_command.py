@@ -1,7 +1,7 @@
-"""E2E tests for the S3a `decoy scan` merge behaviors.
+"""E2E tests for the S3a `decoy pre-scan` merge behaviors.
 
 These cover the behaviors unique to the profile+analyze merge (not already
-carried by the ported profile/storm tests): persist-only-on-`--output`,
+carried by the ported profile tests): persist-only-on-`--output`,
 `--output -` streaming, the PII-honesty framing (H4) in both human and JSON,
 and the privacy-safe field record (H5) that drops raw aggregates.
 """
@@ -49,12 +49,12 @@ def large_csv(tmp_path: Path) -> Path:
 
 
 def test_scan_exits_0(sample_csv: Path) -> None:
-    result = runner.invoke(app, ["scan", str(sample_csv)])
+    result = runner.invoke(app, ["pre-scan", str(sample_csv)])
     assert result.exit_code == 0, result.output
 
 
 def test_scan_human_frames_pii_as_suggestions(sample_csv: Path) -> None:
-    result = runner.invoke(app, ["scan", str(sample_csv)])
+    result = runner.invoke(app, ["pre-scan", str(sample_csv)])
     assert result.exit_code == 0, result.output
     lower = result.output.lower()
     # Positive: candidates are framed as suggestions / review.
@@ -65,10 +65,10 @@ def test_scan_human_frames_pii_as_suggestions(sample_csv: Path) -> None:
 
 
 def test_scan_json_carries_pii_note_and_counts(sample_csv: Path) -> None:
-    result = runner.invoke(app, ["scan", str(sample_csv), "--json"])
+    result = runner.invoke(app, ["pre-scan", str(sample_csv), "--json"])
     assert result.exit_code == 0, result.output
     payload = _json.loads(result.stdout)
-    assert payload["command"] == "scan"
+    assert payload["command"] == "pre-scan"
     assert payload["status"] == "ok"
     assert payload["pii_candidate_count"] >= 1
     # H4: the honesty note travels in JSON.
@@ -84,7 +84,7 @@ def test_scan_json_carries_pii_note_and_counts(sample_csv: Path) -> None:
 
 def test_scan_output_writes_json_file(sample_csv: Path, tmp_path: Path) -> None:
     out = tmp_path / "scan.json"
-    result = runner.invoke(app, ["scan", str(sample_csv), "--output", str(out)])
+    result = runner.invoke(app, ["pre-scan", str(sample_csv), "--output", str(out)])
     assert result.exit_code == 0, result.output
     assert out.exists()
     payload = _json.loads(out.read_text())
@@ -95,14 +95,14 @@ def test_scan_output_writes_json_file(sample_csv: Path, tmp_path: Path) -> None:
 def test_scan_without_output_writes_no_file(sample_csv: Path, tmp_path: Path) -> None:
     """No auto scan_<ts>.json: nothing may appear next to the source or in cwd."""
     before = set(sample_csv.parent.iterdir())
-    result = runner.invoke(app, ["scan", str(sample_csv)])
+    result = runner.invoke(app, ["pre-scan", str(sample_csv)])
     assert result.exit_code == 0, result.output
     after = set(sample_csv.parent.iterdir())
     assert after == before, f"scan wrote an unrequested file: {after - before}"
 
 
 def test_scan_output_dash_streams_to_stdout(sample_csv: Path) -> None:
-    result = runner.invoke(app, ["scan", str(sample_csv), "--output", "-"])
+    result = runner.invoke(app, ["pre-scan", str(sample_csv), "--output", "-"])
     assert result.exit_code == 0, result.output
     payload = _json.loads(result.stdout)
     # The streamed artifact is the engine's richer profile dict.
@@ -123,18 +123,18 @@ def test_scan_output_dash_streams_to_stdout(sample_csv: Path) -> None:
 
 
 def test_scan_output_dash_with_json_is_rejected(sample_csv: Path) -> None:
-    result = runner.invoke(app, ["scan", str(sample_csv), "--output", "-", "--json"])
+    result = runner.invoke(app, ["pre-scan", str(sample_csv), "--output", "-", "--json"])
     assert result.exit_code == 1  # EXIT_USAGE: invalid flag combination
     payload = _json.loads(result.stdout)
     assert payload["status"] == "error"
-    assert payload["command"] == "scan"
+    assert payload["command"] == "pre-scan"
     # The raw profile must NOT have streamed: the only stdout is the error envelope.
     assert "fields" not in payload
     assert "source_label" not in result.stdout  # the rich artifact's marker key
 
 
 def test_scan_output_dash_with_quiet_is_rejected(sample_csv: Path) -> None:
-    result = runner.invoke(app, ["scan", str(sample_csv), "--output", "-", "-q"])
+    result = runner.invoke(app, ["pre-scan", str(sample_csv), "--output", "-", "-q"])
     assert result.exit_code == 1  # EXIT_USAGE
     # Quiet's contract holds: nothing on stdout (the rich profile never streamed).
     assert result.stdout == ""
@@ -146,7 +146,7 @@ def test_scan_output_dash_with_quiet_is_rejected(sample_csv: Path) -> None:
 
 
 def test_scan_show_fields_json_has_no_raw_aggregates(sample_csv: Path) -> None:
-    result = runner.invoke(app, ["scan", str(sample_csv), "--show-fields", "--json"])
+    result = runner.invoke(app, ["pre-scan", str(sample_csv), "--show-fields", "--json"])
     assert result.exit_code == 0, result.output
     payload = _json.loads(result.stdout)
     for f in payload["fields"]:
@@ -166,14 +166,14 @@ def test_scan_show_fields_json_has_no_raw_aggregates(sample_csv: Path) -> None:
 
 def test_scan_rows_default_bounds_sample(large_csv: Path) -> None:
     """A huge-file guard: --rows bounds the sample; --rows 50 caps at 50."""
-    result = runner.invoke(app, ["scan", str(large_csv), "--rows", "50", "--json"])
+    result = runner.invoke(app, ["pre-scan", str(large_csv), "--rows", "50", "--json"])
     assert result.exit_code == 0, result.output
     payload = _json.loads(result.stdout)
     assert payload["row_count"] <= 50
 
 
 def test_scan_rows_zero_full_scan(large_csv: Path) -> None:
-    result = runner.invoke(app, ["scan", str(large_csv), "--rows", "0", "--json"])
+    result = runner.invoke(app, ["pre-scan", str(large_csv), "--rows", "0", "--json"])
     assert result.exit_code == 0, result.output
     payload = _json.loads(result.stdout)
     assert payload["row_count"] == 200
@@ -181,7 +181,7 @@ def test_scan_rows_zero_full_scan(large_csv: Path) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Removed surfaces -> "No such command"; storm integrity still works.
+# Removed surfaces -> "No such command"; post-scan integrity is registered.
 # ---------------------------------------------------------------------------
 
 
@@ -191,14 +191,27 @@ def test_top_level_profile_is_gone() -> None:
     assert "No such command" in result.output
 
 
-def test_storm_analyze_is_gone() -> None:
-    result = runner.invoke(app, ["storm", "analyze", "some.csv"])
-    assert result.exit_code != 0
-    assert "No such command" in result.output
-
-
-def test_report_integrity_registered() -> None:
-    # S4b: `storm integrity` relocated to `report integrity`.
-    result = runner.invoke(app, ["report", "integrity", "--help"])
+def test_post_scan_integrity_registered() -> None:
+    # The integrity check lives under the Post-scan phase.
+    result = runner.invoke(app, ["post-scan", "integrity", "--help"])
     assert result.exit_code == 0
     assert "--source" in result.output
+
+
+def test_pre_scan_profiler_failure_exits_runtime_without_raw_text(
+    sample_csv: Path, monkeypatch
+) -> None:
+    """A requested pre-scan that cannot run is a non-zero exit, never a clean
+    result, and the error carries the exception type name only."""
+    import decoy_engine
+
+    from decoy.cli.exit_codes import EXIT_RUNTIME
+
+    def boom(*_a, **_k):
+        raise RuntimeError("raw cell value SECRET-ABC-123")
+
+    monkeypatch.setattr(decoy_engine, "profile_columns", boom)
+    result = runner.invoke(app, ["pre-scan", str(sample_csv), "--json"])
+    assert result.exit_code == EXIT_RUNTIME
+    assert "SECRET-ABC-123" not in result.output
+    assert _json.loads(result.stdout)["status"] == "error"

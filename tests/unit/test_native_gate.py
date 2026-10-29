@@ -171,10 +171,16 @@ def test_quarantine_not_eligible():
     assert static_native_eligibility(config) is False
 
 
-def test_run_storm_not_eligible():
+def test_post_scan_integrity_not_eligible():
     config = _eligible_config()
-    config["run_storm"] = True
+    config["post_scan"] = {"integrity": True}
     assert static_native_eligibility(config) is False
+
+
+def test_post_scan_integrity_false_stays_eligible():
+    config = _eligible_config()
+    config["post_scan"] = {"integrity": False}
+    assert static_native_eligibility(config) is True
 
 
 def test_vault_column_not_eligible():

@@ -34,7 +34,7 @@
 # Tune to your data; some columns may not exist in your CSV (delete the
 # entry), others may need a different strategy.
 
-version: 1
+version: 2
 
 global_settings:
   seed: 42

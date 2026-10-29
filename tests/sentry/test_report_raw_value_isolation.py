@@ -1,7 +1,7 @@
 """Raw-value isolation sentry for ``decoy report`` (SP-18).
 
 Dennis review note (cli-first-capability-guide.md L534-538):
-  Reporting must build from evidence-safe data only. Do not render full STORM
+  Reporting must build from evidence-safe data only. Do not render full Pre-scan
   profiles or raw diagnostic values into HTML/Markdown by default.
 
 This sentry verifies that the renderers and compare_data CANNOT include raw

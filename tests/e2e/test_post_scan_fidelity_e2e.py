@@ -1,4 +1,4 @@
-"""End-to-end exercise of `decoy report fidelity` (BF1, Sprint 5).
+"""End-to-end exercise of `decoy post-scan fidelity` (BF1, Sprint 5).
 
 Command-surface tests: real CSVs on disk, invoked through the built `decoy`
 Typer app exactly as a user would. Unit-level logic (flag validation,
@@ -8,6 +8,7 @@ tests/unit/test_report_fidelity.py.
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import pandas as pd
@@ -20,7 +21,7 @@ runner = CliRunner()
 
 
 def test_validate_distribution_help_includes_examples_and_see_also():
-    result = runner.invoke(app, ["report", "fidelity", "--help"])
+    result = runner.invoke(app, ["post-scan", "fidelity", "--help"])
     assert result.exit_code == 0
     assert "Examples:" in result.output
     assert "See also:" in result.output
@@ -32,7 +33,7 @@ def test_validate_distribution_identical_frames_grade_a(tmp_path: Path):
     pd.DataFrame({"id": range(100), "tier": ["gold", "silver"] * 50}).to_csv(src, index=False)
     pd.DataFrame({"id": range(100), "tier": ["gold", "silver"] * 50}).to_csv(out, index=False)
 
-    result = runner.invoke(app, ["report", "fidelity", str(src), str(out)])
+    result = runner.invoke(app, ["post-scan", "fidelity", str(src), str(out)])
     assert result.exit_code == 0, result.output
     assert "grade A" in result.output
 
@@ -43,12 +44,12 @@ def test_validate_distribution_json_envelope_has_command_and_status(tmp_path: Pa
     pd.DataFrame({"id": range(20)}).to_csv(src, index=False)
     pd.DataFrame({"id": range(20)}).to_csv(out, index=False)
 
-    result = runner.invoke(app, ["report", "fidelity", str(src), str(out), "--json"])
+    result = runner.invoke(app, ["post-scan", "fidelity", str(src), str(out), "--json"])
     assert result.exit_code == 0, result.output
     import json
 
     payload = json.loads(result.output)
-    assert payload["command"] == "report fidelity"
+    assert payload["command"] == "post-scan fidelity"
     assert payload["status"] == "ok"
     assert payload["schema_version"] == "quality-report/v1"
 
@@ -62,7 +63,7 @@ def test_validate_distribution_drifted_output_fails_hard_gate(tmp_path: Path):
     result = runner.invoke(
         app,
         [
-            "report",
+            "post-scan",
             "fidelity",
             str(src),
             str(out),
@@ -82,7 +83,7 @@ def test_validate_distribution_generate_allows_row_count_mismatch(tmp_path: Path
     pd.DataFrame({"tier": ["gold", "silver"] * 10}).to_csv(out, index=False)
 
     result = runner.invoke(
-        app, ["report", "fidelity", str(src), str(out), "--generate", "--json"]
+        app, ["post-scan", "fidelity", str(src), str(out), "--generate", "--json"]
     )
     assert result.exit_code == 0, result.output
     import json
@@ -98,6 +99,36 @@ def test_validate_distribution_missing_output_file_exits_nonzero(tmp_path: Path)
     src = tmp_path / "source.csv"
     pd.DataFrame({"a": [1]}).to_csv(src, index=False)
     result = runner.invoke(
-        app, ["report", "fidelity", str(src), str(tmp_path / "does_not_exist.csv")]
+        app, ["post-scan", "fidelity", str(src), str(tmp_path / "does_not_exist.csv")]
     )
     assert result.exit_code != 0
+
+
+def test_fidelity_is_labelled_a_measurement_not_a_privacy_guarantee(tmp_path):
+    src = tmp_path / "src.csv"
+    out = tmp_path / "out.csv"
+    src.write_text("a,b\n1,x\n2,y\n3,x\n4,y\n")
+    out.write_text("a,b\n1,x\n2,y\n3,x\n4,y\n")
+    text = runner.invoke(app, ["post-scan", "fidelity", str(src), str(out)])
+    assert text.exit_code == 0
+    assert "not a privacy guarantee" in " ".join(text.output.lower().split())
+    # Report mode records a measurement; it must not print a PASS verdict.
+    assert "PASS" not in text.output
+    payload = json.loads(
+        runner.invoke(app, ["post-scan", "fidelity", str(src), str(out), "--json"]).stdout
+    )
+    assert "not a privacy guarantee" in payload["note"].lower()
+
+
+def test_fidelity_measurement_failure_exits_nonzero_without_raw_text(tmp_path, monkeypatch):
+    import decoy_engine.quality as quality
+
+    def boom(*_a, **_k):
+        raise RuntimeError("raw cell value SECRET-ABC-123")
+
+    monkeypatch.setattr(quality, "compute_quality_report", boom)
+    src = tmp_path / "src.csv"
+    src.write_text("a\n1\n2\n")
+    result = runner.invoke(app, ["post-scan", "fidelity", str(src), str(src)])
+    assert result.exit_code != 0
+    assert "SECRET-ABC-123" not in result.output

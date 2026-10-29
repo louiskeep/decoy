@@ -73,7 +73,7 @@ def _write_config(
     child_path = "child.parquet" if relative_paths else str(tmp_path / "child.parquet")
 
     cfg = {
-        "version": 1,
+        "version": 2,
         "global_settings": {"seed": 7},
         "sources": {
             "parent": {"type": "file", "path": parent_path, "format": "parquet"},
@@ -116,7 +116,7 @@ def _no_relationships_config(tmp_path: Path) -> Path:
     src = tmp_path / "flat.parquet"
     pq.write_table(pa.table({"id": pa.array(range(_N))}), src)
     cfg = {
-        "version": 1,
+        "version": 2,
         "global_settings": {"seed": 1},
         "sources": {"flat": {"type": "file", "path": str(src), "format": "parquet"}},
         "tables": [{"name": "flat", "columns": [{"name": "id", "strategy": "passthrough"}]}],
@@ -417,7 +417,7 @@ class TestRelativeSourcePath:
         yaml_dir = tmp_path / "proj"
         yaml_dir.mkdir()
         cfg = {
-            "version": 1,
+            "version": 2,
             "global_settings": {"seed": 7},
             "sources": {"parent": {"type": "file", "path": "parent.parquet", "format": "parquet"}},
             "tables": [{"name": "parent", "columns": [{"name": "id", "strategy": "passthrough"}]}],

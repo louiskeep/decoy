@@ -37,7 +37,7 @@ def _write_file(path: Path, content: str) -> Path:
 
 def _make_config_dict(src_path: Path, out_path: Path) -> dict:
     return {
-        "version": 1,
+        "version": 2,
         "global_settings": {"seed": 42},
         "sources": {
             "customers": {"type": "file", "format": "csv", "path": str(src_path)},
@@ -260,7 +260,7 @@ def test_verify_manifest_detects_changed_pipeline(tmp_path: Path):
     """Changed pipeline file -> pipeline fingerprint mismatch -> issue reported."""
     manifest, pipeline_path, _, _ = _build_test_manifest(tmp_path)
     # Mutate the pipeline file
-    pipeline_path.write_text("version: 1\n# CHANGED\n", encoding="utf-8")
+    pipeline_path.write_text("version: 2\n# CHANGED\n", encoding="utf-8")
     issues = verify_manifest(manifest)
     assert any("pipeline" in i.lower() for i in issues), (
         f"Expected a pipeline fingerprint issue; got: {issues}"

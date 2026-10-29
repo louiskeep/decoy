@@ -2,13 +2,13 @@
 
 Extracted from `cli/validate.py` (built in S2) under the S3a CLI redesign so
 the "a group command that also takes a bare positional" pattern has one home
-(reuse-first). `validate` and `scan` both need it: `decoy validate CONFIG` and
-`decoy scan SOURCE` each run a hidden default command when the first token is
+(reuse-first). `validate` and `pre-scan` both need it: `decoy validate CONFIG` and
+`decoy pre-scan SOURCE` each run a hidden default command when the first token is
 not one of the group's registered subcommands.
 
 The S2 original hardcoded the hidden command name as `_gate`; this factory
 parameterizes it (M1) so each group registers its default under its own name
-(`_gate` for validate, `_scan` for scan) instead of a single misleading one.
+(`_gate` for validate, `_pre_scan` for pre-scan) instead of a single misleading one.
 
 Mechanism (no new dependency): the vendored-Click `resolve_command` is the one
 choke point every non-help dispatch flows through; the subclass overrides it to

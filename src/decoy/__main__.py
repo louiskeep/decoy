@@ -18,11 +18,12 @@ from decoy.cli.fit import fit as fit_command
 from decoy.cli.info import INFO_EPILOG
 from decoy.cli.info import info as info_command
 from decoy.cli.init import INIT_EPILOG, init_command
+from decoy.cli.post_scan import post_scan_app
+from decoy.cli.pre_scan import pre_scan_app
 from decoy.cli.reference import LIST_EPILOG, SHOW_EPILOG, list_, show
 from decoy.cli.report import report_app
 from decoy.cli.run import RUN_EPILOG
 from decoy.cli.run import run as run_command
-from decoy.cli.scan import scan_app
 from decoy.cli.schema import SCHEMA_EPILOG
 from decoy.cli.schema import schema as schema_command
 from decoy.cli.subset import SUBSET_EPILOG
@@ -42,9 +43,11 @@ from decoy.cli.validate import validate_app
 _ROOT_HELP = """\
 Decoy -- data masking and synthetic generation CLI.
 
+Pipeline phases: Pre-scan (profile / detect) -> Transform (mask / generate) -> Post-scan (check the result).
+
 Try one of:
   decoy demo                       30-second end-to-end walkthrough.
-  decoy scan data.csv              Profile a dataset for PII and re-id risk (candidates as suggestions).
+  decoy pre-scan data.csv          Pre-scan: profile a dataset for PII candidates and re-id risk (suggestions to review).
   decoy validate pipeline.yaml     Run the whole pre-run gate (config + compile + preflight).
   decoy validate compile pipeline.yaml --explain  Explain per-column strategy and compile decisions.
   decoy run pipeline.yaml          Run a masking or generation pipeline.
@@ -58,8 +61,10 @@ Try one of:
   decoy show template hipaa        Dump one bundled template to stdout.
   decoy explain modes              Plain-English topic help. `explain` lists topics.
   decoy info                       Branded splash + quick-start hints.
-  decoy report show evidence.json  Show the evidence manifest (the post-run surface: show/verify/fidelity/integrity/diff/vault).
-  decoy report verify evidence.json  Re-hash the recorded files and report fingerprint drift.
+  decoy post-scan integrity masked.csv --source source.csv  Post-scan: residual-PII / FK / policy findings on a masked file (report-only).
+  decoy post-scan fidelity source.csv output.csv  Post-scan: distribution similarity (a measurement, not a privacy guarantee).
+  decoy report show evidence.json  Show the evidence manifest (the run-artifact surface: show/render/verify/diff/vault).
+  decoy report verify evidence.json  Re-hash the recorded files and report fingerprint drift (not a privacy check).
   decoy report diff a.json b.json  Compare two manifests: fingerprints always, data when the output files exist.
 
 Run `decoy --install-completion` to enable shell tab completion.
@@ -148,7 +153,8 @@ app.command(name="demo", epilog=DEMO_EPILOG)(demo_command)
 app.command(name="explain", epilog=EXPLAIN_EPILOG)(explain_command)
 app.command(name="info", epilog=INFO_EPILOG)(info_command)
 app.command(name="schema", epilog=SCHEMA_EPILOG)(schema_command)
-app.add_typer(scan_app, name="scan")
+app.add_typer(pre_scan_app, name="pre-scan")
+app.add_typer(post_scan_app, name="post-scan")
 app.add_typer(report_app, name="report")
 app.command(name="list", epilog=LIST_EPILOG)(list_)
 app.command(name="show", epilog=SHOW_EPILOG)(show)

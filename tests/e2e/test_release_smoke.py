@@ -3,7 +3,7 @@
 CLI.3 commit 3+4 (2026-06-02): rewritten against the V2 surface.
 Pre-rewrite the file exercised the V1 graph template, the V1
 `examples/*.yaml` shapes, the deleted `forecast` command, and the V1
-demo body. All four are dead under storm-reframe-C and
+demo body. All four are dead  and
 S22-CL-V1GRAPHRUNNER. The new cells:
 
 - `decoy --version` smoke (module install + entry point work).
@@ -88,10 +88,10 @@ def test_templates_list_json_returns_v2_template_set():
 
 def test_demo_json_produces_expected_artifacts(tmp_path: Path):
     """`decoy demo` is the canonical clean-checkout-runnable command:
-    generates its own fixture, scans with STORM, masks via the V2 spine.
+    generates its own fixture, scans with Pre-scan, masks via the V2 spine.
     R6.8 asserts the JSON envelope shape + that the artifacts actually
     got written. The FORECAST step from the V1 demo was deleted under
-    storm-reframe-C; no forecast.json is expected."""
+    ; no forecast.json is expected."""
     result = runner.invoke(app, ["demo", "--dir", str(tmp_path), "--json"])
     assert result.exit_code == 0, f"demo failed: {result.output}"
     payload = json.loads(result.output)
@@ -165,7 +165,7 @@ def test_root_help_lists_canonical_commands():
     output = result.output.lower()
     for cmd in ("validate", "run", "demo", "report", "list", "init"):
         assert cmd in output, f"root help missing {cmd!r}: {result.output[:500]}"
-    # CLI.1 (2026-06-02): forecast subcommand deleted under storm-reframe-C.
+    # CLI.1 (2026-06-02): forecast subcommand deleted .
     assert "forecast" not in output
 
 
@@ -204,7 +204,7 @@ def test_command_help_includes_see_also(cmd: str):
         "output",
         "pipeline",
         "yaml",
-        "storm",
+        "pre-scan",
         "keys",
         "security",
         "completion",

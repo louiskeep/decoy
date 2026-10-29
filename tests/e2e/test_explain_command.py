@@ -37,11 +37,11 @@ def test_explain_known_topic_renders_panel():
 
 
 def test_explain_unknown_topic_suggests_close_match():
-    result = runner.invoke(app, ["explain", "stom"])
+    result = runner.invoke(app, ["explain", "pre-sca"])
     assert result.exit_code == 1
     # Cause + did-you-mean hint per CLI_UX_GUIDE.md section 9.
     assert "unknown topic" in result.stderr.lower()
-    assert "storm" in result.stderr
+    assert "pre-scan" in result.stderr
 
 
 def test_explain_unknown_topic_no_close_match_falls_back_to_list_hint():
@@ -71,11 +71,11 @@ def test_explain_json_index_lists_topics():
 
 
 def test_explain_json_unknown_topic_emits_error_envelope():
-    result = runner.invoke(app, ["explain", "stom", "--json"])
+    result = runner.invoke(app, ["explain", "pre-sca", "--json"])
     assert result.exit_code == 1
     payload = _json.loads(result.stdout)
     assert payload["status"] == "error"
-    assert payload["did_you_mean"] == "storm"
+    assert payload["did_you_mean"] == "pre-scan"
 
 
 def test_explain_quiet_produces_empty_stdout():
@@ -87,11 +87,11 @@ def test_explain_quiet_produces_empty_stdout():
 def test_topic_names_covers_load_bearing_concepts():
     """Sanity check: the topic set must include the load-bearing concepts.
 
-    CLI.4 (2026-06-02): forecast topic dropped (FORECAST retired under
-    storm-reframe-C). The remaining topics cover the V2 surface.
+    CLI.4 (2026-06-02): forecast topic dropped (FORECAST retired). The
+    remaining topics cover the V2 surface and the three pipeline phases.
     """
     names = set(topic_names())
-    expected = {"modes", "transforms", "disguises", "output", "pipeline", "storm", "keys"}
+    expected = {"modes", "transforms", "disguises", "output", "pipeline", "pre-scan", "post-scan", "keys"}
     missing = expected - names
     assert not missing, f"missing topics: {missing}"
     # CLI.1 + CLI.4 (2026-06-02): forecast topic removed; the explain

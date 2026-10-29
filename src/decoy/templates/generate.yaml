@@ -11,7 +11,7 @@
 # CLI.3 (2026-06-02) rewrite: replaces V1 `version: '1.0'` +
 # `generator_settings:` block; V2 uses unified `global_settings`.
 
-version: 1
+version: 2
 
 global_settings:
   seed: 42

@@ -3,7 +3,7 @@
 CLI.3 commit 3 (2026-06-02): rewritten against the V2 demo body.
 Pre-rewrite the file exercised the V1 demo flow (scan -> FORECAST ->
 hash-based mask via the deleted Masker class) + the --ref multi-table
-FK-via-hash flow. Both are dead under storm-reframe-C and S22-CL-
+FK-via-hash flow. Both are dead  and S22-CL-
 V1GRAPHRUNNER. The new cells verify (a) help text renders, (b) the
 single-table demo runs end-to-end and produces customers_masked.csv,
 (c) the --ref flow exits 1 with the deferral message pointing at the
@@ -55,7 +55,7 @@ def test_demo_help_hides_undeliverable_ref_flag():
 
 
 def test_demo_runs_end_to_end(tmp_path: Path):
-    """The new single-table demo: write customers.csv -> STORM scan ->
+    """The new single-table demo: write customers.csv -> Pre-scan scan ->
     V2 mask -> customers_masked.csv. The FORECAST step is dropped (no
     V2 successor); the sample CSV name changed from patients to
     customers to match the V2 demo body."""
@@ -67,7 +67,7 @@ def test_demo_runs_end_to_end(tmp_path: Path):
     assert (out_dir / "customers_masked.csv").exists()
     assert (out_dir / "scan.json").exists()
     assert (out_dir / "pipeline.yaml").exists()
-    # FORECAST step deleted under storm-reframe-C; no forecast.json.
+    # FORECAST step deleted ; no forecast.json.
     assert not (out_dir / "forecast.json").exists()
 
     masked = (out_dir / "customers_masked.csv").read_text()
@@ -112,7 +112,7 @@ def test_demo_writes_masked_csv_with_same_row_count_as_sample(tmp_path: Path):
 
 def test_demo_masked_pipeline_yaml_is_v2_shape(tmp_path: Path):
     """The pipeline.yaml the demo writes is a valid V2 PipelineConfig:
-    version: 1, sources/tables/targets blocks. FC-1 (2026-06-02): the
+    version: 2, sources/tables/targets blocks. FC-1 (2026-06-02): the
     top-level `mode:` field is gone; per-table kind is inferred from
     `columns` vs `generate_columns` presence. The demo's single table
     declares `columns`, making it mask-kind."""
@@ -122,7 +122,7 @@ def test_demo_masked_pipeline_yaml_is_v2_shape(tmp_path: Path):
     result = runner.invoke(app, ["demo", "--dir", str(out_dir), "--quiet"])
     assert result.exit_code == 0
     cfg = _yaml.safe_load((out_dir / "pipeline.yaml").read_text(encoding="utf-8"))
-    assert cfg.get("version") == 1
+    assert cfg.get("version") == 2
     assert "sources" in cfg
     assert "tables" in cfg
     assert "targets" in cfg

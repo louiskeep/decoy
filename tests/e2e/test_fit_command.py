@@ -706,7 +706,7 @@ class TestFitGenerateLoop:
         assert runner.invoke(app, ["fit", str(src), "--output", str(snap_path)]).exit_code == 0
 
         cfg = {
-            "version": 1,
+            "version": 2,
             "global_settings": {"seed": 42},
             "tables": [
                 {
@@ -748,7 +748,7 @@ class TestFitGenerateLoop:
 
     def test_validate_rejects_missing_snapshot(self, tmp_path: Path) -> None:
         cfg = {
-            "version": 1,
+            "version": 2,
             "global_settings": {"seed": 42},
             "tables": [
                 {

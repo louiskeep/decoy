@@ -104,7 +104,7 @@ def _hash_eligible_config(tmp_path: Path, *, source_name: str = "in.parquet") ->
     src = tmp_path / source_name
     _write_parquet(src)
     config = {
-        "version": 1,
+        "version": 2,
         "global_settings": {"seed": 42},
         "sources": {"customers": {"type": "file", "format": "parquet", "path": str(src)}},
         "tables": [
@@ -131,7 +131,7 @@ def _non_hash_parquet_config(tmp_path: Path) -> Path:
     src = tmp_path / "in.parquet"
     _write_parquet(src)
     config = {
-        "version": 1,
+        "version": 2,
         "global_settings": {"seed": 42},
         "sources": {"customers": {"type": "file", "format": "parquet", "path": str(src)}},
         "tables": [
@@ -160,7 +160,7 @@ def _csv_hash_config(tmp_path: Path) -> Path:
         src, index=False
     )
     config = {
-        "version": 1,
+        "version": 2,
         "global_settings": {"seed": 42},
         "sources": {"customers": {"type": "file", "format": "csv", "path": str(src)}},
         "tables": [
@@ -183,7 +183,7 @@ def _csv_hash_config(tmp_path: Path) -> Path:
 
 def _generate_only_config(tmp_path: Path) -> Path:
     config = {
-        "version": 1,
+        "version": 2,
         "global_settings": {"seed": 42},
         "sources": {},
         "tables": [
@@ -325,7 +325,7 @@ def test_broken_companion_does_not_affect_a_live_vault_run(
     src = tmp_path / "in.parquet"
     pd.DataFrame({"id": ["a", "b"], "email": ["a@x.com", "b@x.com"]}).to_parquet(src, index=False)
     config = {
-        "version": 1,
+        "version": 2,
         "global_settings": {"seed": 42},
         "sources": {"customers": {"type": "file", "format": "parquet", "path": str(src)}},
         "tables": [
@@ -458,7 +458,7 @@ def test_native_require_refuses_a_live_vault_writer(tmp_path: Path):
     src = tmp_path / "in.parquet"
     pd.DataFrame({"id": ["a", "b"], "email": ["a@x.com", "b@x.com"]}).to_parquet(src, index=False)
     config = {
-        "version": 1,
+        "version": 2,
         "global_settings": {"seed": 42},
         "sources": {"customers": {"type": "file", "format": "parquet", "path": str(src)}},
         "tables": [
