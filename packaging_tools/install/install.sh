@@ -111,7 +111,9 @@ verify_sig() {
   rm -f "$_raw"; return 1
 }
 
-json_top_number() { grep -o "\"$2\":[0-9][0-9]*" "$1" | head -n1 | sed 's/.*://'; }
+# Whitespace-tolerant so it reads both the signed canonical document and the Python-written
+# trust_state.json whatever its spacing; an unmatched field is empty and callers fail closed.
+json_top_number() { grep -oE "\"$2\"[[:space:]]*:[[:space:]]*[0-9]+" "$1" | head -n1 | sed 's/.*://;s/[[:space:]]//g'; }
 # Extract one string field from CANONICAL (sorted, compact) JSON. Safe because the
 # document is emitted by decoy.distribution.version_document in canonical form and the values
 # (version strings, hex, URLs) contain no '"' or '}'.
@@ -149,6 +151,7 @@ need openssl
 need tar
 need mktemp
 
+FRESHNESS_DOC=""
 TARGET=$(detect_target)
 [ -n "$TARGET" ] || die "unsupported platform ($(uname -s)/$(uname -m)). Supported: linux-x86_64, linux-aarch64, macos-arm64. (macOS Intel and Windows are not supported at launch.)"
 info "target: $TARGET"
@@ -259,9 +262,13 @@ else
   NOW_N=$(date -u +%Y%m%d%H%M%S)
   [ "$NOW_N" -lt "$EXP_N" ] || die "version document expired at $EXPIRES -- refusing (stale or replayed)"
   TRUST_STATE="$DECOY_HOME/trust_state.json"
-  if [ -f "$TRUST_STATE" ]; then
+  # Fast refusal only. The authoritative read-compare-write runs in first_install under the
+  # install lock; this script never writes trust_state.json. An existing state file whose
+  # serial cannot be read is a refusal, never "nothing seen".
+  if [ -e "$TRUST_STATE" ]; then
     SEEN_SERIAL=$(json_top_number "$TRUST_STATE" serial || true)
-    if [ -n "$SEEN_SERIAL" ] && [ "$SERIAL" -lt "$SEEN_SERIAL" ]; then
+    [ -n "$SEEN_SERIAL" ] || die "$TRUST_STATE exists but has no readable 'serial' -- refusing"
+    if [ "$SERIAL" -lt "$SEEN_SERIAL" ]; then
       die "version document serial $SERIAL is older than the newest accepted ($SEEN_SERIAL) -- refusing (rollback/replay)"
     fi
   fi
@@ -281,8 +288,7 @@ else
     *"\"$VERSION\""*) die "version $VERSION is yanked -- refusing" ;;
   esac
 
-  mkdir -p "$DECOY_HOME"
-  printf '{"latest":"%s","serial":%s}\n' "$LATEST" "$SERIAL" > "$TRUST_STATE.tmp.$$" && mv "$TRUST_STATE.tmp.$$" "$TRUST_STATE"
+  FRESHNESS_DOC="$VDOC"
 
   if [ "$VERSION" = "$LATEST" ]; then
     URL=$(json_artifact_field "$VDOC" "$TARGET" url)
@@ -384,7 +390,7 @@ fi
 #    are `decoy upgrade`'s job: it stages a fresh versions/<version>+<build> and flips.)
 DEST="$VERSIONS/$VERSION"
 DECOY_HOME="$DECOY_HOME" DECOY_BIN_DIR="$DECOY_BIN_DIR" \
-  "$PYBIN" -I -B -m decoy.distribution.first_install "$BUNDLE_ROOT" "$VERSION" \
+  "$PYBIN" -I -B -m decoy.distribution.first_install "$BUNDLE_ROOT" "$VERSION" ${FRESHNESS_DOC:+"$FRESHNESS_DOC"} \
   || die "could not install $VERSION (existing runtime, concurrent install, or placement failure) -- nothing was replaced"
 rm -rf "$INCOMING"
 

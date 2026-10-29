@@ -120,16 +120,96 @@ def test_install_sh_refuses_expired_document(tmp_path, keypair):
     assert not (home / "versions").exists()
 
 
+def _record(doc_bytes: bytes, home: Path) -> None:
+    installer.check_document_freshness(vd.parse_document(doc_bytes), home)
+
+
+def _stored_serial(home: Path) -> int:
+    import json
+
+    return json.loads((home / "trust_state.json").read_text())["serial"]
+
+
 @needs_shell_tools
 def test_install_sh_refuses_lower_serial_than_recorded(tmp_path, keypair):
     key, pub = keypair
     doc, _ = _doc(key, tmp_path / "serve", serial=4, expires=_FUTURE)
-    # first run records serial 4 (it then fails to download: no bundle served -- fine)
-    _, home = _run_install_sh(tmp_path, pub, _publish_doc(tmp_path, key, doc))
-    assert '"serial":4' in (home / "trust_state.json").read_text()
+    _record(doc, tmp_path / "sh_home")
     stale, _ = _doc(key, tmp_path / "serve", serial=3, expires=_FUTURE)
+    r, home = _run_install_sh(tmp_path, pub, _publish_doc(tmp_path, key, stale))
+    assert r.returncode != 0 and "rollback" in r.stderr
+    assert _stored_serial(home) == 4
+
+
+@needs_shell_tools
+def test_python_recorded_serial_is_enforced_by_the_shell(tmp_path, keypair):
+    """Python writes the trust state; the shell must read the same serial back, reject a
+    signed N-1, and never lower the stored value."""
+    key, pub = keypair
+    home = tmp_path / "sh_home"
+    newest, _ = _doc(key, tmp_path / "serve", serial=10, expires=_FUTURE)
+    _record(newest, home)
+    stale, _ = _doc(key, tmp_path / "serve", serial=9, expires=_FUTURE)
     r, _ = _run_install_sh(tmp_path, pub, _publish_doc(tmp_path, key, stale))
     assert r.returncode != 0 and "rollback" in r.stderr
+    assert _stored_serial(home) == 10
+
+
+@needs_shell_tools
+@pytest.mark.parametrize("state", ["", "{}", "not json", '{"serial":"x"}'])
+def test_install_sh_refuses_an_unreadable_trust_state(tmp_path, keypair, state):
+    key, pub = keypair
+    home = tmp_path / "sh_home"
+    home.mkdir()
+    (home / "trust_state.json").write_text(state)
+    doc, _ = _doc(key, tmp_path / "serve", serial=5, expires=_FUTURE)
+    r, _ = _run_install_sh(tmp_path, pub, _publish_doc(tmp_path, key, doc))
+    assert r.returncode != 0 and "serial" in r.stderr
+
+
+@needs_shell_tools
+def test_install_sh_does_not_write_trust_state_outside_the_lock(tmp_path, keypair):
+    key, pub = keypair
+    doc, _ = _doc(key, tmp_path / "serve", serial=5, expires=_FUTURE)
+    _, home = _run_install_sh(tmp_path, pub, _publish_doc(tmp_path, key, doc))
+    assert not (home / "trust_state.json").exists()
+
+
+def _first_install(monkeypatch, tmp_path, doc_bytes: bytes, bundle: Path) -> int:
+    from decoy.distribution import first_install
+
+    doc_file = tmp_path / f"vd{next(_n)}.json"
+    doc_file.write_bytes(doc_bytes)
+    monkeypatch.setenv("DECOY_HOME", str(tmp_path / "fi_home"))
+    return first_install.main([str(bundle), "0.2.0", str(doc_file)])
+
+
+def test_concurrent_bootstraps_never_lower_the_highest_serial(tmp_path, keypair, monkeypatch):
+    """Both bootstraps passed the shell's lock-free pre-check against a stored serial 1.
+    Bootstrap 10 records inside the lock then fails to place (no bundle); bootstrap 9 must
+    be refused under the lock rather than overwrite the state down to 9."""
+    from decoy.distribution import first_install
+
+    key, _ = keypair
+    home = tmp_path / "fi_home"
+    seed, _ = _doc(key, tmp_path / "serve", serial=1, expires=_FUTURE)
+    _record(seed, home)
+    d10, _ = _doc(key, tmp_path / "serve", serial=10, expires=_FUTURE)
+    d9, _ = _doc(key, tmp_path / "serve", serial=9, expires=_FUTURE)
+    missing = tmp_path / "no-bundle"
+    assert _first_install(monkeypatch, tmp_path, d10, missing) == first_install.EXIT_FAILED
+    assert _stored_serial(home) == 10
+    assert _first_install(monkeypatch, tmp_path, d9, missing) == first_install.EXIT_STALE
+    assert _stored_serial(home) == 10
+
+
+def test_first_install_refuses_an_expired_document_under_the_lock(tmp_path, keypair, monkeypatch):
+    from decoy.distribution import first_install
+
+    key, _ = keypair
+    expired, _ = _doc(key, tmp_path / "serve", serial=5, expires=_PAST)
+    assert _first_install(monkeypatch, tmp_path, expired, tmp_path / "no-bundle") == first_install.EXIT_STALE
+    assert not (tmp_path / "fi_home" / "trust_state.json").exists()
 
 
 @needs_shell_tools

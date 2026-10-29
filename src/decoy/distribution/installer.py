@@ -163,13 +163,33 @@ _TRUST_STATE = "trust_state.json"
 
 
 def _read_trust_state(home: Path) -> dict:
+    """Absent state is a first run ({}); a present but unreadable/invalid one is refused,
+    never treated as "nothing seen", or corrupting the file would reset rollback protection."""
     import json
 
+    path = home / _TRUST_STATE
     try:
-        data = json.loads((home / _TRUST_STATE).read_text(encoding="utf-8"))
-    except (OSError, ValueError):
+        raw = path.read_text(encoding="utf-8")
+    except FileNotFoundError:
         return {}
-    return data if isinstance(data, dict) else {}
+    except OSError as exc:
+        raise InstallError(f"cannot read {path}: {exc} -- refusing (trust state unreadable)") from exc
+    try:
+        data = json.loads(raw)
+    except ValueError as exc:
+        raise InstallError(f"{path} is corrupt -- refusing (trust state unreadable)") from exc
+    serial = data.get("serial") if isinstance(data, dict) else None
+    if not isinstance(serial, int) or isinstance(serial, bool) or serial < 0:
+        raise InstallError(f"{path} has no valid 'serial' -- refusing (trust state unreadable)")
+    return data
+
+
+def _trust_state_text(latest: object, serial: int) -> str:
+    """Canonical compact sorted form; ``install.sh`` reads the serial from it with a
+    whitespace-tolerant pattern, so the two sides do not depend on matching formatting."""
+    import json
+
+    return json.dumps({"latest": latest, "serial": serial}, sort_keys=True, separators=(",", ":")) + "\n"
 
 
 def check_document_freshness(
@@ -177,8 +197,6 @@ def check_document_freshness(
 ) -> None:
     """Refuse an expired or replayed (lower ``serial``) signature-verified document; with
     ``record`` persist the accepted serial/latest to ``<home>/trust_state.json``. Raises InstallError."""
-    import json
-
     try:
         vd.check_fresh(doc, now=now)
     except ValueError as exc:
@@ -197,7 +215,7 @@ def check_document_freshness(
     # (pull a bad release) under a HIGHER serial, so the serial alone gates rollback.
     home.mkdir(parents=True, exist_ok=True)
     tmp = home / f".{_TRUST_STATE}.{os.getpid()}.tmp"
-    tmp.write_text(json.dumps({"latest": latest, "serial": serial}), encoding="utf-8")
+    tmp.write_text(_trust_state_text(latest, serial), encoding="utf-8")
     os.replace(tmp, home / _TRUST_STATE)
 
 
