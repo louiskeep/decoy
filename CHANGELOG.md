@@ -8,6 +8,30 @@ version numbers follow the [versioning policy](docs/release/versioning.md).
 
 ## [Unreleased]
 
+### Changed (breaking, pre-GA hard rename; no aliases)
+
+- **Pre-scan / Transform / Post-scan.** The CLI now names the three pipeline
+  phases. `decoy scan SOURCE` (and `scan fields|show|diff`) is now
+  `decoy pre-scan SOURCE` (and `pre-scan fields|show|diff`); `decoy report
+  integrity` and `decoy report fidelity` are now `decoy post-scan integrity` and
+  `decoy post-scan fidelity`; `decoy explain storm` is replaced by `decoy explain
+  pipeline|pre-scan|post-scan`. The old spellings exit non-zero as unknown
+  commands. `report show|render|verify|diff|vault` keep their names, and `report
+  verify` remains an artifact-fingerprint check (not a privacy check).
+- **Pipeline `version: 2`.** Bundled templates, `decoy init` scaffolds, the demo
+  and the packaged examples emit `version: 2`; the `run_storm` flag is replaced by
+  `post_scan: {integrity: bool}` (report-only, default false). Post-scan
+  integrity reports use schema `post-scan-integrity/v2`
+  (`quality_metrics["post_scan_integrity"]`).
+- **Engine surface.** The CLI uses `decoy_engine.profile_columns`,
+  `decoy_engine.profiling.*`, `decoy_engine.detection.ner` and
+  `decoy_engine.verification.run_post_mask`. A standalone check that cannot run
+  exits non-zero, and its error output carries the exception type name only.
+- **Output copy.** Integrity output is labelled report-only (not a release
+  decision) and fidelity output states that similarity is not a privacy
+  guarantee. The multi-stage progress indicator is now neutral
+  (`decoy.ui.scan_progress`).
+
 ### Security
 
 - **Installer / update-system hardening (B-2 r7).** The signed version document now

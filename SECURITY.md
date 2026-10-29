@@ -1,6 +1,6 @@
 # Security Policy
 
-`decoy` is the CLI that drives `decoy-engine` for local validation, masking, generation, STORM, and FORECAST. The CLI runs in the user's shell with the user's privileges; there is no API surface and no auth boundary inside the CLI.
+`decoy` is the CLI that drives `decoy-engine` for local validation, masking, generation, and the Pre-scan / Post-scan checks. The CLI runs in the user's shell with the user's privileges; there is no API surface and no auth boundary inside the CLI.
 
 ## Reporting a vulnerability
 
@@ -30,7 +30,7 @@ Only the most recent minor release of `decoy` receives security fixes. Older ver
 ## Local secret-handling guidance
 
 - Prefer `DECOY_MASTER_KEY` environment variable over passing `--master-key` on the command line. Shell history and process lists can leak command-line secrets.
-- `decoy demo` and `decoy storm` write JSON output that can contain top values, sample sentinels, and detector metadata. These are fine to keep locally but may be sensitive to share; review scan JSON before posting.
+- `decoy demo` and `decoy pre-scan --output` write JSON output that can contain top values, sample sentinels, and detector metadata. These are fine to keep locally but may be sensitive to share; review scan JSON before posting.
 - Custom Faker provider files load at process start with the current user's privileges. Treat the providers directory the same way you would treat any directory of executable Python.
 
 ## Security posture summary

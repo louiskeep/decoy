@@ -6,6 +6,20 @@ it at a YAML pipeline that describes your sources, your tables, and the
 strategy for each column, and it produces a masked or synthesized copy of
 your data with deterministic, repeatable output.
 
+A pipeline has three named phases, and each makes a different claim:
+
+```text
+Pre-scan                 Transform            Post-scan
+profile / detect   ->    mask / generate  ->  check the result
+decoy pre-scan           decoy run            decoy post-scan
+```
+
+Pre-scan flags candidate sensitive fields for you to review. Transform applies
+masking or generation. Post-scan reports integrity findings and distribution
+fidelity on the output. Detection candidates, fidelity, artifact integrity
+(`decoy report verify`) and a release decision are four different things; none
+of them stands in for another, and fidelity is not a privacy guarantee.
+
 The CLI is source-available under the Business Source License 1.1 (BUSL-1.1):
 source is readable, non-commercial and internal-business use is permitted by
 the Additional Use Grant, and commercial competing-service use is restricted.
@@ -42,7 +56,7 @@ A few heavier capabilities are opt-in, so the default install stays lean:
 |-------|------|---------|
 | `cloud` | The S3 / GCS SDK dependencies (`boto3`, `google-cloud-storage`) | `pip install decoy-cli[cloud]` |
 | `ner` | spaCy-based PII autodetect for `text_mask`/`text_redact` | `pip install decoy-cli[ner]` |
-| `ml` | The STORM field-classifier (scikit-learn/lightgbm) | `pip install decoy-cli[ml]` |
+| `ml` | The Pre-scan field-classifier (scikit-learn/lightgbm) | `pip install decoy-cli[ml]` |
 | `vault` | Compatibility alias only; installs nothing extra (see note below) | `pip install decoy-cli[vault]` |
 | `all` | Every extra above | `pip install decoy-cli[all]` |
 
@@ -78,7 +92,7 @@ decoy demo
 Scaffold your first pipeline against your own CSV. Two paths:
 
 ```
-# Column-aware: STORM scans the file, picks a strategy per column, writes
+# Column-aware: Pre-scan profiles the file, picks a strategy per column, writes
 # the YAML with `# REVIEW:` comments above every auto-inferred entry.
 decoy init customers.csv --output pipeline.yaml
 # read the REVIEW comments + edit anything you disagree with
@@ -97,8 +111,9 @@ decoy run pipeline.yaml
 `decoy validate pipeline.yaml` runs the whole pre-run gate -- config schema,
 plan compile, and source/capacity preflight -- in one pass, with one report
 grouped by layer and one aggregated exit code. `decoy validate config` runs
-the fast schema-only subset; `decoy report fidelity` recomputes
-distribution fidelity between a source and an output CSV after a run.
+the fast schema-only subset; `decoy post-scan fidelity` recomputes
+distribution fidelity between a source and an output CSV after a run
+(a similarity measurement, not a privacy guarantee).
 `decoy run` runs the pipeline and writes the masked output to the path
 declared under `targets:` in the YAML.
 
@@ -107,13 +122,15 @@ declared under `targets:` in the YAML.
 | Command                          | What it does                                                                  |
 |-----------------------------------|-------------------------------------------------------------------------------|
 | `decoy demo`                     | Run a packaged end-to-end mask on synthetic input. Good first call.           |
-| `decoy init [file]`              | Scaffold a starter `pipeline.yaml`. With a file: column-aware via STORM. Without: prompt for preset (`minimal`, `gdpr`, ...). |
+| `decoy init [file]`              | Scaffold a starter `pipeline.yaml`. With a file: column-aware via Pre-scan. Without: prompt for preset (`minimal`, `gdpr`, ...). |
 | `decoy validate <path>`          | Run the whole pre-run gate (config + compile + preflight): one report, one exit code. |
 | `decoy run <path>`               | Execute a pipeline: read sources, mask, write targets.                        |
 | `decoy tokenize <path>`          | Run the pipeline, replace each `strategy: tokenize` column with a deterministic surrogate, and record the mapping in a local vault. Needs a mask secret. |
 | `decoy detokenize <path> <file>` | Reverse a tokenized file from its vault. Fails closed on a missing/wrong vault or namespace. |
-| `decoy scan <path>`              | Profile a source file: distributions, PII candidates, cardinality hints.      |
-| `decoy report show <evidence.json>` | The post-run surface: show / verify / fidelity / integrity / diff / vault over run artifacts. |
+| `decoy pre-scan <path>`          | Pre-scan: profile a source file (distributions, PII candidates as suggestions, cardinality hints). Subcommands: `fields`, `show`, `diff` on a saved profile. |
+| `decoy post-scan integrity <masked> --source <src>` | Post-scan: residual-PII / FK / policy findings on a masked file. Report-only; not a release decision. |
+| `decoy post-scan fidelity <src> <out>` | Post-scan: distribution similarity between source and output. A measurement, not a privacy guarantee. |
+| `decoy report show <evidence.json>` | The run-artifact surface: show / render / verify / diff / vault. `verify` checks artifact fingerprints, not privacy. |
 | `decoy list templates`           | List the bundled pipeline templates.                                         |
 | `decoy show template <name>`     | Dump one bundled template to stdout (e.g. `decoy show template hipaa`).      |
 | `decoy explain <topic>`          | In-CLI reference (exit codes, providers, strategies).                         |
@@ -132,7 +149,7 @@ pipelines can switch on the integer; the contract is stable across releases.
 | 1    | `EXIT_USAGE`           | Usage error: config did not validate, path did not exist, flag combination was invalid.    |
 | 2    | `EXIT_WARNINGS`        | The command ran clean except for advisory warnings, and `--fail-on-warning` was set. Returned by `decoy validate config` / `validate preflight` (and the `validate` aggregate). Without `--fail-on-warning` the same run exits 0. |
 | 3    | `EXIT_RUNTIME`         | The CLI itself failed mid-run (engine error, output write failure, transient I/O problem). |
-| 4    | `EXIT_FINDINGS`        | The CLI ran cleanly but found data issues (e.g. `decoy report integrity` flagged residual PII or FK preservation failures). The fix is in the data being checked, not in the CLI invocation. |
+| 4    | `EXIT_FINDINGS`        | The CLI ran cleanly but found data issues (e.g. `decoy post-scan integrity` flagged residual PII or FK preservation failures). The fix is in the data being checked, not in the CLI invocation. |
 | 5    | `EXIT_CAPACITY`        | `decoy run` or `decoy validate preflight` refused the job: it needs more memory than the host/budget has (the engine's out-of-core-FK memory gate). The fix is a bigger host/cgroup ceiling or a smaller job. `decoy validate preflight`'s v1 check covers the out-of-core-FK route only, not the ingestion peak or the generate path. |
 
 Constants live in `decoy.cli.exit_codes`. `decoy explain exit-codes` prints
