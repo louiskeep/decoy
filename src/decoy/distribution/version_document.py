@@ -19,11 +19,21 @@ Payload shape (v1):
       "yanked":        ["0.0.9"],         # versions pulled post-release
       "message":       "",                # optional advisory shown on upgrade/notice
       "generated":     "2026-10-26T00:00:00Z",
+      "serial":        42,                # monotonic; verifiers refuse a lower one
+      "expires":       "2026-11-25T00:00:00Z",  # UTC; verifiers refuse after this
       "artifacts": {                      # one entry per supported target
         "linux-x86_64": {"url": "...", "sha256": "<hex>", "sig": "<url>"},
         ...
       }
     }
+
+Freshness (TUF-style, https://theupdateframework.github.io/specification/latest/ -- the
+timestamp/snapshot "version" + "expires" roles): ``serial`` is a monotonic integer the
+signer bumps on every publish and ``expires`` is a signed wall-clock deadline. A signature
+alone proves only WHO signed a document, not that it is CURRENT, so a captured old signed
+document could otherwise freeze a client on a stale (or vulnerable) release. Verifiers
+refuse an expired document (`check_fresh`) and, via `installer`, refuse a ``serial`` lower
+than the highest they have accepted (rollback/replay).
 
 Version ordering uses PEP 440 via `packaging.version` (a direct `decoy-engine`
 dependency, so present in the managed runtime); no hand-rolled comparison.
@@ -39,6 +49,8 @@ from packaging.version import InvalidVersion, Version
 from decoy.distribution import signing
 
 VERSION_DOCUMENT_SCHEMA_VERSION = "cli-version-document/v1"
+TIME_FORMAT = "%Y-%m-%dT%H:%M:%SZ"
+DEFAULT_VALIDITY_DAYS = 30
 
 
 def build_document(
@@ -46,13 +58,20 @@ def build_document(
     latest: str,
     min_supported: str,
     artifacts: dict[str, dict[str, str]],
+    serial: int,
     yanked: list[str] | None = None,
     message: str = "",
     generated: str | None = None,
+    expires: str | None = None,
 ) -> dict[str, Any]:
-    """Assemble a v1 payload. ``artifacts`` maps a target id to {url, sha256, sig}."""
+    """Assemble a v1 payload. ``artifacts`` maps a target id to {url, sha256, sig};
+    ``expires`` defaults to ``DEFAULT_VALIDITY_DAYS`` after ``generated``."""
+    now = _dt.datetime.now(tz=_dt.timezone.utc)
     if generated is None:
-        generated = _dt.datetime.now(tz=_dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        generated = now.strftime(TIME_FORMAT)
+    if expires is None:
+        base = _parse_time(generated) or now
+        expires = (base + _dt.timedelta(days=DEFAULT_VALIDITY_DAYS)).strftime(TIME_FORMAT)
     return {
         "schema_version": VERSION_DOCUMENT_SCHEMA_VERSION,
         "latest": latest,
@@ -60,8 +79,19 @@ def build_document(
         "yanked": sorted(yanked or []),
         "message": message,
         "generated": generated,
+        "serial": serial,
+        "expires": expires,
         "artifacts": artifacts,
     }
+
+
+def _parse_time(value: object) -> _dt.datetime | None:
+    if not isinstance(value, str):
+        return None
+    try:
+        return _dt.datetime.strptime(value, TIME_FORMAT).replace(tzinfo=_dt.timezone.utc)
+    except ValueError:
+        return None
 
 
 def canonical_document_bytes(payload: dict[str, Any]) -> bytes:
@@ -78,7 +108,25 @@ def parse_document(data: bytes) -> dict[str, Any]:
         raise ValueError("version document is not an object")
     if payload.get("schema_version") != VERSION_DOCUMENT_SCHEMA_VERSION:
         raise ValueError(f"unexpected version-document schema: {payload.get('schema_version')!r}")
+    serial = payload.get("serial")
+    if not isinstance(serial, int) or isinstance(serial, bool) or serial < 1:
+        raise ValueError("version document has no valid 'serial'")
+    if _parse_time(payload.get("expires")) is None:
+        raise ValueError("version document has no valid 'expires'")
     return payload
+
+
+def check_fresh(payload: dict[str, Any], *, now: _dt.datetime | None = None) -> None:
+    """Raise ValueError if the (already signature-verified, parsed) document has expired.
+    ``now`` is injectable for tests; naive values are taken as UTC."""
+    now = now or _dt.datetime.now(tz=_dt.timezone.utc)
+    if now.tzinfo is None:
+        now = now.replace(tzinfo=_dt.timezone.utc)
+    expires = _parse_time(payload.get("expires"))
+    if expires is None:
+        raise ValueError("version document has no valid 'expires'")
+    if now >= expires:
+        raise ValueError(f"version document expired at {payload['expires']} (stale or replayed)")
 
 
 def verify_document(data: bytes, signature_b64: str, *, expected_public_pem: str) -> bool:

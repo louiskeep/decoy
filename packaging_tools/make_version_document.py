@@ -13,7 +13,9 @@ acceptable for V1"); nothing here assumes a live service.
 from __future__ import annotations
 
 import argparse
+import datetime as _dt
 import sys
+import time
 from pathlib import Path
 
 from decoy.distribution import manifest as manifest_mod
@@ -61,6 +63,10 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--dist", required=True, help="dir holding the built tarballs + sidecars")
     ap.add_argument("--base-url", required=True, help="published base URL for the bundles")
     ap.add_argument("--out", required=True, help="output path for version.json")
+    ap.add_argument("--serial", type=int, default=None,
+                    help="monotonic document serial (default: current unix time, always rising)")
+    ap.add_argument("--valid-days", type=int, default=vd.DEFAULT_VALIDITY_DAYS,
+                    help="days until the signed document expires; republish before then")
     ap.add_argument("--message", default="")
     ap.add_argument("--yanked", nargs="*", default=[])
     ap.add_argument("--sign", action="store_true")
@@ -76,6 +82,8 @@ def main(argv: list[str] | None = None) -> int:
         latest=args.version,
         min_supported=args.min_supported,
         artifacts=artifacts,
+        serial=args.serial if args.serial is not None else int(time.time()),
+        expires=(_dt.datetime.now(tz=_dt.timezone.utc) + _dt.timedelta(days=args.valid_days)).strftime(vd.TIME_FORMAT),
         yanked=list(args.yanked),
         message=args.message,
     )

@@ -7,7 +7,9 @@ drift in what they accept. A failed signature or checksum is a hard refusal
 (``InstallError``), never a warning-and-continue.
 
 Flow (mirrors install.sh):
-  1. verify the version document's detached signature against the PINNED release key;
+  1. verify the version document's detached signature against the PINNED release key,
+     then its freshness (unexpired, ``serial`` not below the highest ever accepted, see
+     below) and its ``min_supported`` floor;
   2. select the target's {url, sha256, sig}; download the bundle + its signature;
   3. verify the SHA-256 against the signed document, then the bundle's Ed25519
      signature against the pinned key (the trust anchor);
@@ -33,6 +35,16 @@ state change, so there is no move-aside, backup, restore, or signal-trap recover
 wrong: an interruption at any point leaves either the old runtime live (flip not reached)
 or the new one (flip done), never a missing ``current``.
 
+Freshness / anti-rollback (TUF pattern, https://theupdateframework.github.io/specification/latest/:
+timestamp-role ``version`` + ``expires``, client-side "fast-forward/rollback attack"
+checks): a signature proves who signed a document, not that it is current. The signed
+document therefore carries a monotonic ``serial`` and an ``expires`` deadline. An expired
+document is refused, and the highest accepted ``serial`` and the ``latest`` it carried are
+persisted in ``<DECOY_HOME>/trust_state.json`` so a replayed older signed document (lower
+serial) cannot freeze or downgrade a client. ``install.sh`` applies the same rules to the
+same file. The file is local state, not a secret: an attacker who can write it can already
+replace the runtime.
+
 The downloader + the optional post-swap validator are injected so the whole flow is
 unit-testable offline and a failure can be injected at step 7 to exercise rollback.
 """
@@ -40,6 +52,7 @@ unit-testable offline and a failure can be injected at step 7 to exercise rollba
 from __future__ import annotations
 
 import contextlib
+import datetime as _dt
 import os
 import shutil
 import subprocess
@@ -47,7 +60,7 @@ import sys
 import tarfile
 import tempfile
 from dataclasses import dataclass
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Callable
 
 from decoy.distribution import layout, lock, verify_extracted
@@ -146,6 +159,48 @@ def _sweep_stale_staging(versions: Path) -> None:
         shutil.rmtree(entry, ignore_errors=True)
 
 
+_TRUST_STATE = "trust_state.json"
+
+
+def _read_trust_state(home: Path) -> dict:
+    import json
+
+    try:
+        data = json.loads((home / _TRUST_STATE).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def check_document_freshness(
+    doc: dict, home: Path, *, now: _dt.datetime | None = None, record: bool = True
+) -> None:
+    """Refuse an expired or replayed (lower ``serial``) signature-verified document; with
+    ``record`` persist the accepted serial/latest to ``<home>/trust_state.json``. Raises InstallError."""
+    import json
+
+    try:
+        vd.check_fresh(doc, now=now)
+    except ValueError as exc:
+        raise InstallError(f"version document rejected: {exc}") from exc
+    state = _read_trust_state(home)
+    seen_serial = state.get("serial") if isinstance(state.get("serial"), int) else 0
+    serial, latest = doc["serial"], doc.get("latest")
+    if serial < seen_serial:
+        raise InstallError(
+            f"version document serial {serial} is older than the newest accepted ({seen_serial}) "
+            "-- refusing (rollback/replay)"
+        )
+    if not record:
+        return
+    # ``latest`` is recorded for diagnostics only: a signer may legitimately move it back
+    # (pull a bad release) under a HIGHER serial, so the serial alone gates rollback.
+    home.mkdir(parents=True, exist_ok=True)
+    tmp = home / f".{_TRUST_STATE}.{os.getpid()}.tmp"
+    tmp.write_text(json.dumps({"latest": latest, "serial": serial}), encoding="utf-8")
+    os.replace(tmp, home / _TRUST_STATE)
+
+
 def _urllib_download(url: str) -> bytes:
     import urllib.request
 
@@ -182,44 +237,89 @@ def _selfcheck(python_bin: Path) -> subprocess.CompletedProcess:
     )
 
 
+_MAX_LINK_HOPS = 40
+
+
+def _resolve_in_archive(rel: str, symlinks: dict[str, str]) -> str | None:
+    """Resolve archive-root-relative ``rel`` through the symlinks already seen in the
+    archive, component by component, as the filesystem would after extraction. Returns the
+    normalized real path, or None if it climbs above the root (or loops)."""
+    done: list[str] = []
+    todo = list(PurePosixPath(rel).parts)
+    hops = 0
+    while todo:
+        part = todo.pop(0)
+        if part in ("", "."):
+            continue
+        if part == "..":
+            if not done:
+                return None
+            done.pop()
+            continue
+        here = "/".join([*done, part])
+        if here in symlinks:
+            hops += 1
+            target = symlinks[here]
+            if hops > _MAX_LINK_HOPS or target.startswith("/"):
+                return None
+            todo = list(PurePosixPath(target).parts) + todo
+            continue
+        done.append(part)
+    return "/".join(done)
+
+
 def _extract_bundle(tar_bytes: bytes, dest: Path) -> Path:
     """Safely extract the .tar.gz into ``dest`` and return the single top-level dir.
 
-    Rejects member names that are absolute or climb out with '..', and symlink/hardlink
-    members whose target escapes the extraction root (the symlink-escape attack). The
-    embedded interpreter's own INTERNAL symlinks are allowed; the in-bundle signed
-    manifest then re-checks every link target against what was signed."""
+    Rejects member names that are absolute or climb out with '..', members written through
+    an earlier symlink, symlinks whose target escapes the extraction root, and hardlinks
+    whose archive-root path is absolute, climbs out, or resolves (through earlier symlinks)
+    outside the root. The embedded interpreter's own INTERNAL symlinks are allowed; the
+    in-bundle signed manifest then re-checks every link target against what was signed.
+    Extraction is ONLY done with the stdlib "data" filter; a runtime without it refuses."""
     import io
 
     from decoy.distribution.manifest import _symlink_target_escapes
+
+    if not hasattr(tarfile, "data_filter"):
+        raise InstallError(
+            "this Python's tarfile has no extraction filters (needs 3.12+ or a recent 3.8-3.11 "
+            "patch release); refusing to extract an archive unfiltered"
+        )
 
     dest.mkdir(parents=True, exist_ok=True)
     with tarfile.open(fileobj=io.BytesIO(tar_bytes), mode="r:gz") as tar:
         members = tar.getmembers()
         tops: set[str] = set()
+        symlinks: dict[str, str] = {}
         for m in members:
             p = Path(m.name)
             if p.is_absolute() or ".." in p.parts:
                 raise InstallError(f"bundle archive has an unsafe path: {m.name!r}")
-            if m.issym() or m.islnk():
-                # Validate the link target cannot escape the bundle root.
-                rel = p.as_posix()
-                if m.islnk():
-                    # hardlink target is a path within the archive; same escape test.
-                    if _symlink_target_escapes(rel, m.linkname):
-                        raise InstallError(f"bundle archive hardlink escapes root: {m.name!r}")
-                elif _symlink_target_escapes(rel, m.linkname):
+            rel = PurePosixPath(m.name).as_posix()
+            # A member must not be written THROUGH a symlink extracted earlier.
+            parent = PurePosixPath(rel).parent.as_posix()
+            if parent != "." and _resolve_in_archive(parent, symlinks) != PurePosixPath(parent).as_posix():
+                raise InstallError(f"bundle archive member writes through a symlink: {m.name!r}")
+            if m.issym():
+                if _symlink_target_escapes(rel, m.linkname):
                     raise InstallError(f"bundle archive symlink escapes root: {m.name!r}")
+                symlinks[rel] = m.linkname
+            elif m.islnk():
+                # A hardlink name is a path from the ARCHIVE ROOT (not relative to the
+                # link), so it is validated as one, then resolved through earlier symlinks.
+                lp = PurePosixPath(m.linkname)
+                if lp.is_absolute() or ".." in lp.parts or not m.linkname:
+                    raise InstallError(f"bundle archive hardlink escapes root: {m.name!r}")
+                if _resolve_in_archive(m.linkname, symlinks) is None:
+                    raise InstallError(f"bundle archive hardlink escapes root: {m.name!r}")
             tops.add(p.parts[0])
         if len(tops) != 1:
             raise InstallError("bundle archive must hold exactly one top-level directory")
-        # Members are validated above; the stdlib "data" filter (3.12+, backported to
-        # recent 3.8-3.11 patch levels) is a second line that rejects absolute/escaping
-        # paths and out-of-tree links. Fall back on a runtime too old to know it.
         try:
             tar.extractall(dest, filter="data")
-        except TypeError:
-            tar.extractall(dest)
+        except TypeError as exc:
+            raise InstallError("tarfile rejected the 'data' extraction filter; refusing to extract unfiltered") from exc
     return dest / next(iter(tops))
 
 
@@ -330,6 +430,7 @@ def install_version(
     download: Downloader | None = None,
     run_self_check: bool = True,
     post_swap_validate: PostSwapValidator | None = None,
+    now: _dt.datetime | None = None,
 ) -> InstallOutcome:
     home = home or layout.decoy_home()
     with _exclusive(home):
@@ -347,9 +448,18 @@ def install_version(
             # A correctly signed document of the wrong schema/shape is still a refusal, not
             # a traceback (JSONDecodeError is a ValueError).
             raise InstallError(f"version document rejected: {exc}") from exc
+        check_document_freshness(doc, home, now=now)
         version = pin_version or doc.get("latest")
         if not isinstance(version, str) or not version:
             raise InstallError("version document has no usable 'latest'")
+        try:
+            below = vd.below_floor(version, doc)
+        except ValueError:
+            below = False
+        if below:
+            raise InstallError(
+                f"version {version} is below the signed min_supported {doc.get('min_supported')} -- refusing"
+            )
         if vd.is_yanked(doc, version):
             raise InstallError(f"version {version} is yanked -- refusing")
 

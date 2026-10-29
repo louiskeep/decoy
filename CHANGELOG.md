@@ -8,6 +8,20 @@ version numbers follow the [versioning policy](docs/release/versioning.md).
 
 ## [Unreleased]
 
+### Security
+
+- **Installer / update-system hardening (B-2 r7).** The signed version document now
+  carries a monotonic `serial` and an `expires` deadline (TUF-style freshness);
+  `decoy upgrade` and `install.sh` refuse an expired document, and refuse a `serial`
+  lower than the highest accepted (kept in `$DECOY_HOME/trust_state.json`), so a
+  replayed signed document can no longer freeze or downgrade a client. A pin below the
+  signed `min_supported` is refused. Archive extraction validates hardlink names as
+  archive-root paths, rejects members written through earlier symlinks, and refuses to
+  extract at all when the stdlib `data` filter is unavailable (no unfiltered fallback).
+  `DECOY_RELEASE_PUBKEY_FILE` now only replaces the trust anchor while the build still
+  carries the placeholder key (loud warning); it is ignored, with a warning, in a release
+  build. `make_version_document` gains `--serial` / `--valid-days`.
+
 ### Added
 
 - **`decoy tokenize` / `decoy detokenize` (reversible tokenization, B-1).** A
