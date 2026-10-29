@@ -65,11 +65,6 @@ _README_TABLE_OMITTED = frozenset(
         "schema",
         "doctor",
         "subset",
-        # B-1: tokenize/detokenize are an advanced reversible-tokenization pair
-        # (like `unmask`), deliberately kept out of the first-contact README
-        # table; they are advertised in the root help and `decoy explain tokenize`.
-        "tokenize",
-        "detokenize",
         "upgrade",
         # S3b: the four registry sub-apps folded into `list`/`show`; the README
         # table advertises `decoy list templates` / `decoy show template`.

@@ -12,7 +12,8 @@ Flow (mirrors install.sh):
   3. verify the SHA-256 against the signed document, then the bundle's Ed25519
      signature against the pinned key (the trust anchor);
   4. quarantine-extract; verify the in-bundle signed manifest (forward + reverse);
-  5. run the new bundle's native-present self-check (loud refusal);
+  5. refuse a bundle that does not declare the requested version AND target (before its
+     interpreter runs), then run its native-present self-check (loud refusal);
   6. stage the verified bits into a FRESH ``versions/`` slot (never mutating an existing
      ``versions/<version>`` in place), then flip ``current`` atomically to it;
   7. post-swap validation; on failure flip ``current`` back; once live, reclaim the old
@@ -340,7 +341,12 @@ def install_version(
         # 1) version document signature (pinned key)
         if not vd.verify_document(version_doc_bytes, version_doc_sig_b64, expected_public_pem=expected_public_pem):
             raise InstallError("version-document signature invalid -- refusing (possible tampering)")
-        doc = vd.parse_document(version_doc_bytes)
+        try:
+            doc = vd.parse_document(version_doc_bytes)
+        except ValueError as exc:
+            # A correctly signed document of the wrong schema/shape is still a refusal, not
+            # a traceback (JSONDecodeError is a ValueError).
+            raise InstallError(f"version document rejected: {exc}") from exc
         version = pin_version or doc.get("latest")
         if not isinstance(version, str) or not version:
             raise InstallError("version document has no usable 'latest'")
@@ -366,8 +372,10 @@ def install_version(
             name = f"decoy-{version}-{target}.tar.gz"
             url = f"{base_url.rstrip('/')}/{version}/{name}"
             sig_url = url + ".sig"
-            # The signature is the trust anchor; the sidecar sha is a best-effort corruption
-            # check (it is unsigned, like install.sh's pinned path).
+            # CHECKSUM EXCEPTION: the signed v1 document carries only the latest release's
+            # sha256, so a pinned older download has NO signed checksum. The sidecar is an
+            # unsigned, best-effort corruption check (skipped if absent); the Ed25519 bundle
+            # signature below is the sole trust anchor on this path, as in install.sh.
             expected_sha = _try_download_sha(download, url + ".sha256")
 
         tar_bytes = download(url)
@@ -400,20 +408,12 @@ def install_version(
             if not python_bin.exists():
                 raise InstallError("bundle is missing its interpreter")
 
-            # 5) native self-check through the NEW bundle's interpreter (loud refusal)
-            if run_self_check:
-                proc = _selfcheck(python_bin)
-                if proc.returncode != 0:
-                    raise InstallError(
-                        "native companion self-check failed for the new bundle -- refusing: "
-                        + (proc.stderr.strip() or "no detail")
-                    )
-
             # Fail-closed defense in depth: the extracted bundle must DECLARE the version AND
             # the target we asked for. Without this, a wrong-version OR wrong-target download
             # (e.g. latest bits resolved for a pinned older version, or another platform's
             # bundle served at a pinned URL) would be staged + flipped to as mislabeled bits.
-            # Checked BEFORE any staging, so a mismatch never creates a slot or touches disk.
+            # Checked BEFORE the new bundle's interpreter runs (self-check) and BEFORE any staging, so a
+            # mismatch never executes the bundle, creates a slot, or touches a retained runtime.
             declared = _bundle_declared_version(bundle_root)
             if declared != version:
                 raise InstallError(
@@ -428,6 +428,15 @@ def install_version(
                     f"{declared_target!r} but this host is {target!r} (resolution mismatch); "
                     f"versions/{version} on disk is left untouched"
                 )
+
+            # 5) native self-check through the NEW bundle's interpreter (loud refusal)
+            if run_self_check:
+                proc = _selfcheck(python_bin)
+                if proc.returncode != 0:
+                    raise InstallError(
+                        "native companion self-check failed for the new bundle -- refusing: "
+                        + (proc.stderr.strip() or "no detail")
+                    )
 
             # Stage the validated bits into a FRESH slot. An existing versions/<version> is
             # never mutated in place: a same-version repair stages a distinct

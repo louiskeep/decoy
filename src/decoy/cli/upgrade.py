@@ -15,14 +15,13 @@ environment it does not own.
 from __future__ import annotations
 
 import subprocess
-import sys
 from pathlib import Path
 
 import typer
 
 from decoy import __version__
 from decoy.cli.exit_codes import EXIT_OK, EXIT_RUNTIME, EXIT_USAGE
-from decoy.distribution import installer, release_key
+from decoy.distribution import installer, layout, release_key
 from decoy.distribution import version_document as vd
 from decoy.ui.output import OutputMode, emit_json, setup_output
 from decoy.ui.theme import error, hint, success
@@ -47,22 +46,8 @@ _DEFAULT_VERSION_URL = "https://decoy.dev/cli/version.json"
 
 
 def _managed_home() -> Path | None:
-    """The managed-runtime home IFF this interpreter is a bundled-runtime interpreter.
-
-    A managed interpreter lives at ``<home>/versions/<version>/python``, so it locates
-    its own home from ``sys.prefix`` (the nearest ancestor named ``versions`` -> its
-    parent is the home). Deriving it from the running interpreter rather than from
-    ``DECOY_HOME``/``~/.decoy`` means `decoy upgrade` works even when the install used a
-    custom home and that env var is not set at upgrade time. Returns None for a pip/dev
-    install (no ``versions`` ancestor)."""
-    try:
-        prefix = Path(sys.prefix).resolve()
-    except OSError:
-        return None
-    for anc in prefix.parents:
-        if anc.name == "versions":
-            return anc.parent
-    return None
+    """The managed-runtime home, or None for a pip/dev install (see `layout.managed_home`)."""
+    return layout.managed_home()
 
 
 def _fetch(url: str) -> bytes:
@@ -127,7 +112,11 @@ def upgrade(
     if not vd.verify_document(doc_bytes, doc_sig, expected_public_pem=pubkey):
         state.err_console.print(error("error:"), "version-document signature INVALID -- refusing (possible tampering).")
         raise typer.Exit(code=EXIT_RUNTIME)
-    doc = vd.parse_document(doc_bytes)
+    try:
+        doc = vd.parse_document(doc_bytes)
+    except ValueError as exc:
+        state.err_console.print(error("error:"), f"version document rejected: {exc}")
+        raise typer.Exit(code=EXIT_RUNTIME) from exc
     latest = doc.get("latest")
     target_version = version or latest
 
@@ -154,7 +143,7 @@ def upgrade(
             out = subprocess.run([str(launcher), "--version"], capture_output=True, text=True, timeout=60)
         except Exception:
             return False
-        return out.returncode == 0 and (target_version in out.stdout)
+        return out.returncode == 0 and target_version is not None and target_version in out.stdout
 
     # A local activation was already handled before the network fetch (above). Everything
     # that reaches here downloads + re-verifies: a plain/latest upgrade, a pinned
