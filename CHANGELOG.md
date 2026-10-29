@@ -22,6 +22,12 @@ version numbers follow the [versioning policy](docs/release/versioning.md).
   `10/11/12/13` come from the engine-owned retention contract. Needs an engine release that ships
   `decoy_engine.retention` and `DECOY_ENGINE_LOG_FILE`; the `decoy-engine` pin must move with it.
   Crash leftovers that were never in a manifest are not discoverable and stay out of scope (V2).
+- **r2: deletion acts on the verified object.** The verified file is captured by an atomic no-replace
+  rename (`renameat2` / `renameatx_np`) to a private `.decoy-cleanup-*` name, the captured inode is
+  compared to the still-open verified descriptor, and only then unlinked. A file swapped in after
+  verification is renamed back (or kept under the quarantine name), never destroyed. The root recorded in
+  the reviewed inventory is rechecked when the delete phase reopens it. Execution now also refuses on a
+  platform without an atomic no-replace rename (preview still works).
 
 ### Security
 
