@@ -195,7 +195,7 @@ def test_symlink_escape_predicate():
 
 # ----------------------------------------------------------------- version_document
 def test_version_document_canonical_and_select(keypair):
-    doc = vd.build_document(
+    doc = vd.build_document(serial=1, 
         latest="0.2.0", min_supported="0.1.0",
         artifacts={"linux-x86_64": {"url": "u", "sha256": "h", "sig": "s"}},
         yanked=["0.0.9"], generated="2026-01-01T00:00:00Z",
@@ -207,19 +207,19 @@ def test_version_document_canonical_and_select(keypair):
 
 
 def test_version_document_pep440_and_flags():
-    doc = vd.build_document(latest="0.10.0", min_supported="0.2.0", artifacts={}, yanked=["0.10.1"])
+    doc = vd.build_document(serial=1, latest="0.10.0", min_supported="0.2.0", artifacts={}, yanked=["0.10.1"])
     assert vd.compare_versions("0.2.0", "0.10.0") == -1
     assert vd.newer_available("0.9.0", doc) is True
     assert vd.newer_available("0.10.0", doc) is False
     assert vd.below_floor("0.1.0", doc) is True
     assert vd.below_floor("0.2.0", doc) is False
     # yanked latest -> no upgrade offered
-    doc2 = vd.build_document(latest="0.10.1", min_supported="0.2.0", artifacts={}, yanked=["0.10.1"])
+    doc2 = vd.build_document(serial=1, latest="0.10.1", min_supported="0.2.0", artifacts={}, yanked=["0.10.1"])
     assert vd.newer_available("0.9.0", doc2) is False
 
 
 def test_version_document_degrades_on_garbage():
-    doc = vd.build_document(latest="not-a-version", min_supported="x", artifacts={})
+    doc = vd.build_document(serial=1, latest="not-a-version", min_supported="x", artifacts={})
     assert vd.newer_available("0.1.0", doc) is False  # does not raise
     with pytest.raises(ValueError):
         vd.parse_document(b'{"schema_version":"other/v9"}')
@@ -335,7 +335,7 @@ def _synthetic_release(tmp_path: Path, key: Ed25519PrivateKey, pub: str, version
     sig_b64 = _sign_b64(key, tar_bytes)
     (serve / (tarball.name + ".sig")).write_text(sig_b64)
 
-    doc = vd.build_document(
+    doc = vd.build_document(serial=1, 
         latest=version, min_supported=version,
         artifacts={"linux-x86_64": {
             "url": f"file://{tarball}", "sha256": sha, "sig": f"file://{tarball}.sig",
@@ -399,7 +399,7 @@ def test_installer_rejects_checksum_mismatch(tmp_path, monkeypatch, keypair):
     tarball = serve / "decoy-0.1.0-linux-x86_64.tar.gz"
     _deterministic_targz(stage, tarball)
     (serve / (tarball.name + ".sig")).write_text(_sign_b64(key, tarball.read_bytes()))
-    doc = vd.build_document(
+    doc = vd.build_document(serial=1, 
         latest="0.1.0", min_supported="0.1.0",
         artifacts={"linux-x86_64": {"url": f"file://{tarball}", "sha256": "0" * 64, "sig": f"file://{tarball}.sig"}},
     )
@@ -617,7 +617,7 @@ def _file_download(url: str) -> bytes:
 
 
 def _doc_for_latest(serve_dir: Path, latest: str, latest_url: str, key: Ed25519PrivateKey):
-    doc = vd.build_document(
+    doc = vd.build_document(serial=1, 
         latest=latest, min_supported="0.1.0",
         artifacts={"linux-x86_64": {
             "url": latest_url,
@@ -1083,6 +1083,7 @@ def test_upgrade_force_local_reinstalls_not_swap(tmp_path, monkeypatch):
     monkeypatch.setattr(upg.vd, "verify_document", lambda *a, **k: True)
     monkeypatch.setattr(upg.vd, "parse_document", lambda data: {"latest": "0.1.0"})
     monkeypatch.setattr(upg.vd, "newer_available", lambda cur, doc: False)
+    monkeypatch.setattr(upg.installer, "check_document_freshness", lambda *a, **k: None)
     seen = {}
 
     def fake_install(**k):

@@ -34,7 +34,7 @@ $BinDir    = if ($env:DECOY_BIN_DIR) { $env:DECOY_BIN_DIR } else { Join-Path $en
 $VersionUrl = if ($env:DECOY_VERSION_URL) { $env:DECOY_VERSION_URL } else { "https://decoy.dev/cli/version.json" }
 
 # Pinned release public key. DEV/PLACEHOLDER -- filled with the real key at release
-# publish, the same key install.sh pins. DECOY_RELEASE_PUBKEY_FILE overrides (testing).
+# publish, the same key install.sh pins. DECOY_RELEASE_PUBKEY_FILE overrides it ONLY while this is still the placeholder.
 $PinnedPubKey = @"
 -----BEGIN PUBLIC KEY-----
 __DECOY_RELEASE_PUBLIC_KEY__
@@ -98,8 +98,14 @@ if ((Test-Path (Join-Path $DecoyHome "current")) -or $hasVersionDir) {
 $work = New-Item -ItemType Directory -Path (Join-Path $env:TEMP ("decoy-install-" + [guid]::NewGuid()))
 try {
   $pub = Join-Path $work "pub.pem"
-  if ($env:DECOY_RELEASE_PUBKEY_FILE) { Copy-Item $env:DECOY_RELEASE_PUBKEY_FILE $pub }
-  else { Set-Content -Path $pub -Value $PinnedPubKey -NoNewline }
+  $isPlaceholder = $PinnedPubKey.Contains("__DECOY_RELEASE_PUBLIC" + "_KEY__")
+  if ($env:DECOY_RELEASE_PUBKEY_FILE -and $isPlaceholder) {
+    Write-Warning "trusting the release key from DECOY_RELEASE_PUBKEY_FILE instead of a pinned key (dev/test build only)"
+    Copy-Item $env:DECOY_RELEASE_PUBKEY_FILE $pub
+  } else {
+    if ($env:DECOY_RELEASE_PUBKEY_FILE) { Write-Warning "DECOY_RELEASE_PUBKEY_FILE is IGNORED: this installer pins its release key" }
+    Set-Content -Path $pub -Value $PinnedPubKey -NoNewline
+  }
 
   $baseUrl = $VersionUrl -replace '/[^/]*$',''
 

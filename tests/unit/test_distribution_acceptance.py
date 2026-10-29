@@ -55,7 +55,7 @@ def _isolate_managed_paths(tmp_path, monkeypatch):
 def _signed_doc(key, serve: Path, latest: str, *, yanked=(), mutate=None):
     """A signed version document for ``latest`` (served from ``serve``) with ``yanked``."""
     url = _serve_bundle(serve, latest, key)
-    doc = vd.build_document(
+    doc = vd.build_document(serial=1, 
         latest=latest,
         min_supported="0.1.0",
         yanked=list(yanked),
@@ -238,6 +238,8 @@ def _tree_digest(root: Path) -> dict[str, str]:
     out = {}
     for p in sorted(root.rglob("*")):
         rel = p.relative_to(root).as_posix()
+        if rel == "trust_state.json":  # freshness bookkeeping, not part of any runtime
+            continue
         out[rel] = (
             "link:" + os.readlink(p) if p.is_symlink()
             else hashlib.sha256(p.read_bytes()).hexdigest() if p.is_file() else "dir"

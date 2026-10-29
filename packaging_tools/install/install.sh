@@ -15,6 +15,12 @@
 # a warning-and-continue. Established methodology: Ed25519 via openssl; no hand-rolled
 # verification.
 #
+# Freshness (TUF-style timestamp "version"/"expires"): the signed document carries a
+# monotonic `serial` and an `expires` deadline. An expired document is refused, and the
+# highest accepted serial / newest latest are kept in $DECOY_HOME/trust_state.json (shared
+# with `decoy upgrade`, decoy.distribution.installer) so a replayed older signed document
+# cannot freeze or downgrade a client.
+#
 # Usage:
 #   curl -LsSf https://decoy.dev/cli/install.sh | sh
 #   sh install.sh [--version X.Y.Z] [uninstall]
@@ -23,7 +29,9 @@
 #   DECOY_HOME            install root (default: ~/.decoy)
 #   DECOY_BIN_DIR         launcher dir on PATH (default: ~/.local/bin)
 #   DECOY_VERSION_URL     version document URL (default: the hosted endpoint)
-#   DECOY_RELEASE_PUBKEY_FILE  override the pinned key (testing only)
+#   DECOY_RELEASE_PUBKEY_FILE  override the pinned key (dev/test builds ONLY: honored solely
+#                         while PINNED_PUBKEY below is still the placeholder, with a loud
+#                         warning; ignored with a warning once a release injects the real key)
 #   DECOY_LOCAL_BUNDLE    install from a local tarball instead of downloading (offline)
 set -eu
 
@@ -103,6 +111,9 @@ verify_sig() {
   rm -f "$_raw"; return 1
 }
 
+# Whitespace-tolerant so it reads both the signed canonical document and the Python-written
+# trust_state.json whatever its spacing; an unmatched field is empty and callers fail closed.
+json_top_number() { grep -oE "\"$2\"[[:space:]]*:[[:space:]]*[0-9]+" "$1" | head -n1 | sed 's/.*://;s/[[:space:]]//g'; }
 # Extract one string field from CANONICAL (sorted, compact) JSON. Safe because the
 # document is emitted by decoy.distribution.version_document in canonical form and the values
 # (version strings, hex, URLs) contain no '"' or '}'.
@@ -140,6 +151,7 @@ need openssl
 need tar
 need mktemp
 
+FRESHNESS_DOC=""
 TARGET=$(detect_target)
 [ -n "$TARGET" ] || die "unsupported platform ($(uname -s)/$(uname -m)). Supported: linux-x86_64, linux-aarch64, macos-arm64. (macOS Intel and Windows are not supported at launch.)"
 info "target: $TARGET"
@@ -197,10 +209,19 @@ cleanup() {
 trap cleanup EXIT
 
 # Pinned key -> PEM file (test override allowed).
+# The marker is split so the release step's placeholder substitution cannot rewrite this test.
 PUBKEY="$WORK/pub.pem"
-if [ -n "${DECOY_RELEASE_PUBKEY_FILE:-}" ]; then
+case "$PINNED_PUBKEY" in
+  *"__DECOY_RELEASE_PUBLIC""_KEY__"*) KEY_IS_PLACEHOLDER=1 ;;
+  *) KEY_IS_PLACEHOLDER=0 ;;
+esac
+if [ -n "${DECOY_RELEASE_PUBKEY_FILE:-}" ] && [ "$KEY_IS_PLACEHOLDER" = 1 ]; then
+  info "WARNING: trusting the release key from DECOY_RELEASE_PUBKEY_FILE=$DECOY_RELEASE_PUBKEY_FILE instead of a pinned key. This is a dev/test build; never do this with a real install."
   cp "$DECOY_RELEASE_PUBKEY_FILE" "$PUBKEY"
 else
+  if [ -n "${DECOY_RELEASE_PUBKEY_FILE:-}" ]; then
+    info "WARNING: DECOY_RELEASE_PUBKEY_FILE is set but IGNORED: this installer pins its release key and an environment variable cannot replace the trust anchor."
+  fi
   printf '%s\n' "$PINNED_PUBKEY" > "$PUBKEY"
 fi
 
@@ -228,6 +249,30 @@ else
   [ "$(json_top_string "$VDOC" schema_version)" = "cli-version-document/v1" ] \
     || die "version document has an unexpected schema_version -- refusing"
 
+  # Freshness: refuse an expired or replayed (lower-serial) signed document.
+  SERIAL=$(json_top_number "$VDOC" serial)
+  EXPIRES=$(json_top_string "$VDOC" expires)
+  [ -n "$SERIAL" ] || die "version document has no valid 'serial' -- refusing"
+  case "$EXPIRES" in
+    [0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]T[0-9][0-9]:[0-9][0-9]:[0-9][0-9]Z) ;;
+    *) die "version document has no valid 'expires' -- refusing" ;;
+  esac
+  # UTC timestamps in this fixed format compare as 14-digit integers.
+  EXP_N=$(printf '%s' "$EXPIRES" | tr -dc '0-9')
+  NOW_N=$(date -u +%Y%m%d%H%M%S)
+  [ "$NOW_N" -lt "$EXP_N" ] || die "version document expired at $EXPIRES -- refusing (stale or replayed)"
+  TRUST_STATE="$DECOY_HOME/trust_state.json"
+  # Fast refusal only. The authoritative read-compare-write runs in first_install under the
+  # install lock; this script never writes trust_state.json. An existing state file whose
+  # serial cannot be read is a refusal, never "nothing seen".
+  if [ -e "$TRUST_STATE" ]; then
+    SEEN_SERIAL=$(json_top_number "$TRUST_STATE" serial || true)
+    [ -n "$SEEN_SERIAL" ] || die "$TRUST_STATE exists but has no readable 'serial' -- refusing"
+    if [ "$SERIAL" -lt "$SEEN_SERIAL" ]; then
+      die "version document serial $SERIAL is older than the newest accepted ($SEEN_SERIAL) -- refusing (rollback/replay)"
+    fi
+  fi
+
   LATEST=$(json_top_string "$VDOC" latest)
   [ -n "$LATEST" ] || die "version document has no 'latest'"
   VERSION="${PIN_VERSION:-$LATEST}"
@@ -242,6 +287,8 @@ else
   case "$YANKED_LIST" in
     *"\"$VERSION\""*) die "version $VERSION is yanked -- refusing" ;;
   esac
+
+  FRESHNESS_DOC="$VDOC"
 
   if [ "$VERSION" = "$LATEST" ]; then
     URL=$(json_artifact_field "$VDOC" "$TARGET" url)
@@ -343,7 +390,7 @@ fi
 #    are `decoy upgrade`'s job: it stages a fresh versions/<version>+<build> and flips.)
 DEST="$VERSIONS/$VERSION"
 DECOY_HOME="$DECOY_HOME" DECOY_BIN_DIR="$DECOY_BIN_DIR" \
-  "$PYBIN" -I -B -m decoy.distribution.first_install "$BUNDLE_ROOT" "$VERSION" \
+  "$PYBIN" -I -B -m decoy.distribution.first_install "$BUNDLE_ROOT" "$VERSION" ${FRESHNESS_DOC:+"$FRESHNESS_DOC"} \
   || die "could not install $VERSION (existing runtime, concurrent install, or placement failure) -- nothing was replaced"
 rm -rf "$INCOMING"
 

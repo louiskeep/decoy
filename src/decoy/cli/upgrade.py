@@ -117,6 +117,12 @@ def upgrade(
     except ValueError as exc:
         state.err_console.print(error("error:"), f"version document rejected: {exc}")
         raise typer.Exit(code=EXIT_RUNTIME) from exc
+    try:
+        # --check is read-only, so it enforces freshness but does not advance the state.
+        installer.check_document_freshness(doc, home, record=False)
+    except installer.InstallError as exc:
+        state.err_console.print(error("error:"), str(exc))
+        raise typer.Exit(code=EXIT_RUNTIME) from exc
     latest = doc.get("latest")
     target_version = version or latest
 
