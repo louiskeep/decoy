@@ -58,8 +58,10 @@ def managed_home() -> Path | None:
     """The managed-runtime home IFF this interpreter is a bundled-runtime interpreter.
 
     A managed interpreter's ``sys.prefix`` is exactly ``<home>/versions/<slot>/python``, and
-    the home must carry a ``current`` symlink into ``versions/`` and the slot a bundle
-    ``manifest.json``. An ancestor named ``versions`` alone is not identity (pyenv keeps
+    the slot must carry a bundle ``manifest.json``. ``current`` may be absent (an install
+    interrupted between staging and activation leaves a retained bundle that
+    ``upgrade --force`` must be able to repair) but, if present, must point into
+    ``versions/``. An ancestor named ``versions`` alone is not identity (pyenv keeps
     interpreters under ``.pyenv/versions/<x>``), nor is a venv nested inside a bundle.
     Deriving the home from the interpreter, not ``DECOY_HOME``, keeps a custom-home install
     working when the env var is unset. None for a pip/dev install, which keeps the pip/dev
@@ -77,7 +79,9 @@ def managed_home() -> Path | None:
         if not (slot / MANIFEST_NAME).is_file():
             return None
         link = current_link(home)
-        if not link.is_symlink() or Path(os.readlink(link)).parent.name != "versions":
+        if link.is_symlink() and Path(os.readlink(link)).parent.name != "versions":
+            return None
+        if not link.is_symlink() and link.exists():
             return None
     except OSError:
         return None

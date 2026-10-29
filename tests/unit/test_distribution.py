@@ -503,11 +503,63 @@ def test_venv_nested_in_a_bundle_or_unmarked_slot_is_not_managed(monkeypatch, tm
     assert layout.managed_home() is None
 
 
-def test_unmarked_home_without_current_is_not_managed(monkeypatch, tmp_path):
+def test_retained_bundle_without_current_is_managed(monkeypatch, tmp_path):
+    """Interrupted first install: bundle shape + manifest present, `current` never created."""
     home = _managed_layout(tmp_path)
     (home / "current").unlink()
     monkeypatch.setattr(sys, "prefix", str(home / "versions" / "0.3.0" / "python"))
+    assert layout.managed_home() == home.resolve()
+
+
+def test_pyenv_with_stray_manifest_free_slot_still_rejected_without_current(monkeypatch, tmp_path):
+    """Dropping the `current` requirement must not reopen pyenv: no bundle manifest => None."""
+    slot = tmp_path / ".pyenv" / "versions" / "3.12.7"
+    (slot / "python").mkdir(parents=True)
+    monkeypatch.setattr(sys, "prefix", str(slot / "python"))
     assert layout.managed_home() is None
+
+
+def test_upgrade_force_recovers_retained_bundle_without_current(tmp_path, monkeypatch, keypair):
+    """Executes the recovery install.sh prints: `upgrade --force` from a retained bundle with
+    no `current` symlink must repair (not refuse as a pip/dev install)."""
+    from typer.testing import CliRunner
+
+    from decoy.__main__ import app
+    from decoy.cli import upgrade as upg
+
+    key, pub = keypair
+    home = tmp_path / "home"
+    monkeypatch.setenv("DECOY_HOME", str(home))
+    monkeypatch.setenv("DECOY_BIN_DIR", str(tmp_path / "bin"))
+    serve = tmp_path / "serve"
+    url = _serve_bundle(serve, "0.1.0", key)
+    doc, sig = _doc_for_latest(serve, "0.1.0", url, key)
+    installer.install_version(
+        version_doc_bytes=doc, version_doc_sig_b64=sig, expected_public_pem=pub,
+        target="linux-x86_64", home=home, download=_file_download,
+        run_self_check=False, post_swap_validate=lambda cur: True,
+    )
+    (home / "current").unlink()  # interruption between staging and activation
+    slot = home / "versions" / "0.1.0"
+    monkeypatch.setattr(sys, "prefix", str(slot / "python"))
+
+    monkeypatch.setattr(upg.release_key, "pinned_public_pem", lambda: pub)
+    def fetch(u: str) -> bytes:
+        if u.startswith("file://"):
+            return _file_download(u)
+        return sig.encode("ascii") if u.endswith(".sig") else doc
+
+    monkeypatch.setattr(upg, "_fetch", fetch)
+    import subprocess as sp
+    monkeypatch.setattr(
+        upg.subprocess, "run",
+        lambda *a, **k: sp.CompletedProcess(a, 0, stdout="decoy 0.1.0\n", stderr=""),
+    )
+
+    r = CliRunner().invoke(app, ["upgrade", "--force", "--url", "http://h/cli/version.json"])
+    assert r.exit_code == 0, r.output
+    assert "pip/dev" not in r.output
+    assert layout.read_current_version(home) == "0.1.0"
 
 
 def test_verify_extracted_flags_problems(tmp_path, keypair):
