@@ -4,26 +4,81 @@ Everything here is descriptor-relative and refuses to follow a symlink at ANY pa
 candidate can only ever be the exact regular file an allowed root contains. Nothing here prints a
 path or a name; callers see closed outcomes only.
 
-Platform note: this needs ``dir_fd`` support and ``O_NOFOLLOW`` (Linux and macOS). Where they are
-absent ``safe_open_supported()`` is False and execution refuses; preview still works through the
-plain-path fallback, which is read-only.
+Deletion acts on the VERIFIED OBJECT, not on a name. POSIX has no unlink-by-descriptor, so the name
+is first CAPTURED by an atomic no-replace rename to a private quarantine name (Linux
+``renameat2(RENAME_NOREPLACE)``, macOS ``renameatx_np(RENAME_EXCL)``), the captured inode is compared
+to the still-open verified descriptor (a held descriptor pins its inode number), and only then is the
+quarantine name unlinked. A different object that was swapped in is renamed back, or, if the
+original name was re-created meanwhile, KEPT under the quarantine name: it is never destroyed.
+
+Platform note: this needs ``dir_fd`` support, ``O_NOFOLLOW`` and an atomic no-replace rename (Linux
+and macOS). Where they are absent ``safe_open_supported()`` is False and execution refuses; preview
+still works through the plain-path fallback, which is read-only.
 """
 
 from __future__ import annotations
 
+import ctypes
 import enum
 import hashlib
 import os
+import platform
+import secrets
 import stat
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 
 _CHUNK = 1 << 20
+QUARANTINE_PREFIX = ".decoy-cleanup-"
+_RENAME_NOREPLACE = 1  # Linux renameat2 flag
+_RENAME_EXCL = 0x4  # macOS renameatx_np flag
+_LINUX_RENAMEAT2 = {"x86_64": 316, "aarch64": 276, "arm64": 276}.get(platform.machine())
+_libc = ctypes.CDLL(None, use_errno=True)
+
+
+def _noreplace_rename_available() -> bool:
+    if sys.platform.startswith("linux"):
+        return _LINUX_RENAMEAT2 is not None
+    if sys.platform == "darwin":
+        return hasattr(_libc, "renameatx_np")
+    return False
+
+
+def _rename_noreplace(old_dirfd: int, old: str, new_dirfd: int, new: str) -> None:
+    """Atomic rename that fails with EEXIST rather than replace; raises OSError."""
+    if sys.platform.startswith("linux") and _LINUX_RENAMEAT2 is not None:
+        rc = _libc.syscall(
+            _LINUX_RENAMEAT2,
+            ctypes.c_int(old_dirfd),
+            ctypes.c_char_p(os.fsencode(old)),
+            ctypes.c_int(new_dirfd),
+            ctypes.c_char_p(os.fsencode(new)),
+            ctypes.c_uint(_RENAME_NOREPLACE),
+        )
+    elif sys.platform == "darwin" and hasattr(_libc, "renameatx_np"):
+        rc = _libc.renameatx_np(
+            ctypes.c_int(old_dirfd),
+            ctypes.c_char_p(os.fsencode(old)),
+            ctypes.c_int(new_dirfd),
+            ctypes.c_char_p(os.fsencode(new)),
+            ctypes.c_uint(_RENAME_EXCL),
+        )
+    else:
+        raise OSError(38, "no atomic no-replace rename")
+    if rc != 0:
+        err = ctypes.get_errno()
+        raise OSError(err, os.strerror(err))
+
+
+def _after_verify(*_args: object) -> None:
+    """Seam between 'the open descriptor is verified' and 'the name is captured' (race tests)."""
 
 
 def safe_open_supported() -> bool:
     return (
-        hasattr(os, "O_NOFOLLOW")
+        _noreplace_rename_available()
+        and hasattr(os, "O_NOFOLLOW")
         and hasattr(os, "O_DIRECTORY")
         and os.open in os.supports_dir_fd
         and os.unlink in os.supports_dir_fd
@@ -157,23 +212,31 @@ def probe(root_fd: int, parts: tuple[str, ...]) -> tuple[Probe, Identity | None]
 
 
 def unlink_exact(root_fd: int, parts: tuple[str, ...], expected: Identity) -> bool:
-    """Delete the file only if, right now and through descriptors, it is still exactly ``expected``.
-
-    The name is unlinked relative to its parent descriptor after the open descriptor and a fresh
-    ``fstatat(NOFOLLOW)`` of the name agree on the inode. (POSIX has no atomic compare-and-unlink;
-    the residual window is a same-user rename race this command is not designed to resist.)"""
+    """Delete the file only if it is still exactly ``expected`` AND the object removed is the one
+    verified: the name is captured by an atomic rename, the captured inode is compared to the open
+    verified descriptor, and only then is it unlinked (see the module docstring)."""
     try:
         parent, fd = open_beneath(root_fd, parts)
     except OSError:
         return False
     try:
-        now = read_identity(fd)
-        if now != expected:
+        if read_identity(fd) != expected:
             return False
-        named = os.stat(parts[-1], dir_fd=parent, follow_symlinks=False)
-        if (named.st_dev, named.st_ino) != (expected.dev, expected.ino):
+        _after_verify(fd, parts[-1])
+        held = os.fstat(fd)
+        quarantine = QUARANTINE_PREFIX + secrets.token_hex(8)
+        try:
+            _rename_noreplace(parent, parts[-1], parent, quarantine)
+        except OSError:
             return False
-        os.unlink(parts[-1], dir_fd=parent)
+        captured = os.stat(quarantine, dir_fd=parent, follow_symlinks=False)
+        if (captured.st_dev, captured.st_ino) != (held.st_dev, held.st_ino):
+            try:  # not ours: put it back exactly where it was
+                _rename_noreplace(parent, quarantine, parent, parts[-1])
+            except OSError:
+                pass  # the name was re-created meanwhile: the captured object stays, intact
+            return False
+        os.unlink(quarantine, dir_fd=parent)
         return True
     except OSError:
         return False

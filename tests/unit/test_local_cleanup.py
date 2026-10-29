@@ -448,3 +448,56 @@ def test_preview_works_without_dir_fd_support_and_still_refuses_symlinks(
     )
     assert res.exit_code == 13 and report(res)["refusal"] == "refused_unsafe_platform"
     assert victim.read_text() == "precious" and run.b.exists()
+
+
+# ------------------------------------------------------------------------------ r2: exact handle
+
+
+def _digest(run):
+    return report(run.invoke("--json"))["digest"]
+
+
+def test_r2_a_swap_after_verification_never_destroys_the_replacement(run, monkeypatch):
+    """Deletion acts on the VERIFIED object: a file swapped in between 'verified' and 'removed' is
+    restored, never deleted."""
+    from decoy.cli import _local_cleanup_io as io
+
+    digest = _digest(run)
+    replacement = run.out / "replacement.csv"
+    replacement.write_text("a precious DIFFERENT file")
+
+    def swap(_fd, name):
+        if name == run.a.name:  # only the first declared output is raced
+            os.replace(replacement, run.a)
+
+    monkeypatch.setattr(io, "_after_verify", swap, raising=False)
+    res = run.invoke("--execute", "--confirm-digest", digest, "--owner-token", "t", "--json",
+                     env={lc.TOKEN_ENV: "t"})  # fmt: skip
+    assert run.a.read_text() == "a precious DIFFERENT file"  # the replacement survives, intact
+    assert not run.b.exists()  # the untouched declared output was still removed
+    assert report(res)["counts"]["deleted"] == 1  # exactly the unraced output
+
+
+def test_r2_a_swapped_root_between_inventory_and_delete_refuses(run, monkeypatch, tmp_path):
+    """The recorded ROOT device/inode is re-checked when the delete phase reopens the root."""
+    from decoy.cli import _local_cleanup_io as io
+
+    digest = _digest(run)
+    real = io.open_root
+    calls = {"n": 0}
+
+    def swapping(root):
+        calls["n"] += 1
+        if calls["n"] == 2:  # the delete phase reopen; the inventory recompute was call 1
+            moved = tmp_path / "out-moved"
+            run.out.rename(moved)
+            run.out.mkdir()
+            for p in moved.iterdir():
+                os.rename(p, run.out / p.name)  # same inodes, new root directory
+        return real(root)
+
+    monkeypatch.setattr(io, "open_root", swapping)
+    res = run.invoke("--execute", "--confirm-digest", digest, "--owner-token", "t", "--json",
+                     env={lc.TOKEN_ENV: "t"})  # fmt: skip
+    assert run.a.exists() and run.b.exists()
+    assert report(res)["counts"]["deleted"] == 0

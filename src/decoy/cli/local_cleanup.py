@@ -11,7 +11,8 @@ reviewed set and (2) a fresh confirmation: typing the digest's first 12 characte
 script an explicit ``--owner-token`` equal to ``$DECOY_LOCAL_CLEANUP_TOKEN``. The inventory is
 recomputed from disk at execution time, so ANY change since the preview (content, size, inode, mtime,
 a symlink swap) changes the digest and refuses. Each file is then re-opened without following
-symlinks, compared, and unlinked relative to its parent descriptor.
+symlinks, compared on the open descriptor, captured by an atomic no-replace rename and unlinked
+only if the captured inode is the verified one (a swapped-in file is restored, never destroyed).
 
 Trust model: the manifest is the file owner's own evidence. Its hash is an UNKEYED integrity check
 (it catches accidental edits, not a tamperer who recomputes it), so the exact-content, exact-inode and
@@ -386,7 +387,12 @@ def local_cleanup(
     results: dict[str, tuple[Any, Any]] = {}
     root_fds = [io.open_root(r) for r in root]
     try:
-        for aid, (idx, parts, ident, _tok) in sorted(identities.items()):
+        for aid, (idx, parts, ident, tok) in sorted(identities.items()):
+            # The root reopened for deletion must be the root the reviewed inventory recorded.
+            rst = os.fstat(root_fds[idx])
+            if [rst.st_dev, rst.st_ino] != json.loads(tok)[-2:]:
+                results[aid] = (R.RESULT_BACKEND_REFUSED, R.RETAIN_STATE_CHANGED)
+                continue
             if io.unlink_exact(root_fds[idx], parts, ident):
                 state, _ = io.probe(root_fds[idx], parts)
                 if state is io.Probe.ABSENT:
