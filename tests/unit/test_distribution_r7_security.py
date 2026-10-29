@@ -81,9 +81,9 @@ def test_lower_serial_signed_document_is_refused_after_a_newer_one(tmp_path, key
 
 
 def test_recorded_serial_survives_a_refused_lower_document(tmp_path, keypair):
-    key, pub = keypair
+    key, _pub = keypair
     serve = tmp_path / "serve"
-    new, new_sig = _doc(key, serve, "0.2.0", serial=10, expires=_FUTURE)
+    new, _new_sig = _doc(key, serve, "0.2.0", serial=10, expires=_FUTURE)
     installer.check_document_freshness(vd.parse_document(new), layout.decoy_home())
     with pytest.raises(installer.InstallError):
         installer.check_document_freshness(
