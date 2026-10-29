@@ -114,6 +114,7 @@ declared under `targets:` in the YAML.
 | `decoy detokenize <path> <file>` | Reverse a tokenized file from its vault. Fails closed on a missing/wrong vault or namespace. |
 | `decoy scan <path>`              | Profile a source file: distributions, PII candidates, cardinality hints.      |
 | `decoy report show <evidence.json>` | The post-run surface: show / verify / fidelity / integrity / diff / vault over run artifacts. |
+| `decoy local-cleanup --manifest <evidence.json> --root <dir>` | Dry-run first: list the output files an evidence manifest declares and would remove. `--execute` needs the preview's digest plus a fresh confirmation, and only touches those exact files beneath `--root`. |
 | `decoy list templates`           | List the bundled pipeline templates.                                         |
 | `decoy show template <name>`     | Dump one bundled template to stdout (e.g. `decoy show template hipaa`).      |
 | `decoy explain <topic>`          | In-CLI reference (exit codes, providers, strategies).                         |
@@ -137,6 +138,11 @@ pipelines can switch on the integer; the contract is stable across releases.
 
 Constants live in `decoy.cli.exit_codes`. `decoy explain exit-codes` prints
 the same table from the CLI.
+
+`decoy local-cleanup` additionally reports its outcome with the shared retention
+codes owned by the engine (`decoy_engine.retention.ExitCode`), deliberately clear of
+0-5: `10` nothing to do, `11` everything retained, `12` partial, `13` refused (e.g. a
+wrong digest, an unverifiable manifest, no confirmation). Usage errors stay `1`.
 
 ## Where to go next
 

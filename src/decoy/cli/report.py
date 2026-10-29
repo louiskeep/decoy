@@ -166,10 +166,10 @@ def render_html(manifest: dict[str, Any]) -> str:
 
     parts: list[str] = []
     parts.append("<!DOCTYPE html>")
-    parts.append("<html lang=\"en\">")
+    parts.append('<html lang="en">')
     parts.append("<head>")
-    parts.append("<meta charset=\"UTF-8\">")
-    parts.append("<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">")
+    parts.append('<meta charset="UTF-8">')
+    parts.append('<meta name="viewport" content="width=device-width, initial-scale=1">')
     parts.append("<title>Decoy Evidence Report</title>")
     parts.append(f"<style>{_HTML_CSS}</style>")
     parts.append("</head>")
@@ -197,16 +197,16 @@ def render_html(manifest: dict[str, Any]) -> str:
     parts.append("<table>")
     parts.append("<tr><th>Field</th><th>Value</th></tr>")
     parts.append(f"<tr><td>Pipeline Path</td><td>{pipeline_path}</td></tr>")
-    parts.append(
-        f"<tr><td>Pipeline Fingerprint</td><td class=\"fp\">{pipeline_fp_esc}</td></tr>"
-    )
+    parts.append(f'<tr><td>Pipeline Fingerprint</td><td class="fp">{pipeline_fp_esc}</td></tr>')
     parts.append("</table>")
 
     # --- Input Fingerprints ---
     if input_fps:
         parts.append("<h2>Input Fingerprints</h2>")
         parts.append("<table>")
-        parts.append("<tr><th>Table</th><th>Path</th><th>Fingerprint</th><th>Method</th><th>Size (bytes)</th></tr>")
+        parts.append(
+            "<tr><th>Table</th><th>Path</th><th>Fingerprint</th><th>Method</th><th>Size (bytes)</th></tr>"
+        )
         for tname, info_val in input_fps.items():
             if not isinstance(info_val, dict):
                 continue
@@ -216,7 +216,7 @@ def render_html(manifest: dict[str, Any]) -> str:
             path_v = _esc(info_val.get("path") or "?")
             parts.append(
                 f"<tr><td>{_esc(tname)}</td><td>{path_v}</td>"
-                f"<td class=\"fp\">{fp}</td><td>{method}</td><td>{size}</td></tr>"
+                f'<td class="fp">{fp}</td><td>{method}</td><td>{size}</td></tr>'
             )
         parts.append("</table>")
 
@@ -224,7 +224,9 @@ def render_html(manifest: dict[str, Any]) -> str:
     if output_fps:
         parts.append("<h2>Output Fingerprints</h2>")
         parts.append("<table>")
-        parts.append("<tr><th>Table</th><th>Path</th><th>Fingerprint</th><th>Method</th><th>Size (bytes)</th></tr>")
+        parts.append(
+            "<tr><th>Table</th><th>Path</th><th>Fingerprint</th><th>Method</th><th>Size (bytes)</th></tr>"
+        )
         for tname, info_val in output_fps.items():
             if not isinstance(info_val, dict):
                 continue
@@ -234,7 +236,7 @@ def render_html(manifest: dict[str, Any]) -> str:
             path_v = _esc(info_val.get("path") or "?")
             parts.append(
                 f"<tr><td>{_esc(tname)}</td><td>{path_v}</td>"
-                f"<td class=\"fp\">{fp}</td><td>{method}</td><td>{size}</td></tr>"
+                f'<td class="fp">{fp}</td><td>{method}</td><td>{size}</td></tr>'
             )
         parts.append("</table>")
 
@@ -284,11 +286,13 @@ def render_html(manifest: dict[str, Any]) -> str:
     warn_count = len(warnings_list)
     parts.append("<h2>Warnings</h2>")
     if warn_count == 0:
-        parts.append("<p class=\"badge-ok\">No warnings recorded.</p>")
+        parts.append('<p class="badge-ok">No warnings recorded.</p>')
     else:
-        parts.append(f"<p class=\"badge-warn\">{_esc(warn_count)} warning(s) recorded.</p>")
+        parts.append(f'<p class="badge-warn">{_esc(warn_count)} warning(s) recorded.</p>')
         parts.append("<table>")
-        parts.append("<tr><th>#</th><th>Code</th><th>Provider</th><th>Column</th><th>Detail</th></tr>")
+        parts.append(
+            "<tr><th>#</th><th>Code</th><th>Provider</th><th>Column</th><th>Detail</th></tr>"
+        )
         for i, w in enumerate(warnings_list, start=1):
             if isinstance(w, dict):
                 wcode = _esc(w.get("code", "?"))
@@ -300,7 +304,7 @@ def render_html(manifest: dict[str, Any]) -> str:
                     f"<td>{wcol}</td><td>{wdet}</td></tr>"
                 )
             else:
-                parts.append(f"<tr><td>{i}</td><td colspan=\"4\">{_esc(w)}</td></tr>")
+                parts.append(f'<tr><td>{i}</td><td colspan="4">{_esc(w)}</td></tr>')
         parts.append("</table>")
 
     # --- Footer / omission disclaimer ---
@@ -497,9 +501,7 @@ def _warning_key(w: Any) -> str:
     return str(w)
 
 
-def compare_manifests(
-    old: dict[str, Any], new: dict[str, Any]
-) -> dict[str, Any]:
+def compare_manifests(old: dict[str, Any], new: dict[str, Any]) -> dict[str, Any]:
     """Compare two evidence manifests and return a structured diff.
 
     EVIDENCE-SAFE: operates entirely on manifest dicts. Does NOT read any
@@ -521,9 +523,7 @@ def compare_manifests(
     pipeline_fp_changed = old_pf != new_pf
 
     # --- Fingerprint helpers ---
-    def _fp_changes(
-        old_fps: dict[str, Any], new_fps: dict[str, Any]
-    ) -> dict[str, list[Any]]:
+    def _fp_changes(old_fps: dict[str, Any], new_fps: dict[str, Any]) -> dict[str, list[Any]]:
         changed: list[dict[str, Any]] = []
         added: list[dict[str, Any]] = []
         removed: list[dict[str, Any]] = []
@@ -743,18 +743,16 @@ def _render_manifest_compare(state: Any, diff: dict[str, Any]) -> None:
     # Pipeline fingerprint
     if diff["pipeline_fingerprint_changed"]:
         state.console.print(warn("Pipeline fingerprint changed:"))
-        state.console.print(
-            "  old:", code(_fp_short(diff["old_pipeline_fingerprint"]))
-        )
-        state.console.print(
-            "  new:", code(_fp_short(diff["new_pipeline_fingerprint"]))
-        )
+        state.console.print("  old:", code(_fp_short(diff["old_pipeline_fingerprint"])))
+        state.console.print("  new:", code(_fp_short(diff["new_pipeline_fingerprint"])))
         state.console.print("")
 
     # Input fingerprints
     in_ch = diff["input_fingerprint_changes"]
     if in_ch["changed"] or in_ch["added"] or in_ch["removed"]:
-        t = make_table("Table", "Change", "Old Fingerprint", "New Fingerprint", title="Input fingerprints")
+        t = make_table(
+            "Table", "Change", "Old Fingerprint", "New Fingerprint", title="Input fingerprints"
+        )
         for c in in_ch["changed"]:
             t.add_row(c["table"], "changed", _fp_short(c["old"]), _fp_short(c["new"]))
         for a in in_ch["added"]:
@@ -766,7 +764,9 @@ def _render_manifest_compare(state: Any, diff: dict[str, Any]) -> None:
     # Output fingerprints
     out_ch = diff["output_fingerprint_changes"]
     if out_ch["changed"] or out_ch["added"] or out_ch["removed"]:
-        t = make_table("Table", "Change", "Old Fingerprint", "New Fingerprint", title="Output fingerprints")
+        t = make_table(
+            "Table", "Change", "Old Fingerprint", "New Fingerprint", title="Output fingerprints"
+        )
         for c in out_ch["changed"]:
             t.add_row(c["table"], "changed", _fp_short(c["old"]), _fp_short(c["new"]))
         for a in out_ch["added"]:
@@ -889,8 +889,7 @@ def compare_data(
         import pandas as pd
     except ImportError as _err:
         raise RuntimeError(
-            "pandas is required for data-level diff. "
-            "Install with: pip install pandas"
+            "pandas is required for data-level diff. Install with: pip install pandas"
         ) from _err
 
     # Determine which tables appear in both sets.
@@ -1017,9 +1016,7 @@ def compare_data(
                     }
                 )
 
-        table_changed = bool(
-            row_delta != 0 or columns_added or columns_removed or column_deltas
-        )
+        table_changed = bool(row_delta != 0 or columns_added or columns_removed or column_deltas)
         if table_changed:
             any_data_change = True
 
@@ -1264,18 +1261,15 @@ def _diff(
         # as unavailable rather than failing the whole comparison.
         data_dep_error = str(_dep_err)
 
-    missing_files: list[str] = (
-        list(data_result["missing_files"]) if data_result else []
-    )
+    missing_files: list[str] = list(data_result["missing_files"]) if data_result else []
     data_available = data_result is not None and not missing_files
 
     # --require-data: restore the strict hard-fail when the data level could
     # not run (missing output files, or no pandas).
     if require_data and not data_available:
         if missing_files:
-            msg = (
-                "Output files are missing or unreadable and cannot be compared: "
-                + ", ".join(missing_files)
+            msg = "Output files are missing or unreadable and cannot be compared: " + ", ".join(
+                missing_files
             )
         else:
             msg = data_dep_error or "data-level comparison is unavailable."
@@ -1388,12 +1382,7 @@ def _render_data_diff(state: Any, diff_result: dict[str, Any]) -> None:
         removed = td.get("columns_removed") or []
         col_deltas = td.get("column_deltas") or []
 
-        if (
-            (row_delta is not None and row_delta != 0)
-            or added
-            or removed
-            or col_deltas
-        ):
+        if (row_delta is not None and row_delta != 0) or added or removed or col_deltas:
             state.console.print(warn(f"table: {tname}"))
             if row_delta is not None and row_delta != 0:
                 sign = "+" if row_delta > 0 else ""
@@ -1406,17 +1395,16 @@ def _render_data_diff(state: Any, diff_result: dict[str, Any]) -> None:
                     hint(f"({sign}{row_delta})"),
                 )
             if added:
-                state.console.print(
-                    " ", hint("columns added:"), code(", ".join(added))
-                )
+                state.console.print(" ", hint("columns added:"), code(", ".join(added)))
             if removed:
-                state.console.print(
-                    " ", hint("columns removed:"), code(", ".join(removed))
-                )
+                state.console.print(" ", hint("columns removed:"), code(", ".join(removed)))
             if col_deltas:
                 t = make_table(
-                    "Column", "Null Count Delta", "Unique Count Delta", "Dtype Changed",
-                    title=f"{tname} column deltas"
+                    "Column",
+                    "Null Count Delta",
+                    "Unique Count Delta",
+                    "Dtype Changed",
+                    title=f"{tname} column deltas",
                 )
                 for cd in col_deltas:
                     nc_d = str(cd.get("null_count_delta", ""))
@@ -1978,8 +1966,7 @@ def _integrity(
         "--output",
         "-o",
         help=(
-            "Write the JobStormReport JSON to this path. The Rich table "
-            "still renders to stderr."
+            "Write the JobStormReport JSON to this path. The Rich table still renders to stderr."
         ),
     ),
     allow_source_mismatch: bool = typer.Option(
@@ -2177,7 +2164,9 @@ def _integrity(
         elif state.mode is not OutputMode.quiet:
             state.err_console.print(error("error:"), error_text)
             state.err_console.print(
-                " ", hint("hint:"), "rerun with --verbose for the full traceback.",
+                " ",
+                hint("hint:"),
+                "rerun with --verbose for the full traceback.",
             )
         if state.verbose:
             state.err_console.print_exception()
@@ -2282,9 +2271,7 @@ def _vault(
         _emit_error(sanitize_yaml_error(exc))
         raise typer.Exit(code=EXIT_USAGE)
     if not isinstance(raw, dict):
-        _emit_error(
-            f"Pipeline YAML must be a YAML mapping (object), not {type(raw).__name__}."
-        )
+        _emit_error(f"Pipeline YAML must be a YAML mapping (object), not {type(raw).__name__}.")
         raise typer.Exit(code=EXIT_USAGE)
 
     from decoy_engine import VaultError, job_seed_for_config, load_vault
@@ -2315,8 +2302,7 @@ def _vault(
             )
         else:
             _emit_error(
-                f"{getattr(exc, 'code', type(exc).__name__)}: "
-                f"{getattr(exc, 'message', exc)}",
+                f"{getattr(exc, 'code', type(exc).__name__)}: {getattr(exc, 'message', exc)}",
                 hint_text=(
                     "the config's seed does not match the vault; "
                     "use the same config (or seed) as the `decoy run --vault` call "

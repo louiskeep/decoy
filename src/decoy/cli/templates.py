@@ -46,9 +46,7 @@ def _list(
             {
                 "command": "list templates",
                 "status": "ok",
-                "templates": [
-                    {"name": t.name, "summary": t.summary} for t in templates
-                ],
+                "templates": [{"name": t.name, "summary": t.summary} for t in templates],
             },
         )
         return
@@ -112,9 +110,7 @@ def _show(
         elif state.mode is not OutputMode.quiet:
             state.err_console.print(error("error:"), f"unknown template {name!r}.")
             if guess:
-                state.err_console.print(
-                    " ", hint("hint:"), "did you mean", code(guess[0]) + "?"
-                )
+                state.err_console.print(" ", hint("hint:"), "did you mean", code(guess[0]) + "?")
             else:
                 state.err_console.print(
                     " ",

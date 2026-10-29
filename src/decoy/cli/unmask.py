@@ -144,9 +144,7 @@ def unmask(
         _emit_error(sanitize_yaml_error(exc))
         raise typer.Exit(code=EXIT_USAGE)
     if not isinstance(raw, dict):
-        _emit_error(
-            f"Pipeline YAML must be a YAML mapping (object), not {type(raw).__name__}."
-        )
+        _emit_error(f"Pipeline YAML must be a YAML mapping (object), not {type(raw).__name__}.")
         raise typer.Exit(code=EXIT_USAGE)
 
     mask_tables = [
@@ -198,9 +196,7 @@ def unmask(
         _emit_error(f"{err_code}: {message}")
         raise typer.Exit(code=EXIT_USAGE)
     except (ExecutionError, ConfigError) as exc:
-        _emit_error(
-            f"{getattr(exc, 'code', type(exc).__name__)}: {getattr(exc, 'message', exc)}"
-        )
+        _emit_error(f"{getattr(exc, 'code', type(exc).__name__)}: {getattr(exc, 'message', exc)}")
         raise typer.Exit(code=EXIT_USAGE)
     except VaultError as exc:
         # A bad or mismatched vault is an input problem, not a CLI crash.
@@ -215,8 +211,7 @@ def unmask(
             )
         else:
             _emit_error(
-                f"{getattr(exc, 'code', type(exc).__name__)}: "
-                f"{getattr(exc, 'message', exc)}"
+                f"{getattr(exc, 'code', type(exc).__name__)}: {getattr(exc, 'message', exc)}"
             )
         raise typer.Exit(code=EXIT_USAGE)
     except Exception as exc:  # runtime failure, not a usage problem
@@ -297,9 +292,7 @@ def unmask(
     # Absent configured tables are their own clause so real columns and
     # missing tables are never conflated in one count.
     if table_missing:
-        summary = summary[:-1] + (
-            f", {len(table_missing)} configured table(s) not in this input."
-        )
+        summary = summary[:-1] + (f", {len(table_missing)} configured table(s) not in this input.")
     state.console.print(success("OK"), code(str(out_path)))
     state.console.print(summary)
     for e in entries:

@@ -63,9 +63,7 @@ def _disguises_list(json_: bool, quiet: bool, verbose: bool) -> None:
     from decoy_engine.disguises import load_disguises
 
     bundles = sorted(load_disguises(), key=lambda d: d.id)
-    entries = [
-        {"id": d.id, "name": d.name, "rules": len(d.field_rules)} for d in bundles
-    ]
+    entries = [{"id": d.id, "name": d.name, "rules": len(d.field_rules)} for d in bundles]
 
     if state.mode is OutputMode.json:
         emit_json(
@@ -232,9 +230,7 @@ def show(
         help="(schema only) Write the schema to this file instead of stdout.",
         show_default=False,
     ),
-    json_: bool = typer.Option(
-        False, "--json", help="Emit a JSON record instead of human output."
-    ),
+    json_: bool = typer.Option(False, "--json", help="Emit a JSON record instead of human output."),
     quiet: bool = typer.Option(
         False, "--quiet", "-q", help="Suppress stdout. Errors still go to stderr."
     ),
@@ -264,10 +260,7 @@ def show(
 
     if kind in _SHOW_NO_DETAIL:
         state = setup_output(json_, quiet, verbose)
-        msg = (
-            f"no detail view for {kind}; detail exists for "
-            "strategy/provider/template/schema"
-        )
+        msg = f"no detail view for {kind}; detail exists for strategy/provider/template/schema"
         if state.mode is OutputMode.json:
             emit_json(
                 state,
@@ -346,9 +339,7 @@ def _reject_kind(
         # A plural typed at `show`, e.g. `show strategies` -> `show strategy NAME`.
         singular = _PLURAL_TO_SINGULAR[kind]
         suggestion = (
-            f"decoy show {singular} NAME"
-            if singular in _SHOW_DETAIL
-            else f"decoy show {singular}"
+            f"decoy show {singular} NAME" if singular in _SHOW_DETAIL else f"decoy show {singular}"
         )
     else:
         close = get_close_matches(kind, valid, n=1, cutoff=0.6)
@@ -376,12 +367,8 @@ def _reject_kind(
     elif state.mode is not OutputMode.quiet:
         state.err_console.print(error("error:"), f"unknown kind {kind!r}.")
         if suggestion is not None:
-            state.err_console.print(
-                " ", hint("hint:"), "did you mean", code(suggestion) + "?"
-            )
-        state.err_console.print(
-            " ", hint("hint:"), f"valid kinds for {verb}:", valid_str + "."
-        )
+            state.err_console.print(" ", hint("hint:"), "did you mean", code(suggestion) + "?")
+        state.err_console.print(" ", hint("hint:"), f"valid kinds for {verb}:", valid_str + ".")
     raise typer.Exit(code=EXIT_USAGE)
 
 

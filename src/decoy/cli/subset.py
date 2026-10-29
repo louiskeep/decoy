@@ -356,15 +356,23 @@ def _emit_dry_run(state, config_str: str, plan) -> None:
     _edge_stats_rows(state, plan.edges)
     state.console.print()
     state.console.print(
-        hint("Closure rounds:"), str(plan.closure_rounds),
-        " ", hint("Budget:"), plan.budget_outcome,
-        " ", hint("Total surviving rows:"), str(plan.total_surviving_rows),
+        hint("Closure rounds:"),
+        str(plan.closure_rounds),
+        " ",
+        hint("Budget:"),
+        plan.budget_outcome,
+        " ",
+        hint("Total surviving rows:"),
+        str(plan.total_surviving_rows),
     )
     for w in plan.warnings:
         state.console.print(warn("warning:"), w)
     state.console.print()
     state.console.print(
-        hint("Next:"), "drop --dry-run and add", code("--output <dir>"), "to materialize this subset."
+        hint("Next:"),
+        "drop --dry-run and add",
+        code("--output <dir>"),
+        "to materialize this subset.",
     )
 
 
@@ -401,9 +409,14 @@ def _emit_real_run(state, config_str: str, result, out: Path) -> None:
     state.console.print()
     total = sum(t.surviving_rows for t in result.manifest.tables)
     state.console.print(
-        hint("Output dir:"), code(str(out)),
-        " ", hint("Tables written:"), str(len(result.output_paths)),
-        " ", hint("Total rows:"), str(total),
+        hint("Output dir:"),
+        code(str(out)),
+        " ",
+        hint("Tables written:"),
+        str(len(result.output_paths)),
+        " ",
+        hint("Total rows:"),
+        str(total),
     )
     state.console.print(hint("Manifest:"), code(str(out / "subset-manifest.json")))
 
@@ -443,9 +456,7 @@ def _emit_preflight_failure(state, config_str: str, exc) -> None:
         state.err_console.print(" ", error(f"[{f.code}]"), f.message)
     for w in report.warnings:
         state.err_console.print(" ", warn("warning:"), w)
-    state.err_console.print(
-        " ", hint("hint:"), "fix the config/source problems above, then rerun."
-    )
+    state.err_console.print(" ", hint("hint:"), "fix the config/source problems above, then rerun.")
 
 
 def _emit_budget_failure(state, config_str: str, exc) -> None:

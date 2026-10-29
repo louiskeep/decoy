@@ -454,9 +454,7 @@ def _looks_like_raw_data(scan_path: str) -> bool:
     return bool(head) and head[0] != "{"
 
 
-def _emit_load_error(
-    state: OutputState, scan: str, exc: Exception, command_name: str
-) -> None:
+def _emit_load_error(state: OutputState, scan: str, exc: Exception, command_name: str) -> None:
     """Friendly error UX when a scan path won't load.
 
     Detects three cases: missing file, raw-data-mistaken-for-scan, and
@@ -492,11 +490,15 @@ def _emit_load_error(
         state.err_console.print(error("error:"), message)
         if scan_cmd is not None:
             state.err_console.print(
-                " ", hint("hint:"), "scan it first:", code(scan_cmd),
+                " ",
+                hint("hint:"),
+                "scan it first:",
+                code(scan_cmd),
             )
         else:
             state.err_console.print(
-                " ", hint("hint:"),
+                " ",
+                hint("hint:"),
                 "pass the JSON file produced by",
                 code("decoy scan --output scan.json"),
             )
@@ -800,9 +802,7 @@ def _scan(
 
     # Privacy-safe field records (no raw cell values) for inline / --json output.
     field_records = [_safe_field_record(f) for f in profile.fields]
-    pii_candidate_count = sum(
-        1 for f in profile.fields if f.pii_score >= _PII_CANDIDATE_THRESHOLD
-    )
+    pii_candidate_count = sum(1 for f in profile.fields if f.pii_score >= _PII_CANDIDATE_THRESHOLD)
 
     if state.mode is OutputMode.json:
         payload: dict = {
@@ -835,7 +835,10 @@ def _scan(
     ]
     if pii_candidate_count > 0:
         facts.append(
-            ("PII candidates", f"{pii_candidate_count} field(s) -- suggestions only, review required")
+            (
+                "PII candidates",
+                f"{pii_candidate_count} field(s) -- suggestions only, review required",
+            )
         )
     else:
         facts.append(("PII candidates", "none detected"))
@@ -850,7 +853,9 @@ def _scan(
         next_hint = f"decoy scan fields {out_path}"
     else:
         # Persist-only-on-output: point at the two-step saved-scan flow.
-        next_hint = f"decoy scan {source.name} --output scan.json  (then: decoy scan fields scan.json)"
+        next_hint = (
+            f"decoy scan {source.name} --output scan.json  (then: decoy scan fields scan.json)"
+        )
 
     render_card(state, command="decoy scan", facts=facts, next_hint=next_hint, status="ok")
 
@@ -869,15 +874,15 @@ def _scan(
 
 
 def _fields(
-    scan: str = typer.Argument(
-        ..., help="Path to a STORM scan JSON, or `-` for stdin."
-    ),
+    scan: str = typer.Argument(..., help="Path to a STORM scan JSON, or `-` for stdin."),
     pii: PiiLevel | None = typer.Option(
-        None, "--pii",
+        None,
+        "--pii",
         help="Filter to fields whose PII score falls in this bucket.",
     ),
     quasi: bool = typer.Option(
-        False, "--quasi",
+        False,
+        "--quasi",
         help="Only fields that participate in any quasi-identifier group.",
     ),
     json_: bool = typer.Option(
@@ -946,7 +951,10 @@ def _fields(
         return
 
     table = make_table(
-        "Field", "PII score", "Bucket", "QI",
+        "Field",
+        "PII score",
+        "Bucket",
+        "QI",
         title=f"Fields in {label} ({len(rows)} of {total})",
     )
     for r in rows:
@@ -978,9 +986,7 @@ def _fields(
 
 
 def _show(
-    scan: str = typer.Argument(
-        ..., help="Path to a STORM scan JSON, or `-` for stdin."
-    ),
+    scan: str = typer.Argument(..., help="Path to a STORM scan JSON, or `-` for stdin."),
     field: str = typer.Argument(..., help="Field name to inspect."),
     json_: bool = typer.Option(
         False, "--json", help="Emit the full field detail as JSON to stdout."
@@ -1024,16 +1030,19 @@ def _show(
                 },
             )
         elif state.mode is not OutputMode.quiet:
-            state.err_console.print(
-                error("error:"), f"Field {field!r} not in scan."
-            )
+            state.err_console.print(error("error:"), f"Field {field!r} not in scan.")
             if suggestion:
                 state.err_console.print(
-                    " ", hint("hint:"), "did you mean", code(suggestion[0]),
+                    " ",
+                    hint("hint:"),
+                    "did you mean",
+                    code(suggestion[0]),
                 )
             else:
                 state.err_console.print(
-                    " ", hint("hint:"), "list all fields with",
+                    " ",
+                    hint("hint:"),
+                    "list all fields with",
                     code(f"decoy scan fields {scan}"),
                 )
         raise typer.Exit(code=EXIT_USAGE)
@@ -1077,9 +1086,7 @@ def _show(
             facts.append((label, str(matched[key])))
     if detectors:
         names = [
-            str(d.get("detector") or d.get("name") or "?")
-            if isinstance(d, dict)
-            else str(d)
+            str(d.get("detector") or d.get("name") or "?") if isinstance(d, dict) else str(d)
             for d in detectors
         ]
         facts.append(("Detectors", ", ".join(names)))
@@ -1130,14 +1137,11 @@ def _show(
 
 
 def _diff(
-    old: str = typer.Argument(
-        ..., help="Path to the older STORM scan JSON, or `-` for stdin."
-    ),
-    new: str = typer.Argument(
-        ..., help="Path to the newer STORM scan JSON, or `-` for stdin."
-    ),
+    old: str = typer.Argument(..., help="Path to the older STORM scan JSON, or `-` for stdin."),
+    new: str = typer.Argument(..., help="Path to the newer STORM scan JSON, or `-` for stdin."),
     strict: bool = typer.Option(
-        False, "--strict",
+        False,
+        "--strict",
         help="Exit 1 on drift -- any PII bucket bumped up, any new high-PII field, or any new quasi-identifier group.",
     ),
     json_: bool = typer.Option(
@@ -1170,12 +1174,8 @@ def _diff(
                 },
             )
         elif state.mode is not OutputMode.quiet:
-            state.err_console.print(
-                error("error:"), "only one of OLD or NEW can be `-` (stdin)."
-            )
-            state.err_console.print(
-                " ", hint("hint:"), "pipe one scan, pass the other as a path."
-            )
+            state.err_console.print(error("error:"), "only one of OLD or NEW can be `-` (stdin).")
+            state.err_console.print(" ", hint("hint:"), "pipe one scan, pass the other as a path.")
         raise typer.Exit(code=EXIT_USAGE)
 
     try:
@@ -1189,12 +1189,8 @@ def _diff(
         _emit_load_error(state, new, exc, "scan diff")
         raise typer.Exit(code=EXIT_USAGE)
 
-    old_fields = {
-        f.get("name"): f for f in old_data.get("fields", []) if f.get("name")
-    }
-    new_fields = {
-        f.get("name"): f for f in new_data.get("fields", []) if f.get("name")
-    }
+    old_fields = {f.get("name"): f for f in old_data.get("fields", []) if f.get("name")}
+    new_fields = {f.get("name"): f for f in new_data.get("fields", []) if f.get("name")}
 
     added_names = sorted(set(new_fields) - set(old_fields))
     removed_names = sorted(set(old_fields) - set(new_fields))
@@ -1211,16 +1207,20 @@ def _diff(
             pii_increased.append(
                 {
                     "name": name,
-                    "old_score": old_score, "new_score": new_score,
-                    "old_bucket": old_bucket, "new_bucket": new_bucket,
+                    "old_score": old_score,
+                    "new_score": new_score,
+                    "old_bucket": old_bucket,
+                    "new_bucket": new_bucket,
                 }
             )
         elif _bucket_rank(new_bucket) < _bucket_rank(old_bucket):
             pii_decreased.append(
                 {
                     "name": name,
-                    "old_score": old_score, "new_score": new_score,
-                    "old_bucket": old_bucket, "new_bucket": new_bucket,
+                    "old_score": old_score,
+                    "new_score": new_score,
+                    "old_bucket": old_bucket,
+                    "new_bucket": new_bucket,
                 }
             )
 
@@ -1364,9 +1364,7 @@ def _diff(
         state.console.print(t)
 
     if removed_rows:
-        t = make_table(
-            "Field", "PII score (was)", "Bucket (was)", title="Fields removed"
-        )
+        t = make_table("Field", "PII score (was)", "Bucket (was)", title="Fields removed")
         for r in removed_rows:
             score = r["pii_score"]
             score_cell = f"{score:.2f}" if isinstance(score, (int, float)) else "-"

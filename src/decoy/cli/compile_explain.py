@@ -267,8 +267,7 @@ def compile(
         if explain:
             payload["tables"] = tables_info
             payload["ordering"] = [
-                {"table": n.table, "columns": list(n.columns)}
-                for n in plan.ordering
+                {"table": n.table, "columns": list(n.columns)} for n in plan.ordering
             ]
             payload["honesty_note"] = (
                 "Strategies are declared in the pipeline config by the user. "
@@ -349,7 +348,11 @@ def _compile_error(state, config: Path, exc: Exception) -> None:
         # parse both as unknown style tags and drop them.
         state.err_console.print(error("error:"), msg, markup=False)
         state.err_console.print(
-            " ", hint("hint:"), "run", code("decoy validate config <config>"), "for full validation."
+            " ",
+            hint("hint:"),
+            "run",
+            code("decoy validate config <config>"),
+            "for full validation.",
         )
 
 

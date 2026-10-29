@@ -157,8 +157,7 @@ _INFERENCE_TABLE: dict[str, Inference] = {
     "icd10": Inference(
         strategy="truncate",
         review=(
-            "STORM detected ICD-10 codes. truncate to 3 chars (category) "
-            "matches HIPAA Safe Harbor."
+            "STORM detected ICD-10 codes. truncate to 3 chars (category) matches HIPAA Safe Harbor."
         ),
     ),
     "pan": Inference(
@@ -243,7 +242,8 @@ def _infer_strategy_for_column(field_stats) -> Inference:
     """
     matches = getattr(field_stats, "detector_matches", None) or []
     confident_matches = [
-        m for m in matches
+        m
+        for m in matches
         if getattr(m, "confidence_bucket", None) in ("high", "medium")
         or getattr(m, "match_rate", 0.0) >= 0.5
     ]
@@ -257,20 +257,13 @@ def _infer_strategy_for_column(field_stats) -> Inference:
         top_id = getattr(top, "detector_id", "")
         ambiguous = (
             len(confident_matches) > 1
-            and (
-                getattr(top, "match_rate", 0.0)
-                - getattr(confident_matches[1], "match_rate", 0.0)
-            )
+            and (getattr(top, "match_rate", 0.0) - getattr(confident_matches[1], "match_rate", 0.0))
             < 0.1
         )
         base = _INFERENCE_TABLE.get(top_id, _FALLBACK)
         if ambiguous:
-            signals = ", ".join(
-                getattr(m, "detector_id", "?") for m in confident_matches[:3]
-            )
-            review = _AMBIGUOUS_TEMPLATE.format(
-                signals=signals, chosen=base.strategy
-            )
+            signals = ", ".join(getattr(m, "detector_id", "?") for m in confident_matches[:3])
+            review = _AMBIGUOUS_TEMPLATE.format(signals=signals, chosen=base.strategy)
             return Inference(
                 strategy=base.strategy,
                 provider=base.provider,
@@ -281,9 +274,8 @@ def _infer_strategy_for_column(field_stats) -> Inference:
 
     # No confident detector match. Treat likely-unique integer columns
     # as potential FK keys + suggest hash so joins survive.
-    if (
-        getattr(field_stats, "inferred_type", "") == "integer"
-        and getattr(field_stats, "is_likely_unique", False)
+    if getattr(field_stats, "inferred_type", "") == "integer" and getattr(
+        field_stats, "is_likely_unique", False
     ):
         return Inference(
             strategy="hash",

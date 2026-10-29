@@ -18,6 +18,8 @@ from decoy.cli.fit import fit as fit_command
 from decoy.cli.info import INFO_EPILOG
 from decoy.cli.info import info as info_command
 from decoy.cli.init import INIT_EPILOG, init_command
+from decoy.cli.local_cleanup import LOCAL_CLEANUP_EPILOG
+from decoy.cli.local_cleanup import local_cleanup as local_cleanup_command
 from decoy.cli.reference import LIST_EPILOG, SHOW_EPILOG, list_, show
 from decoy.cli.report import report_app
 from decoy.cli.run import RUN_EPILOG
@@ -50,6 +52,7 @@ Try one of:
   decoy run pipeline.yaml          Run a masking or generation pipeline.
   decoy subset pipeline.yaml --dry-run   Preview a FK-aware referential subset.
   decoy unmask pipeline.yaml masked.csv   Recover fpe columns from a masked file.
+  decoy local-cleanup --manifest evidence.json --root ./out   Preview (default) or delete the outputs a run declared.
   decoy tokenize pipeline.yaml --vault tokens.db   Reversible tokenization: mask tokenize columns + write a local vault.
   decoy detokenize pipeline.yaml tokenized.csv --vault tokens.db   Reverse a tokenized file from the local vault.
   decoy fit source.csv             Fit a distribution snapshot for statistical generation.
@@ -155,6 +158,7 @@ app.command(name="show", epilog=SHOW_EPILOG)(show)
 app.command(name="doctor", epilog=DOCTOR_EPILOG)(doctor)
 app.command(name="subset", epilog=SUBSET_EPILOG)(subset_command)
 app.command(name="upgrade", epilog=UPGRADE_EPILOG)(upgrade_command)
+app.command(name="local-cleanup", epilog=LOCAL_CLEANUP_EPILOG)(local_cleanup_command)
 
 
 if __name__ == "__main__":

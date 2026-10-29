@@ -438,7 +438,9 @@ def _run_config_base(config: Path) -> tuple[dict[str, Any] | None, list[_GateFin
     try:
         raw = _yaml.safe_load(config.read_text(encoding="utf-8"))
     except _yaml.YAMLError as exc:
-        findings.append(_GateFinding("config", "error", "yaml.parse_error", sanitize_yaml_error(exc)))
+        findings.append(
+            _GateFinding("config", "error", "yaml.parse_error", sanitize_yaml_error(exc))
+        )
         return None, findings
 
     if raw is None:
@@ -464,7 +466,11 @@ def _run_config_base(config: Path) -> tuple[dict[str, Any] | None, list[_GateFin
             location = ".".join(loc_parts) if loc_parts else None
             findings.append(
                 _GateFinding(
-                    "config", "error", e.get("type", "validation_error"), e.get("msg", str(e)), location
+                    "config",
+                    "error",
+                    e.get("type", "validation_error"),
+                    e.get("msg", str(e)),
+                    location,
                 )
             )
         return None, findings
@@ -733,9 +739,7 @@ def _emit_gate(
 
     state.console.print(success("OK"), code(config_str))
     if has_warning and fail_on_warning:
-        state.err_console.print(
-            warn("warning:"), "warnings present and --fail-on-warning is set."
-        )
+        state.err_console.print(warn("warning:"), "warnings present and --fail-on-warning is set.")
 
 
 validate_app.command(name="config", epilog=_CONFIG_EPILOG)(config)

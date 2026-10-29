@@ -134,9 +134,7 @@ def _load_dataframe(input_file: Path):
         return pd.read_csv(input_file, sep=sep, nrows=10_000)
     if suffix in (".parquet", ".pq"):
         return pd.read_parquet(input_file)
-    raise ValueError(
-        f"unsupported file extension {suffix!r}; expected .csv, .tsv, or .parquet"
-    )
+    raise ValueError(f"unsupported file extension {suffix!r}; expected .csv, .tsv, or .parquet")
 
 
 def _yaml_quote(value: str) -> str:
@@ -273,16 +271,9 @@ def _build_scaffold_yaml(
         f"    path: {output_quoted}\n"
     )
 
-    column_blocks = "\n".join(
-        _emit_column_yaml(name, inferences[name]) for name in column_names
-    )
+    column_blocks = "\n".join(_emit_column_yaml(name, inferences[name]) for name in column_names)
 
-    tables_block = (
-        "tables:\n"
-        f"  - name: {_TABLE_NAME}\n"
-        "    columns:\n"
-        f"{column_blocks}\n"
-    )
+    tables_block = f"tables:\n  - name: {_TABLE_NAME}\n    columns:\n{column_blocks}\n"
 
     return (
         f"{header}\n"
@@ -348,6 +339,7 @@ def _scaffold_from_file(
 
     try:
         from decoy_engine.storm import run_storm
+
         profile = run_storm(df, source_label=str(input_file))
     except Exception as exc:
         if state.mode is not OutputMode.default:
@@ -362,9 +354,7 @@ def _scaffold_from_file(
     suffix = input_file.suffix.lower()
     file_format = "parquet" if suffix in (".parquet", ".pq") else "csv"
     output_ext = ".parquet" if file_format == "parquet" else ".csv"
-    output_path = input_file.with_name(
-        f"{input_file.stem}.masked{output_ext}"
-    )
+    output_path = input_file.with_name(f"{input_file.stem}.masked{output_ext}")
 
     body = _build_scaffold_yaml(
         input_path=input_file,
@@ -466,6 +456,7 @@ def _init(
 
         if out_is_stdout:
             import sys
+
             sys.stdout.write(body)
             return
 
@@ -520,9 +511,7 @@ def _init(
         elif state.mode is not OutputMode.quiet:
             state.err_console.print(error("error:"), f"unknown preset {preset!r}.")
             if guess:
-                state.err_console.print(
-                    " ", hint("hint:"), "did you mean", code(guess[0]) + "?"
-                )
+                state.err_console.print(" ", hint("hint:"), "did you mean", code(guess[0]) + "?")
             else:
                 state.err_console.print(
                     " ",
@@ -575,15 +564,17 @@ def _init(
 
     if preset is None:
         choices = " | ".join(_template_names())
-        chosen = typer.prompt(
-            f"Preset ({choices})",
-            default="minimal",
-        ).strip().lower()
+        chosen = (
+            typer.prompt(
+                f"Preset ({choices})",
+                default="minimal",
+            )
+            .strip()
+            .lower()
+        )
         while chosen not in _template_names():
             state.console.print(error("error:"), f"unknown preset {chosen!r}.")
-            state.console.print(
-                " ", hint("hint:"), f"pick one of: {', '.join(_template_names())}."
-            )
+            state.console.print(" ", hint("hint:"), f"pick one of: {', '.join(_template_names())}.")
             chosen = typer.prompt("Preset", default="minimal").strip().lower()
     else:
         chosen = preset
