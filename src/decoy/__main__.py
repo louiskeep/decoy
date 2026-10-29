@@ -73,6 +73,21 @@ app = typer.Typer(
 )
 
 
+_NO_NOTICE_COMMANDS = frozenset({"upgrade"})
+
+
+def _key_unresolved() -> bool:
+    from decoy.distribution import release_key
+
+    try:
+        release_key.pinned_public_pem()
+    except release_key.NoPinnedKeyError:
+        return True
+    except OSError:
+        return False
+    return False
+
+
 def _version_callback(value: bool) -> None:
     if value:
         typer.echo(f"decoy {__version__}")
@@ -114,7 +129,12 @@ def _root(
         typer.echo(f"decoy: {refusal}", err=True)
         raise typer.Exit(code=EXIT_RUNTIME)
 
-    _update_check.maybe_print_notice(suppress=no_update_check)
+    # `upgrade` owns its own key and network ordering (placeholder-key refusal and local
+    # rollback precede any network), and an unresolved placeholder key means this build
+    # cannot act on a notice, so the startup probe never runs ahead of either.
+    _update_check.maybe_print_notice(
+        suppress=no_update_check or ctx.invoked_subcommand in _NO_NOTICE_COMMANDS or _key_unresolved()
+    )
 
 
 app.command(name="run", epilog=RUN_EPILOG)(run_command)

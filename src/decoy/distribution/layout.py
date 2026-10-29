@@ -57,22 +57,31 @@ def current_link(home: Path | None = None) -> Path:
 def managed_home() -> Path | None:
     """The managed-runtime home IFF this interpreter is a bundled-runtime interpreter.
 
-    A managed interpreter lives at ``<home>/versions/<slot>/python``, so it locates its own
-    home from ``sys.prefix`` (nearest ancestor named ``versions`` -> its parent). Deriving
-    it from the running interpreter, not ``DECOY_HOME``, keeps a custom-home install
-    working when the env var is unset. None for a pip/dev install (no ``versions``
-    ancestor), which is what keeps the pip/dev import contract separate from the managed
-    run-time guard."""
+    A managed interpreter's ``sys.prefix`` is exactly ``<home>/versions/<slot>/python``, and
+    the home must carry a ``current`` symlink into ``versions/`` and the slot a bundle
+    ``manifest.json``. An ancestor named ``versions`` alone is not identity (pyenv keeps
+    interpreters under ``.pyenv/versions/<x>``), nor is a venv nested inside a bundle.
+    Deriving the home from the interpreter, not ``DECOY_HOME``, keeps a custom-home install
+    working when the env var is unset. None for a pip/dev install, which keeps the pip/dev
+    import contract separate from the managed run-time guard."""
     import sys
+
+    from decoy.distribution.manifest import MANIFEST_NAME
 
     try:
         prefix = Path(sys.prefix).resolve()
+        slot = prefix.parent
+        home = slot.parent.parent
+        if prefix.name != "python" or slot.parent.name != "versions":
+            return None
+        if not (slot / MANIFEST_NAME).is_file():
+            return None
+        link = current_link(home)
+        if not link.is_symlink() or Path(os.readlink(link)).parent.name != "versions":
+            return None
     except OSError:
         return None
-    for anc in prefix.parents:
-        if anc.name == "versions":
-            return anc.parent
-    return None
+    return home
 
 
 def cache_dir(home: Path | None = None) -> Path:
