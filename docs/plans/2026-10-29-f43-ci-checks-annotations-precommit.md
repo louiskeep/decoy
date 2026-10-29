@@ -368,6 +368,7 @@ schema_version = "decoy-ci-report/v1"
 status = ok | noop | findings | partial | refused
 exit_code = one of 0..5 from decoy.cli.exit_codes
 checks[] = {id, kind, status, reason_code, finding_count}
+notes[] = {note_id}  # authored, value-free text IDs only (e.g. `ci.precommit_mode_narrowed`); never a scalar, path, or value
 findings[] = {
   rule_id, level(error|warning|note), safe_message_id,
   check_id, optional SourceLocation(uri,start_line,start_column,end_line,end_column),
@@ -828,4 +829,16 @@ Gemini (google/gemini-2.5-pro) reviewed the plan against the MASTER contract. Ve
   `stderr` message ("Running in pre-commit mode; validation narrowed from 'full' to 'config'...") when
   not writing a machine-readable format to stdout.
 
-Opus-4.8 Dennis repo-grounded plan gate is next.
+## 13. Opus-4.8 Dennis repo-grounded plan gate (2026-10-29): GO-WITH-FIXES, fixes folded
+
+Dennis cold-read the plan and byte-verified every cited CLI anchor against the repo at baseline `574aa1e`. **Grounding is CLEAN: no phantom prereqs** (a marked improvement). Verdict GO-WITH-FIXES: 0 BLOCKER, 0 HIGH, 3 MEDIUM, 4 LOW. All folded (Opus, with provenance); M1 and M2 close gaps the earlier Gemini folds opened.
+
+- **MEDIUM M1 (debug-hatch raw sink is unguarded):** the `--unsafe-debug-log PATH` hatch (§4.2) is a sanctioned raw/secret/sample sink, but no test keeps it off the safe path. Folded: acceptance must assert (a) the flag is hidden from `--help` and the CLI reference, (b) no shipped GitHub/GitLab template or pre-commit hook ever passes it, (c) no run creates the file unless the flag is explicitly given, (d) its contents never reach stdout/stderr. Add these to A9 (templates) and A10 (leak sentry).
+- **MEDIUM M2 (pre-commit `note` had no home in the contract):** the Gemini LOW fold promised a report `note` + stderr message, but `SafeCiReport` had no field to carry it. Folded: added a value-free `notes[] = {note_id}` field to the `SafeCiReport` schema in §4.2 (authored text IDs only, no scalars). The pre-commit mode-narrowing surfaces as `note_id = ci.precommit_mode_narrowed` in `notes[]` AND a one-line stderr message ("Running in pre-commit mode; validation narrowed from 'full' to 'config'...") emitted only when a machine-readable format is NOT being written to stdout. Add one acceptance assertion covering both surfaces.
+- **MEDIUM M3 (staged `--name-status -z` rename/copy desync):** `R`/`C` entries carry TWO NUL-separated path fields (`R100\0old\0new\0`) while `A/M/D` carry one; a naive "status then next field" parse desyncs the whole stream after the first rename and scans the wrong path. Folded: §4.5 step 2 must specify the R/C two-field parse explicitly, and A7 must stage a real rename+modify mixed with A/M entries and assert the renamed POST-image blob (by object ID) is the one scanned with the parse staying aligned.
+- **LOW L1 (SARIF rationale overstated), §4.2:** reword "SARIF 2.1.0 requires the rule to be defined in the driver" to "SARIF best practice and GitHub code-scanning expect the rule defined in the driver" (the association is RECOMMENDED, not strictly required). The self-imposed strictness stays; only the justification was wrong.
+- **LOW L2 (loose anchor range), §2:** `tests/sentry/test_report_raw_value_isolation.py` is 289 lines, not `:1-180`; trim or drop the range.
+- **LOW L3 (status label partial vs refused), §4.3:** state that a per-check refusal ALONGSIDE any completed check reports `partial`; `refused` is reserved for the all-refused case. (Exit code is already unambiguous: `EXIT_USAGE` outranks findings.)
+- **LOW L4 (engine anchors verified structurally only), informational:** the engine error classes `PlanCompileError(code, path|None, message)` / `PipelineValidationError(message, path|None, code|None)` and the `tables.customers.columns.customer_id` example match at the nearest local checkout (v0.14.1), but the exact line ranges at stamp `fd51be10`/v0.15.1 were not byte-verifiable on this box. The remote worker MUST confirm the exact ranges and that `unknown_provider` carries a column-level `path` at v0.15.1 before relying on A2's positive-location oracle; the location-free fallback covers the `path=None` case regardless.
+
+Plan is owner-ready. The build gate on the finished code stays Codex first -> Opus-4.8 Dennis -> owner.
