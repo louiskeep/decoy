@@ -10,7 +10,6 @@ reason; its text goes to the unsafe debug sink and nowhere else.
 from __future__ import annotations
 
 import json
-import re
 from pathlib import Path
 
 from decoy.ci.contracts import (
@@ -24,6 +23,7 @@ from decoy.ci.contracts import (
 from decoy.ci.debug import DebugSink
 from decoy.ci.locations import YamlSourceIndex
 from decoy.ci.manifest import LoadedManifest
+from decoy.ci.rule_codes import EVIDENCE_KINDS, VALIDATION_CODES, rule_code
 from decoy.cli.exit_codes import (
     EXIT_CAPACITY,
     EXIT_FINDINGS,
@@ -64,17 +64,6 @@ def not_applicable(check_id: str, kind: str) -> CheckOutcome:
 # ---------------------------------------------------------------------------
 # Validation (full / config) over the existing pre-run gate
 # ---------------------------------------------------------------------------
-
-_CODE_CHARS = re.compile(r"[^a-z0-9_.-]+")
-
-
-def rule_code(code: str) -> str:
-    """Engine/CLI codes are stable tokens; anything else is flattened to the grammar."""
-    cleaned = _CODE_CHARS.sub("_", str(code).lower()).strip("_.-")[:100]
-    if not cleaned or not cleaned[0].isalpha():
-        return "unrecognized_code"
-    return cleaned
-
 
 def validation_outcome(
     loaded: LoadedManifest,
@@ -119,7 +108,7 @@ def validation_outcome(
             logical = item.logical_path or item.location
             findings.append(
                 SafeFinding.create(
-                    rule_id=f"validate.{rule_code(item.code)}",
+                    rule_id=f"validate.{rule_code(item.code, VALIDATION_CODES)}",
                     level="error" if item.severity == "error" else "warning",
                     safe_message_id=(
                         "ci.validation_failed"
@@ -260,7 +249,7 @@ def evidence_outcome(loaded: LoadedManifest, check: EvidenceCheck, sink: DebugSi
         location = SourceLocation(uri=rel) if rel else None
         findings = [
             SafeFinding.create(
-                rule_id=f"evidence.{rule_code(issue.kind)}",
+                rule_id=f"evidence.{rule_code(issue.kind, EVIDENCE_KINDS)}",
                 level="error",
                 safe_message_id="ci.evidence_mismatch",
                 check_id=check_id,
@@ -296,6 +285,5 @@ __all__ = [
     "not_applicable",
     "refused",
     "regression_outcome",
-    "rule_code",
     "validation_outcome",
 ]

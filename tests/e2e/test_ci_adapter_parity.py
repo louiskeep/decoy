@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 from pathlib import Path
 from typing import Any
 
@@ -28,10 +29,14 @@ from tests.ci_support import (
     write_clean_pipeline,
 )
 
+# `decoy ci` emits the fixed family token for a preflight check named after a table
+# (`target.<table>.would_overwrite` -> `target.would_overwrite`): the table name is user data.
+_TABLE_SEGMENT = re.compile(r"^(source|target)\..+\.([a-z_]+)$")
+
 
 def _direct_codes(repo: Path, pipeline: str) -> set[str]:
     proc = run_decoy(["validate", pipeline, "--json"], repo)
-    return {m["code"] for m in json.loads(proc.stdout)["messages"]}
+    return {_TABLE_SEGMENT.sub(r"\1.\2", m["code"]) for m in json.loads(proc.stdout)["messages"]}
 
 
 @pytest.mark.parametrize(

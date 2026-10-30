@@ -7,9 +7,10 @@ the same text, independently of PyYAML's marks.
 from __future__ import annotations
 
 import pytest
+from tests.ci_support import CLEAN_PIPELINE
+
 from decoy.ci.contracts import SourceLocation
 from decoy.ci.locations import YamlSourceIndex
-from tests.ci_support import CLEAN_PIPELINE
 
 
 def _pos(text: str, needle: str, occurrence: int = 1) -> tuple[int, int]:

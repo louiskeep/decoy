@@ -1,10 +1,9 @@
-"""Pure-function checks for the staged scan's glob scope and adapter code flattening."""
+"""Pure-function checks for the staged scan's glob scope and name-status parsing."""
 
 from __future__ import annotations
 
 import pytest
 
-from decoy.ci.adapters import rule_code
 from decoy.ci.staged import glob_matches, parse_name_status_z
 
 
@@ -54,19 +53,3 @@ def test_name_status_parser_reads_exactly_the_fields_each_status_carries() -> No
 def test_name_status_parser_rejects_malformed_streams(raw: bytes) -> None:
     with pytest.raises(ValueError):
         parse_name_status_z(raw)
-
-
-@pytest.mark.parametrize(
-    ("code", "expected"),
-    [
-        ("unknown_provider", "unknown_provider"),
-        ("yaml.parse_error", "yaml.parse_error"),
-        ("target.Customers.would_overwrite", "target.customers.would_overwrite"),
-        ("odd code!", "odd_code"),
-        ("", "unrecognized_code"),
-        ("123", "unrecognized_code"),
-        ("x" * 300, "x" * 100),
-    ],
-)
-def test_validation_codes_are_flattened_to_the_rule_grammar(code: str, expected: str) -> None:
-    assert rule_code(code) == expected
