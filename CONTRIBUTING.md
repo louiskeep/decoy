@@ -33,6 +33,14 @@ pytest tests/e2e/
 
 A green local run on Python 3.10, 3.11, and 3.12 is the bar before requesting review.
 
+### Pinned environment and local gates (workers)
+
+- `scripts/dev/bootstrap.sh` builds `.venv` the way `ci.yml`'s pytest job does: Python 3.10, the engine from the pinned git tag, then `-e .[dev]` plus the ruff version `ci.yml` pins. It prints the engine version, git ref and commit against the pins, and the native companion ABI, and exits non-zero with the fix on any mismatch. `--check` verifies without installing.
+- `scripts/dev/gates.sh [paths...]` runs the env check, ruff check, ruff format --check, `tests/sentry`, then the given tests (default: tests touching files changed against `origin/main`), stopping at the first failure unless `--keep-going`. `ci.yml` has no mypy gate, so that step reports SKIP.
+- It ends with an EVIDENCE block (commands, tool versions, per-step counts, failing test ids). Paste that block into evidence files instead of summarizing.
+- `--baseline` reruns the same steps on `origin/main` in a temporary detached worktree with the same venv and labels each failing id BOTH, BRANCH-ONLY or BASELINE-ONLY.
+- Both scripts are covered by `tests/unit/test_dev_bootstrap_gates.py`.
+
 ## Pull requests
 
 - One topic per PR. Smaller diffs land faster.
