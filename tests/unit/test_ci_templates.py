@@ -199,8 +199,14 @@ def test_extracted_commands_run_against_a_real_fixture(tmp_path: Path) -> None:
         )
         assert missing.returncode != 0
         check_script = next(s for s in scripts if "ci check" in s)
-        done = _bash(check_script, repo, env)
+        done = _bash(check_script, repo, {**env, "DECOY_EXPECTED_VERSION": _version()})
         assert done.returncode == EXIT_OK, done.stdout + done.stderr
         import json
 
         assert_valid_sarif(json.loads((repo / "decoy.sarif").read_text(encoding="utf-8")))
+
+
+@pytest.mark.parametrize("path", [GITHUB, GITLAB])
+def test_template_version_pin_matches_the_packaged_version(path: Path) -> None:
+    """A release bump must refresh the shipped pin, or the template ships a failing check."""
+    assert f'DECOY_EXPECTED_VERSION: "{_version()}"' in path.read_text(encoding="utf-8")

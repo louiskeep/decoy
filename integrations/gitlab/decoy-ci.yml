@@ -1,0 +1,33 @@
+# GitLab CI invoker for `decoy ci check` (Decoy CI integration, decoy-ci/v1).
+#
+# INVOKER ONLY: every check lives in the pinned `decoy` CLI. This file defines a hidden,
+# reusable job; including it adds no job by itself. It installs nothing: provision a pinned
+# `decoy` on the runner yourself and set DECOY_EXPECTED_VERSION to that exact
+# `decoy --version`. The manifest is ./.decoy-ci.yaml (see docs/ci-contracts.md).
+#
+# Pin the include to a protected, immutable ref (a tag or a full commit SHA), never a branch:
+#
+#   include:
+#     - project: your-group/your-ci-templates
+#       ref: <protected tag or full commit SHA>
+#       file: integrations/gitlab/decoy-ci.yml
+#
+#   decoy-ci:
+#     extends: .decoy-ci-check
+#     stage: test
+#
+# The SARIF log is kept only as a job artifact for you to consume. Decoy does not upload or
+# comment, and this file does not configure any GitLab report type.
+.decoy-ci-check:
+  variables:
+    DECOY_EXPECTED_VERSION: "0.1.0"
+  script:
+    - |
+      command -v decoy >/dev/null || { echo "decoy is not installed on this runner" >&2; exit 1; }
+      test "$(decoy --version)" = "decoy ${DECOY_EXPECTED_VERSION}" || { echo "unexpected decoy version" >&2; exit 1; }
+    - decoy ci check .decoy-ci.yaml --format sarif --output decoy.sarif
+  artifacts:
+    when: always
+    paths:
+      - decoy.sarif
+    expire_in: 1 week
