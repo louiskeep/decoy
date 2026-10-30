@@ -138,6 +138,16 @@ declared under `targets:` in the YAML.
 Run `decoy --help` for the full surface, or `decoy <command> --help` for
 any subcommand.
 
+**Pre-scan and Post-scan output is value-free.** Every printed surface of
+`decoy pre-scan` and `decoy post-scan` (stdout, `--json`, `--output -`,
+`--report-out`, errors, `--verbose`) carries no cell values, file paths, table
+names or free-text diagnostics; policed column names (at most 64 characters of
+`[A-Za-z0-9_ .-]`) are shown. The one exception is explicit:
+**`decoy pre-scan SOURCE --output FILE` writes the full scan profile including
+sample top values and sentinels** (owner-only, mode 0600, source path not
+recorded). Protect that file like the source, or use `--json` / `--output -`
+for the value-free projection.
+
 ## Exit codes
 
 `decoy` returns one of these six codes. Scripts, Make recipes, and CI

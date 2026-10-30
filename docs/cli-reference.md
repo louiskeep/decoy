@@ -1034,7 +1034,7 @@ See also: decoy validate, decoy run, decoy report verify, decoy explain exit-cod
 
 ## `decoy pre-scan`
 
-Profile a dataset for PII and re-identification risk. `decoy pre-scan SOURCE` scans a CSV/Parquet/fixed-width file (shape, field stats, PII candidates as suggestions, quasi-identifiers, reid risk) and, with `--output scan.json`, saves the scan. Subcommands operate on a saved scan: list fields (`fields`), per-field detail (`show`), compare two scans (`diff`).
+Profile a dataset for PII and re-identification risk. `decoy pre-scan SOURCE` scans a CSV/Parquet/fixed-width file (shape, field stats, PII candidates as suggestions, quasi-identifiers, reid risk) and, with `--output scan.json`, saves the scan. Subcommands operate on a saved scan: list fields (`fields`), per-field detail (`show`), compare two scans (`diff`). Printed output carries no cell values, paths, table names or free-text diagnostics; policed column names are shown. WARNING: `--output FILE` writes the full scan profile including sample top values and sentinels (owner-only, mode 0600); use `--json` for the value-free projection.
 
 **Usage**:
 
@@ -1060,6 +1060,8 @@ Examples:
 
   decoy pre-scan data.csv --output scan.json
     Save the scan to scan.json, then: decoy pre-scan fields scan.json
+    WARNING: writes the full scan profile including sample top values and
+    sentinels (owner-only, mode 0600). Protect it like the source.
 
   decoy pre-scan data.csv --output -
     Stream the scan JSON to stdout for downstream tooling.
@@ -1072,8 +1074,9 @@ HONESTY: PII candidates are SUGGESTIONS based on pattern matching. They
 are NOT authoritative classifications. You review each flagged field and decide
 what masking to apply. Decoy never auto-classifies PII.
 
-No raw cell values, paths or layout values appear in any printed output.
-Field stats include dtype, null_rate, distinct_count only.
+No cell values, paths, table names, layout values or free-text diagnostics
+appear in any printed output; policed column names (at most 64 characters of
+[A-Za-z0-9_ .-]) do. Field stats include dtype, null_rate, distinct_count only.
 
 See also: decoy pre-scan fields, decoy pre-scan show, decoy pre-scan diff,
   decoy explain pre-scan, decoy validate.
@@ -1360,11 +1363,12 @@ Examples:
     Exit non-zero (EXIT_FINDINGS) when the overall grade falls below B.
 
   decoy post-scan fidelity source.csv output.csv --joint state,tier --json
-    Include a (state, tier) joint fidelity score; emit the full
-    quality-report/v1 + policy JSON.
+    Include a (state, tier) joint fidelity score; emit the value-free
+    fidelity-report/v1 projection (scores, closed codes, policed column
+    names; no cell values, paths or free text) as JSON.
 
   decoy post-scan fidelity source.csv output.csv --report-out report.json
-    Also write the full report + policy verdict to disk.
+    Also write the same fidelity-report/v1 projection to disk.
 
 Exit codes: 0 pass (or warn without --fail-on-warning); 4 EXIT_FINDINGS
 when the policy verdict is fail, or warn with --fail-on-warning set;

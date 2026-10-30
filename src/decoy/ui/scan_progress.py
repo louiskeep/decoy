@@ -69,7 +69,15 @@ def scan_stages(state: OutputState, stages: list[str]) -> Iterator[_StageHandle]
     frame_state: dict = {"frame": 0}
     stop_event = threading.Event()
 
-    with Live(console=state.err_console, refresh_per_second=4, transient=True) as live:
+    # No stdout/stderr redirect: Live's FileProxy would route any stray write in the
+    # wrapped block to the real terminal, defeating the value-free boundary's sink.
+    with Live(
+        console=state.err_console,
+        refresh_per_second=4,
+        transient=True,
+        redirect_stdout=False,
+        redirect_stderr=False,
+    ) as live:
         handle = _StageHandle(live, stages, frame_state)
         handle.refresh()
 

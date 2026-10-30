@@ -1,64 +1,305 @@
-"""The one value-free output boundary for `decoy pre-scan` and `decoy post-scan`.
+"""The value-free contract for `decoy pre-scan` and `decoy post-scan`: closed types, no I/O.
 
-Every byte these commands put on a surface -- stdout, stderr, the `--json`
-envelope, `--verbose` diagnostics, a written report -- leaves through a
-`Surface`. Call sites never format text from data; they hand the boundary one
-of three closed things:
+What may cross to a surface is decided by type, not by where a value came from:
 
-  * a reason key from `REASONS` (fixed message + fixed hint + stable code),
-    optionally with a typed `Location` (parse position or layout entry index
-    plus a closed rule code) and an exception, of which only the type name is
-    ever used;
-  * a `Projection` minted by `decoy.cli._projections`: an allowlisted, typed,
-    value-free view of an engine object (numbers, closed vocabularies, policed
-    names, opaque ids) -- raw engine reports are never serialized;
-  * a notice key from `NOTICES` (fixed stderr warning).
+  * `SafeStr` is the only string a `Projection` accepts. It can be minted only by
+    the policy constructors below (closed vocabulary, policed schema name, opaque
+    label, ISO timestamp, allowlisted type name, static literal). A plain `str`
+    -- including any string derived from a `SafeStr` by slicing, formatting or
+    concatenation, which Python returns as plain `str` -- is refused by `mint`.
+  * `Projection` is minted against a closed schema registry: an unknown schema id
+    or a plain-`str` key outside that schema's declared keys is refused.
+  * Errors are closed reason keys (`REASONS`), positions are a typed `Location`,
+    and exception/warning classes are named only through `safe_cls_name`, which
+    allowlists statically defined classes from known modules.
 
-Engine calls run inside `Surface.engine()`, which captures Python warnings and
-logging so engine diagnostics (which can quote cells, paths and table names)
-never reach stderr or a log handler; `--verbose` reports only their count and
-category names. `guarded` wraps every command so an unexpected exception
-becomes a type-name-only error rather than a traceback.
+Contract stated honestly: no cell values, file paths, table names or free-text
+diagnostics reach a surface. Policed schema identifiers (column names of at most
+64 characters matching `[A-Za-z0-9_][A-Za-z0-9_ .-]*`) are schema and ARE output.
 
-The one deliberate raw artifact is the saved scan written by
-`pre-scan --output FILE`: an explicit, user-requested file that keeps the
-profiler's top values and sentinels. It is written here too, with the source
-label replaced, so even that file carries no path.
+This module performs no I/O; process containment and every write live in
+`decoy.cli._boundary`. Kept dependency-free so it can be lifted into the engine
+as the shared contract.
 
-Pattern: the platform's typed `fidelity-report/v1` projection
-(decoy-platform `api/jobs/fidelity_projection.py`) applied to every CLI surface,
-plus a closed error-code table in the style of RFC 9457 problem details (stable
-type code, fixed title, no echoed input).
+Pattern: parse-don't-validate (Alexis King, 2019) via a phantom-typed string, the
+platform's typed `fidelity-report/v1` projection (decoy-platform
+`api/jobs/fidelity_projection.py`), and RFC 9457-style closed problem codes
+(stable type code, fixed title, no echoed input).
 """
 
 from __future__ import annotations
 
-import functools
-import json as _json
-import logging
 import math
-import warnings
-from collections import Counter
-from collections.abc import Callable, Iterator, Mapping
-from contextlib import contextmanager
+import re
+import sys
+from collections.abc import Mapping
 from dataclasses import dataclass
-from pathlib import Path
+from datetime import datetime
+from enum import Enum
 from types import MappingProxyType
-from typing import Any, NoReturn
-
-import typer
-from typer.core import TyperGroup
-
-try:  # typer >= 0.26 vendors Click
-    from typer._click.exceptions import UsageError
-except ImportError:  # pragma: no cover - older typer on stock Click
-    from click.exceptions import UsageError
+from typing import Any, LiteralString
 
 from decoy.cli.exit_codes import EXIT_RUNTIME, EXIT_USAGE
-from decoy.ui.card import render_card
-from decoy.ui.output import OutputMode, OutputState, setup_output
-from decoy.ui.table import make_table
-from decoy.ui.theme import error, hint, warn
+
+_MINT = object()
+
+MAX_IDENTIFIER_LENGTH = 64
+UNRECOGNIZED = "unrecognized"
+_IDENTIFIER = re.compile(r"[A-Za-z0-9_][A-Za-z0-9_ .\-]*")
+_TYPE_IDENT = re.compile(r"[A-Za-z_][A-Za-z0-9_]{0,63}")
+_KEY_IDENT = re.compile(r"[a-z_][a-z0-9_]{0,63}")
+# Exact module or a dotted child of it. Static library/stdlib classes carry no data in their names.
+_TYPE_MODULES = ("builtins", "decoy", "decoy_engine", "pydantic", "pydantic_core", "yaml", "json")
+
+
+# ---------------------------------------------------------------------------
+# SafeStr and its only constructors.
+# ---------------------------------------------------------------------------
+
+
+class SafeStr(str):
+    """A string proven to come from a closed policy. Mint only via this module."""
+
+    __slots__ = ()
+
+    def __new__(cls, value: str, token: object = None) -> SafeStr:
+        if token is not _MINT or type(value) is not str:
+            raise TypeError("SafeStr is minted only by the value-free policy constructors")
+        return super().__new__(cls, value)
+
+
+def _mint_str(value: str) -> SafeStr:
+    return SafeStr(str(value), _MINT)
+
+
+SAFE_UNRECOGNIZED = _mint_str(UNRECOGNIZED)
+
+
+def literal(value: LiteralString) -> SafeStr:
+    """A compile-time constant (notes, fixed codes). The sentry forbids data here."""
+    return _mint_str(value)
+
+
+def vocab(value: Any, allowed: frozenset[str]) -> SafeStr:
+    """An exact member of a closed set; anything else becomes `unrecognized`."""
+    return _mint_str(value) if type(value) is str and value in allowed else SAFE_UNRECOGNIZED
+
+
+def vocab_or_none(value: Any, allowed: frozenset[str]) -> SafeStr | None:
+    return _mint_str(value) if type(value) is str and value in allowed else None
+
+
+def is_clean_name(value: Any) -> bool:
+    return (
+        isinstance(value, str)
+        and len(value) <= MAX_IDENTIFIER_LENGTH
+        and _IDENTIFIER.fullmatch(value) is not None
+    )
+
+
+def clean_name(value: Any) -> SafeStr | None:
+    """A policed schema identifier, or None when it fails the clean-name rule."""
+    return _mint_str(str(value)) if is_clean_name(value) else None
+
+
+OPAQUE_PREFIXES = frozenset({"field", "redacted-name", "table"})
+
+
+def opaque_label(prefix: str, n: int) -> SafeStr:
+    """`field-N` / `redacted-name-N` / `table-N`: a closed prefix and an ordinal."""
+    if prefix not in OPAQUE_PREFIXES or type(n) is not int or n < 1:
+        raise ValueError("opaque labels take a closed prefix and a positive ordinal")
+    return _mint_str(f"{prefix}-{n}")
+
+
+def iso_timestamp(value: Any) -> SafeStr | None:
+    if type(value) is not str or len(value) > 64:
+        return None
+    try:
+        return _mint_str(datetime.fromisoformat(value).isoformat())
+    except ValueError:
+        return None
+
+
+JOIN_SEPARATORS = frozenset({"+"})
+
+
+def join_safe(sep: str, parts: list[SafeStr | None]) -> SafeStr:
+    """Join already-minted parts with a closed separator (a joint `a+b` name)."""
+    if sep not in JOIN_SEPARATORS:
+        raise ValueError("unknown separator")
+    return _mint_str(sep.join(p if type(p) is SafeStr else UNRECOGNIZED for p in parts))
+
+
+# ---------------------------------------------------------------------------
+# Exception and warning type names: static classes from allowlisted modules only.
+# ---------------------------------------------------------------------------
+
+
+def safe_cls_name(cls: Any, fallback: str = "Exception") -> SafeStr:
+    """The class name when it is statically defined in an allowlisted module, else `fallback`.
+
+    A dynamically built class (`type(f"Err_{secret}", ...)`) is not bound under its
+    name in its module, so even one created inside an allowlisted package collapses.
+    """
+    fallback_safe = _mint_str("Warning" if fallback == "Warning" else "Exception")
+    if not isinstance(cls, type):
+        return fallback_safe
+    mod = getattr(cls, "__module__", None)
+    name = getattr(cls, "__qualname__", None)
+    if type(mod) is not str or type(name) is not str or not _TYPE_IDENT.fullmatch(name):
+        return fallback_safe
+    if not any(mod == p or mod.startswith(p + ".") for p in _TYPE_MODULES):
+        return fallback_safe
+    module = sys.modules.get(mod)
+    if module is None or module.__dict__.get(name) is not cls:
+        return fallback_safe
+    return _mint_str(name)
+
+
+def exc_label(exc: BaseException) -> SafeStr:
+    return safe_cls_name(type(exc), "Exception")
+
+
+def known_type_name(value: Any) -> SafeStr | None:
+    """An engine-reported exception type NAME (a string): kept only when it names an
+    allowlisted static exception class, else the generic `Exception`."""
+    if value is None:
+        return None
+    if type(value) is not str or not _TYPE_IDENT.fullmatch(value):
+        return _mint_str("Exception")
+    stack: list[type] = [BaseException]
+    seen: set[type] = set()
+    while stack:
+        cls = stack.pop()
+        if cls in seen:
+            continue
+        seen.add(cls)
+        if cls.__name__ == value and safe_cls_name(cls) == value:
+            return _mint_str(value)
+        stack.extend(cls.__subclasses__())
+    return _mint_str("Exception")
+
+
+# ---------------------------------------------------------------------------
+# Projections: closed schemas, SafeStr-only strings.
+# ---------------------------------------------------------------------------
+
+_FIELD_RECORD = {
+    "name", "dtype", "null_rate", "distinct_count", "pii_score", "pii_bucket",
+    "pii_candidate", "detector_hits",
+}  # fmt: skip
+_DIFF_ROW = {
+    "name",
+    "pii_score",
+    "pii_bucket",
+    "old_score",
+    "new_score",
+    "old_bucket",
+    "new_bucket",
+}
+_DIFF_GROUPS = {
+    "added", "removed", "pii_increased", "pii_decreased", "qi_groups_added", "qi_groups_removed",
+}  # fmt: skip
+_INTEGRITY = {
+    "source_schema_version", "generated_at", "pass_count", "warning_count", "fail_count",
+    "error_count", "pass_failed_with", "buckets", "residual_pii", "fk_preservation",
+    "policy_validation", "note", "findings", "severities",
+    "table", "column", "detector", "severity", "match_rate", "sample_match_count",
+    "configured_strategy", "source_identity_rate", "source_compared",
+    "parent_table", "parent_column", "child_table", "child_column", "orphan_count",
+    "total_child_rows", "orphan_rate", "namespace",
+    "strategy", "source_distinct", "output_distinct", "bytes_identical",
+}  # fmt: skip
+_FIDELITY = {
+    "source_schema_version", "generated_at", "grade", "overall_score", "marginal_score",
+    "pairwise_score", "shape_score", "diagnostic_passed", "source_row_count",
+    "output_row_count", "sampled", "sample_size", "columns", "pairs", "warnings",
+    "omissions", "policy", "note",
+    "name", "score", "comparable", "method", "shape_method",
+    "source", "code", "column", "kind", "severity", "threshold", "metric", "reason",
+    "schema_version", "verdict", "mode", "violations", "check", "expected", "actual",
+}  # fmt: skip
+
+_PROFILE = {
+    "row_count", "field_count", "sample_strategy", "pii_candidate_count", "pii_note",
+    "reid_risk_score", "quasi_identifier_groups", "saved", "fields", *_FIELD_RECORD,
+}  # fmt: skip
+_FIELD_LIST = {"matched", "total", "fields", "name", "pii_score", "pii_bucket", "quasi_identifier"}
+_FIELD_DETAIL = {
+    "field", "pii_bucket", "quasi_identifier_groups", "sentinel_count", "values_withheld",
+    *_FIELD_RECORD,
+}  # fmt: skip
+_DIFF = {"summary", "changes", "drift", "reid_risk_delta", *_DIFF_GROUPS, *_DIFF_ROW}
+
+SCHEMAS: Mapping[str, frozenset[str]] = MappingProxyType(
+    {
+        "pre-scan-profile/v1": frozenset(_PROFILE),
+        "pre-scan-fields/v1": frozenset(_FIELD_LIST),
+        "pre-scan-field/v1": frozenset(_FIELD_DETAIL),
+        "pre-scan-diff/v1": frozenset(_DIFF),
+        "integrity-report/v1": frozenset(_INTEGRITY),
+        "fidelity-report/v1": frozenset(_FIDELITY),
+    }
+)
+
+SafeScalar = SafeStr | int | float | bool | None
+
+
+@dataclass(frozen=True)
+class Projection:
+    """A value-free payload. Construct only with `mint`."""
+
+    schema: str
+    body: Mapping[str, Any]
+    token: object = None
+
+    def __post_init__(self) -> None:
+        if self.token is not _MINT:
+            raise TypeError("Projection is minted by decoy.cli._value_free.mint only")
+        keys = SCHEMAS.get(self.schema)
+        if keys is None:
+            raise TypeError("unknown projection schema")
+        check_safe_payload(self.body, keys)
+
+    def json(self) -> dict[str, Any]:
+        return {"schema_version": self.schema, **self.body}
+
+
+def mint(schema: str, body: dict[str, Any]) -> Projection:
+    return Projection(schema, MappingProxyType(body), _MINT)
+
+
+def is_minted(value: Any) -> bool:
+    return isinstance(value, Projection) and value.token is _MINT
+
+
+def check_safe_payload(value: Any, keys: frozenset[str]) -> None:
+    """Refuse a plain `str` anywhere, and any key outside the schema or the key grammar."""
+    if value is None or type(value) in (bool, int):
+        return
+    if type(value) is SafeStr:
+        return
+    if isinstance(value, str):
+        raise TypeError("a plain str cannot cross the value-free boundary; mint a SafeStr")
+    if type(value) is float:
+        if not math.isfinite(value):
+            raise TypeError("non-finite number in projection")
+        return
+    if isinstance(value, Mapping):
+        for k, v in value.items():
+            if type(k) is str and k not in keys:
+                raise TypeError("projection key is not in the schema")
+            if type(k) not in (str, SafeStr) or not _KEY_IDENT.fullmatch(k):
+                raise TypeError("projection keys must be schema identifiers")
+            check_safe_payload(v, keys)
+        return
+    if type(value) in (list, tuple):
+        for v in value:
+            check_safe_payload(v, keys)
+        return
+    raise TypeError(f"{safe_cls_name(type(value))} cannot cross the value-free boundary")
+
 
 # ---------------------------------------------------------------------------
 # Closed reason table: the only error text these commands can print.
@@ -138,9 +379,20 @@ REASONS: Mapping[str, Reason] = MappingProxyType(
             "check_failed", "integrity check failed.", _NO_TRACE, EXIT_RUNTIME
         ),
         # shared
+        "verbose_and_quiet": Reason(
+            "usage_error",
+            "--verbose and --quiet are mutually exclusive.",
+            "pick one -- `-v` for diagnostics, `-q` to silence stdout.",
+        ),
+        "json_and_quiet": Reason(
+            "usage_error",
+            "--json and --quiet are mutually exclusive.",
+            "use `--json` for structured stdout, `--quiet` for none.",
+        ),
         "report_write_failed": Reason(
             "write_failed", "could not write the report file.", None, EXIT_RUNTIME
         ),
+        "interrupted": Reason("interrupted", "interrupted.", None, 130),
         "unexpected": Reason("internal_error", "unexpected failure.", _NO_TRACE, EXIT_RUNTIME),
     }
 )
@@ -153,6 +405,29 @@ NOTICES: Mapping[str, str] = MappingProxyType(
         ),
     }
 )
+
+# Labels a Surface may carry; the envelope `command` field is one of these.
+COMMANDS = frozenset(
+    {
+        "pre-scan",
+        "pre-scan fields",
+        "pre-scan show",
+        "pre-scan diff",
+        "post-scan",
+        "post-scan integrity",
+        "post-scan fidelity",
+    }
+)
+ENVELOPE_STATUSES = frozenset({"ok", "findings", "pass", "warn", "fail", "error"})
+
+
+class StageId(str, Enum):
+    """The closed set of progress stage labels."""
+
+    LOAD_SOURCE = "Load source"
+    PROFILE_COLUMNS = "Profile columns"
+    SUMMARIZE = "Summarize"
+
 
 # ---------------------------------------------------------------------------
 # Typed locations: positions and closed rule codes, never the offending value.
@@ -221,242 +496,3 @@ class LayoutError(ValueError):
             raise ValueError("layout index must be a non-negative ordinal")
         super().__init__(rule)
         self.location = Location("layout", index=index, key=key, rule=rule)
-
-
-def exc_label(exc: BaseException) -> str:
-    """The exception type name -- the only part of an exception that is safe."""
-    return type(exc).__name__
-
-
-# ---------------------------------------------------------------------------
-# Projections: the only payload a Surface will serialize.
-# ---------------------------------------------------------------------------
-
-_MINT = object()
-
-
-@dataclass(frozen=True)
-class Projection:
-    """A value-free payload. Construct only through `decoy.cli._projections`."""
-
-    schema: str
-    body: Mapping[str, Any]
-    token: object = None
-
-    def __post_init__(self) -> None:
-        if self.token is not _MINT:
-            raise TypeError("Projection is minted by decoy.cli._projections only")
-        _check_json(self.body)
-
-    def json(self) -> dict[str, Any]:
-        return {"schema_version": self.schema, **self.body}
-
-
-def mint(schema: str, body: dict[str, Any]) -> Projection:
-    return Projection(schema, MappingProxyType(body), _MINT)
-
-
-def _check_json(value: Any) -> None:
-    if value is None or isinstance(value, (str, bool, int)):
-        return
-    if isinstance(value, float):
-        if not math.isfinite(value):
-            raise TypeError("non-finite number in projection")
-        return
-    if isinstance(value, Mapping):
-        for k, v in value.items():
-            if type(k) is not str:
-                raise TypeError("projection keys must be str")
-            _check_json(v)
-        return
-    if isinstance(value, (list, tuple)):
-        for v in value:
-            _check_json(v)
-        return
-    raise TypeError(f"{type(value).__name__} cannot cross the value-free boundary")
-
-
-# ---------------------------------------------------------------------------
-# The Surface.
-# ---------------------------------------------------------------------------
-
-
-class Printer:
-    """What a renderer may do: print projection fields, tables and cards to stdout."""
-
-    def __init__(self, state: OutputState) -> None:
-        self._state = state
-
-    def line(self, *parts: Any) -> None:
-        self._state.console.print(*parts)
-
-    def table(self, *headers: str, rows: list[tuple[Any, ...]], title: str | None = None) -> None:
-        tbl = make_table(*headers, title=title)
-        for row in rows:
-            tbl.add_row(*row)
-        self._state.console.print(tbl)
-
-    def card(self, command: str, facts: list[tuple[str, str]], next_hint: str | None, status: str):
-        render_card(self._state, command=command, facts=facts, next_hint=next_hint, status=status)
-
-
-class Surface:
-    def __init__(self, command: str, json_: bool, quiet: bool, verbose: bool) -> None:
-        self.command = command
-        self.state = setup_output(json_, quiet, verbose)
-
-    @property
-    def mode(self) -> OutputMode:
-        return self.state.mode
-
-    def fail(
-        self,
-        reason: str,
-        *,
-        exc: BaseException | None = None,
-        location: Location | None = None,
-        suggestion: str | None = None,
-    ) -> NoReturn:
-        """Emit a closed-reason error and exit.
-
-        `suggestion` must already be a policed name from a projection.
-        """
-        r = REASONS[reason]
-        hint_text = f"did you mean {suggestion}?" if suggestion else r.hint
-        if self.mode is OutputMode.json:
-            payload: dict[str, Any] = {
-                "command": self.command,
-                "status": "error",
-                "code": r.code,
-                "reason": reason,
-                "error": r.message,
-            }
-            if location is not None:
-                payload["location"] = location.as_json()
-            if exc is not None:
-                payload["error_type"] = exc_label(exc)
-            _emit(payload)
-        else:
-            err = self.state.err_console
-            detail = [r.message]
-            if location is not None:
-                detail.append(f"({location.text()})")
-            if exc is not None:
-                detail.append(f"[{exc_label(exc)}]")
-            err.print(error("error:"), " ".join(detail))
-            if hint_text and self.mode is not OutputMode.quiet:
-                err.print(" ", hint("hint:"), hint_text)
-        raise typer.Exit(code=r.exit_code)
-
-    def notice(self, key: str) -> None:
-        self.state.err_console.print(warn("warning:"), NOTICES[key])
-
-    def emit(
-        self,
-        projection: Projection,
-        *,
-        status: str,
-        render: Callable[[Printer, Mapping[str, Any]], None] | None = None,
-        extra: Mapping[str, str] | None = None,
-    ) -> None:
-        """`--json`: the projection under a command/status envelope; default: `render`."""
-        _require(projection)
-        if self.mode is OutputMode.json:
-            _emit({"command": self.command, "status": status, **(extra or {}), **projection.json()})
-        elif self.mode is OutputMode.default and render is not None:
-            render(Printer(self.state), projection.body)
-
-    def stream(self, projection: Projection) -> None:
-        """`--output -`: the bare projection on stdout."""
-        _require(projection)
-        _emit(projection.json())
-
-    def write(self, path: Path, projection: Projection) -> None:
-        _require(projection)
-        try:
-            path.write_text(_json.dumps(projection.json(), indent=2), encoding="utf-8")
-        except Exception as exc:
-            self.fail("report_write_failed", exc=exc)
-
-    def write_saved_scan(self, path: Path, profile_dict: dict[str, Any]) -> None:
-        """The one raw artifact: the full profile the user asked to save, minus its path."""
-        saved = {**profile_dict, "source_label": "source"}
-        try:
-            path.write_text(_json.dumps(saved, indent=2), encoding="utf-8")
-        except Exception as exc:
-            self.fail("report_write_failed", exc=exc)
-
-    @contextmanager
-    def engine(self) -> Iterator[None]:
-        """Run engine/pandas code with its warnings and log records held back."""
-        previous_disable = logging.root.manager.disable
-        logging.disable(logging.CRITICAL)
-        try:
-            with warnings.catch_warnings(record=True) as caught:
-                warnings.simplefilter("always")
-                yield
-        finally:
-            logging.disable(previous_disable)
-        if self.state.verbose and caught:
-            kinds = Counter(w.category.__name__ for w in caught)
-            summary = ", ".join(f"{name} x{n}" for name, n in sorted(kinds.items()))
-            self.state.err_console.print(
-                hint("debug:"), f"{len(caught)} engine warning(s) withheld ({summary})."
-            )
-
-
-def _require(projection: Projection) -> None:
-    if not isinstance(projection, Projection) or projection.token is not _MINT:
-        raise TypeError("only a minted Projection can cross the value-free boundary")
-
-
-def _emit(payload: dict[str, Any]) -> None:
-    import sys
-
-    sys.stdout.write(_json.dumps(payload) + "\n")
-    sys.stdout.flush()
-
-
-# ---------------------------------------------------------------------------
-# Command and group guards.
-# ---------------------------------------------------------------------------
-
-
-def guarded(command: str) -> Callable[[Callable[..., None]], Callable[..., None]]:
-    """Wrap a command so any escaped exception is a type-name-only error."""
-
-    def deco(fn: Callable[..., None]) -> Callable[..., None]:
-        @functools.wraps(fn)
-        def wrapper(*args: Any, **kwargs: Any) -> None:
-            try:
-                fn(*args, **kwargs)
-            except (typer.Exit, typer.Abort, UsageError):
-                raise
-            except Exception as exc:
-                surface = Surface(
-                    command, bool(kwargs.get("json_")), bool(kwargs.get("quiet")), False
-                )
-                surface.fail("unexpected", exc=exc)
-
-        wrapper.__value_free_guard__ = command  # type: ignore[attr-defined]
-        return wrapper
-
-    return deco
-
-
-def value_free_usage_errors(base: type[TyperGroup]) -> type[TyperGroup]:
-    """Wrap a group so Click usage errors name only the declared parameter."""
-
-    class _ValueFreeGroup(base):  # type: ignore[valid-type, misc]
-        def invoke(self, ctx):  # type: ignore[override]
-            try:
-                return super().invoke(ctx)
-            except UsageError as exc:
-                param = getattr(exc, "param", None)
-                name = getattr(param, "name", None)
-                where = f" for '{name}'" if isinstance(name, str) and name.isidentifier() else ""
-                typer.echo(f"error: invalid usage{where} (usage_error).", err=True)
-                typer.echo("  hint: run the command with --help.", err=True)
-                ctx.exit(2)
-
-    return _ValueFreeGroup

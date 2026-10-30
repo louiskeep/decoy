@@ -1,112 +1,83 @@
-"""Build-failing sentry: pre-scan and post-scan reach a surface only through the boundary.
+"""Build-failing sentry, part 1: the value-free boundary is exclusive by construction.
 
-Two halves, both required:
+Exclusivity proofs (allowlists, not spelling denylists):
 
-1. Structure (AST). `pre_scan.py` and `post_scan.py` cannot print, serialize, write
-   files or touch a console themselves; an exception they catch can only be handed
-   to the boundary as `exc=`; every registered command is wrapped by
-   `_value_free.guarded`; a `Projection` cannot be built outside the projections
-   module. A new call site that bypasses the boundary fails here, not in review.
+1. Structure. `pre_scan.py`, `post_scan.py` and `_projections.py` may import only an
+   explicit allowlist (no `os`, `io`, `sys`, `builtins`, `subprocess`, `shutil`,
+   `tempfile`, `logging`, `warnings`, `rich` or `decoy.ui.*`), may not touch an
+   I/O-capable builtin or attribute, may not construct a boundary type, and may hand
+   `Surface.emit` only a pure renderer. `write_saved_scan` has exactly one call site.
+   Every check is proven non-vacuous by seeding each evasion and watching it go red.
+2. Boundary membership. Every pre-scan/post-scan command is a `ValueFreeCommand`
+   under a `ValueFreeGroup`, and refuses to run outside the boundary.
+3. Semantics. `SafeStr` is the only string a projection accepts and it cannot be
+   minted outside the policy constructors; a recursive auto-poisoner fuzzes every
+   projection builder and every string in every output must be a `SafeStr` with no
+   canary in it.
 
-2. Canaries. Distinct tokens are seeded into a source path, a table name, invalid
-   layout values, every free-text and identifier field of the engine reports, engine
-   exception messages, engine warnings and log records, and the `--report-out`,
-   `--output` and `--debug-log` paths. Every surface -- stdout, stderr, the JSON
-   envelope, the written report, captured logs, `--verbose` -- is scanned across
-   pre-scan (and fields/show/diff), post-scan integrity and post-scan fidelity, on
-   success and error paths.
-
-Policy the canaries respect by design: a short clean-charset COLUMN name is schema
-and is printed (same rule as the platform's `fidelity-report/v1`), so column
-canaries here use characters a column name policy must reject. Table names are
-always opaque, so the table canary is clean-charset on purpose. The pre-scan
-`--output FILE` saved scan is the one explicit raw artifact: it may hold cell
-values, but never a path, exception text or layout value.
+Part 2 (runtime containment, write audit and the canary corpus) is
+`test_value_free_canaries.py`.
 """
 
 from __future__ import annotations
 
 import ast
-import json as _json
-import logging
-import warnings
+import io
+import random
+import sys
 from pathlib import Path
 from typing import Any
 
-import pandas as pd
 import pytest
-from typer.testing import CliRunner
 
-from decoy.__main__ import app
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+import _value_free_checks as checks
+
+from decoy.cli import _boundary as bd
+from decoy.cli import _projections as proj
 from decoy.cli import _value_free as vf
 
-runner = CliRunner()
 SRC = Path(__file__).resolve().parents[2] / "src" / "decoy" / "cli"
 COMMAND_MODULES = ("pre_scan.py", "post_scan.py")
+GUARDED_MODULES = (*COMMAND_MODULES, "_projections.py")
 
-PATH = "QZPATH5180"
-TABLE = "QZTABLE6291"
-LAYOUT_NUM = "7302914856"
-LAYOUT_TXT = "QZLAYOUT4417"
 ENGINE = "QZENGINE8823"
-EXC = "QZEXC1937"
-WARN = "QZWARN2046"
-REPORT = "QZREPORT3375"
-DEBUG = "QZDEBUG5591"
 CELL = "QZCELL9904"
-CANARIES = (PATH, TABLE, LAYOUT_NUM, LAYOUT_TXT, ENGINE, EXC, WARN, REPORT, DEBUG, CELL)
-DIRTY_COL = f"/var/{ENGINE}/col"
-MODES = {"text": [], "json": ["--json"], "verbose": ["-v"], "quiet": ["-q"]}
+LAYOUT_TXT = "QZLAYOUT4417"
+POISON = f"/{ENGINE}/{CELL}"
 
 
-# ---------------------------------------------------------------------------
-# 1. Structure
-# ---------------------------------------------------------------------------
-
-BANNED_NAMES = {
-    "print",
-    "emit_json",
-    "setup_output",
-    "render_card",
-    "make_table",
-    "sanitize_yaml_error",
-    "OutputState",
-    "Projection",
-    "mint",
-    "repr",
-}
-BANNED_ATTRS = {
-    "console",
-    "err_console",
-    "stdout",
-    "stderr",
-    "write_text",
-    "write_bytes",
-    "echo",
-    "dumps",
-    "dump",
-    "mint",
-    "write_saved_scan_raw",
-}
+def _source(name: str) -> str:
+    return (SRC / name).read_text(encoding="utf-8")
 
 
 def _tree(name: str) -> ast.Module:
-    return ast.parse((SRC / name).read_text(encoding="utf-8"))
+    return ast.parse(_source(name))
 
 
-@pytest.mark.parametrize("module", COMMAND_MODULES)
-def test_command_modules_have_no_direct_output_path(module: str) -> None:
-    hits = []
-    for node in ast.walk(_tree(module)):
-        if isinstance(node, ast.Name) and node.id in BANNED_NAMES:
-            hits.append(f"{node.lineno}: name {node.id}")
-        if isinstance(node, ast.Attribute) and node.attr in BANNED_ATTRS:
+# ---------------------------------------------------------------------------
+# 1. Structure: import + capability allowlist.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("module", GUARDED_MODULES)
+def test_guarded_modules_pass_import_and_capability_allowlist(module: str) -> None:
+    hits = checks.module_violations(_source(module), command=module in COMMAND_MODULES)
+    assert not hits, f"{module} reaches past the value-free boundary: {hits}"
+
+
+def test_contract_module_is_pure() -> None:
+    """`_value_free.py` (the F31-liftable contract) does no I/O."""
+    allowed = checks.PURE_IMPORTS | {"sys", "types", "decoy.cli.exit_codes"}
+    tree = _tree("_value_free.py")
+    hits = checks.import_violations(tree, allowed)
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Attribute) and node.attr in checks.FORBIDDEN_ATTRS:
             hits.append(f"{node.lineno}: .{node.attr}")
-        if isinstance(node, ast.alias) and node.name in BANNED_NAMES:
-            hits.append(f"{node.lineno}: import {node.name}")
-        if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id == "open":
-            hits.append(f"{node.lineno}: open()")
-    assert not hits, f"{module} bypasses the value-free boundary: {hits}"
+        if isinstance(node, ast.Name) and node.id in {"open", "print", "input", "eval", "exec"}:
+            hits.append(f"{node.lineno}: {node.id}")
+    assert not hits, hits
 
 
 @pytest.mark.parametrize("module", COMMAND_MODULES)
@@ -139,34 +110,163 @@ def test_caught_exceptions_only_reach_the_boundary_as_exc(module: str) -> None:
             continue
         for stmt in handler.body:
             for node in ast.walk(stmt):
-                if isinstance(node, ast.Name) and node.id == handler.name and id(node) not in allowed:
+                if (
+                    isinstance(node, ast.Name)
+                    and node.id == handler.name
+                    and id(node) not in allowed
+                ):
                     bad.append(f"{node.lineno}: {handler.name}")
     assert not bad, f"{module} uses a caught exception outside `exc=`: {bad}"
 
 
-def test_every_command_is_guarded() -> None:
-    from decoy.cli.post_scan import post_scan_app
-    from decoy.cli.pre_scan import pre_scan_app
+@pytest.mark.parametrize("module", COMMAND_MODULES)
+def test_every_renderer_is_pure(module: str) -> None:
+    hits = checks.emit_renderer_violations(_source(module))
+    assert not hits, f"{module} renderer is not pure: {hits}"
 
-    for typer_app in (pre_scan_app, post_scan_app):
-        assert typer_app.registered_commands
-        for cmd in typer_app.registered_commands:
-            assert getattr(cmd.callback, "__value_free_guard__", None), cmd.name
+
+def test_write_saved_scan_has_exactly_one_call_site() -> None:
+    sources = {p.name: p.read_text(encoding="utf-8") for p in SRC.rglob("*.py")}
+    sites = checks.saved_scan_call_sites(sources)
+    assert [name for name, _ in sites] == ["pre_scan.py"], sites
+
+
+# ---------------------------------------------------------------------------
+# 1b. Non-vacuity: each seeded evasion turns the structural sentry red.
+# ---------------------------------------------------------------------------
+
+SEEDED_EVASIONS = {
+    "path_open_write": 'def _x(x):\n    Path("x").open("w").write(x)\n',
+    "io_open": 'import io\nio.open("x", "w")\n',
+    "os_write": 'import os\nos.write(1, b"x")\n',
+    "builtins_print": 'import builtins\nbuiltins.print("x")\n',
+    "getattr_write_text": 'getattr(Path("x"), "write_text")("x")\n',
+    "import_subprocess": "import subprocess\n",
+    "from_subprocess": "from subprocess import run\n",
+    "import_logging": "import logging\n",
+    "import_warnings": "import warnings\n",
+    "import_rich": "from rich.console import Console\n",
+    "import_ui": "from decoy.ui.output import setup_output\n",
+    "import_shutil": "import shutil\n",
+    "import_tempfile": "import tempfile\n",
+    "sys_stdout": 'import sys\nsys.stdout.write("x")\n',
+    "print": 'print("x")\n',
+    "dunder_import": '__import__("os").write(1, b"x")\n',
+    "mint_token": 'vf.SafeStr("x", vf._MINT)\n',
+    "mint_private": 'vf._mint_str("x")\n',
+    "construct_surface": 'bd.Surface("pre-scan", None, None, False, False, False)\n',
+    "construct_printer": "Printer(None, None)\n",
+    "private_stream": 'surface._out.write("x")\n',
+    "private_state": "surface._state.console.print(1)\n",
+    "dataframe_writer": 'df.to_csv("x")\n',
+    "json_dump": "_json.dump({}, fh)\n",
+    "typer_echo": 'typer.echo("x")\n',
+    "boundary_internal": "from decoy.cli._boundary import _ACTIVE\n",
+    "relative_import": "from . import _boundary\n",
+}
+
+
+@pytest.mark.parametrize("module", GUARDED_MODULES)
+@pytest.mark.parametrize("label", sorted(SEEDED_EVASIONS))
+def test_sentry_catches_seeded_evasions(module: str, label: str) -> None:
+    seeded = _source(module) + "\n" + SEEDED_EVASIONS[label]
+    assert checks.module_violations(seeded, command=module in COMMAND_MODULES), label
+
+
+@pytest.mark.parametrize(
+    ("module", "snippet"),
+    [
+        ("post_scan.py", 'surface.write_saved_scan(Path("x"), {})\n'),
+        ("pre_scan.py", 'surface.write_saved_scan(Path("y"), {})\n'),
+        ("_boundary.py", 'Surface.write_saved_scan(None, Path("z"), {})\n'),
+        ("post_scan.py", "fn = surface.write_saved_scan\n"),
+        ("post_scan.py", 'getattr(surface, "write_saved_scan")\n'),
+    ],
+)
+def test_saved_scan_lock_catches_a_second_call_site(module: str, snippet: str) -> None:
+    sources = {p.name: p.read_text(encoding="utf-8") for p in SRC.rglob("*.py")}
+    sources[module] += "\n" + snippet
+    names = [name for name, _ in checks.saved_scan_call_sites(sources)]
+    assert names != ["pre_scan.py"], names
+
+
+IMPURE_RENDERERS = {
+    "global_read": "SECRET = 1\ndef _r(p, body):\n    p.line(SECRET)\n",
+    "fstring": 'def _r(p, body):\n    p.line(p.t(f"{body}"))\n',
+    "data_template": 'def _r(p, body):\n    p.line(p.t(body["name"]))\n',
+    "data_separator": 'def _r(p, body):\n    p.line(p.join(body["sep"], []))\n',
+    "data_header": 'def _r(p, body):\n    p.table(body["h"], rows=[])\n',
+    "data_style": 'def _r(p, body):\n    p.line(p.t("x", style=body["s"]))\n',
+    "data_card_status": 'def _r(p, body):\n    p.card("c", [], None, body["s"])\n',
+    "str_method": 'def _r(p, body):\n    p.line(body["name"].upper())\n',
+    "str_builtin": "def _r(p, body):\n    p.line(str(body))\n",
+    "private_printer": "def _r(p, body):\n    p._Printer__state.console.print(body)\n",
+    "nested_def": "def _r(p, body):\n    def inner():\n        return 1\n    p.line(inner())\n",
+    "lambda": "def _r(p, body):\n    p.line((lambda: 1)())\n",
+    "not_p": "def _r(out, body):\n    out.line()\n",
+    "impure_helper": "def _h(p):\n    print(1)\ndef _r(p, body):\n    _h(p)\n",
+    "global_stmt": "X = 0\ndef _r(p, body):\n    global X\n    p.line()\n",
+}
+
+
+@pytest.mark.parametrize("label", sorted(IMPURE_RENDERERS))
+def test_renderer_check_catches_impure_renderers(label: str) -> None:
+    source = IMPURE_RENDERERS[label] + 'surface.emit(x, status="ok", render=_r)\n'
+    assert checks.emit_renderer_violations(source), label
+
+
+def test_renderer_check_rejects_non_name_render() -> None:
+    assert checks.emit_renderer_violations('surface.emit(x, status="ok", render=lambda p, b: 1)\n')
+
+
+# ---------------------------------------------------------------------------
+# 2. Boundary membership.
+# ---------------------------------------------------------------------------
+
+
+def test_every_command_runs_inside_the_boundary() -> None:
+    import typer
+
+    from decoy.__main__ import app
+
+    root = typer.main.get_command(app)
+    for name in ("pre-scan", "post-scan"):
+        group = root.commands[name]  # type: ignore[attr-defined]
+        assert type(group).__name__ == "ValueFreeGroup", name
+        assert group.commands
+        for leaf in group.commands.values():
+            assert isinstance(leaf, bd.ValueFreeCommand), (name, leaf.name)
+
+
+def test_callbacks_refuse_to_run_outside_the_boundary() -> None:
+    from decoy.cli import post_scan, pre_scan
+
+    with pytest.raises(RuntimeError):
+        bd.surface("pre-scan", json_=False, quiet=False, verbose=False)
+    with pytest.raises(RuntimeError):
+        pre_scan._fields(scan="-", pii=None, quasi=False, json_=False, quiet=False, verbose=False)
+    with pytest.raises(RuntimeError):
+        post_scan._integrity(
+            masked=Path("m"), source=Path("s"), config=None, out=None,
+            allow_source_mismatch=False, json_=False, quiet=False, verbose=False,
+        )  # fmt: skip
 
 
 def test_projection_cannot_be_forged_and_raw_dicts_cannot_be_emitted(tmp_path: Path) -> None:
     with pytest.raises(TypeError):
         vf.Projection("x/v1", {"a": 1})
-    surface = vf.Surface("t", True, False, False)
+    surface = bd.Surface("pre-scan", io.StringIO(), io.StringIO(), True, False, False)
     for call in (
         lambda: surface.emit({"raw": ENGINE}, status="ok"),  # type: ignore[arg-type]
         lambda: surface.stream({"raw": ENGINE}),  # type: ignore[arg-type]
-        lambda: surface.write(tmp_path / "r.json", {"raw": ENGINE}),  # type: ignore[arg-type]
+        lambda: surface.write_report(tmp_path / "r.json", {"raw": ENGINE}),  # type: ignore[arg-type]
     ):
         with pytest.raises(TypeError):
             call()
     with pytest.raises(TypeError):
         vf.mint("x/v1", {"bad": object()})
+    with pytest.raises(TypeError):
+        vf.mint("pre-scan-fields/v1", {"matched": object()})
 
 
 def test_reasons_and_layout_errors_are_closed() -> None:
@@ -181,7 +281,7 @@ def test_reasons_and_layout_errors_are_closed() -> None:
 
 
 def test_projections_never_read_engine_free_text() -> None:
-    text = (SRC / "_projections.py").read_text(encoding="utf-8")
+    text = _source("_projections.py")
     for key in ('"message"', '"detail"', '"source_label"', '"sample_invalid"', '"samples"'):
         assert f".get({key})" not in text and f"[{key}]" not in text, key
     # Raw value containers may only be tested for presence, never read.
@@ -189,344 +289,189 @@ def test_projections_never_read_engine_free_text() -> None:
 
 
 # ---------------------------------------------------------------------------
-# 2. Canaries
+# 3. Semantics: SafeStr is a closed type.
 # ---------------------------------------------------------------------------
 
 
-@pytest.fixture
-def work(tmp_path: Path) -> Path:
-    d = tmp_path / f"d_{PATH}"
-    d.mkdir()
-    return d
+def test_safestr_is_minted_only_by_policy_constructors() -> None:
+    for args in (("x",), ("x", object()), ("x", None)):
+        with pytest.raises(TypeError):
+            vf.SafeStr(*args)
+    assert type(vf.literal("ok")) is vf.SafeStr
+    assert vf.vocab(f"{ENGINE}", frozenset({"a"})) == vf.UNRECOGNIZED
+    assert vf.clean_name(POISON) is None
+    assert vf.iso_timestamp(ENGINE) is None
+    with pytest.raises(ValueError):
+        vf.opaque_label(ENGINE, 1)
+    with pytest.raises(ValueError):
+        vf.join_safe(ENGINE, [])
 
 
-@pytest.fixture
-def source(work: Path) -> Path:
-    p = work / f"src_{PATH}.csv"
-    pd.DataFrame(
-        {
-            "email": [CELL] * 6 + ["a@x.com", "b@x.com", "c@x.com", "d@x.com"],
-            "n": list(range(10)),
-        }
-    ).to_csv(p, index=False)
-    return p
+@pytest.mark.parametrize(
+    "body",
+    [
+        {"matched": "raw_plain_str"},
+        {"matched": vf.literal("a") + "b"},  # derived strings are plain str
+        {"matched": f"{vf.literal('a')}"},
+        {"matched": vf.literal("a").upper()},
+        {"fields": [{"name": "raw"}]},
+        {ENGINE: 1},  # plain key outside the schema
+        {"fields": [{vf.literal("Bad Key"): 1}]},  # minted key outside the key grammar
+        {"matched": float("nan")},
+    ],
+)
+def test_mint_refuses_plain_str_unknown_keys_and_non_finite(body: dict[str, Any]) -> None:
+    with pytest.raises(TypeError):
+        vf.mint("pre-scan-fields/v1", body)
 
 
-@pytest.fixture
-def masked(work: Path, source: Path) -> Path:
-    # The file stem would become the table name if the CLI derived one from it.
-    p = work / f"{TABLE}.csv"
-    p.write_text(source.read_text())
-    return p
+def test_mint_refuses_unknown_schema() -> None:
+    with pytest.raises(TypeError):
+        vf.mint(f"{ENGINE}/v1", {})
 
 
-def _scan(result, caplog, *files: Path, raw_artifacts: tuple[Path, ...] = ()) -> None:
-    """`raw_artifacts` (the pre-scan saved scan) may hold engine profile content and
-    cell values; never a path, table label, exception, layout value or warning."""
-    parts = [result.stdout or "", result.stderr or ""]
-    if result.exception is not None and not isinstance(result.exception, SystemExit):
-        parts.append(f"UNCAUGHT {type(result.exception).__name__}: {result.exception}")
-    parts.extend(r.getMessage() for r in caplog.records)
-    text = "\n".join(parts)
-    for canary in CANARIES:
-        assert canary not in text, f"{canary} leaked to a stream/log:\n{text}"
-    assert "Traceback" not in text
-    for f in files:
-        if not f.exists():
-            continue
-        body = f.read_text(encoding="utf-8", errors="replace")
-        for canary in CANARIES:
-            if canary in (CELL, ENGINE) and f in raw_artifacts:
-                continue
-            assert canary not in body, f"{canary} leaked into written file {f.name}"
-    assert not (result.exception is not None and not isinstance(result.exception, SystemExit))
+def test_printer_refuses_plain_strings_and_data_templates() -> None:
+    out = io.StringIO()
+    surface = bd.Surface("pre-scan", out, io.StringIO(), False, False, False)
+    projection = vf.mint("pre-scan-fields/v1", {"matched": 0, "total": 0, "fields": []})
+    attempts = [
+        lambda p, b: p.line("raw"),
+        lambda p, b: p.t(vf.literal("{}")),  # a SafeStr cannot pose as a template
+        lambda p, b: p.t("{}", "raw"),
+        lambda p, b: p.t("x", style=ENGINE),
+        lambda p, b: p.table("h", rows=[("raw",)]),
+        lambda p, b: p.card("c", [("label", 1)], None, "ok"),
+        lambda p, b: p.line(object()),
+    ]
+    for render in attempts:
+        with pytest.raises((TypeError, ValueError, KeyError)):
+            surface.emit(projection, status="ok", render=render)
+    with pytest.raises(TypeError):
+        bd.Printer(None, object())  # type: ignore[arg-type]
+    with pytest.raises(TypeError):
+        bd.Fragment(None, object())  # type: ignore[arg-type]
+    with pytest.raises(ValueError):
+        surface.emit(projection, status=ENGINE)
 
 
-def _noisy(fn):
-    """Engine stand-in that also emits a warning and log records carrying canaries."""
+def test_type_names_are_allowlisted_static_classes() -> None:
+    import json
 
-    def wrapper(*a: Any, **k: Any) -> Any:
-        warnings.warn(f"engine says {WARN} {CELL}", UserWarning, stacklevel=1)
-        logging.getLogger("decoy_engine.x").warning("engine log %s %s", WARN, TABLE)
-        logging.getLogger().error("root log %s", WARN)
-        return fn(*a, **k)
+    import yaml
 
-    return wrapper
-
-
-def _poisoned_integrity(*_a: Any, **_k: Any) -> dict[str, Any]:
-    finding = {
-        "table": TABLE,
-        "column": DIRTY_COL,
-        "detector_id": ENGINE,
-        "match_rate": 1.0,
-        "severity": ENGINE,
-        "configured_strategy": f"x/{ENGINE}",
-        "sample_match_count": 3,
-        "message": f"leak {ENGINE} {CELL} {TABLE}",
-        ENGINE: ENGINE,
-    }
-    return {
-        "schema_version": ENGINE,
-        "generated_at": ENGINE,
-        "residual_pii": [finding, {**finding, "severity": "fail", "column": "email"}],
-        "fk_preservation": [
-            {
-                "parent_table": TABLE,
-                "parent_column": DIRTY_COL,
-                "child_table": f"child_{TABLE}",
-                "child_column": "id",
-                "severity": "fail",
-                "orphan_count": 2,
-                "total_child_rows": 4,
-                "orphan_rate": 0.5,
-                "namespace": f"ns:{ENGINE}",
-                "message": ENGINE,
-            }
-        ],
-        "policy_validation": [
-            {"table": TABLE, "column": "n", "strategy": f"<{ENGINE}>", "severity": "info",
-             "message": ENGINE}
-        ],
-        "pass_count": 1,
-        "warning_count": 0,
-        "fail_count": 2,
-        "error_count": 0,
-        "pass_failed_with": f"{ENGINE}: {CELL}",
-        ENGINE: {"nested": ENGINE},
-    }
+    assert vf.safe_cls_name(ValueError) == "ValueError"
+    assert vf.safe_cls_name(json.JSONDecodeError) == "JSONDecodeError"
+    assert vf.safe_cls_name(yaml.YAMLError) == "YAMLError"
+    dynamic = type(f"Err_{CELL}", (Exception,), {})
+    assert vf.safe_cls_name(dynamic) == "Exception"
+    posing = type(f"Err_{CELL}", (Exception,), {"__module__": "decoy_engine.errors"})
+    assert vf.safe_cls_name(posing) == "Exception"
+    warn = type(f"Warn_{CELL}", (UserWarning,), {})
+    assert vf.safe_cls_name(warn, "Warning") == "Warning"
+    assert vf.safe_cls_name(UserWarning, "Warning") == "UserWarning"
+    assert vf.known_type_name("ValueError") == "ValueError"
+    assert vf.known_type_name(f"Err_{CELL}") == "Exception"
+    assert vf.known_type_name(f"{ENGINE}: {CELL}") == "Exception"
 
 
-def _poisoned_quality(*_a: Any, **_k: Any) -> dict[str, Any]:
-    return {
-        "schema_version": "quality-report/v1",
-        "generated_at": ENGINE,
-        "grade": ENGINE,
-        "overall_score": 0.4,
-        "source": {"row_count": 10, "fingerprint": ENGINE},
-        "output": {"row_count": 10, "fingerprint": ENGINE},
-        "diagnostic": {"passed": False, "checks": [{"check": ENGINE, "missing_columns": [CELL]}]},
-        "marginal": {
-            "score": 0.5,
-            "columns": [
-                {"column": DIRTY_COL, "similarity": 0.5, "method": f"unknown_kind:{ENGINE}"},
-                {"column": "email", "similarity": ENGINE, "method": ENGINE},
-            ],
-        },
-        "pairwise": {"joints": [{"columns": [DIRTY_COL, "n"], "similarity": 2.0, "method": "tvd"}]},
-        "warnings": [
-            {"source": ENGINE, "code": ENGINE, "column": DIRTY_COL, "detail": {"v": CELL}},
-        ],
-        "omissions": [{"kind": "joint", "name": f"{DIRTY_COL}+n", "reason": ENGINE}],
-        ENGINE: ENGINE,
-    }
+# ---- recursive auto-poisoner -------------------------------------------------------------------
 
 
-def _poisoned_policy(*_a: Any, **_k: Any) -> dict[str, Any]:
-    return {
-        "schema_version": "quality-policy/v1",
-        "verdict": "fail",
-        "mode": "fail",
-        "violations": [
-            {"check": ENGINE, "severity": "fail", "expected": 0.9, "actual": 0.4,
-             "detail": f"{ENGINE} {CELL}", "column": DIRTY_COL}
-        ],
-    }
+class _Poison(dict):
+    """Every lookup returns a seeded mix of dirty canary strings, nested poisoners, lists
+    and junk numbers, so every key a builder reads -- known or not -- is poisoned."""
 
+    def __init__(self, rng: random.Random, depth: int = 0) -> None:
+        super().__init__()
+        self._rng, self._depth = rng, depth
 
-from decoy_engine import profile_columns as _real_profile_columns  # noqa: E402
-
-
-def _poisoned_profile(df: Any, **_k: Any) -> Any:
-    real = _real_profile_columns(df, source_label=f"{PATH}.csv")
-    data = real.to_dict()
-    data["source_label"] = f"/home/{PATH}/{TABLE}.csv"
-    data["quasi_identifier_groups"] = [[DIRTY_COL, "n"]]
-    data["fields"].append(
-        {
-            "name": DIRTY_COL,
-            "inferred_type": ENGINE,
-            "null_rate": ENGINE,
-            "distinct_count": -1,
-            "pii_score": 0.9,
-            "detector_matches": [{"detector_id": ENGINE, "sample_misses": [CELL]}],
-            "top_values": [{"value": CELL}],
-            "sentinels": [CELL],
-        }
-    )
-
-    class _P:
-        def to_dict(self) -> dict[str, Any]:
-            return data
-
-    return _P()
-
-
-def _boom(*_a: Any, **_k: Any) -> Any:
-    raise RuntimeError(f"row {CELL} at /home/{PATH} table {TABLE} {EXC}")
-
-
-@pytest.mark.parametrize("mode", MODES, ids=list(MODES))
-def test_pre_scan_success_and_saved_scan(source, work, monkeypatch, caplog, mode) -> None:
-    caplog.set_level(logging.DEBUG)
-    import decoy_engine
-
-    monkeypatch.setattr(decoy_engine, "profile_columns", _noisy(_poisoned_profile))
-    saved = work / f"scan_{REPORT}.json"
-    for flags in ([], ["--show-fields"], ["--output", str(saved)]):
-        r = runner.invoke(app, ["pre-scan", str(source), *flags, *MODES[mode]])
-        assert r.exit_code == 0, r.output
-        _scan(r, caplog, saved, raw_artifacts=(saved,))
-    if mode == "text":
-        r = runner.invoke(app, ["pre-scan", str(source), "--output", "-"])
-        assert r.exit_code == 0
-        _scan(r, caplog)
-    assert saved.exists()
-    for argv in (
-        ["fields", str(saved)],
-        ["show", str(saved), "email"],
-        ["show", str(saved), "field-3"],
-        ["show", str(saved), f"x{DIRTY_COL}"],
-        ["diff", str(saved), str(saved)],
-        ["fields", str(work / f"missing_{PATH}.json")],
-    ):
-        r = runner.invoke(app, ["pre-scan", *argv, *MODES[mode]])
-        _scan(r, caplog)
-
-
-@pytest.mark.parametrize("mode", MODES, ids=list(MODES))
-def test_pre_scan_layout_values_never_echo(source, work, caplog, mode) -> None:
-    caplog.set_level(logging.DEBUG)
-    layouts = {
-        "neg_start": f"columns:\n  - {{name: a, start: -{LAYOUT_NUM}, width: 3}}\n",
-        "bad_width": f"columns:\n  - {{name: a, start: 0, width: {LAYOUT_TXT}}}\n",
-        "neg_width": f"columns:\n  - {{name: a, start: 0, width: -{LAYOUT_NUM}}}\n",
-        "not_list": f"columns: {LAYOUT_TXT}\n",
-        "entry": f"columns:\n  - {LAYOUT_TXT}\n",
-        "garbage": f"{{[{LAYOUT_TXT}: {LAYOUT_NUM}",
-    }
-    for label, text in layouts.items():
-        lay = work / f"layout_{label}_{PATH}.yaml"
-        lay.write_text(text)
-        r = runner.invoke(
-            app,
-            ["pre-scan", str(source), "--format", "fixed-width", "--layout", str(lay),
-             *MODES[mode]],
+    def _make(self, key: Any) -> Any:
+        r = self._rng.random()
+        if self._depth > 3 or r < 0.3:
+            return f"{POISON}:{key}"
+        if r < 0.45:
+            return _Poison(self._rng, self._depth + 1)
+        if r < 0.65:
+            return [_Poison(self._rng, self._depth + 1) for _ in range(self._rng.randint(1, 3))]
+        if r < 0.75:
+            return [f"{POISON}:{key}:{i}" for i in range(2)]
+        return self._rng.choice(
+            [float("nan"), float("inf"), -1, True, 2.5, 10**30, None, f"unknown_kind:{POISON}"]
         )
-        assert r.exit_code != 0, label
-        _scan(r, caplog)
-    if mode == "json":
-        lay = work / f"layout_neg_start_{PATH}.yaml"
-        r = runner.invoke(
-            app, ["pre-scan", str(source), "--format", "fixed-width", "--layout", str(lay), "--json"]
+
+    def get(self, key: Any, default: Any = None) -> Any:
+        if not dict.__contains__(self, key):
+            dict.__setitem__(self, key, self._make(key))
+        return dict.__getitem__(self, key)
+
+    def __getitem__(self, key: Any) -> Any:
+        return self.get(key)
+
+    def __contains__(self, key: object) -> bool:
+        return True
+
+
+def _walk_strings(value: Any) -> list[Any]:
+    found: list[Any] = []
+    if isinstance(value, str):
+        found.append(value)
+    elif isinstance(value, dict) or hasattr(value, "items"):
+        for k, v in value.items():
+            found.extend(_walk_strings(k))
+            found.extend(_walk_strings(v))
+    elif isinstance(value, (list, tuple)):
+        for v in value:
+            found.extend(_walk_strings(v))
+    return found
+
+
+def _assert_all_safe(projection: vf.Projection) -> int:
+    strings = _walk_strings(projection.body)
+    for s in strings:
+        assert type(s) is vf.SafeStr or s in vf.SCHEMAS[projection.schema], repr(s)
+        assert ENGINE not in s and CELL not in s, s
+    return len(strings)
+
+
+BUILDERS = {
+    "profile": lambda r: proj.profile(_Poison(r), include_fields=True, saved=r.random() < 0.5),
+    "field_list": lambda r: proj.field_list(
+        _Poison(r), pii=r.choice([None, "high", "none"]), quasi=r.random() < 0.5
+    ),
+    "field_detail": lambda r: proj.field_detail(_Poison(r), _Poison(r)),
+    "scan_diff": lambda r: proj.scan_diff(_Poison(r), _Poison(r)),
+    "integrity_report": lambda r: proj.integrity_report(_Poison(r)),
+    "fidelity_report": lambda r: proj.fidelity_report(_Poison(r), _Poison(r)),
+}
+
+
+@pytest.mark.parametrize("builder", sorted(BUILDERS))
+def test_projection_builders_fuzzed_with_auto_poisoner(builder: str) -> None:
+    total = 0
+    for seed in range(150):
+        total += _assert_all_safe(BUILDERS[builder](random.Random(seed)))
+    assert total > 0, f"{builder}: the fuzz never produced a string to check"
+
+
+def test_closest_field_suggestion_is_policed() -> None:
+    for seed in range(50):
+        rng = random.Random(seed)
+        scan = {"fields": [{"name": f"{POISON}:{i}"} for i in range(3)] + [_Poison(rng)]}
+        hint = proj.closest_field(scan, f"{POISON}:1")
+        assert hint is None or (
+            type(hint) is vf.SafeStr and CELL not in hint and ENGINE not in hint
         )
-        payload = _json.loads(r.stdout)
-        assert payload["reason"] == "layout_invalid"
-        assert payload["location"] == {
-            "kind": "layout", "index": 0, "key": "start", "rule": "start_negative"
-        }
 
 
-@pytest.mark.parametrize("mode", MODES, ids=list(MODES))
-def test_pre_scan_engine_exception_never_echoes(source, monkeypatch, caplog, mode) -> None:
-    caplog.set_level(logging.DEBUG)
-    import decoy_engine
-
-    monkeypatch.setattr(decoy_engine, "profile_columns", _noisy(_boom))
-    r = runner.invoke(app, ["pre-scan", str(source), *MODES[mode]])
-    assert r.exit_code == 3
-    _scan(r, caplog)
-
-
-@pytest.mark.parametrize("mode", MODES, ids=list(MODES))
-def test_post_scan_integrity_projection_only(source, masked, work, monkeypatch, caplog, mode):
-    caplog.set_level(logging.DEBUG)
-    import decoy_engine.verification as ver
-
-    cfg = work / f"cfg_{PATH}.yaml"
-    cfg.write_text(
-        f"version: 2\nsources:\n  {TABLE}:\n    path: {work / f'other_{PATH}.csv'}\n"
-        f"tables:\n  - name: {TABLE}\n    source: {TABLE}\n"
-    )
-    out = work / f"out_{REPORT}.json"
-    # Real engine first (table name from config and from the masked file stem).
-    for extra in ([], ["--config", str(cfg)]):
-        r = runner.invoke(
-            app,
-            ["post-scan", "integrity", str(masked), "--source", str(source), "--output", str(out),
-             *extra, *MODES[mode]],
-        )
-        assert r.exit_code in (0, 1, 4), r.output
-        _scan(r, caplog, out)
-    # Every engine field poisoned: success path still emits only the projection.
-    monkeypatch.setattr(ver, "run_post_mask", _noisy(_poisoned_integrity))
-    r = runner.invoke(
-        app,
-        ["post-scan", "integrity", str(masked), "--source", str(source), "--output", str(out),
-         *MODES[mode]],
-    )
-    assert r.exit_code == 4, r.output
-    _scan(r, caplog, out)
-    written = _json.loads(out.read_text())
-    assert written["schema_version"] == "integrity-report/v1"
-    assert {f["table"] for f in written["residual_pii"]} == {"table-1"}
-    # Error path.
-    monkeypatch.setattr(ver, "run_post_mask", _noisy(_boom))
-    r = runner.invoke(
-        app, ["post-scan", "integrity", str(masked), "--source", str(source), *MODES[mode]]
-    )
-    assert r.exit_code == 3
-    _scan(r, caplog)
-
-
-@pytest.mark.parametrize("mode", MODES, ids=list(MODES))
-def test_post_scan_fidelity_projection_only(source, masked, work, monkeypatch, caplog, mode):
-    caplog.set_level(logging.DEBUG)
-    import decoy_engine.quality as q
-
-    rep = work / f"fid_{REPORT}.json"
-    base = ["post-scan", "fidelity", str(source), str(masked), "--report-out", str(rep)]
-    r = runner.invoke(app, [*base, *MODES[mode]])
-    assert r.exit_code in (0, 4), r.output
-    _scan(r, caplog, rep)
-    monkeypatch.setattr(q, "compute_quality_report", _noisy(_poisoned_quality))
-    monkeypatch.setattr(q, "apply_quality_policy", _poisoned_policy)
-    r = runner.invoke(app, [*base, "--joint", "email,n", *MODES[mode]])
-    assert r.exit_code == 4, r.output
-    _scan(r, caplog, rep)
-    written = _json.loads(rep.read_text())
-    assert written["schema_version"] == "fidelity-report/v1"
-    assert written["grade"] is None
-    monkeypatch.setattr(q, "compute_quality_report", _noisy(_boom))
-    r = runner.invoke(app, [*base, *MODES[mode]])
-    assert r.exit_code == 3
-    _scan(r, caplog)
-
-
-@pytest.mark.parametrize("command", ["pre-scan", "integrity", "fidelity"])
-def test_debug_log_path_is_rejected_value_free(source, masked, work, caplog, command) -> None:
-    """There is no `--debug-log`: the flag is refused without echoing its path or writing it."""
-    log = work / f"debug_{DEBUG}.log"
-    argv = {
-        "pre-scan": ["pre-scan", str(source)],
-        "integrity": ["post-scan", "integrity", str(masked), "--source", str(source)],
-        "fidelity": ["post-scan", "fidelity", str(source), str(masked)],
-    }[command]
-    for mode in MODES.values():
-        r = runner.invoke(app, [*argv, "--debug-log", str(log), *mode])
-        assert r.exit_code != 0
-        _scan(r, caplog)
-    assert not log.exists()
-
-
-def test_unwritable_report_paths_never_echo(source, masked, work, caplog) -> None:
-    bad = work / f"no_dir_{REPORT}" / f"r_{PATH}.json"
-    for argv in (
-        ["post-scan", "integrity", str(masked), "--source", str(source), "--output", str(bad)],
-        ["post-scan", "fidelity", str(source), str(masked), "--report-out", str(bad)],
-        ["pre-scan", str(source), "--output", str(bad)],
-    ):
-        for mode in MODES.values():
-            r = runner.invoke(app, [*argv, *mode])
-            assert r.exit_code == 3, r.output
-            _scan(r, caplog)
+def test_fuzz_is_not_vacuous(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A policy that let data through is caught: by `mint` for a plain str, by the
+    canary scan for a string wrongly minted."""
+    monkeypatch.setattr(proj, "vocab", lambda value, allowed: value)
+    with pytest.raises(TypeError):
+        for seed in range(20):
+            BUILDERS["integrity_report"](random.Random(seed))
+    monkeypatch.undo()
+    monkeypatch.setattr(vf, "is_clean_name", lambda value: isinstance(value, str))
+    with pytest.raises(AssertionError):
+        for seed in range(20):
+            _assert_all_safe(BUILDERS["profile"](random.Random(seed)))

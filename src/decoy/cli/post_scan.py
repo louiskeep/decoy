@@ -13,11 +13,13 @@ verdict and none is a release decision:
 
 A check that cannot run exits non-zero; it never reads as a clean pass. The
 engine owns every algorithm: this module only loads files and calls the engine.
-Every surface (stdout, `--json`, `--output` / `--report-out`, errors,
-`--verbose`) carries only the typed projections minted by
-`decoy.cli._projections` (`integrity-report/v1`, `fidelity-report/v1`) and
-emitted by the `decoy.cli._value_free` Surface. The raw engine reports are
-never serialized: they carry table names, engine messages and free text.
+Every command runs inside the `decoy.cli._boundary` process boundary (entered
+before config validation, imports and engine calls), and every surface
+(stdout, `--json`, `--output` / `--report-out`, errors, `--verbose`) carries only
+the typed projections minted by `decoy.cli._projections` (`integrity-report/v1`,
+`fidelity-report/v1`). No cell values, file paths, table names or free-text
+diagnostics; policed column names remain. The raw engine reports are never
+serialized: they carry table names, engine messages and free text.
 """
 
 from __future__ import annotations
@@ -27,13 +29,12 @@ from pathlib import Path
 from typing import Any
 
 import typer
-from typer.core import TyperGroup
 
+from decoy.cli import _boundary as bd
 from decoy.cli import _projections as proj
 from decoy.cli import _value_free as vf
-from decoy.cli._value_free import Printer, Surface
+from decoy.cli._boundary import Fragment, Printer
 from decoy.cli.exit_codes import EXIT_FINDINGS
-from decoy.ui.theme import error, hint, risk_high, success, warn
 
 # Grade -> minimum overall_score, mirroring the engine's own grade thresholds
 # (decoy_engine.quality.report._GRADE_THRESHOLDS: A >= 0.95, B >= 0.85,
@@ -45,7 +46,7 @@ _VERBOSE_HELP = "Also print value-free diagnostics on stderr (warning counts, ex
 
 post_scan_app = typer.Typer(
     name="post-scan",
-    cls=vf.value_free_usage_errors(TyperGroup),
+    cls=bd.value_free_group(bd.TyperGroup, "post-scan"),
     help=(
         "Check a transformed output against its source: integrity (residual "
         "PII / FK / policy findings) and fidelity (distribution similarity). "
@@ -76,11 +77,12 @@ Examples:
     Exit non-zero (EXIT_FINDINGS) when the overall grade falls below B.
 
   decoy post-scan fidelity source.csv output.csv --joint state,tier --json
-    Include a (state, tier) joint fidelity score; emit the full
-    quality-report/v1 + policy JSON.
+    Include a (state, tier) joint fidelity score; emit the value-free
+    fidelity-report/v1 projection (scores, closed codes, policed column
+    names; no cell values, paths or free text) as JSON.
 
   decoy post-scan fidelity source.csv output.csv --report-out report.json
-    Also write the full report + policy verdict to disk.
+    Also write the same fidelity-report/v1 projection to disk.
 
 Exit codes: 0 pass (or warn without --fail-on-warning); 4 EXIT_FINDINGS
 when the policy verdict is fail, or warn with --fail-on-warning set;
@@ -115,7 +117,6 @@ def _build_strategy_map(config_dict: dict[str, Any]) -> dict[str, str]:
     return strategy_map
 
 
-@vf.guarded("post-scan fidelity")
 def _fidelity(
     source: Path = typer.Argument(
         ...,
@@ -229,7 +230,7 @@ def _fidelity(
     """
     import yaml as _yaml
 
-    surface = Surface("post-scan fidelity", json_, quiet, verbose)
+    surface = bd.surface("post-scan fidelity", json_=json_, quiet=quiet, verbose=verbose)
 
     joint_pairs: list[tuple[str, str]] = []
     for spec in joint:
@@ -275,33 +276,32 @@ def _fidelity(
             thresholds["overall"] = {"min": _GRADE_MIN_SCORE[min_grade.upper()]}
         policy_config = {"mode": mode, "thresholds": thresholds}
 
-    with surface.engine():
-        import pandas as pd
-        from decoy_engine.quality import apply_quality_policy, compute_quality_report
+    import pandas as pd
+    from decoy_engine.quality import apply_quality_policy, compute_quality_report
 
-        try:
-            src_df = pd.read_csv(source)
-        except Exception as exc:
-            surface.fail("source_unreadable", exc=exc)
-        try:
-            out_df = pd.read_csv(output)
-        except Exception as exc:
-            surface.fail("output_unreadable", exc=exc)
-        try:
-            report = compute_quality_report(
-                src_df,
-                out_df,
-                joint_columns=joint_pairs or None,
-                expect_row_parity=not generate,
-            )
-            policy_result = apply_quality_policy(report, policy_config, strategy_map=strategy_map)
-        except Exception as exc:
-            # A measurement that could not run is a failure, never a clean pass.
-            surface.fail("fidelity_failed", exc=exc)
+    try:
+        src_df = pd.read_csv(source)
+    except Exception as exc:
+        surface.fail("source_unreadable", exc=exc)
+    try:
+        out_df = pd.read_csv(output)
+    except Exception as exc:
+        surface.fail("output_unreadable", exc=exc)
+    try:
+        report = compute_quality_report(
+            src_df,
+            out_df,
+            joint_columns=joint_pairs or None,
+            expect_row_parity=not generate,
+        )
+        policy_result = apply_quality_policy(report, policy_config, strategy_map=strategy_map)
+    except Exception as exc:
+        # A measurement that could not run is a failure, never a clean pass.
+        surface.fail("fidelity_failed", exc=exc)
 
     projection = proj.fidelity_report(report, policy_result)
     if report_out is not None:
-        surface.write(report_out, projection)
+        surface.write_report(report_out, projection)
 
     verdict = (projection.body["policy"] or {}).get("verdict")
     surface.emit(projection, status="ok" if verdict == "pass" else (verdict or "error"), render=_render_fidelity)
@@ -309,66 +309,77 @@ def _fidelity(
         raise typer.Exit(code=EXIT_FINDINGS)
 
 
-def _score_text(value: Any) -> str:
-    return f"{value:.3f}" if isinstance(value, (int, float)) else "n/a"
+def _score_text(p: Printer, value: Any) -> Fragment:
+    return p.t("{:.3f}", value) if isinstance(value, (int, float)) else p.t("n/a")
 
 
-def _render_fidelity(out: Printer, body: Mapping[str, Any]) -> None:
-    policy = body["policy"] or {}
+def _verdict_text(p: Printer, policy: Any) -> Fragment:
     verdict = policy.get("verdict")
     if policy.get("mode") == "report":
         # Report mode records a measurement; there is no gate to pass or fail.
-        verdict_text = hint("MEASURED (report-only)")
-    elif verdict == "pass":
-        verdict_text = success("PASS")
-    elif verdict == "warn":
-        verdict_text = warn("WARN")
-    else:
-        verdict_text = error(str(verdict or "unknown").upper())
-    out.line(verdict_text, f"grade {body['grade']}  overall_score {_score_text(body['overall_score'])}")
+        return p.t("MEASURED (report-only)", style="hint")
+    if verdict == "pass":
+        return p.t("PASS", style="success")
+    if verdict == "warn":
+        return p.t("WARN", style="warn")
+    if verdict == "fail":
+        return p.t("FAIL", style="error")
+    return p.t("UNKNOWN", style="error")
 
+
+def _comparable(p: Printer, value: Any) -> Fragment:
+    return p.t("yes") if value else p.t("no")
+
+
+def _render_fidelity(p: Printer, body: Mapping[str, Any]) -> None:
+    policy = body["policy"] or {}
+    p.line(
+        _verdict_text(p, policy),
+        p.cat(p.t("grade {}  overall_score ", body["grade"]), _score_text(p, body["overall_score"])),
+    )
     if body["columns"]:
-        out.table(
+        p.table(
             "Column",
             "Comparable",
             "Similarity",
-            title="Marginal fidelity",
+            title=p.t("Marginal fidelity"),
             rows=[
-                (str(c["name"]), "yes" if c["comparable"] else "no", _score_text(c["score"]))
+                (c["name"], _comparable(p, c["comparable"]), _score_text(p, c["score"]))
                 for c in body["columns"]
             ],
         )
     if body["pairs"]:
-        out.table(
+        p.table(
             "Joint",
             "Comparable",
             "Similarity",
-            title="Pairwise fidelity",
+            title=p.t("Pairwise fidelity"),
             rows=[
-                (
-                    "x".join(str(c) for c in j["columns"]),
-                    "yes" if j["comparable"] else "no",
-                    _score_text(j["score"]),
-                )
+                (p.join("x", j["columns"]), _comparable(p, j["comparable"]), _score_text(p, j["score"]))
                 for j in body["pairs"]
             ],
         )
     violations = policy.get("violations") or []
     if violations:
-        out.table(
+        p.table(
             "Check",
             "Severity",
             "Expected",
             "Actual",
-            title="Policy violations",
+            title=p.t("Policy violations"),
             rows=[
-                (v["check"], v["severity"], _score_text(v["expected"]), _score_text(v["actual"]))
+                (
+                    v["check"],
+                    v["severity"],
+                    _score_text(p, v["expected"]),
+                    _score_text(p, v["actual"]),
+                )
                 for v in violations
             ],
         )
-    elif verdict == "pass":
-        out.line(success("OK"), "no policy violations.")
-    out.line(hint("Note:"), body["note"])
+    elif policy.get("verdict") == "pass":
+        p.line(p.t("OK", style="success"), p.t("no policy violations."))
+    p.line(p.t("Note:", style="hint"), body["note"])
 
 
 # ---------------------------------------------------------------------------
@@ -405,7 +416,6 @@ See also: decoy report verify, decoy post-scan fidelity, decoy explain post-scan
 """
 
 
-@vf.guarded("post-scan integrity")
 def _integrity(
     masked: Path = typer.Argument(
         ...,
@@ -477,7 +487,7 @@ def _integrity(
     1 EXIT_USAGE for missing files; 3 EXIT_RUNTIME for unexpected
     exceptions.
     """
-    surface = Surface("post-scan integrity", json_, quiet, verbose)
+    surface = bd.surface("post-scan integrity", json_=json_, quiet=quiet, verbose=verbose)
 
     config_dict: dict = {
         "version": 2,
@@ -518,29 +528,28 @@ def _integrity(
         ):
             surface.notice("source_mismatch")
 
-    with surface.engine():
-        import pandas as pd
-        from decoy_engine.verification import run_post_mask
+    import pandas as pd
+    from decoy_engine.verification import run_post_mask
 
-        try:
-            source_df = pd.read_csv(source)
-            masked_df = pd.read_csv(masked)
-        except FileNotFoundError:
-            surface.fail("input_not_found")
-        except Exception as exc:
-            surface.fail("source_unreadable", exc=exc)
-        try:
-            report = run_post_mask(
-                source_frames={table_name: source_df},
-                output_frames={table_name: masked_df},
-                config=config_dict,
-            )
-        except Exception as exc:
-            surface.fail("integrity_failed", exc=exc)
+    try:
+        source_df = pd.read_csv(source)
+        masked_df = pd.read_csv(masked)
+    except FileNotFoundError:
+        surface.fail("input_not_found")
+    except Exception as exc:
+        surface.fail("source_unreadable", exc=exc)
+    try:
+        report = run_post_mask(
+            source_frames={table_name: source_df},
+            output_frames={table_name: masked_df},
+            config=config_dict,
+        )
+    except Exception as exc:
+        surface.fail("integrity_failed", exc=exc)
 
     projection = proj.integrity_report(report)
     if out is not None:
-        surface.write(out, projection)
+        surface.write_report(out, projection)
 
     body = projection.body
     # A runner that failed outright is never a clean pass.
@@ -552,26 +561,39 @@ def _integrity(
         raise typer.Exit(code=EXIT_FINDINGS)
 
 
-def _render_integrity(out: Printer, body: Mapping[str, Any]) -> None:
-    rows = []
-    for bucket in proj.INTEGRITY_BUCKETS:
-        summary = body["buckets"][bucket]
-        sev_text = ", ".join(f"{k}:{v}" for k, v in summary["severities"].items())
-        rows.append((bucket, str(summary["findings"]), sev_text or success("clean")))
-    out.table("Bucket", "Findings", "Severities", title="Post-scan integrity", rows=rows)
-    out.line(
-        f"pass={body['pass_count']}  warning={body['warning_count']}  "
-        f"fail={body['fail_count']}  error={body['error_count']}"
+def _severity_text(p: Printer, severities: Any) -> Fragment:
+    if not severities:
+        return p.t("clean", style="success")
+    return p.join(", ", [p.t("{}:{}", k, v) for k, v in severities.items()])
+
+
+def _render_integrity(p: Printer, body: Mapping[str, Any]) -> None:
+    rows = [
+        (bucket, summary["findings"], _severity_text(p, summary["severities"]))
+        for bucket, summary in body["buckets"].items()
+    ]
+    p.table("Bucket", "Findings", "Severities", title=p.t("Post-scan integrity"), rows=rows)
+    p.line(
+        p.t(
+            "pass={}  warning={}  fail={}  error={}",
+            body["pass_count"],
+            body["warning_count"],
+            body["fail_count"],
+            body["error_count"],
+        )
     )
     bad = body["fail_count"] + body["error_count"]
     if body["pass_failed_with"]:
-        out.line(risk_high("FAILED"), f"the integrity pass did not run ({body['pass_failed_with']}).")
+        p.line(
+            p.t("FAILED", style="risk_high"),
+            p.t("the integrity pass did not run ({}).", body["pass_failed_with"]),
+        )
     elif bad == 0:
-        out.line(success("OK"), "no fail or error findings in the checks that ran.")
+        p.line(p.t("OK", style="success"), p.t("no fail or error findings in the checks that ran."))
     else:
-        out.line(risk_high("FINDINGS"), f"{bad} fail/error findings; review the report.")
-    out.line(hint("Note:"), body["note"])
+        p.line(p.t("FINDINGS", style="risk_high"), p.t("{} fail/error findings; review the report.", bad))
+    p.line(p.t("Note:", style="hint"), body["note"])
 
 
-post_scan_app.command(name="integrity", epilog=_INTEGRITY_EPILOG)(_integrity)
-post_scan_app.command(name="fidelity", epilog=_FIDELITY_EPILOG)(_fidelity)
+post_scan_app.command(name="integrity", epilog=_INTEGRITY_EPILOG, cls=bd.ValueFreeCommand)(_integrity)
+post_scan_app.command(name="fidelity", epilog=_FIDELITY_EPILOG, cls=bd.ValueFreeCommand)(_fidelity)

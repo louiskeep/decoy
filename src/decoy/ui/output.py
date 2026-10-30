@@ -9,7 +9,6 @@ from __future__ import annotations
 import json as _json
 import os
 import sys
-import warnings
 from dataclasses import dataclass
 from enum import Enum
 
@@ -68,11 +67,6 @@ def setup_output(json_: bool, quiet: bool, verbose: bool) -> OutputState:
         mode = OutputMode.quiet
     else:
         mode = OutputMode.default
-
-    # Quiet pandas/dateutil chatter unless the user opted into --verbose.
-    # Engine warnings are useful for debugging but pollute the default card UX.
-    if not verbose:
-        warnings.filterwarnings("ignore", category=UserWarning)
 
     return OutputState(
         mode=mode,

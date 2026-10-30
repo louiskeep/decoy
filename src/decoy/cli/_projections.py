@@ -2,8 +2,10 @@
 
 Each function reads an engine object (a profile dict, a saved scan, a
 `post-scan-integrity/v2` report, a `quality-report/v1` + policy result) as
-untrusted input and returns a minted `Projection`. Keys are allowlisted and
-VALUES are constrained, so nothing reaches a surface unless it passes one of:
+untrusted input and returns a minted `Projection`. Keys are allowlisted per
+schema and every string is a `SafeStr` minted by a `decoy.cli._value_free`
+policy constructor -- `mint` refuses a plain `str` -- so nothing reaches a
+surface unless it passes one of:
 
 * numbers: real finite numbers (never bool/str); scores and rates also in [0, 1];
 * vocabulary strings: an exact member of a closed set, otherwise the generic
@@ -16,7 +18,13 @@ VALUES are constrained, so nothing reaches a surface unless it passes one of:
 * tables: always an opaque `table-N`. The CLI derives table names from file
   stems and config, so they are never output;
 * free text the engine writes (finding messages, violation details, warning
-  details) is never read.
+  details) is never read;
+* engine-reported exception type names: only allowlisted static classes,
+  otherwise `Exception`.
+
+Contract: no cell values, file paths, table names or free-text diagnostics;
+policed schema identifiers remain. This module does no I/O and imports nothing
+that can (the sentry pins its import and attribute allowlist).
 
 Mirrors the platform's `fidelity-report/v1` projection (decoy-platform
 `api/jobs/fidelity_projection.py`), which solved the same problem for the same
@@ -27,28 +35,26 @@ from __future__ import annotations
 
 import math
 import re
-from datetime import datetime
 from typing import Any
 
-from decoy.cli._value_free import Projection, mint
+from decoy.cli import _value_free as vf
+from decoy.cli._value_free import Projection, SafeStr, mint
 
-UNRECOGNIZED = "unrecognized"
-MAX_IDENTIFIER_LENGTH = 64
-_IDENTIFIER = re.compile(r"[A-Za-z0-9_][A-Za-z0-9_ .\-]*")
-_TYPE_NAME = re.compile(r"[A-Za-z_][A-Za-z0-9_]{0,63}")
+UNRECOGNIZED = vf.UNRECOGNIZED
+MAX_IDENTIFIER_LENGTH = vf.MAX_IDENTIFIER_LENGTH
 
 PII_CANDIDATE_THRESHOLD = 0.6
 
-PII_NOTE = (
+PII_NOTE = vf.literal(
     "PII candidates are SUGGESTIONS based on pattern matching. "
     "They are not authoritative classifications. Review each flagged field "
     "and decide what masking to apply. Decoy never auto-classifies PII."
 )
-FIDELITY_NOTE = (
+FIDELITY_NOTE = vf.literal(
     "Fidelity measures statistical similarity between source and output. "
     "It is not a privacy guarantee."
 )
-INTEGRITY_NOTE = (
+INTEGRITY_NOTE = vf.literal(
     "Report-only: findings cover the integrity checks that ran. This is not a "
     "release decision or a guarantee that no sensitive data remains."
 )
@@ -93,35 +99,16 @@ def flag(value: Any) -> bool:
     return value is True
 
 
-def timestamp(value: Any) -> str | None:
-    if not isinstance(value, str) or len(value) > 64:
-        return None
-    try:
-        return datetime.fromisoformat(value).isoformat()
-    except ValueError:
-        return None
+timestamp = vf.iso_timestamp
+vocab = vf.vocab
+vocab_or_none = vf.vocab_or_none
+type_name = vf.known_type_name
+clean_identifier = vf.is_clean_name
 
 
-def vocab(value: Any, allowed: frozenset[str]) -> str:
-    return value if isinstance(value, str) and value in allowed else UNRECOGNIZED
-
-
-def vocab_or_none(value: Any, allowed: frozenset[str]) -> str | None:
-    return value if isinstance(value, str) and value in allowed else None
-
-
-def type_name(value: Any) -> str | None:
-    if value is None:
-        return None
-    return value if isinstance(value, str) and _TYPE_NAME.fullmatch(value) else UNRECOGNIZED
-
-
-def clean_identifier(value: Any) -> bool:
-    return (
-        isinstance(value, str)
-        and len(value) <= MAX_IDENTIFIER_LENGTH
-        and _IDENTIFIER.fullmatch(value) is not None
-    )
+def _key(value: Any) -> Any:
+    # Internal dedup key only; never output.
+    return value if isinstance(value, str) else ("type", type(value))
 
 
 class Names:
@@ -129,21 +116,22 @@ class Names:
 
     def __init__(self, positions: dict[str, int] | None = None) -> None:
         self._positions = positions or {}
-        self._labels: dict[str, str] = {}
+        self._labels: dict[Any, SafeStr] = {}
 
-    def one(self, value: Any) -> str | None:
+    def one(self, value: Any) -> SafeStr | None:
         if value is None:
             return None
-        if clean_identifier(value):
-            return value
+        clean = vf.clean_name(value)
+        if clean is not None:
+            return clean
         if isinstance(value, str) and value in self._positions:
-            return f"field-{self._positions[value]}"
-        key = value if isinstance(value, str) else repr(type(value))
+            return vf.opaque_label("field", self._positions[value])
+        key = _key(value)
         if key not in self._labels:
-            self._labels[key] = f"redacted-name-{len(self._labels) + 1}"
+            self._labels[key] = vf.opaque_label("redacted-name", len(self._labels) + 1)
         return self._labels[key]
 
-    def many(self, values: Any) -> list[str | None]:
+    def many(self, values: Any) -> list[SafeStr | None]:
         return [self.one(v) for v in values] if isinstance(values, (list, tuple)) else []
 
 
@@ -151,14 +139,14 @@ class Tables:
     """Tables are always opaque: `table-1`, `table-2` in first-seen order."""
 
     def __init__(self) -> None:
-        self._ids: dict[str, str] = {}
+        self._ids: dict[Any, SafeStr] = {}
 
-    def one(self, value: Any) -> str | None:
+    def one(self, value: Any) -> SafeStr | None:
         if value is None:
             return None
-        key = value if isinstance(value, str) else repr(type(value))
+        key = _key(value)
         if key not in self._ids:
-            self._ids[key] = f"table-{len(self._ids) + 1}"
+            self._ids[key] = vf.opaque_label("table", len(self._ids) + 1)
         return self._ids[key]
 
 
@@ -175,15 +163,18 @@ def _block(block: Any, key: str) -> dict[str, Any]:
 # ---- pre-scan --------------------------------------------------------------------------------
 
 
-def pii_bucket(value: Any) -> str:
+_HIGH, _MED, _LOW, _NONE = vf.literal("high"), vf.literal("med"), vf.literal("low"), vf.literal("none")
+
+
+def pii_bucket(value: Any) -> SafeStr:
     s = number(value)
     if s is None or s <= 0:
-        return "none"
+        return _NONE
     if s >= PII_CANDIDATE_THRESHOLD:
-        return "high"
+        return _HIGH
     if s >= 0.3:
-        return "med"
-    return "low"
+        return _MED
+    return _LOW
 
 
 def scan_names(fields: list[dict[str, Any]]) -> Names:
@@ -221,7 +212,7 @@ def field_record(field: dict[str, Any], names: Names) -> dict[str, Any]:
     }
 
 
-def _qi_groups(scan: dict[str, Any], names: Names) -> list[list[str | None]]:
+def _qi_groups(scan: dict[str, Any], names: Names) -> list[list[SafeStr | None]]:
     raw = scan.get("quasi_identifier_groups")
     return [names.many(g) for g in raw if isinstance(g, (list, tuple))] if isinstance(raw, list) else []
 
@@ -281,7 +272,7 @@ def find_field(scan: dict[str, Any], requested: str) -> dict[str, Any] | None:
     return None
 
 
-def closest_field(scan: dict[str, Any], requested: str) -> str | None:
+def closest_field(scan: dict[str, Any], requested: str) -> SafeStr | None:
     """A policed suggestion for a mistyped field name."""
     import difflib
 
@@ -307,6 +298,10 @@ def field_detail(scan: dict[str, Any], field: dict[str, Any]) -> Projection:
             "values_withheld": bool(field.get("top_values")) or bool(sentinels),
         },
     )
+
+
+def _qi_key(group: list[SafeStr | None]) -> tuple[SafeStr | None, ...]:
+    return tuple(sorted(group, key=lambda m: (m is None, m or "")))
 
 
 def scan_diff(old: dict[str, Any], new: dict[str, Any]) -> Projection:
@@ -339,8 +334,8 @@ def scan_diff(old: dict[str, Any], new: dict[str, Any]) -> Projection:
             decreased.append(change)
     added = [row(n, new_fields[n]) for n in sorted(set(new_fields) - set(old_fields))]
     removed = [row(n, old_fields[n]) for n in sorted(set(old_fields) - set(new_fields))]
-    old_qi = {tuple(sorted(str(x) for x in g)) for g in _qi_groups(old, names)}
-    new_qi = {tuple(sorted(str(x) for x in g)) for g in _qi_groups(new, names)}
+    old_qi = {_qi_key(g) for g in _qi_groups(old, names)}
+    new_qi = {_qi_key(g) for g in _qi_groups(new, names)}
     qi_added = sorted(new_qi - old_qi)
     qi_removed = sorted(old_qi - new_qi)
     old_risk, new_risk = magnitude(old.get("reid_risk_score")), magnitude(new.get("reid_risk_score"))
@@ -375,11 +370,15 @@ def scan_diff(old: dict[str, Any], new: dict[str, Any]) -> Projection:
 
 INTEGRITY_SOURCE_SCHEMAS = frozenset({"post-scan-integrity/v2"})
 INTEGRITY_SEVERITIES = frozenset({"info", "warning", "fail", "error"})
-INTEGRITY_BUCKETS = ("residual_pii", "fk_preservation", "policy_validation")
+INTEGRITY_BUCKETS = (
+    vf.literal("residual_pii"),
+    vf.literal("fk_preservation"),
+    vf.literal("policy_validation"),
+)
 
 
-def _severity_counts(findings: list[dict[str, Any]]) -> dict[str, int]:
-    counts: dict[str, int] = {}
+def _severity_counts(findings: list[dict[str, Any]]) -> dict[SafeStr, int]:
+    counts: dict[SafeStr, int] = {}
     for f in findings:
         sev = f["severity"]
         counts[sev] = counts.get(sev, 0) + 1
@@ -431,7 +430,9 @@ def integrity_report(report: Any) -> Projection:
     ]
     block = report if isinstance(report, dict) else {}
     counts = {k: count(block.get(k)) or 0 for k in ("pass_count", "warning_count", "fail_count", "error_count")}
-    by_bucket = dict(zip(INTEGRITY_BUCKETS, (residual, fk, policy), strict=True))
+    by_bucket: dict[str, list[dict[str, Any]]] = dict(
+        zip(INTEGRITY_BUCKETS, (residual, fk, policy), strict=True)
+    )
     return mint(
         "integrity-report/v1",
         {
@@ -509,9 +510,9 @@ POLICY_CHECKS = frozenset(
 )
 
 
-def method(value: Any) -> str:
+def method(value: Any) -> SafeStr:
     if isinstance(value, str) and value.startswith("unknown_kind:"):
-        return "unknown_kind"
+        return vocab("unknown_kind", METHODS)
     return vocab(value, METHODS)
 
 
@@ -542,7 +543,7 @@ def _omissions(report: dict[str, Any], names: Names) -> list[dict[str, Any]]:
         kind = vocab(o.get("kind"), ENTRY_KINDS)
         raw = o.get("name")
         name = (
-            "+".join(str(names.one(p)) for p in raw.split("+"))
+            vf.join_safe("+", [names.one(p) for p in raw.split("+")])
             if kind == "joint" and isinstance(raw, str)
             else names.one(raw)
         )

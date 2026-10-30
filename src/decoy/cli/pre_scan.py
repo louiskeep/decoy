@@ -16,12 +16,15 @@ Two non-negotiable disciplines:
   required" and carries a `pii_note`; it NEVER says "classified as" / "detected
   as" / "is PII".
 
-  PRIVACY (H5): every printed surface is a typed projection minted by
-  `decoy.cli._projections` and emitted by the `decoy.cli._value_free` Surface:
-  dtype, null rate, distinct count, PII score/bucket, detector ids, policed
-  column names. Errors are closed reason codes. This module never prints,
-  serializes or formats data itself. The `--output FILE` saved scan is the one
-  explicit raw artifact (it keeps the profiler's top values and sentinels).
+  PRIVACY (H5): every command runs inside the `decoy.cli._boundary` process
+  boundary, and every printed surface is a typed projection minted by
+  `decoy.cli._projections`: dtype, null rate, distinct count, PII score/bucket,
+  detector ids, policed column names. No cell values, file paths, table names
+  or free-text diagnostics; policed schema identifiers remain. Errors are
+  closed reason codes. This module cannot print, write or serialize: the
+  sentry pins its imports and attributes. The `--output FILE` saved scan is the
+  one explicit raw artifact: it writes the full scan profile including sample
+  top values and sentinels (owner-only, mode 0600).
 
 Reuses the engine's `profile_columns` function. Does NOT reimplement detection.
 """
@@ -29,7 +32,6 @@ Reuses the engine's `profile_columns` function. Does NOT reimplement detection.
 from __future__ import annotations
 
 import json as _json
-import sys
 from collections.abc import Mapping
 from enum import Enum
 from pathlib import Path
@@ -37,14 +39,13 @@ from typing import Any
 
 import typer
 
+from decoy.cli import _boundary as bd
 from decoy.cli import _projections as proj
 from decoy.cli import _value_free as vf
+from decoy.cli._boundary import Fragment, Printer, Surface
 from decoy.cli._default_group import make_default_group
-from decoy.cli._value_free import LayoutError, Printer, Surface
+from decoy.cli._value_free import LayoutError
 from decoy.cli.exit_codes import EXIT_USAGE
-from decoy.ui.output import OutputMode
-from decoy.ui.scan_progress import scan_stages
-from decoy.ui.theme import accent, code, hint, risk_high, risk_med, success, warn
 
 _PRE_SCAN_GROUP_HELP = (
     "Profile a dataset for PII and re-identification risk. `decoy pre-scan "
@@ -52,7 +53,11 @@ _PRE_SCAN_GROUP_HELP = (
     "candidates as suggestions, quasi-identifiers, reid risk) and, with "
     "`--output scan.json`, saves the scan. Subcommands operate on a saved "
     "scan: list fields (`fields`), per-field detail (`show`), compare two "
-    "scans (`diff`)."
+    "scans (`diff`). Printed output carries no cell values, paths, table names "
+    "or free-text diagnostics; policed column names are shown. WARNING: "
+    "`--output FILE` writes the full scan profile including sample top values "
+    "and sentinels (owner-only, mode 0600); use `--json` for the value-free "
+    "projection."
 )
 
 _VERBOSE_HELP = "Also print value-free diagnostics on stderr (warning counts, exception type names)."
@@ -113,6 +118,8 @@ Examples:
 
   decoy pre-scan data.csv --output scan.json
     Save the scan to scan.json, then: decoy pre-scan fields scan.json
+    WARNING: writes the full scan profile including sample top values and
+    sentinels (owner-only, mode 0600). Protect it like the source.
 
   decoy pre-scan data.csv --output -
     Stream the scan JSON to stdout for downstream tooling.
@@ -125,8 +132,9 @@ HONESTY: PII candidates are SUGGESTIONS based on pattern matching. They
 are NOT authoritative classifications. You review each flagged field and decide
 what masking to apply. Decoy never auto-classifies PII.
 
-No raw cell values, paths or layout values appear in any printed output.
-Field stats include dtype, null_rate, distinct_count only.
+No cell values, paths, table names, layout values or free-text diagnostics
+appear in any printed output; policed column names (at most 64 characters of
+[A-Za-z0-9_ .-]) do. Field stats include dtype, null_rate, distinct_count only.
 
 See also: decoy pre-scan fields, decoy pre-scan show, decoy pre-scan diff,
   decoy explain pre-scan, decoy validate.
@@ -185,7 +193,7 @@ See also: decoy pre-scan, decoy pre-scan fields.
 
 pre_scan_app = typer.Typer(
     name="pre-scan",
-    cls=vf.value_free_usage_errors(make_default_group("_pre_scan")),
+    cls=bd.value_free_group(make_default_group("_pre_scan"), "pre-scan"),
     help=_PRE_SCAN_GROUP_HELP,
     epilog=_PRE_SCAN_EPILOG,
     no_args_is_help=True,
@@ -351,7 +359,7 @@ def _load_data(
 # ---------------------------------------------------------------------------
 
 
-def _load_scan_dict(scan_path: str) -> dict:
+def _load_scan_dict(surface: Surface, scan_path: str) -> dict:
     """Load a pre-scan profile JSON file (or stdin when path is `-`).
 
     Accepts both shapes `decoy pre-scan` produces -- the bare `to_dict()` written
@@ -359,7 +367,7 @@ def _load_scan_dict(scan_path: str) -> dict:
     tools wrap it in.
     """
     try:
-        raw = sys.stdin.read() if scan_path == "-" else Path(scan_path).read_text(encoding="utf-8")
+        raw = surface.read_text(scan_path)
     except UnicodeDecodeError:
         # A ValueError, not an OSError: normalise so callers have one unreadable case.
         raise OSError("scan file is not valid UTF-8") from None
@@ -371,7 +379,7 @@ def _load_scan_dict(scan_path: str) -> dict:
     return data
 
 
-def _looks_like_raw_data(scan_path: str) -> bool:
+def _looks_like_raw_data(surface: Surface, scan_path: str) -> bool:
     """True when the path is almost certainly raw data, not a saved scan."""
     if scan_path == "-":
         return False
@@ -382,8 +390,7 @@ def _looks_like_raw_data(scan_path: str) -> bool:
     ):
         return True
     try:
-        with p.open("r", encoding="utf-8", errors="replace") as fh:
-            head = fh.read(64).lstrip()
+        head = surface.peek_text(p, 64).lstrip()
     except OSError:
         return False
     return bool(head) and head[0] != "{"
@@ -392,9 +399,9 @@ def _looks_like_raw_data(scan_path: str) -> bool:
 def _load_scan(surface: Surface, scan_path: str) -> dict:
     """Load a saved scan or fail with a closed reason (never the path or parser text)."""
     try:
-        return _load_scan_dict(scan_path)
+        return _load_scan_dict(surface, scan_path)
     except (FileNotFoundError, _json.JSONDecodeError, OSError) as exc:
-        if _looks_like_raw_data(scan_path):
+        if _looks_like_raw_data(surface, scan_path):
             surface.fail("scan_is_raw_data")
         if isinstance(exc, FileNotFoundError):
             surface.fail("scan_not_found")
@@ -404,188 +411,231 @@ def _load_scan(surface: Surface, scan_path: str) -> dict:
 
 
 # ---------------------------------------------------------------------------
-# Renderers: projection body in, styled text out. No engine object reaches here.
+# Renderers: pure functions of (Printer, projection body). The sentry checks
+# that they only call `p` methods, literal templates and each other.
 # ---------------------------------------------------------------------------
 
 
-def _bucket_cell(bucket: str) -> str:
+def _bucket_cell(p: Printer, bucket: Any) -> Fragment:
     if bucket == "high":
-        return risk_high(bucket)
+        return p.t("{}", bucket, style="risk_high")
     if bucket == "med":
-        return risk_med(bucket)
-    return hint(bucket)
+        return p.t("{}", bucket, style="risk_med")
+    return p.t("{}", bucket, style="hint")
 
 
-def _score_cell(value: Any) -> str:
-    return f"{value:.2f}" if isinstance(value, (int, float)) else "-"
+def _score_cell(p: Printer, value: Any) -> Fragment:
+    return p.t("{:.2f}", value) if isinstance(value, (int, float)) else p.t("-")
 
 
-def _qi_text(groups: list) -> str:
-    return ", ".join("(" + " + ".join(str(m) for m in g) + ")" for g in groups)
+def _qi_text(p: Printer, groups: Any) -> Fragment:
+    return p.join(", ", [p.cat(p.t("("), p.join(" + ", g), p.t(")")) for g in groups])
 
 
-def _render_pii_honesty(out: Printer, pii_candidate_count: int) -> None:
+def _render_pii_honesty(p: Printer, pii_candidate_count: Any) -> None:
     """The profile-honesty framing block (H4): candidates are suggestions."""
-    out.line(warn("PII candidates:"), f"{pii_candidate_count} field(s) flagged by pattern matching.")
-    out.line(" ", hint("These are SUGGESTIONS for review -- NOT authoritative classifications."))
-    out.line(
-        " ",
-        "Review each flagged field and choose the masking strategy that fits.",
-        "Use",
-        code("decoy list templates"),
-        "to browse available templates.",
+    p.line(
+        p.t("PII candidates:", style="warn"),
+        p.t("{} field(s) flagged by pattern matching.", pii_candidate_count),
     )
-    out.line()
+    p.line(
+        p.t(" "),
+        p.t("These are SUGGESTIONS for review -- NOT authoritative classifications.", style="hint"),
+    )
+    p.line(
+        p.t(" "),
+        p.t("Review each flagged field and choose the masking strategy that fits."),
+        p.t("Use"),
+        p.t("decoy list templates", style="code"),
+        p.t("to browse available templates."),
+    )
+    p.line()
 
 
-def _render_profile(out: Printer, body: Mapping[str, Any]) -> None:
+def _render_profile(p: Printer, body: Mapping[str, Any]) -> None:
     pii_count = body["pii_candidate_count"]
-    facts: list[tuple[str, str]] = [
-        ("Rows scanned", f"{body['row_count'] or 0:,} ({body['sample_strategy']})"),
-        ("Columns", str(body["field_count"])),
+    facts = [
+        (p.t("Rows scanned"), p.t("{:,} ({})", body["row_count"] or 0, body["sample_strategy"])),
+        (p.t("Columns"), body["field_count"]),
         (
-            "PII candidates",
-            f"{pii_count} field(s) -- suggestions only, review required"
+            p.t("PII candidates"),
+            p.t("{} field(s) -- suggestions only, review required", pii_count)
             if pii_count
-            else "none detected",
+            else p.t("none detected"),
         ),
-        ("Reid risk", str(body["reid_risk_score"])),
+        (p.t("Reid risk"), body["reid_risk_score"]),
     ]
     if body["quasi_identifier_groups"]:
-        facts.append(("Quasi-identifiers", _qi_text(body["quasi_identifier_groups"])))
+        facts.append((p.t("Quasi-identifiers"), _qi_text(p, body["quasi_identifier_groups"])))
     if body["saved"]:
-        facts.append(("Saved", "yes (path not echoed)"))
-        next_hint = "decoy pre-scan fields SCAN_FILE"
+        facts.append((p.t("Saved"), p.t("yes (path not echoed)")))
+        next_hint = p.t("decoy pre-scan fields SCAN_FILE")
     else:
-        next_hint = "decoy pre-scan SOURCE --output scan.json  (then: decoy pre-scan fields scan.json)"
-    out.card("decoy pre-scan", facts, next_hint, "ok")
+        next_hint = p.t(
+            "decoy pre-scan SOURCE --output scan.json  (then: decoy pre-scan fields scan.json)"
+        )
+    p.card("decoy pre-scan", facts, next_hint, "ok")
 
     fields = body.get("fields")
     if fields is not None:
-        out.line()
-        out.line(accent(f"Fields ({len(fields)}):"))
+        p.line()
+        p.line(p.t("Fields ({}):", len(fields), style="accent"))
         rows = []
         for f in fields:
-            cell = ""
+            cell = p.t("")
             if f["pii_candidate"]:
-                cell = "suggestion -- review"
+                cell = p.t("suggestion -- review")
                 if f["detector_hits"]:
-                    cell += f" [{', '.join(f['detector_hits'])}]"
+                    cell = p.cat(cell, p.t(" ["), p.join(", ", f["detector_hits"]), p.t("]"))
             null_rate = f["null_rate"]
             rows.append(
                 (
-                    str(f["name"]),
-                    str(f["dtype"]),
-                    f"{null_rate:.1%}" if isinstance(null_rate, (int, float)) else "-",
-                    str(f["distinct_count"]),
+                    f["name"],
+                    f["dtype"],
+                    p.t("{:.1%}", null_rate) if isinstance(null_rate, (int, float)) else p.t("-"),
+                    f["distinct_count"],
                     cell,
                 )
             )
-        out.table("Field", "Type", "Null rate", "Distinct", "PII candidate", rows=rows)
-        out.line()
+        p.table("Field", "Type", "Null rate", "Distinct", "PII candidate", rows=rows)
+        p.line()
         if pii_count:
-            _render_pii_honesty(out, pii_count)
+            _render_pii_honesty(p, pii_count)
     elif pii_count:
-        out.line()
-        _render_pii_honesty(out, pii_count)
-        out.line(hint("Tip:"), "add", code("--show-fields"), "for per-field detail.")
+        p.line()
+        _render_pii_honesty(p, pii_count)
+        p.line(p.t("Tip:", style="hint"), p.t("add"), p.t("--show-fields", style="code"), p.t("for per-field detail."))
 
 
-def _render_field_list(out: Printer, body: Mapping[str, Any]) -> None:
+def _render_field_list(p: Printer, body: Mapping[str, Any]) -> None:
     rows = body["fields"]
     if not rows:
-        out.line(hint(f"No fields match in the scan (scanned {body['total']})."))
+        p.line(p.t("No fields match in the scan (scanned {}).", body["total"], style="hint"))
         return
-    out.table(
+    p.table(
         "Field",
         "PII score",
         "Bucket",
         "QI",
-        title=f"Fields in the scan ({len(rows)} of {body['total']})",
+        title=p.t("Fields in the scan ({} of {})", len(rows), body["total"]),
         rows=[
             (
-                str(r["name"]),
-                _score_cell(r["pii_score"]),
-                _bucket_cell(r["pii_bucket"]),
-                "yes" if r["quasi_identifier"] else "",
+                r["name"],
+                _score_cell(p, r["pii_score"]),
+                _bucket_cell(p, r["pii_bucket"]),
+                p.t("yes") if r["quasi_identifier"] else p.t(""),
             )
             for r in rows
         ],
     )
-    out.line(hint("Next:"), code(f"decoy pre-scan show SCAN_FILE {rows[0]['name']}"))
+    p.line(p.t("Next:", style="hint"), p.t("decoy pre-scan show SCAN_FILE {}", rows[0]["name"], style="code"))
 
 
-def _render_field_detail(out: Printer, body: Mapping[str, Any]) -> None:
+def _render_field_detail(p: Printer, body: Mapping[str, Any]) -> None:
     f = body["field"]
-    facts: list[tuple[str, str]] = [
-        ("Field", str(f["name"])),
-        ("PII score", f"{_score_cell(f['pii_score'])} ({body['pii_bucket']})"),
+    facts = [
+        (p.t("Field"), f["name"]),
+        (p.t("PII score"), p.cat(_score_cell(p, f["pii_score"]), p.t(" ({})", body["pii_bucket"]))),
     ]
-    for key, label in (("dtype", "Type"), ("null_rate", "Null rate"), ("distinct_count", "Distinct")):
-        if f.get(key) is not None:
-            facts.append((label, str(f[key])))
+    if f.get("dtype") is not None:
+        facts.append((p.t("Type"), f["dtype"]))
+    if f.get("null_rate") is not None:
+        facts.append((p.t("Null rate"), f["null_rate"]))
+    if f.get("distinct_count") is not None:
+        facts.append((p.t("Distinct"), f["distinct_count"]))
     if f["detector_hits"]:
-        facts.append(("Detectors", ", ".join(f["detector_hits"])))
+        facts.append((p.t("Detectors"), p.join(", ", f["detector_hits"])))
     if body["sentinel_count"]:
-        facts.append(("Sentinels", f"{body['sentinel_count']} (values withheld)"))
+        facts.append((p.t("Sentinels"), p.t("{} (values withheld)", body["sentinel_count"])))
     if body["quasi_identifier_groups"]:
-        facts.append(("Quasi-identifier in", _qi_text(body["quasi_identifier_groups"])))
+        facts.append((p.t("Quasi-identifier in"), _qi_text(p, body["quasi_identifier_groups"])))
     if body["values_withheld"]:
-        facts.append(("Values", "withheld (top values / sentinels stay in the saved file)"))
-    out.card("decoy pre-scan show", facts, "decoy pre-scan fields SCAN_FILE", "ok")
+        facts.append(
+            (p.t("Values"), p.t("withheld (top values / sentinels stay in the saved file)"))
+        )
+    p.card("decoy pre-scan show", facts, p.t("decoy pre-scan fields SCAN_FILE"), "ok")
 
 
-def _render_diff(out: Printer, body: Mapping[str, Any]) -> None:
+def _bucket_change(p: Printer, bucket: Any, score: Any) -> Fragment:
+    return p.cat(p.t("{} (", bucket), _score_cell(p, score), p.t(")"))
+
+
+def _change_rows(p: Printer, changes: Any) -> list[tuple[Any, Fragment, Fragment]]:
+    return [
+        (
+            r["name"],
+            _bucket_change(p, r["old_bucket"], r["old_score"]),
+            _bucket_change(p, r["new_bucket"], r["new_score"]),
+        )
+        for r in changes
+    ]
+
+
+def _field_rows(p: Printer, changes: Any) -> list[tuple[Any, Fragment, Fragment]]:
+    return [
+        (r["name"], _score_cell(p, r["pii_score"]), _bucket_cell(p, r["pii_bucket"]))
+        for r in changes
+    ]
+
+
+def _render_diff(p: Printer, body: Mapping[str, Any]) -> None:
     summary, changes, drift = body["summary"], body["changes"], body["drift"]
-    facts: list[tuple[str, str]] = [
-        ("Fields added", str(summary["added"])),
-        ("Fields removed", str(summary["removed"])),
-        ("PII bucket increased", str(summary["pii_increased"])),
-        ("PII bucket decreased", str(summary["pii_decreased"])),
+    facts = [
+        (p.t("Fields added"), summary["added"]),
+        (p.t("Fields removed"), summary["removed"]),
+        (p.t("PII bucket increased"), summary["pii_increased"]),
+        (p.t("PII bucket decreased"), summary["pii_decreased"]),
     ]
     delta = summary["reid_risk_delta"]
     if delta is not None:
-        facts.append(("Reid risk delta", f"{'+' if delta > 0 else ''}{delta:.2f}"))
+        facts.append(
+            (p.t("Reid risk delta"), p.t("{:+.2f}", delta) if delta > 0 else p.t("{:.2f}", delta))
+        )
     if summary["qi_groups_added"] or summary["qi_groups_removed"]:
-        facts.append(("QI groups", f"+{summary['qi_groups_added']} -{summary['qi_groups_removed']}"))
+        facts.append(
+            (p.t("QI groups"), p.t("+{} -{}", summary["qi_groups_added"], summary["qi_groups_removed"]))
+        )
     increased = changes["pii_increased"]
     new_high = [r for r in changes["added"] if r["pii_bucket"] == "high"]
     focus = increased[0]["name"] if increased else (new_high[0]["name"] if new_high else None)
-    next_hint = f"decoy pre-scan show NEW_SCAN {focus}" if focus else None
-    out.card("decoy pre-scan diff", facts, next_hint, "warn" if drift else "ok")
+    next_hint = p.t("decoy pre-scan show NEW_SCAN {}", focus) if focus else None
+    p.card("decoy pre-scan diff", facts, next_hint, "warn" if drift else "ok")
 
-    def bucket_change(r: Mapping[str, Any], side: str) -> str:
-        return f"{r[side + '_bucket']} ({_score_cell(r[side + '_score'])})"
-
-    for key, title in (("pii_increased", "PII bucket increased"), ("pii_decreased", "PII bucket decreased")):
-        if changes[key]:
-            out.table(
-                "Field",
-                "Old",
-                "New",
-                title=title,
-                rows=[(str(r["name"]), bucket_change(r, "old"), bucket_change(r, "new")) for r in changes[key]],
-            )
-    for key, title in (("added", "Fields added"), ("removed", "Fields removed")):
-        if changes[key]:
-            out.table(
-                "Field",
-                "PII score",
-                "Bucket",
-                title=title,
-                rows=[
-                    (str(r["name"]), _score_cell(r["pii_score"]), _bucket_cell(r["pii_bucket"]))
-                    for r in changes[key]
-                ],
-            )
-    for key, title in (
-        ("qi_groups_added", "Quasi-identifier groups added"),
-        ("qi_groups_removed", "Quasi-identifier groups removed"),
-    ):
-        if changes[key]:
-            out.table("Group", title=title, rows=[(_qi_text([g]),) for g in changes[key]])
-    if not drift and not any(summary[k] for k in ("added", "removed", "pii_decreased", "qi_groups_removed")):
-        out.line(success("No drift detected."))
+    if changes["pii_increased"]:
+        p.table(
+            "Field", "Old", "New", title=p.t("PII bucket increased"),
+            rows=_change_rows(p, changes["pii_increased"]),
+        )  # fmt: skip
+    if changes["pii_decreased"]:
+        p.table(
+            "Field", "Old", "New", title=p.t("PII bucket decreased"),
+            rows=_change_rows(p, changes["pii_decreased"]),
+        )  # fmt: skip
+    if changes["added"]:
+        p.table(
+            "Field", "PII score", "Bucket", title=p.t("Fields added"),
+            rows=_field_rows(p, changes["added"]),
+        )  # fmt: skip
+    if changes["removed"]:
+        p.table(
+            "Field", "PII score", "Bucket", title=p.t("Fields removed"),
+            rows=_field_rows(p, changes["removed"]),
+        )  # fmt: skip
+    if changes["qi_groups_added"]:
+        p.table(
+            "Group", title=p.t("Quasi-identifier groups added"),
+            rows=[(_qi_text(p, [g]),) for g in changes["qi_groups_added"]],
+        )  # fmt: skip
+    if changes["qi_groups_removed"]:
+        p.table(
+            "Group", title=p.t("Quasi-identifier groups removed"),
+            rows=[(_qi_text(p, [g]),) for g in changes["qi_groups_removed"]],
+        )  # fmt: skip
+    quiet_summary = not any(
+        summary[k] for k in ("added", "removed", "pii_decreased", "qi_groups_removed")
+    )
+    if not drift and quiet_summary:
+        p.line(p.t("No drift detected.", style="success"))
 
 
 # ---------------------------------------------------------------------------
@@ -593,7 +643,6 @@ def _render_diff(out: Printer, body: Mapping[str, Any]) -> None:
 # ---------------------------------------------------------------------------
 
 
-@vf.guarded("pre-scan")
 def _pre_scan(
     source: Path = typer.Argument(
         ...,
@@ -625,9 +674,9 @@ def _pre_scan(
         "--output",
         "-o",
         help=(
-            "Save the FULL scan JSON to this path: an explicit artifact on disk that "
-            "includes raw top values and sentinels, so protect it like the source "
-            "(the source path is not recorded in it). Use - to print the value-free "
+            "WARNING: writes the full scan profile including sample top values and "
+            "sentinels to this path (owner-only, mode 0600; the source path is not "
+            "recorded). Protect it like the source. Use - to print the value-free "
             "pre-scan-profile/v1 projection to stdout instead (counts, types, rates, "
             "detector ids, policed column names; no cell values). "
             "Without --output nothing is written to disk."
@@ -666,22 +715,23 @@ def _pre_scan(
 
     Runs the Pre-scan profiler on the source file. PII candidates are surfaced as
     SUGGESTIONS for review -- never as authoritative auto-classifications.
-    No raw cell values appear in any printed output (stdout, --json, --output -,
-    errors, --verbose); paths, layout values and rejected option values are never
-    echoed. Save the scan with `--output scan.json`, then operate on it with
-    `decoy pre-scan fields/show/diff`.
+    No cell values, paths, table names or free-text diagnostics appear in any
+    printed output (stdout, --json, --output -, errors, --verbose); policed
+    column names do. Layout values and rejected option values are never echoed.
+    `--output scan.json` writes the full scan profile including sample top values
+    and sentinels (mode 0600); operate on it with `decoy pre-scan fields/show/diff`.
 
     Supported formats: delimited (CSV/TSV, default), parquet, and fixed-width.
     Fixed-width input requires an explicit --layout spec (column boundaries are
     ambiguous without one). Format is inferred from the extension when --format
     is not supplied.
     """
-    surface = Surface("pre-scan", json_, quiet, verbose)
+    surface = bd.surface("pre-scan", json_=json_, quiet=quiet, verbose=verbose)
     streamed = out is not None and str(out) == "-"
 
     # `--output -` emits the projection on stdout, so combining it with
     # --json/--quiet would be ambiguous about which stdout contract wins.
-    if streamed and surface.mode is not OutputMode.default:
+    if streamed and surface.mode != "default":
         surface.fail("output_stream_conflict")
 
     effective_fmt: InputFormat = fmt if fmt is not None else _infer_format(source)
@@ -707,8 +757,8 @@ def _pre_scan(
     try:
         from decoy_engine import profile_columns
 
-        with surface.engine(), scan_stages(
-            surface.state, ["Load source", "Profile columns", "Summarize"]
+        with surface.progress(
+            vf.StageId.LOAD_SOURCE, vf.StageId.PROFILE_COLUMNS, vf.StageId.SUMMARIZE
         ) as ms:
             df = _load_data(source, effective_fmt, layout_columns, row_cap, effective_strategy)
             ms.complete()
@@ -742,7 +792,6 @@ def _pre_scan(
 # ---------------------------------------------------------------------------
 
 
-@vf.guarded("pre-scan fields")
 def _fields(
     scan: str = typer.Argument(..., help="Path to a pre-scan profile JSON, or `-` for stdin."),
     pii: PiiLevel | None = typer.Option(
@@ -767,7 +816,7 @@ def _fields(
     membership, pipe the result somewhere else. For per-field detail, see
     `decoy pre-scan show`.
     """
-    surface = Surface("pre-scan fields", json_, quiet, verbose)
+    surface = bd.surface("pre-scan fields", json_=json_, quiet=quiet, verbose=verbose)
     data = _load_scan(surface, scan)
     projection = proj.field_list(data, pii=pii.value if pii else None, quasi=quasi)
     surface.emit(projection, status="ok", render=_render_field_list)
@@ -778,7 +827,6 @@ def _fields(
 # ---------------------------------------------------------------------------
 
 
-@vf.guarded("pre-scan show")
 def _show(
     scan: str = typer.Argument(..., help="Path to a pre-scan profile JSON, or `-` for stdin."),
     field: str = typer.Argument(
@@ -805,7 +853,7 @@ def _show(
     sentinels were found. Top values and sentinel values are withheld; they stay
     in the saved scan file only. Read-only.
     """
-    surface = Surface("pre-scan show", json_, quiet, verbose)
+    surface = bd.surface("pre-scan show", json_=json_, quiet=quiet, verbose=verbose)
     data = _load_scan(surface, scan)
     matched = proj.find_field(data, field)
     if matched is None:
@@ -818,7 +866,6 @@ def _show(
 # ---------------------------------------------------------------------------
 
 
-@vf.guarded("pre-scan diff")
 def _diff(
     old: str = typer.Argument(..., help="Path to the older pre-scan profile JSON, or `-` for stdin."),
     new: str = typer.Argument(..., help="Path to the newer pre-scan profile JSON, or `-` for stdin."),
@@ -842,7 +889,7 @@ def _diff(
     high-PII field appears, or a new quasi-identifier group forms. Read-only
     -- the scans are JSON; raw data never enters the CLI.
     """
-    surface = Surface("pre-scan diff", json_, quiet, verbose)
+    surface = bd.surface("pre-scan diff", json_=json_, quiet=quiet, verbose=verbose)
     if old == "-" and new == "-":
         surface.fail("diff_two_stdin")
     projection = proj.scan_diff(_load_scan(surface, old), _load_scan(surface, new))
@@ -854,10 +901,11 @@ def _diff(
 # The hidden default command: `decoy pre-scan SOURCE` (no subcommand) routes here
 # via the shared default-command group. Hidden so it stays out of help / the
 # generated reference / completion, while the group can still dispatch to it.
-pre_scan_app.command(name="_pre_scan", hidden=True, epilog=_PRE_SCAN_EPILOG)(_pre_scan)
-pre_scan_app.command(name="fields", epilog=_FIELDS_EPILOG)(_fields)
-pre_scan_app.command(name="show", epilog=_SHOW_EPILOG)(_show)
-pre_scan_app.command(name="diff", epilog=_DIFF_EPILOG)(_diff)
+_CMD = bd.ValueFreeCommand
+pre_scan_app.command(name="_pre_scan", hidden=True, epilog=_PRE_SCAN_EPILOG, cls=_CMD)(_pre_scan)
+pre_scan_app.command(name="fields", epilog=_FIELDS_EPILOG, cls=_CMD)(_fields)
+pre_scan_app.command(name="show", epilog=_SHOW_EPILOG, cls=_CMD)(_show)
+pre_scan_app.command(name="diff", epilog=_DIFF_EPILOG, cls=_CMD)(_diff)
 
 SCAN_EPILOG = _PRE_SCAN_EPILOG
 

@@ -49,6 +49,8 @@ Installable Typer/Rich CLI that wraps `decoy-engine` for local validation, runs,
 | Validate command | `src/decoy/cli/validate.py` |
 | Pre-scan command (`pre-scan`, `fields`, `show`, `diff`) | `src/decoy/cli/pre_scan.py` |
 | Post-scan commands (`post-scan integrity`, `post-scan fidelity`) | `src/decoy/cli/post_scan.py` |
+| Value-free contract for pre-/post-scan (`SafeStr`, closed schemas, reasons; no I/O) | `src/decoy/cli/_value_free.py`, projections in `src/decoy/cli/_projections.py` |
+| Value-free process boundary (stream/log/warning containment, `BaseException` trap, the only writer) | `src/decoy/cli/_boundary.py`; sentry `tests/sentry/test_value_free_boundary.py` + `test_value_free_canaries.py` |
 | Scan progress indicator | `src/decoy/ui/scan_progress.py` |
 | Plan command | `src/decoy/cli/plan.py` |
 | Output formatting | `src/decoy/ui/` |

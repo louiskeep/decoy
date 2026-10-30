@@ -99,13 +99,15 @@ def test_text_sentry_bites_if_raw_value_injected(tmp_path: Path) -> None:
     _write_sentinel_csv(csv_path)
 
     import decoy.cli._projections as profile_mod
+    from decoy.cli import _value_free as vf
 
     original_safe = profile_mod.field_record
 
     def leaky_safe_field_record(field, names):
         rec = original_safe(field, names)
-        # Inject sentinel into the dtype cell to simulate a raw-value leak.
-        rec["dtype"] = _STRING_SENTINEL
+        # Simulate a POLICY bug: the sentinel is wrongly minted as if it were vocabulary.
+        # (A raw `str` can no longer be injected at all -- see the refusal check below.)
+        rec["dtype"] = vf.vocab(_STRING_SENTINEL, frozenset({_STRING_SENTINEL}))
         return rec
 
     with patch.object(profile_mod, "field_record", leaky_safe_field_record):
@@ -151,3 +153,27 @@ def test_sentinel_is_present_in_source_file(tmp_path: Path) -> None:
     content = csv_path.read_text(encoding="utf-8")
     assert _STRING_SENTINEL in content, "Setup error: string sentinel not in CSV."
     assert _SENTINEL_SSN in content, "Setup error: SSN sentinel not in CSV."
+
+
+def test_raw_str_injection_is_refused_by_construction(tmp_path: Path) -> None:
+    """A builder bug that passes a plain `str` never reaches a surface: `mint` refuses it."""
+    csv_path = tmp_path / "data.csv"
+    _write_sentinel_csv(csv_path)
+
+    import decoy.cli._projections as profile_mod
+
+    original_safe = profile_mod.field_record
+
+    def raw_field_record(field, names):
+        rec = original_safe(field, names)
+        rec["dtype"] = _STRING_SENTINEL
+        return rec
+
+    with patch.object(profile_mod, "field_record", raw_field_record):
+        result = runner.invoke(
+            app, ["pre-scan", str(csv_path), "--show-fields"], env=_WIDE_ENV
+        )
+
+    assert result.exit_code == 3, result.output
+    assert _STRING_SENTINEL not in result.output
+    assert "unexpected failure" in result.stderr
