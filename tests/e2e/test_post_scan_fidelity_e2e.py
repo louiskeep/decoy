@@ -51,7 +51,8 @@ def test_validate_distribution_json_envelope_has_command_and_status(tmp_path: Pa
     payload = json.loads(result.output)
     assert payload["command"] == "post-scan fidelity"
     assert payload["status"] == "ok"
-    assert payload["schema_version"] == "quality-report/v1"
+    assert payload["schema_version"] == "fidelity-report/v1"
+    assert payload["source_schema_version"] == "quality-report/v1"
 
 
 def test_validate_distribution_drifted_output_fails_hard_gate(tmp_path: Path):
@@ -89,10 +90,9 @@ def test_validate_distribution_generate_allows_row_count_mismatch(tmp_path: Path
     import json
 
     payload = json.loads(result.output)
-    row_count_check = next(
-        c for c in payload["diagnostic"]["checks"] if c["check"] == "row_count"
-    )
-    assert row_count_check["passed"] is True
+    # The projection carries the diagnostic verdict and closed warning codes only.
+    assert payload["diagnostic_passed"] is True
+    assert "row_count" not in [w["code"] for w in payload["warnings"]]
 
 
 def test_validate_distribution_missing_output_file_exits_nonzero(tmp_path: Path):

@@ -87,7 +87,7 @@ def test_profile_text_output_no_raw_values(tmp_path: Path) -> None:
 def test_text_sentry_bites_if_raw_value_injected(tmp_path: Path) -> None:
     """Prove the wide-console text sentry detects raw cell leaks.
 
-    Monkeypatches _safe_field_record to inject the sentinel into a profile
+    Monkeypatches the projection's field_record to inject the sentinel into a profile
     cell (simulating a bug that emits raw values), then verifies the isolation
     test WOULD catch it -- i.e., the sentinel appears un-truncated in the
     wide-console output.  Reverts the patch at the end.
@@ -98,17 +98,17 @@ def test_text_sentry_bites_if_raw_value_injected(tmp_path: Path) -> None:
     csv_path = tmp_path / "data.csv"
     _write_sentinel_csv(csv_path)
 
-    import decoy.cli.pre_scan as profile_mod
+    import decoy.cli._projections as profile_mod
 
-    original_safe = profile_mod._safe_field_record
+    original_safe = profile_mod.field_record
 
-    def leaky_safe_field_record(field_stats):
-        rec = original_safe(field_stats)
+    def leaky_safe_field_record(field, names):
+        rec = original_safe(field, names)
         # Inject sentinel into the dtype cell to simulate a raw-value leak.
         rec["dtype"] = _STRING_SENTINEL
         return rec
 
-    with patch.object(profile_mod, "_safe_field_record", leaky_safe_field_record):
+    with patch.object(profile_mod, "field_record", leaky_safe_field_record):
         result = runner.invoke(
             app, ["pre-scan", str(csv_path), "--show-fields"], env=_WIDE_ENV
         )

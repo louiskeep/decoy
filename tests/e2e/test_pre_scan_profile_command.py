@@ -65,7 +65,8 @@ def test_pre_scan_writes_profile_and_succeeds(sample_csv: Path, tmp_path: Path):
     payload = _json.loads(out_path.read_text())
     assert payload["row_count"] == 5
     assert payload["fields"]
-    assert payload["source_label"] == "sample.csv"
+    # The saved scan never records the source path or file name.
+    assert payload["source_label"] == "source"
 
 
 def test_pre_scan_json_emits_envelope(sample_csv: Path, tmp_path: Path):

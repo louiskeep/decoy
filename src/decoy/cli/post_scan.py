@@ -12,23 +12,27 @@ verdict and none is a release decision:
                privacy guarantee.
 
 A check that cannot run exits non-zero; it never reads as a clean pass. The
-engine owns every algorithm: this module only loads files, calls the engine and
-renders the result. Raw exception text is never echoed (type name only).
+engine owns every algorithm: this module only loads files and calls the engine.
+Every surface (stdout, `--json`, `--output` / `--report-out`, errors,
+`--verbose`) carries only the typed projections minted by
+`decoy.cli._projections` (`integrity-report/v1`, `fidelity-report/v1`) and
+emitted by the `decoy.cli._value_free` Surface. The raw engine reports are
+never serialized: they carry table names, engine messages and free text.
 """
 
 from __future__ import annotations
 
-import json as _json
+from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
 import typer
 from typer.core import TyperGroup
 
+from decoy.cli import _projections as proj
 from decoy.cli import _value_free as vf
-from decoy.cli._yaml_errors import sanitize_yaml_error
-from decoy.cli.exit_codes import EXIT_FINDINGS, EXIT_RUNTIME, EXIT_USAGE
-from decoy.ui.output import OutputMode, emit_json, setup_output
+from decoy.cli._value_free import Printer, Surface
+from decoy.cli.exit_codes import EXIT_FINDINGS
 from decoy.ui.theme import error, hint, risk_high, success, warn
 
 # Grade -> minimum overall_score, mirroring the engine's own grade thresholds
@@ -37,14 +41,7 @@ from decoy.ui.theme import error, hint, risk_high, success, warn
 # (grade -> score) helper, so `--min-grade` needs its own copy of the table.
 _GRADE_MIN_SCORE: dict[str, float] = {"A": 0.95, "B": 0.85, "C": 0.70, "D": 0.50}
 
-_FIDELITY_NOTE = (
-    "Fidelity measures statistical similarity between source and output. "
-    "It is not a privacy guarantee."
-)
-_INTEGRITY_NOTE = (
-    "Report-only: findings cover the integrity checks that ran. This is not a "
-    "release decision or a guarantee that no sensitive data remains."
-)
+_VERBOSE_HELP = "Also print value-free diagnostics on stderr (warning counts, exception type names)."
 
 post_scan_app = typer.Typer(
     name="post-scan",
@@ -118,6 +115,7 @@ def _build_strategy_map(config_dict: dict[str, Any]) -> dict[str, str]:
     return strategy_map
 
 
+@vf.guarded("post-scan fidelity")
 def _fidelity(
     source: Path = typer.Argument(
         ...,
@@ -197,12 +195,12 @@ def _fidelity(
     report_out: Path | None = typer.Option(
         None,
         "--report-out",
-        help="Write the full quality-report/v1 + policy JSON to this path.",
+        help="Write the value-free fidelity-report/v1 projection to this path.",
     ),
     json_: bool = typer.Option(
         False,
         "--json",
-        help="Emit the full quality-report/v1 + policy result as JSON.",
+        help="Emit the value-free fidelity-report/v1 projection as JSON.",
     ),
     quiet: bool = typer.Option(
         False,
@@ -210,12 +208,7 @@ def _fidelity(
         "-q",
         help="Suppress stdout. Exit code carries the result.",
     ),
-    verbose: bool = typer.Option(
-        False,
-        "--verbose",
-        "-v",
-        help="Enable debug-level CLI logs on stderr.",
-    ),
+    verbose: bool = typer.Option(False, "--verbose", "-v", help=_VERBOSE_HELP),
 ) -> None:
     """Recompute distribution fidelity between a source and an output CSV.
 
@@ -236,26 +229,21 @@ def _fidelity(
     """
     import yaml as _yaml
 
-    state = setup_output(json_, quiet, verbose)
-
-    def _fail(code: str, message: str, exit_code: int = EXIT_USAGE) -> None:
-        vf.fail(state, "post-scan fidelity", code, message, exit_code=exit_code)
+    surface = Surface("post-scan fidelity", json_, quiet, verbose)
 
     joint_pairs: list[tuple[str, str]] = []
     for spec in joint:
         parts = [p.strip() for p in spec.split(",") if p.strip()]
         if len(parts) != 2:
-            _fail(vf.CODE_USAGE, "--joint expects 'colA,colB'.")
+            surface.fail("joint_format")
         joint_pairs.append((parts[0], parts[1]))
 
     if min_grade is not None and min_score is not None:
-        _fail(vf.CODE_USAGE, "specify only one of --min-grade / --min-score, not both.")
-
+        surface.fail("grade_and_score")
     if min_grade is not None and min_grade.upper() not in _GRADE_MIN_SCORE:
-        _fail(vf.CODE_USAGE, "--min-grade must be one of A, B, C, D.")
-
+        surface.fail("grade_invalid")
     if mode not in ("report", "warn", "fail"):
-        _fail(vf.CODE_USAGE, "--mode must be one of report, warn, fail.")
+        surface.fail("mode_invalid")
 
     strategy_map: dict[str, str] = {}
     if pipeline_config is not None:
@@ -265,21 +253,20 @@ def _fidelity(
             raw_cfg = _yaml.safe_load(pipeline_config.read_text(encoding="utf-8"))
             config_dict = PipelineConfig.model_validate(raw_cfg).model_dump()
         except _yaml.YAMLError as exc:
-            # YAMLError carries the offending source line verbatim; sanitize it.
-            _fail(vf.CODE_CONFIG_INVALID, sanitize_yaml_error(exc))
+            surface.fail("config_not_yaml", exc=exc, location=vf.yaml_location(exc))
         except Exception as exc:
-            _fail(vf.CODE_CONFIG_INVALID, f"could not parse --config ({vf.exc_label(exc)}).")
+            surface.fail("config_invalid", exc=exc)
         strategy_map = _build_strategy_map(config_dict)
 
     if policy is not None:
         try:
             policy_config = _yaml.safe_load(policy.read_text(encoding="utf-8")) or {}
         except _yaml.YAMLError as exc:
-            _fail(vf.CODE_CONFIG_INVALID, sanitize_yaml_error(exc))
+            surface.fail("policy_not_yaml", exc=exc, location=vf.yaml_location(exc))
         except Exception as exc:
-            _fail(vf.CODE_CONFIG_INVALID, f"could not parse --policy ({vf.exc_label(exc)}).")
+            surface.fail("policy_invalid", exc=exc)
         if not isinstance(policy_config, dict):
-            _fail(vf.CODE_CONFIG_INVALID, "--policy must be a YAML/JSON mapping.")
+            surface.fail("policy_not_mapping")
     else:
         thresholds: dict[str, Any] = {}
         if min_score is not None:
@@ -288,121 +275,100 @@ def _fidelity(
             thresholds["overall"] = {"min": _GRADE_MIN_SCORE[min_grade.upper()]}
         policy_config = {"mode": mode, "thresholds": thresholds}
 
-    import pandas as pd
-    from decoy_engine.quality import apply_quality_policy, compute_quality_report
+    with surface.engine():
+        import pandas as pd
+        from decoy_engine.quality import apply_quality_policy, compute_quality_report
 
-    try:
-        src_df = pd.read_csv(source)
-    except Exception as exc:
-        _fail(vf.CODE_INPUT_UNREADABLE, f"could not read the source file ({vf.exc_label(exc)}).")
-    try:
-        out_df = pd.read_csv(output)
-    except Exception as exc:
-        _fail(vf.CODE_INPUT_UNREADABLE, f"could not read the output file ({vf.exc_label(exc)}).")
+        try:
+            src_df = pd.read_csv(source)
+        except Exception as exc:
+            surface.fail("source_unreadable", exc=exc)
+        try:
+            out_df = pd.read_csv(output)
+        except Exception as exc:
+            surface.fail("output_unreadable", exc=exc)
+        try:
+            report = compute_quality_report(
+                src_df,
+                out_df,
+                joint_columns=joint_pairs or None,
+                expect_row_parity=not generate,
+            )
+            policy_result = apply_quality_policy(report, policy_config, strategy_map=strategy_map)
+        except Exception as exc:
+            # A measurement that could not run is a failure, never a clean pass.
+            surface.fail("fidelity_failed", exc=exc)
 
-    try:
-        report = compute_quality_report(
-            src_df,
-            out_df,
-            joint_columns=joint_pairs or None,
-            expect_row_parity=not generate,
-        )
-        policy_result = apply_quality_policy(report, policy_config, strategy_map=strategy_map)
-    except Exception as exc:
-        # A measurement that could not run is a failure, never a clean pass.
-        _fail(vf.CODE_CHECK_FAILED, f"fidelity measurement failed: {vf.exc_label(exc)}", EXIT_RUNTIME)
-
+    projection = proj.fidelity_report(report, policy_result)
     if report_out is not None:
-        report_out.write_text(
-            _json.dumps({**report, "policy": policy_result}, indent=2),
-            encoding="utf-8",
-        )
+        surface.write(report_out, projection)
 
-    verdict = policy_result["verdict"]
-    status = "ok" if verdict == "pass" else verdict
-
-    if state.mode is OutputMode.json:
-        envelope = dict(report)
-        envelope["command"] = "post-scan fidelity"
-        envelope["status"] = status
-        envelope["policy"] = policy_result
-        envelope["note"] = _FIDELITY_NOTE
-        emit_json(state, envelope)
-    elif state.mode is not OutputMode.quiet:
-        _render_fidelity_report(state, report, policy_result)
-
-    if verdict == "fail" or (verdict == "warn" and fail_on_warning):
+    verdict = (projection.body["policy"] or {}).get("verdict")
+    surface.emit(projection, status="ok" if verdict == "pass" else (verdict or "error"), render=_render_fidelity)
+    if verdict not in ("pass", "warn") or (verdict == "warn" and fail_on_warning):
         raise typer.Exit(code=EXIT_FINDINGS)
 
 
-def _render_fidelity_report(
-    state: Any,
-    report: dict[str, Any],
-    policy_result: dict[str, Any],
-) -> None:
-    """Human-readable rendering of a quality-report/v1 + policy result."""
-    from decoy.ui.table import make_table
+def _score_text(value: Any) -> str:
+    return f"{value:.3f}" if isinstance(value, (int, float)) else "n/a"
 
-    grade = report.get("grade", "unavailable")
-    overall = report.get("overall_score")
-    overall_str = f"{overall:.3f}" if isinstance(overall, (int, float)) else "n/a"
-    verdict = policy_result.get("verdict", "pass")
 
-    if policy_result.get("mode", "report") == "report":
+def _render_fidelity(out: Printer, body: Mapping[str, Any]) -> None:
+    policy = body["policy"] or {}
+    verdict = policy.get("verdict")
+    if policy.get("mode") == "report":
         # Report mode records a measurement; there is no gate to pass or fail.
         verdict_text = hint("MEASURED (report-only)")
     elif verdict == "pass":
-        verdict_text = success(verdict.upper())
+        verdict_text = success("PASS")
     elif verdict == "warn":
-        verdict_text = warn(verdict.upper())
+        verdict_text = warn("WARN")
     else:
-        verdict_text = error(verdict.upper())
-    state.console.print(verdict_text, f"grade {grade}  overall_score {overall_str}")
+        verdict_text = error(str(verdict or "unknown").upper())
+    out.line(verdict_text, f"grade {body['grade']}  overall_score {_score_text(body['overall_score'])}")
 
-    columns = report.get("marginal", {}).get("columns", [])
-    if columns:
-        table = make_table("Column", "Comparable", "Similarity", title="Marginal fidelity")
-        for col in columns:
-            if not isinstance(col, dict):
-                continue
-            sim = col.get("similarity")
-            sim_str = f"{sim:.3f}" if isinstance(sim, (int, float)) else "n/a"
-            table.add_row(
-                str(col.get("column", "?")),
-                "yes" if col.get("comparable") else "no",
-                sim_str,
-            )
-        state.console.print(table)
-
-    joints = report.get("pairwise", {}).get("joints", [])
-    if joints:
-        table = make_table("Joint", "Comparable", "Similarity", title="Pairwise fidelity")
-        for j in joints:
-            if not isinstance(j, dict):
-                continue
-            sim = j.get("similarity")
-            sim_str = f"{sim:.3f}" if isinstance(sim, (int, float)) else "n/a"
-            table.add_row(
-                "x".join(j.get("columns", [])),
-                "yes" if j.get("comparable") else "no",
-                sim_str,
-            )
-        state.console.print(table)
-
-    violations = policy_result.get("violations", [])
+    if body["columns"]:
+        out.table(
+            "Column",
+            "Comparable",
+            "Similarity",
+            title="Marginal fidelity",
+            rows=[
+                (str(c["name"]), "yes" if c["comparable"] else "no", _score_text(c["score"]))
+                for c in body["columns"]
+            ],
+        )
+    if body["pairs"]:
+        out.table(
+            "Joint",
+            "Comparable",
+            "Similarity",
+            title="Pairwise fidelity",
+            rows=[
+                (
+                    "x".join(str(c) for c in j["columns"]),
+                    "yes" if j["comparable"] else "no",
+                    _score_text(j["score"]),
+                )
+                for j in body["pairs"]
+            ],
+        )
+    violations = policy.get("violations") or []
     if violations:
-        table = make_table("Check", "Column", "Expected", "Actual", title="Policy violations")
-        for v in violations:
-            table.add_row(
-                str(v.get("check", "?")),
-                str(v.get("column", "-")),
-                str(v.get("expected", "-")),
-                str(v.get("actual", "-")),
-            )
-        state.console.print(table)
+        out.table(
+            "Check",
+            "Severity",
+            "Expected",
+            "Actual",
+            title="Policy violations",
+            rows=[
+                (v["check"], v["severity"], _score_text(v["expected"]), _score_text(v["actual"]))
+                for v in violations
+            ],
+        )
     elif verdict == "pass":
-        state.console.print(success("OK"), "no policy violations.")
-    state.console.print(hint("Note:"), _FIDELITY_NOTE)
+        out.line(success("OK"), "no policy violations.")
+    out.line(hint("Note:"), body["note"])
 
 
 # ---------------------------------------------------------------------------
@@ -424,10 +390,11 @@ Examples:
     is reduced to "no config provided" notes.
 
   decoy post-scan integrity masked.csv --source source.csv --json > report.json
-    Pipe the full post-scan-integrity/v2 report JSON for downstream tooling.
+    Pipe the value-free integrity-report/v1 projection for downstream tooling
+    (counts, rates, closed codes; tables as opaque table-N ids; no messages).
 
   decoy post-scan integrity masked.csv --source source.csv --output report.json
-    Write JSON to file + render a Rich summary on stderr.
+    Also write the same integrity-report/v1 projection to a file.
 
 Exit codes: 0 clean (no fail/error findings); 4 EXIT_FINDINGS (one
 or more fail-severity findings); 1 EXIT_USAGE for missing files;
@@ -438,6 +405,7 @@ See also: decoy report verify, decoy post-scan fidelity, decoy explain post-scan
 """
 
 
+@vf.guarded("post-scan integrity")
 def _integrity(
     masked: Path = typer.Argument(
         ...,
@@ -471,8 +439,8 @@ def _integrity(
         "--output",
         "-o",
         help=(
-            "Write the post-scan-integrity/v2 JSON to this path. The Rich table "
-            "still renders to stderr."
+            "Write the value-free integrity-report/v1 projection to this path. "
+            "The summary table still renders to stdout."
         ),
     ),
     allow_source_mismatch: bool = typer.Option(
@@ -486,14 +454,12 @@ def _integrity(
     json_: bool = typer.Option(
         False,
         "--json",
-        help="Emit the full post-scan-integrity/v2 JSON to stdout. No card.",
+        help="Emit the value-free integrity-report/v1 projection to stdout. No card.",
     ),
     quiet: bool = typer.Option(
         False, "--quiet", "-q", help="Suppress stdout. Errors still go to stderr."
     ),
-    verbose: bool = typer.Option(
-        False, "--verbose", "-v", help="Enable debug-level CLI logs on stderr."
-    ),
+    verbose: bool = typer.Option(False, "--verbose", "-v", help=_VERBOSE_HELP),
 ) -> None:
     """Verify a masked file's integrity against its pre-mask source.
 
@@ -511,146 +477,100 @@ def _integrity(
     1 EXIT_USAGE for missing files; 3 EXIT_RUNTIME for unexpected
     exceptions.
     """
-    import pandas as pd
+    surface = Surface("post-scan integrity", json_, quiet, verbose)
 
-    from decoy.ui.table import make_table
+    config_dict: dict = {
+        "version": 2,
+        "global_settings": {"seed": 0},
+        "sources": {},
+        "tables": [],
+        "targets": {},
+        "relationships": [],
+    }
+    # The engine keys frames by table; the name never leaves the engine report,
+    # and the projection replaces every table with an opaque id.
+    table_name = "masked"
+    if config is not None:
+        import yaml as _yaml
+        from decoy_engine import PipelineConfig
 
-    state = setup_output(json_, quiet, verbose)
+        try:
+            raw = _yaml.safe_load(config.read_text(encoding="utf-8"))
+        except _yaml.YAMLError as exc:
+            surface.fail("config_not_yaml", exc=exc, location=vf.yaml_location(exc))
+        except Exception as exc:
+            surface.fail("config_invalid", exc=exc)
+        try:
+            config_dict = PipelineConfig.model_validate(raw).model_dump()
+        except Exception as exc:
+            surface.fail("config_invalid", exc=exc)
+        # The verb handles a single source/masked pair: anchor on the first
+        # declared table and warn when --source points elsewhere.
+        tables = config_dict.get("tables") or []
+        if tables:
+            table_name = tables[0]["name"]
+        declared = (config_dict.get("sources") or {}).get(table_name) or {}
+        declared_path = declared.get("path") if isinstance(declared, dict) else None
+        if (
+            declared_path
+            and not allow_source_mismatch
+            and Path(declared_path).resolve() != source.resolve()
+        ):
+            surface.notice("source_mismatch")
 
-    def _fail(code: str, message: str, exit_code: int = EXIT_USAGE) -> None:
-        vf.fail(state, "post-scan integrity", code, message, exit_code=exit_code)
-
-    try:
+    with surface.engine():
+        import pandas as pd
         from decoy_engine.verification import run_post_mask
 
-        source_df = pd.read_csv(source)
-        masked_df = pd.read_csv(masked)
-
-        config_dict: dict
-        table_name: str
-        if config is not None:
-            import yaml as _yaml
-            from decoy_engine import PipelineConfig
-
-            try:
-                raw = _yaml.safe_load(config.read_text(encoding="utf-8"))
-            except _yaml.YAMLError as exc:
-                # The outer handler renders str(exc); a raw YAMLError there would
-                # echo the offending source line. Re-raise a pre-sanitized message.
-                _fail(vf.CODE_CONFIG_INVALID, sanitize_yaml_error(exc))
-            try:
-                config_dict = PipelineConfig.model_validate(raw).model_dump()
-            except Exception as exc:
-                _fail(
-                    vf.CODE_CONFIG_INVALID,
-                    f"could not validate --config ({vf.exc_label(exc)}).",
-                )
-            # Pick the first declared table name. Mixed-mode configs
-            # can declare multiple; the CLI verb today handles a single
-            # source/masked pair, so we anchor on the first table the
-            # pipeline declared and warn if the user passed a source
-            # that points elsewhere.
-            tables = config_dict.get("tables") or []
-            table_name = tables[0]["name"] if tables else masked.stem
-            declared_sources = config_dict.get("sources") or {}
-            declared_path = None
-            if table_name in declared_sources:
-                declared_path = declared_sources[table_name].get("path")
-            if (
-                declared_path
-                and not allow_source_mismatch
-                and Path(declared_path).resolve() != source.resolve()
-            ):
-                state.err_console.print(
-                    hint("warning:"),
-                    "--source does not match the pipeline's declared input.path; "
-                    "proceeding with --source as ground truth "
-                    "(suppress with --allow-source-mismatch).",
-                )
-        else:
-            # No config: synthesize a minimal dict. The runner's
-            # residual_pii + policy_validation branches degrade
-            # gracefully when relationships + sources + tables are
-            # absent (see the decoy_engine.verification.postmask.runner docstring).
-            table_name = masked.stem
-            config_dict = {
-                "version": 2,
-                "global_settings": {"seed": 0},
-                "sources": {},
-                "tables": [],
-                "targets": {},
-                "relationships": [],
-            }
-
-        report = run_post_mask(
-            source_frames={table_name: source_df},
-            output_frames={table_name: masked_df},
-            config=config_dict,
-        )
-
-        if out is not None:
-            out.write_text(_json.dumps(report, indent=2))
-
-        # Decide exit code based on the report's severity counters.
-        fail_count = int(report.get("fail_count") or 0)
-        error_count = int(report.get("error_count") or 0)
-        exit_code = EXIT_FINDINGS if (fail_count + error_count) > 0 else 0
-
-        if state.mode is OutputMode.json:
-            emit_json(
-                state,
-                {
-                    "command": "post-scan integrity",
-                    "status": "ok" if exit_code == 0 else "findings",
-                    "note": _INTEGRITY_NOTE,
-                    "report": report,
-                },
+        try:
+            source_df = pd.read_csv(source)
+            masked_df = pd.read_csv(masked)
+        except FileNotFoundError:
+            surface.fail("input_not_found")
+        except Exception as exc:
+            surface.fail("source_unreadable", exc=exc)
+        try:
+            report = run_post_mask(
+                source_frames={table_name: source_df},
+                output_frames={table_name: masked_df},
+                config=config_dict,
             )
-        elif state.mode is not OutputMode.quiet:
-            # Render a 3-row summary table; the per-finding detail
-            # lives in the JSON payload (--json or --output).
-            table = make_table("Bucket", "Findings", "Severities", title="Post-scan integrity")
-            for bucket in ("residual_pii", "fk_preservation", "policy_validation"):
-                findings = report.get(bucket) or []
-                if not findings:
-                    table.add_row(bucket, "0", success("clean"))
-                    continue
-                sevs: dict[str, int] = {}
-                for f in findings:
-                    sev = (f.get("severity") if isinstance(f, dict) else None) or "info"
-                    sevs[sev] = sevs.get(sev, 0) + 1
-                sev_text = ", ".join(f"{k}:{v}" for k, v in sorted(sevs.items()))
-                table.add_row(bucket, str(len(findings)), sev_text)
-            state.console.print(table)
-            counters = (
-                f"pass={report.get('pass_count', 0)}  "
-                f"warning={report.get('warning_count', 0)}  "
-                f"fail={fail_count}  "
-                f"error={error_count}"
-            )
-            state.console.print(counters)
-            if exit_code == 0:
-                state.console.print(
-                    success("OK"), "no fail or error findings in the checks that ran."
-                )
-            else:
-                state.console.print(
-                    risk_high("FINDINGS"),
-                    f"{fail_count + error_count} fail/error findings; review the report.",
-                )
-            state.console.print(hint("Note:"), _INTEGRITY_NOTE)
+        except Exception as exc:
+            surface.fail("integrity_failed", exc=exc)
 
-        if exit_code != 0:
-            raise typer.Exit(code=exit_code)
+    projection = proj.integrity_report(report)
+    if out is not None:
+        surface.write(out, projection)
 
-    except typer.Exit:
-        raise
-    except FileNotFoundError:
-        _fail(vf.CODE_INPUT_UNREADABLE, "could not open an input file (not found).")
-    except Exception as exc:
-        # Type name only, no traceback even with --verbose: engine/pandas
-        # messages and frames can embed raw cell values.
-        _fail(vf.CODE_CHECK_FAILED, f"integrity check failed: {vf.exc_label(exc)}", EXIT_RUNTIME)
+    body = projection.body
+    # A runner that failed outright is never a clean pass.
+    findings = body["fail_count"] + body["error_count"] + (1 if body["pass_failed_with"] else 0)
+    surface.emit(
+        projection, status="ok" if findings == 0 else "findings", render=_render_integrity
+    )
+    if findings:
+        raise typer.Exit(code=EXIT_FINDINGS)
+
+
+def _render_integrity(out: Printer, body: Mapping[str, Any]) -> None:
+    rows = []
+    for bucket in proj.INTEGRITY_BUCKETS:
+        summary = body["buckets"][bucket]
+        sev_text = ", ".join(f"{k}:{v}" for k, v in summary["severities"].items())
+        rows.append((bucket, str(summary["findings"]), sev_text or success("clean")))
+    out.table("Bucket", "Findings", "Severities", title="Post-scan integrity", rows=rows)
+    out.line(
+        f"pass={body['pass_count']}  warning={body['warning_count']}  "
+        f"fail={body['fail_count']}  error={body['error_count']}"
+    )
+    bad = body["fail_count"] + body["error_count"]
+    if body["pass_failed_with"]:
+        out.line(risk_high("FAILED"), f"the integrity pass did not run ({body['pass_failed_with']}).")
+    elif bad == 0:
+        out.line(success("OK"), "no fail or error findings in the checks that ran.")
+    else:
+        out.line(risk_high("FINDINGS"), f"{bad} fail/error findings; review the report.")
+    out.line(hint("Note:"), body["note"])
 
 
 post_scan_app.command(name="integrity", epilog=_INTEGRITY_EPILOG)(_integrity)

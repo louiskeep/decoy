@@ -439,7 +439,8 @@ def test_scan_parity_with_cli_pre_scan(sample_csv: Path, tmp_path: Path):
     lib_profile = decoy.scan(sample_csv).to_dict()
 
     assert lib_profile["row_count"] == cli_profile["row_count"]
-    assert lib_profile["source_label"] == cli_profile["source_label"]
+    # The CLI's saved scan replaces the label (a file name) with a fixed token.
+    assert cli_profile["source_label"] == "source"
     assert lib_profile["reid_risk_score"] == cli_profile["reid_risk_score"]
     lib_fields = {f["name"]: f["pii_score"] for f in lib_profile["fields"]}
     cli_fields = {f["name"]: f["pii_score"] for f in cli_profile["fields"]}

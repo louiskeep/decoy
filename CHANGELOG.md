@@ -31,6 +31,19 @@ version numbers follow the [versioning policy](docs/release/versioning.md).
   decision) and fidelity output states that similarity is not a privacy
   guarantee. The multi-stage progress indicator is now neutral
   (`decoy.ui.scan_progress`).
+- **Value-free pre-scan / post-scan output.** Every surface of these commands
+  (stdout, `--json`, `--output` / `--report-out`, errors, `--verbose`) now carries
+  only typed projections: `pre-scan-profile/v1`, `pre-scan-fields/v1`,
+  `pre-scan-field/v1`, `pre-scan-diff/v1`, `integrity-report/v1` and
+  `fidelity-report/v1` (mirroring the platform's projection). The raw engine
+  reports (`post-scan-integrity/v2`, `quality-report/v1`) are no longer emitted or
+  written: tables are opaque `table-N` ids, engine messages and details are
+  dropped, unknown codes read `unrecognized`, and column names outside a short
+  clean charset become `field-N` / `redacted-name-N`. Errors are closed reason codes
+  (`reason`, `error_type`, typed `location`), so a layout value, path or exception
+  message never appears. `--verbose` reports only engine warning counts and type
+  names. The `pre-scan --output FILE` saved scan still keeps raw top values but
+  records `source_label: "source"` instead of the file name.
 
 ### Security
 

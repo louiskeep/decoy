@@ -71,31 +71,30 @@ def test_integrity_clean_pair_exits_zero(clean_pair: tuple[Path, Path]):
     payload = _json.loads(result.stdout)
     assert payload["command"] == "post-scan integrity"
     assert payload["status"] == "ok"
-    assert "report" in payload
-    report = payload["report"]
-    assert "residual_pii" in report
-    assert "fk_preservation" in report
-    assert "policy_validation" in report
-    assert "schema_version" in report
-    # fail + error counts are zero on the clean path.
-    assert report.get("fail_count", 0) == 0
-    assert report.get("error_count", 0) == 0
+    # The envelope carries only the value-free projection, never the raw report.
+    assert "report" not in payload
+    assert payload["schema_version"] == "integrity-report/v1"
+    for bucket in ("residual_pii", "fk_preservation", "policy_validation"):
+        assert bucket in payload
+    assert payload["fail_count"] == 0
+    assert payload["error_count"] == 0
 
 
 def test_integrity_returns_report_shape(clean_pair: tuple[Path, Path]):
-    """The wire shape matches what the platform's post-scan-integrity report.report_json
-    column carries: schema_version + 3 finding lists + 4 severity counters
-    + pass_failed_with + generated_at. Pin this so a future engine refactor
-    can't silently change the public contract."""
+    """Pin the `integrity-report/v1` projection: 3 finding lists, 4 counters,
+    per-bucket summary, and nothing free-text (no messages, no table names)."""
     src, masked = clean_pair
     result = runner.invoke(
         app, ["post-scan", "integrity", str(masked), "--source", str(src), "--json"]
     )
     assert result.exit_code == 0
     payload = _json.loads(result.stdout)
-    report = payload["report"]
+    report = payload
     expected = {
         "schema_version",
+        "source_schema_version",
+        "buckets",
+        "note",
         "residual_pii",
         "fk_preservation",
         "policy_validation",
@@ -112,8 +111,7 @@ def test_integrity_returns_report_shape(clean_pair: tuple[Path, Path]):
 
 
 def test_integrity_writes_out_file(clean_pair: tuple[Path, Path], tmp_path: Path):
-    """`--output <path>` writes the report JSON to disk; the report is
-    valid JSON and matches the --json output's `report` key."""
+    """`--output <path>` writes the integrity-report/v1 projection to disk."""
     src, masked = clean_pair
     out_path = tmp_path / "report.json"
     result = runner.invoke(
@@ -131,7 +129,7 @@ def test_integrity_writes_out_file(clean_pair: tuple[Path, Path], tmp_path: Path
     assert result.exit_code == 0
     assert out_path.exists()
     data = _json.loads(out_path.read_text(encoding="utf-8"))
-    assert "schema_version" in data
+    assert data["schema_version"] == "integrity-report/v1"
     assert "residual_pii" in data
 
 
@@ -186,7 +184,8 @@ class TestExitFourReachable:
         )
         assert result.exit_code == EXIT_FINDINGS, result.output
         payload = _json.loads(result.output)
-        severities = [f["severity"] for f in payload["report"]["residual_pii"]]
+        severities = [f["severity"] for f in payload["residual_pii"]]
+        assert all(f["table"] == "table-1" and "message" not in f for f in payload["residual_pii"])
         assert "fail" in severities
 
     def test_properly_masked_file_exits_zero(self, tmp_path):
@@ -230,7 +229,8 @@ class TestHonestyAndFailureTruth:
         )
         payload = _json.loads(result.output)
         assert "report-only" in payload["note"].lower()
-        assert payload["report"]["schema_version"] == "post-scan-integrity/v2"
+        assert payload["schema_version"] == "integrity-report/v1"
+        assert payload["source_schema_version"] == "post-scan-integrity/v2"
 
     def test_old_config_version_and_key_fail_without_echoing_values(self, clean_pair, tmp_path):
         src, masked = clean_pair
@@ -260,7 +260,8 @@ class TestHonestyAndFailureTruth:
         assert "SECRET-ABC-123" not in result.output
         payload = _json.loads(result.stdout)
         assert payload["status"] == "error"
-        assert "RuntimeError" in payload["error"]
+        assert payload["error_type"] == "RuntimeError"
+        assert payload["reason"] == "integrity_failed"
 
     def test_declared_post_scan_integrity_config_is_accepted(self, clean_pair, tmp_path):
         src, masked = clean_pair

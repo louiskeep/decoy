@@ -1072,8 +1072,8 @@ HONESTY: PII candidates are SUGGESTIONS based on pattern matching. They
 are NOT authoritative classifications. You review each flagged field and decide
 what masking to apply. Decoy never auto-classifies PII.
 
-No raw cell values appear in the inline output. Field stats include dtype,
-null_rate, distinct_count only.
+No raw cell values, paths or layout values appear in any printed output.
+Field stats include dtype, null_rate, distinct_count only.
 
 See also: decoy pre-scan fields, decoy pre-scan show, decoy pre-scan diff,
   decoy explain pre-scan, decoy validate.
@@ -1082,7 +1082,7 @@ See also: decoy pre-scan fields, decoy pre-scan show, decoy pre-scan diff,
 **Commands**:
 
 * `fields`: List fields from a saved scan, with...
-* `show`: Per-field detail from a saved scan.
+* `show`: Per-field detail from a saved scan...
 * `diff`: Compare two scans -- catch schema, PII,...
 
 ### `decoy pre-scan fields`
@@ -1107,9 +1107,9 @@ $ decoy pre-scan fields [OPTIONS] SCAN
 
 * `--pii [high|med|low|none]`: Filter to fields whose PII score falls in this bucket.
 * `--quasi`: Only fields that participate in any quasi-identifier group.
-* `--json`: Emit the filtered field list as JSON to stdout.
+* `--json`: Emit the value-free pre-scan-fields/v1 list (name, PII score/bucket, QI flag).
 * `-q, --quiet`: Suppress stdout. Errors still go to stderr.
-* `-v, --verbose`: Enable debug-level CLI logs on stderr.
+* `-v, --verbose`: Also print value-free diagnostics on stderr (warning counts, exception type names).
 * `--help`: Show this message and exit.
 
 Examples:
@@ -1128,10 +1128,12 @@ See also: decoy pre-scan, decoy pre-scan show.
 
 ### `decoy pre-scan show`
 
-Per-field detail from a saved scan.
+Per-field detail from a saved scan (value-free).
 
-The drill-down view of one field: PII score + bucket, detector matches,
-sentinel hits, top values, quasi-identifier membership. Read-only.
+The drill-down view of one field: dtype, null rate, distinct count, PII
+score + bucket, detector ids, quasi-identifier membership and how many
+sentinels were found. Top values and sentinel values are withheld; they stay
+in the saved scan file only. Read-only.
 
 **Usage**:
 
@@ -1142,22 +1144,23 @@ $ decoy pre-scan show [OPTIONS] SCAN FIELD
 **Arguments**:
 
 * `SCAN`: Path to a pre-scan profile JSON, or `-` for stdin.  [required]
-* `FIELD`: Field name to inspect.  [required]
+* `FIELD`: Field name to inspect (or the field-N label shown for a redacted name).  [required]
 
 **Options**:
 
-* `--json`: Emit the full field detail as JSON to stdout.
+* `--json`: Emit the value-free pre-scan-field/v1 projection: dtype, null rate, distinct count, PII score/bucket, detector ids, QI membership, sentinel count. Never top values or sentinel values.
 * `-q, --quiet`: Suppress stdout. Errors still go to stderr.
-* `-v, --verbose`: Enable debug-level CLI logs on stderr.
+* `-v, --verbose`: Also print value-free diagnostics on stderr (warning counts, exception type names).
 * `--help`: Show this message and exit.
 
 Examples:
 
   decoy pre-scan show scan.json ssn
-    Per-field detail card -- PII score, detectors, sentinels, top values, QI.
+    Per-field detail card -- type, null rate, distinct count, PII score,
+    detector ids, sentinel count, QI membership. Values are withheld.
 
   decoy pre-scan show scan.json email --json
-    Same data as a structured JSON envelope.
+    The same value-free facts as pre-scan-field/v1 JSON.
 
   decoy pre-scan data.csv --output - | decoy pre-scan show - ssn
     Pipe a fresh scan straight in.
@@ -1188,9 +1191,9 @@ $ decoy pre-scan diff [OPTIONS] OLD NEW
 **Options**:
 
 * `--strict`: Exit 1 on drift -- any PII bucket bumped up, any new high-PII field, or any new quasi-identifier group.
-* `--json`: Emit the categorized diff as JSON to stdout.
+* `--json`: Emit the value-free pre-scan-diff/v1 projection as JSON.
 * `-q, --quiet`: Suppress stdout. Errors still go to stderr.
-* `-v, --verbose`: Enable debug-level CLI logs on stderr.
+* `-v, --verbose`: Also print value-free diagnostics on stderr (warning counts, exception type names).
 * `--help`: Show this message and exit.
 
 Examples:
@@ -1259,11 +1262,11 @@ $ decoy post-scan integrity [OPTIONS] MASKED
 
 * `--source FILE`: Pre-mask source CSV (ground truth for the integrity check).  [required]
 * `--config FILE`: Optional pipeline.yaml. When passed, policy_validation can compare against the configured masks. Without it the runner still produces residual_pii + fk_preservation findings.
-* `-o, --output PATH`: Write the post-scan-integrity/v2 JSON to this path. The Rich table still renders to stderr.
+* `-o, --output PATH`: Write the value-free integrity-report/v1 projection to this path. The summary table still renders to stdout.
 * `--allow-source-mismatch`: Suppress the stderr warning when --source does not match the pipeline&#x27;s declared sources block.
-* `--json`: Emit the full post-scan-integrity/v2 JSON to stdout. No card.
+* `--json`: Emit the value-free integrity-report/v1 projection to stdout. No card.
 * `-q, --quiet`: Suppress stdout. Errors still go to stderr.
-* `-v, --verbose`: Enable debug-level CLI logs on stderr.
+* `-v, --verbose`: Also print value-free diagnostics on stderr (warning counts, exception type names).
 * `--help`: Show this message and exit.
 
 Examples:
@@ -1280,10 +1283,11 @@ Examples:
     is reduced to "no config provided" notes.
 
   decoy post-scan integrity masked.csv --source source.csv --json > report.json
-    Pipe the full post-scan-integrity/v2 report JSON for downstream tooling.
+    Pipe the value-free integrity-report/v1 projection for downstream tooling
+    (counts, rates, closed codes; tables as opaque table-N ids; no messages).
 
   decoy post-scan integrity masked.csv --source source.csv --output report.json
-    Write JSON to file + render a Rich summary on stderr.
+    Also write the same integrity-report/v1 projection to a file.
 
 Exit codes: 0 clean (no fail/error findings); 4 EXIT_FINDINGS (one
 or more fail-severity findings); 1 EXIT_USAGE for missing files;
@@ -1333,10 +1337,10 @@ $ decoy post-scan fidelity [OPTIONS] SOURCE OUTPUT
 * `--min-grade TEXT`: Shorthand: minimum letter grade (A/B/C/D) the overall score must reach.
 * `--min-score FLOAT`: Shorthand: minimum overall_score in [0, 1].
 * `--fail-on-warning`: Also exit non-zero (EXIT_FINDINGS) when the policy verdict is &#x27;warn&#x27;.
-* `--report-out PATH`: Write the full quality-report/v1 + policy JSON to this path.
-* `--json`: Emit the full quality-report/v1 + policy result as JSON.
+* `--report-out PATH`: Write the value-free fidelity-report/v1 projection to this path.
+* `--json`: Emit the value-free fidelity-report/v1 projection as JSON.
 * `-q, --quiet`: Suppress stdout. Exit code carries the result.
-* `-v, --verbose`: Enable debug-level CLI logs on stderr.
+* `-v, --verbose`: Also print value-free diagnostics on stderr (warning counts, exception type names).
 * `--help`: Show this message and exit.
 
 Examples:

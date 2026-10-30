@@ -156,7 +156,7 @@ def test_scan_show_fields_json_has_no_raw_aggregates(sample_csv: Path) -> None:
         # The allowed privacy-safe keys.
         assert set(f) <= {
             "name", "dtype", "null_rate", "distinct_count",
-            "pii_score", "pii_candidate", "detector_hits",
+            "pii_score", "pii_bucket", "pii_candidate", "detector_hits",
         }
 
 

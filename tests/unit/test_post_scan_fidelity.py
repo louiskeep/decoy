@@ -60,7 +60,8 @@ def test_distribution_calls_engine_compute_quality_report(tmp_path: Path):
     assert spy_policy.call_count == 1, "post-scan fidelity must call apply_quality_policy exactly once"
 
     payload = _json.loads(result.output)
-    assert payload["schema_version"] == "quality-report/v1"
+    assert payload["schema_version"] == "fidelity-report/v1"
+    assert payload["source_schema_version"] == "quality-report/v1"
     assert "policy" in payload
     assert payload["policy"]["schema_version"] == "quality-policy/v1"
 
@@ -95,12 +96,9 @@ def test_distribution_generate_flag_sets_expect_row_parity_false(tmp_path: Path)
     _, kwargs = spy.call_args
     assert kwargs["expect_row_parity"] is False
     payload = _json.loads(result.output)
-    row_count_check = next(
-        c for c in payload["diagnostic"]["checks"] if c["check"] == "row_count"
-    )
-    assert row_count_check["passed"] is True, (
-        "row-count mismatch must not be flagged when --generate is set"
-    )
+    # The projection carries the diagnostic verdict and closed warning codes only.
+    assert payload["diagnostic_passed"] is True
+    assert "row_count" not in [w["code"] for w in payload["warnings"]]
 
 
 # ---------------------------------------------------------------------------
@@ -129,7 +127,7 @@ def test_distribution_joint_produces_pairwise_block(tmp_path: Path):
     )
     assert result.exit_code == 0, result.output
     payload = _json.loads(result.output)
-    joints = payload["pairwise"]["joints"]
+    joints = payload["pairs"]
     assert len(joints) == 1
     assert joints[0]["columns"] == ["state", "tier"]
 
@@ -373,5 +371,5 @@ def test_distribution_report_out_writes_json(tmp_path: Path):
     )
     assert result.exit_code == 0, result.output
     written = _json.loads(report_out.read_text(encoding="utf-8"))
-    assert written["schema_version"] == "quality-report/v1"
+    assert written["schema_version"] == "fidelity-report/v1"
     assert written["policy"]["schema_version"] == "quality-policy/v1"

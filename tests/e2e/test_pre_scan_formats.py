@@ -94,7 +94,8 @@ def test_pre_scan_reads_parquet_fixture(parquet_fixture: Path, tmp_path: Path):
     assert payload["row_count"] == 3
     field_names = [f["name"] for f in payload["fields"]]
     assert "email" in field_names, f"Expected 'email' in fields. Got: {field_names}"
-    assert payload["source_label"] == "members.parquet"
+    # The saved scan never records the source path or file name.
+    assert payload["source_label"] == "source"
 
 
 def test_pre_scan_parquet_json_output(parquet_fixture: Path):
