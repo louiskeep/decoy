@@ -51,7 +51,7 @@ import yaml as _yaml
 
 from decoy.cli._default_group import make_default_group
 from decoy.cli._yaml_errors import sanitize_yaml_error
-from decoy.cli.exit_codes import EXIT_CAPACITY, EXIT_USAGE, EXIT_WARNINGS
+from decoy.cli.exit_codes import EXIT_CAPACITY, EXIT_OK, EXIT_USAGE, EXIT_WARNINGS
 from decoy.ui.output import OutputMode, emit_json, setup_output
 from decoy.ui.theme import accent, code, error, hint, success, warn
 
@@ -404,6 +404,9 @@ class _GateFinding:
     code: str
     message: str
     location: str | None = None
+    # The dotted config path the engine attached, even where the direct command has never
+    # surfaced it as `location`. Read by `decoy ci` only; no existing output renders it.
+    logical_path: str | None = None
 
 
 # Canonical layer order for the grouped human report.
@@ -414,7 +417,9 @@ _GATE_LAYERS: tuple[tuple[str, str], ...] = (
 )
 
 
-def _run_config_base(config: Path) -> tuple[dict[str, Any] | None, list[_GateFinding]]:
+def _run_config_base(
+    config: Path, source_text: str | None = None
+) -> tuple[dict[str, Any] | None, list[_GateFinding]]:
     """The shared config layer: YAML parse + schema validate + the profile-free
     plan-compile checks, composed exactly as `validate config` composes them.
 
@@ -436,7 +441,8 @@ def _run_config_base(config: Path) -> tuple[dict[str, Any] | None, list[_GateFin
     findings: list[_GateFinding] = []
 
     try:
-        raw = _yaml.safe_load(config.read_text(encoding="utf-8"))
+        text = source_text if source_text is not None else config.read_text(encoding="utf-8")
+        raw = _yaml.safe_load(text)
     except _yaml.YAMLError as exc:
         findings.append(_GateFinding("config", "error", "yaml.parse_error", sanitize_yaml_error(exc)))
         return None, findings
@@ -469,7 +475,15 @@ def _run_config_base(config: Path) -> tuple[dict[str, Any] | None, list[_GateFin
             )
         return None, findings
     except (PipelineValidationError, ConfigError) as exc:
-        findings.append(_GateFinding("config", "error", "pipeline.validation_error", str(exc)))
+        findings.append(
+            _GateFinding(
+                "config",
+                "error",
+                "pipeline.validation_error",
+                str(exc),
+                logical_path=getattr(exc, "path", None),
+            )
+        )
         return None, findings
 
     # Looked up on the module (not a `from ... import` binding) so a test can
@@ -480,7 +494,9 @@ def _run_config_base(config: Path) -> tuple[dict[str, Any] | None, list[_GateFin
         from decoy.cli.extras import plan_compile_error_fields
 
         err_code, message = plan_compile_error_fields(exc)
-        findings.append(_GateFinding("config", "error", err_code, message))
+        findings.append(
+            _GateFinding("config", "error", err_code, message, logical_path=exc.path or None)
+        )
         return None, findings
 
     return raw, findings
@@ -532,7 +548,9 @@ def _run_compile_layer(raw: dict[str, Any]) -> list[_GateFinding]:
 
         err_code, message = plan_compile_error_fields(exc)
         findings.append(
-            _GateFinding("compile", "error", err_code, message, location=exc.path or None)
+            _GateFinding(
+                "compile", "error", err_code, message, location=exc.path or None, logical_path=exc.path or None
+            )
         )
         return findings
     except Exception as exc:  # mirrors `compile`'s own broad compile-error catch
@@ -578,6 +596,52 @@ def _run_preflight_layer(raw: dict[str, Any], config: Path) -> tuple[list[_GateF
             _GateFinding("preflight", severity, c.code or c.name, c.message, c.location)
         )
     return findings, acc.capacity_insufficient
+
+
+@dataclass(frozen=True)
+class GateResult:
+    """The side-effect-free outcome of the pre-run gate (no rendering, no exit).
+
+    `decoy validate CONFIG` renders it; `decoy ci check` consumes the same value, so the
+    CI wrapper cannot drift from the direct command.
+    """
+
+    findings: list[_GateFinding]
+    ran_layers: frozenset[str]
+    capacity_insufficient: bool
+
+
+def run_config_gate(config: Path, source_text: str | None = None) -> GateResult:
+    """Config layer only (YAML + schema + profile-free plan-compile checks)."""
+    _, findings = _run_config_base(config, source_text)
+    return GateResult(findings, frozenset({"config"}), False)
+
+
+def run_gate(config: Path, source_text: str | None = None) -> GateResult:
+    """Config + compile + preflight, short-circuiting after a failed config layer."""
+    raw, config_findings = _run_config_base(config, source_text)
+    if raw is None:
+        return GateResult(config_findings, frozenset({"config"}), False)
+    compile_findings = _run_compile_layer(raw)
+    preflight_findings, capacity_insufficient = _run_preflight_layer(raw, config)
+    return GateResult(
+        config_findings + compile_findings + preflight_findings,
+        frozenset({"config", "compile", "preflight"}),
+        capacity_insufficient,
+    )
+
+
+def gate_exit_code(result: GateResult, fail_on_warning: bool) -> int:
+    """Exit-code precedence (highest first): capacity, any error, blocking warning, ok."""
+    if result.capacity_insufficient:
+        # A hard capacity FAIL always exits EXIT_CAPACITY, outranking a co-occurring
+        # compile failure (both appear in the report).
+        return EXIT_CAPACITY
+    if any(f.severity == "error" for f in result.findings):
+        return EXIT_USAGE
+    if fail_on_warning and any(f.severity == "warning" for f in result.findings):
+        return EXIT_WARNINGS
+    return EXIT_OK
 
 
 def _gate(
@@ -628,34 +692,17 @@ def _gate(
     state = setup_output(json_, quiet, verbose)
     config_str = str(config)
 
-    raw, config_findings = _run_config_base(config)
-    if raw is None:
-        # Config base failed: compile/preflight cannot run. Short-circuit.
-        _emit_gate(state, config_findings, config_str, fail_on_warning, ran_layers={"config"})
-        raise typer.Exit(code=EXIT_USAGE)
-
-    compile_findings = _run_compile_layer(raw)
-    preflight_findings, capacity_insufficient = _run_preflight_layer(raw, config)
-    findings = config_findings + compile_findings + preflight_findings
-
+    result = run_gate(config)
     _emit_gate(
         state,
-        findings,
+        result.findings,
         config_str,
         fail_on_warning,
-        ran_layers={"config", "compile", "preflight"},
+        ran_layers=set(result.ran_layers),
     )
-
-    # Exit-code precedence (highest first).
-    if capacity_insufficient:
-        # A hard capacity FAIL always exits EXIT_CAPACITY, outranking a
-        # co-occurring compile failure (both appear in the report).
-        raise typer.Exit(code=EXIT_CAPACITY)
-    if any(f.severity == "error" for f in findings):
-        raise typer.Exit(code=EXIT_USAGE)
-    if fail_on_warning and any(f.severity == "warning" for f in findings):
-        raise typer.Exit(code=EXIT_WARNINGS)
-    # else EXIT_OK (implicit clean return)
+    code = gate_exit_code(result, fail_on_warning)
+    if code != EXIT_OK:
+        raise typer.Exit(code=code)
 
 
 def _emit_gate(

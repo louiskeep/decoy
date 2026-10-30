@@ -84,7 +84,7 @@ def _manifest(pattern_literal: str, *, evidence: bool, extra: str = "") -> str:
     return (
         "schema_version: decoy-ci/v1\n"
         "pipelines:\n  - id: primary\n    path: pipeline.yaml\n"
-        "checks:\n  validation:\n    enabled: true\n    mode: full\n    pipelines: [primary]\n"
+        "checks:\n  validation:\n    enabled: true\n    mode: full\n    pipelines: [primary]\n    fail_on_warning: false\n"
         f"{ev}\n"
         "staged_scan:\n  enabled: true\n  patterns:\n"
         f"    - id: pii.seeded-test-identifier\n      literal: {json.dumps(pattern_literal)}\n"
@@ -194,8 +194,10 @@ def test_no_canary_or_identifying_substring_reaches_any_byte(
     assert report_text.strip(), "the report surface must not be empty"
     _assert_real_report(fmt, report_text, scenario, status)
     after = {p for p in case.repo.rglob("*") if ".git" not in p.parts}
-    # no stray artifact: only the requested report file may appear (A9c)
-    assert {p.name for p in after - before} <= {out_file.name}
+    # no stray artifact: only the requested report file may appear (A9c). The engine's own
+    # cwd-relative `logs/decoy_engine.log` (written by every full validation, with or
+    # without F43) is the one known pre-existing exception.
+    assert {p.name for p in after - before} <= {out_file.name, "logs", "decoy_engine.log"}
 
     for where, text in artifacts.items():
         for needle in _needles(tmp_path):

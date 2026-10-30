@@ -8,6 +8,7 @@ through `if __name__ == "__main__":`.
 import typer
 
 from decoy import __version__
+from decoy.cli.ci import ci_app
 from decoy.cli.cockpit import DOCTOR_EPILOG, doctor
 from decoy.cli.demo import DEMO_EPILOG
 from decoy.cli.demo import _demo as demo_command
@@ -61,6 +62,7 @@ Try one of:
   decoy report show evidence.json  Show the evidence manifest (the post-run surface: show/verify/fidelity/integrity/diff/vault).
   decoy report verify evidence.json  Re-hash the recorded files and report fingerprint drift.
   decoy report diff a.json b.json  Compare two manifests: fingerprints always, data when the output files exist.
+  decoy ci check                   Run CI checks from .decoy-ci.yaml; JSON, SARIF, or Markdown report (see docs/ci-contracts.md).
 
 Run `decoy --install-completion` to enable shell tab completion.
 """
@@ -150,6 +152,7 @@ app.command(name="info", epilog=INFO_EPILOG)(info_command)
 app.command(name="schema", epilog=SCHEMA_EPILOG)(schema_command)
 app.add_typer(scan_app, name="scan")
 app.add_typer(report_app, name="report")
+app.add_typer(ci_app, name="ci")
 app.command(name="list", epilog=LIST_EPILOG)(list_)
 app.command(name="show", epilog=SHOW_EPILOG)(show)
 app.command(name="doctor", epilog=DOCTOR_EPILOG)(doctor)

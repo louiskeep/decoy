@@ -9,6 +9,8 @@ from __future__ import annotations
 import json
 
 import pytest
+from tests.ci_support import assert_valid_sarif
+
 from decoy.ci import contracts
 from decoy.ci.contracts import (
     CheckOutcome,
@@ -18,8 +20,6 @@ from decoy.ci.contracts import (
     UnsafeFindingError,
 )
 from decoy.ci.reporting import SarifProjectionError, render_json, render_markdown, render_sarif
-from tests.ci_support import assert_valid_sarif
-
 from decoy.cli.exit_codes import EXIT_FINDINGS, EXIT_OK, EXIT_RUNTIME, EXIT_USAGE, EXIT_WARNINGS
 
 

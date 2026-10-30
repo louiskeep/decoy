@@ -33,8 +33,12 @@ EXAMPLES_ROOT = Path(__file__).resolve().parent.parent.parent / "examples"
 EXPECTED_EXAMPLES = {"mask_example.yaml", "generate_example.yaml"}
 
 
+# Not pipelines: the F43 `decoy-ci/v1` CI manifest, validated by tests/unit/test_ci_manifest.py.
+NON_PIPELINE_EXAMPLES = {"decoy-ci.yaml"}
+
+
 def _example_paths() -> list[Path]:
-    return sorted(p for p in EXAMPLES_ROOT.glob("*.yaml"))
+    return sorted(p for p in EXAMPLES_ROOT.glob("*.yaml") if p.name not in NON_PIPELINE_EXAMPLES)
 
 
 def test_expected_examples_present_no_v1_holdovers():

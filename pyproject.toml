@@ -118,11 +118,20 @@ dependencies = [
     # lacks either breaks the whole CLI, not just upgrade.
     "packaging>=21.0",
     "cryptography>=42",
+    # Declared directly: `decoy ci` owns the decoy-ci/v1 manifest as a strict Pydantic model
+    # (and `decoy validate` already imports pydantic), so it must not ride in only as an
+    # engine transitive. Floor matches the engine's own.
+    "pydantic>=2,<3",
 ]
 
 [project.optional-dependencies]
 dev = [
     "pytest>=7.0.0",
+    # F43 test oracles only, never a runtime dependency: jsonschema validates emitted SARIF
+    # against the vendored OASIS schema; pre-commit runs the shipped hook for real (4.4.0 is
+    # the first release with `language: unsupported`).
+    "jsonschema>=4,<5",
+    "pre-commit>=4.4.0",
 ]
 # CLI install DX (2026-09-25): pass-through extras so `pip install
 # decoy-cli[...]` actually reaches the engine's matching extra instead of

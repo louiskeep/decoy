@@ -7,9 +7,10 @@ import os
 from pathlib import Path
 
 import pytest
+from tests.ci_support import ci_manifest, make_repo, write
+
 from decoy.ci.contracts import CI_MANIFEST_VERSION
 from decoy.ci.manifest import ManifestError, load_manifest, manifest_json_schema_text
-from tests.ci_support import ci_manifest, make_repo, write
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
@@ -83,21 +84,29 @@ def test_unknown_fields_are_rejected_at_every_level(tmp_path: Path) -> None:
 
 
 @pytest.mark.parametrize(
-    "extra",
+    "text",
     [
-        "anchors:\n  - &a {id: x}\n",  # anchor definition
-        "ref: *a\n",  # alias use (anchor defined above)
-        "merge:\n  <<: {id: x}\n",  # merge key
-        "tagged: !!python/object:os.system {}\n",  # custom/unsafe tag
-        "tagged: !custom value\n",  # unknown local tag
-        "---\nschema_version: decoy-ci/v1\n",  # second document
+        # Each document is VALID but for the one feature under test, so the rejection can
+        # only come from the YAML-feature guard (not from an unknown field).
+        "schema_version: decoy-ci/v1\npipelines:\n  - &p {id: primary, path: pipeline.yaml}\n",  # anchor
+        "schema_version: decoy-ci/v1\npipelines:\n  - <<: {id: primary, path: pipeline.yaml}\n",  # merge key
+        BASE + "---\nschema_version: decoy-ci/v1\n",  # second document
+        "schema_version: !!python/object:os.system {}\npipelines: []\n",  # unsafe tag
+        "schema_version: !custom decoy-ci/v1\npipelines:\n  - {id: primary, path: pipeline.yaml}\n",
     ],
 )
-def test_yaml_features_outside_the_contract_are_rejected(tmp_path: Path, extra: str) -> None:
-    text = BASE + extra
-    if extra.startswith("ref:"):
-        text = BASE + "anchors:\n  - &a {id: x}\n" + extra
+def test_yaml_features_outside_the_contract_are_rejected(tmp_path: Path, text: str) -> None:
     _reject(tmp_path, text)
+
+
+def test_the_guard_does_not_over_reject_plain_equivalents(tmp_path: Path) -> None:
+    """Positive control: the same documents without the forbidden feature load."""
+    plain = "schema_version: decoy-ci/v1\npipelines:\n  - {id: primary, path: pipeline.yaml}\n"
+    assert _load(tmp_path, plain).manifest.pipelines[0].id == "primary"
+    tagged = plain.replace("schema_version: decoy-ci/v1", "schema_version: !!str decoy-ci/v1")
+    assert (
+        _load(tmp_path, tagged).manifest.schema_version == "decoy-ci/v1"
+    )  # standard str tag is fine
 
 
 def test_duplicate_yaml_keys_are_rejected(tmp_path: Path) -> None:
@@ -116,7 +125,7 @@ def test_json_manifest_is_accepted_and_json_duplicate_keys_are_not(tmp_path: Pat
 
 
 @pytest.mark.parametrize(
-    "bad", ["/etc/passwd", "../outside.yaml", "a/../../b.yaml", "a\\\\b.yaml", ""]
+    "bad", ["/etc/passwd", "../outside.yaml", "a/../../b.yaml", "a/../b.yaml", "a\\\\b.yaml", ""]
 )
 def test_unsafe_pipeline_paths_are_rejected(tmp_path: Path, bad: str) -> None:
     text = BASE.replace("pipeline.yaml", json.dumps(bad))

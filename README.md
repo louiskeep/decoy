@@ -114,12 +114,32 @@ declared under `targets:` in the YAML.
 | `decoy detokenize <path> <file>` | Reverse a tokenized file from its vault. Fails closed on a missing/wrong vault or namespace. |
 | `decoy scan <path>`              | Profile a source file: distributions, PII candidates, cardinality hints.      |
 | `decoy report show <evidence.json>` | The post-run surface: show / verify / fidelity / integrity / diff / vault over run artifacts. |
+| `decoy ci check [manifest]`      | Run the checks in a `decoy-ci/v1` manifest and emit one value-free JSON, SARIF 2.1.0, or Markdown report. See [CI integration](#ci-integration). |
 | `decoy list templates`           | List the bundled pipeline templates.                                         |
 | `decoy show template <name>`     | Dump one bundled template to stdout (e.g. `decoy show template hipaa`).      |
 | `decoy explain <topic>`          | In-CLI reference (exit codes, providers, strategies).                         |
 
 Run `decoy --help` for the full surface, or `decoy <command> --help` for
 any subcommand.
+
+## CI integration
+
+`decoy ci check` runs the checks listed in a committed `.decoy-ci.yaml` (full or config-only
+validation, saved-scan drift, evidence verification, and an optional bounded scan of
+*staged* files for literal seeded identifiers) and writes one report. It uses the exit codes
+below, never uploads or comments, and prints no matched value.
+
+```bash
+decoy ci check .decoy-ci.yaml --format sarif --output decoy.sarif
+```
+
+- **Manifest:** `examples/decoy-ci.yaml`; schema `docs/schemas/decoy-ci-v1.schema.json`.
+- **GitHub Actions / GitLab CI:** invoker-only templates in `integrations/`. They need a
+  pre-provisioned, pinned `decoy` on the runner; code-scanning upload is an opt-in step you
+  configure, not something Decoy does.
+- **pre-commit:** add this repository under `repos:` and enable hook `decoy-ci-check`
+  (pre-commit >= 4.4.0, a pre-installed `decoy` on `PATH`, no network).
+- Full contract, limits, and false-positive behavior: [docs/ci-contracts.md](docs/ci-contracts.md).
 
 ## Exit codes
 

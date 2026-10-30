@@ -104,7 +104,9 @@ REASON_CODES: frozenset[str] = frozenset(
 CHECK_KINDS: frozenset[str] = frozenset(
     {"validation", "drift", "evidence", "regression", "staged_scan", "manifest"}
 )
-CHECK_STATUSES: frozenset[str] = frozenset({"ok", "noop", "findings", "partial", "refused", "failed"})
+CHECK_STATUSES: frozenset[str] = frozenset(
+    {"ok", "noop", "findings", "partial", "refused", "failed"}
+)
 LEVELS: frozenset[str] = frozenset({"error", "warning", "note"})
 EXIT_CODES: frozenset[int] = frozenset(
     {EXIT_OK, EXIT_USAGE, EXIT_WARNINGS, EXIT_RUNTIME, EXIT_FINDINGS, EXIT_CAPACITY}
@@ -431,6 +433,8 @@ class _Strict(BaseModel):
 
 
 class PipelineRef(_Strict):
+    """A pipeline YAML file validated by the validation check (repo-relative to the manifest)."""
+
     id: Id
     path: RepoPath
 
@@ -438,6 +442,8 @@ class PipelineRef(_Strict):
 
 
 class ValidationCheck(_Strict):
+    """Existing `decoy validate` semantics: `full` = config+compile+preflight, `config` = config layer only."""
+
     enabled: StrictBool = True
     mode: Literal["full", "config"] = "full"
     pipelines: tuple[Id, ...] | None = Field(default=None, min_length=1, max_length=MAX_PIPELINES)
@@ -445,6 +451,8 @@ class ValidationCheck(_Strict):
 
 
 class DriftCheck(_Strict):
+    """Compare two saved STORM scan JSON files with the `scan diff` categorizer."""
+
     id: Id
     baseline: RepoPath
     current: RepoPath
@@ -454,6 +462,8 @@ class DriftCheck(_Strict):
 
 
 class EvidenceCheck(_Strict):
+    """Verify a cli-local-1 evidence manifest with the `report verify` fingerprint check."""
+
     id: Id
     manifest: RepoPath
 
@@ -461,6 +471,8 @@ class EvidenceCheck(_Strict):
 
 
 class RegressionRef(_Strict):
+    """Reference to an F12 regression suite. Refused until a public F12 runner exists."""
+
     id: Id
     suite: RepoPath
 
@@ -468,6 +480,8 @@ class RegressionRef(_Strict):
 
 
 class Checks(_Strict):
+    """Selected checks. Omitted `checks` means full validation of every pipeline."""
+
     validation: ValidationCheck = ValidationCheck()
     drift: tuple[DriftCheck, ...] = Field(default=(), max_length=MAX_DRIFT)
     evidence: tuple[EvidenceCheck, ...] = Field(default=(), max_length=MAX_EVIDENCE)
@@ -478,6 +492,8 @@ Glob = Annotated[StrictStr, Field(max_length=512)]
 
 
 class StagedPattern(_Strict):
+    """An exact UTF-8 byte literal (4-128 bytes) scanned for in staged blobs of matching paths."""
+
     id: Id
     literal: StrictStr
     paths: tuple[Glob, ...] = Field(min_length=1, max_length=32)
@@ -503,6 +519,8 @@ class StagedPattern(_Strict):
 
 
 class StagedLimits(_Strict):
+    """Scan limits. Each default is also the hard maximum: a manifest may lower, never raise."""
+
     max_files: StrictInt = Field(default=HARD_MAX_FILES, ge=1, le=HARD_MAX_FILES)
     max_blob_bytes: StrictInt = Field(default=HARD_MAX_BLOB_BYTES, ge=1, le=HARD_MAX_BLOB_BYTES)
     max_total_bytes: StrictInt = Field(default=HARD_MAX_TOTAL_BYTES, ge=1, le=HARD_MAX_TOTAL_BYTES)
@@ -513,6 +531,8 @@ class StagedLimits(_Strict):
 
 
 class StagedScan(_Strict):
+    """Bounded scan of the Git index (staged post-image) for the configured literals."""
+
     enabled: StrictBool = False
     patterns: tuple[StagedPattern, ...] = Field(default=(), max_length=MAX_PATTERNS)
     limits: StagedLimits = StagedLimits()
@@ -528,6 +548,8 @@ class StagedScan(_Strict):
 
 
 class CiManifest(_Strict):
+    """The `decoy-ci/v1` CI manifest: strict, typed, no includes, commands, or interpolation."""
+
     schema_version: Literal["decoy-ci/v1"]
     pipelines: tuple[PipelineRef, ...] = Field(min_length=1, max_length=MAX_PIPELINES)
     checks: Checks = Checks()
@@ -538,7 +560,11 @@ class CiManifest(_Strict):
         pipeline_ids = [p.id for p in self.pipelines]
         if len(pipeline_ids) != len(set(pipeline_ids)):
             raise PydanticCustomError("duplicate_id", "duplicate pipeline id")
-        check_ids = [c.id for group in (self.checks.drift, self.checks.evidence, self.checks.regression_suites) for c in group]
+        check_ids = [
+            c.id
+            for group in (self.checks.drift, self.checks.evidence, self.checks.regression_suites)
+            for c in group
+        ]
         if len(check_ids) != len(set(check_ids)):
             raise PydanticCustomError("duplicate_id", "duplicate check id")
         selected = self.checks.validation.pipelines

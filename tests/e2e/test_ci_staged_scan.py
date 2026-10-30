@@ -8,6 +8,7 @@ from __future__ import annotations
 import os
 import shutil
 import stat
+import time
 import urllib.parse
 from pathlib import Path
 
@@ -322,14 +323,21 @@ def test_git_timeout_is_a_runtime_failure_not_a_clean_scan(tmp_path: Path) -> No
     repo = _repo(tmp_path, manifest)
     write(repo, "fixtures/a.txt", "clean\n")
     git(repo, "add", "fixtures")
+    # A git that hangs on the staged diff (a stand-in for a stalled filesystem). `exec`
+    # makes the sleep BE the process, so the budget's kill is what ends it, not the sleep.
     shim_dir = tmp_path / "shim"
     shim_dir.mkdir()
     shim = shim_dir / "git"
-    shim.write_text(f'#!/bin/sh\nsleep 3\nexec {shutil.which("git")} "$@"\n', encoding="utf-8")
+    shim.write_text(
+        '#!/bin/sh\ncase "$*" in *"diff --cached"*) exec sleep 30;; esac\n'
+        f'exec {shutil.which("git")} "$@"\n',
+        encoding="utf-8",
+    )
     shim.chmod(shim.stat().st_mode | stat.S_IEXEC)
-    # rev-parse is also git: shimming PATH exercises the shared budget end to end
     env = {"PATH": f"{shim_dir}{os.pathsep}{os.environ['PATH']}"}
+    started = time.monotonic()
     proc, report = _scan(repo, env=env)
+    assert time.monotonic() - started < 15, "the 1s Git budget must actually stop the process"
     assert proc.returncode == EXIT_RUNTIME, proc.stderr
     assert (report["status"], report["exit_code"]) == ("partial", EXIT_RUNTIME)
     assert _check(report)["reason_code"] == "ci.git_failure"
@@ -394,3 +402,100 @@ def test_copy_entries_use_the_two_field_form_too(tmp_path: Path, status_sample: 
     ]
     with pytest.raises(ValueError):
         parse_name_status_z(b"A\0a.txt\0R100\0only-one-field\0")
+
+
+def test_exact_boundary_sizes_are_accepted(tmp_path: Path) -> None:
+    repo = _repo(tmp_path)
+    write(repo, "fixtures/exact.txt", b"a" * (1024 * 1024))  # == max_blob_bytes
+    git(repo, "add", "fixtures")
+    proc, report = _scan(repo)
+    assert proc.returncode == EXIT_OK, proc.stderr
+    assert (report["status"], report["findings"]) == ("ok", [])
+    # five 1 MiB files total exactly 5 MiB == max_total_bytes
+    git(repo, "reset", "-q")
+    (repo / "fixtures" / "exact.txt").unlink()
+    for i in range(5):
+        write(repo, f"fixtures/m{i}.txt", bytes([97 + i]) * (1024 * 1024))
+    git(repo, "add", "fixtures")
+    proc, report = _scan(repo)
+    assert proc.returncode == EXIT_OK, proc.stderr
+    assert report["status"] == "ok"
+
+
+def test_file_count_boundary_is_inclusive(tmp_path: Path) -> None:
+    repo = _repo(tmp_path)
+    for i in range(200):
+        write(repo, f"fixtures/f{i:03d}.txt", f"clean {i}\n")
+    git(repo, "add", "fixtures")
+    proc, report = _scan(repo)
+    assert proc.returncode == EXIT_OK, proc.stderr
+    assert report["status"] == "ok"
+
+
+def test_replace_refs_cannot_swap_the_bytes_that_get_scanned(tmp_path: Path) -> None:
+    repo = _repo(tmp_path)
+    write(repo, "fixtures/a.txt", f"{LITERAL}1\n")
+    git(repo, "add", "fixtures/a.txt")
+    dirty = git(repo, "rev-parse", ":fixtures/a.txt").stdout.decode().strip()
+    clean = (
+        git(repo, "hash-object", "-w", "--stdin", input=b"nothing to see\n").stdout.decode().strip()
+    )
+    git(repo, "replace", "-f", dirty, clean)
+    # control: with replace refs honored, git itself would hand back the clean bytes
+    assert git(repo, "cat-file", "-p", dirty).stdout == b"nothing to see\n"
+    proc, report = _scan(repo)
+    assert proc.returncode == EXIT_FINDINGS, proc.stderr
+    assert _paths(report) == ["fixtures/a.txt"]
+
+
+def test_the_execution_controls_have_teeth(tmp_path: Path) -> None:
+    """Negative control for the no-program test: a plain `git diff --cached` DOES run them."""
+    repo = _repo(tmp_path)
+    marker = tmp_path / "plain-git.marker"
+    script = tmp_path / "touch.sh"
+    script.write_text(f"#!/bin/sh\necho ran >> {marker}\ncat\n", encoding="utf-8")
+    script.chmod(script.stat().st_mode | stat.S_IEXEC)
+    git(repo, "config", "diff.external", str(script))
+    write(repo, "fixtures/a.txt", f"{LITERAL}1\n")
+    git(repo, "add", "fixtures/a.txt")
+    git(repo, "commit", "-q", "-m", "x")
+    write(repo, "fixtures/a.txt", f"{LITERAL}2\n")
+    git(repo, "add", "fixtures/a.txt")
+    git(repo, "diff", "--cached")
+    assert marker.exists(), "the repo-configured program must run for a plain git diff"
+
+
+def test_type_changes_are_scanned_or_refused_never_skipped(tmp_path: Path) -> None:
+    repo = _repo(tmp_path)
+    write(repo, "elsewhere.txt", "target\n")
+    write(repo, "fixtures/regular.txt", "clean\n")
+    (repo / "fixtures").mkdir(exist_ok=True)
+    os.symlink("../elsewhere.txt", repo / "fixtures" / "was_link.txt")
+    commit_all(repo, "types")
+    # regular -> symlink: refused (never followed)
+    (repo / "fixtures" / "regular.txt").unlink()
+    os.symlink("../elsewhere.txt", repo / "fixtures" / "regular.txt")
+    git(repo, "add", "fixtures/regular.txt")
+    proc, report = _scan(repo)
+    assert proc.returncode == EXIT_USAGE, proc.stderr
+    assert _check(report)["reason_code"] == "ci.staged_unsupported_entry"
+    git(repo, "reset", "-q", "--hard")
+    # symlink -> regular file holding the literal: the new regular post-image IS scanned
+    (repo / "fixtures" / "was_link.txt").unlink()
+    write(repo, "fixtures/was_link.txt", f"{LITERAL}1\n")
+    git(repo, "add", "fixtures/was_link.txt")
+    assert git(repo, "diff", "--cached", "--name-status").stdout.decode().startswith("T")
+    proc, report = _scan(repo)
+    assert proc.returncode == EXIT_FINDINGS, proc.stderr
+    assert _paths(report) == ["fixtures/was_link.txt"]
+
+
+def test_a_hit_in_a_path_that_cannot_be_reported_still_blocks(tmp_path: Path) -> None:
+    repo = _repo(tmp_path)
+    write(repo, "fixtures/back\\slash.txt", f"{LITERAL}1\n")  # a backslash is legal in a Git path
+    git(repo, "add", "fixtures")
+    proc, report = _scan(repo)
+    assert proc.returncode == EXIT_USAGE, proc.stderr
+    assert report["status"] == "partial"
+    assert _check(report)["reason_code"] == "ci.staged_unsupported_entry"
+    assert report["findings"] == []
