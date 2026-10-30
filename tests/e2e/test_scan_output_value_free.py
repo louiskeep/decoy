@@ -301,3 +301,109 @@ def test_post_scan_fidelity_unreadable_csv_value_free(source, work, monkeypatch)
     r = runner.invoke(app, ["post-scan", "fidelity", str(source), str(junk), "--json"])
     assert r.exit_code != 0
     _assert_clean(r)
+
+
+# ---------------------------------------------------------------------------
+# Round-3 regressions: one boundary for layout errors, file writes, engine keys
+# and uncaught errors.
+# ---------------------------------------------------------------------------
+
+NUMSEC = "991712345"
+
+
+@pytest.mark.parametrize("mode", [[], ["--json"], ["-v"], ["-q"]], ids=["text", "json", "verbose", "quiet"])
+@pytest.mark.parametrize(
+    "column",
+    [
+        f"{{name: a, start: -{NUMSEC}, width: 4}}",
+        f"{{name: a, start: 0, width: -{NUMSEC}}}",
+        "{name: a, start: 0, width: 0}",
+        f"{{name: a, start: {NUMSEC}x, width: 4}}",
+        "{name: a, start: 0}",
+        "{name: '', start: 0, width: 4}",
+        f"[{NUMSEC}]",
+    ],
+)
+def test_pre_scan_layout_value_never_echoed(source, work, column, mode) -> None:
+    layout = work / f"lay_{PATHSEC}.yaml"
+    layout.write_text(f"columns:\n  - {column}\n")
+    r = runner.invoke(
+        app, ["pre-scan", str(source), "--format", "fixed-width", "--layout", str(layout), *mode]
+    )
+    assert r.exit_code != 0
+    _assert_clean(r)
+    assert NUMSEC not in _surfaces(r)
+    if mode == ["--json"]:
+        assert _json.loads(r.stdout)["code"] == "layout_invalid"
+
+
+@pytest.mark.parametrize("mode", [[], ["--json"], ["-v"], ["-q"]], ids=["text", "json", "verbose", "quiet"])
+def test_report_out_unwritable_is_a_fixed_refusal(source, masked, work, mode) -> None:
+    missing = work / f"no_dir_{PATHSEC}" / f"rep_{PATHSEC}.json"
+    cases = [
+        ["post-scan", "fidelity", str(source), str(masked), "--report-out", str(missing)],
+        ["post-scan", "integrity", str(masked), "--source", str(source), "--output", str(missing)],
+        ["pre-scan", str(source), "--output", str(missing)],
+        ["post-scan", "fidelity", str(source), str(masked), "--report-out", str(work)],
+    ]
+    for argv in cases:
+        r = runner.invoke(app, [*argv, *mode])
+        assert r.exit_code != 0, argv
+        _assert_clean(r)
+        assert "FileNotFoundError" not in _surfaces(r) and "IsADirectoryError" not in _surfaces(r)
+
+
+def test_unwritable_output_json_envelope_has_stable_code(source, masked, work) -> None:
+    missing = work / "nodir" / "r.json"
+    r = runner.invoke(
+        app,
+        ["post-scan", "fidelity", str(source), str(masked), "--report-out", str(missing), "--json"],
+    )
+    payload = _json.loads(r.stdout)
+    assert payload["code"] == "output_unwritable"
+
+
+def test_integrity_without_config_never_uses_the_masked_filename(source, masked, work, monkeypatch) -> None:
+    import decoy_engine.verification as ver
+
+    seen = {}
+
+    def echo_keys(*, source_frames, output_frames, config):
+        seen["keys"] = (tuple(source_frames), tuple(output_frames))
+        name = next(iter(output_frames))
+        return {
+            "fail_count": 0,
+            "error_count": 0,
+            "residual_pii": [{"severity": "info", "table": name}],
+        }
+
+    monkeypatch.setattr(ver, "run_post_mask", echo_keys)
+    rep = work / "rep.json"
+    for mode in ([], ["--json"], ["-v"]):
+        r = runner.invoke(
+            app,
+            ["post-scan", "integrity", str(masked), "--source", str(source), "--output", str(rep), *mode],
+        )
+        assert r.exit_code == 0, r.output
+        _assert_clean(r, extra=rep.read_text())
+    assert PATHSEC not in "".join(seen["keys"][0] + seen["keys"][1])
+
+
+@pytest.mark.parametrize("argv", [
+    ["pre-scan", "{src}"],
+    ["post-scan", "fidelity", "{src}", "{src}"],
+    ["post-scan", "integrity", "{src}", "--source", "{src}"],
+])
+def test_unexpected_exception_is_a_fixed_refusal_without_traceback(source, argv, monkeypatch) -> None:
+    import decoy.cli._value_free as vf
+
+    def boom(*a, **k):
+        raise KeyError(f"{CELL} {EXCSEC} {PATHSEC}")
+
+    # An error raised outside every command-level handler (here: at output time).
+    monkeypatch.setattr(vf, "card", boom)
+    monkeypatch.setattr(vf, "out", boom)
+    r = runner.invoke(app, [a.replace("{src}", str(source)) for a in argv])
+    assert r.exit_code == 3, r.output
+    _assert_clean(r)
+    assert "KeyError" in _surfaces(r)

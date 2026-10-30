@@ -1130,8 +1130,10 @@ See also: decoy pre-scan, decoy pre-scan show.
 
 Per-field detail from a saved scan.
 
-The drill-down view of one field: PII score + bucket, detector matches,
-sentinel hits, top values, quasi-identifier membership. Read-only.
+The drill-down view of one field: PII score + bucket, type, null rate, distinct
+count, detector ids, sentinel count, quasi-identifier membership. Top values,
+sentinels and other cell-derived detail stay in the saved scan file and are
+never printed. Read-only.
 
 **Usage**:
 
@@ -1146,7 +1148,7 @@ $ decoy pre-scan show [OPTIONS] SCAN FIELD
 
 **Options**:
 
-* `--json`: Emit the full field detail as JSON to stdout.
+* `--json`: Emit the value-free field facts as JSON to stdout.
 * `-q, --quiet`: Suppress stdout. Errors still go to stderr.
 * `-v, --verbose`: Enable debug-level CLI logs on stderr.
 * `--help`: Show this message and exit.
@@ -1154,7 +1156,7 @@ $ decoy pre-scan show [OPTIONS] SCAN FIELD
 Examples:
 
   decoy pre-scan show scan.json ssn
-    Per-field detail card -- PII score, detectors, sentinels, top values, QI.
+    Per-field detail card -- PII score, detector ids, null rate, distinct count, QI.
 
   decoy pre-scan show scan.json email --json
     Same data as a structured JSON envelope.

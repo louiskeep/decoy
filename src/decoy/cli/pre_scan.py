@@ -40,8 +40,7 @@ import typer
 from decoy.cli import _value_free as vf
 from decoy.cli._default_group import make_default_group
 from decoy.cli.exit_codes import EXIT_USAGE
-from decoy.ui.card import render_card
-from decoy.ui.output import OutputMode, OutputState, emit_json, setup_output
+from decoy.ui.output import OutputMode, OutputState, setup_output
 from decoy.ui.scan_progress import scan_stages
 from decoy.ui.table import make_table
 from decoy.ui.theme import accent, code, error, hint, risk_high, risk_med, success, warn
@@ -62,7 +61,34 @@ _PII_CANDIDATE_THRESHOLD = vf.PII_CANDIDATE_THRESHOLD
 
 
 class LayoutError(ValueError):
-    """A layout-spec problem whose message is fixed text, safe to print."""
+    """A layout-spec problem reported as a fixed reason plus a safe location.
+
+    Carries no offending value: the message is looked up from `_LAYOUT_REASONS`.
+    """
+
+    def __init__(self, reason: str, column: int | None = None, key: str | None = None) -> None:
+        super().__init__(reason)
+        self.reason = reason
+        self.column = column
+        self.key = key
+
+    def safe_message(self) -> str:
+        where = "" if self.column is None else f" (column {self.column}"
+        where += "" if self.key is None else f", key '{self.key}'"
+        where += ")" if self.column is not None else ""
+        return _LAYOUT_REASONS[self.reason] + where
+
+
+_LAYOUT_REASONS = {
+    "not_mapping": "layout file must be a mapping with a 'columns' key",
+    "columns_not_list": "'columns' must be a list of column mappings",
+    "column_not_mapping": "layout column must be a mapping",
+    "name_invalid": "layout column needs a non-empty string 'name'",
+    "key_missing": "layout column is missing a required key",
+    "key_not_integer": "layout column key must be an integer",
+    "start_negative": "layout column 'start' must be >= 0",
+    "width_not_positive": "layout column 'width' must be > 0",
+}
 
 
 class SampleStrategy(str, Enum):
@@ -164,7 +190,7 @@ _SHOW_EPILOG = """\
 Examples:
 
   decoy pre-scan show scan.json ssn
-    Per-field detail card -- PII score, detectors, sentinels, top values, QI.
+    Per-field detail card -- PII score, detector ids, null rate, distinct count, QI.
 
   decoy pre-scan show scan.json email --json
     Same data as a structured JSON envelope.
@@ -243,53 +269,30 @@ def _parse_layout(layout_path: Path) -> list[dict]:
         data = _json_mod.loads(text)
 
     if not isinstance(data, dict) or "columns" not in data:
-        raise LayoutError(
-            "Layout file must be a mapping with a 'columns' key. "
-            "Each column must have 'name', 'start', and 'width'."
-        )
+        raise LayoutError("not_mapping")
 
     columns = data["columns"]
     if not isinstance(columns, list):
-        raise LayoutError(
-            "Layout file: 'columns' must be a list of column dicts. Each column needs a string 'name' and integer 'start'/'width'."
-        )
+        raise LayoutError("columns_not_list")
 
     for i, col in enumerate(columns):
         if not isinstance(col, dict):
-            raise LayoutError(
-                f"layout column {i}: expected a dict - "
-                "each column needs a string 'name' and integer 'start'/'width'."
-            )
+            raise LayoutError("column_not_mapping", i)
         name = col.get("name")
         if not isinstance(name, str) or not name.strip():
-            raise LayoutError(
-                f"layout column {i}: missing or empty 'name' - "
-                "each column needs a string 'name' and integer 'start'/'width'."
-            )
+            raise LayoutError("name_invalid", i, "name")
         for key in ("start", "width"):
             val = col.get(key)
             if val is None:
-                raise LayoutError(
-                    f"layout column {i}: missing '{key}' - "
-                    "each column needs a string 'name' and integer 'start'/'width'."
-                )
+                raise LayoutError("key_missing", i, key)
             try:
                 int_val = int(val)
             except (TypeError, ValueError):
-                raise LayoutError(
-                    f"layout column {i}: '{key}' must be an integer - "
-                    "each column needs a string 'name' and integer 'start'/'width'."
-                )
+                raise LayoutError("key_not_integer", i, key) from None
             if key == "start" and int_val < 0:
-                raise LayoutError(
-                    f"layout column {i}: 'start' must be >= 0, got {int_val} - "
-                    "each column needs a string 'name' and integer 'start'/'width'."
-                )
+                raise LayoutError("start_negative", i, key)
             if key == "width" and int_val <= 0:
-                raise LayoutError(
-                    f"layout column {i}: 'width' must be > 0, got {int_val} - "
-                    "each column needs a string 'name' and integer 'start'/'width'."
-                )
+                raise LayoutError("width_not_positive", i, key)
 
     return list(columns)
 
@@ -370,9 +373,8 @@ def _load_data(
     if fmt is InputFormat.fixed_width:
         if not layout:
             raise ValueError(
-                f"Fixed-width input requires --layout: column boundaries in {path.name} "
-                "are ambiguous without an explicit layout spec. "
-                "Run: decoy pre-scan <file> --layout <layout.yaml>"
+                "Fixed-width input requires --layout: column boundaries are "
+                "ambiguous without an explicit layout spec."
             )
         return _load_fixed_width_with_sampling(path, layout, rows, strategy)
     # Default: delimited (CSV/TSV)
@@ -396,13 +398,13 @@ def _load_scan_dict(scan_path: str) -> dict:
             raw = sys.stdin.read()
         else:
             raw = Path(scan_path).read_text(encoding="utf-8")
-    except UnicodeDecodeError as exc:
+    except UnicodeDecodeError:
         # UnicodeDecodeError is a ValueError, not an OSError, so the callers
         # that catch (FileNotFoundError, JSONDecodeError, OSError) would let a
         # non-UTF-8 scan file crash with a raw traceback and corrupt --json
         # output. Normalise to OSError so the existing handlers emit a clean
         # error.
-        raise OSError(f"scan file is not valid UTF-8: {exc}") from exc
+        raise OSError("scan file is not valid UTF-8") from None
     data = _json.loads(raw)
     if "profile" in data and "row_count" not in data:
         data = data["profile"]
@@ -501,7 +503,7 @@ _PII_NOTE = (
 
 def _render_fields(state, field_records: list[dict], pii_candidate_count: int) -> None:
     """Render the privacy-safe per-field detail table + honesty framing."""
-    state.console.print(accent(f"Fields ({len(field_records)}):"))
+    vf.out(state, accent(f"Fields ({len(field_records)}):"))
 
     tbl = make_table("Field", "Type", "Null rate", "Distinct", "PII candidate")
     for f in field_records:
@@ -518,8 +520,8 @@ def _render_fields(state, field_records: list[dict], pii_candidate_count: int) -
             str(f["distinct_count"]),
             pii_cell,
         )
-    state.console.print(tbl)
-    state.console.print()
+    vf.out(state, tbl)
+    vf.out(state)
 
     if pii_candidate_count > 0:
         _render_pii_honesty(state, pii_candidate_count)
@@ -527,22 +529,22 @@ def _render_fields(state, field_records: list[dict], pii_candidate_count: int) -
 
 def _render_pii_honesty(state, pii_candidate_count: int) -> None:
     """The profile-honesty framing block (H4): candidates are suggestions."""
-    state.console.print(
+    vf.out(state, 
         warn("PII candidates:"),
         f"{pii_candidate_count} field(s) flagged by pattern matching.",
     )
-    state.console.print(
+    vf.out(state, 
         " ",
         hint("These are SUGGESTIONS for review -- NOT authoritative classifications."),
     )
-    state.console.print(
+    vf.out(state, 
         " ",
         "Review each flagged field and choose the masking strategy that fits.",
         "Use",
         code("decoy list templates"),
         "to browse available templates.",
     )
-    state.console.print()
+    vf.out(state)
 
 
 # ---------------------------------------------------------------------------
@@ -667,11 +669,11 @@ def _pre_scan(
         try:
             layout_columns = _parse_layout(layout)
         except Exception as exc:
-            detail = str(exc) if isinstance(exc, LayoutError) else vf.exc_label(exc)
+            detail = exc.safe_message() if isinstance(exc, LayoutError) else vf.exc_label(exc)
             vf.fail(
                 state,
                 "pre-scan",
-                vf.CODE_USAGE,
+                vf.CODE_LAYOUT_INVALID,
                 f"could not parse the --layout file ({detail}).",
                 hint_text="each column needs 'name', 'start' (0-indexed) and 'width'.",
             )
@@ -699,8 +701,12 @@ def _pre_scan(
             if out_path is not None:
                 # The explicitly requested artifact keeps the engine's rich
                 # profile (top values, sentinels); nothing printed ever does.
-                out_path.write_text(_json.dumps(profile.to_dict(), indent=2))
+                vf.write_artifact(
+                    state, "pre-scan", out_path, _json.dumps(profile.to_dict(), indent=2)
+                )
             ms.complete()
+    except typer.Exit:
+        raise
     except Exception as exc:
         # No message, no traceback (even with --verbose): engine and pandas
         # errors and frames carry row data.
@@ -712,7 +718,7 @@ def _pre_scan(
                   "pii_candidate_count": pii_candidate_count}
 
     if streamed:
-        sys.stdout.write(_json.dumps(projection) + "\n")
+        vf.stream(projection)
         return
 
     if state.mode is OutputMode.json:
@@ -731,7 +737,7 @@ def _pre_scan(
         }
         if show_fields:
             payload["fields"] = field_records
-        emit_json(state, payload)
+        vf.emit(state, payload)
         return
 
     if state.mode is OutputMode.quiet:
@@ -761,15 +767,15 @@ def _pre_scan(
         # Persist-only-on-output: point at the two-step saved-scan flow.
         next_hint = "decoy pre-scan SOURCE --output scan.json  (then: decoy pre-scan fields scan.json)"
 
-    render_card(state, command="decoy pre-scan", facts=facts, next_hint=next_hint, status="ok")
+    vf.card(state, command="decoy pre-scan", facts=facts, next_hint=next_hint, status="ok")
 
     if show_fields:
-        state.console.print()
+        vf.out(state)
         _render_fields(state, field_records, pii_candidate_count)
     elif pii_candidate_count > 0:
-        state.console.print()
+        vf.out(state)
         _render_pii_honesty(state, pii_candidate_count)
-        state.console.print(hint("Tip:"), "add", code("--show-fields"), "for per-field detail.")
+        vf.out(state, hint("Tip:"), "add", code("--show-fields"), "for per-field detail.")
 
 
 # ---------------------------------------------------------------------------
@@ -833,7 +839,7 @@ def _fields(
     ]
 
     if state.mode is OutputMode.json:
-        emit_json(
+        vf.emit(
             state,
             {
                 "command": "pre-scan fields",
@@ -850,7 +856,7 @@ def _fields(
 
     label = "the scan" if scan != "-" else "stdin"
     if not rows:
-        state.console.print(hint(f"No fields match in {label} (scanned {total})."))
+        vf.out(state, hint(f"No fields match in {label} (scanned {total})."))
         return
 
     table = make_table(
@@ -873,11 +879,11 @@ def _fields(
             bucket_cell,
             "yes" if r["quasi_identifier"] else "",
         )
-    state.console.print(table)
+    vf.out(state, table)
 
     if rows and scan != "-":
         first = rows[0]["name"]
-        state.console.print(hint("Next:"), code(f"decoy pre-scan show SCAN_FILE {first}"))
+        vf.out(state, hint("Next:"), code(f"decoy pre-scan show SCAN_FILE {first}"))
 
 
 # ---------------------------------------------------------------------------
@@ -891,7 +897,7 @@ def _show(
     ),
     field: str = typer.Argument(..., help="Field name to inspect."),
     json_: bool = typer.Option(
-        False, "--json", help="Emit the full field detail as JSON to stdout."
+        False, "--json", help="Emit the value-free field facts as JSON to stdout."
     ),
     quiet: bool = typer.Option(
         False, "--quiet", "-q", help="Suppress stdout. Errors still go to stderr."
@@ -902,8 +908,10 @@ def _show(
 ) -> None:
     """Per-field detail from a saved scan.
 
-    The drill-down view of one field: PII score + bucket, detector matches,
-    sentinel hits, top values, quasi-identifier membership. Read-only.
+    The drill-down view of one field: PII score + bucket, type, null rate, distinct
+    count, detector ids, sentinel count, quasi-identifier membership. Top values,
+    sentinels and other cell-derived detail stay in the saved scan file and are
+    never printed. Read-only.
     """
     state = setup_output(json_, quiet, verbose)
 
@@ -927,7 +935,7 @@ def _show(
             vf.CODE_USAGE,
             "the requested field is not in the scan.",
             hint_text=(
-                f"did you mean {close[0]}?"
+                f"did you mean {vf.schema_name(close[0])}?"
                 if close
                 else "list all fields with: decoy pre-scan fields SCAN_FILE"
             ),
@@ -942,7 +950,7 @@ def _show(
     sentinel_count = len(matched.get("sentinels") or [])
 
     if state.mode is OutputMode.json:
-        emit_json(
+        vf.emit(
             state,
             {
                 "command": "pre-scan show",
@@ -981,7 +989,7 @@ def _show(
 
     next_hint = "decoy pre-scan fields SCAN_FILE" if scan != "-" else None
 
-    render_card(
+    vf.card(
         state,
         command="decoy pre-scan show",
         facts=facts,
@@ -1027,7 +1035,7 @@ def _diff(
 
     if old == "-" and new == "-":
         if state.mode is OutputMode.json:
-            emit_json(
+            vf.emit(
                 state,
                 {
                     "command": "pre-scan diff",
@@ -1036,10 +1044,10 @@ def _diff(
                 },
             )
         elif state.mode is not OutputMode.quiet:
-            state.err_console.print(
+            vf.err(state, 
                 error("error:"), "only one of OLD or NEW can be `-` (stdin)."
             )
-            state.err_console.print(
+            vf.err(state, 
                 " ", hint("hint:"), "pipe one scan, pass the other as a path."
             )
         raise typer.Exit(code=EXIT_USAGE)
@@ -1122,7 +1130,7 @@ def _diff(
     drift = bool(pii_increased or new_high_pii or qi_added)
 
     if state.mode is OutputMode.json:
-        emit_json(
+        vf.emit(
             state,
             {
                 "command": "pre-scan diff",
@@ -1177,7 +1185,7 @@ def _diff(
     elif new_high_pii and new != "-":
         next_hint = f"decoy pre-scan show NEW_SCAN {new_high_pii[0]['name']}"
 
-    render_card(
+    vf.card(
         state,
         command="decoy pre-scan diff",
         facts=facts,
@@ -1200,7 +1208,7 @@ def _diff(
                 f"{r['old_bucket']} ({r['old_score']:.2f})",
                 new_cell,
             )
-        state.console.print(t)
+        vf.out(state, t)
 
     if pii_decreased:
         t = make_table("Field", "Old", "New", title="PII bucket decreased")
@@ -1210,7 +1218,7 @@ def _diff(
                 f"{r['old_bucket']} ({r['old_score']:.2f})",
                 f"{r['new_bucket']} ({r['new_score']:.2f})",
             )
-        state.console.print(t)
+        vf.out(state, t)
 
     if added_rows:
         t = make_table("Field", "PII score", "Bucket", title="Fields added")
@@ -1225,7 +1233,7 @@ def _diff(
             else:
                 bucket_cell = hint(bucket)
             t.add_row(r["name"], score_cell, bucket_cell)
-        state.console.print(t)
+        vf.out(state, t)
 
     if removed_rows:
         t = make_table(
@@ -1235,22 +1243,22 @@ def _diff(
             score = r["pii_score"]
             score_cell = f"{score:.2f}" if isinstance(score, (int, float)) else "-"
             t.add_row(r["name"], score_cell, r["pii_bucket"])
-        state.console.print(t)
+        vf.out(state, t)
 
     if qi_added:
         t = make_table("Group", title="Quasi-identifier groups added")
         for g in qi_added:
             t.add_row("(" + " + ".join(g) + ")")
-        state.console.print(t)
+        vf.out(state, t)
 
     if qi_removed:
         t = make_table("Group", title="Quasi-identifier groups removed")
         for g in qi_removed:
             t.add_row("(" + " + ".join(g) + ")")
-        state.console.print(t)
+        vf.out(state, t)
 
     if not drift and not (pii_decreased or removed_rows or qi_removed or added_rows):
-        state.console.print(success("No drift detected."))
+        vf.out(state, success("No drift detected."))
 
     if strict and drift:
         raise typer.Exit(code=EXIT_USAGE)

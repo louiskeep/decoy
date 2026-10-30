@@ -1,7 +1,10 @@
 """One value-free output boundary for the pre-scan / post-scan commands.
 
-Everything these commands print (stdout, stderr, JSON, hints) is built here or
-passed through here, so no call site decides on its own what is safe:
+Every output, error and file write of these commands goes through this module
+(`out`, `err`, `emit`, `stream`, `card`, `fail`, `write_artifact`); a build-failing
+sentry (tests/sentry/test_value_free_boundary.py) rejects a command module that
+reaches a console, stdout or the filesystem directly. No call site decides on its
+own what is safe:
 
   * errors carry a stable code plus an exception *type name*, never a message,
     a traceback, a path, or a rejected option value;
@@ -9,7 +12,10 @@ passed through here, so no call site decides on its own what is safe:
     names -- column names are schema; top values, sentinels, samples, min/max
     and modes are data and never leave this boundary;
   * Click usage errors (bad enum, bad int, missing file) are rewritten to name
-    only the declared parameter, because Click echoes the rejected value.
+    only the declared parameter, because Click echoes the rejected value;
+  * any other exception escaping a command becomes a fixed refusal (type name
+    only), so Typer's traceback renderer never prints locals or paths;
+  * file writes translate OSError to a fixed refusal that omits the path.
 
 The one deliberate exception is the profile file written by
 `pre-scan --output FILE`: an explicit, user-requested artifact on disk.
@@ -17,17 +23,21 @@ The one deliberate exception is the profile file written by
 
 from __future__ import annotations
 
+import json
+import sys
+from pathlib import Path
 from typing import Any, NoReturn
 
 import typer
 from typer.core import TyperGroup
 
 try:  # typer >= 0.26 vendors Click
-    from typer._click.exceptions import UsageError
+    from typer._click.exceptions import ClickException, UsageError
 except ImportError:  # pragma: no cover - older typer on stock Click
-    from click.exceptions import UsageError
+    from click.exceptions import ClickException, UsageError
 
 from decoy.cli.exit_codes import EXIT_RUNTIME, EXIT_USAGE
+from decoy.ui.card import render_card
 from decoy.ui.output import OutputMode, OutputState, emit_json
 from decoy.ui.theme import error, hint
 
@@ -40,6 +50,54 @@ CODE_SCAN_UNREADABLE = "scan_unreadable"
 CODE_SCAN_FAILED = "scan_failed"
 CODE_CHECK_FAILED = "check_failed"
 CODE_CONFIG_INVALID = "config_invalid"
+CODE_OUTPUT_UNWRITABLE = "output_unwritable"
+CODE_LAYOUT_INVALID = "layout_invalid"
+
+
+def out(state: OutputState, *renderables: Any) -> None:
+    """The only stdout console sink for these commands."""
+    state.console.print(*renderables)
+
+
+def err(state: OutputState, *renderables: Any) -> None:
+    """The only stderr console sink for these commands."""
+    state.err_console.print(*renderables)
+
+
+def emit(state: OutputState, payload: dict[str, Any]) -> None:
+    """The only JSON-envelope sink (no-op outside --json)."""
+    emit_json(state, payload)
+
+
+def stream(payload: dict[str, Any]) -> None:
+    """Raw JSON line on stdout, for `--output -` (a value-free projection)."""
+    sys.stdout.write(json.dumps(payload) + "\n")
+    sys.stdout.flush()
+
+
+def card(state: OutputState, **kwargs: Any) -> None:
+    """Run-summary card; facts must already be value-free."""
+    render_card(state, **kwargs)
+
+
+def schema_name(name: object) -> str:
+    """Mark a column/field name taken from a trusted saved profile as schema."""
+    return str(name)
+
+
+def write_artifact(state: OutputState, command: str, path: Path, text: str) -> None:
+    """Write a user-requested artifact; refuse without echoing the path or the OS message."""
+    try:
+        path.write_text(text, encoding="utf-8")
+    except (OSError, RuntimeError, UnicodeError):
+        fail(
+            state,
+            command,
+            CODE_OUTPUT_UNWRITABLE,
+            "could not write the requested output file.",
+            hint_text="check that the directory exists and is writable.",
+            exit_code=EXIT_USAGE,
+        )
 
 
 def exc_label(exc: BaseException) -> str:
@@ -134,5 +192,13 @@ def value_free_usage_errors(base: type[TyperGroup]) -> type[TyperGroup]:
                 typer.echo(f"error: invalid usage{where} ({CODE_USAGE}).", err=True)
                 typer.echo("  hint: run the command with --help.", err=True)
                 ctx.exit(2)
+            except (typer.Exit, typer.Abort, ClickException):
+                raise
+            except Exception as exc:
+                # Last line of defence: an unhandled error would otherwise reach Typer's
+                # traceback renderer, which prints frame locals and file paths.
+                typer.echo(f"error: command failed: {exc_label(exc)} ({CODE_CHECK_FAILED}).", err=True)
+                typer.echo("  hint: no traceback is printed: diagnostics can carry row data.", err=True)
+                ctx.exit(EXIT_RUNTIME)
 
     return _ValueFreeGroup

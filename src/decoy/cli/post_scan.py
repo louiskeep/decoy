@@ -28,7 +28,7 @@ from typer.core import TyperGroup
 from decoy.cli import _value_free as vf
 from decoy.cli._yaml_errors import sanitize_yaml_error
 from decoy.cli.exit_codes import EXIT_FINDINGS, EXIT_RUNTIME, EXIT_USAGE
-from decoy.ui.output import OutputMode, emit_json, setup_output
+from decoy.ui.output import OutputMode, setup_output
 from decoy.ui.theme import error, hint, risk_high, success, warn
 
 # Grade -> minimum overall_score, mirroring the engine's own grade thresholds
@@ -36,6 +36,10 @@ from decoy.ui.theme import error, hint, risk_high, success, warn
 # C >= 0.70, D >= 0.50): the engine maps score -> grade but exposes no reverse
 # (grade -> score) helper, so `--min-grade` needs its own copy of the table.
 _GRADE_MIN_SCORE: dict[str, float] = {"A": 0.95, "B": 0.85, "C": 0.70, "D": 0.50}
+
+# Engine table key when no --config names one. Never derived from a file name:
+# the engine echoes it into findings, which would carry the masked file's name.
+_NO_CONFIG_TABLE = "table"
 
 _FIDELITY_NOTE = (
     "Fidelity measures statistical similarity between source and output. "
@@ -313,9 +317,11 @@ def _fidelity(
         _fail(vf.CODE_CHECK_FAILED, f"fidelity measurement failed: {vf.exc_label(exc)}", EXIT_RUNTIME)
 
     if report_out is not None:
-        report_out.write_text(
+        vf.write_artifact(
+            state,
+            "post-scan fidelity",
+            report_out,
             _json.dumps({**report, "policy": policy_result}, indent=2),
-            encoding="utf-8",
         )
 
     verdict = policy_result["verdict"]
@@ -327,7 +333,7 @@ def _fidelity(
         envelope["status"] = status
         envelope["policy"] = policy_result
         envelope["note"] = _FIDELITY_NOTE
-        emit_json(state, envelope)
+        vf.emit(state, envelope)
     elif state.mode is not OutputMode.quiet:
         _render_fidelity_report(state, report, policy_result)
 
@@ -357,7 +363,7 @@ def _render_fidelity_report(
         verdict_text = warn(verdict.upper())
     else:
         verdict_text = error(verdict.upper())
-    state.console.print(verdict_text, f"grade {grade}  overall_score {overall_str}")
+    vf.out(state, verdict_text, f"grade {grade}  overall_score {overall_str}")
 
     columns = report.get("marginal", {}).get("columns", [])
     if columns:
@@ -372,7 +378,7 @@ def _render_fidelity_report(
                 "yes" if col.get("comparable") else "no",
                 sim_str,
             )
-        state.console.print(table)
+        vf.out(state, table)
 
     joints = report.get("pairwise", {}).get("joints", [])
     if joints:
@@ -387,7 +393,7 @@ def _render_fidelity_report(
                 "yes" if j.get("comparable") else "no",
                 sim_str,
             )
-        state.console.print(table)
+        vf.out(state, table)
 
     violations = policy_result.get("violations", [])
     if violations:
@@ -399,10 +405,10 @@ def _render_fidelity_report(
                 str(v.get("expected", "-")),
                 str(v.get("actual", "-")),
             )
-        state.console.print(table)
+        vf.out(state, table)
     elif verdict == "pass":
-        state.console.print(success("OK"), "no policy violations.")
-    state.console.print(hint("Note:"), _FIDELITY_NOTE)
+        vf.out(state, success("OK"), "no policy violations.")
+    vf.out(state, hint("Note:"), _FIDELITY_NOTE)
 
 
 # ---------------------------------------------------------------------------
@@ -551,7 +557,7 @@ def _integrity(
             # pipeline declared and warn if the user passed a source
             # that points elsewhere.
             tables = config_dict.get("tables") or []
-            table_name = tables[0]["name"] if tables else masked.stem
+            table_name = tables[0]["name"] if tables else _NO_CONFIG_TABLE
             declared_sources = config_dict.get("sources") or {}
             declared_path = None
             if table_name in declared_sources:
@@ -561,7 +567,7 @@ def _integrity(
                 and not allow_source_mismatch
                 and Path(declared_path).resolve() != source.resolve()
             ):
-                state.err_console.print(
+                vf.err(state, 
                     hint("warning:"),
                     "--source does not match the pipeline's declared input.path; "
                     "proceeding with --source as ground truth "
@@ -572,7 +578,7 @@ def _integrity(
             # residual_pii + policy_validation branches degrade
             # gracefully when relationships + sources + tables are
             # absent (see the decoy_engine.verification.postmask.runner docstring).
-            table_name = masked.stem
+            table_name = _NO_CONFIG_TABLE
             config_dict = {
                 "version": 2,
                 "global_settings": {"seed": 0},
@@ -589,7 +595,7 @@ def _integrity(
         )
 
         if out is not None:
-            out.write_text(_json.dumps(report, indent=2))
+            vf.write_artifact(state, "post-scan integrity", out, _json.dumps(report, indent=2))
 
         # Decide exit code based on the report's severity counters.
         fail_count = int(report.get("fail_count") or 0)
@@ -597,7 +603,7 @@ def _integrity(
         exit_code = EXIT_FINDINGS if (fail_count + error_count) > 0 else 0
 
         if state.mode is OutputMode.json:
-            emit_json(
+            vf.emit(
                 state,
                 {
                     "command": "post-scan integrity",
@@ -621,24 +627,24 @@ def _integrity(
                     sevs[sev] = sevs.get(sev, 0) + 1
                 sev_text = ", ".join(f"{k}:{v}" for k, v in sorted(sevs.items()))
                 table.add_row(bucket, str(len(findings)), sev_text)
-            state.console.print(table)
+            vf.out(state, table)
             counters = (
                 f"pass={report.get('pass_count', 0)}  "
                 f"warning={report.get('warning_count', 0)}  "
                 f"fail={fail_count}  "
                 f"error={error_count}"
             )
-            state.console.print(counters)
+            vf.out(state, counters)
             if exit_code == 0:
-                state.console.print(
+                vf.out(state, 
                     success("OK"), "no fail or error findings in the checks that ran."
                 )
             else:
-                state.console.print(
+                vf.out(state, 
                     risk_high("FINDINGS"),
                     f"{fail_count + error_count} fail/error findings; review the report.",
                 )
-            state.console.print(hint("Note:"), _INTEGRITY_NOTE)
+            vf.out(state, hint("Note:"), _INTEGRITY_NOTE)
 
         if exit_code != 0:
             raise typer.Exit(code=exit_code)
