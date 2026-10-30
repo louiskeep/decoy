@@ -35,7 +35,12 @@ typed model and drift-tested byte for byte); a runnable example is
 | pattern | `{id, literal, paths[1+], exclude_paths[]}`; literal is 4-128 UTF-8 bytes, no control characters; globs are repo-root relative using `*`, `**`, `?` only |
 
 IDs match `^[a-z][a-z0-9_.-]{0,63}$` and are unique (pipeline ids; check ids across
-drift/evidence/regression; pattern ids).
+drift/evidence/regression; pattern ids). IDs are emitted in reports (`staged.<pattern id>`,
+`validation.<pipeline id>`), so never put a sensitive value in an ID.
+
+Roots: the containment root is the Git work tree that contains the manifest, or the
+manifest's own directory when it is not in a work tree (a staged scan then cannot read an
+index and reports `ci.git_failure`). Reported URIs are relative to that root.
 
 Default when `checks` is omitted: full validation of every declared pipeline with warnings
 blocking. Drift, evidence, regression, and staged scans must be requested explicitly.
@@ -61,6 +66,20 @@ scan could not cover every selected blob) | `refused` (no selected check could r
 `partial` or `refused` report never exits 0. A non-blocking drift pair reports warnings and
 exits 0. The JSON report and exit code are authoritative for completeness; SARIF carries
 findings only.
+
+## Output
+
+`--output PATH` writes the single report atomically (temp file + rename) and leaves stdout
+empty; `-` (the default) writes it to stdout. Like the other `--output` flags, an explicit
+path is the operator's deliberate choice and replaces an existing regular file. The path
+must be inside the root, its directory must already exist, and it may not be a symlink.
+When the report goes to a file, one value-free summary line is printed on stderr.
+Evidence manifests record paths as `decoy run` saw them; they are resolved the way
+`decoy report verify` resolves them (relative to the working directory), so run the check
+from the repository root. A recorded path that exists but is not a regular file is treated
+as missing and never read. Full validation runs the engine's compile layer, which (as for
+`decoy validate`) writes the engine log to `logs/decoy_engine.log` under the working
+directory; ignore that path in version control.
 
 ## Report: `decoy-ci-report/v1` (`--format json`)
 
@@ -131,8 +150,10 @@ configure. The templates never pass the unsafe debug option.
 ## Staged scan
 
 Reads the Git **index** (stage-0 blobs by object id through `git cat-file`), never the
-worktree. Selected paths come from `git diff --cached --name-status -z -M --diff-filter=ACMR`
-(renames/copies carry two path fields; the post-image path is scanned). Git runs with an argv
+worktree. Changed paths come from `git diff --cached --name-status -z -M` (renames/copies
+carry two path fields; the post-image path is scanned). Added, copied, modified, renamed, and
+type-changed entries are scanned; deletions are skipped; an unmerged entry anywhere refuses
+the whole scan (`ci.staged_unmerged`), and an unknown status is refused rather than ignored. Git runs with an argv
 array, `shell=False`, repository root as cwd, `--no-ext-diff`, no textconv, a sanitized
 environment, and a shared time budget. Symlinks, submodules, unmerged entries, and missing
 stage-0 blobs are refused. Matching is exact byte search of customer literals over the whole
