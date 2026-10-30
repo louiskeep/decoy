@@ -1,0 +1,35 @@
+# decoy-ci/v1 manifest: what `decoy ci check` runs. Reference: docs/ci-contracts.md
+# Paths are relative to this file. The drift and evidence entries need artifacts that your
+# pipeline run produces (a saved `decoy scan --output` JSON and a `decoy run --evidence-out`
+# manifest); drop those entries until you have them.
+schema_version: decoy-ci/v1
+
+pipelines:
+  - id: primary
+    path: pipeline.yaml
+
+checks:
+  validation:
+    enabled: true
+    mode: full
+    pipelines: [primary]
+    fail_on_warning: true
+  drift:
+    - id: discovery-baseline
+      baseline: ci/baselines/customer-scan.json
+      current: build/customer-scan.json
+      blocking: true
+  evidence:
+    - id: protected-output
+      manifest: build/evidence.json
+  regression_suites: []
+
+# Exact byte literals only (no regex, no entropy). Use synthetic seeded test identifiers,
+# never real values: the literal lives in this reviewed file and is never printed anywhere.
+staged_scan:
+  enabled: true
+  patterns:
+    - id: pii.seeded-test-identifier
+      literal: "DECOY_TEST_IDENTIFIER_"
+      paths: ["fixtures/**", "examples/**"]
+      exclude_paths: []

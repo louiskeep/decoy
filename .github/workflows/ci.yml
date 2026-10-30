@@ -31,6 +31,12 @@
 #                         the middle of the pinned range) to keep this
 #                         lane itself fast -- the full version matrix on
 #                         a built artifact is release-smoke.yml's job.
+#   ci-template-lint   -- F43: actionlint (pinned) on the shipped GitHub Actions
+#                         template and the vendored GitLab CI JSON schema (via
+#                         check-jsonschema, pinned) on the shipped GitLab
+#                         template. Static platform-syntax gate only; the
+#                         templates are exercised end to end by tests/unit/
+#                         test_ci_templates.py. No live GitHub/GitLab run.
 #   certified-profile  -- rebuilds the pristine DP runtime profile from
 #                         requirements-certified.txt on the exact CPython
 #                         patch it was certified on and runs
@@ -197,6 +203,44 @@ jobs:
           cd smoke_run
           ../.smoke/bin/decoy run pipeline.yaml
           test -s output.csv
+
+      - name: decoy ci check against the installed wheel (smoke 4)
+        # F43: the CI wrapper from the INSTALLED package, config-only validation
+        # of the pipeline smoke 3b produced, SARIF out. Proves the decoy.ci
+        # modules ship in the wheel and the schema-valid log is written.
+        run: |
+          set -euo pipefail
+          cd smoke_run
+          git init -q
+          printf 'schema_version: decoy-ci/v1\npipelines:\n  - {id: smoke, path: pipeline.yaml}\nchecks:\n  validation: {mode: config}\n' > .decoy-ci.yaml
+          ../.smoke/bin/decoy ci check .decoy-ci.yaml --format sarif --output decoy.sarif
+          ../.smoke/bin/python -c "import json; d = json.load(open('decoy.sarif')); assert d['version'] == '2.1.0' and d['runs'][0]['results'] == []"
+
+  # ---------------------------------------------------------------------------
+  # ci-template-lint: platform syntax for the shipped CI templates (F43)
+  # ---------------------------------------------------------------------------
+  ci-template-lint:
+    name: ci-template-lint
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+
+      - name: Install the pinned linters
+        # actionlint-py downloads the matching actionlint release binary; both
+        # pins are exact so a lint verdict is attributable to one version.
+        run: pip install "actionlint-py==1.7.12.25" "check-jsonschema==0.39.0"
+
+      - name: actionlint (GitHub Actions template)
+        run: actionlint integrations/github-actions/decoy-ci.yml
+
+      - name: GitLab CI schema (GitLab template)
+        run: check-jsonschema --builtin-schema vendor.gitlab-ci integrations/gitlab/decoy-ci.yml
 
   # ---------------------------------------------------------------------------
   # certified-profile: requirements-certified.txt still reproduces a

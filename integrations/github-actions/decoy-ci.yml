@@ -1,0 +1,65 @@
+# GitHub Actions invoker for `decoy ci check` (Decoy CI integration, decoy-ci/v1).
+#
+# INVOKER ONLY: every check lives in the pinned `decoy` CLI; this file runs one command and
+# keeps its output file. It installs nothing: provision a pinned `decoy` on the runner
+# yourself (image, cache, or an earlier step you own) and set DECOY_EXPECTED_VERSION to that
+# exact `decoy --version`. The manifest is ./.decoy-ci.yaml (see docs/ci-contracts.md).
+#
+# Decoy never uploads or comments. Code-scanning upload is the separate, opt-in
+# `upload-sarif` job below: it runs only when the repository variable DECOY_UPLOAD_SARIF is
+# 'true', and it is the only job granted `security-events: write`. Pull requests from forks
+# get a read-only token, and private repositories need `actions: read` (already granted
+# there): configure upload for those cases deliberately. Actions are pinned to full commit
+# SHAs; refresh the pins on your own schedule.
+name: decoy-ci
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+env:
+  DECOY_EXPECTED_VERSION: "0.1.0"
+
+jobs:
+  decoy-ci:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Verify the pre-provisioned decoy runtime
+        run: |
+          command -v decoy >/dev/null || { echo "decoy is not installed on this runner" >&2; exit 1; }
+          test "$(decoy --version)" = "decoy ${DECOY_EXPECTED_VERSION}" || { echo "unexpected decoy version" >&2; exit 1; }
+      - name: Run decoy ci check
+        run: decoy ci check .decoy-ci.yaml --format sarif --output decoy.sarif
+      - name: Keep the SARIF log
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: decoy-sarif
+          path: decoy.sarif
+          if-no-files-found: ignore
+
+  upload-sarif:
+    needs: decoy-ci
+    if: ${{ always() && vars.DECOY_UPLOAD_SARIF == 'true' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: read
+      security-events: write
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: decoy-sarif
+      - uses: github/codeql-action/upload-sarif@9b3254085494b55a0f7c4c2b3d2d52cc712ce370 # v4.39.1
+        with:
+          sarif_file: decoy.sarif
+          category: decoy

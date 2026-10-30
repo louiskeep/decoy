@@ -27,6 +27,8 @@ Installable Typer/Rich CLI that wraps `decoy-engine` for local validation, runs,
 | Path | What Lives Here |
 |---|---|
 | `src/decoy/cli/` | `run`, `validate`, `plan`, `storm`, `init`, `demo`, `explain`, `info`, `upgrade`, `templates`, `tokenize`/`detokenize` commands |
+| `src/decoy/cli/ci.py` | `decoy ci check`: flags and report file I/O only (F43) |
+| `src/decoy/ci/` | CI integration layer: `contracts` (manifest + value-free finding boundary), `manifest` (strict loader/schema), `locations` (YAML marks), `adapters` (thin wrappers over existing checks), `staged` + `_git` (bounded Git-index scan), `reporting` (JSON/SARIF/Markdown), `runner`, `debug` |
 | `src/decoy/cli/_token_vault.py` | Local SQLite token vault (the engine's `TokenVaultWriter` seam, B-1) |
 | `src/decoy/distribution/` | Shipped verify + update machinery (Ed25519 verify, bundle manifest, version-document contract, `~/.decoy` layout, native self-check, `decoy upgrade` installer core) |
 | `packaging_tools/` | Build-host release pipeline (bundle assembler, signing, install scripts, version-document generator, smoke) -- NOT shipped in the wheel |
@@ -47,6 +49,7 @@ Installable Typer/Rich CLI that wraps `decoy-engine` for local validation, runs,
 | Run command | `src/decoy/cli/run.py` |
 | Tokenize / detokenize | `src/decoy/cli/tokenize.py` (store: `_token_vault.py`) |
 | Validate command | `src/decoy/cli/validate.py` |
+| CI checks / SARIF / pre-commit | `src/decoy/ci/`, `src/decoy/cli/ci.py`, `docs/ci-contracts.md`, `.pre-commit-hooks.yaml`, `integrations/` |
 | STORM command | `src/decoy/cli/storm.py` |
 | Plan command | `src/decoy/cli/plan.py` |
 | Output formatting | `src/decoy/ui/` |

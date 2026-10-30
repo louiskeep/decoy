@@ -1,0 +1,363 @@
+{
+  "$defs": {
+    "Checks": {
+      "additionalProperties": false,
+      "description": "Selected checks. Omitted `checks` means full validation of every pipeline.",
+      "properties": {
+        "drift": {
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/DriftCheck"
+          },
+          "maxItems": 32,
+          "title": "Drift",
+          "type": "array"
+        },
+        "evidence": {
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/EvidenceCheck"
+          },
+          "maxItems": 32,
+          "title": "Evidence",
+          "type": "array"
+        },
+        "regression_suites": {
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/RegressionRef"
+          },
+          "maxItems": 16,
+          "title": "Regression Suites",
+          "type": "array"
+        },
+        "validation": {
+          "$ref": "#/$defs/ValidationCheck",
+          "default": {
+            "enabled": true,
+            "fail_on_warning": true,
+            "mode": "full",
+            "pipelines": null
+          }
+        }
+      },
+      "title": "Checks",
+      "type": "object"
+    },
+    "DriftCheck": {
+      "additionalProperties": false,
+      "description": "Compare two saved STORM scan JSON files with the `scan diff` categorizer.",
+      "properties": {
+        "baseline": {
+          "maxLength": 1024,
+          "title": "Baseline",
+          "type": "string"
+        },
+        "blocking": {
+          "default": true,
+          "title": "Blocking",
+          "type": "boolean"
+        },
+        "current": {
+          "maxLength": 1024,
+          "title": "Current",
+          "type": "string"
+        },
+        "id": {
+          "pattern": "^[a-z][a-z0-9_.-]{0,63}$",
+          "title": "Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "baseline",
+        "current"
+      ],
+      "title": "DriftCheck",
+      "type": "object"
+    },
+    "EvidenceCheck": {
+      "additionalProperties": false,
+      "description": "Verify a cli-local-1 evidence manifest with the `report verify` fingerprint check.",
+      "properties": {
+        "id": {
+          "pattern": "^[a-z][a-z0-9_.-]{0,63}$",
+          "title": "Id",
+          "type": "string"
+        },
+        "manifest": {
+          "maxLength": 1024,
+          "title": "Manifest",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "manifest"
+      ],
+      "title": "EvidenceCheck",
+      "type": "object"
+    },
+    "PipelineRef": {
+      "additionalProperties": false,
+      "description": "A pipeline YAML file validated by the validation check (repo-relative to the manifest).",
+      "properties": {
+        "id": {
+          "pattern": "^[a-z][a-z0-9_.-]{0,63}$",
+          "title": "Id",
+          "type": "string"
+        },
+        "path": {
+          "maxLength": 1024,
+          "title": "Path",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "path"
+      ],
+      "title": "PipelineRef",
+      "type": "object"
+    },
+    "RegressionRef": {
+      "additionalProperties": false,
+      "description": "Reference to an F12 regression suite. Refused until a public F12 runner exists.",
+      "properties": {
+        "id": {
+          "pattern": "^[a-z][a-z0-9_.-]{0,63}$",
+          "title": "Id",
+          "type": "string"
+        },
+        "suite": {
+          "maxLength": 1024,
+          "title": "Suite",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "suite"
+      ],
+      "title": "RegressionRef",
+      "type": "object"
+    },
+    "StagedLimits": {
+      "additionalProperties": false,
+      "description": "Scan limits. Each default is also the hard maximum: a manifest may lower, never raise.",
+      "properties": {
+        "max_blob_bytes": {
+          "default": 1048576,
+          "maximum": 1048576,
+          "minimum": 1,
+          "title": "Max Blob Bytes",
+          "type": "integer"
+        },
+        "max_files": {
+          "default": 200,
+          "maximum": 200,
+          "minimum": 1,
+          "title": "Max Files",
+          "type": "integer"
+        },
+        "max_finding_groups": {
+          "default": 100,
+          "maximum": 100,
+          "minimum": 1,
+          "title": "Max Finding Groups",
+          "type": "integer"
+        },
+        "max_git_seconds": {
+          "default": 10,
+          "maximum": 10,
+          "minimum": 1,
+          "title": "Max Git Seconds",
+          "type": "integer"
+        },
+        "max_total_bytes": {
+          "default": 5242880,
+          "maximum": 5242880,
+          "minimum": 1,
+          "title": "Max Total Bytes",
+          "type": "integer"
+        }
+      },
+      "title": "StagedLimits",
+      "type": "object"
+    },
+    "StagedPattern": {
+      "additionalProperties": false,
+      "description": "An exact UTF-8 byte literal (4-128 bytes) scanned for in staged blobs of matching paths.",
+      "properties": {
+        "exclude_paths": {
+          "default": [],
+          "items": {
+            "maxLength": 512,
+            "type": "string"
+          },
+          "maxItems": 32,
+          "title": "Exclude Paths",
+          "type": "array"
+        },
+        "id": {
+          "pattern": "^[a-z][a-z0-9_.-]{0,63}$",
+          "title": "Id",
+          "type": "string"
+        },
+        "literal": {
+          "title": "Literal",
+          "type": "string"
+        },
+        "paths": {
+          "items": {
+            "maxLength": 512,
+            "type": "string"
+          },
+          "maxItems": 32,
+          "minItems": 1,
+          "title": "Paths",
+          "type": "array"
+        }
+      },
+      "required": [
+        "id",
+        "literal",
+        "paths"
+      ],
+      "title": "StagedPattern",
+      "type": "object"
+    },
+    "StagedScan": {
+      "additionalProperties": false,
+      "description": "Bounded scan of the Git index (staged post-image) for the configured literals.",
+      "properties": {
+        "enabled": {
+          "default": false,
+          "title": "Enabled",
+          "type": "boolean"
+        },
+        "limits": {
+          "$ref": "#/$defs/StagedLimits",
+          "default": {
+            "max_blob_bytes": 1048576,
+            "max_files": 200,
+            "max_finding_groups": 100,
+            "max_git_seconds": 10,
+            "max_total_bytes": 5242880
+          }
+        },
+        "patterns": {
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/StagedPattern"
+          },
+          "maxItems": 32,
+          "title": "Patterns",
+          "type": "array"
+        }
+      },
+      "title": "StagedScan",
+      "type": "object"
+    },
+    "ValidationCheck": {
+      "additionalProperties": false,
+      "description": "Existing `decoy validate` semantics: `full` = config+compile+preflight, `config` = config layer only.",
+      "properties": {
+        "enabled": {
+          "default": true,
+          "title": "Enabled",
+          "type": "boolean"
+        },
+        "fail_on_warning": {
+          "default": true,
+          "title": "Fail On Warning",
+          "type": "boolean"
+        },
+        "mode": {
+          "default": "full",
+          "enum": [
+            "full",
+            "config"
+          ],
+          "title": "Mode",
+          "type": "string"
+        },
+        "pipelines": {
+          "anyOf": [
+            {
+              "items": {
+                "pattern": "^[a-z][a-z0-9_.-]{0,63}$",
+                "type": "string"
+              },
+              "maxItems": 32,
+              "minItems": 1,
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Pipelines"
+        }
+      },
+      "title": "ValidationCheck",
+      "type": "object"
+    }
+  },
+  "$id": "https://github.com/louiskeep/decoy/blob/main/docs/schemas/decoy-ci-v1.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "The `decoy-ci/v1` CI manifest: strict, typed, no includes, commands, or interpolation.",
+  "properties": {
+    "checks": {
+      "$ref": "#/$defs/Checks",
+      "default": {
+        "drift": [],
+        "evidence": [],
+        "regression_suites": [],
+        "validation": {
+          "enabled": true,
+          "fail_on_warning": true,
+          "mode": "full",
+          "pipelines": null
+        }
+      }
+    },
+    "pipelines": {
+      "items": {
+        "$ref": "#/$defs/PipelineRef"
+      },
+      "maxItems": 32,
+      "minItems": 1,
+      "title": "Pipelines",
+      "type": "array"
+    },
+    "schema_version": {
+      "const": "decoy-ci/v1",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "staged_scan": {
+      "$ref": "#/$defs/StagedScan",
+      "default": {
+        "enabled": false,
+        "limits": {
+          "max_blob_bytes": 1048576,
+          "max_files": 200,
+          "max_finding_groups": 100,
+          "max_git_seconds": 10,
+          "max_total_bytes": 5242880
+        },
+        "patterns": []
+      }
+    }
+  },
+  "required": [
+    "schema_version",
+    "pipelines"
+  ],
+  "title": "CiManifest",
+  "type": "object"
+}

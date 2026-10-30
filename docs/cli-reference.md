@@ -21,6 +21,7 @@ Try one of:
   decoy report show evidence.json  Show the evidence manifest (the post-run surface: show/verify/fidelity/integrity/diff/vault).
   decoy report verify evidence.json  Re-hash the recorded files and report fingerprint drift.
   decoy report diff a.json b.json  Compare two manifests: fingerprints always, data when the output files exist.
+  decoy ci check                   Run CI checks from .decoy-ci.yaml; JSON, SARIF, or Markdown report (see docs/ci-contracts.md).
 
 Run `decoy --install-completion` to enable shell tab completion.
 
@@ -58,6 +59,7 @@ $ decoy [OPTIONS] COMMAND [ARGS]...
 * `validate`: Pre-run validation gate.
 * `scan`: Profile a dataset for PII and...
 * `report`: The post-run surface: show / render /...
+* `ci`: CI integration: portable checks, SARIF,...
 
 ## `decoy run`
 
@@ -1650,3 +1652,67 @@ global_settings.seed) used by the `decoy run --vault` call that wrote
 the vault, otherwise the decrypt will fail and the command exits 1.
 
 See also: decoy run --vault, decoy unmask --vault.
+
+
+## `decoy ci`
+
+CI integration: portable checks, SARIF, and pre-commit.
+
+**Usage**:
+
+```console
+$ decoy ci [OPTIONS] COMMAND [ARGS]...
+```
+
+**Options**:
+
+* `--help`: Show this message and exit.
+
+**Commands**:
+
+* `check`: Run the checks in a decoy-ci/v1 manifest...
+
+### `decoy ci check`
+
+Run the checks in a decoy-ci/v1 manifest and emit ONE value-free report.
+
+Wraps `decoy validate`, saved-scan drift, evidence verification, and a bounded
+staged-file literal scan. Findings carry rule ids, severities, fixed text, and
+repository-relative locations only. Exits with the existing Decoy exit integers.
+
+**Usage**:
+
+```console
+$ decoy ci check [OPTIONS] [MANIFEST]
+```
+
+**Arguments**:
+
+* `[MANIFEST]`: Path to the decoy-ci/v1 manifest (YAML or JSON). No manifest search is done.  [default: .decoy-ci.yaml]
+
+**Options**:
+
+* `--format [json|sarif|markdown]`: Report format: json (decoy-ci-report/v1), sarif (2.1.0), or markdown.  [default: json]
+* `-o, --output TEXT`: Write the report to this file inside the repository, or `-` for stdout.  [default: -]
+* `--context [ci|pre-commit]`: `pre-commit` narrows to config-only validation plus the staged scan.  [default: ci]
+* `-q, --quiet`: Suppress stderr notes and summary.
+* `-v, --verbose`: Print one value-free line per check on stderr.
+* `--help`: Show this message and exit.
+
+Examples:
+
+  decoy ci check
+
+    Run the checks in ./.decoy-ci.yaml and print one JSON report.
+
+  decoy ci check .decoy-ci.yaml --format sarif --output decoy.sarif
+
+    Write a SARIF 2.1.0 log for a code-scanning upload step you configure.
+
+  decoy ci check --context pre-commit --format markdown
+
+    What the pre-commit hook runs (config-only validation plus the staged scan).
+
+Exit codes: 0 clean; 1 invalid input or validation errors; 2 blocking warnings;
+3 runtime failure; 4 findings; 5 capacity refusal. See docs/ci-contracts.md.
+Decoy never uploads or comments; uploads belong to your CI workflow.

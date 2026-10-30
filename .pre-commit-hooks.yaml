@@ -1,0 +1,15 @@
+# Provider manifest for the `pre-commit` framework (https://pre-commit.com).
+# Consumers add this repository under `repos:` in .pre-commit-config.yaml and pin `rev:`.
+# Requires a PRE-INSTALLED, version-pinned `decoy` on PATH: the hook installs nothing and
+# uses no network (`language: unsupported` runs `entry` directly; it needs pre-commit >= 4.4.0).
+# It reads ./.decoy-ci.yaml, validates config only (no source or preflight reads), and scans
+# the STAGED content for the manifest's literal patterns. See docs/ci-contracts.md.
+- id: decoy-ci-check
+  name: decoy ci check
+  description: Config-only Decoy validation plus a bounded scan of staged content for seeded literals.
+  entry: decoy ci check --context pre-commit --format markdown
+  language: unsupported
+  pass_filenames: false
+  always_run: true
+  stages: [pre-commit]
+  minimum_pre_commit_version: "4.4.0"

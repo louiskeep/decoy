@@ -31,6 +31,7 @@ from __future__ import annotations
 import difflib
 import json as _json
 import sys
+from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
 
@@ -1129,66 +1130,26 @@ def _show(
 # ---------------------------------------------------------------------------
 
 
-def _diff(
-    old: str = typer.Argument(
-        ..., help="Path to the older STORM scan JSON, or `-` for stdin."
-    ),
-    new: str = typer.Argument(
-        ..., help="Path to the newer STORM scan JSON, or `-` for stdin."
-    ),
-    strict: bool = typer.Option(
-        False, "--strict",
-        help="Exit 1 on drift -- any PII bucket bumped up, any new high-PII field, or any new quasi-identifier group.",
-    ),
-    json_: bool = typer.Option(
-        False, "--json", help="Emit the categorized diff as JSON to stdout."
-    ),
-    quiet: bool = typer.Option(
-        False, "--quiet", "-q", help="Suppress stdout. Errors still go to stderr."
-    ),
-    verbose: bool = typer.Option(
-        False, "--verbose", "-v", help="Enable debug-level CLI logs on stderr."
-    ),
-) -> None:
-    """Compare two scans -- catch schema, PII, and risk drift.
+@dataclass(frozen=True)
+class ScanDiff:
+    """The categorized difference between two saved STORM scans (pure, no I/O)."""
 
-    Designed for CI: run `decoy scan diff baseline.json new.json --strict`
-    on every PR to fail the build when a column's PII bucket goes up, a new
-    high-PII field appears, or a new quasi-identifier group forms. Read-only
-    -- the scans are JSON; raw data never enters the CLI.
-    """
-    state = setup_output(json_, quiet, verbose)
+    added_rows: list[dict]
+    removed_rows: list[dict]
+    pii_increased: list[dict]
+    pii_decreased: list[dict]
+    qi_added: list[tuple[str, ...]]
+    qi_removed: list[tuple[str, ...]]
+    risk_delta: float | None
+    new_high_pii: list[dict]
 
-    if old == "-" and new == "-":
-        if state.mode is OutputMode.json:
-            emit_json(
-                state,
-                {
-                    "command": "scan diff",
-                    "status": "error",
-                    "error": "only one of OLD or NEW can be `-` (stdin).",
-                },
-            )
-        elif state.mode is not OutputMode.quiet:
-            state.err_console.print(
-                error("error:"), "only one of OLD or NEW can be `-` (stdin)."
-            )
-            state.err_console.print(
-                " ", hint("hint:"), "pipe one scan, pass the other as a path."
-            )
-        raise typer.Exit(code=EXIT_USAGE)
+    @property
+    def drift(self) -> bool:
+        return bool(self.pii_increased or self.new_high_pii or self.qi_added)
 
-    try:
-        old_data = _load_scan_dict(old)
-    except (FileNotFoundError, _json.JSONDecodeError, OSError) as exc:
-        _emit_load_error(state, old, exc, "scan diff")
-        raise typer.Exit(code=EXIT_USAGE)
-    try:
-        new_data = _load_scan_dict(new)
-    except (FileNotFoundError, _json.JSONDecodeError, OSError) as exc:
-        _emit_load_error(state, new, exc, "scan diff")
-        raise typer.Exit(code=EXIT_USAGE)
 
+def compute_scan_diff(old_data: dict, new_data: dict) -> ScanDiff:
+    """Categorize drift between two scan dicts. Shared by `scan diff` and `decoy ci check`."""
     old_fields = {
         f.get("name"): f for f in old_data.get("fields", []) if f.get("name")
     }
@@ -1253,7 +1214,83 @@ def _diff(
     ]
 
     new_high_pii = [r for r in added_rows if r["pii_bucket"] == "high"]
-    drift = bool(pii_increased or new_high_pii or qi_added)
+    return ScanDiff(
+        added_rows=added_rows,
+        removed_rows=removed_rows,
+        pii_increased=pii_increased,
+        pii_decreased=pii_decreased,
+        qi_added=qi_added,
+        qi_removed=qi_removed,
+        risk_delta=risk_delta,
+        new_high_pii=new_high_pii,
+    )
+
+
+def _diff(
+    old: str = typer.Argument(
+        ..., help="Path to the older STORM scan JSON, or `-` for stdin."
+    ),
+    new: str = typer.Argument(
+        ..., help="Path to the newer STORM scan JSON, or `-` for stdin."
+    ),
+    strict: bool = typer.Option(
+        False, "--strict",
+        help="Exit 1 on drift -- any PII bucket bumped up, any new high-PII field, or any new quasi-identifier group.",
+    ),
+    json_: bool = typer.Option(
+        False, "--json", help="Emit the categorized diff as JSON to stdout."
+    ),
+    quiet: bool = typer.Option(
+        False, "--quiet", "-q", help="Suppress stdout. Errors still go to stderr."
+    ),
+    verbose: bool = typer.Option(
+        False, "--verbose", "-v", help="Enable debug-level CLI logs on stderr."
+    ),
+) -> None:
+    """Compare two scans -- catch schema, PII, and risk drift.
+
+    Designed for CI: run `decoy scan diff baseline.json new.json --strict`
+    on every PR to fail the build when a column's PII bucket goes up, a new
+    high-PII field appears, or a new quasi-identifier group forms. Read-only
+    -- the scans are JSON; raw data never enters the CLI.
+    """
+    state = setup_output(json_, quiet, verbose)
+
+    if old == "-" and new == "-":
+        if state.mode is OutputMode.json:
+            emit_json(
+                state,
+                {
+                    "command": "scan diff",
+                    "status": "error",
+                    "error": "only one of OLD or NEW can be `-` (stdin).",
+                },
+            )
+        elif state.mode is not OutputMode.quiet:
+            state.err_console.print(
+                error("error:"), "only one of OLD or NEW can be `-` (stdin)."
+            )
+            state.err_console.print(
+                " ", hint("hint:"), "pipe one scan, pass the other as a path."
+            )
+        raise typer.Exit(code=EXIT_USAGE)
+
+    try:
+        old_data = _load_scan_dict(old)
+    except (FileNotFoundError, _json.JSONDecodeError, OSError) as exc:
+        _emit_load_error(state, old, exc, "scan diff")
+        raise typer.Exit(code=EXIT_USAGE)
+    try:
+        new_data = _load_scan_dict(new)
+    except (FileNotFoundError, _json.JSONDecodeError, OSError) as exc:
+        _emit_load_error(state, new, exc, "scan diff")
+        raise typer.Exit(code=EXIT_USAGE)
+
+    diff = compute_scan_diff(old_data, new_data)
+    added_rows, removed_rows = diff.added_rows, diff.removed_rows
+    pii_increased, pii_decreased = diff.pii_increased, diff.pii_decreased
+    qi_added, qi_removed = diff.qi_added, diff.qi_removed
+    risk_delta, new_high_pii, drift = diff.risk_delta, diff.new_high_pii, diff.drift
 
     if state.mode is OutputMode.json:
         emit_json(

@@ -55,6 +55,7 @@ from __future__ import annotations
 
 import hashlib
 import json as _json
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -296,12 +297,22 @@ def build_manifest(
     return manifest
 
 
-def verify_manifest(manifest: dict[str, Any]) -> list[str]:
+@dataclass(frozen=True)
+class EvidenceIssue:
+    """One typed verification issue. `kind` is the stable machine contract (`decoy ci`
+    reads only this); `message` is the exact legacy prose `report verify` prints."""
+
+    kind: str
+    message: str
+
+
+def verify_manifest_issues(
+    manifest: dict[str, Any], *, regular_files_only: bool = False
+) -> list[EvidenceIssue]:
     """Verify a manifest's fingerprints against the current on-disk state.
 
-    Returns a list of issue strings. Empty list = clean (all fingerprints
-    match, manifest_hash is valid). Non-empty = fingerprint mismatch or
-    drift detected.
+    Returns typed issues. Empty list = clean (all fingerprints match, manifest_hash is
+    valid). Non-empty = fingerprint mismatch or drift detected.
 
     Integrity limit: manifest_hash is an UNKEYED SHA-256 check. It detects
     accidental drift; it does NOT detect a motivated tamperer who can edit
@@ -317,17 +328,29 @@ def verify_manifest(manifest: dict[str, Any]) -> list[str]:
     What is NOT checked:
     * Data correctness or masking quality.
     * Whether the output was actually produced by the recorded pipeline.
+
+    `regular_files_only` (used by `decoy ci check`, where the manifest may come from an
+    untrusted change): a recorded path that exists but is not a regular file (FIFO, device)
+    is reported as missing instead of being hashed, so it cannot hang the check.
     """
-    issues: list[str] = []
+    issues: list[EvidenceIssue] = []
+
+    def _absent(path: Path) -> bool:
+        if not path.exists():
+            return True
+        return regular_files_only and not path.is_file()
 
     # --- Manifest integrity check ---
     recorded_hash = manifest.get("manifest_hash", "")
     computed_hash = compute_manifest_hash(manifest)
     if recorded_hash != computed_hash:
         issues.append(
-            f"manifest integrity: manifest_hash mismatch "
-            f"(recorded {recorded_hash[:16]}..., computed {computed_hash[:16]}...); "
-            "manifest file may have been edited"
+            EvidenceIssue(
+                "manifest_hash_mismatch",
+                f"manifest integrity: manifest_hash mismatch "
+                f"(recorded {recorded_hash[:16]}..., computed {computed_hash[:16]}...); "
+                "manifest file may have been edited",
+            )
         )
         # If the manifest itself changed we still proceed so that all
         # other issues are surfaced in one pass.
@@ -337,14 +360,21 @@ def verify_manifest(manifest: dict[str, Any]) -> list[str]:
     recorded_pf = manifest.get("pipeline_fingerprint")
     if pipeline_path_str and recorded_pf:
         pipeline_path = Path(pipeline_path_str)
-        if not pipeline_path.exists():
-            issues.append(f"pipeline missing: {pipeline_path_str} not found")
+        if _absent(pipeline_path):
+            issues.append(
+                EvidenceIssue(
+                    "pipeline_missing", f"pipeline missing: {pipeline_path_str} not found"
+                )
+            )
         else:
             current_pf = hash_file(pipeline_path)
             if current_pf != recorded_pf:
                 issues.append(
-                    f"pipeline fingerprint changed: {pipeline_path_str} "
-                    f"(recorded {recorded_pf[:16]}..., current {current_pf[:16]}...)"
+                    EvidenceIssue(
+                        "pipeline_fingerprint_changed",
+                        f"pipeline fingerprint changed: {pipeline_path_str} "
+                        f"(recorded {recorded_pf[:16]}..., current {current_pf[:16]}...)",
+                    )
                 )
 
     # --- Input fingerprints ---
@@ -356,14 +386,22 @@ def verify_manifest(manifest: dict[str, Any]) -> list[str]:
         if not path_str or not recorded_fp:
             continue
         p = Path(path_str)
-        if not p.exists():
-            issues.append(f"input missing: {path_str} (table {table_name!r}) not found")
+        if _absent(p):
+            issues.append(
+                EvidenceIssue(
+                    "input_missing",
+                    f"input missing: {path_str} (table {table_name!r}) not found",
+                )
+            )
             continue
         current_fp = hash_file(p)
         if current_fp != recorded_fp:
             issues.append(
-                f"input fingerprint changed: {path_str} (table {table_name!r}) "
-                f"(recorded {recorded_fp[:16]}..., current {current_fp[:16]}...)"
+                EvidenceIssue(
+                    "input_fingerprint_changed",
+                    f"input fingerprint changed: {path_str} (table {table_name!r}) "
+                    f"(recorded {recorded_fp[:16]}..., current {current_fp[:16]}...)",
+                )
             )
 
     # --- Output fingerprints ---
@@ -375,17 +413,30 @@ def verify_manifest(manifest: dict[str, Any]) -> list[str]:
         if not path_str or not recorded_fp:
             continue
         p = Path(path_str)
-        if not p.exists():
-            issues.append(f"output missing: {path_str} (table {table_name!r}) not found")
+        if _absent(p):
+            issues.append(
+                EvidenceIssue(
+                    "output_missing",
+                    f"output missing: {path_str} (table {table_name!r}) not found",
+                )
+            )
             continue
         current_fp = hash_file(p)
         if current_fp != recorded_fp:
             issues.append(
-                f"output fingerprint changed: {path_str} (table {table_name!r}) "
-                f"(recorded {recorded_fp[:16]}..., current {current_fp[:16]}...)"
+                EvidenceIssue(
+                    "output_fingerprint_changed",
+                    f"output fingerprint changed: {path_str} (table {table_name!r}) "
+                    f"(recorded {recorded_fp[:16]}..., current {current_fp[:16]}...)",
+                )
             )
 
     return issues
+
+
+def verify_manifest(manifest: dict[str, Any]) -> list[str]:
+    """`verify_manifest_issues` rendered as the public list of issue strings."""
+    return [issue.message for issue in verify_manifest_issues(manifest)]
 
 
 # ---------------------------------------------------------------------------

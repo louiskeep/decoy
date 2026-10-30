@@ -24,6 +24,24 @@ version numbers follow the [versioning policy](docs/release/versioning.md).
 
 ### Added
 
+- **`decoy ci check` (F43: CI checks, SARIF, pre-commit, portable manifest).** A thin,
+  local, network-free wrapper over the existing contracts. A committed `decoy-ci/v1`
+  manifest (`docs/schemas/decoy-ci-v1.schema.json`, example `examples/decoy-ci.yaml`)
+  selects full or config-only validation, saved-scan drift, evidence verification, and an
+  optional bounded scan of STAGED files for exact customer literals. One value-free
+  report is emitted as `decoy-ci-report/v1` JSON, SARIF 2.1.0 (validated against the
+  OASIS schema; exact YAML line/column for validation findings, rules, and
+  `partialFingerprints`), or Markdown. Exit integers are the existing taxonomy
+  (precedence 5 > 3 > 1 > 4 > 2 > 0); no integer is added and direct commands keep their
+  behavior. Ships `.pre-commit-hooks.yaml` (`decoy-ci-check`, offline, needs pre-commit
+  >= 4.4.0 and a pre-installed `decoy`) and invoker-only GitHub Actions / GitLab CI
+  templates under `integrations/`. Contract: `docs/ci-contracts.md`. Deferred, by design:
+  the F12 regression runner (a non-empty `regression_suites` is refused, never skipped),
+  F18 includes, a packaged Marketplace action, platform export, and any upload or comment
+  behavior (uploads are your CI workflow's opt-in step).
+- `pydantic>=2,<3` is now a direct dependency; `jsonschema` and `pre-commit` join the `dev`
+  extra (test oracles only).
+
 - **`decoy tokenize` / `decoy detokenize` (reversible tokenization, B-1).** A
   local, single-operator tokenization pair over the engine's keyed token-vault
   seam (A-8). `decoy tokenize pipeline.yaml --vault tokens.db` runs a masking
