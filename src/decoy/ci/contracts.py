@@ -247,6 +247,9 @@ class SafeFinding:
             raise UnsafeFindingError("fingerprint is not a sha256 hex digest")
         _pos_int(self.occurrences, "occurrences")
 
+    def validate(self) -> None:
+        self.__post_init__()
+
     @classmethod
     def create(
         cls,
@@ -282,6 +285,10 @@ class SafeFinding:
         return (self.check_id, self.rule_id, *loc, self.level, self.fingerprint)
 
 
+def _plain_int(value: object) -> bool:
+    return type(value) is int
+
+
 @dataclass(frozen=True)
 class CheckResult:
     id: str
@@ -290,12 +297,38 @@ class CheckResult:
     reason_code: str | None
     finding_count: int
 
+    def __post_init__(self) -> None:
+        _token(self.id, "check id")
+        if self.kind not in CHECK_KINDS:
+            raise UnsafeFindingError("check kind is not recognised")
+        if self.status not in CHECK_STATUSES:
+            raise UnsafeFindingError("check status is not recognised")
+        if self.reason_code is not None and self.reason_code not in REASON_CODES:
+            raise UnsafeFindingError("reason code is not in the registry")
+        if not _plain_int(self.finding_count) or self.finding_count < 0:
+            raise UnsafeFindingError("finding count must be a non-negative integer")
+
+    def validate(self) -> None:
+        self.__post_init__()
+
 
 @dataclass(frozen=True)
 class CheckOutcome:
     result: CheckResult
     findings: tuple[SafeFinding, ...]
     exit_code: int
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.result, CheckResult):
+            raise UnsafeFindingError("result must be a CheckResult")
+        self.result.validate()
+        _validate_findings(self.findings)
+        if not _plain_int(self.exit_code) or self.exit_code not in EXIT_CODES:
+            raise UnsafeFindingError("exit code is not in the public taxonomy")
+        if self.result.finding_count != len(self.findings):
+            raise UnsafeFindingError("finding count does not match the findings")
+        if self.result.status in ("partial", "refused", "failed") and self.exit_code == EXIT_OK:
+            raise UnsafeFindingError("an incomplete check cannot exit 0")
 
     @classmethod
     def create(
@@ -325,6 +358,16 @@ class CheckOutcome:
 
 
 _COMPLETED = frozenset({"ok", "noop", "findings"})
+REPORT_STATUSES: frozenset[str] = CHECK_STATUSES - {"failed"}
+
+
+def _validate_findings(findings: object) -> None:
+    if not isinstance(findings, tuple):
+        raise UnsafeFindingError("findings must be a tuple of SafeFinding")
+    for finding in findings:
+        if not isinstance(finding, SafeFinding):
+            raise UnsafeFindingError("findings must be a tuple of SafeFinding")
+        finding.validate()
 
 
 @dataclass(frozen=True)
@@ -335,6 +378,31 @@ class SafeCiReport:
     checks: tuple[CheckResult, ...]
     notes: tuple[str, ...]
     findings: tuple[SafeFinding, ...]
+
+    def __post_init__(self) -> None:
+        # The factories are conveniences; this is the gate. Every string a renderer can emit
+        # is either a registry key or a bounded token, so free text has no field to ride in.
+        if self.schema_version != CI_REPORT_VERSION:
+            raise UnsafeFindingError("report schema version is not recognised")
+        if self.status not in REPORT_STATUSES:
+            raise UnsafeFindingError("report status is not recognised")
+        if not _plain_int(self.exit_code) or self.exit_code not in EXIT_CODES:
+            raise UnsafeFindingError("exit code is not in the public taxonomy")
+        if not isinstance(self.checks, tuple) or not self.checks:
+            raise UnsafeFindingError("a report needs a tuple of checks")
+        for check in self.checks:
+            if not isinstance(check, CheckResult):
+                raise UnsafeFindingError("checks must be CheckResult values")
+            check.validate()
+        if not isinstance(self.notes, tuple) or any(
+            not isinstance(n, str) or n not in NOTE_TEXTS for n in self.notes
+        ):
+            raise UnsafeFindingError("notes must be registered note ids")
+        _validate_findings(self.findings)
+
+    def validate(self) -> None:
+        """Re-run the gate; emitters call it so a post-construction mutation cannot slip by."""
+        self.__post_init__()
 
     @classmethod
     def from_outcomes(

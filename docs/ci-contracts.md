@@ -77,9 +77,11 @@ When the report goes to a file, one value-free summary line is printed on stderr
 Evidence manifests record paths as `decoy run` saw them; they are resolved the way
 `decoy report verify` resolves them (relative to the working directory), so run the check
 from the repository root. A recorded path that exists but is not a regular file is treated
-as missing and never read. Full validation runs the engine's compile layer, which (as for
-`decoy validate`) writes the engine log to `logs/decoy_engine.log` under the working
-directory; ignore that path in version control.
+as missing and never read. An output path that cannot be resolved safely (a symlink loop, an
+over-long name, a filesystem error) is refused with one fixed line and exit 1; the path is
+never echoed. `decoy ci` never writes or touches the engine's `logs/decoy_engine.log`: the
+engine's file logging is contained for the duration of the checks because its advisories name
+user tables.
 
 ## Report: `decoy-ci-report/v1` (`--format json`)
 
@@ -184,7 +186,8 @@ is deliberately no value allowlist (it would be a second sensitive-value store).
 writes a separate unstructured file that may contain secrets, sample values, absolute paths,
 and raw exception text. It is never written to stdout/stderr, never created unless given,
 never passed by any shipped template or hook, and its contents must not be parsed or
-uploaded.
+uploaded. If the log cannot be written, stderr says so (one fixed line, no "written" warning)
+and a run whose report would have exited 0 exits 3; a worse exit code is never masked.
 
 ## Known limits
 

@@ -12,6 +12,7 @@ A future emitter inherits the guard by adding its flag value to FORMATS.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 from dataclasses import dataclass
@@ -158,6 +159,15 @@ def _assert_real_report(fmt: str, text: str, scenario: str, status: str) -> None
         assert text.startswith("# Decoy CI") and status in text
 
 
+def _snapshot(repo: Path) -> dict[str, str]:
+    """Content digest of every regular file outside .git: catches created AND modified files."""
+    return {
+        p.relative_to(repo).as_posix(): hashlib.sha256(p.read_bytes()).hexdigest()
+        for p in repo.rglob("*")
+        if ".git" not in p.parts and p.is_file() and not p.is_symlink()
+    }
+
+
 def _walk_keys(node, found: set[str]) -> None:
     if isinstance(node, dict):
         for k, v in node.items():
@@ -180,7 +190,7 @@ def test_no_canary_or_identifying_substring_reaches_any_byte(
         args.append("--verbose")
     if surface.endswith("file"):
         args += ["--output", f"report.{fmt}"]
-    before = {p for p in case.repo.rglob("*") if ".git" not in p.parts}
+    before = _snapshot(case.repo)
     proc = ci_check(case.repo, *args)
     status, code = EXPECTED[scenario]
     assert proc.returncode == code, (proc.returncode, proc.stderr[-400:])
@@ -193,11 +203,14 @@ def test_no_canary_or_identifying_substring_reaches_any_byte(
     report_text = artifacts.get("file") or proc.stdout
     assert report_text.strip(), "the report surface must not be empty"
     _assert_real_report(fmt, report_text, scenario, status)
-    after = {p for p in case.repo.rglob("*") if ".git" not in p.parts}
-    # no stray artifact: only the requested report file may appear (A9c). The engine's own
-    # cwd-relative `logs/decoy_engine.log` (written by every full validation, with or
-    # without F43) is the one known pre-existing exception.
-    assert {p.name for p in after - before} <= {out_file.name, "logs", "decoy_engine.log"}
+    after = _snapshot(case.repo)
+    # no stray artifact: only the requested report file may appear or change (A9c). The engine's
+    # cwd-relative `logs/decoy_engine.log` is NOT exempt: `decoy ci` must not write it, and every
+    # created or modified file is scanned for the canaries below.
+    changed = {rel for rel, digest in after.items() if before.get(rel) != digest}
+    assert changed <= {out_file.name}, changed
+    for rel in changed:
+        artifacts[f"file:{rel}"] = (case.repo / rel).read_bytes().decode("utf-8", "replace")
 
     for where, text in artifacts.items():
         for needle in _needles(tmp_path):

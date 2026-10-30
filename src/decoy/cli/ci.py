@@ -20,6 +20,7 @@ from decoy import __version__
 from decoy.ci import reporting
 from decoy.ci.contracts import NOTE_TEXTS, SafeCiReport
 from decoy.ci.debug import DebugSink
+from decoy.ci.engine_logging import engine_logging_silenced
 from decoy.ci.manifest import ManifestError, load_manifest
 from decoy.ci.runner import (
     PRECOMMIT_NOTE,
@@ -81,21 +82,27 @@ def _refuse(message: str) -> typer.Exit:
 
 
 def _safe_target(raw: str, root: Path) -> Path:
-    """A regular-file target inside `root`; refuses symlinks and escapes."""
-    target = Path(raw)
-    if not target.is_absolute():
-        target = Path.cwd() / target
-    # Containment is judged on the parent so a not-yet-existing file is allowed, and the
-    # target itself must not be a symlink even when it points inside the root.
-    parent = target.parent.resolve()
+    """A regular-file target inside `root`; refuses symlinks, escapes and unresolvable paths."""
+    # Every filesystem touch is inside one handler: a symlink loop (RuntimeError/OSError) or an
+    # I/O failure carries the absolute path in its text, which must never reach a stream.
     try:
-        parent.relative_to(root)
-    except ValueError:
-        raise _refuse("an output path must be inside the repository") from None
-    if not parent.is_dir():
+        target = Path(raw)
+        if not target.is_absolute():
+            target = Path.cwd() / target
+        # Containment is judged on the parent so a not-yet-existing file is allowed, and the
+        # target itself must not be a symlink even when it points inside the root.
+        parent = target.parent.resolve()
+        inside = parent.is_relative_to(root)
+        parent_is_dir = parent.is_dir()
+        final = parent / target.name
+        unsafe_final = final.is_symlink() or (final.exists() and not final.is_file())
+    except (RuntimeError, OSError, ValueError):
+        raise _refuse("the output path could not be resolved safely") from None
+    if not inside:
+        raise _refuse("an output path must be inside the repository")
+    if not parent_is_dir:
         raise _refuse("the output directory does not exist")
-    final = parent / target.name
-    if final.is_symlink() or (final.exists() and not final.is_file()):
+    if unsafe_final:
         raise _refuse("an output path must be a regular file, not a symlink")
     return final
 
@@ -179,7 +186,8 @@ def check(
 
     if loaded is not None:
         try:
-            report = run_checks(loaded, context, sink)
+            with engine_logging_silenced():
+                report = run_checks(loaded, context, sink)
         except Exception:
             sink.add_exception("runner")
             report = unexpected_failure_report()
@@ -195,16 +203,22 @@ def check(
             typer.echo("error: could not write the report.", err=True)
             raise typer.Exit(code=EXIT_RUNTIME) from None
 
+    exit_code = report.exit_code
     if sink.enabled:
         try:
             sink.flush()
         except OSError:
             typer.echo("error: could not write the debug log.", err=True)
-        typer.echo(
-            "warning: an UNSAFE debug log was written; it may contain secrets or sample "
-            "values. Do not share, parse, or upload it.",
-            err=True,
-        )
+            # The operator asked for a diagnostic that does not exist; a clean report must not
+            # hide that, but a worse code from the checks themselves is never masked.
+            if exit_code == EXIT_OK:
+                exit_code = EXIT_RUNTIME
+        else:
+            typer.echo(
+                "warning: an UNSAFE debug log was written; it may contain secrets or sample "
+                "values. Do not share, parse, or upload it.",
+                err=True,
+            )
 
     if not quiet:
         machine_on_stdout = to_stdout and format_ in (ReportFormat.json, ReportFormat.sarif)
@@ -221,5 +235,5 @@ def check(
                 err=True,
             )
 
-    if report.exit_code != EXIT_OK:
-        raise typer.Exit(code=report.exit_code)
+    if exit_code != EXIT_OK:
+        raise typer.Exit(code=exit_code)

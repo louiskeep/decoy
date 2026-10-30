@@ -15,7 +15,7 @@ import json
 from typing import Any
 
 from decoy.ci import contracts
-from decoy.ci.contracts import SafeCiReport, SafeFinding, SourceLocation
+from decoy.ci.contracts import SafeCiReport, SafeFinding, SourceLocation, UnsafeFindingError
 
 SARIF_SCHEMA_URI = (
     "https://docs.oasis-open.org/sarif/sarif/v2.1.0/errata01/os/schemas/sarif-schema-2.1.0.json"
@@ -52,6 +52,7 @@ def _location_dict(loc: SourceLocation | None) -> dict[str, Any] | None:
 
 
 def report_to_dict(report: SafeCiReport) -> dict[str, Any]:
+    report.validate()
     return {
         "schema_version": report.schema_version,
         "status": report.status,
@@ -139,6 +140,10 @@ def _sarif_rules(findings: tuple[SafeFinding, ...]) -> list[dict[str, Any]]:
 
 
 def render_sarif(report: SafeCiReport, *, tool_version: str) -> str:
+    try:
+        report.validate()
+    except UnsafeFindingError as exc:
+        raise SarifProjectionError("the report failed its safety validation") from exc
     rules = _sarif_rules(report.findings)
     defined = {r["id"] for r in rules}
     results = [_sarif_result(f) for f in report.findings]
@@ -180,6 +185,7 @@ def _where(loc: SourceLocation | None) -> str:
 
 
 def render_markdown(report: SafeCiReport) -> str:
+    report.validate()
     lines = [
         "# Decoy CI report",
         "",
