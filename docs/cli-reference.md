@@ -10,6 +10,7 @@ Try one of:
   decoy run pipeline.yaml          Run a masking or generation pipeline.
   decoy subset pipeline.yaml --dry-run   Preview a FK-aware referential subset.
   decoy unmask pipeline.yaml masked.csv   Recover fpe columns from a masked file.
+  decoy local-cleanup --manifest evidence.json --root ./out   Preview (default) or delete the outputs a run declared.
   decoy tokenize pipeline.yaml --vault tokens.db   Reversible tokenization: mask tokenize columns + write a local vault.
   decoy detokenize pipeline.yaml tokenized.csv --vault tokens.db   Reverse a tokenized file from the local vault.
   decoy fit source.csv             Fit a distribution snapshot for statistical generation.
@@ -55,6 +56,7 @@ $ decoy [OPTIONS] COMMAND [ARGS]...
 * `doctor`: Check engine and dependency health.
 * `subset`: Cut a referentially-complete FK-aware...
 * `upgrade`: Upgrade (or pin) the managed Decoy runtime...
+* `local-cleanup`: Preview (default) or delete the output...
 * `validate`: Pre-run validation gate.
 * `scan`: Profile a dataset for PII and...
 * `report`: The post-run surface: show / render /...
@@ -804,6 +806,35 @@ Examples:
 
 Verification: the version document and the bundle are both checked against the pinned
 release key before anything is swapped. A bad signature or checksum refuses the upgrade.
+
+
+## `decoy local-cleanup`
+
+Preview (default) or delete the output files an evidence manifest declares.
+
+**Usage**:
+
+```console
+$ decoy local-cleanup [OPTIONS]
+```
+
+**Options**:
+
+* `--manifest PATH`: A cli-local-1 evidence manifest. Only its declared OUTPUT files are ever candidates.  [required]
+* `--root PATH`: Allowed root directory (repeatable). Outputs outside every root are retained.  [required]
+* `--execute`: Delete the reviewed set. Needs --confirm-digest and a fresh confirmation.
+* `--confirm-digest TEXT`: The inventory digest printed by the dry run.
+* `--owner-token TEXT`: Non-interactive confirmation; must equal $DECOY_LOCAL_CLEANUP_TOKEN.
+* `--max-files INTEGER RANGE`: Bound on declared outputs considered.  [default: 500; 1&lt;=x&lt;=5000]
+* `--json`: Print the canonical retention-report/v1 JSON.
+* `--help`: Show this message and exit.
+
+Examples:
+  decoy local-cleanup --manifest evidence.json --root ./out
+  decoy local-cleanup --manifest evidence.json --root ./out --execute --confirm-digest <digest>
+
+Only the output files declared by the manifest, beneath --root, are ever candidates.
+Exit codes: 0 success, 10 nothing to do, 11 everything retained, 12 partial, 13 refused.
 
 
 ## `decoy validate`

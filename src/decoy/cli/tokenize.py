@@ -409,7 +409,12 @@ def tokenize(
     for t, c, ns in tok_cols:
         state.console.print(" ", warn("note:"), f"{t}.{c}: namespace {ns}")
     state.console.print(
-        " ", hint("hint:"), "reverse with: decoy detokenize", code(config.name), "<output> --vault", code(str(vault))
+        " ",
+        hint("hint:"),
+        "reverse with: decoy detokenize",
+        code(config.name),
+        "<output> --vault",
+        code(str(vault)),
     )
 
 

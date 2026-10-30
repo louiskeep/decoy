@@ -8,6 +8,27 @@ version numbers follow the [versioning policy](docs/release/versioning.md).
 
 ## [Unreleased]
 
+### Added (F26: `decoy local-cleanup`)
+
+- **`decoy local-cleanup --manifest evidence.json --root DIR`**: dry-run-first, stateless removal of
+  the OUTPUT files a `cli-local-1` evidence manifest declares. Never discovers files, never touches
+  inputs, the pipeline, the manifest or anything outside `--root`; writes no catalog, workspace or log.
+  Output is the shared value-free `retention-report/v1` (counts, opaque ids, closed codes; no paths,
+  names or hashes). `--execute` needs the preview's inventory digest (recomputed from disk, so any
+  content/size/inode/mtime change or symlink swap refuses) plus a fresh confirmation (type the digest
+  prefix on a TTY, or `--owner-token` equal to `$DECOY_LOCAL_CLEANUP_TOKEN` when scripted). Each file is
+  re-opened without following symlinks, compared, and unlinked relative to its parent descriptor; on
+  platforms without `dir_fd`/`O_NOFOLLOW` execution refuses while preview still works. Exit codes
+  `10/11/12/13` come from the engine-owned retention contract. Needs an engine release that ships
+  `decoy_engine.retention` and `DECOY_ENGINE_LOG_FILE`; the `decoy-engine` pin must move with it.
+  Crash leftovers that were never in a manifest are not discoverable and stay out of scope (V2).
+- **r2: deletion acts on the verified object.** The verified file is captured by an atomic no-replace
+  rename (`renameat2` / `renameatx_np`) to a private `.decoy-cleanup-*` name, the captured inode is
+  compared to the still-open verified descriptor, and only then unlinked. A file swapped in after
+  verification is renamed back (or kept under the quarantine name), never destroyed. The root recorded in
+  the reviewed inventory is rechecked when the delete phase reopens it. Execution now also refuses on a
+  platform without an atomic no-replace rename (preview still works).
+
 ### Security
 
 - **Installer / update-system hardening (B-2 r7).** The signed version document now

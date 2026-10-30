@@ -65,9 +65,7 @@ def schema(
         # Compose --output and --json: when --json is set, write the envelope;
         # otherwise write the raw schema. Both go to the file, not stdout.
         if state.mode is OutputMode.json:
-            content = _json.dumps(
-                {"command": "schema", "status": "ok", "schema": schema_dict}
-            )
+            content = _json.dumps({"command": "schema", "status": "ok", "schema": schema_dict})
         else:
             content = _json.dumps(schema_dict, indent=2)
         output.write_text(content, encoding="utf-8")
