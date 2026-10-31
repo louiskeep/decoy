@@ -6,15 +6,25 @@ so the resolve-only sentry (`test_engine_import_surface.py`) cannot see the drif
 This sentry bans them from `src/decoy` outright, except for an explicit allowlist in which
 every entry carries a reason and a removal note.
 
-Scope: static references only, reported as full dotted symbols and counted per file. It sees
-imports of any form (aliased, nested, in any scope); attribute chains through any binding that
-came from a `decoy_engine` import, an assignment of an engine path, or a literal
-`importlib.import_module(...)` / `__import__(...)` (positional, keyword and relative-with-package
-forms); and literal `getattr/setattr/hasattr/delattr(<engine path>, "name")`. Bindings are scoped
-per module/function/class/lambda, and one name bound to two engine targets in one scope fails as
-ambiguous. Not seen (documented limits): names built at run time, tuple-unpacking assignments,
-and aliases passed through function calls. Dunder names (`__version__`) are public by Python
-convention and are not flagged.
+Counting rule (one sentence): a reference is counted once per import-statement name and once
+per maximal attribute/getattr chain through a binding, so `from m import x; x()` is 1 and
+`import m; m.x()` is 2 when `m` is bad; a bare use of a from-imported name is not a new reference.
+
+What it sees: imports of any form; attribute chains and literal getattr/setattr/hasattr/delattr
+through any name bound to an engine path (import, assignment, walrus, for/with/except target,
+comprehension target, literal `import_module` / `__import__` result, any depth); annotations,
+decorators, defaults and class bases (string annotations when they parse).
+
+One flat binding table per file, no scope analysis: a name bound anywhere in the file to an
+engine path resolves to it everywhere in the file. A name bound to two different engine targets
+is reported as "ambiguous binding". Shadowing therefore OVER-flags (a parameter, class attribute
+or non-engine rebinding named like an engine alias); the remedy for such a false positive is an
+allowlist entry with a reason, or renaming. `except ... as name` names are exempt from the
+ambiguity report (they are instances, reused for unrelated exceptions).
+
+Not seen (documented limits): names built at run time, tuple-unpacking assignments, aliases
+passed through function calls, and string annotations that do not parse or sit inside a
+subscript. Dunder names (`__version__`) are public by Python convention and are not flagged.
 """
 
 from __future__ import annotations
@@ -88,237 +98,205 @@ def _is_engine(name: str) -> bool:
     return name == _ENGINE or name.startswith(_ENGINE + ".")
 
 
-def _chain(node: ast.expr) -> list[str] | None:
-    """`a.b.c` -> ["a", "b", "c"]; None when the base is not a plain name."""
-    parts: list[str] = []
-    while isinstance(node, ast.Attribute):
-        parts.append(node.attr)
-        node = node.value
-    if isinstance(node, ast.Name):
-        parts.append(node.id)
-        return parts[::-1]
-    return None
-
-
 def _literal(node: ast.expr | None) -> str | None:
-    if isinstance(node, ast.Constant) and isinstance(node.value, str):
-        return node.value
-    return None
+    return node.value if isinstance(node, ast.Constant) and isinstance(node.value, str) else None
 
 
 def _arg(call: ast.Call, pos: int, keyword: str) -> ast.expr | None:
-    if len(call.args) > pos:
-        return call.args[pos]
-    return next((k.value for k in call.keywords if k.arg == keyword), None)
+    """An argument by keyword or position, uniformly."""
+    for k in call.keywords:
+        if k.arg == keyword:
+            return k.value
+    return call.args[pos] if len(call.args) > pos else None
 
 
 _REFLECT = {"getattr", "setattr", "hasattr", "delattr"}
+_MAX_ALIAS_ROUNDS = 8  # aliases of aliases settle in a few rounds; past this the scan fails closed
 
 
 def _dynamic_import(call: ast.Call) -> tuple[list[str], list[str]] | None:
-    """For a literal `importlib.import_module(...)` / `__import__(...)` of an engine
-    module: (path of the value the call returns, every engine path it touches)."""
-    callee = _chain(call.func)
-    if not callee or callee[-1] not in {"import_module", "__import__"}:
+    """For a literal `import_module(...)` / `__import__(...)` of an engine module: (path of
+    the value the call returns, every engine path it names)."""
+    func = call.func
+    callee = func.id if isinstance(func, ast.Name) else func.attr if isinstance(func, ast.Attribute) else ""
+    if callee not in {"import_module", "__import__"}:
         return None
     name = _literal(_arg(call, 0, "name"))
-    if name is None:
-        return None
-    is_import_module = callee[-1] == "import_module"
-    if name.startswith("."):
-        package = _literal(_arg(call, 1, "package")) if is_import_module else None
-        if package is None:
-            return None
+    if name is not None and name.startswith("."):
+        package = _literal(_arg(call, 1, "package")) if callee == "import_module" else None
         try:
-            name = importlib.util.resolve_name(name, package)
+            name = importlib.util.resolve_name(name, package) if package else None
         except (ImportError, ValueError):
-            return None
-    if not _is_engine(name):
+            name = None
+    if name is None or not _is_engine(name):
         return None
-    touched = [name]
-    result = name
-    if not is_import_module:
-        fromlist = _arg(call, 3, "fromlist")
-        items = fromlist.elts if isinstance(fromlist, (ast.List, ast.Tuple)) else []
-        names = [lit for e in items if (lit := _literal(e))]
-        touched += [f"{name}.{n}" for n in names]
-        result = name if names else _ENGINE  # __import__ returns the top package without a fromlist
-    return result.split("."), [t for t in touched]
+    if callee == "import_module":
+        return name.split("."), [name]
+    fromlist = _arg(call, 3, "fromlist")
+    items = fromlist.elts if isinstance(fromlist, (ast.List, ast.Tuple)) else []
+    touched = [name, *(f"{name}.{lit}" for e in items if (lit := _literal(e)))]
+    # `__import__` returns the submodule only when fromlist is truthy; a fromlist that is not
+    # a literal is treated as truthy (the conservative reading).
+    falsy = fromlist is None or (isinstance(fromlist, (ast.List, ast.Tuple)) and not items)
+    falsy = falsy or (isinstance(fromlist, ast.Constant) and not fromlist.value)
+    return (_ENGINE if falsy else name).split("."), touched
 
 
 def _reflective(call: ast.Call) -> tuple[ast.expr, str] | None:
-    """`getattr(obj, "literal"[, ...])` and its set/has/del siblings: (obj, literal)."""
+    """`getattr(obj, "literal", ...)` and its set/has/del siblings: (obj, literal)."""
     if isinstance(call.func, ast.Name) and call.func.id in _REFLECT and len(call.args) >= 2:
-        lit = _literal(call.args[1])
-        if lit is not None:
+        if (lit := _literal(call.args[1])) is not None:
             return call.args[0], lit
     return None
 
 
 class _Scan:
-    """One file. Scopes (module, function, class, lambda) each own their bindings, filled by
-    a pre-pass so a use may precede its import; one name bound to two different engine
-    targets in one scope is reported as ambiguous instead of picking one."""
+    """One file, one flat binding table: a name bound anywhere in the file to an engine path
+    resolves to it everywhere in the file, and a name bound to two different engine targets
+    is reported as ambiguous (except-clause names, reused for unrelated exceptions, excepted).
+    Shadowing therefore over-flags and never under-flags."""
 
-    def __init__(self, rel: str) -> None:
+    def __init__(self, rel: str, tree: ast.Module) -> None:
         self.rel = rel
         self.found: list[tuple[str, str, str]] = []
-        self.stack: list[dict[str, str]] = []
+        self.table: dict[str, dict[str, int]] = {}  # name -> {engine path: first line}
+        self.caught: set[str] = set()  # names bound by `except ... as name`
+        self.collect(tree)
+        for name, paths in self.table.items():
+            if len(paths) > 1 and name not in self.caught:
+                self.found.append(
+                    (rel, f"ambiguous binding of {name!r}: " + " vs ".join(sorted(paths)), f"{rel}:{max(paths.values())}")
+                )
+        self.visit(tree)
 
-    def report(self, path: list[str] | str, node: ast.AST) -> None:
-        parts = path.split(".") if isinstance(path, str) else path
-        if _bad_path(parts):
-            self.found.append((self.rel, ".".join(parts), f"{self.rel}:{node.lineno}"))  # type: ignore[attr-defined]
+    def bind(self, name: str, path: str, node: ast.AST) -> None:
+        self.table.setdefault(name, {}).setdefault(path, node.lineno)  # type: ignore[attr-defined]
 
-    def lookup(self, name: str) -> str | None:
-        return next((s[name] for s in reversed(self.stack) if name in s), None)
+    def collect(self, tree: ast.Module) -> None:
+        pairs: list[tuple[str, ast.expr, ast.AST, bool]] = []  # (name, value, node, iterates)
+        for n in ast.walk(tree):
+            if isinstance(n, ast.ImportFrom) and n.level == 0 and n.module and _is_engine(n.module):
+                for a in n.names:
+                    if a.name != "*":
+                        self.bind(a.asname or a.name, f"{n.module}.{a.name}", n)
+            elif isinstance(n, ast.Import):
+                for a in n.names:
+                    if _is_engine(a.name):
+                        self.bind(a.asname or a.name.split(".")[0], a.name if a.asname else _ENGINE, n)
+            elif isinstance(n, ast.Assign):
+                pairs += [(t.id, n.value, n, False) for t in n.targets if isinstance(t, ast.Name)]
+            elif isinstance(n, (ast.AnnAssign, ast.NamedExpr)) and isinstance(n.target, ast.Name):
+                if n.value is not None:
+                    pairs.append((n.target.id, n.value, n, False))
+            elif isinstance(n, (ast.For, ast.AsyncFor, ast.comprehension)):
+                if isinstance(n.target, ast.Name):
+                    pairs.append((n.target.id, n.iter, n.target, True))
+            elif isinstance(n, ast.withitem) and isinstance(n.optional_vars, ast.Name):
+                pairs.append((n.optional_vars.id, n.context_expr, n.optional_vars, False))
+            elif isinstance(n, ast.ExceptHandler) and n.name and n.type is not None:
+                pairs.append((n.name, n.type, n, False))
+                self.caught.add(n.name)
+        size = -1
+        for _ in range(_MAX_ALIAS_ROUNDS):
+            if size == (size := sum(len(v) for v in self.table.values())):
+                return
+            for name, value, node, iterates in pairs:
+                exprs = value.elts if iterates and isinstance(value, (ast.List, ast.Tuple, ast.Set)) else [value]
+                for expr in exprs:
+                    if (path := self.resolve(expr)) is not None:
+                        self.bind(name, ".".join(path), node)
+        self.found.append((self.rel, "unstable alias chain", f"{self.rel}:1"))
 
     def resolve(self, expr: ast.expr) -> list[str] | None:
         """The engine path an expression denotes, or None."""
         if isinstance(expr, ast.Name):
-            found = self.lookup(expr.id)
-            return found.split(".") if found else None
+            paths = self.table.get(expr.id)
+            # several paths only for an `except` name: prefer a bad one so nothing is dropped
+            return min(paths, key=lambda p: (not _bad_path(p.split(".")), p)).split(".") if paths else None
+        if isinstance(expr, ast.NamedExpr):
+            return self.resolve(expr.value)
         if isinstance(expr, ast.Attribute):
             base = self.resolve(expr.value)
             return [*base, expr.attr] if base else None
         if isinstance(expr, ast.Call):
             if (dyn := _dynamic_import(expr)) is not None:
                 return dyn[0]
-            if (call := _reflective(expr)) and isinstance(expr.func, ast.Name) and expr.func.id == "getattr":
-                base = self.resolve(call[0])
-                return [*base, call[1]] if base else None
+            if (refl := _reflective(expr)) and getattr(expr.func, "id", "") == "getattr":
+                base = self.resolve(refl[0])
+                return [*base, refl[1]] if base else None
         return None
 
-    def bind(self, name: str, path: str, node: ast.AST) -> None:
-        scope = self.stack[-1]
-        if name in scope and scope[name] != path:
-            self.found.append(
-                (
-                    self.rel,
-                    f"ambiguous binding of {name!r}: {scope[name]} vs {path}",
-                    f"{self.rel}:{node.lineno}",  # type: ignore[attr-defined]
-                )
-            )
-            return
-        scope[name] = path
+    def report(self, path: list[str] | str, node: ast.AST) -> None:
+        parts = path.split(".") if isinstance(path, str) else path
+        if _bad_path(parts):
+            self.found.append((self.rel, ".".join(parts), f"{self.rel}:{node.lineno}"))  # type: ignore[attr-defined]
 
-    def prepass(self, body: list[ast.AST]) -> None:
-        imports: list[ast.AST] = []
-        assigns: list[ast.AST] = []
-        todo = list(body)
-        while todo:
-            node = todo.pop()
-            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
-                continue
-            if isinstance(node, (ast.Import, ast.ImportFrom)):
-                imports.append(node)
-            elif isinstance(node, (ast.Assign, ast.AnnAssign)):
-                assigns.append(node)
-            todo.extend(ast.iter_child_nodes(node))
-        key = lambda n: (n.lineno, n.col_offset)  # noqa: E731
-        for node in sorted(imports, key=key):
-            if isinstance(node, ast.ImportFrom):
-                if node.level == 0 and node.module and _is_engine(node.module):
-                    for a in node.names:
-                        if a.name != "*":
-                            self.bind(a.asname or a.name, f"{node.module}.{a.name}", node)
-            elif isinstance(node, ast.Import):
-                for a in node.names:
-                    if _is_engine(a.name):
-                        local = a.asname or a.name.split(".")[0]
-                        self.bind(local, a.name if a.asname else _ENGINE, node)
-        for node in sorted(assigns, key=key):
-            value = node.value
-            targets = node.targets if isinstance(node, ast.Assign) else [node.target]
-            if value is None or (path := self.resolve(value)) is None:
-                continue
-            for t in targets:
-                if isinstance(t, ast.Name):
-                    self.bind(t.id, ".".join(path), node)
-
-    def scoped(self, body: list[ast.AST]) -> None:
-        self.stack.append({})
-        self.prepass(body)
-        for stmt in body:
-            self.visit(stmt)
-        self.stack.pop()
+    def access_path(self, node: ast.AST) -> list[str] | None:
+        """The full engine path of a maximal attribute / reflective-access chain."""
+        if isinstance(node, ast.Attribute):
+            return self.resolve(node)
+        if isinstance(node, ast.Call) and (refl := _reflective(node)):
+            base = self.resolve(refl[0])
+            return [*base, refl[1]] if base else None
+        return None
 
     def visit(self, node: ast.AST) -> None:
         if isinstance(node, ast.ImportFrom):
             if node.level == 0 and node.module and _is_engine(node.module):
                 for a in node.names:
                     self.report(f"{node.module}.{a.name}", node)
-        elif isinstance(node, ast.Import):
+            return
+        if isinstance(node, ast.Import):
             for a in node.names:
                 if _is_engine(a.name):
                     self.report(a.name, node)
-        elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)):
-            args = node.args
-            outer = [*args.defaults, *(d for d in args.kw_defaults if d is not None)]
-            if not isinstance(node, ast.Lambda):
-                outer += node.decorator_list
-            for expr in outer:
-                self.visit(expr)
-            self.scoped(node.body if isinstance(node.body, list) else [node.body])
-        elif isinstance(node, ast.ClassDef):
-            for expr in [*node.bases, *(k.value for k in node.keywords), *node.decorator_list]:
-                self.visit(expr)
-            self.scoped(node.body)
-        elif isinstance(node, (ast.Attribute, ast.Call)) and self.visit_access(node):
             return
-        else:
-            for child in ast.iter_child_nodes(node):
-                self.visit(child)
+        if (path := self.access_path(node)) is not None:
+            self.report(path, node)
+            self.visit_chain(node, ".".join(path))
+            return
+        if isinstance(node, ast.Call) and (dyn := _dynamic_import(node)):
+            for touched in dyn[1]:
+                self.report(touched, node)
+        for ann in (getattr(node, "annotation", None), getattr(node, "returns", None)):
+            if (text := _literal(ann)) is not None:  # string annotation: scan it when it parses
+                try:
+                    parsed = ast.parse(text.strip(), mode="eval")
+                except SyntaxError:
+                    continue
+                ast.increment_lineno(parsed, ann.lineno - 1)  # type: ignore[union-attr]
+                self.visit(parsed.body)
+        for child in ast.iter_child_nodes(node):
+            self.visit(child)
 
-    def visit_access(self, node: ast.Attribute | ast.Call) -> bool:
-        """Report a maximal attribute / reflective access chain once, at its full path.
-        False when the node is not such a chain (the caller descends normally)."""
-        if isinstance(node, ast.Call):
-            if (dyn := _dynamic_import(node)) is not None:
-                for touched in dyn[1]:
-                    self.report(touched, node)
-                return False
-            refl = _reflective(node)
-            if refl is None:
-                return False
-            base = self.resolve(refl[0])
-            if base is None:
-                return False
-            self.report([*base, refl[1]], node)
-            self.visit_chain_base(refl[0])
-            return True
-        path = self.resolve(node)
-        if path is None:
-            return False
-        self.report(path, node)
-        self.visit_chain_base(node.value)
-        return True
-
-    def visit_chain_base(self, node: ast.AST) -> None:
-        """Walk down a chain already reported, visiting only a dynamic-import call at its
-        root (its own module may be bad); a Name root needs nothing."""
+    def visit_chain(self, node: ast.AST, full: str) -> None:
+        """Descend a chain already reported as `full`: visit what is not on its spine (the
+        remaining reflective-call arguments), and report a dynamic-import root's module only
+        if the chain's path does not already contain it."""
         while True:
-            if isinstance(node, ast.Attribute):
+            if isinstance(node, (ast.Attribute, ast.NamedExpr)):
                 node = node.value
             elif isinstance(node, ast.Call) and (refl := _reflective(node)) and self.resolve(refl[0]):
+                for extra in [*node.args[1:], *(k.value for k in node.keywords)]:
+                    self.visit(extra)
                 node = refl[0]
             else:
                 break
-        if isinstance(node, ast.Call):
-            self.visit(node)
+        if isinstance(node, ast.Call) and (dyn := _dynamic_import(node)):
+            for touched in dyn[1]:
+                if full != touched and not full.startswith(touched + "."):
+                    self.report(touched, node)
+            for child in ast.iter_child_nodes(node):
+                self.visit(child)
 
 
 def internal_refs(root: Path) -> list[tuple[str, str, str]]:
     """(relative path, full dotted symbol, "path:line") for every boundary violation."""
     found: list[tuple[str, str, str]] = []
     for path in sorted(root.rglob("*.py")):
-        if "__pycache__" in path.parts:
-            continue
-        rel = path.relative_to(root).as_posix()
-        tree = ast.parse(path.read_text(encoding="utf-8"), filename=rel)
-        scan = _Scan(rel)
-        scan.scoped(tree.body)
-        found.extend(scan.found)
+        if "__pycache__" not in path.parts:
+            rel = path.relative_to(root).as_posix()
+            found.extend(_Scan(rel, ast.parse(path.read_text(encoding="utf-8"), filename=rel)).found)
     return found
 
 
@@ -561,14 +539,6 @@ def test_flags_reflective_access_with_a_literal_name(tmp_path: Path) -> None:
         assert _scan(tmp_path, source) == [], source
 
 
-def test_bindings_are_scoped_to_their_function(tmp_path: Path) -> None:
-    source = (
-        "def f():\n    from decoy_engine import kernel as m\n    return m._cache\n"
-        "def g():\n    from decoy_engine import sdk as m\n    return m._other\n"
-    )
-    assert sorted(_scan(tmp_path, source)) == ["decoy_engine.kernel._cache", "decoy_engine.sdk._other"]
-
-
 def test_one_name_bound_to_two_engine_targets_fails_closed(tmp_path: Path) -> None:
     source = (
         "from decoy_engine import kernel as m\nfrom decoy_engine import sdk as m\nm.fine\n"
@@ -735,3 +705,30 @@ def test_one_flat_binding_table_per_file_over_flags_shadowing(tmp_path: Path) ->
         "def g():\n    from decoy_engine import sdk as m\n"
     )
     assert any("ambiguous" in r for r in _scan(tmp_path, two_functions))
+
+
+def test_except_names_are_not_ambiguous_but_never_hide_a_bad_path(tmp_path: Path) -> None:
+    clean = (
+        "import decoy_engine\n"
+        "try:\n    pass\nexcept decoy_engine.A as e:\n    e.args\n"
+        "try:\n    pass\nexcept decoy_engine.B as e:\n    e.args\n"
+    )
+    assert _scan(tmp_path, clean) == []
+    with_bad = clean.replace("decoy_engine.A", "decoy_engine.internal.errors.X")
+    assert sorted(_scan(tmp_path, with_bad)) == [
+        "decoy_engine.internal.errors.X",
+        "decoy_engine.internal.errors.X.args",
+        "decoy_engine.internal.errors.X.args",
+    ]
+
+
+def test_alias_chains_resolve_and_a_chain_past_the_round_cap_fails_closed(
+    tmp_path: Path, monkeypatch
+) -> None:
+    forward = "import decoy_engine\na = decoy_engine.kernel\nb = a\nc = b\nc._x\n"
+    assert _scan(tmp_path, forward) == ["decoy_engine.kernel._x"]
+    # bound last-to-first, each alias needs one more round than the one before it
+    reverse = "import decoy_engine\nd = c\nc = b\nb = a\na = decoy_engine.kernel\nd._x\n"
+    assert _scan(tmp_path, reverse) == ["decoy_engine.kernel._x"]
+    monkeypatch.setitem(globals(), "_MAX_ALIAS_ROUNDS", 2)
+    assert "unstable alias chain" in _scan(tmp_path, reverse)
