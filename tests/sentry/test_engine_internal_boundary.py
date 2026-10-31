@@ -608,3 +608,130 @@ def test_scopes_and_expression_shapes_the_scan_must_cover(tmp_path: Path) -> Non
     }
     for source, expected in cases.items():
         assert _scan(tmp_path, source) == expected, source
+
+
+# --- remediation round 2: red-first controls ------------------------------------------
+
+_IMPORT_DE = "import decoy_engine\n"
+
+
+def test_annotations_are_scanned(tmp_path: Path) -> None:
+    for source in (
+        "def f(x: decoy_engine._T): ...\n",
+        "def f(x: decoy_engine._T, /): ...\n",
+        "def f(*a: decoy_engine._T): ...\n",
+        "def f(*, k: decoy_engine._T): ...\n",
+        "def f(**kw: decoy_engine._T): ...\n",
+        "def f() -> decoy_engine._T: ...\n",
+        "async def f(x: decoy_engine._T) -> None: ...\n",
+        "v: decoy_engine._T = 1\n",
+        "class C(decoy_engine._T): ...\n",
+        "class C(metaclass=decoy_engine._T): ...\n",
+        "def f(x: 'decoy_engine._T'): ...\n",
+        "def f() -> 'decoy_engine._T': ...\n",
+        "v: 'decoy_engine._T' = 1\n",
+    ):
+        assert _scan(tmp_path, _IMPORT_DE + source) == ["decoy_engine._T"], source
+    # an unparseable string annotation is a documented limit, not a crash
+    assert _scan(tmp_path, _IMPORT_DE + "def f(x: 'not ((valid'): ...\n") == []
+
+
+def test_reflective_calls_keep_their_other_arguments(tmp_path: Path) -> None:
+    for source, expected in (
+        ("getattr(decoy_engine, '_a', decoy_engine._b)\n", ["decoy_engine._a", "decoy_engine._b"]),
+        (
+            "setattr(decoy_engine.kernel, '_c', decoy_engine.internal.x)\n",
+            ["decoy_engine.kernel._c", "decoy_engine.internal.x"],
+        ),
+        ("hasattr(decoy_engine, '_a', default=decoy_engine._b)\n", ["decoy_engine._a", "decoy_engine._b"]),
+    ):
+        assert sorted(_scan(tmp_path, _IMPORT_DE + source)) == sorted(expected), source
+
+
+def test_every_binding_construct_registers_an_engine_alias(tmp_path: Path) -> None:
+    imp = "import importlib\n"
+    cases = (
+        (imp + "(m := importlib.import_module('decoy_engine.kernel'))\nm._c\n", ["decoy_engine.kernel._c"]),
+        (imp + "(m := importlib.import_module('decoy_engine.kernel'))._c\n", ["decoy_engine.kernel._c"]),
+        (_IMPORT_DE + "for m in (decoy_engine.kernel,):\n    m._c\n", ["decoy_engine.kernel._c"]),
+        (_IMPORT_DE + "x = [m._c for m in (decoy_engine.kernel,)]\n", ["decoy_engine.kernel._c"]),
+        (
+            imp + "with importlib.import_module('decoy_engine.kernel') as m:\n    m._c\n",
+            ["decoy_engine.kernel._c"],
+        ),
+        (
+            _IMPORT_DE + "try:\n    pass\nexcept decoy_engine.errors.DecoyError as e:\n    e._detail\n",
+            ["decoy_engine.errors.DecoyError._detail"],
+        ),
+    )
+    for source, expected in cases:
+        assert _scan(tmp_path, source) == expected, source
+
+
+def test_dunder_import_with_a_non_literal_fromlist_returns_the_submodule(tmp_path: Path) -> None:
+    for source in (
+        "v = 'a'\nm = __import__('decoy_engine.kernel', fromlist=[v])\nm._cache\n",
+        "v = ['a']\nm = __import__('decoy_engine.kernel', fromlist=v)\nm._cache\n",
+        "v = ['a']\nm = __import__('decoy_engine.kernel', None, None, v)\nm._cache\n",
+    ):
+        assert _scan(tmp_path, source) == ["decoy_engine.kernel._cache"], source
+    # an empty / absent fromlist returns the top package
+    assert _scan(tmp_path, "m = __import__('decoy_engine.kernel')\nm.sdk\n") == []
+
+
+def test_a_dynamic_import_at_the_root_of_a_chain_is_reported_once(tmp_path: Path) -> None:
+    imp = "import importlib\n"
+    assert _scan(tmp_path, imp + "importlib.import_module('decoy_engine.internal.logging').get_logger()\n") == [
+        "decoy_engine.internal.logging.get_logger"
+    ]
+    # the touched module is not a prefix of the chain here, so it is still reported
+    assert _scan(tmp_path, "__import__('decoy_engine.internal.x').sdk\n") == ["decoy_engine.internal.x"]
+
+
+def test_counting_rule_one_per_import_name_and_one_per_access_chain(tmp_path: Path) -> None:
+    """A reference is counted once per import-statement name and once per maximal
+    attribute/getattr chain; a bare use of a from-imported name is not a new reference."""
+    from_form = "from decoy_engine.internal.logging import get_logger\nget_logger()\nget_logger()\n"
+    assert _scan(tmp_path, from_form) == ["decoy_engine.internal.logging.get_logger"]
+    module_form = "import decoy_engine.internal.logging as L\nL.get_logger()\nL.get_logger()\n"
+    assert _scan(tmp_path, module_form) == [
+        "decoy_engine.internal.logging",
+        "decoy_engine.internal.logging.get_logger",
+        "decoy_engine.internal.logging.get_logger",
+    ]
+
+
+def test_dynamic_import_arguments_are_read_uniformly_by_keyword_or_position(tmp_path: Path) -> None:
+    imp = "import importlib\n"
+    for source, expected in (
+        (imp + "importlib.import_module(name='.internal.fs', package='decoy_engine')\n", "decoy_engine.internal.fs"),
+        (imp + "importlib.import_module('.internal.fs', package='decoy_engine')\n", "decoy_engine.internal.fs"),
+        (imp + "importlib.import_module(package='decoy_engine', name='.internal.fs')\n", "decoy_engine.internal.fs"),
+        ("__import__('decoy_engine', fromlist=['internal'])\n", "decoy_engine.internal"),
+        ("__import__('decoy_engine', None, None, fromlist=['internal'])\n", "decoy_engine.internal"),
+        ("__import__('decoy_engine', globals(), locals(), ['internal'])\n", "decoy_engine.internal"),
+        (
+            "__import__(name='decoy_engine', globals=None, locals=None, fromlist=['internal'], level=0)\n",
+            "decoy_engine.internal",
+        ),
+    ):
+        assert _scan(tmp_path, source) == [expected], source
+
+
+def test_one_flat_binding_table_per_file_over_flags_shadowing(tmp_path: Path) -> None:
+    """Documented over-flags: a name bound anywhere in the file to an engine path resolves to
+    it everywhere in the file (class bodies, parameters, non-engine rebinding included), and
+    one name bound to two engine targets anywhere in the file is ambiguous."""
+    cases = (
+        "from decoy_engine import kernel\ndef f(kernel):\n    return kernel._c\n",
+        "import decoy_engine as e\ne = object()\ne._p\n",
+        "class C:\n    import decoy_engine.kernel as k\n    def f(self):\n        return k._c\n",
+        "def f():\n    import decoy_engine.kernel as m\n\ndef g():\n    m = 1\n    return m._c\n",
+    )
+    for source in cases:
+        assert _scan(tmp_path, source), source
+    two_functions = (
+        "def f():\n    from decoy_engine import kernel as m\n"
+        "def g():\n    from decoy_engine import sdk as m\n"
+    )
+    assert any("ambiguous" in r for r in _scan(tmp_path, two_functions))
