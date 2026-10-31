@@ -327,7 +327,6 @@ def mask(
     master_key: str | bytes | None = None,
     key_label: str | None = None,
     out: Any = None,
-    substrate: str | None = None,
     native: bool | None = None,
 ) -> "pd.DataFrame | dict[str, pd.DataFrame]":
     """Mask (or generate) data through the same engine path `decoy run` uses.
@@ -371,8 +370,6 @@ def mask(
             nothing, if it declares none). A path overrides the single
             declared table's target path. A `dict[str, path]` overrides
             per table by name.
-        substrate: Execution substrate override (only `"pandas"`; anything else raises `invalid_substrate`).
-            `None` keeps `run_pipeline`'s default.
         native: Mirrors the CLI's `--native`/`--no-native` (Phase 3.1).
             `None` (default): inherit the engine's native-on-when-present
             behavior. `True`: require that a compiled native kernel actually
@@ -495,14 +492,6 @@ def mask(
         resolver = _build_generation_resolver(master_key, key_label)
         instance_locale = (config_dict.get("global_settings") or {}).get("default_locale")
 
-        # Passing `substrate=None` explicitly is NOT the same as omitting it:
-        # `None` means "defer to DECOY_SUBSTRATE / the engine's internal
-        # default" (`resolve_substrate`). That resolves to pandas when
-        # DECOY_SUBSTRATE is unset, but would honor whatever DECOY_SUBSTRATE the
-        # environment set -- which breaks the CLI's plain-run contract
-        # ("plain runs always use pandas; --substrate is only consulted for
-        # --chunked runs"). Mirror the CLI exactly: omit the kwarg entirely
-        # unless the caller explicitly chose a substrate.
         # H1 remediation (round 3, matches decoy run's own fix): the shared
         # `_native_gate.run_pipeline_kwargs` capability-detects
         # `unified_slice_enabled` against the installed engine, so `mask()`
@@ -511,8 +500,6 @@ def mask(
         extra_run_pipeline_kwargs: dict[str, Any] = dict(
             _native_gate.run_pipeline_kwargs(gate_result)
         )
-        if substrate is not None:
-            extra_run_pipeline_kwargs["substrate"] = substrate
 
         result = run_pipeline(
             config_dict,
@@ -526,7 +513,6 @@ def mask(
         route = _native_gate.classify_route(
             chunked=False,
             any_generate=any_generate,
-            resolved_substrate=None,
             quality_metrics=result.quality_metrics,
         )
         # Stage 2 (approach 2): assert --native's/`native=True`'s

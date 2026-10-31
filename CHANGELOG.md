@@ -85,6 +85,24 @@ version numbers follow the [versioning policy](docs/release/versioning.md).
   `--chunked` apply unchanged. No raw SQL (the relation name is the handle); no
   new engine source format. Not supported with `--evidence-out` yet.
 
+### Removed (`--substrate` / `DECOY_SUBSTRATE`, 2026-10-31) -- BREAKING, pre-GA
+
+- **`decoy run --substrate` and the `DECOY_SUBSTRATE` env var are gone, and
+  `decoy.mask()` no longer takes `substrate=`.** The pinned engine (0.15.1) ships
+  one execution adapter and deleted `resolve_substrate` and `run_pipeline`'s
+  `substrate` parameter; every `--chunked` run (and every `mask()` call that
+  passed `substrate=`) failed on the import. The flag had no remaining effect:
+  `pandas` was the only accepted value and plain runs ignored it. A run that still
+  passes `--substrate` now exits with Typer's usage error (exit 2, "No such
+  option"); `DECOY_SUBSTRATE` is no longer read. `decoy explain substrate` stays
+  and says so. The chunked route label is the fixed `pandas chunked stream`.
+- **Engine import-surface sentry.** `tests/sentry/test_engine_import_surface.py`
+  derives, by AST, every `decoy_engine` name the CLI imports and every keyword it
+  passes to `run_pipeline` (including those reaching it through a `**kwargs`
+  dict), and resolves each against the installed engine. It fails closed on a
+  missing name and on any keyword set it cannot derive statically, so engine API
+  drift is caught at test time instead of at the first user's `--chunked` run.
+
 ### Changed (CLI command-surface redesign, 2026-10-23) -- BREAKING, pre-GA
 
 The `decoy` command surface was redesigned from ~17 top-level commands plus 11

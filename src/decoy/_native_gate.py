@@ -416,7 +416,6 @@ def classify_route(
     *,
     chunked: bool,
     any_generate: bool,
-    resolved_substrate: str | None,
     quality_metrics: dict[str, Any] | None,
 ) -> RouteClassification:
     """The three-state native route indicator, scoped to candidacy (plan
@@ -426,14 +425,13 @@ def classify_route(
 
     `--chunked` runs have no `ExecutionResult` (the chunked path streams
     per-chunk and returns nothing to classify), so `quality_metrics` is
-    `None` for them and the label is built from `resolved_substrate` alone
-    (build-time correction #1: never hardcode "pandas" -- report the
-    substrate actually resolved for this run)."""
+    `None` for them; the engine has one execution adapter, so their label
+    is fixed."""
     if chunked:
         return RouteClassification(
             applicable=False,
             state=None,
-            label=f"{resolved_substrate or 'pandas'} chunked stream",
+            label="pandas chunked stream",
         )
 
     qm = quality_metrics or {}

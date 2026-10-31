@@ -371,7 +371,7 @@ def _managed_python(tmp_path: Path) -> Path:
     import decoy
 
     prefix = tmp_path / "home" / "versions" / "0.0.1" / "python"
-    venv.EnvBuilder(with_pip=False).create(prefix)
+    venv.EnvBuilder(with_pip=False, symlinks=True).create(prefix)
     (prefix.parent / "manifest.json").write_text("{}", encoding="utf-8")
     layout.atomic_point_current_at("0.0.1", tmp_path / "home")
     site = next(prefix.glob("lib/python*/site-packages"))

@@ -207,7 +207,6 @@ def test_mask_native_false_stays_compatible_with_an_older_engine(
         derive_key=None,
         instance_default_locale=None,
         vault_writer=None,
-        substrate=None,
     ):
         return real_run_pipeline(
             config,
@@ -217,7 +216,6 @@ def test_mask_native_false_stays_compatible_with_an_older_engine(
             derive_key=derive_key,
             instance_default_locale=instance_default_locale,
             vault_writer=vault_writer,
-            substrate=substrate,
         )
 
     monkeypatch.setattr("decoy_engine.run_pipeline", _old_engine_run_pipeline)

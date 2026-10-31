@@ -358,17 +358,16 @@ _TOPICS: dict[str, _Topic] = {
         name="substrate",
         summary="pandas is the only masking substrate; polars was removed.",
         body=(
-            "Masking runs on pandas. It is the default and the only substrate for\n"
-            "both plain and --chunked runs, via the engine's unified run_pipeline\n"
-            "(V2 path) and its internal PandasExecutionAdapter.\n\n"
+            "Masking runs on pandas. It is the only substrate for both plain and\n"
+            "--chunked runs, via the engine's unified run_pipeline (V2 path) and\n"
+            "its internal PandasExecutionAdapter. There is nothing to select:\n"
+            "the engine ships one execution adapter.\n\n"
             "The polars masking substrate was removed from the engine: it was\n"
             "value-equal to pandas and not faster for the per-value keyed-crypto\n"
-            "masking workload. --substrate polars and DECOY_SUBSTRATE=polars now\n"
-            "fail with a usage error (exit 1). (Polars is still used elsewhere in\n"
-            "Decoy for FK subsetting, its genuine strength; that is unaffected.)\n\n"
-            "--substrate and the DECOY_SUBSTRATE env var accept only 'pandas' and\n"
-            "are consulted only for --chunked runs; on a plain run either just\n"
-            "emits a warning to stderr.\n"
+            "masking workload. (Polars is still used elsewhere in Decoy for FK\n"
+            "subsetting, its genuine strength; that is unaffected.)\n\n"
+            "The former --substrate flag and DECOY_SUBSTRATE env var were removed\n"
+            "with it; a run that still passes --substrate exits with a usage error.\n"
             "(See: decoy explain chunked for when to use --chunked.)"
         ),
         see_also=("decoy run --help", "decoy explain chunked"),
