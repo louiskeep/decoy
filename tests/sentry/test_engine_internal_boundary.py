@@ -293,3 +293,87 @@ def test_allowlist_excuses_exactly_its_file_and_ref(tmp_path: Path) -> None:
     allow = (AllowedInternal("ok.py", "decoy_engine.internal", "r", "x"),)
     left = unallowed_internal_refs(tmp_path, allow)
     assert len(left) == 1 and left[0].startswith("other.py:1"), left
+
+
+# --- remediation round 1: red-first controls ------------------------------------------
+
+
+def test_allowlist_does_not_cover_a_new_symbol_in_an_allowlisted_file(tmp_path: Path) -> None:
+    """Granularity: an entry excuses its own symbol, not everything else under the same
+    truncated prefix."""
+    (tmp_path / "x.py").write_text(
+        "import decoy_engine.internal.logging\nimport decoy_engine.internal.fs\n", encoding="utf-8"
+    )
+    allow = (AllowedInternal("x.py", "decoy_engine.internal", "r", "x"),)
+    assert unallowed_internal_refs(tmp_path, allow), "new internal symbol folded into old entry"
+
+
+def test_allowlist_does_not_cover_a_second_private_read_under_one_prefix(tmp_path: Path) -> None:
+    (tmp_path / "x.py").write_text(
+        "from decoy_engine.execution._strategies import SCALAR_HANDLERS\n"
+        "from decoy_engine.execution._strategies import OTHER_PRIVATE\n",
+        encoding="utf-8",
+    )
+    allow = (AllowedInternal("x.py", "decoy_engine.execution._strategies", "r", "x"),)
+    left = unallowed_internal_refs(tmp_path, allow)
+    assert left, "a second private symbol folded into the first entry"
+
+
+def test_flags_relative_and_keyword_dynamic_imports(tmp_path: Path) -> None:
+    for source in (
+        "import importlib\nimportlib.import_module('.internal.fs', 'decoy_engine')\n",
+        "import importlib\nimportlib.import_module('.internal.fs', package='decoy_engine')\n",
+        "import importlib\nimportlib.import_module(name='decoy_engine.internal.fs')\n",
+        "import importlib\nimportlib.import_module(package='decoy_engine', name='.internal.fs')\n",
+        "__import__(name='decoy_engine.internal.fs')\n",
+        "__import__('decoy_engine', fromlist=['internal'])\n",
+    ):
+        assert len(_scan(tmp_path, source)) == 1, source
+
+
+def test_tracks_the_value_a_dynamic_import_returns(tmp_path: Path) -> None:
+    assert _scan(
+        tmp_path,
+        "import importlib\nm = importlib.import_module('decoy_engine.kernel')\nm._cache\n",
+    ) == ["decoy_engine.kernel._cache"]
+    assert _scan(
+        tmp_path,
+        "import importlib\nimportlib.import_module('decoy_engine.kernel')._cache\n",
+    ) == ["decoy_engine.kernel._cache"]
+    assert _scan(tmp_path, "import decoy_engine\nk = decoy_engine.kernel\nk._cache\n") == [
+        "decoy_engine.kernel._cache"
+    ]
+
+
+def test_flags_reflective_access_with_a_literal_name(tmp_path: Path) -> None:
+    for source in (
+        "import decoy_engine\ngetattr(decoy_engine, '_state')\n",
+        "import decoy_engine\ngetattr(decoy_engine, '_state', None)\n",
+        "from decoy_engine import kernel\nsetattr(kernel, '_cache', 1)\n",
+        "from decoy_engine import kernel\nhasattr(kernel, '_cache')\n",
+        "from decoy_engine import kernel\ndelattr(kernel, '_cache')\n",
+        "import decoy_engine\ngetattr(decoy_engine.kernel, '_cache')\n",
+        "import decoy_engine\ngetattr(decoy_engine, 'internal')\n",
+    ):
+        assert len(_scan(tmp_path, source)) == 1, source
+    for source in (
+        "import decoy_engine\ngetattr(decoy_engine, 'run_pipeline')\n",
+        "import decoy_engine\nname = 'x'\ngetattr(decoy_engine, name)\n",
+        "o = object()\ngetattr(o, '_private')\n",
+    ):
+        assert _scan(tmp_path, source) == [], source
+
+
+def test_bindings_are_scoped_to_their_function(tmp_path: Path) -> None:
+    source = (
+        "def f():\n    from decoy_engine import kernel as m\n    return m._cache\n"
+        "def g():\n    from decoy_engine import sdk as m\n    return m._other\n"
+    )
+    assert sorted(_scan(tmp_path, source)) == ["decoy_engine.kernel._cache", "decoy_engine.sdk._other"]
+
+
+def test_one_name_bound_to_two_engine_targets_fails_closed(tmp_path: Path) -> None:
+    source = (
+        "from decoy_engine import kernel as m\nfrom decoy_engine import sdk as m\nm.fine\n"
+    )
+    assert any("ambiguous" in r for r in _scan(tmp_path, source))
