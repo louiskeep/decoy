@@ -33,14 +33,15 @@ _ENGINE = "decoy_engine"
 class AllowedInternal:
     file: str  # path relative to src/decoy
     symbol: str  # full dotted engine symbol exactly as the scan reports it
-    count: int  # exact number of occurrences allowed; more fail, fewer means shrink the entry
+    count: int  # exact references allowed (imports + attribute/reflective accesses); more or fewer fail
     reason: str
     removal: str  # what has to land, and where, before this entry can be deleted
 
 
 # Entries are added only when the pinned engine and engine main have no public equivalent.
 # One entry per (file, full symbol) with the exact occurrence count: a new symbol, or one more
-# use of an allowed symbol, fails until it is reviewed and listed here.
+# reference (import or access) to an allowed symbol, fails until reviewed and listed here.
+# A bare use of a name already imported under an entry is the same reviewed symbol.
 _NEEDS = "docs/handoffs/inputs/cli-needs-engine-public-api.md"
 _LOG = "decoy_engine.internal.logging"
 _STRAT = "decoy_engine.execution._strategies.SCALAR_HANDLERS"
@@ -351,18 +352,50 @@ def test_cli_does_not_import_engine_internals() -> None:
     )
 
 
+def allowlist_problems(
+    root: Path, allowlist: tuple[AllowedInternal, ...] = ALLOWLIST
+) -> list[str]:
+    live: dict[tuple[str, str], int] = {}
+    for rel, symbol, _ in internal_refs(root):
+        live[(rel, symbol)] = live.get((rel, symbol), 0) + 1
+    problems: list[str] = []
+    for entry in allowlist:
+        if not entry.reason.strip() or not entry.removal.strip():
+            problems.append(f"entry lacks a reason or removal note: {entry.file} {entry.symbol}")
+        if entry.count < 1:
+            problems.append(f"entry count must be >= 1: {entry.file} {entry.symbol}")
+        now = live.get((entry.file, entry.symbol), 0)
+        if now != entry.count:
+            problems.append(
+                f"stale or wrong count ({now} live, {entry.count} listed): {entry.file} {entry.symbol}"
+            )
+    keys = [(a.file, a.symbol) for a in allowlist]
+    if len(set(keys)) != len(keys):
+        problems.append("duplicate allowlist entry")
+    return problems
+
+
 def test_every_allowlist_entry_is_justified_and_still_needed() -> None:
     """The allowlist may only shrink: an entry needs a reason and a removal note, and its
-    count must equal the live occurrences (a fixed site must lower or drop its entry)."""
-    live: dict[tuple[str, str], int] = {}
-    for rel, symbol, _ in internal_refs(_SRC):
-        live[(rel, symbol)] = live.get((rel, symbol), 0) + 1
-    for entry in ALLOWLIST:
-        assert entry.reason.strip(), entry
-        assert entry.removal.strip(), entry
-        assert entry.count >= 1, entry
-        assert live.get((entry.file, entry.symbol), 0) == entry.count, f"stale or wrong count: {entry}"
-    assert len({(a.file, a.symbol) for a in ALLOWLIST}) == len(ALLOWLIST), "duplicate entry"
+    count must equal the live references (a fixed site must lower or drop its entry)."""
+    problems = allowlist_problems(_SRC)
+    assert not problems, "\n  - ".join(["allowlist is out of date:", *problems])
+
+
+def test_allowlist_hygiene_check_bites(tmp_path: Path) -> None:
+    (tmp_path / "x.py").write_text("import decoy_engine.internal.fs\n", encoding="utf-8")
+    ok = AllowedInternal("x.py", "decoy_engine.internal.fs", 1, "r", "x")
+    assert allowlist_problems(tmp_path, (ok,)) == []
+    bad = {
+        "stale": AllowedInternal("x.py", "decoy_engine.internal.base", 1, "r", "x"),
+        "too many": AllowedInternal("x.py", "decoy_engine.internal.fs", 2, "r", "x"),
+        "no reason": AllowedInternal("x.py", "decoy_engine.internal.fs", 1, " ", "x"),
+        "no removal": AllowedInternal("x.py", "decoy_engine.internal.fs", 1, "r", ""),
+        "zero": AllowedInternal("x.py", "decoy_engine.internal.fs", 0, "r", "x"),
+    }
+    for name, entry in bad.items():
+        assert allowlist_problems(tmp_path, (entry,)), name
+    assert allowlist_problems(tmp_path, (ok, ok)), "duplicate"
 
 
 def test_boundary_scan_reaches_nested_packages(tmp_path: Path) -> None:
