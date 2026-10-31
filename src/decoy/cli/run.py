@@ -5,10 +5,9 @@ Non-chunked runs (the default) go through `run_pipeline`, the engine's
 unified entry point that profiles, compiles, and executes mask + generate
 tables in one call, using the engine's internal `PandasExecutionAdapter`.
 `--chunked` is a separate streaming path (`run_mask_pipeline_chunked`),
-mask-only, which still supports substrate selection via
-`select_execution_adapter`. `graph` and `convert` are V1-only and have
-no engine; the choke-point validator rejects them with a typed error
-before this module sees them.
+mask-only, on the engine's one execution adapter (pandas). `graph` and
+`convert` are V1-only and have no engine; the choke-point validator
+rejects them with a typed error before this module sees them.
 """
 
 import binascii
@@ -282,19 +281,6 @@ def run(
             "extra (cryptography)."
         ),
     ),
-    substrate: str = typer.Option(
-        None,
-        "--substrate",
-        envvar="DECOY_SUBSTRATE",
-        help=(
-            "Execution substrate for --chunked runs. pandas is the only substrate "
-            "(the default); any other value, including the removed 'polars', is "
-            "rejected with a usage error. Non-chunked (plain) runs always use the "
-            "engine's pandas adapter; this flag and the DECOY_SUBSTRATE env var are "
-            "consulted only for --chunked runs, and setting either on a plain run "
-            "emits a warning to stderr and is otherwise ignored."
-        ),
-    ),
     key_label: str = typer.Option(
         None,
         "--key-label",
@@ -455,40 +441,10 @@ def run(
                 state.err_console.print(error("error:"), msg)
             raise typer.Exit(code=EXIT_USAGE)
 
-    # Reject an unsupported substrate (e.g. the removed 'polars') up front, on
-    # plain and chunked runs alike: the engine only ships pandas, so a value it
-    # would refuse mid-run is a usage error the user can fix now.
-    if substrate is not None:
-        from decoy_engine.execution import ExecutionError, resolve_substrate
-
-        try:
-            resolve_substrate(substrate)
-        except ExecutionError as exc:
-            msg = str(exc)
-            if state.mode is OutputMode.json:
-                emit_json(
-                    state,
-                    {"command": "run", "status": "error", "config": config_str, "error": msg},
-                )
-            elif state.mode is not OutputMode.quiet:
-                state.err_console.print(error("error:"), msg)
-            raise typer.Exit(code=EXIT_USAGE)
-
     raw_cfg = _load_raw_config(config)
     yaml_mode = _detect_mode(raw_cfg) or mode.value
 
     resolver = _build_resolver(master_key, key_label, raw_cfg, state)
-
-    # Warn when --substrate (or DECOY_SUBSTRATE) is set on a non-chunked run.
-    # The flag is only consulted on the --chunked path; plain runs hardcode
-    # the engine's PandasExecutionAdapter. Warning to stderr only; do not
-    # suppress in --json mode (json goes to stdout); suppress in --quiet.
-    if substrate is not None and not chunked and state.mode is not OutputMode.quiet:
-        state.err_console.print(
-            warn("warning:"),
-            "--substrate is only consulted for --chunked runs; "
-            "this plain run uses the engine's pandas adapter.",
-        )
 
     # Temp dir holding Parquet snapshots acquired from --duckdb-source inputs;
     # created only when the flag is used, torn down in the run's finally.
@@ -835,13 +791,10 @@ def run(
                 vault_writer = vault_writer_for_config(config_dict)
 
             if chunked:
-                resolved_substrate = _run_chunked_mask(
-                    config_dict, config.parent, chunk_size, substrate, vault_writer
-                )
+                _run_chunked_mask(config_dict, config.parent, chunk_size, vault_writer)
                 _native_route = _native_gate.classify_route(
                     chunked=True,
                     any_generate=any_generate,
-                    resolved_substrate=resolved_substrate,
                     quality_metrics=None,
                 )
             else:
@@ -878,7 +831,6 @@ def run(
                 _native_route = _native_gate.classify_route(
                     chunked=False,
                     any_generate=any_generate,
-                    resolved_substrate=None,
                     quality_metrics=result.quality_metrics,
                 )
                 # Stage 2 (approach 2): assert --native's compiled-kernel
@@ -1441,16 +1393,12 @@ def _run_chunked_mask(
     config_dict: dict,
     base_dir: Path,
     chunk_size: int,
-    substrate: str | None = None,
     vault_writer=None,
-) -> str:
+) -> None:
     """WS4 chunked mask path: stream each mask table's source through
-    `decoy_engine.run_mask_pipeline_chunked`, writing output per chunk.
-
-    Returns the RESOLVED substrate label (never None): the chunked path has
-    no `ExecutionResult` to read a route from, so the caller's native-route
-    indicator (Phase 3.1) builds its "Route: <substrate> chunked stream"
-    label from this instead of hardcoding "pandas".
+    `decoy_engine.run_mask_pipeline_chunked`, writing output per chunk, on
+    the engine's one execution adapter (pandas; the chunked path has no
+    `ExecutionResult`, so the caller labels the route itself).
 
     The engine's `check_chunked_compatibility` rejects anything that is
     not value-keyed (PlanCompileError -> EXIT_USAGE via the H10 typed
@@ -1464,19 +1412,11 @@ def _run_chunked_mask(
     reader follows the declared source `format`; the writer follows the
     target path suffix. Parquet reads stream via ParquetFile.iter_batches; CSV reads keep
     the dtype=str contract of the plain path, so a csv -> parquet run
-    produces an all-string schema.
-
-    `substrate` None keeps the chunked default (pandas, the byte-stable
-    contract this mode shipped with); an explicit value selects the
-    adapter via the engine's `select_execution_adapter`."""
+    produces an all-string schema."""
     _require_local_io_endpoints(config_dict)
 
     from decoy_engine import __version__ as engine_version
     from decoy_engine import run_mask_pipeline_chunked
-    from decoy_engine.execution import resolve_substrate, select_execution_adapter
-
-    resolved_substrate = resolve_substrate(substrate)
-    adapter = select_execution_adapter(substrate=substrate) if substrate is not None else None
 
     sources = config_dict.get("sources") or {}
     targets = config_dict.get("targets") or {}
@@ -1499,14 +1439,11 @@ def _run_chunked_mask(
             iter_source_chunks(name, src_spec, base_dir, chunk_size),
             table=name,
             engine_version=engine_version,
-            adapter=adapter,
             vault_writer=vault_writer,
         )
         _write_chunked_output(
             masked_iter, out_path, src_path, src_is_parquet=src_spec.get("format") == "parquet"
         )
-
-    return resolved_substrate
 
 
 def _write_chunked_output(

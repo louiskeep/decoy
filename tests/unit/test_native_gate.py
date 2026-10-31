@@ -403,19 +403,10 @@ def test_candidate_requires_non_chunked_and_mask_only():
 # ---------------------------------------------------------------------------
 
 
-def test_classify_route_chunked_reports_resolved_substrate():
-    route = classify_route(
-        chunked=True, any_generate=False, resolved_substrate="polars", quality_metrics=None
-    )
+def test_classify_route_chunked_is_not_applicable_and_labels_the_one_adapter():
+    route = classify_route(chunked=True, any_generate=False, quality_metrics=None)
     assert route.applicable is False
     assert route.state is None
-    assert route.label == "polars chunked stream"
-
-
-def test_classify_route_chunked_defaults_to_pandas_label_when_substrate_none():
-    route = classify_route(
-        chunked=True, any_generate=False, resolved_substrate=None, quality_metrics=None
-    )
     assert route.label == "pandas chunked stream"
 
 
@@ -423,7 +414,6 @@ def test_classify_route_generate_only_reports_execution_mode():
     route = classify_route(
         chunked=False,
         any_generate=True,
-        resolved_substrate=None,
         quality_metrics={"execution": {"execution_mode": "sequential"}},
     )
     assert route.applicable is False
@@ -433,7 +423,7 @@ def test_classify_route_generate_only_reports_execution_mode():
 
 def test_classify_route_generate_only_without_execution_metrics_is_neutral():
     route = classify_route(
-        chunked=False, any_generate=True, resolved_substrate=None, quality_metrics=None
+        chunked=False, any_generate=True, quality_metrics=None
     )
     assert route.applicable is False
     assert route.label == "n/a (not a unified-slice candidate)"
@@ -446,7 +436,6 @@ def test_classify_route_non_full_frame_mask_only_reports_execution_mode():
     route = classify_route(
         chunked=False,
         any_generate=False,
-        resolved_substrate=None,
         quality_metrics={"execution": {"execution_mode": "out_of_core"}},
     )
     assert route.applicable is False
@@ -457,7 +446,6 @@ def test_classify_route_full_frame_without_activation_is_pandas_legacy():
     route = classify_route(
         chunked=False,
         any_generate=False,
-        resolved_substrate=None,
         quality_metrics={"execution": {"execution_mode": "full_frame"}},
     )
     assert route.applicable is True
@@ -472,7 +460,6 @@ def test_classify_route_activation_with_no_compiled_kernel_is_unified_slice_stat
     route = classify_route(
         chunked=False,
         any_generate=False,
-        resolved_substrate=None,
         quality_metrics={
             "execution": {"execution_mode": "full_frame"},
             "unified_slice_activation": {
@@ -494,7 +481,6 @@ def test_classify_route_activation_with_compiled_kernel_is_native():
     route = classify_route(
         chunked=False,
         any_generate=False,
-        resolved_substrate=None,
         quality_metrics={
             "execution": {"execution_mode": "full_frame"},
             "unified_slice_activation": {
@@ -819,7 +805,6 @@ def _route(state):
     return classify_route(
         chunked=False,
         any_generate=False,
-        resolved_substrate=None,
         quality_metrics=(
             {"execution": {"execution_mode": "full_frame"}}
             if state == "pandas"
@@ -862,7 +847,6 @@ def test_post_run_verify_fails_closed_on_non_applicable_route():
     non_candidate_route = classify_route(
         chunked=False,
         any_generate=False,
-        resolved_substrate=None,
         quality_metrics={"execution": {"execution_mode": "sequential"}},
     )
     with pytest.raises(NativeGateError) as exc_info:

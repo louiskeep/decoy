@@ -118,57 +118,6 @@ class TestRunChunked:
         assert result.exit_code == 0, result.output
         assert (tmp_path / "out.csv").read_bytes() == plain
 
-    def test_explicit_pandas_substrate_matches_default_chunked(
-        self, tmp_path: Path
-    ) -> None:
-        """--substrate pandas (the only substrate) streams identically to the
-        default chunked run."""
-        cfg = _pipeline(tmp_path, _SAFE)
-        assert (
-            runner.invoke(
-                app, ["run", str(cfg), "--chunked", "--chunk-size", "33"]
-            ).exit_code
-            == 0
-        )
-        default_out = (tmp_path / "out.csv").read_bytes()
-        (tmp_path / "out.csv").unlink()
-
-        result = runner.invoke(
-            app,
-            [
-                "run",
-                str(cfg),
-                "--chunked",
-                "--chunk-size",
-                "33",
-                "--substrate",
-                "pandas",
-            ],
-        )
-        assert result.exit_code == 0, result.output
-        assert (tmp_path / "out.csv").read_bytes() == default_out
-
-    def test_polars_substrate_rejected_as_removed(self, tmp_path: Path) -> None:
-        """The engine removed the polars masking substrate; the CLI rejects it
-        up front with a usage error naming the valid set, and writes nothing."""
-        cfg = _pipeline(tmp_path, _SAFE)
-        result = runner.invoke(
-            app,
-            ["run", str(cfg), "--chunked", "--chunk-size", "33", "--substrate", "polars"],
-        )
-        assert result.exit_code == EXIT_USAGE, result.output
-        assert "invalid_substrate" in result.output or "must be one of" in result.output
-        assert "pandas" in result.output
-        assert not (tmp_path / "out.csv").exists()
-
-    def test_invalid_substrate_rejected(self, tmp_path: Path) -> None:
-        cfg = _pipeline(tmp_path, _SAFE)
-        result = runner.invoke(
-            app, ["run", str(cfg), "--chunked", "--substrate", "duckdb"]
-        )
-        assert result.exit_code != 0
-        assert "substrate" in result.output.lower()
-
     def test_faker_without_pool_size_exits_usage(self, tmp_path: Path) -> None:
         columns = [
             {

@@ -1168,7 +1168,7 @@ def _make_bundle_runtime(parent: Path) -> tuple[Path, Path]:
     from packaging_tools import build_bundle
 
     bundle = parent / "bundle"
-    venv.EnvBuilder(with_pip=False).create(bundle / "python")
+    venv.EnvBuilder(with_pip=False, symlinks=True).create(bundle / "python")
     site = next((bundle / "python").glob("lib/python*/site-packages"))
     (site / "decoy").mkdir()
     (site / "decoy" / "__init__.py").write_text("__version__ = 'bundle-local'\n", encoding="utf-8")
