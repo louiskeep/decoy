@@ -6,16 +6,21 @@ so the resolve-only sentry (`test_engine_import_surface.py`) cannot see the drif
 This sentry bans them from `src/decoy` outright, except for an explicit allowlist in which
 every entry carries a reason and a removal note.
 
-Scope: static references only. It sees imports of any form (`import`, `from ... import`,
-aliased or nested), `_private` attribute reads through any binding that came from a
-`decoy_engine` import, and string-literal `importlib.import_module(...)` / `__import__(...)`
-targets. A dynamically built module name is not resolvable statically and is not seen.
-Dunder names (`__version__`) are public by Python convention and are not flagged.
+Scope: static references only, reported as full dotted symbols and counted per file. It sees
+imports of any form (aliased, nested, in any scope); attribute chains through any binding that
+came from a `decoy_engine` import, an assignment of an engine path, or a literal
+`importlib.import_module(...)` / `__import__(...)` (positional, keyword and relative-with-package
+forms); and literal `getattr/setattr/hasattr/delattr(<engine path>, "name")`. Bindings are scoped
+per module/function/class/lambda, and one name bound to two engine targets in one scope fails as
+ambiguous. Not seen (documented limits): names built at run time, tuple-unpacking assignments,
+and aliases passed through function calls. Dunder names (`__version__`) are public by Python
+convention and are not flagged.
 """
 
 from __future__ import annotations
 
 import ast
+import importlib.util
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -27,45 +32,45 @@ _ENGINE = "decoy_engine"
 @dataclass(frozen=True)
 class AllowedInternal:
     file: str  # path relative to src/decoy
-    ref: str  # dotted engine name exactly as the scan reports it
+    symbol: str  # full dotted engine symbol exactly as the scan reports it
+    count: int  # exact number of occurrences allowed; more fail, fewer means shrink the entry
     reason: str
     removal: str  # what has to land, and where, before this entry can be deleted
 
 
 # Entries are added only when the pinned engine and engine main have no public equivalent.
+# One entry per (file, full symbol) with the exact occurrence count: a new symbol, or one more
+# use of an allowed symbol, fails until it is reviewed and listed here.
 _NEEDS = "docs/handoffs/inputs/cli-needs-engine-public-api.md"
+_LOG = "decoy_engine.internal.logging"
+_STRAT = "decoy_engine.execution._strategies.SCALAR_HANDLERS"
+_REG = "decoy_engine.validators._registry._REGISTRY"
+_LOG_WHY = (
+    "Silences the engine's cwd-relative file logger during `decoy ci` and restores its "
+    "singleton; the engine has no public logging configuration (only the `Logger` protocol)."
+)
+_LOG_GONE = f"Engine exports a public logging opt-out ({_NEEDS} #1); then delete this entry."
+_STRAT_WHY = "`decoy list/show strategy` reads the live SCALAR_HANDLERS registry; no public listing."
+_STRAT_GONE = f"Engine exports a strategy-registry accessor ({_NEEDS} #2); then delete this entry."
+_REG_WHY = "`decoy list validators` reads the live validator registry; no public listing."
+_REG_GONE = f"Engine exports a validator-name accessor ({_NEEDS} #4); then delete this entry."
 ALLOWLIST: tuple[AllowedInternal, ...] = (
-    AllowedInternal(
-        "ci/engine_logging.py",
-        "decoy_engine.internal",
-        "Silences the engine's cwd-relative file logger during `decoy ci`; the engine has no "
-        "public logging configuration (only the `Logger` protocol).",
-        f"Engine exports a public logging opt-out ({_NEEDS} #1); then delete this entry.",
-    ),
-    AllowedInternal(
-        "ci/engine_logging.py",
-        "decoy_engine.internal.logging._LOGGER_INSTANCE",
-        "Resets and restores the engine's logger singleton around the silenced block.",
-        f"Same public opt-out as above ({_NEEDS} #1).",
-    ),
-    AllowedInternal(
-        "cli/cockpit.py",
-        "decoy_engine.execution._strategies",
-        "`decoy list/show strategy` reads the live SCALAR_HANDLERS registry; no public listing.",
-        f"Engine exports a strategy-registry accessor ({_NEEDS} #2); then delete this entry.",
-    ),
+    AllowedInternal("ci/engine_logging.py", _LOG, 1, _LOG_WHY, _LOG_GONE),
+    AllowedInternal("ci/engine_logging.py", f"{_LOG}.get_logger", 1, _LOG_WHY, _LOG_GONE),
+    AllowedInternal("ci/engine_logging.py", f"{_LOG}._LOGGER_INSTANCE", 3, _LOG_WHY, _LOG_GONE),
+    AllowedInternal("cli/cockpit.py", _STRAT, 2, _STRAT_WHY, _STRAT_GONE),
+    AllowedInternal("cli/cockpit.py", f"{_STRAT}.items", 1, _STRAT_WHY, _STRAT_GONE),
+    AllowedInternal("cli/cockpit.py", f"{_STRAT}.get", 1, _STRAT_WHY, _STRAT_GONE),
+    AllowedInternal("cli/cockpit.py", f"{_STRAT}.keys", 1, _STRAT_WHY, _STRAT_GONE),
     AllowedInternal(
         "cli/cockpit.py",
         "decoy_engine.checksums._KNOWN_SCHEMES",
+        1,
         "`decoy list checksums` reads the live scheme set; no public listing.",
         f"Engine exports a checksum-scheme accessor ({_NEEDS} #3); then delete this entry.",
     ),
-    AllowedInternal(
-        "cli/cockpit.py",
-        "decoy_engine.validators._registry",
-        "`decoy list validators` reads the live validator registry; no public listing.",
-        f"Engine exports a validator-name accessor ({_NEEDS} #4); then delete this entry.",
-    ),
+    AllowedInternal("cli/cockpit.py", _REG, 1, _REG_WHY, _REG_GONE),
+    AllowedInternal("cli/cockpit.py", f"{_REG}.keys", 1, _REG_WHY, _REG_GONE),
 )
 
 
@@ -73,18 +78,9 @@ def _is_private(segment: str) -> bool:
     return segment.startswith("_") and not (segment.startswith("__") and segment.endswith("__"))
 
 
-def _bad_segment(segment: str) -> bool:
-    return segment == "internal" or _is_private(segment)
-
-
-def _first_bad_prefix(dotted: str) -> str | None:
-    """`dotted` truncated at its first `internal` / `_private` segment below the
-    engine root, else None."""
-    parts = dotted.split(".")
-    for i, seg in enumerate(parts[1:], start=1):
-        if _bad_segment(seg):
-            return ".".join(parts[: i + 1])
-    return None
+def _bad_path(path: list[str]) -> bool:
+    """`path[0]` is the engine root; any `internal` / `_private` segment below it is bad."""
+    return any(seg == "internal" or _is_private(seg) for seg in path[1:])
 
 
 def _is_engine(name: str) -> bool:
@@ -103,77 +99,240 @@ def _chain(node: ast.expr) -> list[str] | None:
     return None
 
 
+def _literal(node: ast.expr | None) -> str | None:
+    if isinstance(node, ast.Constant) and isinstance(node.value, str):
+        return node.value
+    return None
+
+
+def _arg(call: ast.Call, pos: int, keyword: str) -> ast.expr | None:
+    if len(call.args) > pos:
+        return call.args[pos]
+    return next((k.value for k in call.keywords if k.arg == keyword), None)
+
+
+_REFLECT = {"getattr", "setattr", "hasattr", "delattr"}
+
+
+def _dynamic_import(call: ast.Call) -> tuple[list[str], list[str]] | None:
+    """For a literal `importlib.import_module(...)` / `__import__(...)` of an engine
+    module: (path of the value the call returns, every engine path it touches)."""
+    callee = _chain(call.func)
+    if not callee or callee[-1] not in {"import_module", "__import__"}:
+        return None
+    name = _literal(_arg(call, 0, "name"))
+    if name is None:
+        return None
+    is_import_module = callee[-1] == "import_module"
+    if name.startswith("."):
+        package = _literal(_arg(call, 1, "package")) if is_import_module else None
+        if package is None:
+            return None
+        try:
+            name = importlib.util.resolve_name(name, package)
+        except (ImportError, ValueError):
+            return None
+    if not _is_engine(name):
+        return None
+    touched = [name]
+    result = name
+    if not is_import_module:
+        fromlist = _arg(call, 3, "fromlist")
+        items = fromlist.elts if isinstance(fromlist, (ast.List, ast.Tuple)) else []
+        names = [lit for e in items if (lit := _literal(e))]
+        touched += [f"{name}.{n}" for n in names]
+        result = name if names else _ENGINE  # __import__ returns the top package without a fromlist
+    return result.split("."), [t for t in touched]
+
+
+def _reflective(call: ast.Call) -> tuple[ast.expr, str] | None:
+    """`getattr(obj, "literal"[, ...])` and its set/has/del siblings: (obj, literal)."""
+    if isinstance(call.func, ast.Name) and call.func.id in _REFLECT and len(call.args) >= 2:
+        lit = _literal(call.args[1])
+        if lit is not None:
+            return call.args[0], lit
+    return None
+
+
+class _Scan:
+    """One file. Scopes (module, function, class, lambda) each own their bindings, filled by
+    a pre-pass so a use may precede its import; one name bound to two different engine
+    targets in one scope is reported as ambiguous instead of picking one."""
+
+    def __init__(self, rel: str) -> None:
+        self.rel = rel
+        self.found: list[tuple[str, str, str]] = []
+        self.stack: list[dict[str, str]] = []
+
+    def report(self, path: list[str] | str, node: ast.AST) -> None:
+        parts = path.split(".") if isinstance(path, str) else path
+        if _bad_path(parts):
+            self.found.append((self.rel, ".".join(parts), f"{self.rel}:{node.lineno}"))  # type: ignore[attr-defined]
+
+    def lookup(self, name: str) -> str | None:
+        return next((s[name] for s in reversed(self.stack) if name in s), None)
+
+    def resolve(self, expr: ast.expr) -> list[str] | None:
+        """The engine path an expression denotes, or None."""
+        if isinstance(expr, ast.Name):
+            found = self.lookup(expr.id)
+            return found.split(".") if found else None
+        if isinstance(expr, ast.Attribute):
+            base = self.resolve(expr.value)
+            return [*base, expr.attr] if base else None
+        if isinstance(expr, ast.Call):
+            if (dyn := _dynamic_import(expr)) is not None:
+                return dyn[0]
+            if (call := _reflective(expr)) and isinstance(expr.func, ast.Name) and expr.func.id == "getattr":
+                base = self.resolve(call[0])
+                return [*base, call[1]] if base else None
+        return None
+
+    def bind(self, name: str, path: str, node: ast.AST) -> None:
+        scope = self.stack[-1]
+        if name in scope and scope[name] != path:
+            self.found.append(
+                (
+                    self.rel,
+                    f"ambiguous binding of {name!r}: {scope[name]} vs {path}",
+                    f"{self.rel}:{node.lineno}",  # type: ignore[attr-defined]
+                )
+            )
+            return
+        scope[name] = path
+
+    def prepass(self, body: list[ast.AST]) -> None:
+        imports: list[ast.AST] = []
+        assigns: list[ast.AST] = []
+        todo = list(body)
+        while todo:
+            node = todo.pop()
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+                continue
+            if isinstance(node, (ast.Import, ast.ImportFrom)):
+                imports.append(node)
+            elif isinstance(node, (ast.Assign, ast.AnnAssign)):
+                assigns.append(node)
+            todo.extend(ast.iter_child_nodes(node))
+        key = lambda n: (n.lineno, n.col_offset)  # noqa: E731
+        for node in sorted(imports, key=key):
+            if isinstance(node, ast.ImportFrom):
+                if node.level == 0 and node.module and _is_engine(node.module):
+                    for a in node.names:
+                        if a.name != "*":
+                            self.bind(a.asname or a.name, f"{node.module}.{a.name}", node)
+            elif isinstance(node, ast.Import):
+                for a in node.names:
+                    if _is_engine(a.name):
+                        local = a.asname or a.name.split(".")[0]
+                        self.bind(local, a.name if a.asname else _ENGINE, node)
+        for node in sorted(assigns, key=key):
+            value = node.value
+            targets = node.targets if isinstance(node, ast.Assign) else [node.target]
+            if value is None or (path := self.resolve(value)) is None:
+                continue
+            for t in targets:
+                if isinstance(t, ast.Name):
+                    self.bind(t.id, ".".join(path), node)
+
+    def scoped(self, body: list[ast.AST]) -> None:
+        self.stack.append({})
+        self.prepass(body)
+        for stmt in body:
+            self.visit(stmt)
+        self.stack.pop()
+
+    def visit(self, node: ast.AST) -> None:
+        if isinstance(node, ast.ImportFrom):
+            if node.level == 0 and node.module and _is_engine(node.module):
+                for a in node.names:
+                    self.report(f"{node.module}.{a.name}", node)
+        elif isinstance(node, ast.Import):
+            for a in node.names:
+                if _is_engine(a.name):
+                    self.report(a.name, node)
+        elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)):
+            args = node.args
+            outer = [*args.defaults, *(d for d in args.kw_defaults if d is not None)]
+            if not isinstance(node, ast.Lambda):
+                outer += node.decorator_list
+            for expr in outer:
+                self.visit(expr)
+            self.scoped(node.body if isinstance(node.body, list) else [node.body])
+        elif isinstance(node, ast.ClassDef):
+            for expr in [*node.bases, *(k.value for k in node.keywords), *node.decorator_list]:
+                self.visit(expr)
+            self.scoped(node.body)
+        elif isinstance(node, (ast.Attribute, ast.Call)) and self.visit_access(node):
+            return
+        else:
+            for child in ast.iter_child_nodes(node):
+                self.visit(child)
+
+    def visit_access(self, node: ast.Attribute | ast.Call) -> bool:
+        """Report a maximal attribute / reflective access chain once, at its full path.
+        False when the node is not such a chain (the caller descends normally)."""
+        if isinstance(node, ast.Call):
+            if (dyn := _dynamic_import(node)) is not None:
+                for touched in dyn[1]:
+                    self.report(touched, node)
+                return False
+            refl = _reflective(node)
+            if refl is None:
+                return False
+            base = self.resolve(refl[0])
+            if base is None:
+                return False
+            self.report([*base, refl[1]], node)
+            self.visit_chain_base(refl[0])
+            return True
+        path = self.resolve(node)
+        if path is None:
+            return False
+        self.report(path, node)
+        self.visit_chain_base(node.value)
+        return True
+
+    def visit_chain_base(self, node: ast.AST) -> None:
+        """Walk down a chain already reported, visiting only a dynamic-import call at its
+        root (its own module may be bad); a Name root needs nothing."""
+        while True:
+            if isinstance(node, ast.Attribute):
+                node = node.value
+            elif isinstance(node, ast.Call) and (refl := _reflective(node)) and self.resolve(refl[0]):
+                node = refl[0]
+            else:
+                break
+        if isinstance(node, ast.Call):
+            self.visit(node)
+
+
 def internal_refs(root: Path) -> list[tuple[str, str, str]]:
-    """(relative path, dotted ref, "path:line") for every boundary violation."""
+    """(relative path, full dotted symbol, "path:line") for every boundary violation."""
     found: list[tuple[str, str, str]] = []
     for path in sorted(root.rglob("*.py")):
         if "__pycache__" in path.parts:
             continue
         rel = path.relative_to(root).as_posix()
         tree = ast.parse(path.read_text(encoding="utf-8"), filename=rel)
-        alias: dict[str, str] = {}  # local binding -> dotted engine path it names
-
-        def add(ref: str, node: ast.AST, rel: str = rel) -> None:
-            if (bad := _first_bad_prefix(ref)) is not None:
-                found.append((rel, bad, f"{rel}:{getattr(node, 'lineno', '?')}"))
-
-        for node in ast.walk(tree):
-            if isinstance(node, ast.ImportFrom) and node.level == 0 and node.module:
-                if not _is_engine(node.module):
-                    continue
-                for a in node.names:
-                    full = f"{node.module}.{a.name}"
-                    add(full, node)
-                    alias[a.asname or a.name] = full
-            elif isinstance(node, ast.Import):
-                for a in node.names:
-                    if not _is_engine(a.name):
-                        continue
-                    add(a.name, node)
-                    alias[a.asname or a.name.split(".")[0]] = a.name if a.asname else _ENGINE
-            elif isinstance(node, ast.Call):
-                callee = _chain(node.func)
-                if callee and callee[-1] in {"import_module", "__import__"} and node.args:
-                    arg = node.args[0]
-                    if (
-                        isinstance(arg, ast.Constant)
-                        and isinstance(arg.value, str)
-                        and _is_engine(arg.value)
-                    ):
-                        add(arg.value, node)
-
-        if not alias:
-            continue
-        # Maximal attribute chains only, so `m._p.q` reports once, at `m._p`.
-        inner = {
-            id(n.value)
-            for n in ast.walk(tree)
-            if isinstance(n, ast.Attribute) and isinstance(n.value, ast.Attribute)
-        }
-        for node in ast.walk(tree):
-            if not isinstance(node, ast.Attribute) or id(node) in inner:
-                continue
-            chain = _chain(node)
-            if not chain or chain[0] not in alias:
-                continue
-            base = alias[chain[0]]
-            # The binding's own path was judged at its import; judge only what the
-            # attribute accesses add on top of it.
-            for i, seg in enumerate(chain[1:], start=1):
-                if _bad_segment(seg):
-                    found.append(
-                        (rel, ".".join([base, *chain[1 : i + 1]]), f"{rel}:{node.lineno}")
-                    )
-                    break
+        scan = _Scan(rel)
+        scan.scoped(tree.body)
+        found.extend(scan.found)
     return found
 
 
 def unallowed_internal_refs(
     root: Path, allowlist: tuple[AllowedInternal, ...] = ALLOWLIST
 ) -> list[str]:
-    allowed = {(a.file, a.ref) for a in allowlist}
+    """Occurrences of a (file, symbol) beyond what its entry allows; no entry allows none."""
+    allowed = {(a.file, a.symbol): a.count for a in allowlist}
+    by_key: dict[tuple[str, str], list[str]] = {}
+    for rel, symbol, where in internal_refs(root):
+        by_key.setdefault((rel, symbol), []).append(where)
     return [
-        f"{where}: {ref}" for rel, ref, where in internal_refs(root) if (rel, ref) not in allowed
+        f"{', '.join(wheres)}: {symbol} ({len(wheres)} found, {allowed.get((rel, symbol), 0)} allowed)"
+        for (rel, symbol), wheres in by_key.items()
+        if len(wheres) > allowed.get((rel, symbol), 0)
     ]
 
 
@@ -193,14 +352,17 @@ def test_cli_does_not_import_engine_internals() -> None:
 
 
 def test_every_allowlist_entry_is_justified_and_still_needed() -> None:
-    """The allowlist may only shrink: an entry needs a reason and a removal note, and
-    must match a reference that still exists (a fixed site must drop its entry)."""
-    live = {(rel, ref) for rel, ref, _ in internal_refs(_SRC)}
+    """The allowlist may only shrink: an entry needs a reason and a removal note, and its
+    count must equal the live occurrences (a fixed site must lower or drop its entry)."""
+    live: dict[tuple[str, str], int] = {}
+    for rel, symbol, _ in internal_refs(_SRC):
+        live[(rel, symbol)] = live.get((rel, symbol), 0) + 1
     for entry in ALLOWLIST:
         assert entry.reason.strip(), entry
         assert entry.removal.strip(), entry
-        assert (entry.file, entry.ref) in live, f"stale allowlist entry: {entry}"
-    assert len({(a.file, a.ref) for a in ALLOWLIST}) == len(ALLOWLIST), "duplicate entry"
+        assert entry.count >= 1, entry
+        assert live.get((entry.file, entry.symbol), 0) == entry.count, f"stale or wrong count: {entry}"
+    assert len({(a.file, a.symbol) for a in ALLOWLIST}) == len(ALLOWLIST), "duplicate entry"
 
 
 def test_boundary_scan_reaches_nested_packages(tmp_path: Path) -> None:
@@ -221,16 +383,16 @@ def _scan(tmp_path: Path, source: str) -> list[str]:
 
 def test_flags_each_import_shape_of_an_internal_module(tmp_path: Path) -> None:
     shapes = {
-        "import decoy_engine.internal.logging\n": ["decoy_engine.internal"],
-        "import decoy_engine.internal.logging as lg\n": ["decoy_engine.internal"],
+        "import decoy_engine.internal.logging\n": ["decoy_engine.internal.logging"],
+        "import decoy_engine.internal.logging as lg\n": ["decoy_engine.internal.logging"],
         "from decoy_engine.internal.faker_setup import get_faker_providers\n": [
-            "decoy_engine.internal"
+            "decoy_engine.internal.faker_setup.get_faker_providers"
         ],
-        "from decoy_engine.internal import faker_setup\n": ["decoy_engine.internal"],
+        "from decoy_engine.internal import faker_setup\n": ["decoy_engine.internal.faker_setup"],
         "from decoy_engine import internal\n": ["decoy_engine.internal"],
-        "def f():\n    from decoy_engine.internal.fs import x\n": ["decoy_engine.internal"],
+        "def f():\n    from decoy_engine.internal.fs import x\n": ["decoy_engine.internal.fs.x"],
         "try:\n    import decoy_engine.internal.base\nexcept ImportError:\n    pass\n": [
-            "decoy_engine.internal"
+            "decoy_engine.internal.base"
         ],
     }
     for source, expected in shapes.items():
@@ -243,7 +405,7 @@ def test_flags_private_engine_names(tmp_path: Path) -> None:
         "decoy_engine.kernel._impl"
     ]
     assert _scan(tmp_path, "import decoy_engine._core\n") == ["decoy_engine._core"]
-    assert _scan(tmp_path, "from decoy_engine._core.x import y\n") == ["decoy_engine._core"]
+    assert _scan(tmp_path, "from decoy_engine._core.x import y\n") == ["decoy_engine._core.x.y"]
 
 
 def test_flags_private_attribute_reads_through_any_engine_binding(tmp_path: Path) -> None:
@@ -251,10 +413,10 @@ def test_flags_private_attribute_reads_through_any_engine_binding(tmp_path: Path
         "decoy_engine._state"
     ]
     assert _scan(tmp_path, "import decoy_engine\nx = decoy_engine.internal.logging\n") == [
-        "decoy_engine.internal"
+        "decoy_engine.internal.logging"
     ]
     assert _scan(tmp_path, "from decoy_engine import kernel\nkernel._cache.clear()\n") == [
-        "decoy_engine.kernel._cache"
+        "decoy_engine.kernel._cache.clear"
     ]
     assert _scan(tmp_path, "import decoy_engine.kernel as k\nk._cache = None\n") == [
         "decoy_engine.kernel._cache"
@@ -267,7 +429,7 @@ def test_flags_literal_dynamic_imports(tmp_path: Path) -> None:
         "m = importlib.import_module('decoy_engine.internal.logging')\n"
         "n = __import__('decoy_engine.internal.base')\n"
     )
-    assert _scan(tmp_path, source) == ["decoy_engine.internal", "decoy_engine.internal"]
+    assert _scan(tmp_path, source) == ["decoy_engine.internal.logging", "decoy_engine.internal.base"]
 
 
 def test_does_not_flag_public_engine_use_or_unrelated_private_names(tmp_path: Path) -> None:
@@ -290,7 +452,7 @@ def test_does_not_flag_public_engine_use_or_unrelated_private_names(tmp_path: Pa
 def test_allowlist_excuses_exactly_its_file_and_ref(tmp_path: Path) -> None:
     (tmp_path / "ok.py").write_text("import decoy_engine.internal.logging\n", encoding="utf-8")
     (tmp_path / "other.py").write_text("import decoy_engine.internal.logging\n", encoding="utf-8")
-    allow = (AllowedInternal("ok.py", "decoy_engine.internal", "r", "x"),)
+    allow = (AllowedInternal("ok.py", "decoy_engine.internal.logging", 1, "r", "x"),)
     left = unallowed_internal_refs(tmp_path, allow)
     assert len(left) == 1 and left[0].startswith("other.py:1"), left
 
@@ -304,7 +466,7 @@ def test_allowlist_does_not_cover_a_new_symbol_in_an_allowlisted_file(tmp_path: 
     (tmp_path / "x.py").write_text(
         "import decoy_engine.internal.logging\nimport decoy_engine.internal.fs\n", encoding="utf-8"
     )
-    allow = (AllowedInternal("x.py", "decoy_engine.internal", "r", "x"),)
+    allow = (AllowedInternal("x.py", "decoy_engine.internal.logging", 1, "r", "x"),)
     assert unallowed_internal_refs(tmp_path, allow), "new internal symbol folded into old entry"
 
 
@@ -314,7 +476,9 @@ def test_allowlist_does_not_cover_a_second_private_read_under_one_prefix(tmp_pat
         "from decoy_engine.execution._strategies import OTHER_PRIVATE\n",
         encoding="utf-8",
     )
-    allow = (AllowedInternal("x.py", "decoy_engine.execution._strategies", "r", "x"),)
+    allow = (
+        AllowedInternal("x.py", "decoy_engine.execution._strategies.SCALAR_HANDLERS", 1, "r", "x"),
+    )
     left = unallowed_internal_refs(tmp_path, allow)
     assert left, "a second private symbol folded into the first entry"
 
@@ -377,3 +541,37 @@ def test_one_name_bound_to_two_engine_targets_fails_closed(tmp_path: Path) -> No
         "from decoy_engine import kernel as m\nfrom decoy_engine import sdk as m\nm.fine\n"
     )
     assert any("ambiguous" in r for r in _scan(tmp_path, source))
+
+
+def test_allowlist_count_is_exact_not_a_floor(tmp_path: Path) -> None:
+    (tmp_path / "x.py").write_text(
+        "import decoy_engine.internal.logging as a\n"
+        "a.get_logger()\n"
+        "a.get_logger()\n",
+        encoding="utf-8",
+    )
+    allow = (
+        AllowedInternal("x.py", "decoy_engine.internal.logging", 1, "r", "x"),
+        AllowedInternal("x.py", "decoy_engine.internal.logging.get_logger", 1, "r", "x"),
+    )
+    left = unallowed_internal_refs(tmp_path, allow)
+    assert len(left) == 1 and "get_logger" in left[0] and "2 found, 1 allowed" in left[0], left
+
+
+def test_scopes_and_expression_shapes_the_scan_must_cover(tmp_path: Path) -> None:
+    cases = {
+        "def f():\n    return k._c\nimport decoy_engine.kernel as k\n": ["decoy_engine.kernel._c"],
+        "class C:\n    def f(self):\n        import decoy_engine\n        return decoy_engine._s\n": [
+            "decoy_engine._s"
+        ],
+        "import decoy_engine\nf = lambda x=decoy_engine._s: x\n": ["decoy_engine._s"],
+        "import decoy_engine\n[decoy_engine._s for _ in range(2)]\n": ["decoy_engine._s"],
+        "import decoy_engine\ngetattr(getattr(decoy_engine, 'kernel'), '_c')\n": [
+            "decoy_engine.kernel._c"
+        ],
+        "from decoy_engine import kernel as m\nfrom decoy_engine import kernel as m\nm.ok\n": [],
+        "import other\nother._p\nfrom other import internal\ninternal.x\n": [],
+        "x = 'decoy_engine.internal.logging'\n": [],
+    }
+    for source, expected in cases.items():
+        assert _scan(tmp_path, source) == expected, source
