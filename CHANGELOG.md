@@ -10,7 +10,7 @@ version numbers follow the [versioning policy](docs/release/versioning.md).
 
 ### Added
 
-- **CycloneDX SBOM generator (R1-c).** `scripts/release/sbom.sh` writes a reproducible CycloneDX 1.6 SBOM of the certified runtime pins (`requirements-certified.txt`) with a pinned `cyclonedx-bom` run through `uvx`; no timestamp or serial, public pins only. Not signed or published. Docs: `docs/release/sbom.md`.
+- **CycloneDX SBOM generator (R1-c).** `scripts/release/sbom.sh` writes a reproducible CycloneDX 1.6 SBOM of the certified runtime pins (`requirements-certified.txt`) with the tool environment pinned and hash-enforced from `scripts/release/sbom-tool-requirements.txt`; no timestamp or serial, well-formed public pins only. Not signed or published. Docs: `docs/release/sbom.md`.
 
 ### Security
 
