@@ -19,12 +19,12 @@ One flat binding table per file, no scope analysis: a name bound anywhere in the
 engine path resolves to it everywhere in the file. A name bound to two different engine targets
 is reported as "ambiguous binding". Shadowing therefore OVER-flags (a parameter, class attribute
 or non-engine rebinding named like an engine alias); the remedy for such a false positive is an
-allowlist entry with a reason, or renaming. `except ... as name` names are exempt from the
-ambiguity report (they are instances, reused for unrelated exceptions).
+allowlist entry with a reason, or renaming. A name is exempt from the ambiguity report only
+when every binding of it in the file is an `except ... as name` clause (any other binder counts).
 
-Not seen (documented limits): names built at run time, tuple-unpacking assignments, aliases
-passed through function calls, and string annotations that do not parse or sit inside a
-subscript. Dunder names (`__version__`) are public by Python convention and are not flagged.
+Not seen (documented limits): names built at run time, tuple-unpacking assignments, nested
+handler tuples, aliases passed through function calls, and string annotations that do not
+parse or sit inside a subscript. Dunder names (`__version__`) are public by Python convention and are not flagged.
 """
 
 from __future__ import annotations
@@ -110,6 +110,18 @@ def _arg(call: ast.Call, pos: int, keyword: str) -> ast.expr | None:
     return call.args[pos] if len(call.args) > pos else None
 
 
+def _non_except_binding(n: ast.AST) -> str | None:
+    """The name any binder other than `except ... as` introduces (unknown binders count)."""
+    if isinstance(n, ast.Name):
+        return n.id if isinstance(n.ctx, ast.Store) else None
+    if isinstance(n, ast.alias):
+        return n.asname or n.name.split(".")[0]
+    if isinstance(n, ast.MatchMapping):
+        return n.rest
+    named = (ast.arg, ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef, ast.MatchAs, ast.MatchStar)
+    return (getattr(n, "arg", None) or getattr(n, "name", None)) if isinstance(n, named) else None
+
+
 _REFLECT = {"getattr", "setattr", "hasattr", "delattr"}
 _MAX_ALIAS_ROUNDS = 8  # aliases of aliases settle in a few rounds; past this the scan fails closed
 
@@ -153,7 +165,7 @@ def _reflective(call: ast.Call) -> tuple[ast.expr, str] | None:
 class _Scan:
     """One file, one flat binding table: a name bound anywhere in the file to an engine path
     resolves to it everywhere in the file, and a name bound to two different engine targets
-    is reported as ambiguous (except-clause names, reused for unrelated exceptions, excepted).
+    is reported as ambiguous (names bound only by except clauses excepted).
     Shadowing therefore over-flags and never under-flags."""
 
     def __init__(self, rel: str, tree: ast.Module) -> None:
@@ -161,9 +173,10 @@ class _Scan:
         self.found: list[tuple[str, str, str]] = []
         self.table: dict[str, dict[str, int]] = {}  # name -> {engine path: first line}
         self.caught: set[str] = set()  # names bound by `except ... as name`
+        self.other: set[str] = set()  # names bound by anything else
         self.collect(tree)
         for name, paths in self.table.items():
-            if len(paths) > 1 and name not in self.caught:
+            if len(paths) > 1 and name not in self.caught - self.other:
                 self.found.append(
                     (rel, f"ambiguous binding of {name!r}: " + " vs ".join(sorted(paths)), f"{rel}:{max(paths.values())}")
                 )
@@ -175,6 +188,8 @@ class _Scan:
     def collect(self, tree: ast.Module) -> None:
         pairs: list[tuple[str, ast.expr, ast.AST, bool]] = []  # (name, value, node, iterates)
         for n in ast.walk(tree):
+            if (other := _non_except_binding(n)) is not None:
+                self.other.add(other)
             if isinstance(n, ast.ImportFrom) and n.level == 0 and n.module and _is_engine(n.module):
                 for a in n.names:
                     if a.name != "*":
@@ -194,7 +209,7 @@ class _Scan:
             elif isinstance(n, ast.withitem) and isinstance(n.optional_vars, ast.Name):
                 pairs.append((n.optional_vars.id, n.context_expr, n.optional_vars, False))
             elif isinstance(n, ast.ExceptHandler) and n.name and n.type is not None:
-                pairs.append((n.name, n.type, n, False))
+                pairs.append((n.name, n.type, n, True))
                 self.caught.add(n.name)
         size = -1
         for _ in range(_MAX_ALIAS_ROUNDS):
