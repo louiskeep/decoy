@@ -33,7 +33,40 @@ class AllowedInternal:
 
 
 # Entries are added only when the pinned engine and engine main have no public equivalent.
-ALLOWLIST: tuple[AllowedInternal, ...] = ()
+_NEEDS = "docs/handoffs/inputs/cli-needs-engine-public-api.md"
+ALLOWLIST: tuple[AllowedInternal, ...] = (
+    AllowedInternal(
+        "ci/engine_logging.py",
+        "decoy_engine.internal",
+        "Silences the engine's cwd-relative file logger during `decoy ci`; the engine has no "
+        "public logging configuration (only the `Logger` protocol).",
+        f"Engine exports a public logging opt-out ({_NEEDS} #1); then delete this entry.",
+    ),
+    AllowedInternal(
+        "ci/engine_logging.py",
+        "decoy_engine.internal.logging._LOGGER_INSTANCE",
+        "Resets and restores the engine's logger singleton around the silenced block.",
+        f"Same public opt-out as above ({_NEEDS} #1).",
+    ),
+    AllowedInternal(
+        "cli/cockpit.py",
+        "decoy_engine.execution._strategies",
+        "`decoy list/show strategy` reads the live SCALAR_HANDLERS registry; no public listing.",
+        f"Engine exports a strategy-registry accessor ({_NEEDS} #2); then delete this entry.",
+    ),
+    AllowedInternal(
+        "cli/cockpit.py",
+        "decoy_engine.checksums._KNOWN_SCHEMES",
+        "`decoy list checksums` reads the live scheme set; no public listing.",
+        f"Engine exports a checksum-scheme accessor ({_NEEDS} #3); then delete this entry.",
+    ),
+    AllowedInternal(
+        "cli/cockpit.py",
+        "decoy_engine.validators._registry",
+        "`decoy list validators` reads the live validator registry; no public listing.",
+        f"Engine exports a validator-name accessor ({_NEEDS} #4); then delete this entry.",
+    ),
+)
 
 
 def _is_private(segment: str) -> bool:

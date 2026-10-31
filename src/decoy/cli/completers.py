@@ -60,16 +60,12 @@ def disguise_ids() -> list[str]:
 
 @lru_cache(maxsize=1)
 def _faker_provider_ids_cached() -> tuple[str, ...]:
-    """CLI.3 (2026-06-02): import path moved from
-    decoy_engine.internal.helpers (deleted) to
-    decoy_engine.internal.faker_setup. Pre-fix the silent except
-    masked the ImportError + completers returned (), so the
-    --faker-type tab-completer was a no-op everywhere."""
+    """The engine's public provider list; the old `internal.faker_setup` import drifted
+    once (CLI.3) and the blanket except turned that into a silent empty completer."""
     try:
-        from decoy_engine.internal.faker_setup import get_faker_providers
-        from faker import Faker
+        from decoy_engine import list_generate_faker_providers
 
-        return tuple(sorted(get_faker_providers(Faker()).keys()))
+        return tuple(list_generate_faker_providers())
     except Exception:
         return ()
 
