@@ -732,3 +732,62 @@ def test_alias_chains_resolve_and_a_chain_past_the_round_cap_fails_closed(
     assert _scan(tmp_path, reverse) == ["decoy_engine.kernel._x"]
     monkeypatch.setitem(globals(), "_MAX_ALIAS_ROUNDS", 2)
     assert "unstable alias chain" in _scan(tmp_path, reverse)
+
+
+# --- remediation round 3: red-first controls ------------------------------------------
+
+_TRY = "try:\n    pass\nexcept {} as e:\n    pass\n"
+
+
+def test_an_except_name_with_any_other_binding_is_not_exempt(tmp_path: Path) -> None:
+    """The exemption holds only when every binding of the name is an except clause; one
+    other binding makes two engine targets ambiguous again, so a mis-attributed access
+    cannot pass under an entry written for the other target."""
+    exc = _TRY.format("decoy_engine.errors.DecoyError")
+    other_bindings = (
+        "e = decoy_engine.kernel\n",
+        "from decoy_engine import kernel as e\n",
+        "for e in (decoy_engine.kernel,):\n    pass\n",
+        "(e := decoy_engine.kernel)\n",
+        "import importlib\nwith importlib.import_module('decoy_engine.kernel') as e:\n    pass\n",
+    )
+    for binding in other_bindings:
+        source = _IMPORT_DE + binding + exc + "e._cache\n"
+        assert any("ambiguous" in r for r in _scan(tmp_path, source)), binding
+        (tmp_path / "mod.py").write_text(source, encoding="utf-8")
+        hide = (AllowedInternal("mod.py", "decoy_engine.errors.DecoyError._cache", 1, "r", "x"),)
+        assert unallowed_internal_refs(tmp_path, hide), binding
+    # a parameter is a non-except binding too: two except targets plus a parameter is ambiguous
+    two = _TRY.format("decoy_engine.A") + _TRY.format("decoy_engine.B")
+    param = _IMPORT_DE + two + "def f(e):\n    return e._x\n"
+    assert any("ambiguous" in r for r in _scan(tmp_path, param))
+
+
+def test_tuple_handler_types_register_each_engine_member(tmp_path: Path) -> None:
+    cases = (
+        (
+            _TRY.format("(decoy_engine.errors.A, ValueError)") + "e._detail\n",
+            ["decoy_engine.errors.A._detail"],
+        ),
+        (
+            _TRY.format("(ValueError, decoy_engine.errors._Hidden)") + "e.args\n",
+            ["decoy_engine.errors._Hidden", "decoy_engine.errors._Hidden.args"],
+        ),
+        (_TRY.format("(ValueError, OSError)") + "e._x\n", []),
+    )
+    for source, expected in cases:
+        assert sorted(_scan(tmp_path, _IMPORT_DE + source)) == expected, source
+
+
+def test_a_pure_except_name_reused_across_unrelated_handlers_stays_exempt(tmp_path: Path) -> None:
+    source = _IMPORT_DE + "".join(
+        _TRY.format(t) + "e.args\n"
+        for t in (
+            "decoy_engine.A",
+            "decoy_engine.plan.B",
+            "ValueError",
+            "(decoy_engine.C, OSError)",
+            "(decoy_engine.D, decoy_engine.E)",
+        )
+    )
+    assert _scan(tmp_path, source) == []
