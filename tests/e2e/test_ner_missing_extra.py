@@ -12,7 +12,7 @@ the CLI in practice. This test goes through the real compile path
 load and no profile per `_check_ner_available_for_strategy`'s docstring) so
 the wrapped shape is what's actually under test.
 
-Monkeypatches `decoy_engine.storm.ner.spacy_installed` to return False --
+Monkeypatches `decoy_engine.detection.ner.spacy_installed` to return False --
 the same boundary-level determinism as `_simulate_no_cloud_extra` in
 tests/e2e/test_run_missing_extras.py, rather than depending on whether
 spaCy happens to be installed in the dev/CI venv running this suite.
@@ -36,7 +36,7 @@ def _ner_pipeline(tmp_path: Path) -> Path:
     src = tmp_path / "notes.csv"
     src.write_text("notes\nCall John Smith at 555-1234.\n", encoding="utf-8")
     cfg = {
-        "version": 1,
+        "version": 2,
         "global_settings": {"seed": 42},
         "sources": {"notes": {"type": "file", "format": "csv", "path": str(src)}},
         "tables": [
@@ -62,7 +62,7 @@ class TestNerMissingExtraThroughRealCompile:
     def test_validate_config_shows_cli_extra_not_engine_extra(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        monkeypatch.setattr("decoy_engine.storm.ner.spacy_installed", lambda: False)
+        monkeypatch.setattr("decoy_engine.detection.ner.spacy_installed", lambda: False)
         cfg = _ner_pipeline(tmp_path)
         result = runner.invoke(app, ["validate", "config", str(cfg)])
         assert result.exit_code == EXIT_USAGE, result.output
@@ -77,7 +77,7 @@ class TestNerMissingExtraThroughRealCompile:
     def test_validate_config_json_mode_shows_cli_extra(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        monkeypatch.setattr("decoy_engine.storm.ner.spacy_installed", lambda: False)
+        monkeypatch.setattr("decoy_engine.detection.ner.spacy_installed", lambda: False)
         cfg = _ner_pipeline(tmp_path)
         result = runner.invoke(app, ["validate", "config", str(cfg), "--json"])
         assert result.exit_code == EXIT_USAGE, result.output
@@ -91,8 +91,8 @@ class TestNerMissingExtraThroughRealCompile:
         # download <model>`, not an extra -- the engine's own message
         # should reach the operator unchanged (translate_ner_unavailable
         # only rewrites ner_spacy_not_installed).
-        monkeypatch.setattr("decoy_engine.storm.ner.spacy_installed", lambda: True)
-        monkeypatch.setattr("decoy_engine.storm.ner.model_installed", lambda model: False)
+        monkeypatch.setattr("decoy_engine.detection.ner.spacy_installed", lambda: True)
+        monkeypatch.setattr("decoy_engine.detection.ner.model_installed", lambda model: False)
         cfg = _ner_pipeline(tmp_path)
         result = runner.invoke(app, ["validate", "config", str(cfg)])
         assert result.exit_code == EXIT_USAGE, result.output
@@ -109,7 +109,7 @@ class TestNerMissingExtraThroughPreflight:
     def test_preflight_shows_the_literal_extra_name(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        monkeypatch.setattr("decoy_engine.storm.ner.spacy_installed", lambda: False)
+        monkeypatch.setattr("decoy_engine.detection.ner.spacy_installed", lambda: False)
         cfg = _ner_pipeline(tmp_path)
         result = runner.invoke(app, ["validate", "preflight", str(cfg)])
         assert result.exit_code == EXIT_USAGE, result.output
@@ -120,7 +120,7 @@ class TestNerMissingExtraThroughPreflight:
     def test_preflight_json_mode_shows_the_literal_extra_name(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        monkeypatch.setattr("decoy_engine.storm.ner.spacy_installed", lambda: False)
+        monkeypatch.setattr("decoy_engine.detection.ner.spacy_installed", lambda: False)
         cfg = _ner_pipeline(tmp_path)
         result = runner.invoke(app, ["validate", "preflight", str(cfg), "--json"])
         assert result.exit_code == EXIT_USAGE, result.output
@@ -136,7 +136,7 @@ class TestNerMissingExtraThroughCompile:
     def test_compile_shows_cli_extra_and_code_prefix(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        monkeypatch.setattr("decoy_engine.storm.ner.spacy_installed", lambda: False)
+        monkeypatch.setattr("decoy_engine.detection.ner.spacy_installed", lambda: False)
         cfg = _ner_pipeline(tmp_path)
         result = runner.invoke(app, ["validate", "compile", str(cfg)])
         assert result.exit_code == EXIT_USAGE, result.output
@@ -148,7 +148,7 @@ class TestNerMissingExtraThroughCompile:
     def test_compile_explain_shows_cli_extra(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        monkeypatch.setattr("decoy_engine.storm.ner.spacy_installed", lambda: False)
+        monkeypatch.setattr("decoy_engine.detection.ner.spacy_installed", lambda: False)
         cfg = _ner_pipeline(tmp_path)
         result = runner.invoke(app, ["validate", "compile", str(cfg), "--explain"])
         assert result.exit_code == EXIT_USAGE, result.output
@@ -161,7 +161,7 @@ class TestNerMissingExtraThroughCompile:
     ) -> None:
         import json
 
-        monkeypatch.setattr("decoy_engine.storm.ner.spacy_installed", lambda: False)
+        monkeypatch.setattr("decoy_engine.detection.ner.spacy_installed", lambda: False)
         cfg = _ner_pipeline(tmp_path)
         result = runner.invoke(app, ["validate", "compile", str(cfg), "--json"])
         assert result.exit_code == EXIT_USAGE, result.output

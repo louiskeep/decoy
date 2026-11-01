@@ -24,14 +24,14 @@ def test_init_help_includes_examples():
 
 def test_init_quiet_writes_minimal_pipeline(tmp_path: Path):
     """CLI.3 (2026-06-02): bundled minimal template is now V2 PipelineConfig
-    shape: `version: 1`, `tables[].columns`, no `masking_rules`."""
+    shape: `version: 2`, `tables[].columns`, no `masking_rules`."""
     out = tmp_path / "pipeline.yaml"
     result = runner.invoke(app, ["init", "--output", str(out), "--quiet"])
     assert result.exit_code == 0
     assert result.stdout == ""
     assert out.exists()
     data = yaml.safe_load(out.read_text())
-    assert data.get("version") == 1
+    assert data.get("version") == 2
     assert "tables" in data
     assert len(data["tables"]) >= 1
     assert len(data["tables"][0]["columns"]) >= 3
@@ -234,7 +234,7 @@ def test_init_scaffold_round_trips_date_shift_truncate_fpe(
 
 
 def test_init_scaffold_actually_runs_and_pan_stays_luhn_valid(
-    csv_with_date_zip_pan_id: Path, tmp_path: Path
+    csv_with_date_zip_pan_id: Path, tmp_path: Path, mask_secret: str
 ):
     """Two-model-gate HIGH finding: `PipelineConfig.model_validate` passing
     (the assertion above) is a WEAKER property than the scaffold being
@@ -259,7 +259,8 @@ def test_init_scaffold_actually_runs_and_pan_stays_luhn_valid(
     )
     assert init_result.exit_code == 0, init_result.stdout + init_result.stderr
 
-    run_result = runner.invoke(app, ["run", str(out)])
+    # The scaffold is keyed (hash/fpe/date_shift), so it runs the way the init hint says.
+    run_result = runner.invoke(app, ["run", str(out), "--mask-secret", mask_secret])
     assert run_result.exit_code == 0, (
         f"scaffold failed to run (exit {run_result.exit_code}): {run_result.output}"
     )
@@ -289,7 +290,7 @@ def test_old_phantom_params_shape_fails_validation(tmp_path: Path):
     input_path = tmp_path / "accounts.csv"
     output_path = tmp_path / "accounts.masked.csv"
     phantom_body = f"""\
-version: 1
+version: 2
 
 global_settings:
   seed: 42

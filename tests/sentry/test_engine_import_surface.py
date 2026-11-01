@@ -362,7 +362,7 @@ def test_engine_surface_scan_sees_the_whole_cli() -> None:
     engine entry points, so a refactor cannot quietly narrow it to nothing."""
     refs = {(r.module, r.name) for r in collect_engine_refs(_SRC)}
     assert (_ENGINE, "run_pipeline") in refs
-    assert (_ENGINE, "run_storm") in refs
+    assert (_ENGINE, "profile_columns") in refs
     calls = [c.where for c in collect_pipeline_calls(_SRC, star_kwargs="resolve")]
     assert any(w.startswith("cli/run.py:") for w in calls), calls
     assert any(w.startswith("api.py:") for w in calls), calls

@@ -43,6 +43,10 @@ from typer.testing import CliRunner
 
 from decoy.__main__ import app
 from decoy.cli.exit_codes import EXIT_CAPACITY, EXIT_OK
+from tests.keyed_secret import TEST_MASK_SECRET_REF
+
+# Keyed strategies need an admitted mask secret (engine 0.17.0); see tests/keyed_secret.py.
+pytestmark = pytest.mark.usefixtures("mask_secret")
 
 runner = CliRunner()
 
@@ -71,8 +75,8 @@ def _write_config(tmp_path: Path, parent: pa.Table, child: pa.Table) -> Path:
     pq.write_table(parent, tmp_path / "parent.parquet")
     pq.write_table(child, tmp_path / "child.parquet")
     cfg = {
-        "version": 1,
-        "global_settings": {"seed": 7},
+        "version": 2,
+        "global_settings": {"seed": 7, "mask_secret_ref": TEST_MASK_SECRET_REF},
         "sources": {
             "parent": {
                 "type": "file",
@@ -289,8 +293,8 @@ def _fanin_config(tmp_path: Path, n_parents: int = _FANIN_INCOMING_EDGES, rows: 
     tables.append({"name": "child", "columns": child_columns_cfg})
 
     cfg = {
-        "version": 1,
-        "global_settings": {"seed": 7},
+        "version": 2,
+        "global_settings": {"seed": 7, "mask_secret_ref": TEST_MASK_SECRET_REF},
         "sources": sources,
         "targets": {
             "child": {

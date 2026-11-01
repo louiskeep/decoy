@@ -1,7 +1,7 @@
 """Unit tests for the S6 library one-liner API (`decoy.mask` / `decoy.scan`).
 
 `decoy.api` is a thin wrapper over `decoy_engine.run_pipeline` /
-`decoy_engine.run_storm` -- the SAME entrypoints `decoy run` /
+`decoy_engine.profile_columns` -- the SAME entrypoints `decoy run` /
 `decoy storm analyze` call. These tests prove:
 
   1. Basic mask/scan behavior (round-trip, keyed determinism, generate
@@ -9,7 +9,7 @@
      mask-secret / target / data shapes).
   2. Parity: `decoy.mask(...)` on a config produces byte-identical output
      to `decoy run <same config>.yaml` (test_mask_parity_with_cli_run*),
-     and `decoy.scan(...)` on a file produces the identical StormProfile
+     and `decoy.scan(...)` on a file produces the identical ColumnProfile
      to `decoy storm analyze <same file>` (test_scan_parity_with_cli*).
 
 See src/decoy/api.py for the design notes (why `data`/`out` need staged
@@ -63,7 +63,7 @@ def _mask_config_dict(source_path: Path, target_path: Path) -> dict:
     """Minimal V2 PipelineConfig mask config, same shape as
     tests/e2e/test_run_command.py's `mask_config` fixture."""
     return {
-        "version": 1,
+        "version": 2,
         "global_settings": {"seed": 42},
         "sources": {
             "customers": {"type": "file", "format": "csv", "path": str(source_path)},
@@ -100,7 +100,7 @@ def mask_config_path(tmp_path: Path, sample_csv: Path) -> Path:
 
 def test_mask_dataframe_in_memory_roundtrip(sample_df: pd.DataFrame, tmp_path: Path):
     config = {
-        "version": 1,
+        "version": 2,
         "global_settings": {"seed": 42},
         "tables": [
             {
@@ -135,7 +135,7 @@ def test_mask_config_path_data_none_uses_declared_sources(mask_config_path: Path
 
 def test_mask_does_not_mutate_caller_config_dict(sample_df: pd.DataFrame, tmp_path: Path):
     config = {
-        "version": 1,
+        "version": 2,
         "global_settings": {"seed": 42},
         "tables": [
             {"name": "t", "columns": [{"name": "customer_id", "strategy": "passthrough"}]},
@@ -150,7 +150,7 @@ def test_mask_dict_data_multi_table(tmp_path: Path):
     df_a = pd.DataFrame({"id": ["A1", "A2"]})
     df_b = pd.DataFrame({"id": ["B1", "B2"], "email": ["x@example.com", "y@example.com"]})
     config = {
-        "version": 1,
+        "version": 2,
         "global_settings": {"seed": 7},
         "tables": [
             {"name": "table_a", "columns": [{"name": "id", "strategy": "passthrough"}]},
@@ -182,7 +182,7 @@ def test_mask_dict_data_multi_table(tmp_path: Path):
 
 def test_mask_generate_table(tmp_path: Path):
     config = {
-        "version": 1,
+        "version": 2,
         "global_settings": {"seed": 42},
         "sources": {},
         "tables": [
@@ -212,7 +212,7 @@ def test_mask_keyed_secret_deterministic_across_calls(tmp_path: Path, monkeypatc
     monkeypatch.setenv("DECOY_TEST_MASK_SECRET", secret)
     df = pd.DataFrame({"email": ["a@example.com", "b@example.com"]})
     config = {
-        "version": 1,
+        "version": 2,
         "global_settings": {"seed": 1},
         "tables": [
             {
@@ -242,7 +242,7 @@ def test_mask_requires_config():
 
 def test_mask_no_targets_and_no_out_raises(tmp_path: Path):
     config = {
-        "version": 1,
+        "version": 2,
         "global_settings": {"seed": 1},
         "tables": [{"name": "t", "columns": [{"name": "a", "strategy": "passthrough"}]}],
     }
@@ -252,7 +252,7 @@ def test_mask_no_targets_and_no_out_raises(tmp_path: Path):
 
 def test_mask_ambiguous_dataframe_multi_table_raises():
     config = {
-        "version": 1,
+        "version": 2,
         "global_settings": {"seed": 1},
         "tables": [
             {"name": "t1", "columns": [{"name": "a", "strategy": "passthrough"}]},
@@ -269,7 +269,7 @@ def test_mask_ambiguous_dataframe_multi_table_raises():
 
 def test_mask_invalid_mask_secret_ref_raises(tmp_path: Path):
     config = {
-        "version": 1,
+        "version": 2,
         "global_settings": {"seed": 1},
         "tables": [{"name": "t", "columns": [{"name": "a", "strategy": "passthrough"}]}],
     }
@@ -285,7 +285,7 @@ def test_mask_invalid_mask_secret_ref_raises(tmp_path: Path):
 def test_mask_secret_set_in_both_places_raises(tmp_path: Path, monkeypatch):
     monkeypatch.setenv("DECOY_TEST_MASK_SECRET_2", secrets.token_hex(32))
     config = {
-        "version": 1,
+        "version": 2,
         "global_settings": {"seed": 1, "mask_secret_ref": "env:DECOY_TEST_MASK_SECRET_2"},
         "tables": [{"name": "t", "columns": [{"name": "a", "strategy": "passthrough"}]}],
     }
@@ -303,7 +303,7 @@ def test_mask_malformed_mask_secret_ref_shape_raises_before_pydantic_echo():
     ValidationError (which would echo the raw value verbatim) -- DE-02
     secret-disclosure ROOT guard, ported from decoy.cli.run."""
     config = {
-        "version": 1,
+        "version": 2,
         "global_settings": {"seed": 1, "mask_secret_ref": ["not", "a", "string"]},
         "tables": [{"name": "t", "columns": [{"name": "a", "strategy": "passthrough"}]}],
         "targets": {"t": {"type": "file", "format": "csv", "path": "/tmp/decoy-test-x.csv"}},
@@ -319,7 +319,7 @@ def test_mask_invalid_config_shape_raises_config_validation_error(tmp_path: Path
     and only fails later, at execution, as an engine ExecutionError --
     not this library's concern to reclassify)."""
     config = {
-        "version": 1,
+        "version": 2,
         "global_settings": {"seed": 1},
         "tables": [{"name": "t", "columns": [{"name": "a", "strategy": "passthrough"}]}],
         "targets": {"t": {"type": "file", "format": "csv", "path": str(tmp_path / "o.csv")}},
@@ -334,7 +334,7 @@ def test_mask_master_key_requires_key_label():
         decoy.mask(
             pd.DataFrame({"a": [1]}),
             {
-                "version": 1,
+                "version": 2,
                 "global_settings": {"seed": 1},
                 "tables": [{"name": "t", "columns": [{"name": "a", "strategy": "passthrough"}]}],
                 "targets": {
@@ -482,7 +482,7 @@ def engine_must_not_run(monkeypatch: pytest.MonkeyPatch) -> None:
 
 def _single_table_config(source: dict, target: dict) -> dict:
     return {
-        "version": 1,
+        "version": 2,
         "global_settings": {"seed": 42},
         "sources": {"customers": source},
         "tables": [

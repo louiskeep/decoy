@@ -718,7 +718,7 @@ def test_duplicate_or_multi_version_pins_are_refused(tmp_path, content):
 
 def test_dev_profile_lock_is_refused_by_its_header_not_by_its_git_line(tmp_path):
     text = _DEV_LOCK.read_text()
-    mutated = re.sub(r"(?m)^decoy-engine @ git\+\S+$", "decoy-engine==0.15.1", text)
+    mutated = re.sub(r"(?m)^decoy-engine @ git\+\S+$", "decoy-engine==0.17.0", text)
     assert mutated != text
     out = tmp_path / "sbom.cdx.json"
     pins = tmp_path / "requirements-dev.lock"

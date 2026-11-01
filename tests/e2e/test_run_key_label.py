@@ -33,7 +33,7 @@ def _generate_pipeline(tmp_path: Path, *, top_level_key_label: str | None = None
     """Minimal pure-generate V2 pipeline; optionally carries a top-level
     `key_label:` field (the shape the docs used to -- wrongly -- describe)."""
     cfg: dict = {
-        "version": 1,
+        "version": 2,
         "global_settings": {"seed": 42},
         "sources": {},
         "tables": [

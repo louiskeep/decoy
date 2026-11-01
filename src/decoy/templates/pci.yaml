@@ -14,7 +14,14 @@
 # always maps to the same masked PAN (deterministic join survival).
 # CVV is redacted entirely (must never be retained per PCI DSS req 3.2).
 
-version: 1
+# Keyed: a mask secret is REQUIRED. Without one `decoy run` refuses with
+# keyed_strategy_requires_secret (there is no seed fallback). Supply a >=32-byte secret:
+#   export DECOY_MASK_SECRET=$(openssl rand -hex 32)
+#   decoy run pipeline.yaml --mask-secret env:DECOY_MASK_SECRET
+# or set global_settings.mask_secret_ref: "env:DECOY_MASK_SECRET" (or "file:/PATH").
+# See `decoy explain keys`.
+
+version: 2
 
 global_settings:
   seed: 42
@@ -59,8 +66,8 @@ tables:
         strategy: faker
         provider: person_email
 
-      # Transaction id stays linkable across systems: hash is keyed on
-      # derive(job_seed, namespace, value), so the same source id always
+      # Transaction id stays linkable across systems: hash is keyed on the
+      # mask secret (required) and the namespace, so the same source id always
       # maps to the same token. Works for any id format (uuid, int, ...).
       - name: transaction_id
         strategy: hash

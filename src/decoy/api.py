@@ -10,7 +10,7 @@ wrapper around decoy-engine; all data logic lives in the engine."
 
     decoy.mask(...)  wraps decoy_engine.run_pipeline  (the call `decoy run`
                       makes for non-chunked runs).
-    decoy.scan(...)  wraps decoy_engine.run_storm     (the call
+    decoy.scan(...)  wraps decoy_engine.profile_columns (the call
                       `decoy scan` makes).
 
 Both accept a config/source shaped exactly like the pipeline YAML `decoy
@@ -31,7 +31,7 @@ from typing import Any
 import pandas as pd
 import pyarrow as pa
 
-from decoy import _native_gate
+from decoy import _mask_secret_guidance, _native_gate
 from decoy.cli.extras import UnsupportedCloudEndpointError
 from decoy.cli.run import (
     _is_valid_mask_secret_ref,
@@ -501,14 +501,20 @@ def mask(
             _native_gate.run_pipeline_kwargs(gate_result)
         )
 
-        result = run_pipeline(
-            config_dict,
-            sources,
-            engine_version=engine_version,
-            derive_key=resolver,
-            instance_default_locale=instance_locale,
-            **extra_run_pipeline_kwargs,
-        )
+        try:
+            result = run_pipeline(
+                config_dict,
+                sources,
+                engine_version=engine_version,
+                derive_key=resolver,
+                instance_default_locale=instance_locale,
+                **extra_run_pipeline_kwargs,
+            )
+        except Exception as exc:
+            # The documented error type, with the `mask()` remedy instead of the engine's.
+            if _mask_secret_guidance.is_keyed_secret_refusal(exc):
+                raise MaskSecretConfigError(_mask_secret_guidance.API) from None
+            raise
 
         route = _native_gate.classify_route(
             chunked=False,
@@ -543,7 +549,7 @@ def scan(
     """Profile a dataset for PII / re-identification risk, through the same
     engine path `decoy scan` uses.
 
-    Wraps `decoy_engine.run_storm` -- exactly what `decoy scan`
+    Wraps `decoy_engine.profile_columns` -- exactly what `decoy scan`
     calls after loading the source into a DataFrame.
 
     Args:
@@ -562,11 +568,11 @@ def scan(
             list (`[{"name": ..., "start": ..., "width": ...}, ...]`).
 
     Returns:
-        A `decoy_engine.StormProfile` -- the same object `decoy scan
+        A `decoy_engine.ColumnProfile` -- the same object `decoy scan
         --output scan.json` serializes. Call `.to_dict()` for the
         JSON-ready shape.
     """
-    from decoy_engine import run_storm
+    from decoy_engine import profile_columns
 
     try:
         strategy_enum = SampleStrategy(strategy)
@@ -599,7 +605,7 @@ def scan(
             f"data must be a pandas DataFrame or a path (str/Path), got {type(data).__name__}."
         )
 
-    return run_storm(
+    return profile_columns(
         df,
         source_label=label,
         sample_strategy=strategy_enum.value,

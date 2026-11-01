@@ -116,7 +116,7 @@ def test_finding_without_a_provable_logical_path_has_no_location(tmp_path: Path)
 
 def test_missing_required_key_degrades_to_no_region_not_a_wrong_one(tmp_path: Path) -> None:
     # `version` is required; the leaf is absent and its parent is the document root.
-    repo = _repo(tmp_path, CLEAN_PIPELINE.replace("version: 1\n", ""))
+    repo = _repo(tmp_path, CLEAN_PIPELINE.replace("version: 2\n", ""))
     proc, doc = _sarif(repo)
     assert proc.returncode == EXIT_USAGE, proc.stderr
     assert_valid_sarif(doc)

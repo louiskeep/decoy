@@ -29,8 +29,8 @@ def test_put_lookup_and_reverse_roundtrip(tmp_path: Path) -> None:
     vp = tmp_path / "t.db"
     with LocalTokenVault(vp, create=True) as v:
         assert v.lookup_existing("ns", "a") is None
-        v.put("ns", "a", "tok_1")
-        v.put("ns", "b", "tok_2")
+        assert v.put("ns", "a", "tok_1") == "tok_1"
+        assert v.put("ns", "b", "tok_2") == "tok_2"
         v.commit()
         assert v.lookup_existing("ns", "a") == "tok_1"
         assert v.reverse("ns", "tok_1") == "a"
@@ -56,8 +56,9 @@ def test_namespace_scopes_both_directions(tmp_path: Path) -> None:
 def test_put_is_idempotent_on_same_token(tmp_path: Path) -> None:
     vp = tmp_path / "t.db"
     with LocalTokenVault(vp, create=True) as v:
-        v.put("ns", "a", "tok_1")
-        v.put("ns", "a", "tok_1")  # no raise, no duplicate
+        assert v.put("ns", "a", "tok_1") == "tok_1"
+        # No raise, no duplicate, and the engine (>=0.16.0) still gets the stored token.
+        assert v.put("ns", "a", "tok_1") == "tok_1"
         v.commit()
         assert v.count() == 1
 

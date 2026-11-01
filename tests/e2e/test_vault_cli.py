@@ -1,7 +1,7 @@
 """`decoy run --vault` + `decoy unmask --vault` (deferred follow-up 1).
 
 The vault records (namespace, masked) -> source for `vault: true`
-columns at mask time, encrypted under the config's seed, so one-way
+columns at mask time, encrypted under the mask secret, so one-way
 strategies recover at unmask time. Opt-in twice: the column flag AND
 the --vault path.
 """
@@ -17,6 +17,10 @@ from typer.testing import CliRunner
 
 from decoy.__main__ import app
 from decoy.cli.exit_codes import EXIT_USAGE
+from tests.keyed_secret import TEST_MASK_SECRET_REF
+
+# Keyed strategies need an admitted mask secret (engine 0.17.0); see tests/keyed_secret.py.
+pytestmark = pytest.mark.usefixtures("mask_secret")
 
 pytest.importorskip("cryptography")
 
@@ -32,8 +36,8 @@ def _pipeline(tmp_path: Path, columns: list[dict], rows: int = 50) -> Path:
         }
     ).to_csv(src, index=False)
     cfg = {
-        "version": 1,
-        "global_settings": {"seed": 42},
+        "version": 2,
+        "global_settings": {"seed": 42, "mask_secret_ref": TEST_MASK_SECRET_REF},
         "sources": {"accounts": {"type": "file", "format": "csv", "path": str(src)}},
         "tables": [{"name": "accounts", "columns": columns}],
         "targets": {
@@ -133,15 +137,18 @@ class TestVaultUsageErrors:
         assert result.exit_code == 0, result.output
         assert "0 column(s) reversed" in result.output
 
-    def test_unmask_with_wrong_seed_config_exits_usage(self, tmp_path: Path) -> None:
+    def test_unmask_with_wrong_secret_config_exits_usage(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         cfg = _pipeline(tmp_path, _VAULTED)
         vault = tmp_path / "vault.bin"
         assert (
             runner.invoke(app, ["run", str(cfg), "--vault", str(vault)]).exit_code == 0
         )
-        # Same config shape, different seed: the vault must not decrypt.
+        # Same config shape, a different mask secret: the vault must not decrypt.
+        monkeypatch.setenv("DECOY_TEST_OTHER_SECRET", b"decoy-test-only-other-key-000032".hex())
         wrong = yaml.safe_load(cfg.read_text(encoding="utf-8"))
-        wrong["global_settings"]["seed"] = 99
+        wrong["global_settings"]["mask_secret_ref"] = "env:DECOY_TEST_OTHER_SECRET"
         wrong_path = tmp_path / "wrong.yaml"
         wrong_path.write_text(yaml.safe_dump(wrong), encoding="utf-8")
         result = runner.invoke(
@@ -156,3 +163,18 @@ class TestVaultUsageErrors:
         )
         assert result.exit_code == EXIT_USAGE
         assert "vault_key_mismatch" in result.output
+
+    def test_the_seed_no_longer_keys_the_vault(self, tmp_path: Path) -> None:
+        """Engine 0.17.0 keys the vault with the mask secret alone; the public seed
+        is not key material, so a different seed under the same secret still opens it."""
+        cfg = _pipeline(tmp_path, _VAULTED)
+        vault = tmp_path / "vault.bin"
+        assert runner.invoke(app, ["run", str(cfg), "--vault", str(vault)]).exit_code == 0
+        other = yaml.safe_load(cfg.read_text(encoding="utf-8"))
+        other["global_settings"]["seed"] = 99
+        other_path = tmp_path / "other_seed.yaml"
+        other_path.write_text(yaml.safe_dump(other), encoding="utf-8")
+        result = runner.invoke(
+            app, ["unmask", str(other_path), str(tmp_path / "out.csv"), "--vault", str(vault)]
+        )
+        assert result.exit_code == 0, result.output

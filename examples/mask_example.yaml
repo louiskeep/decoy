@@ -20,7 +20,7 @@
 # OSS.1 commit 2 (2026-06-02) V2 rewrite: replaces V1 `version: '1.0'`
 # + `input:` / `output:` / `masking_rules:` shape.
 
-version: 1
+version: 2
 
 global_settings:
   seed: 42

@@ -22,7 +22,7 @@ import typer
 from rich.text import Text
 
 from decoy import __version__ as _cli_version
-from decoy import _native_gate
+from decoy import _mask_secret_guidance, _native_gate
 from decoy.cli._duckdb_source import DuckDBSourceError, acquire_relation, parse_flag
 from decoy.cli._sources import iter_source_chunks, read_source
 from decoy.cli._yaml_errors import sanitize_yaml_error
@@ -895,7 +895,7 @@ def run(
         # extra -- still needs EXIT_USAGE classification below with the
         # engine's own message intact.
         try:
-            from decoy_engine.storm.ner import NerUnavailableError as _NerUnavailableError
+            from decoy_engine.detection.ner import NerUnavailableError as _NerUnavailableError
 
             _ner_unavailable_types: tuple = (_NerUnavailableError,)
         except ImportError:
@@ -1005,6 +1005,10 @@ def run(
         error_text = str(exc)
         if len(error_text) > 500:
             error_text = error_text[:500] + "..."
+        keyed_refusal = _mask_secret_guidance.is_keyed_secret_refusal(exc)
+        if keyed_refusal:
+            # The engine words this for its Python API; the CLI remedy is a flag.
+            error_text = _mask_secret_guidance.RUN
 
         # PII egress guard (dennis sprint-5 BLOCKER): the raw engine error
         # can quote source-row cell values verbatim (see the comment above),
@@ -1070,6 +1074,8 @@ def run(
                     "this job needs more memory than this host has; use a larger "
                     "tier or reduce the job.",
                 )
+            elif keyed_refusal:
+                state.err_console.print(error("error:"), error_text, markup=False)
             else:
                 state.err_console.print(error("error:"), error_text, markup=False)
                 state.err_console.print(

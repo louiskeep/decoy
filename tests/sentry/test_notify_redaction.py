@@ -26,11 +26,16 @@ from pathlib import Path
 from unittest import mock
 
 import pandas as pd
+import pytest
 import yaml
+from tests.keyed_secret import TEST_MASK_SECRET_REF
 from typer.testing import CliRunner
 
 from decoy.__main__ import app
 from decoy.notify import build_run_event
+
+# Keyed strategies need an admitted mask secret (engine 0.17.0); see tests/keyed_secret.py.
+pytestmark = pytest.mark.usefixtures("mask_secret")
 
 runner = CliRunner()
 
@@ -101,8 +106,8 @@ def _write_mask_config(tmp_path: Path) -> Path:
         src, index=False
     )
     cfg = {
-        "version": 1,
-        "global_settings": {"seed": 42},
+        "version": 2,
+        "global_settings": {"seed": 42, "mask_secret_ref": TEST_MASK_SECRET_REF},
         "sources": {"customers": {"type": "file", "format": "csv", "path": str(src)}},
         "tables": [
             {

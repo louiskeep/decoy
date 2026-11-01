@@ -28,7 +28,7 @@ _REGISTRY: tuple[tuple[str, str], ...] = (
     ("generate", "Synthetic-data generation pipeline; no input file required."),
     # CLI.3 (2026-06-02): graph template removed. V1 `mode: graph` was
     # retired under storm-reframe-C / S22-CL-V1GRAPHRUNNER; the V2 graph
-    # builder UI emits a `version: 1` PipelineConfig from node settings
+    # builder UI emits a `version: 2` PipelineConfig from node settings
     # instead of authoring graph-mode YAML by hand.
 )
 

@@ -161,7 +161,7 @@ See also: decoy validate compile --explain, decoy report fidelity, decoy validat
 Recover fpe-masked columns from a masked file using the pipeline config.
 
 Reverses every `strategy: fpe` column (format-preserving encryption is
-a keyed bijection; the key derives from the config&#x27;s seed + namespace).
+a keyed bijection; the key derives from the mask secret + namespace).
 Other strategies are one-way and pass through unchanged with an
 `irreversible` report entry. Exits 0 on success, 1 on a config/usage
 error, 3 on a runtime failure.
@@ -174,14 +174,14 @@ $ decoy unmask [OPTIONS] CONFIG MASKED
 
 **Arguments**:
 
-* `CONFIG`: The pipeline config the mask run used (carries seed + namespaces).  [required]
+* `CONFIG`: The pipeline config the mask run used; its global_settings.mask_secret_ref must name the same mask secret.  [required]
 * `MASKED`: The masked CSV produced by `decoy run` for one table.  [required]
 
 **Options**:
 
 * `--table TEXT`: Which config table the masked file belongs to. Required when the config masks more than one table.
 * `-o, --output PATH`: Where to write the recovered CSV. Default: &lt;masked&gt;.unmasked.csv next to the input.
-* `--vault FILE`: Vault file the mask run wrote (decoy run --vault). Recovers one-way columns declared vault: true; decrypts under the config&#x27;s seed.
+* `--vault FILE`: Vault file the mask run wrote (decoy run --vault). Recovers one-way columns declared vault: true; decrypts under the mask secret named by global_settings.mask_secret_ref.
 * `--json`: Emit a structured JSON result on stdout. Errors still go to stderr.
 * `-q, --quiet`: Suppress stdout. Errors still go to stderr; exit code carries the result.
 * `-v, --verbose`: Enable debug-level CLI logs on stderr.
@@ -207,9 +207,10 @@ Examples:
 
 Only `strategy: fpe` columns reverse from the config alone; hash,
 redact, faker and the other one-way strategies pass through unchanged
-unless the column was vaulted at mask time. The config carries the
-seed: treat it as a key; the vault file is a re-identification map,
-store it separately from the masked output.
+unless the column was vaulted at mask time. The config's
+global_settings.mask_secret_ref must name the secret the mask run used;
+the vault file is a re-identification map, store it separately from the
+masked output.
 
 See also: decoy run, decoy explain strategies.
 
@@ -1475,10 +1476,10 @@ See also: decoy report integrity, decoy fit, decoy run.
 
 Verify a masked file&#x27;s integrity against its pre-mask source.
 
-Wraps `decoy_engine.storm.postmask.run_storm_post_mask`. Runs the
+Wraps `decoy_engine.verification.postmask.run_post_mask`. Runs the
 three post-mask check buckets (residual_pii, fk_preservation,
 policy_validation) the platform&#x27;s mask job already runs when
-`run_storm: true` is declared in the pipeline; this verb lets the
+`post_scan: {integrity: true}` is declared in the pipeline; this verb lets the
 CLI user run the same checks standalone.
 
 Distinct from `report verify` (manifest fingerprint-drift): integrity is
@@ -1612,8 +1613,9 @@ counts (pandas v2.x). No novel statistical method is used.
 
 Inspect a vault file: report entry count, namespaces, and dropped-ambiguous count.
 
-Opens the vault using the seed derived from the pipeline config. A
-mismatched seed (wrong config) exits 1 with a clear error message.
+Opens the vault with the mask secret that global_settings.mask_secret_ref
+in the pipeline config names, the secret the `decoy run --vault` call
+used; the seed is not key material. A missing or wrong secret exits 1.
 Exits 0 on success, 1 on a config/vault/usage error.
 
 **Usage**:

@@ -25,6 +25,10 @@ from decoy_engine import NativeCompanionStatus
 
 import decoy
 from decoy._native_gate import NativeGateError
+from tests.keyed_secret import TEST_MASK_SECRET_REF
+
+# Keyed strategies need an admitted mask secret (engine 0.17.0); see tests/keyed_secret.py.
+pytestmark = pytest.mark.usefixtures("mask_secret")
 
 _ABI = "decoy-native-abi-2"
 
@@ -65,8 +69,8 @@ def eligible_parquet_config(tmp_path: Path) -> dict:
         src, index=False
     )
     return {
-        "version": 1,
-        "global_settings": {"seed": 42},
+        "version": 2,
+        "global_settings": {"seed": 42, "mask_secret_ref": TEST_MASK_SECRET_REF},
         "sources": {"customers": {"type": "file", "format": "parquet", "path": str(src)}},
         "tables": [
             {
@@ -89,8 +93,8 @@ def csv_config(tmp_path: Path) -> dict:
     src = tmp_path / "in.csv"
     pd.DataFrame({"id": ["a", "b"], "email": ["a@x.com", "b@x.com"]}).to_csv(src, index=False)
     return {
-        "version": 1,
-        "global_settings": {"seed": 42},
+        "version": 2,
+        "global_settings": {"seed": 42, "mask_secret_ref": TEST_MASK_SECRET_REF},
         "sources": {"customers": {"type": "file", "format": "csv", "path": str(src)}},
         "tables": [
             {
@@ -142,8 +146,8 @@ def test_mask_native_true_refuses_absent_companion_before_a_missing_source_error
     to open it, so the caller sees the native-companion reason, not a
     generic `FileNotFoundError` that would obscure it."""
     config = {
-        "version": 1,
-        "global_settings": {"seed": 42},
+        "version": 2,
+        "global_settings": {"seed": 42, "mask_secret_ref": TEST_MASK_SECRET_REF},
         "sources": {
             "customers": {
                 "type": "file",
@@ -251,8 +255,8 @@ def test_mask_native_true_fails_closed_on_runtime_ineligible_candidate(
 
 def test_mask_native_true_on_generate_only_rejected_before_dispatch(tmp_path: Path):
     config = {
-        "version": 1,
-        "global_settings": {"seed": 42},
+        "version": 2,
+        "global_settings": {"seed": 42, "mask_secret_ref": TEST_MASK_SECRET_REF},
         "tables": [
             {
                 "name": "employees",

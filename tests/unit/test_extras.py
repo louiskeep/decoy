@@ -268,7 +268,7 @@ class TestCheckCloudEndpointsSupported:
 
 class TestTranslateNerUnavailable:
     def test_rewrites_spacy_not_installed_to_cli_extra(self) -> None:
-        from decoy_engine.storm.ner import NerUnavailableError
+        from decoy_engine.detection.ner import NerUnavailableError
 
         exc = NerUnavailableError(code="ner_spacy_not_installed", message="spaCy is not installed")
         translated = translate_ner_unavailable(exc)
@@ -279,7 +279,7 @@ class TestTranslateNerUnavailable:
         # spaCy IS present here, just not the requested model -- the fix is
         # `spacy download <model>`, not an extra, so the engine's own
         # message should be left alone (translate_ner_unavailable -> None).
-        from decoy_engine.storm.ner import NerUnavailableError
+        from decoy_engine.detection.ner import NerUnavailableError
 
         exc = NerUnavailableError(code="ner_model_not_installed", message="model X missing")
         assert translate_ner_unavailable(exc) is None

@@ -129,3 +129,14 @@ def test_extras_topic_lists_every_pass_through_extra():
     assert result.exit_code == 0
     for extra in ("cloud", "ner", "ml", "vault", "all"):
         assert f"decoy-cli[{extra}]" in result.stdout, result.stdout
+
+
+def test_explain_keys_states_the_keyed_mask_secret_is_required():
+    """Engine >=0.17.0 removed the pre-GA job_seed fallback: keyed masking with no
+    admitted secret fails with keyed_strategy_requires_secret in every phase."""
+    result = runner.invoke(app, ["explain", "keys", "--json"])
+    assert result.exit_code == 0, result.stdout
+    body = _json.loads(result.stdout)["body"]
+    assert "keyed_strategy_requires_secret" in body
+    assert "falling back to job_seed" not in body
+    assert "still run" not in body

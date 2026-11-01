@@ -2,14 +2,13 @@
 
 Capability-gaps WS1 (2026-06-12). The inverse of the fpe leg of
 `decoy run`: the SAME pipeline config the mask run used carries the
-seed (the secret) plus per-column namespace/charset, which is exactly
-what `decoy_engine.unmask_pipeline` needs to re-derive the Feistel key
-and invert the permutation. One-way strategies (hash, redact, faker,
+mask secret reference (`global_settings.mask_secret_ref`) plus per-column
+namespace/charset, which is exactly what `decoy_engine.unmask_pipeline`
+needs to re-derive the Feistel key and invert the permutation. One-way strategies (hash, redact, faker,
 date_shift, ...) pass through unchanged and are reported irreversible.
 
-SECURITY: anyone holding the pipeline config can reverse its fpe
-columns. Treat the config file (specifically `global_settings.seed`)
-with the sensitivity of a decryption key.
+SECURITY: anyone holding the mask secret and the config can reverse its
+fpe columns. The secret is the decryption key; the config only names it.
 """
 
 from __future__ import annotations
@@ -19,6 +18,7 @@ from pathlib import Path
 import typer
 import yaml as _yaml
 
+from decoy import _mask_secret_guidance
 from decoy.cli._yaml_errors import sanitize_yaml_error
 from decoy.cli.exit_codes import EXIT_RUNTIME, EXIT_USAGE
 from decoy.ui.output import OutputMode, emit_json, setup_output
@@ -45,9 +45,10 @@ Examples:
 
 Only `strategy: fpe` columns reverse from the config alone; hash,
 redact, faker and the other one-way strategies pass through unchanged
-unless the column was vaulted at mask time. The config carries the
-seed: treat it as a key; the vault file is a re-identification map,
-store it separately from the masked output.
+unless the column was vaulted at mask time. The config's
+global_settings.mask_secret_ref must name the secret the mask run used;
+the vault file is a re-identification map, store it separately from the
+masked output.
 
 See also: decoy run, decoy explain strategies.
 """
@@ -59,7 +60,10 @@ def unmask(
         exists=True,
         dir_okay=False,
         readable=True,
-        help="The pipeline config the mask run used (carries seed + namespaces).",
+        help=(
+            "The pipeline config the mask run used; its global_settings.mask_secret_ref "
+            "must name the same mask secret."
+        ),
     ),
     masked: Path = typer.Argument(
         ...,
@@ -88,7 +92,7 @@ def unmask(
         help=(
             "Vault file the mask run wrote (decoy run --vault). Recovers "
             "one-way columns declared vault: true; decrypts under the "
-            "config's seed."
+            "mask secret named by global_settings.mask_secret_ref."
         ),
     ),
     json_: bool = typer.Option(
@@ -112,7 +116,7 @@ def unmask(
     """Recover fpe-masked columns from a masked file using the pipeline config.
 
     Reverses every `strategy: fpe` column (format-preserving encryption is
-    a keyed bijection; the key derives from the config's seed + namespace).
+    a keyed bijection; the key derives from the mask secret + namespace).
     Other strategies are one-way and pass through unchanged with an
     `irreversible` report entry. Exits 0 on success, 1 on a config/usage
     error, 3 on a runtime failure.
@@ -177,6 +181,7 @@ def unmask(
     from decoy_engine import VaultError, unmask_pipeline
     from decoy_engine.errors import ConfigError
     from decoy_engine.execution import ExecutionError
+    from decoy_engine.keyprovider import MaskSecretError
     from decoy_engine.plan import PlanCompileError
 
     try:
@@ -218,6 +223,15 @@ def unmask(
                 f"{getattr(exc, 'code', type(exc).__name__)}: "
                 f"{getattr(exc, 'message', exc)}"
             )
+        raise typer.Exit(code=EXIT_USAGE)
+    except MaskSecretError as exc:
+        # A missing, weak or unresolvable secret is the operator's config, not a crash
+        # (`decoy run` and `decoy tokenize` classify it the same way). The engine's
+        # messages are value-free; its keyed refusal names its Python API, so swap it.
+        if _mask_secret_guidance.is_keyed_secret_refusal(exc):
+            _emit_error(_mask_secret_guidance.UNMASK)
+        else:
+            _emit_error(f"{getattr(exc, 'code', type(exc).__name__)}: {getattr(exc, 'message', exc)}")
         raise typer.Exit(code=EXIT_USAGE)
     except Exception as exc:  # runtime failure, not a usage problem
         _emit_error(f"unmask failed: {type(exc).__name__}: {exc}"[:500])
@@ -285,8 +299,8 @@ def unmask(
     )
     # Surface each secondary bucket whenever it is non-empty, independent of
     # --vault: `vault_miss` arises precisely when a vault could NOT reverse a
-    # requested column, and `reversed_unverified` when fpe reversed under the
-    # non-secret job_seed fallback -- both are genuine per-column outcomes an
+    # requested column, and `reversed_unverified` for every fpe reversal (FF1 is
+    # unauthenticated, even under a real secret) -- both are genuine per-column outcomes an
     # operator must see, not artifacts of whether a vault was passed.
     if counts["reversed_unverified"]:
         summary = summary[:-1] + f", {counts['reversed_unverified']} reversed (unverified)."

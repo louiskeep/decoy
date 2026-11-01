@@ -117,7 +117,7 @@ def test_init_stdout_with_dash(csv_with_pii: Path, tmp_path: Path):
         app, ["init", str(csv_with_pii), "--output", "-"]
     )
     assert result.exit_code == 0, result.stdout + result.stderr
-    assert "version: 1" in result.stdout
+    assert "version: 2" in result.stdout
     assert "# REVIEW:" in result.stdout
 
 

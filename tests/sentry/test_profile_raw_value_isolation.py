@@ -6,7 +6,7 @@ output must NEVER include raw cell values from the source data.
 Rationale: STORM profiles contain counts, null rates, and cardinality data.
 They must NOT contain top_values, mode_value, min_value, max_value, or any
 other raw aggregates that could reconstruct original values. The profile CLI
-command wraps run_storm but explicitly strips any raw-value fields before
+command wraps profile_columns but explicitly strips any raw-value fields before
 emitting output.
 
 Text-lane implementation note:

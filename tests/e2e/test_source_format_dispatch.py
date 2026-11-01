@@ -24,6 +24,10 @@ import decoy
 from decoy.__main__ import app
 from decoy.api import ConfigValidationError
 from decoy.cli.exit_codes import EXIT_USAGE
+from tests.keyed_secret import TEST_MASK_SECRET_REF
+
+# Keyed strategies need an admitted mask secret (engine 0.17.0); see tests/keyed_secret.py.
+pytestmark = pytest.mark.usefixtures("mask_secret")
 
 runner = CliRunner()
 
@@ -66,15 +70,16 @@ def _config(
     *,
     layout: dict | None = None,
     tgt_name: str = "out.csv",
+    columns: list[dict] | None = None,
 ) -> Path:
     source: dict[str, Any] = {"type": "file", "format": fmt, "path": str(src)}
     if layout is not None:
         source["layout"] = layout
     cfg = {
-        "version": 1,
-        "global_settings": {"seed": 42},
+        "version": 2,
+        "global_settings": {"seed": 42, "mask_secret_ref": TEST_MASK_SECRET_REF},
         "sources": {"people": source},
-        "tables": [{"name": "people", "columns": _COLUMNS}],
+        "tables": [{"name": "people", "columns": columns or _COLUMNS}],
         "targets": {"people": {"type": "file", "format": "csv", "path": str(tmp_path / tgt_name)}},
     }
     p = tmp_path / "pipeline.yaml"
@@ -135,7 +140,13 @@ def test_run_fixed_width_matches_engine_on_public_reader(tmp_path: Path):
 def test_demo_path_fixed_width_matches_engine(tmp_path: Path):
     from decoy.cli.demo import _run_v2_mask
 
-    config = _fixed_width_config(tmp_path)
+    # The demo path drives the engine adapter directly and admits no mask secret (the
+    # bundled demo pipeline is unkeyed), so it is fed the unkeyed shape; the
+    # fixed-width read parity this test checks does not depend on the strategy.
+    unkeyed = [{**c, "strategy": "redact"} if c["strategy"] == "hash" else c for c in _COLUMNS]
+    config = _fixed_width_config(
+        tmp_path, columns=[{k: v for k, v in c.items() if k != "namespace"} for c in unkeyed]
+    )
     _run_v2_mask(config)
     got = pd.read_csv(tmp_path / "out.csv", dtype=str)
     assert list(got.columns) == ["id", "name", "age"]
@@ -250,8 +261,8 @@ def test_csv_named_parquet_is_read_as_csv(tmp_path: Path):
 
 def _raw_config(tmp_path: Path, source: dict) -> Path:
     cfg = {
-        "version": 1,
-        "global_settings": {"seed": 42},
+        "version": 2,
+        "global_settings": {"seed": 42, "mask_secret_ref": TEST_MASK_SECRET_REF},
         "sources": {"people": source},
         "tables": [{"name": "people", "columns": _COLUMNS}],
         "targets": {"people": {"type": "file", "format": "csv", "path": str(tmp_path / "out.csv")}},
@@ -306,8 +317,8 @@ def test_fixed_width_chunked_writes_no_table_even_with_other_tables(tmp_path: Pa
     fw_src = tmp_path / "b.dat"
     _write_fixed_width(fw_src)
     cfg = {
-        "version": 1,
-        "global_settings": {"seed": 42},
+        "version": 2,
+        "global_settings": {"seed": 42, "mask_secret_ref": TEST_MASK_SECRET_REF},
         "sources": {
             "a": {"type": "file", "format": "csv", "path": str(csv_src)},
             "b": {"type": "file", "format": "fixed_width", "path": str(fw_src), "layout": _LAYOUT},
@@ -492,8 +503,8 @@ def test_mask_api_data_path_infers_format_when_config_declares_none(tmp_path: Pa
 
 def _cloud_declared_config(tmp_path: Path, source: dict[str, Any]) -> Path:
     cfg = {
-        "version": 1,
-        "global_settings": {"seed": 42},
+        "version": 2,
+        "global_settings": {"seed": 42, "mask_secret_ref": TEST_MASK_SECRET_REF},
         "sources": {"people": source},
         "tables": [{"name": "people", "columns": _COLUMNS}],
         "targets": {"people": {"type": "file", "format": "csv", "path": str(tmp_path / "out.csv")}},

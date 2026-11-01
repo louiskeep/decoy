@@ -280,8 +280,8 @@ def tokenize(
         )
         raise typer.Exit(code=EXIT_USAGE)
 
-    # BLOCKER (B-1): tokenize is ALWAYS keyed. `decoy run` may fall back to the
-    # PUBLIC 8-byte job seed pre-GA, but for tokenize that fallback is fatal: with
+    # BLOCKER (B-1): tokenize is ALWAYS keyed. The engine (>=0.17.0) also rejects a
+    # keyed run with no secret, but this check keeps the CLI's own coded error; with
     # no secret every token is tok_ + derive(job_seed, namespace, NFC(plaintext)),
     # and job_seed is public, so anyone holding the output plus the config can
     # recompute the tokens offline and re-identify low-entropy values WITHOUT the

@@ -23,7 +23,7 @@ from decoy.ci.contracts import (
 from decoy.ci.debug import DebugSink
 from decoy.ci.locations import YamlSourceIndex
 from decoy.ci.manifest import LoadedManifest
-from decoy.ci.rule_codes import EVIDENCE_KINDS, VALIDATION_CODES, rule_code
+from decoy.ci.rule_codes import EVIDENCE_KINDS, rule_code, validation_codes
 from decoy.cli.exit_codes import (
     EXIT_CAPACITY,
     EXIT_FINDINGS,
@@ -108,7 +108,7 @@ def validation_outcome(
             logical = item.logical_path or item.location
             findings.append(
                 SafeFinding.create(
-                    rule_id=f"validate.{rule_code(item.code, VALIDATION_CODES)}",
+                    rule_id=f"validate.{rule_code(item.code, validation_codes())}",
                     level="error" if item.severity == "error" else "warning",
                     safe_message_id=(
                         "ci.validation_failed"

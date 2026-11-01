@@ -23,7 +23,7 @@ non-negotiable disciplines:
   any aggregate that could expose raw cell data. (The `--output` artifact keeps
   the engine's richer `profile.to_dict()`; that is pre-existing and intentional.)
 
-Reuses the engine's `run_storm` function. Does NOT reimplement detection.
+Reuses the engine's `profile_columns` function. Does NOT reimplement detection.
 """
 
 from __future__ import annotations
@@ -752,12 +752,12 @@ def _scan(
     effective_strategy = SampleStrategy.full if rows == 0 else strategy
 
     try:
-        from decoy_engine import run_storm
+        from decoy_engine import profile_columns
 
         with stormy_multistage(state, ["Load source", "Profile columns", "Summarize"]) as ms:
             df = _load_data(source, effective_fmt, layout_columns, row_cap, effective_strategy)
             ms.complete()
-            profile = run_storm(
+            profile = profile_columns(
                 df,
                 source_label=source.name,
                 sample_strategy=effective_strategy.value,

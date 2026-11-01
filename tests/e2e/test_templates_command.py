@@ -46,13 +46,13 @@ def test_list_templates_json_returns_full_set():
 
 def test_show_template_dumps_raw_yaml_to_stdout():
     """CLI.3 (2026-06-02): templates rewritten to V2 shape; the body now
-    declares `version: 1` + `tables[].columns` instead of V1 `masking_rules`.
+    declares `version: 2` + `tables[].columns` instead of V1 `masking_rules`.
     """
     result = runner.invoke(app, ["show", "template", "minimal"])
     assert result.exit_code == 0
     parsed = yaml.safe_load(result.stdout)
     assert parsed is not None
-    assert parsed.get("version") == 1
+    assert parsed.get("version") == 2
     assert "tables" in parsed
     assert len(parsed["tables"]) >= 1
     assert len(parsed["tables"][0]["columns"]) >= 3

@@ -20,6 +20,10 @@ from typer.testing import CliRunner
 
 from decoy.__main__ import app
 from decoy.cli.exit_codes import EXIT_USAGE
+from tests.keyed_secret import TEST_MASK_SECRET_REF, with_mask_secret
+
+# Keyed strategies need an admitted mask secret (engine 0.17.0); see tests/keyed_secret.py.
+pytestmark = pytest.mark.usefixtures("mask_secret")
 
 runner = CliRunner()
 
@@ -113,8 +117,8 @@ def _pipeline(tmp_path: Path, *, seed: int = 42) -> Path:
         }
     ).to_csv(src, index=False)
     cfg = {
-        "version": 1,
-        "global_settings": {"seed": seed},
+        "version": 2,
+        "global_settings": {"seed": seed, "mask_secret_ref": TEST_MASK_SECRET_REF},
         "sources": {"accounts": {"type": "file", "format": "csv", "path": str(src)}},
         "tables": [
             {
@@ -192,10 +196,9 @@ class TestUnmaskRoundTrip:
         assert payload["command"] == "unmask"
         assert payload["status"] == "ok"
         by_col = {c["column"]: c for c in payload["columns"]}
-        # DE-02: this round-trip configures no mask_secret_ref, so the FPE
-        # reversal runs under the job_seed fallback and the engine reports it
-        # as `reversed_unverified` (recovered, but not cryptographically
-        # authenticated) rather than `reversed`.
+        # FF1 is unauthenticated, so the engine reports an FPE reversal as
+        # `reversed_unverified` (recovered, but not cryptographically
+        # authenticated) even under a real mask secret, never plain `reversed`.
         assert by_col["ssn"]["status"] == "reversed_unverified"
         assert by_col["email"]["status"] == "irreversible"
 
@@ -287,8 +290,8 @@ class TestUnmaskVaultError:
         src = tmp_path / "accounts.csv"
         pd.DataFrame({"ssn": ["123-45-6789"]}).to_csv(src, index=False)
         cfg = {
-            "version": 1,
-            "global_settings": {"seed": 42},
+            "version": 2,
+            "global_settings": {"seed": 42, "mask_secret_ref": TEST_MASK_SECRET_REF},
             "sources": {"accounts": {"type": "file", "format": "csv", "path": str(src)}},
             "tables": [
                 {
@@ -467,18 +470,14 @@ def csv_with_pan(tmp_path: Path) -> Path:
 
 class TestUnmaskConsoleSurfacesReversedUnverified:
     """Real-world reproduction: `decoy init` scaffolds an fpe column for a
-    PAN, `decoy run` with no mask secret masks it under the non-secret
-    job_seed fallback, and `decoy unmask` decrypts it back with status
-    `reversed_unverified`. Before the fix, the console summary counted only
-    `reversed`/`irreversible`/`untouched` and printed a `note:` only for
-    `("reversed", "vault_reversed", "vault_miss")` -- so a `reversed_
-    unverified` column was invisible: not counted (summary said "0 column(s)
-    reversed" despite a PAN having been decrypted) and its "may be WRONG
-    plaintext" authentication caveat was never printed. Only `--json`
-    surfaced it correctly.
+    PAN, `decoy run` masks it under the mask secret, and `decoy unmask`
+    decrypts it back with status `reversed_unverified` (FF1 is
+    unauthenticated, so the engine never reports it as plain `reversed`).
+    The console summary must count that column in its own term and print the
+    "may be WRONG plaintext" caveat, not only `--json`.
     """
 
-    def test_console_summary_reports_reversed_unverified_and_warning(
+    def test_console_summary_reports_reversed_unverified_under_a_secret(
         self, csv_with_pan: Path, tmp_path: Path
     ) -> None:
         out_cfg = tmp_path / "pipeline.yaml"
@@ -486,6 +485,9 @@ class TestUnmaskConsoleSurfacesReversedUnverified:
             app, ["init", str(csv_with_pan), "--output", str(out_cfg), "--quiet"]
         )
         assert init_result.exit_code == 0, init_result.output
+        # `decoy unmask` reads the secret from the YAML ref, so the run uses it too.
+        scaffold = yaml.safe_load(out_cfg.read_text(encoding="utf-8"))
+        out_cfg.write_text(yaml.safe_dump(with_mask_secret(scaffold)), encoding="utf-8")
 
         run_result = runner.invoke(app, ["run", str(out_cfg)])
         assert run_result.exit_code == 0, run_result.output
@@ -515,11 +517,28 @@ class TestUnmaskConsoleSurfacesReversedUnverified:
         assert "wrong plaintext" in flat.lower() or "unauthenticated" in flat.lower(), (
             f"missing authentication warning note: {flat!r}"
         )
+        # And the round trip is real: the scaffolded PAN column comes back exactly.
+        original = pd.read_csv(csv_with_pan, dtype=str)
+        recovered = pd.read_csv(out, dtype=str)
+        pan = next(c for c in original.columns if c in recovered.columns and original[c].str.isdigit().all())
+        assert list(recovered[pan]) == list(original[pan])
+
+    def test_no_secret_unmask_of_the_scaffold_refuses_with_the_registered_code(
+        self, csv_with_pan: Path, tmp_path: Path
+    ) -> None:
+        """The job_seed reversal this class used to exercise no longer exists:
+        without a secret the scaffold's keyed run is refused before any output."""
+        out_cfg = tmp_path / "pipeline.yaml"
+        assert runner.invoke(app, ["init", str(csv_with_pan), "--output", str(out_cfg), "--quiet"]).exit_code == 0
+        run_result = runner.invoke(app, ["run", str(out_cfg)])
+        assert run_result.exit_code == EXIT_USAGE, run_result.output
+        assert "keyed_strategy_requires_secret" in run_result.output
+        assert not (tmp_path / "accounts.masked.csv").exists()
 
 
 def _multitable_cfg(tmp_path: Path) -> tuple[Path, Path]:
     """A two-table mask config where only `accounts` is present in the input.
-    `accounts.card` is fpe (reverses under the job_seed fallback ->
+    `accounts.card` is fpe (an unauthenticated reversal ->
     reversed_unverified); `orders` is configured but never masked to a file,
     so unmasking the accounts file alone yields a `table_missing` pseudo-entry
     for orders. Returns (config_path, masked_accounts_path)."""
@@ -529,8 +548,8 @@ def _multitable_cfg(tmp_path: Path) -> tuple[Path, Path]:
     ).to_csv(src, index=False)
     masked = tmp_path / "acc.masked.csv"
     cfg = {
-        "version": 1,
-        "global_settings": {"seed": 42},
+        "version": 2,
+        "global_settings": {"seed": 42, "mask_secret_ref": TEST_MASK_SECRET_REF},
         "sources": {"accounts": {"type": "file", "format": "csv", "path": str(src)}},
         "tables": [
             {
@@ -599,8 +618,8 @@ class TestUnmaskSummaryIsCompleteCensus:
         # matches (so no key-mismatch error) but no masked value is a key in it.
         def _cfg(src: Path, out: Path) -> dict:
             return {
-                "version": 1,
-                "global_settings": {"seed": 42},
+                "version": 2,
+                "global_settings": {"seed": 42, "mask_secret_ref": TEST_MASK_SECRET_REF},
                 "sources": {
                     "accounts": {"type": "file", "format": "csv", "path": str(src)}
                 },

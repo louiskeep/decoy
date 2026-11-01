@@ -22,6 +22,10 @@ from typer.testing import CliRunner
 
 from decoy.__main__ import app
 from decoy.cli.exit_codes import EXIT_USAGE
+from tests.keyed_secret import TEST_MASK_SECRET_REF
+
+# Keyed strategies need an admitted mask secret (engine 0.17.0); see tests/keyed_secret.py.
+pytestmark = pytest.mark.usefixtures("mask_secret")
 
 runner = CliRunner()
 
@@ -58,8 +62,8 @@ def _make_duckdb(path: Path, table: str = "people", frame: pd.DataFrame | None =
 
 def _config(tmp_path: Path, sources: dict[str, Any], *, out: str = "out.csv") -> Path:
     cfg = {
-        "version": 1,
-        "global_settings": {"seed": 42},
+        "version": 2,
+        "global_settings": {"seed": 42, "mask_secret_ref": TEST_MASK_SECRET_REF},
         "sources": sources,
         "tables": [{"name": "people", "columns": _COLUMNS}],
         "targets": {"people": {"type": "file", "format": "csv", "path": str(tmp_path / out)}},
@@ -276,8 +280,8 @@ def test_duckdb_source_two_tables(tmp_path: Path):
     db1 = _make_duckdb(tmp_path / "a.duckdb", table="people")  # ages 31, 4, 57
     db2 = _make_duckdb(tmp_path / "b.duckdb", table="staff", frame=staff)
     cfg = {
-        "version": 1,
-        "global_settings": {"seed": 42},
+        "version": 2,
+        "global_settings": {"seed": 42, "mask_secret_ref": TEST_MASK_SECRET_REF},
         "sources": {},
         "tables": [
             {"name": "people", "columns": _COLUMNS},
@@ -313,8 +317,8 @@ def test_duckdb_source_reserved_word_table_name(tmp_path: Path):
 
     db = _make_duckdb(tmp_path / "in.duckdb", table="order")
     cfg = {
-        "version": 1,
-        "global_settings": {"seed": 42},
+        "version": 2,
+        "global_settings": {"seed": 42, "mask_secret_ref": TEST_MASK_SECRET_REF},
         "sources": {},
         "tables": [{"name": "order", "columns": _COLUMNS}],
         "targets": {"order": {"type": "file", "format": "csv", "path": str(tmp_path / "out.csv")}},
@@ -335,8 +339,8 @@ def test_duckdb_source_malformed_tables_does_not_crash(tmp_path: Path):
 
     db = _make_duckdb(tmp_path / "in.duckdb")
     cfg = {
-        "version": 1,
-        "global_settings": {"seed": 42},
+        "version": 2,
+        "global_settings": {"seed": 42, "mask_secret_ref": TEST_MASK_SECRET_REF},
         "sources": {},
         "tables": 3,  # malformed on purpose
         "targets": {"people": {"type": "file", "format": "csv", "path": str(tmp_path / "o.csv")}},

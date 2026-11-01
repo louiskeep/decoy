@@ -1,8 +1,8 @@
 """End-to-end tests for `decoy report integrity` (relocated from the storm group, S4b).
 
-The CLI verb wraps `decoy_engine.storm.postmask.run_storm_post_mask` and
-returns the same JobStormReport-shaped payload the platform persists
-when a mask job declared `run_storm: true`. These cells pin the wire
+The CLI verb wraps `decoy_engine.verification.postmask.run_post_mask` and
+returns the same post-scan-integrity report payload the platform persists
+when a mask job declared `post_scan: {integrity: true}`. These cells pin the wire
 shape + the exit-code contract + the deprecation-free help body.
 """
 
@@ -76,7 +76,7 @@ def test_integrity_clean_pair_exits_zero(clean_pair: tuple[Path, Path]):
     assert "residual_pii" in report
     assert "fk_preservation" in report
     assert "policy_validation" in report
-    assert "schema_version" in report
+    assert report["schema_version"] == "post-scan-integrity/v2"
     # fail + error counts are zero on the clean path.
     assert report.get("fail_count", 0) == 0
     assert report.get("error_count", 0) == 0

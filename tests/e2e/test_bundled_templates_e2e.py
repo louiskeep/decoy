@@ -21,6 +21,7 @@ from typer.testing import CliRunner
 
 from decoy.__main__ import app
 from decoy.templates import get_template, list_templates
+from tests.keyed_secret import TEST_MASK_SECRET_REF
 
 runner = CliRunner()
 
@@ -71,6 +72,14 @@ _SAMPLE_VALUES: dict[str, list[str]] = {
 }
 
 _MASK_TEMPLATES = ("minimal", "hipaa", "pci", "gdpr")
+# Keyed templates need a mask secret, supplied the way a user does (`--mask-secret`);
+# test_keyed_secret_guidance.py pins this set against the engine's own classifier.
+_KEYED = frozenset({"hipaa", "pci", "gdpr"})
+
+
+def _run_args(name: str, config_path: Path) -> list[str]:
+    args = ["run", str(config_path)]
+    return [*args, "--mask-secret", TEST_MASK_SECRET_REF] if name in _KEYED else args
 
 
 def _materialize(name: str, tmp_path: Path) -> tuple[Path, Path, dict]:
@@ -108,13 +117,13 @@ class TestEveryTemplateValidatesAndRuns:
         ]
 
     @pytest.mark.parametrize("name", _MASK_TEMPLATES)
-    def test_mask_template_validate_then_run(self, name: str, tmp_path: Path):
+    def test_mask_template_validate_then_run(self, name: str, tmp_path: Path, mask_secret: str):
         config_path, out_path, _cfg = _materialize(name, tmp_path)
 
         validate = runner.invoke(app, ["validate", "config", str(config_path)])
         assert validate.exit_code == 0, f"{name}: validate failed:\n{validate.output}"
 
-        run = runner.invoke(app, ["run", str(config_path)])
+        run = runner.invoke(app, _run_args(name, config_path))
         assert run.exit_code == 0, f"{name}: run failed:\n{run.output}"
         assert out_path.exists(), f"{name}: no output written"
         out = pd.read_csv(out_path, dtype=str)
@@ -139,9 +148,9 @@ class TestEveryTemplateValidatesAndRuns:
 class TestRewrittenStrategySemantics:
     """Spot checks on the strategies the H5/H12 rewrite introduced."""
 
-    def test_hipaa_semantics(self, tmp_path: Path):
+    def test_hipaa_semantics(self, tmp_path: Path, mask_secret: str):
         config_path, out_path, _cfg = _materialize("hipaa", tmp_path)
-        assert runner.invoke(app, ["run", str(config_path)]).exit_code == 0
+        assert runner.invoke(app, _run_args("hipaa", config_path)).exit_code == 0
         out = pd.read_csv(out_path, dtype=str)
         src = pd.DataFrame({c: _SAMPLE_VALUES[c] for c in out.columns})
 
@@ -159,7 +168,7 @@ class TestRewrittenStrategySemantics:
         for col in ("device_id", "biometric_id", "health_plan_id", "license_number"):
             assert not set(out[col]) & set(src[col]), col
 
-    def test_pci_pan_luhn_valid_and_deterministic(self, tmp_path: Path):
+    def test_pci_pan_luhn_valid_and_deterministic(self, tmp_path: Path, mask_secret: str):
         def luhn_ok(number: str) -> bool:
             digits = [int(d) for d in number]
             odd = digits[-1::-2]
@@ -167,7 +176,7 @@ class TestRewrittenStrategySemantics:
             return (sum(odd) + sum(even)) % 10 == 0
 
         config_path, out_path, _cfg = _materialize("pci", tmp_path)
-        assert runner.invoke(app, ["run", str(config_path)]).exit_code == 0
+        assert runner.invoke(app, _run_args("pci", config_path)).exit_code == 0
         first = pd.read_csv(out_path, dtype=str)
         for masked, original in zip(first["card_number"], _SAMPLE_VALUES["card_number"]):
             assert masked != original
@@ -175,14 +184,14 @@ class TestRewrittenStrategySemantics:
             assert luhn_ok(masked), f"fpe PAN {masked} fails Luhn"
         # Deterministic: a second run with the same seed is byte-identical
         # for the keyed columns.
-        assert runner.invoke(app, ["run", str(config_path)]).exit_code == 0
+        assert runner.invoke(app, _run_args("pci", config_path)).exit_code == 0
         second = pd.read_csv(out_path, dtype=str)
         assert list(first["transaction_id"]) == list(second["transaction_id"])
         assert list(first["card_number"]) == list(second["card_number"])
 
-    def test_gdpr_device_id_pseudonymised(self, tmp_path: Path):
+    def test_gdpr_device_id_pseudonymised(self, tmp_path: Path, mask_secret: str):
         config_path, out_path, _cfg = _materialize("gdpr", tmp_path)
-        assert runner.invoke(app, ["run", str(config_path)]).exit_code == 0
+        assert runner.invoke(app, _run_args("gdpr", config_path)).exit_code == 0
         out = pd.read_csv(out_path, dtype=str)
         assert not set(out["device_id"]) & set(_SAMPLE_VALUES["device_id"])
         assert list(out["postal_code"]) == [v[:3] for v in _SAMPLE_VALUES["postal_code"]]
