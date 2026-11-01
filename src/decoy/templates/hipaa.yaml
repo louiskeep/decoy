@@ -27,13 +27,19 @@
 #     provider exists in the default registry, so this template uses
 #     redact, which is strictly safer (documented drift-guard exception).
 #
-# fpe and date_shift are keyed on the mask secret (--mask-secret or
-# global_settings.mask_secret_ref; required, see `decoy explain keys`):
+# fpe and date_shift are keyed on the mask secret (see the Keyed note below):
 # the same source value always maps to the same output within a
 # namespace, so joins and longitudinal analysis survive the mask.
 #
 # Tune to your data; some columns may not exist in your CSV (delete the
 # entry), others may need a different strategy.
+
+# Keyed: a mask secret is REQUIRED. Without one `decoy run` refuses with
+# keyed_strategy_requires_secret (there is no seed fallback). Supply a >=32-byte secret:
+#   export DECOY_MASK_SECRET=$(openssl rand -hex 32)
+#   decoy run pipeline.yaml --mask-secret env:DECOY_MASK_SECRET
+# or set global_settings.mask_secret_ref: "env:DECOY_MASK_SECRET" (or "file:/PATH").
+# See `decoy explain keys`.
 
 version: 2
 

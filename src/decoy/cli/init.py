@@ -22,12 +22,13 @@ from pathlib import Path
 
 import typer
 
+from decoy import _mask_secret_guidance
 from decoy.cli._init_inference import Inference, _infer_strategy_for_column
 from decoy.cli.completers import init_presets
 from decoy.cli.exit_codes import EXIT_RUNTIME, EXIT_USAGE
 from decoy.templates import get_template
 from decoy.templates import template_names as _template_names
-from decoy.ui.output import OutputMode, emit_json, setup_output
+from decoy.ui.output import OutputMode, OutputState, emit_json, setup_output
 from decoy.ui.theme import accent, code, error, hint, success
 
 _INIT_EPILOG = """\
@@ -284,8 +285,7 @@ def _build_scaffold_yaml(
         f"{column_blocks}\n"
     )
 
-    return (
-        f"{header}\n"
+    body = (
         "version: 2\n\n"
         "global_settings:\n"
         "  seed: 42\n\n"
@@ -293,6 +293,11 @@ def _build_scaffold_yaml(
         f"{tables_block}\n"
         f"{targets_block}"
     )
+    import yaml as _yaml
+
+    if _mask_secret_guidance.config_is_keyed(_yaml.safe_load(body)):
+        header += "#\n" + _mask_secret_guidance.YAML_COMMENT
+    return f"{header}\n{body}"
 
 
 def _validate_scaffold(body: str) -> None:
@@ -500,6 +505,7 @@ def _init(
             "read the # REVIEW: comments, edit as needed, then",
             code(f"decoy validate config {out}"),
         )
+        _print_keyed_hint(state, body)
         return
 
     # Validate --preset early so the error path is consistent across modes.
@@ -602,6 +608,14 @@ def _init(
     state.console.print()
     state.console.print(success("OK"), "wrote", code(str(out)), "(preset:", code(chosen) + ")")
     state.console.print(hint("Next:"), code(f"decoy validate config {out}"))
+    _print_keyed_hint(state, rendered)
+
+
+def _print_keyed_hint(state: OutputState, body: str) -> None:
+    import yaml as _yaml
+
+    if _mask_secret_guidance.config_is_keyed(_yaml.safe_load(body)):
+        state.console.print(hint("Keyed:"), _mask_secret_guidance.INIT_HINT, markup=False)
 
 
 _init.__doc__ = _init.__doc__

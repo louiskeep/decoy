@@ -17,11 +17,16 @@ from pathlib import Path
 from unittest import mock
 
 import pandas as pd
+import pytest
 import yaml
 from typer.testing import CliRunner
 
 from decoy.__main__ import app
 from decoy.cli.exit_codes import EXIT_USAGE
+from tests.keyed_secret import TEST_MASK_SECRET_REF
+
+# Keyed strategies need an admitted mask secret (engine 0.17.0); see tests/keyed_secret.py.
+pytestmark = pytest.mark.usefixtures("mask_secret")
 
 runner = CliRunner()
 
@@ -31,7 +36,7 @@ def _write_mask_config(tmp_path: Path) -> Path:
     pd.DataFrame({"customer_id": ["1", "2"], "name": ["a", "b"]}).to_csv(src, index=False)
     cfg = {
         "version": 2,
-        "global_settings": {"seed": 42},
+        "global_settings": {"seed": 42, "mask_secret_ref": TEST_MASK_SECRET_REF},
         "sources": {"customers": {"type": "file", "format": "csv", "path": str(src)}},
         "tables": [
             {
@@ -60,7 +65,7 @@ def _write_bad_config(tmp_path: Path) -> Path:
     """A config that fails at run time (config-level plan-compile error)."""
     cfg = {
         "version": 2,
-        "global_settings": {"seed": 1},
+        "global_settings": {"seed": 1, "mask_secret_ref": TEST_MASK_SECRET_REF},
         "sources": {"t": {"type": "file", "format": "csv", "path": "./missing.csv"}},
         "tables": [{"name": "t", "columns": [{"name": "x", "strategy": "faker", "provider": "no_such_provider"}]}],
         "targets": {"t": {"type": "file", "format": "csv", "path": str(tmp_path / "out.csv")}},

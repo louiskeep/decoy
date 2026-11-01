@@ -51,6 +51,10 @@ from typer.testing import CliRunner
 
 from decoy.__main__ import app
 from decoy.cli.exit_codes import EXIT_USAGE
+from tests.keyed_secret import TEST_MASK_SECRET_REF
+
+# Keyed strategies need an admitted mask secret (engine 0.17.0); see tests/keyed_secret.py.
+pytestmark = pytest.mark.usefixtures("mask_secret")
 
 runner = CliRunner()
 
@@ -105,7 +109,7 @@ def _hash_eligible_config(tmp_path: Path, *, source_name: str = "in.parquet") ->
     _write_parquet(src)
     config = {
         "version": 2,
-        "global_settings": {"seed": 42},
+        "global_settings": {"seed": 42, "mask_secret_ref": TEST_MASK_SECRET_REF},
         "sources": {"customers": {"type": "file", "format": "parquet", "path": str(src)}},
         "tables": [
             {
@@ -132,7 +136,7 @@ def _non_hash_parquet_config(tmp_path: Path) -> Path:
     _write_parquet(src)
     config = {
         "version": 2,
-        "global_settings": {"seed": 42},
+        "global_settings": {"seed": 42, "mask_secret_ref": TEST_MASK_SECRET_REF},
         "sources": {"customers": {"type": "file", "format": "parquet", "path": str(src)}},
         "tables": [
             {
@@ -161,7 +165,7 @@ def _csv_hash_config(tmp_path: Path) -> Path:
     )
     config = {
         "version": 2,
-        "global_settings": {"seed": 42},
+        "global_settings": {"seed": 42, "mask_secret_ref": TEST_MASK_SECRET_REF},
         "sources": {"customers": {"type": "file", "format": "csv", "path": str(src)}},
         "tables": [
             {
@@ -184,7 +188,7 @@ def _csv_hash_config(tmp_path: Path) -> Path:
 def _generate_only_config(tmp_path: Path) -> Path:
     config = {
         "version": 2,
-        "global_settings": {"seed": 42},
+        "global_settings": {"seed": 42, "mask_secret_ref": TEST_MASK_SECRET_REF},
         "sources": {},
         "tables": [
             {
@@ -326,7 +330,7 @@ def test_broken_companion_does_not_affect_a_live_vault_run(
     pd.DataFrame({"id": ["a", "b"], "email": ["a@x.com", "b@x.com"]}).to_parquet(src, index=False)
     config = {
         "version": 2,
-        "global_settings": {"seed": 42},
+        "global_settings": {"seed": 42, "mask_secret_ref": TEST_MASK_SECRET_REF},
         "sources": {"customers": {"type": "file", "format": "parquet", "path": str(src)}},
         "tables": [
             {
@@ -457,7 +461,7 @@ def test_native_require_refuses_a_live_vault_writer(tmp_path: Path):
     pd.DataFrame({"id": ["a", "b"], "email": ["a@x.com", "b@x.com"]}).to_parquet(src, index=False)
     config = {
         "version": 2,
-        "global_settings": {"seed": 42},
+        "global_settings": {"seed": 42, "mask_secret_ref": TEST_MASK_SECRET_REF},
         "sources": {"customers": {"type": "file", "format": "parquet", "path": str(src)}},
         "tables": [
             {

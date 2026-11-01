@@ -17,6 +17,7 @@ from typer.testing import CliRunner
 
 from decoy.__main__ import app
 from decoy.cli.exit_codes import EXIT_USAGE
+from tests.keyed_secret import TEST_MASK_SECRET_REF
 
 pytest.importorskip("cryptography")
 
@@ -34,7 +35,7 @@ def _pipeline(tmp_path: Path, rows: int = 30) -> Path:
     ).to_csv(src, index=False)
     cfg = {
         "version": 2,
-        "global_settings": {"seed": 42},
+        "global_settings": {"seed": 42, "mask_secret_ref": TEST_MASK_SECRET_REF},
         "sources": {
             "accounts": {"type": "file", "format": "csv", "path": str(src)}
         },
@@ -66,7 +67,7 @@ def _pipeline(tmp_path: Path, rows: int = 30) -> Path:
 
 
 @pytest.fixture()
-def vault_setup(tmp_path: Path):
+def vault_setup(tmp_path: Path, mask_secret: str):
     """Run a mask pipeline with --vault; yield (cfg_path, vault_path)."""
     cfg = _pipeline(tmp_path)
     vault = tmp_path / "vault.bin"

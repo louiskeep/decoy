@@ -34,7 +34,13 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 
 import pandas as pd
+import pytest
 import yaml
+
+from tests.keyed_secret import TEST_MASK_SECRET_REF
+
+# Keyed strategies need an admitted mask secret (engine 0.17.0); see tests/keyed_secret.py.
+pytestmark = pytest.mark.usefixtures("mask_secret")
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 _WEBHOOK_SECRET = "sprint5-live-webhook-proof-secret"
@@ -79,7 +85,7 @@ def _write_tiny_pipeline(tmp_path: Path) -> Path:
     )
     cfg = {
         "version": 2,
-        "global_settings": {"seed": 7},
+        "global_settings": {"seed": 7, "mask_secret_ref": TEST_MASK_SECRET_REF},
         "sources": {"customers": {"type": "file", "format": "csv", "path": str(src)}},
         "tables": [
             {

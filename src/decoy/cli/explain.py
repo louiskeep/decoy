@@ -188,7 +188,7 @@ _TOPICS: dict[str, _Topic] = {
     ),
     "keys": _Topic(
         name="keys",
-        summary="Two separate key mechanisms: --master-key for generation, --mask-secret/mask_secret_ref for masking.",
+        summary="Two separate key mechanisms: --master-key for generation; a mask secret (--mask-secret/mask_secret_ref) is required for keyed masking.",
         body=(
             "Decoy has two independent keyed-determinism mechanisms. They do not share a\n"
             "secret and setting one has no effect on the other.\n\n"
@@ -225,7 +225,12 @@ _TOPICS: dict[str, _Topic] = {
             "   `deterministic: true` or `vault: true` column, ...) with no mask secret is\n"
             "   REJECTED before any data is read (keyed_strategy_requires_secret). There is\n"
             "   no fallback to the public job_seed: that would let anyone with the config\n"
-            "   reproduce the mapping."
+            "   reproduce the mapping. The bundled gdpr, hipaa and pci templates are keyed.\n"
+            "   Make a throwaway secret for local development:\n"
+            "     export DECOY_MASK_SECRET=$(openssl rand -hex 32)\n"
+            "     decoy run pipeline.yaml --mask-secret env:DECOY_MASK_SECRET\n"
+            "   `decoy unmask` reads the secret from global_settings.mask_secret_ref only;\n"
+            "   it must be the same secret the mask run used."
         ),
         see_also=("decoy run --help",),
     ),
@@ -240,8 +245,9 @@ _TOPICS: dict[str, _Topic] = {
             "The vault is an encrypted source-to-masked map for the vaulted columns.\n"
             "Recover the originals with:\n\n"
             "  decoy unmask masked.csv --vault vault.bin --table customers -o recovered.csv\n\n"
-            "The vault key is derived from the run's seed, so unmask needs the SAME\n"
-            "config (seed + namespace) that produced it. Store the vault separately\n"
+            "The vault key is derived from the mask secret, so unmask needs a config\n"
+            "whose global_settings.mask_secret_ref names the SAME secret (and the same\n"
+            "namespaces) the run used. Store the vault separately\n"
             "from the masked output and treat it as sensitive -- together they\n"
             "re-identify every vaulted value. Needs the engine's vault extra\n"
             "(cryptography). FPE columns are reversible on their own and do not use\n"

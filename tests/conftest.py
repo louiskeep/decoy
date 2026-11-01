@@ -17,3 +17,6 @@ import os
 os.environ.pop("FORCE_COLOR", None)
 os.environ["NO_COLOR"] = "1"
 os.environ["TERM"] = "dumb"
+
+# The shared keyed-strategy secret fixture (`mask_secret`); see tests/keyed_secret.py.
+from tests.keyed_secret import mask_secret  # noqa: F401

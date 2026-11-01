@@ -17,6 +17,13 @@
 #     device always maps to the same token, so device-level analytics
 #     survive without exposing the identifier.
 
+# Keyed: a mask secret is REQUIRED. Without one `decoy run` refuses with
+# keyed_strategy_requires_secret (there is no seed fallback). Supply a >=32-byte secret:
+#   export DECOY_MASK_SECRET=$(openssl rand -hex 32)
+#   decoy run pipeline.yaml --mask-secret env:DECOY_MASK_SECRET
+# or set global_settings.mask_secret_ref: "env:DECOY_MASK_SECRET" (or "file:/PATH").
+# See `decoy explain keys`.
+
 version: 2
 
 global_settings:

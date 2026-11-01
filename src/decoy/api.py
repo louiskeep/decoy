@@ -31,7 +31,7 @@ from typing import Any
 import pandas as pd
 import pyarrow as pa
 
-from decoy import _native_gate
+from decoy import _mask_secret_guidance, _native_gate
 from decoy.cli.extras import UnsupportedCloudEndpointError
 from decoy.cli.run import (
     _is_valid_mask_secret_ref,
@@ -501,14 +501,20 @@ def mask(
             _native_gate.run_pipeline_kwargs(gate_result)
         )
 
-        result = run_pipeline(
-            config_dict,
-            sources,
-            engine_version=engine_version,
-            derive_key=resolver,
-            instance_default_locale=instance_locale,
-            **extra_run_pipeline_kwargs,
-        )
+        try:
+            result = run_pipeline(
+                config_dict,
+                sources,
+                engine_version=engine_version,
+                derive_key=resolver,
+                instance_default_locale=instance_locale,
+                **extra_run_pipeline_kwargs,
+            )
+        except Exception as exc:
+            # The documented error type, with the `mask()` remedy instead of the engine's.
+            if _mask_secret_guidance.is_keyed_secret_refusal(exc):
+                raise MaskSecretConfigError(_mask_secret_guidance.API) from None
+            raise
 
         route = _native_gate.classify_route(
             chunked=False,

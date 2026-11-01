@@ -15,6 +15,8 @@ import sys
 from pathlib import Path
 from typing import Any
 
+from tests.keyed_secret import TEST_MASK_SECRET_REF, secret_env
+
 SARIF_SCHEMA_PATH = Path(__file__).parent / "fixtures" / "schemas" / "sarif-schema-2.1.0.json"
 
 MANIFEST_NAME = ".decoy-ci.yaml"
@@ -169,7 +171,11 @@ def ci_manifest(
 def make_evidence(repo: Path, rel: str = "build/evidence.json") -> Path:
     """Produce a REAL cli-local-1 evidence manifest by running the pipeline."""
     (repo / Path(rel).parent).mkdir(parents=True, exist_ok=True)
-    proc = run_decoy(["run", "pipeline.yaml", "--evidence-out", rel], repo)
+    proc = run_decoy(
+        ["run", "pipeline.yaml", "--evidence-out", rel, "--mask-secret", TEST_MASK_SECRET_REF],
+        repo,
+        env=secret_env(),
+    )
     assert proc.returncode == 0, proc.stderr[-2000:]
     return repo / rel
 

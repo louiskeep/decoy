@@ -234,7 +234,7 @@ def test_init_scaffold_round_trips_date_shift_truncate_fpe(
 
 
 def test_init_scaffold_actually_runs_and_pan_stays_luhn_valid(
-    csv_with_date_zip_pan_id: Path, tmp_path: Path
+    csv_with_date_zip_pan_id: Path, tmp_path: Path, mask_secret: str
 ):
     """Two-model-gate HIGH finding: `PipelineConfig.model_validate` passing
     (the assertion above) is a WEAKER property than the scaffold being
@@ -259,7 +259,8 @@ def test_init_scaffold_actually_runs_and_pan_stays_luhn_valid(
     )
     assert init_result.exit_code == 0, init_result.stdout + init_result.stderr
 
-    run_result = runner.invoke(app, ["run", str(out)])
+    # The scaffold is keyed (hash/fpe/date_shift), so it runs the way the init hint says.
+    run_result = runner.invoke(app, ["run", str(out), "--mask-secret", mask_secret])
     assert run_result.exit_code == 0, (
         f"scaffold failed to run (exit {run_result.exit_code}): {run_result.output}"
     )

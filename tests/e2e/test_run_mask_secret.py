@@ -6,9 +6,8 @@ KeyProvider on both the plain (`run_pipeline`) and `--chunked` paths, is
 independent of `--master-key` (which is generation-only), and must not
 silently override an already-configured YAML `mask_secret_ref`.
 
-See also: tests/e2e/test_unmask_command.py (the DE-02 job_seed-fallback
-"reversed_unverified" status this flag is meant to upgrade away from),
-tests/e2e/test_run_chunked.py (the chunked byte-parity contract this
+See also: tests/e2e/test_keyed_secret_guidance.py (what a keyed run with no
+secret prints), tests/e2e/test_run_chunked.py (the chunked byte-parity contract this
 flag must not break).
 """
 
@@ -84,7 +83,9 @@ def _simulate_pre_de02_engine():
             sys.modules[_KEYPROVIDER_MOD] = saved
 
 
-def _mask_pipeline(tmp_path: Path, *, mask_secret_ref: str | None = None, rows: int = 50) -> Path:
+def _mask_pipeline(
+    tmp_path: Path, *, mask_secret_ref: str | None = None, rows: int = 50, strategy: str = "fpe"
+) -> Path:
     src = tmp_path / "accounts.csv"
     pd.DataFrame(
         {
@@ -108,7 +109,9 @@ def _mask_pipeline(tmp_path: Path, *, mask_secret_ref: str | None = None, rows: 
                         "strategy": "fpe",
                         "namespace": "ssn_identity",
                         "provider_config": {"charset": "digits"},
-                    },
+                    }
+                    if strategy == "fpe"
+                    else {"name": "ssn", "strategy": strategy},
                 ],
             }
         ],
@@ -176,24 +179,28 @@ def _mixed_pipeline(tmp_path: Path, *, mask_secret_ref: str | None = None) -> Pa
 
 
 class TestMaskSecretKeyedOutput:
-    def test_keyed_output_differs_from_unkeyed_run(self, tmp_path: Path) -> None:
-        (tmp_path / "unkeyed").mkdir(exist_ok=True)
-        unkeyed_cfg = _mask_pipeline(tmp_path / "unkeyed")
-        result = runner.invoke(app, ["run", str(unkeyed_cfg)])
-        assert result.exit_code == 0, result.output
-        unkeyed_out = (tmp_path / "unkeyed" / "out.csv").read_bytes()
+    def test_no_secret_keyed_run_refuses_with_the_registered_code(self, tmp_path: Path) -> None:
+        cfg = _mask_pipeline(tmp_path)
+        result = runner.invoke(app, ["run", str(cfg), "--json"])
+        assert result.exit_code == EXIT_USAGE, result.output
+        from decoy_engine import reasons
 
-        (tmp_path / "keyed").mkdir(exist_ok=True)
-        keyed_cfg = _mask_pipeline(tmp_path / "keyed")
-        result = runner.invoke(
-            app,
-            ["run", str(keyed_cfg), "--mask-secret", "env:DECOY_MASK_SECRET"],
-            env={"DECOY_MASK_SECRET": _SECRET_A},
-        )
-        assert result.exit_code == 0, result.output
-        keyed_out = (tmp_path / "keyed" / "out.csv").read_bytes()
+        code = reasons.runtime.KEYED_STRATEGY_REQUIRES_SECRET
+        assert reasons.is_registered(code)
+        assert json.loads(result.stdout)["error"].startswith(f"{code}: ")
+        assert not (tmp_path / "out.csv").exists()
 
-        assert keyed_out != unkeyed_out
+    def test_secret_bearing_run_round_trips_through_unmask(self, tmp_path: Path) -> None:
+        cfg = _mask_pipeline(tmp_path, mask_secret_ref="env:DECOY_MASK_SECRET")
+        env = {"DECOY_MASK_SECRET": _SECRET_A}
+        assert runner.invoke(app, ["run", str(cfg)], env=env).exit_code == 0
+        masked = pd.read_csv(tmp_path / "out.csv", dtype=str)
+        original = pd.read_csv(tmp_path / "accounts.csv", dtype=str)
+        assert (masked["ssn"] != original["ssn"]).all()
+        result = runner.invoke(app, ["unmask", str(cfg), str(tmp_path / "out.csv")], env=env)
+        assert result.exit_code == 0, result.output
+        recovered = pd.read_csv(tmp_path / "out.unmasked.csv", dtype=str)
+        assert list(recovered["ssn"]) == list(original["ssn"])
 
     def test_same_secret_is_byte_identical_across_runs(self, tmp_path: Path) -> None:
         (tmp_path / "run1").mkdir()
@@ -561,31 +568,36 @@ class TestMaskSecretYamlWorkflow:
         )
         keyed_out = (tmp_path / "keyed" / "out.csv").read_bytes()
 
-        # And it must actually be keyed (differs from an unkeyed run).
-        unkeyed_cfg = _mask_pipeline(tmp_path / "unkeyed")
-        assert runner.invoke(app, ["run", str(unkeyed_cfg)]).exit_code == 0
-        unkeyed_out = (tmp_path / "unkeyed" / "out.csv").read_bytes()
-        assert keyed_out != unkeyed_out
+        # And it must actually be keyed by that secret: the same secret through the flag
+        # gives the same bytes, a different secret gives different bytes.
+        (tmp_path / "flag").mkdir()
+        (tmp_path / "other").mkdir()
+        flag_cfg = _mask_pipeline(tmp_path / "flag")
+        other_cfg = _mask_pipeline(tmp_path / "other", mask_secret_ref="env:DECOY_MASK_SECRET")
+        flag_args = ["run", str(flag_cfg), "--mask-secret", "env:DECOY_MASK_SECRET"]
+        assert runner.invoke(app, flag_args, env={"DECOY_MASK_SECRET": _SECRET_A}).exit_code == 0
+        assert runner.invoke(app, ["run", str(other_cfg)], env={"DECOY_MASK_SECRET": _SECRET_B}).exit_code == 0
+        assert keyed_out == (tmp_path / "flag" / "out.csv").read_bytes()
+        assert keyed_out != (tmp_path / "other" / "out.csv").read_bytes()
 
     def test_exported_env_var_is_not_absorbed_as_flag_value(self, tmp_path: Path) -> None:
         """With `--mask-secret`'s envvar removed, exporting DECOY_MASK_SECRET
         (no flag, no YAML ref) must have ZERO effect on the run -- the raw
         secret is not silently absorbed as the flag value and turned into a
-        (malformed) mask_secret_ref."""
+        mask_secret_ref. With no ref anywhere a keyed run is refused, so the
+        exported variable must leave that refusal byte-identical."""
         (tmp_path / "with_env").mkdir()
         (tmp_path / "no_env").mkdir()
         cfg_with_env = _mask_pipeline(tmp_path / "with_env")
         cfg_no_env = _mask_pipeline(tmp_path / "no_env")
 
-        r_env = runner.invoke(app, ["run", str(cfg_with_env)], env={"DECOY_MASK_SECRET": _SECRET_A})
-        assert r_env.exit_code == 0, r_env.output
-        r_noenv = runner.invoke(app, ["run", str(cfg_no_env)], env={})
-        assert r_noenv.exit_code == 0, r_noenv.output
-
-        # Byte-identical: the exported env var had no effect (not absorbed).
-        assert (tmp_path / "with_env" / "out.csv").read_bytes() == (
-            tmp_path / "no_env" / "out.csv"
-        ).read_bytes()
+        r_env = runner.invoke(app, ["run", str(cfg_with_env), "--json"], env={"DECOY_MASK_SECRET": _SECRET_A})
+        r_noenv = runner.invoke(app, ["run", str(cfg_no_env), "--json"], env={})
+        assert r_env.exit_code == r_noenv.exit_code == EXIT_USAGE, (r_env.output, r_noenv.output)
+        assert json.loads(r_env.stdout)["error"] == json.loads(r_noenv.stdout)["error"]
+        assert "keyed_strategy_requires_secret" in json.loads(r_env.stdout)["error"]
+        assert _SECRET_A not in r_env.output
+        assert not (tmp_path / "with_env" / "out.csv").exists()
 
 
 class TestMaskSecretChunked:
@@ -621,19 +633,28 @@ class TestMaskSecretChunked:
         chunked_out = (tmp_path / "chunked" / "out.csv").read_bytes()
         assert plain_out == chunked_out
 
-        # Sanity: the chunked+keyed run must differ from an unkeyed run,
+        # Sanity: a chunked run under a different secret must differ,
         # proving --mask-secret was actually consulted on the chunked path
         # (not silently ignored while still passing the byte-parity check
         # above for an unrelated reason).
-        (tmp_path / "chunked_unkeyed").mkdir()
-        unkeyed_cfg = _mask_pipeline(tmp_path / "chunked_unkeyed", rows=200)
-        r_unkeyed = runner.invoke(
+        (tmp_path / "chunked_other").mkdir()
+        other_cfg = _mask_pipeline(tmp_path / "chunked_other", rows=200)
+        r_other = runner.invoke(
             app,
-            ["run", str(unkeyed_cfg), "--chunked", "--chunk-size", "37"],
+            [
+                "run",
+                str(other_cfg),
+                "--chunked",
+                "--chunk-size",
+                "37",
+                "--mask-secret",
+                "env:DECOY_MASK_SECRET",
+            ],
+            env={"DECOY_MASK_SECRET": _SECRET_B},
         )
-        assert r_unkeyed.exit_code == 0, r_unkeyed.output
-        unkeyed_out = (tmp_path / "chunked_unkeyed" / "out.csv").read_bytes()
-        assert unkeyed_out != chunked_out
+        assert r_other.exit_code == 0, r_other.output
+        other_out = (tmp_path / "chunked_other" / "out.csv").read_bytes()
+        assert other_out != chunked_out
 
 
 class TestPreDE02EngineGuard:
@@ -702,17 +723,15 @@ class TestPreDE02EngineGuard:
     def test_probe_inert_without_secret_run_succeeds(self, tmp_path: Path) -> None:
         """The guard must not over-fire: with NO mask secret configured, the
         `if effective_ref:` gate is False, so the keyprovider probe is never
-        attempted and a plain unkeyed run succeeds.
+        attempted and an unkeyed run succeeds. The column is redacted because a
+        keyed strategy with no secret is refused by the engine itself
+        (TestMaskSecretKeyedOutput), which would mask what this test checks.
 
         This runs WITHOUT the pre-DE-02 block on purpose: the engine itself
         does a legitimate lazy `import decoy_engine.keyprovider` inside
         run_pipeline (execution/_pipeline.py), so blocking the module would
-        break the run for a reason unrelated to the CLI guard. The point here
-        is only that the guard leaves a no-secret run alone -- the guard is
-        purely gated on a configured ref, which the refused tests above
-        exercise. (Broader no-secret success coverage: TestMaskSecretKeyedOutput
-        unkeyed runs, tests/e2e/test_run_command.py.)"""
-        cfg = _mask_pipeline(tmp_path)  # no mask_secret_ref, no flag
+        break the run for a reason unrelated to the CLI guard."""
+        cfg = _mask_pipeline(tmp_path, strategy="redact")  # no mask_secret_ref, no flag
         result = runner.invoke(app, ["run", str(cfg)], env={})
         assert result.exit_code == 0, (
             f"an unkeyed run must not be blocked by the mask-secret probe; "

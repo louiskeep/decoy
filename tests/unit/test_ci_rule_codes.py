@@ -4,6 +4,12 @@ Two halves: an unknown code carrying a canary reaches none of the three report f
 and every code the pinned engine, the CLI gate, and the evidence verifier can produce today
 is in the allowlist -- so a new upstream code fails here and forces an explicit decision
 instead of silently collapsing to `unknown_code`.
+
+The engine's code set comes from its published reason registry
+(`decoy_engine.reasons.manifest()`), the source producers reference since 0.16.0. A source
+scan alone went blind once producers switched from string literals to registry symbols, so
+the literal scan only supplements the registry (codes raised outside it, such as native
+companion statuses).
 """
 
 from __future__ import annotations
@@ -33,18 +39,6 @@ CANARY = "rulecanary7d41e0"
 _CODE_TOKEN = re.compile(r"^[a-z][a-z0-9_.-]*$")
 _CODE_NAME = re.compile(r"(^|_)(CODES?|REASONS?)$")
 
-# f-string `code=` sites in the pinned engine, each with the decision taken for it. The
-# expansions are in the allowlist; a run-time-only site the gate cannot reach stays out
-# (it would map to UNKNOWN_CODE). A new dynamic site fails until it is added here.
-_ENGINE_DYNAMIC_CODES: dict[str, tuple[str, ...]] = {
-    "plan/_checks_grouped_series.py": (
-        "grouped_series_missing_group_by_ref",
-        "grouped_series_missing_order_by_ref",
-    ),
-    "execution/_sequential_native.py": (),
-}
-
-
 # ---- source scanners --------------------------------------------------------------------
 
 
@@ -62,23 +56,24 @@ def _call_name(call: ast.Call) -> str:
     return func.attr if isinstance(func, ast.Attribute) else getattr(func, "id", "")
 
 
-def _engine_codes() -> tuple[set[str], set[str]]:
-    """Literal codes the engine raises or reports, plus the files with f-string codes."""
+def _registry_codes() -> set[str]:
+    """Every wire code in the engine's published reason registry, tombstones included."""
+    from decoy_engine import reasons
+
+    return {entry["code"] for entry in reasons.manifest()["entries"]}  # type: ignore[index, union-attr]
+
+
+def _engine_literal_codes() -> set[str]:
+    """Literal codes the engine raises or reports outside the registry."""
     import decoy_engine
 
     root = Path(decoy_engine.__file__).parent
     codes: set[str] = set()
-    dynamic: set[str] = set()
     for path in root.rglob("*.py"):
-        rel = path.relative_to(root).as_posix()
         for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
             values: list[ast.AST] = []
             if isinstance(node, ast.Call):
-                for kw in node.keywords:
-                    if kw.arg in ("code", "reason"):
-                        values.append(kw.value)
-                        if isinstance(kw.value, ast.JoinedStr) and kw.arg == "code":
-                            dynamic.add(rel)
+                values += [kw.value for kw in node.keywords if kw.arg in ("code", "reason")]
                 name = _call_name(node)
                 if node.args and (name.endswith("Error") or name.endswith("Exception")):
                     values.append(node.args[0])
@@ -88,7 +83,16 @@ def _engine_codes() -> tuple[set[str], set[str]]:
                     values.append(node.value)
             for value in values:
                 codes.update(s for s in _literals(value) if _CODE_TOKEN.match(s))
-    return codes, dynamic
+    return codes
+
+
+def _engine_codes() -> set[str]:
+    return _registry_codes() | _engine_literal_codes()
+
+
+def _unlisted(codes: set[str]) -> list[str]:
+    """Codes `decoy ci` would emit as UNKNOWN_CODE."""
+    return sorted(c for c in codes if rule_code(c, VALIDATION_CODES) == UNKNOWN_CODE)
 
 
 def _module_tree(module: object) -> ast.AST:
@@ -153,14 +157,23 @@ def _pydantic_error_types() -> set[str]:
 # ---- completeness: a new upstream code fails the build ---------------------------------
 
 
+def test_the_engine_code_set_is_not_vacuous() -> None:
+    from decoy_engine import reasons
+
+    registry = {spec.code for spec in reasons.specs()}
+    assert registry, "the engine registry is empty; the source of truth is broken"
+    codes = _engine_codes()
+    assert registry <= codes and len(codes) >= len(registry)
+    assert all(reasons.is_registered(c) for c in _registry_codes())
+    # A seeded code the allowlist does not know is reported, not absorbed.
+    canary = "canary_code_absent_from_allowlist"
+    assert canary not in VALIDATION_CODES and not reasons.is_registered(canary)
+    assert rule_code(canary, VALIDATION_CODES) == UNKNOWN_CODE
+    assert _unlisted(codes | {canary}) == sorted({canary, *_unlisted(codes)})
+
+
 def test_every_engine_code_is_allowlisted() -> None:
-    codes, dynamic = _engine_codes()
-    assert codes, "the engine scan found nothing; the scanner is broken"
-    assert dynamic == set(_ENGINE_DYNAMIC_CODES), (
-        "a new f-string engine code site needs an explicit allowlist decision"
-    )
-    expanded = {c for group in _ENGINE_DYNAMIC_CODES.values() for c in group}
-    assert sorted((codes | expanded) - VALIDATION_CODES) == []
+    assert _unlisted(_engine_codes()) == []
 
 
 def test_every_pydantic_error_type_is_allowlisted() -> None:

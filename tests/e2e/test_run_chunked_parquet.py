@@ -17,10 +17,15 @@ from pathlib import Path
 import pandas as pd
 import pyarrow as pa
 import pyarrow.parquet as pq
+import pytest
 import yaml
 from typer.testing import CliRunner
 
 from decoy.__main__ import app
+from tests.keyed_secret import TEST_MASK_SECRET_REF
+
+# Keyed strategies need an admitted mask secret (engine 0.17.0); see tests/keyed_secret.py.
+pytestmark = pytest.mark.usefixtures("mask_secret")
 
 runner = CliRunner()
 
@@ -55,7 +60,7 @@ def _pipeline(tmp_path: Path, *, src_fmt: str, tgt_fmt: str, rows: int = 200) ->
         df.to_csv(src, index=False)
     cfg = {
         "version": 2,
-        "global_settings": {"seed": 42},
+        "global_settings": {"seed": 42, "mask_secret_ref": TEST_MASK_SECRET_REF},
         "sources": {"accounts": {"type": "file", "format": src_fmt, "path": str(src)}},
         "tables": [{"name": "accounts", "columns": _COLUMNS}],
         "targets": {

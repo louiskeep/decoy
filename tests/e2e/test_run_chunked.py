@@ -11,11 +11,16 @@ from __future__ import annotations
 from pathlib import Path
 
 import pandas as pd
+import pytest
 import yaml
 from typer.testing import CliRunner
 
 from decoy.__main__ import app
 from decoy.cli.exit_codes import EXIT_USAGE
+from tests.keyed_secret import TEST_MASK_SECRET_REF
+
+# Keyed strategies need an admitted mask secret (engine 0.17.0); see tests/keyed_secret.py.
+pytestmark = pytest.mark.usefixtures("mask_secret")
 
 runner = CliRunner()
 
@@ -30,7 +35,7 @@ def _pipeline(tmp_path: Path, columns: list[dict], rows: int = 200) -> Path:
     ).to_csv(src, index=False)
     cfg = {
         "version": 2,
-        "global_settings": {"seed": 42},
+        "global_settings": {"seed": 42, "mask_secret_ref": TEST_MASK_SECRET_REF},
         "sources": {"accounts": {"type": "file", "format": "csv", "path": str(src)}},
         "tables": [{"name": "accounts", "columns": columns}],
         "targets": {
