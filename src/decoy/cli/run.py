@@ -143,6 +143,19 @@ class _ChunkedReportFlagError(Exception):
     loudly rather than silently dropping the requested report (plan P2-3)."""
 
 
+class _ChunkedVaultError(Exception):
+    """--chunked with --vault; user error (exits EXIT_USAGE).
+
+    A chunked stream writes each output chunk before the vault that re-identifies it
+    exists, so the engine refuses a chunked entry with a vault writer
+    (`vault_requires_resident_output`). The CLI refuses first, before any work."""
+
+
+_CHUNKED_VAULT_MESSAGE = (
+    "chunked runs cannot write a token vault; rerun without --chunked or without --vault"
+)
+
+
 class _MaskSecretUsageError(Exception):
     """--mask-secret AND YAML mask_secret_ref both set; user error (exits EXIT_USAGE)."""
 
@@ -278,7 +291,7 @@ def run(
             "vault: true columns) to this path. The vault plus the config "
             "re-identify every vaulted value: store them separately and "
             "never alongside the masked output. Needs the engine's vault "
-            "extra (cryptography)."
+            "extra (cryptography). Not supported with --chunked."
         ),
     ),
     key_label: str = typer.Option(
@@ -713,6 +726,8 @@ def run(
                     "ExecutionResult, which the streaming --chunked path does not "
                     "produce. Run without --chunked to use these flags."
                 )
+            if chunked and vault is not None:
+                raise _ChunkedVaultError(_CHUNKED_VAULT_MESSAGE)
 
             # The engine has no bounded fixed-width iterator, so a chunked
             # run cannot stream one. Refuse before any table is written
@@ -791,7 +806,7 @@ def run(
                 vault_writer = vault_writer_for_config(config_dict)
 
             if chunked:
-                _run_chunked_mask(config_dict, config.parent, chunk_size, vault_writer)
+                _run_chunked_mask(config_dict, config.parent, chunk_size)
                 _native_route = _native_gate.classify_route(
                     chunked=True,
                     any_generate=any_generate,
@@ -952,6 +967,7 @@ def run(
                         _ChunkedGenerateError,
                         _ChunkedFixedWidthError,
                         _ChunkedReportFlagError,
+                        _ChunkedVaultError,
                         _VaultUsageError,
                         _MaskSecretUsageError,
                         # A fixable --duckdb-source flag (bad value, missing DB,
@@ -1399,7 +1415,6 @@ def _run_chunked_mask(
     config_dict: dict,
     base_dir: Path,
     chunk_size: int,
-    vault_writer=None,
 ) -> None:
     """WS4 chunked mask path: stream each mask table's source through
     `decoy_engine.run_mask_pipeline_chunked`, writing output per chunk, on
@@ -1445,7 +1460,6 @@ def _run_chunked_mask(
             iter_source_chunks(name, src_spec, base_dir, chunk_size),
             table=name,
             engine_version=engine_version,
-            vault_writer=vault_writer,
         )
         _write_chunked_output(
             masked_iter, out_path, src_path, src_is_parquet=src_spec.get("format") == "parquet"

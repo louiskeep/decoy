@@ -137,3 +137,50 @@ class TestRunChunked:
         result = runner.invoke(app, ["run", str(cfg), "--chunked"])
         assert result.exit_code == EXIT_USAGE
         assert "pool_size" in result.output
+
+
+_CHUNKED_VAULT_REFUSAL = (
+    "chunked runs cannot write a token vault; rerun without --chunked or without --vault"
+)
+
+
+@pytest.mark.parametrize("mode", ["text", "json"])
+def test_chunked_with_vault_is_refused_before_any_output(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, mode: str
+) -> None:
+    """The engine (B-6) refuses a chunked entry with a vault writer: a chunked stream
+    publishes output before the vault it re-identifies by exists. The CLI says so first,
+    before admission, the vault writer or any engine entry runs."""
+    import decoy_engine
+    import decoy_engine.secret_providers
+
+    calls: list[str] = []
+
+    def _spy(name: str):
+        def _called(*args, **kwargs):
+            calls.append(name)
+            raise AssertionError(f"{name} must not run")
+
+        return _called
+
+    for name in ("run_mask_pipeline_chunked", "run_pipeline", "vault_writer_for_config"):
+        monkeypatch.setattr(decoy_engine, name, _spy(name))
+    monkeypatch.setattr(decoy_engine.secret_providers, "admit_mask_key", _spy("admit_mask_key"))
+
+    cfg = _pipeline(
+        tmp_path, [{"name": "email", "strategy": "hash", "namespace": "e", "vault": True}]
+    )
+    vault = tmp_path / "vault.bin"
+    argv = ["run", str(cfg), "--chunked", "--vault", str(vault)]
+    result = runner.invoke(app, [*argv, "--json"] if mode == "json" else argv)
+
+    assert result.exit_code == EXIT_USAGE, result.output
+    assert calls == []
+    assert not (tmp_path / "out.csv").exists()
+    assert not vault.exists()
+    if mode == "json":
+        import json
+
+        assert json.loads(result.stdout)["error"] == _CHUNKED_VAULT_REFUSAL
+    else:
+        assert _CHUNKED_VAULT_REFUSAL in " ".join(result.output.split())
