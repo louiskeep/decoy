@@ -90,6 +90,47 @@ def _engine_codes() -> set[str]:
     return _registry_codes() | _engine_literal_codes()
 
 
+# Computed `code=` sites in the engine, each with the decision taken for it: the codes it can
+# produce (each must be allowlisted). A computed code is invisible to the registry and the
+# literal scan, so a new one would silently collapse to UNKNOWN_CODE; it fails here until it
+# is listed. Engine 0.17.0 has none (0.15.1's two moved into the registry).
+_APPROVED_DYNAMIC_CODE_SITES: dict[str, tuple[str, ...]] = {}
+
+
+def _is_str(node: ast.AST) -> bool:
+    return isinstance(node, ast.Constant) and isinstance(node.value, str)
+
+
+def _is_computed_string(value: ast.AST) -> bool:
+    """An f-string, `"...".format(...)`, or `%` / `+` string building, at any depth."""
+    for node in ast.walk(value):
+        if isinstance(node, ast.JoinedStr):
+            return True
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute):
+            if node.func.attr == "format" and _is_str(node.func.value):
+                return True
+        if isinstance(node, ast.BinOp) and isinstance(node.op, (ast.Mod, ast.Add)):
+            if _is_str(node.left) or _is_str(node.right):
+                return True
+    return False
+
+
+def _dynamic_code_sites(root: Path) -> dict[str, list[int]]:
+    """Files under `root` with a computed `code=` argument, and the lines."""
+    sites: dict[str, list[int]] = {}
+    for path in sorted(root.rglob("*.py")):
+        for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
+            if isinstance(node, ast.Call):
+                for kw in node.keywords:
+                    if kw.arg == "code" and _is_computed_string(kw.value):
+                        sites.setdefault(path.relative_to(root).as_posix(), []).append(node.lineno)
+    return sites
+
+
+def _unapproved_dynamic_sites(root: Path) -> list[str]:
+    return sorted(set(_dynamic_code_sites(root)) - set(_APPROVED_DYNAMIC_CODE_SITES))
+
+
 def _unlisted(codes: set[str]) -> list[str]:
     """Codes `decoy ci` would emit as UNKNOWN_CODE."""
     return sorted(c for c in codes if rule_code(c, validation_codes()) == UNKNOWN_CODE)
@@ -174,6 +215,39 @@ def test_the_engine_code_set_is_not_vacuous() -> None:
 
 def test_every_engine_code_is_allowlisted() -> None:
     assert _unlisted(_engine_codes()) == []
+
+
+def test_every_computed_engine_code_site_is_approved() -> None:
+    import decoy_engine
+
+    root = Path(decoy_engine.__file__).parent
+    assert _unapproved_dynamic_sites(root) == [], _dynamic_code_sites(root)
+    # A listed site that no longer exists is a stale decision, not a pass.
+    assert set(_APPROVED_DYNAMIC_CODE_SITES) <= set(_dynamic_code_sites(root))
+    expansions = {c for codes in _APPROVED_DYNAMIC_CODE_SITES.values() for c in codes}
+    assert _unlisted(expansions) == []
+
+
+_SEEDED_SITES = {
+    "fstring": 'raise ExecutionError(code=f"leak_{value}_x", message="m")',
+    "format": 'raise ExecutionError(code="leak_{}_x".format(value), message="m")',
+    "percent": 'raise ExecutionError(code="leak_%s_x" % value, message="m")',
+    "concat": 'raise ExecutionError(code="leak_" + value, message="m")',
+    "nested": 'raise ExecutionError(code=str(f"leak_{value}"), message="m")',
+}
+
+
+@pytest.mark.parametrize("shape", sorted(_SEEDED_SITES))
+def test_a_seeded_computed_code_site_is_reported(tmp_path: Path, shape: str) -> None:
+    pkg = tmp_path / "fake_engine" / "execution"
+    pkg.mkdir(parents=True)
+    (pkg / "_ok.py").write_text(
+        "def f(value):\n    raise ExecutionError(code=reasons.runtime.X, message=f'{value}')\n"
+        "def g():\n    raise ExecutionError(code='literal_code', message='m')\n",
+        encoding="utf-8",
+    )
+    (pkg / "_seeded.py").write_text(f"def f(value):\n    {_SEEDED_SITES[shape]}\n", encoding="utf-8")
+    assert _unapproved_dynamic_sites(tmp_path / "fake_engine") == ["execution/_seeded.py"]
 
 
 def test_the_engine_half_is_derived_from_the_registry_not_written_by_hand() -> None:
@@ -324,3 +398,7 @@ def test_importing_the_ci_modules_does_not_import_the_engine() -> None:
         [sys.executable, "-c", probe], capture_output=True, text=True, check=True
     ).stdout.strip()
     assert out == "False"
+    import decoy.ci.rule_codes as rule_codes_module
+
+    flat = " ".join((rule_codes_module.__doc__ or "").split())
+    assert "at import" not in flat and "on first use" in flat, flat

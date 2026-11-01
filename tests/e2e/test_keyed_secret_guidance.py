@@ -230,3 +230,53 @@ def test_reversal_help_names_the_mask_secret_not_the_seed(args: list[str]) -> No
     assert "mask_secret_ref" in flat, flat
     for stale in ("config's seed", "run's seed", "seed + namespace", "(seed + namespace)"):
         assert stale not in flat, f"{stale!r} in: {flat}"
+
+
+# ---- every route shows its own fixed text, not the engine's -----------------------------
+
+
+def _vaulted_pipeline(tmp_path: Path, *, secret: bool) -> Path:
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    cfg_path = _keyed_pipeline(tmp_path, strategy="hash", secret=secret)
+    cfg = yaml.safe_load(cfg_path.read_text(encoding="utf-8"))
+    cfg["tables"][0]["columns"][0]["vault"] = True
+    cfg_path.write_text(yaml.safe_dump(cfg), encoding="utf-8")
+    return cfg_path
+
+
+@pytest.mark.parametrize(
+    "route",
+    ["run", "run --chunked", "run --vault", "unmask", "unmask --vault", "report vault"],
+)
+def test_every_route_prints_its_fixed_refusal_text(
+    tmp_path: Path, mask_secret: str, route: str
+) -> None:
+    """Each route raises the engine's KeyedStrategyRequiresSecret unwrapped on 0.17.0; each
+    must swap it for its own constant, so a regression on one route cannot hide behind another."""
+    from decoy import _mask_secret_guidance as guidance
+
+    # A real masked file and vault, written under the secret by a configured run.
+    written = _vaulted_pipeline(tmp_path / "written", secret=True)
+    vault = tmp_path / "vault.bin"
+    assert runner.invoke(app, ["run", str(written), "--vault", str(vault)]).exit_code == 0
+    masked = tmp_path / "written" / "out.csv"
+
+    no_secret = _vaulted_pipeline(tmp_path / "refused", secret=False)
+    fpe_no_secret = _keyed_pipeline(tmp_path)
+    argv, expected = {
+        "run": (["run", str(fpe_no_secret)], guidance.RUN),
+        "run --chunked": (["run", str(fpe_no_secret), "--chunked"], guidance.RUN),
+        "run --vault": (["run", str(no_secret), "--vault", str(tmp_path / "v2.bin")], guidance.RUN),
+        "unmask": (["unmask", str(fpe_no_secret), str(masked)], guidance.UNMASK),
+        "unmask --vault": (
+            ["unmask", str(no_secret), str(masked), "--vault", str(vault)],
+            guidance.UNMASK,
+        ),
+        "report vault": (
+            ["report", "vault", str(vault), "--config", str(no_secret)],
+            guidance.REPORT_VAULT,
+        ),
+    }[route]
+    result = runner.invoke(app, [*argv, "--json"])
+    assert result.exit_code == EXIT_USAGE, result.output
+    assert json.loads(result.stdout)["error"] == expected

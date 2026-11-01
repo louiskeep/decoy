@@ -7,7 +7,8 @@ check, a future code that interpolates a value -- can reach JSON, SARIF or Markd
 the SARIF `reportingDescriptor.id` contract (a stable rule identifier, not a message) applied
 as an allow-list output encoding (OWASP ASVS V5.3: encode against a known-good set).
 
-The engine half is derived from the pinned engine's reason registry at import, plus the few
+The engine half is derived from the pinned engine's reason registry on first use (never at
+module import, so `decoy ci` can import the engine with its logging silenced), plus the few
 literal codes it raises outside the registry; the pydantic-core `ErrorType`, CLI-gate and
 evidence-verifier sets are written out. `tests/unit/test_ci_rule_codes.py` re-derives every
 set from source and fails when upstream adds a code none of them holds.
