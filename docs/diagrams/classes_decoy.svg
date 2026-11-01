@@ -345,7 +345,7 @@
 <text xml:space="preserve" text-anchor="start" x="2875.12" y="-124.58" font-family="Times,serif" font-size="14.00">commit(): None</text>
 <text xml:space="preserve" text-anchor="start" x="2875.12" y="-107.33" font-family="Times,serif" font-size="14.00">count(): int</text>
 <text xml:space="preserve" text-anchor="start" x="2875.12" y="-90.08" font-family="Times,serif" font-size="14.00">lookup_existing(namespace: str, plaintext: str): str | None</text>
-<text xml:space="preserve" text-anchor="start" x="2875.12" y="-72.83" font-family="Times,serif" font-size="14.00">put(namespace: str, plaintext: str, token: str): None</text>
+<text xml:space="preserve" text-anchor="start" x="2875.12" y="-72.83" font-family="Times,serif" font-size="14.00">put(namespace: str, plaintext: str, token: str): str</text>
 <text xml:space="preserve" text-anchor="start" x="2875.12" y="-55.58" font-family="Times,serif" font-size="14.00">reverse(namespace: str, token: str): str | None</text>
 </g>
 <!-- decoy.ci.manifest.ManifestError -->
