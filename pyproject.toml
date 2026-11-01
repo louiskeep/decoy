@@ -93,10 +93,14 @@ dependencies = [
     # -- that `decoy tokenize` / `decoy detokenize` require. A 0.7.0-0.14.x
     # engine lacks that kwarg, so every tokenize run would die with TypeError.
     #
-    # Hard-pinned to the same engine release the platform vault (B-6) pins. The
-    # engine is not on PyPI, so CI and the smoke docs install the `v0.15.1`
-    # git tag (engine `main` is stamped 0.7.0 and would not satisfy `==0.15.1`).
-    "decoy-engine==0.15.1",
+    # 0.16.0 makes `TokenVaultWriter.put` return the token the vault stored, and
+    # 0.17.0 (R-a, commit 1132d29e) is the first release cut from engine `main`
+    # with the DP certified rows re-pinned, so `requirements-certified.txt`
+    # reproduces a certified row again.
+    #
+    # Hard-pinned to the same engine release the platform pins. The engine is
+    # not on PyPI, so CI and the smoke docs install the `v0.17.0` git tag.
+    "decoy-engine==0.17.0",
     # Pin the typer minor: `typer utils docs` metavar rendering differs across
     # typer minors (0.26.x emits `TEXT`/`FILE`; 0.27.x emits `<str>`/`<file>`),
     # and docs/cli-reference.md is committed and checked by the test_cli_surface
