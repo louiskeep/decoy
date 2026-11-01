@@ -1,6 +1,6 @@
 """Local token-vault store for `decoy tokenize` / `decoy detokenize` (B-1).
 
-The engine's `tokenize` mask strategy (A-8 token-vault seam, engine ==0.15.1) derives a
+The engine's `tokenize` mask strategy (A-8 token-vault seam, engine ==0.17.0) derives a
 deterministic surrogate per value and hands the `(plaintext, token)` pair to a
 platform-injected writer; the engine holds no vault itself (library code does
 not know its callers). This module is the CLI-side, single-operator, LOCAL
@@ -16,7 +16,7 @@ the plaintext key; this store only persists exactly what the engine hands to
 stdlib `sqlite3` embedded store -- the established local, atomic,
 single-file key-value substrate -- rather than a bespoke on-disk format. The
 protocol surface (`lookup_existing(namespace, plaintext)` / `put(namespace,
-plaintext, token)`) matches the engine's `TokenVaultWriter` Protocol
+plaintext, token) -> str`) matches the engine's `TokenVaultWriter` Protocol
 (`decoy_engine/execution/_adapter.py`), so the engine treats this store as the
 opaque callback it expects.
 
@@ -220,8 +220,10 @@ class LocalTokenVault:
         ).fetchone()
         return row[0] if row is not None else None
 
-    def put(self, namespace: str, plaintext: str, token: str) -> None:
-        """Persist a newly minted `(plaintext, token)` pair under `namespace`.
+    def put(self, namespace: str, plaintext: str, token: str) -> str:
+        """Persist a newly minted `(plaintext, token)` pair under `namespace` and
+        return the stored token, which the engine (>=0.16.0) emits; it fails the
+        run closed on a None return.
 
         The engine only calls this after `lookup_existing` returned None, so a
         row should not already exist. If one does with the SAME token the write
@@ -239,7 +241,7 @@ class LocalTokenVault:
         except sqlite3.IntegrityError:
             existing = self.lookup_existing(namespace, plaintext)
             if existing == token:
-                return
+                return token
             raise TokenVaultError(
                 code="vault_token_conflict",
                 message=(
@@ -249,6 +251,7 @@ class LocalTokenVault:
                     "Use a fresh vault, or the mask secret the vault was built with."
                 ),
             ) from None
+        return token
 
     # -- CLI-local reverse path (detokenize) --------------------------------
 

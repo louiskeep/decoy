@@ -24,14 +24,14 @@ def test_init_help_includes_examples():
 
 def test_init_quiet_writes_minimal_pipeline(tmp_path: Path):
     """CLI.3 (2026-06-02): bundled minimal template is now V2 PipelineConfig
-    shape: `version: 1`, `tables[].columns`, no `masking_rules`."""
+    shape: `version: 2`, `tables[].columns`, no `masking_rules`."""
     out = tmp_path / "pipeline.yaml"
     result = runner.invoke(app, ["init", "--output", str(out), "--quiet"])
     assert result.exit_code == 0
     assert result.stdout == ""
     assert out.exists()
     data = yaml.safe_load(out.read_text())
-    assert data.get("version") == 1
+    assert data.get("version") == 2
     assert "tables" in data
     assert len(data["tables"]) >= 1
     assert len(data["tables"][0]["columns"]) >= 3
@@ -289,7 +289,7 @@ def test_old_phantom_params_shape_fails_validation(tmp_path: Path):
     input_path = tmp_path / "accounts.csv"
     output_path = tmp_path / "accounts.masked.csv"
     phantom_body = f"""\
-version: 1
+version: 2
 
 global_settings:
   seed: 42

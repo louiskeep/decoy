@@ -59,7 +59,7 @@ def mask_config(tmp_path: Path, sample_csv: Path) -> Path:
     cardinality_mode.
     """
     config = {
-        "version": 1,
+        "version": 2,
         "global_settings": {"seed": 42},
         "sources": {
             "customers": {"type": "file", "format": "csv", "path": str(sample_csv)},
@@ -88,7 +88,7 @@ def mask_config(tmp_path: Path, sample_csv: Path) -> Path:
 def generate_config(tmp_path: Path) -> Path:
     """Minimal V2 PipelineConfig for the generate path (no sources)."""
     config = {
-        "version": 1,
+        "version": 2,
         "global_settings": {"seed": 42},
         "sources": {},
         "tables": [
@@ -256,7 +256,7 @@ def test_run_rejects_v1_graph_yaml(tmp_path: Path):
 
 
 def test_run_rejects_v1_masking_rules_shape(tmp_path: Path):
-    """V1 `masking_rules:` flat-list config (no `version: 1`, no
+    """V1 `masking_rules:` flat-list config (no `version: 2`, no
     `tables:` block) is rejected at the V2 choke point."""
     cfg = {
         "global_settings": {"seed": 42},
@@ -280,7 +280,7 @@ class TestExitCodeDispatch:
         # faker on a non-poolable provider compiles to a PlanCompileError
         # at run's compile_plan step (engine row 11).
         cfg = {
-            "version": 1,
+            "version": 2,
             "global_settings": {"seed": 1},
             "sources": {"t": {"type": "file", "format": "csv", "path": str(sample_csv)}},
             "tables": [
@@ -305,7 +305,7 @@ class TestExitCodeDispatch:
         # is malformed, so it must exit EXIT_USAGE(1), not the EXIT_RUNTIME(3)
         # catch-all. This is the failure mode a stale `params:` block hits.
         cfg = {
-            "version": 1,
+            "version": 2,
             "global_settings": {"seed": 1},
             "sources": {"t": {"type": "file", "format": "csv", "path": str(sample_csv)}},
             "tables": [
@@ -330,7 +330,7 @@ class TestExitCodeDispatch:
     def test_runtime_error_still_exits_runtime(self, tmp_path):
         # Source file missing -> not a config error -> EXIT_RUNTIME(3).
         cfg = {
-            "version": 1,
+            "version": 2,
             "global_settings": {"seed": 1},
             "sources": {"t": {"type": "file", "format": "csv", "path": str(tmp_path / "nope.csv")}},
             "tables": [{"name": "t", "columns": [{"name": "a", "strategy": "redact"}]}],
@@ -352,7 +352,7 @@ class TestMixedConfigSuccess:
 
     def test_mixed_config_exits_zero_and_writes_both_targets(self, tmp_path, sample_csv):
         cfg = {
-            "version": 1,
+            "version": 2,
             "global_settings": {"seed": 1},
             "sources": {"t": {"type": "file", "format": "csv", "path": str(sample_csv)}},
             "tables": [

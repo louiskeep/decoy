@@ -27,14 +27,15 @@
 #     provider exists in the default registry, so this template uses
 #     redact, which is strictly safer (documented drift-guard exception).
 #
-# fpe and date_shift are keyed on derive(job_seed, namespace, value):
+# fpe and date_shift are keyed on the mask secret (--mask-secret or
+# global_settings.mask_secret_ref; required, see `decoy explain keys`):
 # the same source value always maps to the same output within a
 # namespace, so joins and longitudinal analysis survive the mask.
 #
 # Tune to your data; some columns may not exist in your CSV (delete the
 # entry), others may need a different strategy.
 
-version: 1
+version: 2
 
 global_settings:
   seed: 42

@@ -221,14 +221,11 @@ _TOPICS: dict[str, _Topic] = {
             "   The ref points at a >=32-byte secret (hex or base64); the ENGINE resolves it\n"
             "   from the referenced env var or file at run time and never logs or serializes\n"
             "   the raw secret.\n"
-            "   Pre-GA: without a mask secret, keyed masking strategies still run, keyed off\n"
-            "   the 8-byte job_seed. The job_seed IS deterministic across machines, so the\n"
-            "   output is reproducible -- but the job_seed is PUBLIC (not a confidentiality\n"
-            "   secret), so unkeyed masking is NOT re-identification-safe: anyone with the\n"
-            "   config can reproduce the mapping. AT GA: a keyed masking strategy with no\n"
-            "   resolved mask secret is REJECTED outright (fail-closed) rather than silently\n"
-            "   falling back to job_seed -- see `decoy_engine.release.is_pre_ga()`. Configure\n"
-            "   a real mask secret before then."
+            "   A keyed masking strategy (fpe, hash, date_shift, tokenize, any\n"
+            "   `deterministic: true` or `vault: true` column, ...) with no mask secret is\n"
+            "   REJECTED before any data is read (keyed_strategy_requires_secret). There is\n"
+            "   no fallback to the public job_seed: that would let anyone with the config\n"
+            "   reproduce the mapping."
         ),
         see_also=("decoy run --help",),
     ),

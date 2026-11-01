@@ -303,7 +303,7 @@ def test_distribution_config_prevents_intentional_loss_from_flagging(tmp_path: P
     pd.DataFrame({"email": [f"hash_{i:064x}" for i in range(50)]}).to_csv(out, index=False)
 
     cfg = {
-        "version": 1,
+        "version": 2,
         "global_settings": {"seed": 1},
         "sources": {"t": {"type": "file", "format": "csv", "path": str(src)}},
         "tables": [{"name": "t", "columns": [{"name": "email", "strategy": "hash"}]}],

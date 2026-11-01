@@ -32,7 +32,7 @@ def _write_mask_config(tmp_path: Path) -> Path:
         src, index=False
     )
     cfg = {
-        "version": 1,
+        "version": 2,
         "global_settings": {"seed": 42},
         "sources": {"customers": {"type": "file", "format": "csv", "path": str(src)}},
         "tables": [
@@ -125,7 +125,7 @@ class TestPartANegatives:
         # top-level key) never reaches run_pipeline at all -- confirms the
         # capacity branch does not widen the EXIT_USAGE type-dispatch above it.
         bad_cfg = tmp_path / "bad.yaml"
-        bad_cfg.write_text(yaml.dump({"version": 1, "not_a_real_key": True}), encoding="utf-8")
+        bad_cfg.write_text(yaml.dump({"version": 2, "not_a_real_key": True}), encoding="utf-8")
         result = runner.invoke(app, ["run", str(bad_cfg)])
         assert result.exit_code == EXIT_USAGE
         assert "capacity:" not in result.output

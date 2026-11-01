@@ -56,7 +56,7 @@ def clean_config(tmp_path: Path) -> Path:
         }
     ).to_csv(src, index=False)
     cfg = {
-        "version": 1,
+        "version": 2,
         "global_settings": {"seed": 42},
         "sources": {"customers": {"type": "file", "format": "csv", "path": str(src)}},
         "tables": [
@@ -89,7 +89,7 @@ def leaky_config(tmp_path: Path) -> Path:
     src = tmp_path / "lin.csv"
     pd.DataFrame({"code": ["AAAAA", "AAA", "BBBBB"]}).to_csv(src, index=False)
     cfg = {
-        "version": 1,
+        "version": 2,
         "global_settings": {"seed": 7},
         "sources": {"t": {"type": "file", "format": "csv", "path": str(src)}},
         "tables": [
@@ -117,7 +117,7 @@ def leaky_config(tmp_path: Path) -> Path:
 def generate_config(tmp_path: Path) -> Path:
     """A pure-generate config (no sources) for the --explain-plan stamp test."""
     cfg = {
-        "version": 1,
+        "version": 2,
         "global_settings": {"seed": 42},
         "sources": {},
         "tables": [

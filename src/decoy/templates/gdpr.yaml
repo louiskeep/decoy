@@ -17,7 +17,7 @@
 #     device always maps to the same token, so device-level analytics
 #     survive without exposing the identifier.
 
-version: 1
+version: 2
 
 global_settings:
   seed: 42

@@ -21,7 +21,7 @@ MANIFEST_NAME = ".decoy-ci.yaml"
 
 # Line/column layout of CLEAN_PIPELINE is pinned: tests assert exact marks.
 CLEAN_PIPELINE = """\
-version: 1
+version: 2
 global_settings:
   seed: 42
 sources:

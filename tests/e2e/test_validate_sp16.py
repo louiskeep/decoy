@@ -40,7 +40,7 @@ def _valid_v2_mask_config(tmp_path: Path, out_name: str = "out.csv") -> tuple[di
     src = tmp_path / "in.csv"
     pd.DataFrame({"customer_id": ["1", "2"], "name": ["a", "b"]}).to_csv(src, index=False)
     cfg = {
-        "version": 1,
+        "version": 2,
         "global_settings": {"seed": 42},
         "sources": {
             "customers": {"type": "file", "format": "csv", "path": str(src)},

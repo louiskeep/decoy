@@ -30,7 +30,7 @@ def _write_mask_config(tmp_path: Path) -> Path:
     src = tmp_path / "in.csv"
     pd.DataFrame({"customer_id": ["1", "2"], "name": ["a", "b"]}).to_csv(src, index=False)
     cfg = {
-        "version": 1,
+        "version": 2,
         "global_settings": {"seed": 42},
         "sources": {"customers": {"type": "file", "format": "csv", "path": str(src)}},
         "tables": [
@@ -59,7 +59,7 @@ def _write_mask_config(tmp_path: Path) -> Path:
 def _write_bad_config(tmp_path: Path) -> Path:
     """A config that fails at run time (config-level plan-compile error)."""
     cfg = {
-        "version": 1,
+        "version": 2,
         "global_settings": {"seed": 1},
         "sources": {"t": {"type": "file", "format": "csv", "path": "./missing.csv"}},
         "tables": [{"name": "t", "columns": [{"name": "x", "strategy": "faker", "provider": "no_such_provider"}]}],

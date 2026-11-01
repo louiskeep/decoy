@@ -6,7 +6,7 @@ choke point. Pre-rewrite the file exercised V1 graph YAML + V1
 storm-reframe-C) and the validator now hard-rejects them. The new
 cells verify (a) a minimal valid V2 PipelineConfig passes, (b) V1
 graph YAML exits 1 with a typed PipelineValidationError, (c) V1
-`masking_rules` configs exit 1 (no `version: 1`), (d) malformed YAML
+`masking_rules` configs exit 1 (no `version: 2`), (d) malformed YAML
 exits 1, (e) missing file exits 1, (f) `--help` and `--version` flags
 remain functional.
 """
@@ -31,14 +31,14 @@ runner = CliRunner()
 
 def _valid_v2_mask_config(tmp_path: Path) -> dict:
     """Minimal V2 PipelineConfig that satisfies all required-field invariants:
-    `version: 1`, `mode: mask`, at least one table (with at least one
+    `version: 2`, `mode: mask`, at least one table (with at least one
     column or generate_column), at least one target. Pulled from the
     canonical golden-fixture shape at
     `decoy-engine/tests/integration/golden/test_execution_e2e.py`."""
     src = tmp_path / "in.csv"
     pd.DataFrame({"customer_id": ["1", "2"], "name": ["a", "b"]}).to_csv(src, index=False)
     return {
-        "version": 1,
+        "version": 2,
         "global_settings": {"seed": 42},
         "sources": {
             "customers": {"type": "file", "format": "csv", "path": str(src)},
@@ -127,7 +127,7 @@ def test_validate_rejects_graph_mode_yaml(tmp_path: Path):
 
 
 def test_validate_rejects_v1_mask_config(tmp_path: Path):
-    """V1 `masking_rules` config (no `version: 1`, no `tables` block)
+    """V1 `masking_rules` config (no `version: 2`, no `tables` block)
     exits 1. The V2 choke point treats it as a schema violation."""
     config = {
         "global_settings": {"seed": 42},
@@ -221,7 +221,7 @@ class TestConfigOnlyPlanChecks:
         import yaml as _y
 
         cfg = {
-            "version": 1,
+            "version": 2,
             "global_settings": {"seed": 1},
             "sources": {"t": {"type": "file", "format": "csv", "path": "./t.csv"}},
             "tables": [{"name": "t", "columns": columns}],

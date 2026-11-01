@@ -71,7 +71,7 @@ def _config(
     if layout is not None:
         source["layout"] = layout
     cfg = {
-        "version": 1,
+        "version": 2,
         "global_settings": {"seed": 42},
         "sources": {"people": source},
         "tables": [{"name": "people", "columns": _COLUMNS}],
@@ -250,7 +250,7 @@ def test_csv_named_parquet_is_read_as_csv(tmp_path: Path):
 
 def _raw_config(tmp_path: Path, source: dict) -> Path:
     cfg = {
-        "version": 1,
+        "version": 2,
         "global_settings": {"seed": 42},
         "sources": {"people": source},
         "tables": [{"name": "people", "columns": _COLUMNS}],
@@ -306,7 +306,7 @@ def test_fixed_width_chunked_writes_no_table_even_with_other_tables(tmp_path: Pa
     fw_src = tmp_path / "b.dat"
     _write_fixed_width(fw_src)
     cfg = {
-        "version": 1,
+        "version": 2,
         "global_settings": {"seed": 42},
         "sources": {
             "a": {"type": "file", "format": "csv", "path": str(csv_src)},
@@ -492,7 +492,7 @@ def test_mask_api_data_path_infers_format_when_config_declares_none(tmp_path: Pa
 
 def _cloud_declared_config(tmp_path: Path, source: dict[str, Any]) -> Path:
     cfg = {
-        "version": 1,
+        "version": 2,
         "global_settings": {"seed": 42},
         "sources": {"people": source},
         "tables": [{"name": "people", "columns": _COLUMNS}],

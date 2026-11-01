@@ -36,7 +36,7 @@ runner = CliRunner()
 
 def _minimal_config(src_path: Path, out_path: Path) -> dict:
     return {
-        "version": 1,
+        "version": 2,
         "global_settings": {"seed": 42},
         "sources": {
             "customers": {"type": "file", "format": "csv", "path": str(src_path)},
@@ -140,7 +140,7 @@ def test_evidence_verify_clean(tmp_path: Path):
 def test_evidence_verify_detects_changed_pipeline(tmp_path: Path):
     """report verify exits non-zero when the pipeline file has changed."""
     evidence_path, pipeline_path, _, _ = _write_evidence(tmp_path)
-    pipeline_path.write_text("version: 1\n# TAMPERED\n", encoding="utf-8")
+    pipeline_path.write_text("version: 2\n# TAMPERED\n", encoding="utf-8")
     result = runner.invoke(app, ["report", "verify", str(evidence_path)])
     assert result.exit_code != 0
 
@@ -185,7 +185,7 @@ def test_evidence_verify_json_clean(tmp_path: Path):
 def test_evidence_verify_json_tampered(tmp_path: Path):
     """report verify --json with tamper exits non-zero and emits JSON with issues."""
     evidence_path, pipeline_path, _, _ = _write_evidence(tmp_path)
-    pipeline_path.write_text("version: 1\n# TAMPERED\n", encoding="utf-8")
+    pipeline_path.write_text("version: 2\n# TAMPERED\n", encoding="utf-8")
     result = runner.invoke(app, ["report", "verify", "--json", str(evidence_path)])
     assert result.exit_code != 0
     data = _json.loads(result.stdout)

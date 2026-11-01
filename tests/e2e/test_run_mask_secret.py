@@ -96,7 +96,7 @@ def _mask_pipeline(tmp_path: Path, *, mask_secret_ref: str | None = None, rows: 
     if mask_secret_ref is not None:
         global_settings["mask_secret_ref"] = mask_secret_ref
     cfg = {
-        "version": 1,
+        "version": 2,
         "global_settings": global_settings,
         "sources": {"accounts": {"type": "file", "format": "csv", "path": str(src)}},
         "tables": [
@@ -134,7 +134,7 @@ def _mixed_pipeline(tmp_path: Path, *, mask_secret_ref: str | None = None) -> Pa
     if mask_secret_ref is not None:
         global_settings["mask_secret_ref"] = mask_secret_ref
     cfg = {
-        "version": 1,
+        "version": 2,
         "global_settings": global_settings,
         "sources": {"accounts": {"type": "file", "format": "csv", "path": str(src)}},
         "tables": [
@@ -498,7 +498,7 @@ class TestMaskSecretWrongTypeYaml:
         # global_settings is a YAML LIST (not a mapping), with the secret
         # smuggled inside a nested dict item.
         raw_cfg = {
-            "version": 1,
+            "version": 2,
             "global_settings": [{"mask_secret_ref": [_SECRET_MARKER]}],
             "sources": {"accounts": {"type": "file", "format": "csv", "path": str(src)}},
             "tables": [

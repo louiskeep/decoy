@@ -46,7 +46,7 @@ def _eligible_config(tmp_path: Path) -> Path:
     src = tmp_path / "in.parquet"
     pd.DataFrame({"id": ["a", "b"], "email": ["a@x.com", "b@x.com"]}).to_parquet(src, index=False)
     cfg = {
-        "version": 1,
+        "version": 2,
         "global_settings": {"seed": 42},
         "sources": {"customers": {"type": "file", "format": "parquet", "path": str(src)}},
         "tables": [
@@ -73,7 +73,7 @@ def _ineligible_config(tmp_path: Path) -> Path:
     src = tmp_path / "in.csv"
     pd.DataFrame({"id": ["a", "b"], "email": ["a@x.com", "b@x.com"]}).to_csv(src, index=False)
     cfg = {
-        "version": 1,
+        "version": 2,
         "global_settings": {"seed": 42},
         "sources": {"customers": {"type": "file", "format": "csv", "path": str(src)}},
         "tables": [

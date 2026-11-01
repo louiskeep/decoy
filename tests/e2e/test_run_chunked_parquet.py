@@ -54,7 +54,7 @@ def _pipeline(tmp_path: Path, *, src_fmt: str, tgt_fmt: str, rows: int = 200) ->
     else:
         df.to_csv(src, index=False)
     cfg = {
-        "version": 1,
+        "version": 2,
         "global_settings": {"seed": 42},
         "sources": {"accounts": {"type": "file", "format": src_fmt, "path": str(src)}},
         "tables": [{"name": "accounts", "columns": _COLUMNS}],

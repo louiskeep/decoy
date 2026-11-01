@@ -29,7 +29,7 @@ def _pipeline(tmp_path: Path, columns: list[dict], rows: int = 200) -> Path:
         }
     ).to_csv(src, index=False)
     cfg = {
-        "version": 1,
+        "version": 2,
         "global_settings": {"seed": 42},
         "sources": {"accounts": {"type": "file", "format": "csv", "path": str(src)}},
         "tables": [{"name": "accounts", "columns": columns}],

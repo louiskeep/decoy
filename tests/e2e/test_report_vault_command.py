@@ -33,7 +33,7 @@ def _pipeline(tmp_path: Path, rows: int = 30) -> Path:
         }
     ).to_csv(src, index=False)
     cfg = {
-        "version": 1,
+        "version": 2,
         "global_settings": {"seed": 42},
         "sources": {
             "accounts": {"type": "file", "format": "csv", "path": str(src)}

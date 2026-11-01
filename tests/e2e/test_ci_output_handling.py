@@ -172,7 +172,7 @@ def test_evidence_that_is_not_a_manifest_object_is_refused(tmp_path: Path) -> No
 
 def test_a_pipeline_that_is_not_utf8_is_a_finding_not_a_crash(tmp_path: Path) -> None:
     repo = _repo(tmp_path)
-    write(repo, "pipeline.yaml", b"version: 1\nname: caf\xe9\n")
+    write(repo, "pipeline.yaml", b"version: 2\nname: caf\xe9\n")
     proc = ci_check(repo, "--format", "json")
     report = parse_stdout(proc)
     assert proc.returncode == EXIT_USAGE, proc.stderr

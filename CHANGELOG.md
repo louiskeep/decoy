@@ -8,6 +8,10 @@ version numbers follow the [versioning policy](docs/release/versioning.md).
 
 ## [Unreleased]
 
+### Changed
+
+- **Engine repin to `decoy-engine==0.17.0` (R-a, `v0.17.0` / `1132d29e`), crossing 0.16.0.** Every engine call uses the new names: `run_storm` -> `profile_columns`, `decoy_engine.storm.postmask.run_storm_post_mask` -> `decoy_engine.verification.postmask.run_post_mask` (report schema `post-scan-integrity/v2`), `decoy_engine.storm.ner` -> `decoy_engine.detection.ner`. Generated and bundled pipelines (`decoy init`, `decoy demo`, `report integrity`, the five templates, `examples/`) declare `version: 2`, which the engine now requires. The native eligibility hint declines `post_scan: {integrity: true}` (was `run_storm`). The local token vault's `put` returns the stored token (engine 0.16.0 `TokenVaultWriter` contract). `decoy explain keys` states that a keyed strategy with no mask secret is rejected (`keyed_strategy_requires_secret`); the pre-GA `job_seed` fallback is gone. `requirements-certified.txt` records fingerprint `a7b40d54...` for engine 0.17.0. CLI verbs are not renamed.
+
 ### Added
 
 - **CycloneDX SBOM generator (R1-c).** `scripts/release/sbom.sh` writes a reproducible CycloneDX 1.6 SBOM of the certified runtime pins (`requirements-certified.txt`) with the tool environment pinned, hash-enforced and wheel-only from `scripts/release/sbom-tool-requirements.txt`, run isolated (`python -I`, `uv --no-config`, no ambient `UV_*` settings, CPython 3.12 only); no timestamp or serial; well-formed public pins only, one per package, with the generated components checked against the pins. Not signed or published. Docs: `docs/release/sbom.md`.

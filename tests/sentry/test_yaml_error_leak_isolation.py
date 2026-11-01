@@ -27,7 +27,7 @@ runner = CliRunner()
 # A distinctive marker on an unterminated YAML flow sequence: the `[` makes
 # safe_load raise a YAMLError whose snippet quotes this whole line.
 _SENTINEL = "YAMLLEAK_SENTINEL_" + "Z" * 12
-_BAD_YAML = f"version: 1\napi_password: [{_SENTINEL}\n"
+_BAD_YAML = f"version: 2\napi_password: [{_SENTINEL}\n"
 _WIDE_ENV = {"COLUMNS": "10000"}  # stop Rich truncating the sentinel mid-string
 
 

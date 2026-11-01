@@ -61,8 +61,8 @@ class Inference:
     deterministic: bool = False
 
 
-# Detector-id -> Inference. Detector ids come from STORM's detectors
-# (`decoy_engine.storm.detectors`). The table is intentionally a
+# Detector-id -> Inference. Detector ids come from the engine detectors
+# (`decoy_engine.detection.detectors`). The table is intentionally a
 # narrow subset; the long tail goes through `_FALLBACK`.
 #
 # The REVIEW reason is the operator-facing copy that lands in the
@@ -239,7 +239,7 @@ def _infer_strategy_for_column(field_stats) -> Inference:
 
     The function reads only public attributes on FieldStats; it does
     not import from decoy_engine. Callers pass the FieldStats they
-    already obtained from run_storm.
+    already obtained from profile_columns.
     """
     matches = getattr(field_stats, "detector_matches", None) or []
     confident_matches = [

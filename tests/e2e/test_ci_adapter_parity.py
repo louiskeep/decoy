@@ -59,7 +59,7 @@ def test_validation_rule_ids_equal_the_direct_commands_codes(tmp_path: Path, var
         "missing_source": CLEAN_PIPELINE,
         "overwrite_warning": CLEAN_PIPELINE,
         "not_mapping": "- a\n- b\n",
-        "no_version": CLEAN_PIPELINE.replace("version: 1\n", ""),
+        "no_version": CLEAN_PIPELINE.replace("version: 2\n", ""),
     }[variant]
     write(repo, "pipeline.yaml", text)
     if variant == "missing_source":

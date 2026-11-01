@@ -42,7 +42,7 @@ def _valid_config(tmp_path: Path) -> tuple[dict, Path]:
     src = tmp_path / "in.csv"
     pd.DataFrame({"email": ["a@b.com", "c@d.com"]}).to_csv(src, index=False)
     cfg = {
-        "version": 1,
+        "version": 2,
         "global_settings": {"seed": 42},
         "sources": {
             "customers": {"type": "file", "format": "csv", "path": str(src)},
@@ -77,7 +77,7 @@ def _valid_config(tmp_path: Path) -> tuple[dict, Path]:
 def _missing_source_config(tmp_path: Path) -> Path:
     """Config where the source CSV does not exist on disk."""
     cfg = {
-        "version": 1,
+        "version": 2,
         "global_settings": {"seed": 42},
         "sources": {
             "customers": {
@@ -149,7 +149,7 @@ def test_preflight_reports_missing_source(tmp_path: Path):
 def test_preflight_invalid_yaml(tmp_path: Path):
     """preflight exits non-zero on a YAML parse error."""
     p = tmp_path / "bad.yaml"
-    p.write_text("version: 1\n  bad_indent: [unclosed", encoding="utf-8")
+    p.write_text("version: 2\n  bad_indent: [unclosed", encoding="utf-8")
     result = runner.invoke(app, ["validate", "preflight", str(p)])
     assert result.exit_code != 0
 

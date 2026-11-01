@@ -78,7 +78,7 @@ def _write_tiny_pipeline(tmp_path: Path) -> Path:
         src, index=False
     )
     cfg = {
-        "version": 1,
+        "version": 2,
         "global_settings": {"seed": 7},
         "sources": {"customers": {"type": "file", "format": "csv", "path": str(src)}},
         "tables": [

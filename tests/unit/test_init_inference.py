@@ -41,7 +41,7 @@ from decoy.cli.init import (
 
 @dataclass
 class _FakeMatch:
-    """Stand-in for decoy_engine.storm.types.DetectorMatch."""
+    """Stand-in for decoy_engine.detection.types.DetectorMatch."""
 
     detector_id: str
     match_rate: float = 0.9
@@ -50,7 +50,7 @@ class _FakeMatch:
 
 @dataclass
 class _FakeFieldStats:
-    """Stand-in for decoy_engine.storm.types.FieldStats."""
+    """Stand-in for decoy_engine.profiling.types.FieldStats."""
 
     name: str
     detector_matches: list = None
@@ -295,7 +295,7 @@ def test_yaml_body_parses_through_pipeline_config(tmp_path: Path):
     )
     # Header + REVIEW comments land in the body.
     assert "# REVIEW:" in body
-    assert "version: 1" in body
+    assert "version: 2" in body
     # PipelineConfig must accept the emitted YAML.
     _validate_scaffold(body)
 

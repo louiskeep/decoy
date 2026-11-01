@@ -71,7 +71,7 @@ def _write_config(tmp_path: Path, parent: pa.Table, child: pa.Table) -> Path:
     pq.write_table(parent, tmp_path / "parent.parquet")
     pq.write_table(child, tmp_path / "child.parquet")
     cfg = {
-        "version": 1,
+        "version": 2,
         "global_settings": {"seed": 7},
         "sources": {
             "parent": {
@@ -289,7 +289,7 @@ def _fanin_config(tmp_path: Path, n_parents: int = _FANIN_INCOMING_EDGES, rows: 
     tables.append({"name": "child", "columns": child_columns_cfg})
 
     cfg = {
-        "version": 1,
+        "version": 2,
         "global_settings": {"seed": 7},
         "sources": sources,
         "targets": {

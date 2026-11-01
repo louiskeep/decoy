@@ -81,7 +81,7 @@ def _build_pipeline_yaml(input_path: Path, output_path: Path) -> str:
     import yaml as _yaml
 
     cfg = {
-        "version": 1,
+        "version": 2,
         "global_settings": {"seed": 42},
         "sources": {
             "customers": {
@@ -144,10 +144,10 @@ def _run_single_demo(state: OutputState, out_dir: Path) -> int:
     if state.mode is OutputMode.default:
         state.console.print(accent("[2/3]"), "Scanning with STORM...")
     import pandas as pd
-    from decoy_engine import run_storm
+    from decoy_engine import profile_columns
 
     df = pd.read_csv(sample_csv)
-    profile = run_storm(df, source_label=sample_csv.name, sample_strategy="full")
+    profile = profile_columns(df, source_label=sample_csv.name, sample_strategy="full")
     scan_json.write_text(_json.dumps(profile.to_dict(), indent=2))
 
     if state.mode is OutputMode.default:

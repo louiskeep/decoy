@@ -2004,10 +2004,10 @@ def _integrity(
 ) -> None:
     """Verify a masked file's integrity against its pre-mask source.
 
-    Wraps `decoy_engine.storm.postmask.run_storm_post_mask`. Runs the
+    Wraps `decoy_engine.verification.postmask.run_post_mask`. Runs the
     three post-mask check buckets (residual_pii, fk_preservation,
     policy_validation) the platform's mask job already runs when
-    `run_storm: true` is declared in the pipeline; this verb lets the
+    `post_scan: {integrity: true}` is declared in the pipeline; this verb lets the
     CLI user run the same checks standalone.
 
     Distinct from `report verify` (manifest fingerprint-drift): integrity is
@@ -2026,7 +2026,7 @@ def _integrity(
     source_str = str(source)
 
     try:
-        from decoy_engine.storm.postmask import run_storm_post_mask
+        from decoy_engine.verification.postmask import run_post_mask
 
         source_df = pd.read_csv(source)
         masked_df = pd.read_csv(masked)
@@ -2071,11 +2071,10 @@ def _integrity(
             # residual_pii + policy_validation branches degrade
             # gracefully when relationships + sources + tables are
             # absent (verified against
-            # decoy_engine.storm.postmask.runner docstring +
-            # tests/unit/storm/test_postmask_runner.py).
+            # the decoy_engine.verification.postmask.runner docstring).
             table_name = masked.stem
             config_dict = {
-                "version": 1,
+                "version": 2,
                 "global_settings": {"seed": 0},
                 "sources": {},
                 "tables": [],
@@ -2083,7 +2082,7 @@ def _integrity(
                 "relationships": [],
             }
 
-        report = run_storm_post_mask(
+        report = run_post_mask(
             source_frames={table_name: source_df},
             output_frames={table_name: masked_df},
             config=config_dict,

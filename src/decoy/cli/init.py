@@ -286,7 +286,7 @@ def _build_scaffold_yaml(
 
     return (
         f"{header}\n"
-        "version: 1\n\n"
+        "version: 2\n\n"
         "global_settings:\n"
         "  seed: 42\n\n"
         f"{sources_block}\n"
@@ -347,8 +347,9 @@ def _scaffold_from_file(
         raise typer.Exit(code=EXIT_RUNTIME) from exc
 
     try:
-        from decoy_engine.storm import run_storm
-        profile = run_storm(df, source_label=str(input_file))
+        from decoy_engine import profile_columns
+
+        profile = profile_columns(df, source_label=str(input_file))
     except Exception as exc:
         if state.mode is not OutputMode.default:
             state.err_console.print(error("error:"), f"STORM scan failed: {exc}")

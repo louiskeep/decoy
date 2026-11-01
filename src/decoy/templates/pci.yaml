@@ -14,7 +14,7 @@
 # always maps to the same masked PAN (deterministic join survival).
 # CVV is redacted entirely (must never be retained per PCI DSS req 3.2).
 
-version: 1
+version: 2
 
 global_settings:
   seed: 42
@@ -59,8 +59,8 @@ tables:
         strategy: faker
         provider: person_email
 
-      # Transaction id stays linkable across systems: hash is keyed on
-      # derive(job_seed, namespace, value), so the same source id always
+      # Transaction id stays linkable across systems: hash is keyed on the
+      # mask secret (required) and the namespace, so the same source id always
       # maps to the same token. Works for any id format (uuid, int, ...).
       - name: transaction_id
         strategy: hash

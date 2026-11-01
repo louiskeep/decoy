@@ -1475,10 +1475,10 @@ See also: decoy report integrity, decoy fit, decoy run.
 
 Verify a masked file&#x27;s integrity against its pre-mask source.
 
-Wraps `decoy_engine.storm.postmask.run_storm_post_mask`. Runs the
+Wraps `decoy_engine.verification.postmask.run_post_mask`. Runs the
 three post-mask check buckets (residual_pii, fk_preservation,
 policy_validation) the platform&#x27;s mask job already runs when
-`run_storm: true` is declared in the pipeline; this verb lets the
+`post_scan: {integrity: true}` is declared in the pipeline; this verb lets the
 CLI user run the same checks standalone.
 
 Distinct from `report verify` (manifest fingerprint-drift): integrity is
