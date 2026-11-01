@@ -1613,8 +1613,9 @@ counts (pandas v2.x). No novel statistical method is used.
 
 Inspect a vault file: report entry count, namespaces, and dropped-ambiguous count.
 
-Opens the vault using the seed derived from the pipeline config. A
-mismatched seed (wrong config) exits 1 with a clear error message.
+Opens the vault with the mask secret that global_settings.mask_secret_ref
+in the pipeline config names, the secret the `decoy run --vault` call
+used; the seed is not key material. A missing or wrong secret exits 1.
 Exits 0 on success, 1 on a config/vault/usage error.
 
 **Usage**:

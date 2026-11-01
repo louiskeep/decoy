@@ -30,8 +30,8 @@ import decoy.cli.validate as cli_validate
 from decoy.ci.rule_codes import (
     EVIDENCE_KINDS,
     UNKNOWN_CODE,
-    VALIDATION_CODES,
     rule_code,
+    validation_codes,
 )
 
 CANARY = "rulecanary7d41e0"
@@ -92,7 +92,7 @@ def _engine_codes() -> set[str]:
 
 def _unlisted(codes: set[str]) -> list[str]:
     """Codes `decoy ci` would emit as UNKNOWN_CODE."""
-    return sorted(c for c in codes if rule_code(c, VALIDATION_CODES) == UNKNOWN_CODE)
+    return sorted(c for c in codes if rule_code(c, validation_codes()) == UNKNOWN_CODE)
 
 
 def _module_tree(module: object) -> ast.AST:
@@ -167,8 +167,8 @@ def test_the_engine_code_set_is_not_vacuous() -> None:
     assert all(reasons.is_registered(c) for c in _registry_codes())
     # A seeded code the allowlist does not know is reported, not absorbed.
     canary = "canary_code_absent_from_allowlist"
-    assert canary not in VALIDATION_CODES and not reasons.is_registered(canary)
-    assert rule_code(canary, VALIDATION_CODES) == UNKNOWN_CODE
+    assert canary not in validation_codes() and not reasons.is_registered(canary)
+    assert rule_code(canary, validation_codes()) == UNKNOWN_CODE
     assert _unlisted(codes | {canary}) == sorted({canary, *_unlisted(codes)})
 
 
@@ -176,17 +176,50 @@ def test_every_engine_code_is_allowlisted() -> None:
     assert _unlisted(_engine_codes()) == []
 
 
+def test_the_engine_half_is_derived_from_the_registry_not_written_by_hand() -> None:
+    """The allowlist holds the whole registry by construction (non-vacuity: at least the
+    registry's size), and the explicit literal-only set is exactly what the registry misses,
+    so it can neither go stale nor smuggle in a code the engine does not raise."""
+    from decoy.ci import rule_codes
+
+    registry = _registry_codes()
+    derived = rule_codes._engine_registry_codes()
+    assert len(derived) >= len(registry) > 0
+    assert derived == registry
+    assert registry <= validation_codes()
+    assert rule_codes._ENGINE_LITERAL_CODES == _engine_literal_codes() - registry
+
+
+def test_every_registry_code_is_a_sarif_safe_token() -> None:
+    """The allowlist's guarantee is that a rule_id carries no value. Registry codes are
+    closed-vocabulary by construction; this checks it instead of assuming it."""
+    unsafe = sorted(c for c in _registry_codes() if not _CODE_TOKEN.fullmatch(c))
+    assert unsafe == []
+
+
+@pytest.mark.parametrize(
+    "bad",
+    ["odd code!", f"leak {CANARY}", "Upper_case", "tab\there", "", "x/y", "ünicode"],
+    ids=["space-bang", "canary", "upper", "tab", "empty", "slash", "non-ascii"],
+)
+def test_the_registry_derivation_drops_a_code_outside_the_safe_set(bad: str) -> None:
+    from decoy.ci.rule_codes import _codes_from_registry
+
+    entries = [{"code": "fine_code"}, {"code": bad}, {"code": None}, {}]
+    assert _codes_from_registry(entries) == frozenset({"fine_code"})
+
+
 def test_every_pydantic_error_type_is_allowlisted() -> None:
-    assert sorted(_pydantic_error_types() - VALIDATION_CODES) == []
+    assert sorted(_pydantic_error_types() - validation_codes()) == []
 
 
 def test_every_cli_gate_code_and_preflight_template_is_allowlisted() -> None:
     codes, templates = _cli_gate_codes()
     assert {"yaml.parse_error", "missing_extra", "validation_error"} <= codes
-    assert sorted(codes - VALIDATION_CODES) == []
+    assert sorted(codes - validation_codes()) == []
     assert templates, "the preflight scan found no templated check names"
     for template in templates:
-        emitted = rule_code(template.format(CANARY), VALIDATION_CODES)
+        emitted = rule_code(template.format(CANARY), validation_codes())
         assert emitted != UNKNOWN_CODE, template
         assert CANARY not in emitted, template
 
@@ -217,7 +250,7 @@ def test_every_evidence_issue_kind_is_allowlisted() -> None:
     ],
 )
 def test_validation_codes_map_through_the_allowlist(code: object, expected: str) -> None:
-    assert rule_code(code, VALIDATION_CODES) == expected
+    assert rule_code(code, validation_codes()) == expected
 
 
 def test_an_engine_code_is_not_a_valid_evidence_kind() -> None:
@@ -274,3 +307,20 @@ def test_an_unknown_upstream_code_never_reaches_any_report_format(
             "validate.target.would_overwrite",
             f"evidence.{UNKNOWN_CODE}",
         }
+
+
+def test_importing_the_ci_modules_does_not_import_the_engine() -> None:
+    """`decoy ci` first imports the engine inside engine_logging_silenced, from a scratch cwd,
+    so the engine's cwd-relative log file never lands in the checked repository. The allowlist
+    must therefore derive the registry half on first use, not when the module is imported."""
+    import subprocess
+    import sys
+
+    probe = (
+        "import sys; import decoy.ci.rule_codes, decoy.ci.adapters, decoy.cli.ci; "
+        "print('decoy_engine' in sys.modules)"
+    )
+    out = subprocess.run(
+        [sys.executable, "-c", probe], capture_output=True, text=True, check=True
+    ).stdout.strip()
+    assert out == "False"

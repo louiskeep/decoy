@@ -2247,8 +2247,9 @@ def _vault(
 ) -> None:
     """Inspect a vault file: report entry count, namespaces, and dropped-ambiguous count.
 
-    Opens the vault using the seed derived from the pipeline config. A
-    mismatched seed (wrong config) exits 1 with a clear error message.
+    Opens the vault with the mask secret that global_settings.mask_secret_ref
+    in the pipeline config names, the secret the `decoy run --vault` call
+    used; the seed is not key material. A missing or wrong secret exits 1.
     Exits 0 on success, 1 on a config/vault/usage error.
     """
     import yaml as _yaml
@@ -2286,22 +2287,29 @@ def _vault(
         )
         raise typer.Exit(code=EXIT_USAGE)
 
-    from decoy_engine import VaultError, job_seed_for_config, load_vault
-    from decoy_engine.plan import PlanCompileError
+    from decoy_engine import VaultError, load_vault
+    from decoy_engine.keyprovider import MaskSecretError
+    from decoy_engine.secret_providers import AdmissionScope, admit_mask_key
 
-    # Derive the job seed from the config (fails cleanly for bool/float seeds).
+    from decoy import _mask_secret_guidance
+
+    # The engine's own admission path (the one `decoy unmask` reaches through
+    # unmask_pipeline); the scope closes the admitted secret on every exit.
     try:
-        job_seed = job_seed_for_config(raw)
-    except PlanCompileError as exc:
-        from decoy.cli.extras import plan_compile_error_fields
-
-        err_code, message = plan_compile_error_fields(exc)
-        _emit_error(f"{err_code}: {message}")
+        with AdmissionScope() as scope:
+            provider = scope.adopt(admit_mask_key(raw)).key_provider
+            if provider is None:
+                # A vault is always keyed; there is no seed fallback to open it with.
+                _emit_error(_mask_secret_guidance.REPORT_VAULT)
+                raise typer.Exit(code=EXIT_USAGE)
+            mapping, ambiguous_dropped = load_vault(str(vault), provider.mask_key())
+    except MaskSecretError as exc:
+        # Value-free engine messages; the keyed refusal names its Python API, so swap it.
+        if _mask_secret_guidance.is_keyed_secret_refusal(exc):
+            _emit_error(_mask_secret_guidance.REPORT_VAULT)
+        else:
+            _emit_error(f"{getattr(exc, 'code', type(exc).__name__)}: {getattr(exc, 'message', exc)}")
         raise typer.Exit(code=EXIT_USAGE)
-
-    # Open the vault.
-    try:
-        mapping, ambiguous_dropped = load_vault(str(vault), job_seed)
     except VaultError as exc:
         if getattr(exc, "code", None) == "vault_protocol_version_mismatch":
             _emit_error(
@@ -2317,9 +2325,8 @@ def _vault(
                 f"{getattr(exc, 'code', type(exc).__name__)}: "
                 f"{getattr(exc, 'message', exc)}",
                 hint_text=(
-                    "the config's seed does not match the vault; "
-                    "use the same config (or seed) as the `decoy run --vault` call "
-                    "that wrote this vault."
+                    "use the mask secret (global_settings.mask_secret_ref) of the "
+                    "`decoy run --vault` call that wrote this vault."
                 ),
             )
         raise typer.Exit(code=EXIT_USAGE)

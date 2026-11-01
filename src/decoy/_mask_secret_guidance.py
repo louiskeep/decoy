@@ -27,6 +27,12 @@ UNMASK = (
     "the mask run used. See `decoy explain keys`."
 )
 
+REPORT_VAULT = (
+    f"{CODE}: a vault is encrypted under the mask secret the run used, and none was "
+    f"supplied. Set global_settings.mask_secret_ref in the pipeline YAML to {_FORMS}, the "
+    "same secret the `decoy run --vault` call used. See `decoy explain keys`."
+)
+
 API = (
     f"{CODE}: this pipeline uses a keyed masking strategy and no mask secret was supplied. "
     f"Pass mask_secret= with {_FORMS}, or set global_settings.mask_secret_ref in the "
