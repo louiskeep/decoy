@@ -408,12 +408,12 @@ def _emit_real_run(state, config_str: str, result, out: Path) -> None:
     state.console.print(hint("Manifest:"), code(str(out / "subset-manifest.json")))
 
 
-def _emit_preflight_failure(state, config_str: str, exc) -> None:
+def _emit_preflight_failure(state, config_str: str, failure) -> None:
     """A fail-closed preflight condition (type mismatch, half-composite,
     dangling column, non-Parquet source, source orphans under
     orphan_policy=fail). Never a stack trace: every code and message here
     comes straight off `FkPreflightReport`."""
-    report = exc.report
+    report = failure.report
     if state.mode is OutputMode.json:
         emit_json(
             state,
@@ -422,8 +422,8 @@ def _emit_preflight_failure(state, config_str: str, exc) -> None:
                 "status": "error",
                 "error_kind": "preflight",
                 "config": config_str,
-                "code": exc.code,
-                "error": exc.message,
+                "code": failure.code,
+                "error": failure.message,
                 "failures": [
                     {"code": f.code, "relationship": f.relationship, "message": f.message}
                     for f in report.failures
@@ -448,7 +448,7 @@ def _emit_preflight_failure(state, config_str: str, exc) -> None:
     )
 
 
-def _emit_budget_failure(state, config_str: str, exc) -> None:
+def _emit_budget_failure(state, config_str: str, failure) -> None:
     """The fan-out budget was exceeded. No output was ever written (the
     engine's hard-fail contract runs the budget check before output_dir is
     touched); this handler never has cleanup to do."""
@@ -460,14 +460,14 @@ def _emit_budget_failure(state, config_str: str, exc) -> None:
                 "status": "error",
                 "error_kind": "budget_exceeded",
                 "config": config_str,
-                "code": exc.code,
-                "error": exc.message,
-                "scope": exc.scope,
-                "table": exc.table,
-                "cap": exc.cap,
-                "actual": exc.actual,
-                "seed_total": exc.seed_total,
-                "edge_id": exc.edge_id,
+                "code": failure.code,
+                "error": failure.message,
+                "scope": failure.scope,
+                "table": failure.table,
+                "cap": failure.cap,
+                "actual": failure.actual,
+                "seed_total": failure.seed_total,
+                "edge_id": failure.edge_id,
             },
         )
         return
@@ -475,7 +475,7 @@ def _emit_budget_failure(state, config_str: str, exc) -> None:
     if state.mode is OutputMode.quiet:
         return
 
-    state.err_console.print(error("error:"), exc.message, markup=False)
+    state.err_console.print(error("error:"), failure.message, markup=False)
     state.err_console.print(
         " ", hint("hint:"), "rerun with --dry-run to inspect the estimate before adjusting budget."
     )
