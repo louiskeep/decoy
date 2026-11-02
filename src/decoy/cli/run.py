@@ -1566,10 +1566,11 @@ def _commit_vault(vault_writer, vault: Path) -> None:
     `ext4`'s documented rename guidance: data fsync, rename, directory fsync). Any failure
     leaves no temp file. A vault renamed in before a failed directory fsync is removed, and a
     pre-existing vault (kept as a hard link until the rename is durable) is put back, so a
-    failed rewrite never loses the previous vault (on a filesystem without hard links the
-    rewrite proceeds unbacked). Any failure is reported as the constant `vault_write_failed`
-    text, except a coded engine `VaultError` (value-free, e.g. the install-the-vault-extra
-    remedy), which keeps its own text after the same cleanup.
+    failed rewrite never loses the previous vault; a pre-existing vault that cannot be hard
+    linked is not overwritten at all (the commit fails before the rename). Any failure is
+    reported as the constant `vault_write_failed` text, except a coded engine `VaultError`
+    (value-free, e.g. the install-the-vault-extra remedy), which keeps its own text after the
+    same cleanup.
     """
     import secrets
     import tempfile
@@ -1596,8 +1597,11 @@ def _commit_vault(vault_writer, vault: Path) -> None:
             backup = directory / f".{vault.name}.{secrets.token_hex(8)}.bak"
             try:
                 os.link(vault, backup, follow_symlinks=False)
-            except OSError:  # no hard links here: the rewrite still proceeds, unbacked
+            except OSError:
+                # An existing vault that cannot be backed up is never overwritten: a failed
+                # rename or directory fsync after it would leave neither vault.
                 backup = None
+                raise
         os.replace(tmp, vault)
         tmp, renamed = None, True
         _fsync_directory(directory)

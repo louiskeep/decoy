@@ -214,3 +214,34 @@ def test_tokenize_failed_commit_publishes_no_output(
     assert CANARY not in result.output
     assert not (tmp_path / "out.csv").exists(), "tokenized output was published uncommitted"
     assert not vault.exists()
+
+
+@pytest.mark.parametrize("also_fail_directory_fsync", [False, True])
+def test_preexisting_vault_survives_backup_link_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, also_fail_directory_fsync: bool
+) -> None:
+    """An existing vault that cannot be backed up is never overwritten: abort before the rename."""
+    import errno
+
+    vault = tmp_path / "vault.bin"
+    first = runner.invoke(app, ["run", str(_pipeline(tmp_path / "first")), "--vault", str(vault)])
+    assert first.exit_code == 0, first.output
+    before = vault.read_bytes()
+    attempts: list[tuple[str, str]] = []
+    real_link = os.link
+
+    def _link(src, dst, *a, **k):
+        if Path(src) == vault:
+            attempts.append((str(src), str(dst)))
+            raise OSError(errno.EPERM, f"Operation not permitted: {CANARY}")
+        return real_link(src, dst, *a, **k)
+
+    monkeypatch.setattr(os, "link", _link)
+    if also_fail_directory_fsync:
+        _fail_directory_fsync(monkeypatch)
+    root = tmp_path / "second"
+    for extra in ([], ["--json"]):
+        result = runner.invoke(app, ["run", str(_pipeline(root)), "--vault", str(vault), *extra])
+        _assert_failed_clean(result, root, vault)
+        assert vault.read_bytes() == before, "the pre-existing vault was replaced or removed"
+    assert len(attempts) == 2, "the backup link was never attempted; the test is vacuous"
