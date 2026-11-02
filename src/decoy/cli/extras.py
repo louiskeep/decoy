@@ -29,6 +29,7 @@ _MODULE_TO_EXTRA: dict[str, str] = {
     "spacy": "ner",
     "sklearn": "ml",
     "lightgbm": "ml",
+    "opentelemetry": "otel",
 }
 
 

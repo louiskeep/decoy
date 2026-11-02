@@ -180,6 +180,45 @@ class _ConfigValidationError(Exception):
     deeper in the pipeline (which are engine defects -> EXIT_RUNTIME)."""
 
 
+class _OtelSettingsUsageError(Exception):
+    """A refused --otel-endpoint / DECOY_OTEL_* setting; user error (exits EXIT_USAGE)."""
+
+
+def _start_telemetry(flag_endpoint: str | None, state):
+    """Build the trace exporter when --otel-endpoint or DECOY_OTEL_ENDPOINT asks for it.
+
+    Neither set: `opentelemetry` is never imported, whatever `OTEL_*` holds. The flag
+    without the `[otel]` extra raises into run's missing-extra arm; the env var alone
+    only warns, so an exported variable cannot fail unrelated runs.
+    """
+    endpoint = flag_endpoint or os.environ.get("DECOY_OTEL_ENDPOINT")
+    if not endpoint:
+        return None
+    try:
+        from decoy import telemetry
+    except ModuleNotFoundError as exc:
+        if flag_endpoint or translate_missing_extra(exc) is None:
+            raise
+        if state.mode is not OutputMode.quiet:
+            state.err_console.print(
+                warn("warning:"),
+                "DECOY_OTEL_ENDPOINT is set but the otel extra is not installed, so traces "
+                "are off. Add it with:  pip install decoy-cli[otel]",
+                markup=False,
+                soft_wrap=True,
+            )
+        return None
+    try:
+        return telemetry.configure(
+            endpoint,
+            os.environ.get("DECOY_OTEL_HEADERS"),
+            endpoint_setting="--otel-endpoint" if flag_endpoint else "DECOY_OTEL_ENDPOINT",
+        )
+    except telemetry.OtelSettingsError as exc:
+        # The message names the setting only; drop the chain so no value rides along.
+        raise _OtelSettingsUsageError(str(exc)) from None
+
+
 # The raw pre-check (before Pydantic) and the effective-ref guard share the one
 # predicate in `decoy._mask_secret`; callers never echo the value.
 _is_valid_mask_secret_ref = _mask_secret.is_valid_mask_secret_ref
@@ -429,6 +468,16 @@ def run(
             "handle."
         ),
     ),
+    otel_endpoint: str = typer.Option(
+        None,
+        "--otel-endpoint",
+        help=(
+            "Export OpenTelemetry traces of this run to the OTLP/HTTP traces URL of a "
+            "collector you run (also DECOY_OTEL_ENDPOINT). Headers come only from "
+            "DECOY_OTEL_HEADERS (name=value,...), which needs https unless the host is "
+            "loopback. Standard OTEL_* variables are ignored. Needs decoy-cli[otel]."
+        ),
+    ),
 ) -> None:
     """Run a decoy pipeline from a YAML config.
 
@@ -495,6 +544,9 @@ def run(
     _run_started_at = datetime.now(timezone.utc)
     started = time.perf_counter()
     try:
+        # F30: refuse a bad telemetry setting before any work. Spans and the exit
+        # flush bind to `_otel` in C1b.
+        _otel = _start_telemetry(otel_endpoint, state)
         with spinner(state, f"Running {yaml_mode}..."), contextlib.ExitStack() as _scopes:
             from decoy_engine import (
                 PipelineConfig,
@@ -951,6 +1003,7 @@ def run(
                         _ChunkedVaultError,
                         _VaultUsageError,
                         _MaskSecretUsageError,
+                        _OtelSettingsUsageError,
                         # A fixable --duckdb-source flag (bad value, missing DB,
                         # unknown relation, unreadable database) -- the operator's
                         # request is wrong, not a runtime crash.
