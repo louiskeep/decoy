@@ -110,7 +110,8 @@ def test_unmask_refusal_is_usage_and_names_the_config_key(tmp_path: Path, mask_s
     assert runner.invoke(app, ["run", str(cfg), "--mask-secret", mask_secret]).exit_code == 0
     result = runner.invoke(app, ["unmask", str(cfg), str(tmp_path / "out.csv")])
     assert result.exit_code == EXIT_USAGE, result.output
-    _assert_actionable(result.output, flag=False)
+    # `decoy unmask` takes --mask-secret too, so its remedy names the flag and the config key.
+    _assert_actionable(result.output, flag=True)
     assert "unmask failed" not in result.output
     assert not (tmp_path / "out.unmasked.csv").exists()
 

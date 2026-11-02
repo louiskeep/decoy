@@ -22,15 +22,16 @@ RUN = (
 )
 
 UNMASK = (
-    f"{CODE}: reversing keyed columns needs the mask secret the run used. Set "
-    f"global_settings.mask_secret_ref in the pipeline YAML to {_FORMS}, the same secret "
-    "the mask run used. See `decoy explain keys`."
+    f"{CODE}: reversing keyed columns needs the mask secret the run used. Pass "
+    f"--mask-secret with {_FORMS}, or set global_settings.mask_secret_ref in the pipeline "
+    "YAML (one place, not both): the same secret the mask run used. See `decoy explain keys`."
 )
 
 REPORT_VAULT = (
     f"{CODE}: a vault is encrypted under the mask secret the run used, and none was "
-    f"supplied. Set global_settings.mask_secret_ref in the pipeline YAML to {_FORMS}, the "
-    "same secret the `decoy run --vault` call used. See `decoy explain keys`."
+    f"supplied. Pass --mask-secret with {_FORMS}, or set global_settings.mask_secret_ref in "
+    "the pipeline YAML (one place, not both): the same secret the `decoy run --vault` call "
+    "used. See `decoy explain keys`."
 )
 
 API = (

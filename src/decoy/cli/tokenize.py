@@ -27,6 +27,7 @@ from pathlib import Path
 
 import typer
 
+from decoy import _mask_secret
 from decoy.cli._token_vault import LocalTokenVault, TokenVaultError, iter_tokenize_columns
 from decoy.cli._yaml_errors import sanitize_yaml_error
 from decoy.cli.exit_codes import EXIT_RUNTIME, EXIT_USAGE
@@ -95,12 +96,7 @@ See also: decoy tokenize, decoy explain tokenize.
 """
 
 
-def _is_valid_mask_secret_ref(value: object) -> bool:
-    # Mirrors decoy.cli.run._is_valid_mask_secret_ref: a valid ref is a
-    # non-empty `env:NAME` / `file:/PATH` string. Kept local (one short pure
-    # predicate) rather than importing run.py, whose module-level import pulls
-    # in the whole run command surface.
-    return isinstance(value, str) and value.startswith(("env:", "file:"))
+_is_valid_mask_secret_ref = _mask_secret.is_valid_mask_secret_ref
 
 
 def tokenize(

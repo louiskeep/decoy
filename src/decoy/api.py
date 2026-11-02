@@ -31,10 +31,10 @@ from typing import Any
 import pandas as pd
 import pyarrow as pa
 
-from decoy import _mask_secret_guidance, _native_gate
+from decoy import _mask_secret, _mask_secret_guidance, _native_gate
+from decoy._mask_secret import is_valid_mask_secret_ref as _is_valid_mask_secret_ref
 from decoy.cli.extras import UnsupportedCloudEndpointError
 from decoy.cli.run import (
-    _is_valid_mask_secret_ref,
     _load_sources_from_config,
     _write_mask_outputs,
 )
@@ -117,26 +117,24 @@ def _apply_mask_secret(config_dict: dict, mask_secret: str | None) -> None:
     (DE-02 Option B): one secret source per run, chosen explicitly, and a
     fail-closed refusal when the installed engine predates DE-02's
     keyprovider (which would otherwise silently emit UNKEYED output)."""
-    if mask_secret is not None:
-        existing_ref = (config_dict.get("global_settings") or {}).get("mask_secret_ref")
-        if existing_ref is not None:
-            raise MaskSecretConfigError(
-                "mask_secret was passed but the config already sets "
-                "global_settings.mask_secret_ref. Set the masking secret "
-                "in exactly one place: drop mask_secret=, or remove "
-                "mask_secret_ref from the config."
-            )
-        config_dict.setdefault("global_settings", {})["mask_secret_ref"] = mask_secret
-
-    effective_ref = (config_dict.get("global_settings") or {}).get("mask_secret_ref")
-    if effective_ref is not None:
-        if not _is_valid_mask_secret_ref(effective_ref):
-            raise MaskSecretConfigError(
-                "Invalid mask secret: expected an 'env:NAME' or 'file:/PATH' "
-                "reference to a >=32-byte secret (from mask_secret= or "
-                "global_settings.mask_secret_ref). It is a REFERENCE, never "
-                "the raw secret."
-            )
+    _mask_secret.apply_mask_secret(
+        config_dict,
+        mask_secret,
+        error=MaskSecretConfigError,
+        both_set=(
+            "mask_secret was passed but the config already sets "
+            "global_settings.mask_secret_ref. Set the masking secret "
+            "in exactly one place: drop mask_secret=, or remove "
+            "mask_secret_ref from the config."
+        ),
+        invalid=(
+            "Invalid mask secret: expected an 'env:NAME' or 'file:/PATH' "
+            "reference to a >=32-byte secret (from mask_secret= or "
+            "global_settings.mask_secret_ref). It is a REFERENCE, never "
+            "the raw secret."
+        ),
+    )
+    if (config_dict.get("global_settings") or {}).get("mask_secret_ref") is not None:
         try:
             import decoy_engine.keyprovider  # noqa: F401
         except ImportError as exc:

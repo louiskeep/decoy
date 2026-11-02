@@ -400,6 +400,8 @@ def test_no_native_stays_compatible_with_an_older_engine(
         derive_key=None,
         instance_default_locale=None,
         vault_writer=None,
+        # DE-02 (engine 0.4.0, the floor) predates the slice; a real old engine has it.
+        key_provider=None,
     ):
         return real_run_pipeline(
             config,
@@ -409,6 +411,7 @@ def test_no_native_stays_compatible_with_an_older_engine(
             derive_key=derive_key,
             instance_default_locale=instance_default_locale,
             vault_writer=vault_writer,
+            key_provider=key_provider,
         )
 
     monkeypatch.setattr("decoy_engine.run_pipeline", _old_engine_run_pipeline)

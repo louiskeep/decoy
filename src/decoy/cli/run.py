@@ -11,6 +11,7 @@ rejects them with a typed error before this module sees them.
 """
 
 import binascii
+import contextlib
 import json as _json
 import os
 import time
@@ -22,7 +23,7 @@ import typer
 from rich.text import Text
 
 from decoy import __version__ as _cli_version
-from decoy import _mask_secret_guidance, _native_gate
+from decoy import _mask_secret, _mask_secret_guidance, _native_gate
 from decoy.cli._duckdb_source import DuckDBSourceError, acquire_relation, parse_flag
 from decoy.cli._sources import iter_source_chunks, read_source
 from decoy.cli._yaml_errors import sanitize_yaml_error
@@ -169,14 +170,9 @@ class _ConfigValidationError(Exception):
     deeper in the pipeline (which are engine defects -> EXIT_RUNTIME)."""
 
 
-# DE-02: the ONE place that decides whether a mask_secret_ref value is
-# well-formed. A valid ref is a non-empty `env:NAME` / `file:/PATH` string; a
-# non-str (list/int/dict), empty string, or wrong-prefix string is invalid.
-# Shared by the raw pre-check (before Pydantic) and the merged effective-ref
-# guard so the two can never diverge. Callers ALWAYS raise a redacted error --
-# they never echo the value, which may be a raw secret.
-def _is_valid_mask_secret_ref(value: object) -> bool:
-    return isinstance(value, str) and value.startswith(("env:", "file:"))
+# The raw pre-check (before Pydantic) and the effective-ref guard share the one
+# predicate in `decoy._mask_secret`; callers never echo the value.
+_is_valid_mask_secret_ref = _mask_secret.is_valid_mask_secret_ref
 
 
 def _load_raw_config(config_path: Path) -> dict | None:
@@ -489,7 +485,7 @@ def run(
     _run_started_at = datetime.now(timezone.utc)
     started = time.perf_counter()
     try:
-        with spinner(state, f"Running {yaml_mode}..."):
+        with spinner(state, f"Running {yaml_mode}..."), contextlib.ExitStack() as _scopes:
             from decoy_engine import (
                 PipelineConfig,
                 run_pipeline,
@@ -617,51 +613,11 @@ def run(
             # _require_local_io_endpoints), not here, so `decoy.mask()` --
             # which calls the same helpers -- gets the identical refusal.
 
-            # DE-02 Option B (2026-07-15): --mask-secret sets the same
-            # `global_settings.mask_secret_ref` slot the YAML can set directly.
-            # It feeds run_pipeline's fail-closed KeyProvider resolution AND
-            # the --chunked path (both read mask_secret_ref off this same
-            # config dict -- _pipeline.py / _chunked.py); one injection point
-            # covers both routes.
-            #
-            # Both-set check uses PRESENCE (`is not None`), not truthiness: a
-            # YAML `mask_secret_ref: ""` is still a configured slot, so the flag
-            # must not silently override it -- one secret source per run, chosen
-            # explicitly. The flag itself has no env var, so `mask_secret is
-            # None` here means "flag absent".
-            if mask_secret is not None:
-                existing_ref = (config_dict.get("global_settings") or {}).get("mask_secret_ref")
-                if existing_ref is not None:
-                    raise _MaskSecretUsageError(
-                        "--mask-secret was passed but the YAML already sets "
-                        "global_settings.mask_secret_ref. Set the masking "
-                        "secret in exactly one place: drop --mask-secret, or "
-                        "remove mask_secret_ref from the config."
-                    )
-                config_dict.setdefault("global_settings", {})["mask_secret_ref"] = mask_secret
-
-            # Validate + fail-closed guard on the EFFECTIVE ref (whether it came
-            # from --mask-secret or the YAML). Keyed off PRESENCE, not
-            # truthiness: a configured-but-empty `mask_secret_ref: ""` is a user
-            # error, NOT a silent fall-through to an unkeyed (job_seed) run --
-            # the engine's resolvers treat empty as no-secret, so truthiness
-            # here would let an empty ref emit UNKEYED output pre-GA. A present
-            # ref must be a well-formed `env:`/`file:` reference.
-            #
-            # Never echo the ref VALUE in any error (it may be a raw secret a
-            # user pasted by mistake): the message states the expected format
-            # only. This also keeps the value out of the --json error payload,
-            # which is built from `str(exc)`.
-            effective_ref = (config_dict.get("global_settings") or {}).get("mask_secret_ref")
-            if effective_ref is not None:
-                if not _is_valid_mask_secret_ref(effective_ref):
-                    raise _MaskSecretUsageError(
-                        "Invalid mask secret: expected an 'env:NAME' or "
-                        "'file:/PATH' reference to a >=32-byte secret (from "
-                        "--mask-secret or global_settings.mask_secret_ref). It "
-                        "is a REFERENCE, never the raw secret. "
-                        "See: decoy explain keys."
-                    )
+            # --mask-secret fills the same `global_settings.mask_secret_ref` slot the
+            # YAML can set; one source per run, presence-keyed, never echoed (the
+            # flag has no env var, so None means "flag absent").
+            _mask_secret.apply_mask_secret(config_dict, mask_secret, error=_MaskSecretUsageError)
+            if (config_dict.get("global_settings") or {}).get("mask_secret_ref") is not None:
                 # A mask_secret_ref is only honored by a DE-02 engine; a
                 # pre-DE-02 engine has no `keyprovider` module and would
                 # SILENTLY IGNORE the ref, emitting job-seed-keyed output
@@ -799,21 +755,33 @@ def run(
             if gate_result.warn_message and state.mode is not OutputMode.quiet:
                 state.err_console.print(warn("warning:"), Text(gate_result.warn_message))
 
+            # Usage and source refusals come before the secret read, in the order the engine
+            # used when it admitted inside each entry.
+            _require_local_io_endpoints(config_dict)
+            if chunked:
+                _check_chunked_tables(config_dict)
+            else:
+                sources = _load_sources_from_config(config_dict, config.parent)
+            # One admission per run: the vault writer and every engine entry get this
+            # provider, so the secret is read once and output and vault share one key.
+            key_provider = _scopes.enter_context(_mask_secret.admitted_key_provider(config_dict))
+            # None is the engine default; omitting it keeps run_pipeline's call shape for
+            # an unkeyed config.
+            _key_kwargs = {} if key_provider is None else {"key_provider": key_provider}
             vault_writer = None
             if vault is not None:
                 from decoy_engine import vault_writer_for_config
 
-                vault_writer = vault_writer_for_config(config_dict)
+                vault_writer = vault_writer_for_config(config_dict, **_key_kwargs)
 
             if chunked:
-                _run_chunked_mask(config_dict, config.parent, chunk_size)
+                _run_chunked_mask(config_dict, config.parent, chunk_size, key_provider)
                 _native_route = _native_gate.classify_route(
                     chunked=True,
                     any_generate=any_generate,
                     quality_metrics=None,
                 )
             else:
-                sources = _load_sources_from_config(config_dict, config.parent)
                 instance_locale = (config_dict.get("global_settings") or {}).get("default_locale")
                 # S5 report kwargs are passed ONLY when a report flag was
                 # requested. All four default off, so the default run sends no
@@ -840,6 +808,7 @@ def run(
                     derive_key=resolver,
                     instance_default_locale=instance_locale,
                     vault_writer=vault_writer,
+                    **_key_kwargs,
                     **_report_kwargs,
                     **_native_gate.run_pipeline_kwargs(gate_result),
                 )
@@ -1415,6 +1384,7 @@ def _run_chunked_mask(
     config_dict: dict,
     base_dir: Path,
     chunk_size: int,
+    key_provider=None,
 ) -> None:
     """WS4 chunked mask path: stream each mask table's source through
     `decoy_engine.run_mask_pipeline_chunked`, writing output per chunk, on
@@ -1460,10 +1430,22 @@ def _run_chunked_mask(
             iter_source_chunks(name, src_spec, base_dir, chunk_size),
             table=name,
             engine_version=engine_version,
+            key_provider=key_provider,
         )
         _write_chunked_output(
             masked_iter, out_path, src_path, src_is_parquet=src_spec.get("format") == "parquet"
         )
+
+
+def _check_chunked_tables(config_dict: dict) -> None:
+    """The engine's config-only chunked check for every mask table (it repeats it per entry)."""
+    from decoy_engine import get_default_registry
+    from decoy_engine.execution import check_chunked_compatibility
+
+    registry = get_default_registry()
+    for entry in config_dict.get("tables") or []:
+        if isinstance(entry, dict) and entry.get("columns"):
+            check_chunked_compatibility(config_dict, table=entry["name"], registry=registry)
 
 
 def _write_chunked_output(

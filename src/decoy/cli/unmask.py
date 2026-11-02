@@ -2,7 +2,7 @@
 
 Capability-gaps WS1 (2026-06-12). The inverse of the fpe leg of
 `decoy run`: the SAME pipeline config the mask run used carries the
-mask secret reference (`global_settings.mask_secret_ref`) plus per-column
+mask secret reference (`--mask-secret` or `global_settings.mask_secret_ref`) plus per-column
 namespace/charset, which is exactly what `decoy_engine.unmask_pipeline`
 needs to re-derive the Feistel key and invert the permutation. One-way strategies (hash, redact, faker,
 date_shift, ...) pass through unchanged and are reported irreversible.
@@ -18,7 +18,7 @@ from pathlib import Path
 import typer
 import yaml as _yaml
 
-from decoy import _mask_secret_guidance
+from decoy import _mask_secret, _mask_secret_guidance
 from decoy.cli._yaml_errors import sanitize_yaml_error
 from decoy.cli.exit_codes import EXIT_RUNTIME, EXIT_USAGE
 from decoy.ui.output import OutputMode, emit_json, setup_output
@@ -45,9 +45,9 @@ Examples:
 
 Only `strategy: fpe` columns reverse from the config alone; hash,
 redact, faker and the other one-way strategies pass through unchanged
-unless the column was vaulted at mask time. The config's
-global_settings.mask_secret_ref must name the secret the mask run used;
-the vault file is a re-identification map, store it separately from the
+unless the column was vaulted at mask time. --mask-secret (or the
+config's global_settings.mask_secret_ref) must name the secret the mask
+run used; the vault file is a re-identification map, store it separately from the
 masked output.
 
 See also: decoy run, decoy explain strategies.
@@ -61,8 +61,8 @@ def unmask(
         dir_okay=False,
         readable=True,
         help=(
-            "The pipeline config the mask run used; its global_settings.mask_secret_ref "
-            "must name the same mask secret."
+            "The pipeline config the mask run used. The mask secret (--mask-secret or "
+            "its global_settings.mask_secret_ref) must be the one that run used."
         ),
     ),
     masked: Path = typer.Argument(
@@ -92,9 +92,10 @@ def unmask(
         help=(
             "Vault file the mask run wrote (decoy run --vault). Recovers "
             "one-way columns declared vault: true; decrypts under the "
-            "mask secret named by global_settings.mask_secret_ref."
+            "mask secret (--mask-secret or global_settings.mask_secret_ref)."
         ),
     ),
+    mask_secret: str | None = typer.Option(None, "--mask-secret", help=_mask_secret.FLAG_HELP),
     json_: bool = typer.Option(
         False,
         "--json",
@@ -151,6 +152,11 @@ def unmask(
         _emit_error(
             f"Pipeline YAML must be a YAML mapping (object), not {type(raw).__name__}."
         )
+        raise typer.Exit(code=EXIT_USAGE)
+    try:
+        _mask_secret.apply_mask_secret(raw, mask_secret)
+    except _mask_secret.MaskSecretFlagError as exc:
+        _emit_error(str(exc))
         raise typer.Exit(code=EXIT_USAGE)
 
     mask_tables = [

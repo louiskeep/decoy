@@ -43,6 +43,7 @@ from typing import Any
 
 import typer
 
+from decoy import _mask_secret
 from decoy.cli._yaml_errors import sanitize_yaml_error
 from decoy.cli.evidence import _render_manifest_card, verify_manifest
 from decoy.cli.exit_codes import EXIT_FINDINGS, EXIT_RUNTIME, EXIT_USAGE
@@ -2223,10 +2224,11 @@ def _vault(
         dir_okay=False,
         readable=True,
         help=(
-            "The pipeline config the mask run used (must carry the same seed "
-            "as the run that wrote the vault)."
+            "The pipeline config the mask run used. The vault opens only under the mask "
+            "secret that run used (--mask-secret or global_settings.mask_secret_ref)."
         ),
     ),
+    mask_secret: str | None = typer.Option(None, "--mask-secret", help=_mask_secret.FLAG_HELP),
     json_: bool = typer.Option(
         False,
         "--json",
@@ -2247,8 +2249,8 @@ def _vault(
 ) -> None:
     """Inspect a vault file: report entry count, namespaces, and dropped-ambiguous count.
 
-    Opens the vault with the mask secret that global_settings.mask_secret_ref
-    in the pipeline config names, the secret the `decoy run --vault` call
+    Opens the vault with the mask secret that --mask-secret or
+    global_settings.mask_secret_ref in the pipeline config names, the secret the `decoy run --vault` call
     used; the seed is not key material. A missing or wrong secret exits 1.
     Exits 0 on success, 1 on a config/vault/usage error.
     """
@@ -2286,18 +2288,21 @@ def _vault(
             f"Pipeline YAML must be a YAML mapping (object), not {type(raw).__name__}."
         )
         raise typer.Exit(code=EXIT_USAGE)
+    try:
+        _mask_secret.apply_mask_secret(raw, mask_secret)
+    except _mask_secret.MaskSecretFlagError as exc:
+        _emit_error(str(exc))
+        raise typer.Exit(code=EXIT_USAGE)
 
     from decoy_engine import VaultError, load_vault
     from decoy_engine.keyprovider import MaskSecretError
-    from decoy_engine.secret_providers import AdmissionScope, admit_mask_key
 
     from decoy import _mask_secret_guidance
 
     # The engine's own admission path (the one `decoy unmask` reaches through
     # unmask_pipeline); the scope closes the admitted secret on every exit.
     try:
-        with AdmissionScope() as scope:
-            provider = scope.adopt(admit_mask_key(raw)).key_provider
+        with _mask_secret.admitted_key_provider(raw) as provider:
             if provider is None:
                 # A vault is always keyed; there is no seed fallback to open it with.
                 _emit_error(_mask_secret_guidance.REPORT_VAULT)
@@ -2325,8 +2330,8 @@ def _vault(
                 f"{getattr(exc, 'code', type(exc).__name__)}: "
                 f"{getattr(exc, 'message', exc)}",
                 hint_text=(
-                    "use the mask secret (global_settings.mask_secret_ref) of the "
-                    "`decoy run --vault` call that wrote this vault."
+                    "use the mask secret (--mask-secret or global_settings.mask_secret_ref) "
+                    "of the `decoy run --vault` call that wrote this vault."
                 ),
             )
         raise typer.Exit(code=EXIT_USAGE)
