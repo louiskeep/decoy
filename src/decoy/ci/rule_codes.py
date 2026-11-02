@@ -102,24 +102,25 @@ def _engine_registry_codes() -> frozenset[str]:
 
     return _codes_from_registry(reasons.manifest()["entries"])
 
-# Literal codes the engine emits outside the registry (sources at engine v0.17.0). The test
+# Literal codes the engine emits outside the registry (sources at engine v0.18.0). The test
 # holds this set equal to what an AST scan of the installed engine finds minus the registry.
 _ENGINE_LITERAL_CODES: frozenset[str] = frozenset(
     {
         "abi-mismatch",  # execution/native/_companion_status.py:346
         "absent",  # execution/native/_companion_status.py:269
         "collision_rate",  # execution/native/_pool_quality.py:442
-        "field_missing",  # execution/_isolated_memwatch.py:43
+        "field_missing",  # execution/_isolated_memwatch.py:44
         "kat-corrupt",  # execution/native/_companion_status.py:147
         "load-error",  # execution/native/_companion_status.py:291
         "measured",  # execution/_probe.py:461
-        "oom_killed",  # execution/_isolated_run.py:525
+        "oom_killed",  # execution/_isolated_run.py:520
         "pool_duplicate_rate",  # execution/native/_pool_quality.py:454
         "present-ok",  # execution/native/_companion_status.py:384
-        "process_exited",  # execution/_isolated_memwatch.py:43
-        "read_error",  # execution/_isolated_memwatch.py:43
-        "stopped",  # execution/_isolated_memwatch.py:43
-        "thread_start_failed",  # execution/_isolated_memwatch.py:43
+        "process_exited",  # execution/_isolated_memwatch.py:44
+        "read_error",  # execution/_isolated_memwatch.py:44
+        "stopped",  # execution/_isolated_memwatch.py:44
+        "thread_start_failed",  # execution/_isolated_memwatch.py:44
+        "unreachable",  # secret_providers/_preflight.py:216
     }
 )
 

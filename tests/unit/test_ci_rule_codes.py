@@ -93,7 +93,7 @@ def _engine_codes() -> set[str]:
 # Computed `code=` sites in the engine, each with the decision taken for it: the codes it can
 # produce (each must be allowlisted). A computed code is invisible to the registry and the
 # literal scan, so a new one would silently collapse to UNKNOWN_CODE; it fails here until it
-# is listed. Engine 0.17.0 has none (0.15.1's two moved into the registry).
+# is listed. Engine 0.18.0 has none (0.15.1's two moved into the registry).
 _APPROVED_DYNAMIC_CODE_SITES: dict[str, tuple[str, ...]] = {}
 
 
