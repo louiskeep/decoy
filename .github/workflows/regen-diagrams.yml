@@ -53,8 +53,8 @@ jobs:
           pip install pydeps pylint
           # decoy-engine is not on PyPI yet, so install it from the repo first. This job holds a
           # write token (it pushes regenerated diagrams), so pin an exact engine commit (the
-          # v0.17.0 release commit) instead of tracking main; bump it with each engine release.
-          pip install "git+https://github.com/louiskeep/decoy-engine@1132d29e40a0c947174fff65185fb95168ce504f"
+          # v0.18.0 release commit) instead of tracking main; bump it with each engine release.
+          pip install "git+https://github.com/louiskeep/decoy-engine@f5b46a2c109f7b901e8ed3d36e48798bb6179b1d"
           pip install -e .
 
       - name: Regenerate diagrams

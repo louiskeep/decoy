@@ -98,9 +98,13 @@ dependencies = [
     # with the DP certified rows re-pinned, so `requirements-certified.txt`
     # reproduces a certified row again.
     #
+    # 0.18.0 (R-b, commit f5b46a2c) checks a `file:` mask secret is owner-only
+    # on the descriptor it reads, and adds certified row b643894d for the CLI
+    # runtime profile.
+    #
     # Hard-pinned to the same engine release the platform pins. The engine is
-    # not on PyPI, so CI and the smoke docs install the `v0.17.0` git tag.
-    "decoy-engine==0.17.0",
+    # not on PyPI, so CI and the smoke docs install the `v0.18.0` git tag.
+    "decoy-engine==0.18.0",
     # Pin the typer minor: `typer utils docs` metavar rendering differs across
     # typer minors (0.26.x emits `TEXT`/`FILE`; 0.27.x emits `<str>`/`<file>`),
     # and docs/cli-reference.md is committed and checked by the test_cli_surface

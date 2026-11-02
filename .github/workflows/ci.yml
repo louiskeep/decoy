@@ -117,7 +117,7 @@ jobs:
         # After OSS.7 publishes, swap to: pip install decoy-engine==<pinned>
         run: |
           pip install --upgrade pip
-          pip install "git+https://github.com/louiskeep/decoy-engine@v0.17.0"
+          pip install "git+https://github.com/louiskeep/decoy-engine@v0.18.0"
 
       - name: Install CLI in editable mode with dev extras
         # Editable install wires the `decoy` console script so e2e tests
@@ -165,7 +165,7 @@ jobs:
         # `.smoke/bin/pip install decoy-engine`.
         run: |
           .smoke/bin/pip install --upgrade pip
-          .smoke/bin/pip install "git+https://github.com/louiskeep/decoy-engine@v0.17.0"
+          .smoke/bin/pip install "git+https://github.com/louiskeep/decoy-engine@v0.18.0"
 
       - name: Install the freshly-built decoy wheel (non-editable)
         run: .smoke/bin/pip install dist/*.whl
@@ -274,7 +274,7 @@ jobs:
         env:
           VIRTUAL_ENV: .venv-certified
         run: |
-          uv pip install "git+https://github.com/louiskeep/decoy-engine@v0.17.0" .
+          uv pip install "git+https://github.com/louiskeep/decoy-engine@v0.18.0" .
           uv pip install -r requirements-certified.txt
 
       - name: Certification smoke (fingerprint + manifest row + real DP fit)
