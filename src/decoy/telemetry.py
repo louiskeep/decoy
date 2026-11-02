@@ -188,6 +188,7 @@ def build_provider(
             max_span_attribute_length=64,
         ),
         shutdown_on_exit=False,
+        meter_provider=NoOpMeterProvider(),  # else get_meter_provider() may load OTEL_METER_PROVIDER
     )
     provider.add_span_processor(
         BatchSpanProcessor(

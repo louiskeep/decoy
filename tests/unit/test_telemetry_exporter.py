@@ -278,3 +278,22 @@ def test_flush_huge_body_200_is_not_read(listeners) -> None:
     flush_bounded(tel)
     assert big.handled.wait(15)
     assert big.connections == 1 and big.written < 16 * MIB
+
+
+def test_tracer_meter_is_noop_under_hostile_meter_env(monkeypatch) -> None:
+    from opentelemetry import metrics as metrics_api
+    from opentelemetry.metrics import NoOpMeterProvider
+    from opentelemetry.metrics._internal.instrument import NoOpCounter, NoOpUpDownCounter
+
+    # Reset the process-global lazy meter provider so the env var is consulted again.
+    monkeypatch.setattr(metrics_api._internal, "_METER_PROVIDER", None)
+    monkeypatch.setenv("OTEL_PYTHON_METER_PROVIDER", "sdk_meter_provider")
+    monkeypatch.setenv("OTEL_PYTHON_SDK_INTERNAL_METRICS_ENABLED", "true")
+    # Non-vacuity: with these variables the global provider is the SDK one, so a
+    # provider that fell back to it would get real instruments.
+    assert not isinstance(metrics_api.get_meter_provider(), NoOpMeterProvider)
+    monkeypatch.setattr(metrics_api._internal, "_METER_PROVIDER", None)
+    tel = build_provider("http://127.0.0.1:9/v1/traces", {}, service_version="t")
+    metrics = tel.provider.get_tracer("t")._tracer_metrics
+    assert isinstance(metrics._started_spans, NoOpCounter)
+    assert isinstance(metrics._live_spans, NoOpUpDownCounter)

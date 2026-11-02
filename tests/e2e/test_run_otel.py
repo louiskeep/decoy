@@ -160,6 +160,8 @@ def test_otel_settings_refusals(tmp_path, monkeypatch, cell) -> None:
 def test_headers_come_only_from_env(tmp_path, monkeypatch, listener) -> None:
     help_text = runner.invoke(app, ["run", "--help"]).stdout
     assert "--otel-endpoint" in help_text and "--otel-headers" not in help_text
+    # Rich reads a bare `[otel]` as markup and drops it; the install hint must survive.
+    assert "decoy-cli[otel]" in " ".join(help_text.split())
     cfg = _pipeline(tmp_path)
     usage = _run(cfg, "--otel-endpoint", LOOPBACK, "--otel-headers", "a=b")
     assert usage.exit_code == 2 and "No such option" in usage.output
@@ -182,3 +184,27 @@ def test_headers_come_only_from_env(tmp_path, monkeypatch, listener) -> None:
         for extra_args in ([], ["--json"], ["--verbose"]):
             result = _run(cfg, *extra_args, "--otel-endpoint", listener.url)
             assert "MARKER" not in result.stdout + result.stderr
+
+
+def test_empty_flag_is_refused_not_unset(tmp_path, monkeypatch, listener) -> None:
+    cfg = _pipeline(tmp_path)
+    monkeypatch.setenv("DECOY_OTEL_ENDPOINT", listener.url)
+    for extra_args in ([], ["--json"]):
+        for empty in ("", "  "):
+            result = _run(cfg, *extra_args, "--otel-endpoint", empty)
+            assert result.exit_code == 1, result.output
+            text = result.stdout + result.stderr
+            assert "--otel-endpoint" in text and listener.url not in text
+            if extra_args:
+                assert json.loads(result.stdout)["status"] == "error"
+    time.sleep(0.3)
+    assert listener.connections == 0  # no fall-through to DECOY_OTEL_ENDPOINT
+
+
+def test_missing_extra_message_names_the_flag(tmp_path, monkeypatch) -> None:
+    _hide_otel(monkeypatch)
+    result = _run(_pipeline(tmp_path), "--json", "--otel-endpoint", LOOPBACK)
+    assert result.exit_code == 1, result.output
+    message = json.loads(result.stdout)["error"]
+    assert "pip install decoy-cli[otel]" in message
+    assert "--otel-endpoint" in message and "this pipeline" not in message

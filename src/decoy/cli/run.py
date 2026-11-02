@@ -191,14 +191,29 @@ def _start_telemetry(flag_endpoint: str | None, state):
     without the `[otel]` extra raises into run's missing-extra arm; the env var alone
     only warns, so an exported variable cannot fail unrelated runs.
     """
-    endpoint = flag_endpoint or os.environ.get("DECOY_OTEL_ENDPOINT")
-    if not endpoint:
-        return None
+    if flag_endpoint is not None:
+        # An empty flag is refused, not read as "unset": falling through would export
+        # to DECOY_OTEL_ENDPOINT while the operator believed the flag chose the target.
+        if not flag_endpoint.strip():
+            raise _OtelSettingsUsageError("--otel-endpoint is empty; give an OTLP/HTTP traces URL")
+        endpoint = flag_endpoint
+    else:
+        endpoint = os.environ.get("DECOY_OTEL_ENDPOINT")
+        if not endpoint:
+            return None
     try:
         from decoy import telemetry
     except ModuleNotFoundError as exc:
-        if flag_endpoint or translate_missing_extra(exc) is None:
+        if translate_missing_extra(exc) is None:
             raise
+        if flag_endpoint is not None:
+            # Own wording: the shared extras message says "this pipeline needs", but
+            # here the trigger was the flag, not the pipeline.
+            raise MissingExtraError(
+                "--otel-endpoint needs the otel extra, which is not installed. "
+                "Add it with:  pip install decoy-cli[otel]",
+                extra="otel",
+            ) from None
         if state.mode is not OutputMode.quiet:
             state.err_console.print(
                 warn("warning:"),
@@ -475,7 +490,7 @@ def run(
             "Export OpenTelemetry traces of this run to the OTLP/HTTP traces URL of a "
             "collector you run (also DECOY_OTEL_ENDPOINT). Headers come only from "
             "DECOY_OTEL_HEADERS (name=value,...), which needs https unless the host is "
-            "loopback. Standard OTEL_* variables are ignored. Needs decoy-cli[otel]."
+            "loopback. Standard OTEL_* variables are ignored. Needs decoy-cli\\[otel]."
         ),
     ),
 ) -> None:
