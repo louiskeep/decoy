@@ -27,7 +27,7 @@ case ${1:-} in
 esac
 
 die() { echo "BOOTSTRAP FAIL: $1" >&2; echo "  fix: $2" >&2; exit 1; }
-# The pytest job's engine spec, e.g. git+https://github.com/louiskeep/decoy-engine@v0.17.0
+# The pytest job's engine spec, e.g. git+https://github.com/louiskeep/decoy-engine@v0.18.0
 ENGINE_SPEC=$(sed -n 's/^ *pip install "\(git+https:[^"]*decoy-engine@[^"]*\)"$/\1/p' "$WF" | head -n 1)
 ENGINE_REF=${ENGINE_SPEC##*@}
 PYPROJECT_PIN=$(sed -n 's/^ *"decoy-engine==\([^"]*\)",.*/\1/p' pyproject.toml)
