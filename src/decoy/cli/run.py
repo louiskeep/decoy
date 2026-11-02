@@ -991,9 +991,9 @@ def run(
         if len(error_text) > 500:
             error_text = error_text[:500] + "..."
         keyed_refusal = _mask_secret_guidance.is_keyed_secret_refusal(exc)
-        if keyed_refusal:
-            # The engine words this for its Python API; the CLI remedy is a flag.
-            error_text = _mask_secret_guidance.RUN
+        if isinstance(exc, _mask_secret_error_types):
+            # Constant text by code; the engine message never reaches the terminal or --json.
+            error_text = _mask_secret_guidance.secret_error_text(exc, _mask_secret_guidance.RUN)
 
         # PII egress guard (dennis sprint-5 BLOCKER): the raw engine error
         # can quote source-row cell values verbatim (see the comment above),

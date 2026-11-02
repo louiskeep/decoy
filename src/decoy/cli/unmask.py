@@ -193,7 +193,8 @@ def unmask(
     try:
         df = pd.read_csv(masked, dtype=str)
     except Exception as exc:
-        _emit_error(f"could not read {masked}: {exc}")
+        # The path the user gave and the type only: a parse error can quote a cell.
+        _emit_error(f"could not read {masked}: {type(exc).__name__}")
         raise typer.Exit(code=EXIT_USAGE)
 
     try:
@@ -202,6 +203,10 @@ def unmask(
             {target_table: pa.Table.from_pandas(df, preserve_index=False)},
             vault_path=str(vault) if vault is not None else None,
         )
+    except MaskSecretError as exc:
+        # Before the class branches: a secret refusal gets its remedy whatever else it is.
+        _emit_error(_mask_secret_guidance.secret_error_text(exc, _mask_secret_guidance.UNMASK))
+        raise typer.Exit(code=EXIT_USAGE)
     except PlanCompileError as exc:
         from decoy.cli.extras import plan_compile_error_fields
 
@@ -230,17 +235,9 @@ def unmask(
                 f"{getattr(exc, 'message', exc)}"
             )
         raise typer.Exit(code=EXIT_USAGE)
-    except MaskSecretError as exc:
-        # A missing, weak or unresolvable secret is the operator's config, not a crash
-        # (`decoy run` and `decoy tokenize` classify it the same way). The engine's
-        # messages are value-free; its keyed refusal names its Python API, so swap it.
-        if _mask_secret_guidance.is_keyed_secret_refusal(exc):
-            _emit_error(_mask_secret_guidance.UNMASK)
-        else:
-            _emit_error(f"{getattr(exc, 'code', type(exc).__name__)}: {getattr(exc, 'message', exc)}")
-        raise typer.Exit(code=EXIT_USAGE)
     except Exception as exc:  # runtime failure, not a usage problem
-        _emit_error(f"unmask failed: {type(exc).__name__}: {exc}"[:500])
+        # The type only: a runtime error's text can quote a source or masked cell.
+        _emit_error(f"unmask failed: {type(exc).__name__}")
         raise typer.Exit(code=EXIT_RUNTIME)
 
     out_path = output if output is not None else masked.with_suffix(".unmasked.csv")

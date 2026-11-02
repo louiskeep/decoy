@@ -2309,11 +2309,9 @@ def _vault(
                 raise typer.Exit(code=EXIT_USAGE)
             mapping, ambiguous_dropped = load_vault(str(vault), provider.mask_key())
     except MaskSecretError as exc:
-        # Value-free engine messages; the keyed refusal names its Python API, so swap it.
-        if _mask_secret_guidance.is_keyed_secret_refusal(exc):
-            _emit_error(_mask_secret_guidance.REPORT_VAULT)
-        else:
-            _emit_error(f"{getattr(exc, 'code', type(exc).__name__)}: {getattr(exc, 'message', exc)}")
+        _emit_error(
+            _mask_secret_guidance.secret_error_text(exc, _mask_secret_guidance.REPORT_VAULT)
+        )
         raise typer.Exit(code=EXIT_USAGE)
     except VaultError as exc:
         if getattr(exc, "code", None) == "vault_protocol_version_mismatch":

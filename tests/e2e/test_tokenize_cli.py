@@ -45,6 +45,7 @@ def _mask_secret_ref(tmp_path: Path) -> str:
     secret = tmp_path / "mask.secret"
     if not secret.exists():
         secret.write_text(_MASK_SECRET_HEX, encoding="utf-8")
+        secret.chmod(0o600)  # the documented owner-only recipe
     return f"file:{secret}"
 
 
@@ -343,6 +344,7 @@ class TestFailClosed:
         catch-all. The reported length is the only secret-derived fact."""
         weak = tmp_path / "weak.secret"
         weak.write_text("deadbeef", encoding="utf-8")  # 4 bytes decoded, < 32
+        weak.chmod(0o600)
         cfg = _pipeline(tmp_path, _TOKENIZE_COLS, with_secret=False)
         vault = tmp_path / "tokens.db"
         result = runner.invoke(
@@ -700,6 +702,7 @@ class TestNoLeakOnErrorPaths:
         bad_ref_cfg.write_text(yaml.safe_dump(bad_ref))
         weak = tmp_path / "weak.secret"
         weak.write_text("short")
+        weak.chmod(0o600)
         for args in (
             [str(bad_ref_cfg), "--vault", str(tmp_path / "v1.db")],
             [str(cfg), "--vault", str(tmp_path / "v2.db"), "--mask-secret", f"file:{weak}"],

@@ -27,7 +27,7 @@ from pathlib import Path
 
 import typer
 
-from decoy import _mask_secret
+from decoy import _mask_secret, _mask_secret_guidance
 from decoy.cli._token_vault import LocalTokenVault, TokenVaultError, iter_tokenize_columns
 from decoy.cli._yaml_errors import sanitize_yaml_error
 from decoy.cli.exit_codes import EXIT_RUNTIME, EXIT_USAGE
@@ -346,13 +346,11 @@ def tokenize(
     except TokenVaultError as exc:
         _emit_error(f"{exc.code}: {exc.message}")
         raise typer.Exit(code=EXIT_USAGE)
-    except (PlanCompileError, ExecutionError, ConfigError, MaskSecretError) as exc:
-        # MaskSecretError (missing_mask_secret / weak_mask_secret / bad_secret_ref)
-        # is a fixable operator problem, not a runtime crash: a shape-valid secret
-        # ref that cannot resolve. Its message is value-free by construction (the
-        # engine redacts; it names the env var / path, never the secret), so the
-        # same coded `{code}: {message}` surface the other engine errors get is
-        # safe here.
+    except MaskSecretError as exc:
+        # A fixable operator problem; dispatched on the code before the classes below.
+        _emit_error(_mask_secret_guidance.secret_error_text(exc, _mask_secret_guidance.TOKENIZE))
+        raise typer.Exit(code=EXIT_USAGE)
+    except (PlanCompileError, ExecutionError, ConfigError) as exc:
         _emit_error(f"{getattr(exc, 'code', type(exc).__name__)}: {getattr(exc, 'message', exc)}")
         raise typer.Exit(code=EXIT_USAGE)
     except typer.Exit:
