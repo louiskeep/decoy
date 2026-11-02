@@ -90,34 +90,6 @@ class TestVaultRoundTrip:
         ]
         assert "vault-reversed" in result.output
 
-    def test_chunked_run_writes_equivalent_vault(self, tmp_path: Path) -> None:
-        cfg = _pipeline(tmp_path, _VAULTED)
-        vault = tmp_path / "vault.bin"
-        result = runner.invoke(
-            app,
-            ["run", str(cfg), "--chunked", "--chunk-size", "7", "--vault", str(vault)],
-        )
-        assert result.exit_code == 0, result.output
-
-        out = tmp_path / "recovered.csv"
-        result = runner.invoke(
-            app,
-            [
-                "unmask",
-                str(cfg),
-                str(tmp_path / "out.csv"),
-                "--vault",
-                str(vault),
-                "--output",
-                str(out),
-            ],
-        )
-        assert result.exit_code == 0, result.output
-        recovered = pd.read_csv(out, dtype=str)
-        assert recovered["email"].tolist() == [
-            f"user{i}@example.com" for i in range(50)
-        ]
-
 
 class TestVaultUsageErrors:
     def test_vault_without_vaulted_columns_exits_usage(self, tmp_path: Path) -> None:

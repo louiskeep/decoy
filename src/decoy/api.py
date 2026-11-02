@@ -31,10 +31,10 @@ from typing import Any
 import pandas as pd
 import pyarrow as pa
 
-from decoy import _mask_secret_guidance, _native_gate
+from decoy import _mask_secret, _mask_secret_guidance, _native_gate
+from decoy._mask_secret import is_valid_mask_secret_ref as _is_valid_mask_secret_ref
 from decoy.cli.extras import UnsupportedCloudEndpointError
 from decoy.cli.run import (
-    _is_valid_mask_secret_ref,
     _load_sources_from_config,
     _write_mask_outputs,
 )
@@ -117,26 +117,24 @@ def _apply_mask_secret(config_dict: dict, mask_secret: str | None) -> None:
     (DE-02 Option B): one secret source per run, chosen explicitly, and a
     fail-closed refusal when the installed engine predates DE-02's
     keyprovider (which would otherwise silently emit UNKEYED output)."""
-    if mask_secret is not None:
-        existing_ref = (config_dict.get("global_settings") or {}).get("mask_secret_ref")
-        if existing_ref is not None:
-            raise MaskSecretConfigError(
-                "mask_secret was passed but the config already sets "
-                "global_settings.mask_secret_ref. Set the masking secret "
-                "in exactly one place: drop mask_secret=, or remove "
-                "mask_secret_ref from the config."
-            )
-        config_dict.setdefault("global_settings", {})["mask_secret_ref"] = mask_secret
-
-    effective_ref = (config_dict.get("global_settings") or {}).get("mask_secret_ref")
-    if effective_ref is not None:
-        if not _is_valid_mask_secret_ref(effective_ref):
-            raise MaskSecretConfigError(
-                "Invalid mask secret: expected an 'env:NAME' or 'file:/PATH' "
-                "reference to a >=32-byte secret (from mask_secret= or "
-                "global_settings.mask_secret_ref). It is a REFERENCE, never "
-                "the raw secret."
-            )
+    _mask_secret.apply_mask_secret(
+        config_dict,
+        mask_secret,
+        error=MaskSecretConfigError,
+        both_set=(
+            "mask_secret was passed but the config already sets "
+            "global_settings.mask_secret_ref. Set the masking secret "
+            "in exactly one place: drop mask_secret=, or remove "
+            "mask_secret_ref from the config."
+        ),
+        invalid=(
+            "Invalid mask secret: expected an 'env:NAME' or 'file:/PATH' "
+            "reference to a >=32-byte secret (from mask_secret= or "
+            "global_settings.mask_secret_ref). It is a REFERENCE, never "
+            "the raw secret."
+        ),
+    )
+    if (config_dict.get("global_settings") or {}).get("mask_secret_ref") is not None:
         try:
             import decoy_engine.keyprovider  # noqa: F401
         except ImportError as exc:
@@ -502,18 +500,28 @@ def mask(
         )
 
         try:
-            result = run_pipeline(
-                config_dict,
-                sources,
-                engine_version=engine_version,
-                derive_key=resolver,
-                instance_default_locale=instance_locale,
-                **extra_run_pipeline_kwargs,
-            )
+            # The same admission `decoy run` uses (an owner-only `file:` is checked on its
+            # open descriptor); the engine gets the provider and never reads the ref itself.
+            # None keeps run_pipeline's call shape for an unkeyed config.
+            with _mask_secret.admitted_key_provider(config_dict) as key_provider:
+                key_kwargs = {} if key_provider is None else {"key_provider": key_provider}
+                result = run_pipeline(
+                    config_dict,
+                    sources,
+                    engine_version=engine_version,
+                    derive_key=resolver,
+                    instance_default_locale=instance_locale,
+                    **key_kwargs,
+                    **extra_run_pipeline_kwargs,
+                )
         except Exception as exc:
             # The documented error type, with the `mask()` remedy instead of the engine's.
             if _mask_secret_guidance.is_keyed_secret_refusal(exc):
                 raise MaskSecretConfigError(_mask_secret_guidance.API) from None
+            if getattr(exc, "code", None) == _mask_secret.UNSAFE_CODE:
+                raise MaskSecretConfigError(
+                    _mask_secret_guidance.SECRET_REMEDIES[_mask_secret.UNSAFE_CODE]
+                ) from None
             raise
 
         route = _native_gate.classify_route(

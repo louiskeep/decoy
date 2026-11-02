@@ -27,6 +27,7 @@ from pathlib import Path
 
 import typer
 
+from decoy import _mask_secret, _mask_secret_guidance
 from decoy.cli._token_vault import LocalTokenVault, TokenVaultError, iter_tokenize_columns
 from decoy.cli._yaml_errors import sanitize_yaml_error
 from decoy.cli.exit_codes import EXIT_RUNTIME, EXIT_USAGE
@@ -95,12 +96,7 @@ See also: decoy tokenize, decoy explain tokenize.
 """
 
 
-def _is_valid_mask_secret_ref(value: object) -> bool:
-    # Mirrors decoy.cli.run._is_valid_mask_secret_ref: a valid ref is a
-    # non-empty `env:NAME` / `file:/PATH` string. Kept local (one short pure
-    # predicate) rather than importing run.py, whose module-level import pulls
-    # in the whole run command surface.
-    return isinstance(value, str) and value.startswith(("env:", "file:"))
+_is_valid_mask_secret_ref = _mask_secret.is_valid_mask_secret_ref
 
 
 def tokenize(
@@ -330,33 +326,36 @@ def tokenize(
         with spinner(state, "Tokenizing..."):
             sources = _load_sources_from_config(config_dict, config.parent)
             instance_locale = (config_dict.get("global_settings") or {}).get("default_locale")
-            token_vault = LocalTokenVault(vault, create=True)
-            result = run_pipeline(
-                config_dict,
-                sources,
-                engine_version=engine_version,
-                instance_default_locale=instance_locale,
-                token_vault_writer=token_vault,
-            )
-            _write_mask_outputs(config_dict, result, config.parent)
+            # The CLI admits the secret (an owner-only `file:` is checked on its open
+            # descriptor) and hands the engine the provider, so the engine never reads the
+            # ref itself.
+            with _mask_secret.admitted_key_provider(config_dict) as key_provider:
+                token_vault = LocalTokenVault(vault, create=True)
+                result = run_pipeline(
+                    config_dict,
+                    sources,
+                    engine_version=engine_version,
+                    instance_default_locale=instance_locale,
+                    token_vault_writer=token_vault,
+                    key_provider=key_provider,
+                )
             vault_count = token_vault.count()
             row_count = sum(len(tbl) for tbl in result.outputs.values())
-            # Make the mapping durable only now that the run succeeded AND the
-            # output is written -- a failure before here leaves no partial vault.
-            # commit() is the last fallible statement so `committed` is an exact
-            # "mappings are on disk" flag for the finally's cleanup.
+            # The mapping is durable BEFORE any output is published: tokenized output whose
+            # mapping was never committed can never be reversed. A failure before commit
+            # leaves no partial vault; `committed` is the exact "mappings are on disk" flag
+            # for the finally's cleanup.
             token_vault.commit()
             committed = True
+            _write_mask_outputs(config_dict, result, config.parent)
     except TokenVaultError as exc:
         _emit_error(f"{exc.code}: {exc.message}")
         raise typer.Exit(code=EXIT_USAGE)
-    except (PlanCompileError, ExecutionError, ConfigError, MaskSecretError) as exc:
-        # MaskSecretError (missing_mask_secret / weak_mask_secret / bad_secret_ref)
-        # is a fixable operator problem, not a runtime crash: a shape-valid secret
-        # ref that cannot resolve. Its message is value-free by construction (the
-        # engine redacts; it names the env var / path, never the secret), so the
-        # same coded `{code}: {message}` surface the other engine errors get is
-        # safe here.
+    except MaskSecretError as exc:
+        # A fixable operator problem; dispatched on the code before the classes below.
+        _emit_error(_mask_secret_guidance.secret_error_text(exc, _mask_secret_guidance.TOKENIZE))
+        raise typer.Exit(code=EXIT_USAGE)
+    except (PlanCompileError, ExecutionError, ConfigError) as exc:
         _emit_error(f"{getattr(exc, 'code', type(exc).__name__)}: {getattr(exc, 'message', exc)}")
         raise typer.Exit(code=EXIT_USAGE)
     except typer.Exit:
@@ -365,11 +364,18 @@ def tokenize(
         # Never echo the exception text: engine tokenize errors are value-free
         # today, but a future non-vault error (e.g. a pandas codec error) could
         # embed a source cell value. Surface the type only -- never the message.
-        _emit_error(
-            f"tokenize failed with an unexpected {type(exc).__name__}; the run was "
-            "aborted before the vault was committed, so it holds no mappings from "
-            "this run. Discard any output files this run produced."
-        )
+        if committed:
+            _emit_error(
+                f"tokenize failed with an unexpected {type(exc).__name__} while writing "
+                "the output; the vault was committed first, so it holds this run's "
+                "mappings. Discard any partial output files and re-run."
+            )
+        else:
+            _emit_error(
+                f"tokenize failed with an unexpected {type(exc).__name__}; the run was "
+                "aborted before the vault was committed, so it holds no mappings from "
+                "this run. No output was written."
+            )
         raise typer.Exit(code=EXIT_RUNTIME) from exc
     finally:
         if token_vault is not None:

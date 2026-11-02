@@ -89,7 +89,7 @@ $ decoy run [OPTIONS] CONFIG
 * `--mask-secret TEXT`: env:NAME or file:/PATH pointing at a &gt;=32-byte mask secret for keyed masking (mask: strategies -- fpe, hash, date_shift, and others). Independent of --master-key (which is generation-only). Sets &#x27;global_settings.mask_secret_ref&#x27; for this run; an error if the YAML already sets it. Explicit flag only -- it deliberately has NO env var, because the ref it carries (e.g. &#x27;env:DECOY_MASK_SECRET&#x27;) already indirects through the environment; a second env layer would absorb the raw exported secret as this flag&#x27;s value. See: decoy explain keys.
 * `--chunked`: Stream the source through the engine chunk-by-chunk, for inputs too large to load whole. Works for mask configs whose every strategy is value-keyed (hash, fpe, redact, truncate, text_redact, date_shift, bucketize), plus faker/categorical when deterministic with an explicit pool_size / categories declared in config; output is byte-identical to a plain run. Sources are read by their declared format (csv or parquet; fixed_width is not supported with --chunked); targets are written by file suffix. See: decoy explain chunked.
 * `--chunk-size INTEGER RANGE`: Rows per chunk in --chunked mode.  [default: 100000; x&gt;=1]
-* `--vault PATH`: Write the token vault (encrypted source-to-masked map for vault: true columns) to this path. The vault plus the config re-identify every vaulted value: store them separately and never alongside the masked output. Needs the engine&#x27;s vault extra (cryptography).
+* `--vault PATH`: Write the token vault (encrypted source-to-masked map for vault: true columns) to this path. The vault plus the config re-identify every vaulted value: store them separately and never alongside the masked output. Needs the engine&#x27;s vault extra (cryptography). Not supported with --chunked.
 * `--key-label TEXT`: Stable namespace string for the --master-key generation key hierarchy (synthetic generation only, not masking). Required when --master-key is set. Pick something durable (e.g. &#x27;customers_q4&#x27;); changing it produces different generated output. CLI flag only -- PipelineConfig forbids unknown top-level keys, so there is no YAML equivalent.
 * `--evidence-out PATH`: Write a local evidence manifest (JSON) to this path after a successful run. The manifest records pipeline hash, input/output file fingerprints, run metadata, and row counts/timings/warnings where available (these are omitted for --chunked runs). It does NOT contain raw data values. Use `decoy report verify` to check the manifest against current files. See: decoy explain evidence (when available).
 * `--notify TEXT`: Notify a channel after the run reaches its terminal state. Repeatable. Spec is &#x27;kind:target&#x27;: webhook:&lt;url&gt;, slack:&lt;url&gt;, email:&lt;address&gt;. Best-effort: a channel failure never changes the run&#x27;s exit code. Webhook signing key from DECOY_NOTIFY_WEBHOOK_SECRET (unsigned if unset); SMTP from DECOY_NOTIFY_SMTP_HOST/_PORT/_USER/_PASS/_FROM. Nothing is persisted to .decoy/workspace.json -- targets and secrets are flags/env only, never written to disk.
@@ -174,14 +174,15 @@ $ decoy unmask [OPTIONS] CONFIG MASKED
 
 **Arguments**:
 
-* `CONFIG`: The pipeline config the mask run used; its global_settings.mask_secret_ref must name the same mask secret.  [required]
+* `CONFIG`: The pipeline config the mask run used. The mask secret (--mask-secret or its global_settings.mask_secret_ref) must be the one that run used.  [required]
 * `MASKED`: The masked CSV produced by `decoy run` for one table.  [required]
 
 **Options**:
 
 * `--table TEXT`: Which config table the masked file belongs to. Required when the config masks more than one table.
 * `-o, --output PATH`: Where to write the recovered CSV. Default: &lt;masked&gt;.unmasked.csv next to the input.
-* `--vault FILE`: Vault file the mask run wrote (decoy run --vault). Recovers one-way columns declared vault: true; decrypts under the mask secret named by global_settings.mask_secret_ref.
+* `--vault FILE`: Vault file the mask run wrote (decoy run --vault). Recovers one-way columns declared vault: true; decrypts under the mask secret (--mask-secret or global_settings.mask_secret_ref).
+* `--mask-secret TEXT`: Reference to the mask secret the run used: &#x27;env:NAME&#x27; or &#x27;file:/PATH&#x27; (a &gt;=32-byte secret; an owner-only file, never the raw value). Sets global_settings.mask_secret_ref for this command; an error if the YAML also sets it. See: decoy explain keys.
 * `--json`: Emit a structured JSON result on stdout. Errors still go to stderr.
 * `-q, --quiet`: Suppress stdout. Errors still go to stderr; exit code carries the result.
 * `-v, --verbose`: Enable debug-level CLI logs on stderr.
@@ -207,9 +208,9 @@ Examples:
 
 Only `strategy: fpe` columns reverse from the config alone; hash,
 redact, faker and the other one-way strategies pass through unchanged
-unless the column was vaulted at mask time. The config's
-global_settings.mask_secret_ref must name the secret the mask run used;
-the vault file is a re-identification map, store it separately from the
+unless the column was vaulted at mask time. --mask-secret (or the
+config's global_settings.mask_secret_ref) must name the secret the mask
+run used; the vault file is a re-identification map, store it separately from the
 masked output.
 
 See also: decoy run, decoy explain strategies.
@@ -1613,8 +1614,8 @@ counts (pandas v2.x). No novel statistical method is used.
 
 Inspect a vault file: report entry count, namespaces, and dropped-ambiguous count.
 
-Opens the vault with the mask secret that global_settings.mask_secret_ref
-in the pipeline config names, the secret the `decoy run --vault` call
+Opens the vault with the mask secret that --mask-secret or
+global_settings.mask_secret_ref in the pipeline config names, the secret the `decoy run --vault` call
 used; the seed is not key material. A missing or wrong secret exits 1.
 Exits 0 on success, 1 on a config/vault/usage error.
 
@@ -1630,7 +1631,8 @@ $ decoy report vault [OPTIONS] VAULT
 
 **Options**:
 
-* `--config FILE`: The pipeline config the mask run used (must carry the same seed as the run that wrote the vault).  [required]
+* `--config FILE`: The pipeline config the mask run used. The vault opens only under the mask secret that run used (--mask-secret or global_settings.mask_secret_ref).  [required]
+* `--mask-secret TEXT`: Reference to the mask secret the run used: &#x27;env:NAME&#x27; or &#x27;file:/PATH&#x27; (a &gt;=32-byte secret; an owner-only file, never the raw value). Sets global_settings.mask_secret_ref for this command; an error if the YAML also sets it. See: decoy explain keys.
 * `--json`: Emit a structured JSON result on stdout. Errors still go to stderr.
 * `-q, --quiet`: Suppress stdout. Errors still go to stderr; exit code carries the result.
 * `-v, --verbose`: Enable debug-level CLI logs on stderr.

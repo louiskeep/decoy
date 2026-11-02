@@ -229,8 +229,13 @@ _TOPICS: dict[str, _Topic] = {
             "   Make a throwaway secret for local development:\n"
             "     export DECOY_MASK_SECRET=$(openssl rand -hex 32)\n"
             "     decoy run pipeline.yaml --mask-secret env:DECOY_MASK_SECRET\n"
-            "   `decoy unmask` reads the secret from global_settings.mask_secret_ref only;\n"
-            "   it must be the same secret the mask run used."
+            "   For a lasting secret use an owner-only file (decoy has no implicit source:\n"
+            "   it never reads a default file or makes a key for you):\n"
+            "     umask 077; mkdir -p ~/.config/decoy\n"
+            "     openssl rand -hex 32 > ~/.config/decoy/mask.key\n"
+            "     decoy run pipeline.yaml --mask-secret file:$HOME/.config/decoy/mask.key\n"
+            "   `decoy unmask` and `decoy report vault` take the same --mask-secret (or the\n"
+            "   YAML ref); it must be the same secret the mask run used."
         ),
         see_also=("decoy run --help",),
     ),

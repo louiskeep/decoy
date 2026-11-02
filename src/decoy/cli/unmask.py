@@ -2,7 +2,7 @@
 
 Capability-gaps WS1 (2026-06-12). The inverse of the fpe leg of
 `decoy run`: the SAME pipeline config the mask run used carries the
-mask secret reference (`global_settings.mask_secret_ref`) plus per-column
+mask secret reference (`--mask-secret` or `global_settings.mask_secret_ref`) plus per-column
 namespace/charset, which is exactly what `decoy_engine.unmask_pipeline`
 needs to re-derive the Feistel key and invert the permutation. One-way strategies (hash, redact, faker,
 date_shift, ...) pass through unchanged and are reported irreversible.
@@ -18,7 +18,7 @@ from pathlib import Path
 import typer
 import yaml as _yaml
 
-from decoy import _mask_secret_guidance
+from decoy import _mask_secret, _mask_secret_guidance
 from decoy.cli._yaml_errors import sanitize_yaml_error
 from decoy.cli.exit_codes import EXIT_RUNTIME, EXIT_USAGE
 from decoy.ui.output import OutputMode, emit_json, setup_output
@@ -45,9 +45,9 @@ Examples:
 
 Only `strategy: fpe` columns reverse from the config alone; hash,
 redact, faker and the other one-way strategies pass through unchanged
-unless the column was vaulted at mask time. The config's
-global_settings.mask_secret_ref must name the secret the mask run used;
-the vault file is a re-identification map, store it separately from the
+unless the column was vaulted at mask time. --mask-secret (or the
+config's global_settings.mask_secret_ref) must name the secret the mask
+run used; the vault file is a re-identification map, store it separately from the
 masked output.
 
 See also: decoy run, decoy explain strategies.
@@ -61,8 +61,8 @@ def unmask(
         dir_okay=False,
         readable=True,
         help=(
-            "The pipeline config the mask run used; its global_settings.mask_secret_ref "
-            "must name the same mask secret."
+            "The pipeline config the mask run used. The mask secret (--mask-secret or "
+            "its global_settings.mask_secret_ref) must be the one that run used."
         ),
     ),
     masked: Path = typer.Argument(
@@ -92,9 +92,10 @@ def unmask(
         help=(
             "Vault file the mask run wrote (decoy run --vault). Recovers "
             "one-way columns declared vault: true; decrypts under the "
-            "mask secret named by global_settings.mask_secret_ref."
+            "mask secret (--mask-secret or global_settings.mask_secret_ref)."
         ),
     ),
+    mask_secret: str | None = typer.Option(None, "--mask-secret", help=_mask_secret.FLAG_HELP),
     json_: bool = typer.Option(
         False,
         "--json",
@@ -152,6 +153,11 @@ def unmask(
             f"Pipeline YAML must be a YAML mapping (object), not {type(raw).__name__}."
         )
         raise typer.Exit(code=EXIT_USAGE)
+    try:
+        _mask_secret.apply_mask_secret(raw, mask_secret)
+    except _mask_secret.MaskSecretFlagError as exc:
+        _emit_error(str(exc))
+        raise typer.Exit(code=EXIT_USAGE)
 
     mask_tables = [
         t.get("name")
@@ -187,15 +193,24 @@ def unmask(
     try:
         df = pd.read_csv(masked, dtype=str)
     except Exception as exc:
-        _emit_error(f"could not read {masked}: {exc}")
+        # The type only: a parse error can quote a cell, and the path is not ours to print.
+        _emit_error(f"could not read the masked file: {type(exc).__name__}")
         raise typer.Exit(code=EXIT_USAGE)
 
     try:
-        result = unmask_pipeline(
-            raw,
-            {target_table: pa.Table.from_pandas(df, preserve_index=False)},
-            vault_path=str(vault) if vault is not None else None,
-        )
+        # Admitted the way `run` admits it (an owner-only `file:` is checked on its open
+        # descriptor); the engine gets the provider and never reads the ref itself.
+        with _mask_secret.admitted_key_provider(raw) as key_provider:
+            result = unmask_pipeline(
+                raw,
+                {target_table: pa.Table.from_pandas(df, preserve_index=False)},
+                vault_path=str(vault) if vault is not None else None,
+                key_provider=key_provider,
+            )
+    except MaskSecretError as exc:
+        # Before the class branches: a secret refusal gets its remedy whatever else it is.
+        _emit_error(_mask_secret_guidance.secret_error_text(exc, _mask_secret_guidance.UNMASK))
+        raise typer.Exit(code=EXIT_USAGE)
     except PlanCompileError as exc:
         from decoy.cli.extras import plan_compile_error_fields
 
@@ -224,17 +239,9 @@ def unmask(
                 f"{getattr(exc, 'message', exc)}"
             )
         raise typer.Exit(code=EXIT_USAGE)
-    except MaskSecretError as exc:
-        # A missing, weak or unresolvable secret is the operator's config, not a crash
-        # (`decoy run` and `decoy tokenize` classify it the same way). The engine's
-        # messages are value-free; its keyed refusal names its Python API, so swap it.
-        if _mask_secret_guidance.is_keyed_secret_refusal(exc):
-            _emit_error(_mask_secret_guidance.UNMASK)
-        else:
-            _emit_error(f"{getattr(exc, 'code', type(exc).__name__)}: {getattr(exc, 'message', exc)}")
-        raise typer.Exit(code=EXIT_USAGE)
     except Exception as exc:  # runtime failure, not a usage problem
-        _emit_error(f"unmask failed: {type(exc).__name__}: {exc}"[:500])
+        # The type only: a runtime error's text can quote a source or masked cell.
+        _emit_error(f"unmask failed: {type(exc).__name__}")
         raise typer.Exit(code=EXIT_RUNTIME)
 
     out_path = output if output is not None else masked.with_suffix(".unmasked.csv")

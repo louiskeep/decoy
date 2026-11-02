@@ -22,15 +22,22 @@ RUN = (
 )
 
 UNMASK = (
-    f"{CODE}: reversing keyed columns needs the mask secret the run used. Set "
-    f"global_settings.mask_secret_ref in the pipeline YAML to {_FORMS}, the same secret "
-    "the mask run used. See `decoy explain keys`."
+    f"{CODE}: reversing keyed columns needs the mask secret the run used. Pass "
+    f"--mask-secret with {_FORMS}, or set global_settings.mask_secret_ref in the pipeline "
+    "YAML (one place, not both): the same secret the mask run used. See `decoy explain keys`."
 )
 
 REPORT_VAULT = (
     f"{CODE}: a vault is encrypted under the mask secret the run used, and none was "
-    f"supplied. Set global_settings.mask_secret_ref in the pipeline YAML to {_FORMS}, the "
-    "same secret the `decoy run --vault` call used. See `decoy explain keys`."
+    f"supplied. Pass --mask-secret with {_FORMS}, or set global_settings.mask_secret_ref in "
+    "the pipeline YAML (one place, not both): the same secret the `decoy run --vault` call "
+    "used. See `decoy explain keys`."
+)
+
+TOKENIZE = (
+    f"{CODE}: tokenize is keyed and no mask secret was supplied. Pass --mask-secret with "
+    f"{_FORMS}, or set global_settings.mask_secret_ref in the pipeline YAML (one place, not "
+    f"both). {_LOCAL}, then add --mask-secret env:DECOY_MASK_SECRET. See `decoy explain keys`."
 )
 
 API = (
@@ -54,6 +61,46 @@ YAML_COMMENT = (
     '# or set global_settings.mask_secret_ref: "env:DECOY_MASK_SECRET" (or "file:/PATH").\n'
     "# See `decoy explain keys`.\n"
 )
+
+
+# Every other secret refusal: fixed text by registered code. The engine's own message is never
+# printed, so nothing a provider, a ref or a path put in it can reach the terminal or --json.
+SECRET_REMEDIES = {
+    "weak_mask_secret": (
+        "weak_mask_secret: the mask secret is shorter than 32 bytes. Use a secret of at least "
+        f"32 bytes (hex or base64). {_LOCAL}. See `decoy explain keys`."
+    ),
+    "missing_mask_secret": (
+        "missing_mask_secret: the referenced mask secret is not set (an unset env: variable or "
+        "a missing or empty file: path). Check the reference. See `decoy explain keys`."
+    ),
+    "bad_secret_ref": (
+        f"bad_secret_ref: the mask secret reference is malformed; use {_FORMS}. "
+        "See `decoy explain keys`."
+    ),
+    "secret_provider_unknown": (
+        "secret_provider_unknown: the reference names a secret provider this CLI does not "
+        "register (it reads env: and file: references). See `decoy explain keys`."
+    ),
+    "secret_file_permissions_unsafe": (
+        "secret_file_permissions_unsafe: the mask secret file must be owner-only (no group or "
+        "other access): chmod 600 it, or make it with umask 077. See `decoy explain keys`."
+    ),
+}
+_SECRET_DEFAULT = "the mask secret could not be admitted. See `decoy explain keys`."
+_CODE_CHARS = frozenset("abcdefghijklmnopqrstuvwxyz0123456789_")
+
+
+def secret_error_text(exc: BaseException, keyed_remedy: str) -> str:
+    """Constant text for a `MaskSecretError`, chosen by its registered code; never `str(exc)`."""
+    code = getattr(exc, "code", None)
+    # Registered codes are a `str` subclass; take the plain value and accept only code shapes.
+    code = str.__str__(code) if isinstance(code, str) else ""
+    if not code or not set(code) <= _CODE_CHARS or len(code) > 64:
+        code = "mask_secret_error"
+    if code == CODE:
+        return keyed_remedy
+    return SECRET_REMEDIES.get(code, f"{code}: {_SECRET_DEFAULT}")
 
 
 def is_keyed_secret_refusal(exc: BaseException) -> bool:
