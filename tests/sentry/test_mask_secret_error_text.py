@@ -67,10 +67,12 @@ def written(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tuple[Path, Path
     return tmp_path / "ok" / "out.csv", vault
 
 
-def _unsafe_ref(tmp_path: Path) -> str:
+def _doubled_ref(tmp_path: Path) -> str:
+    """A real, owner-only key file: the CLI's own mode check admits it, so the mocked engine
+    error (not the check) decides the printed code. The canary file name proves no path prints."""
     key = tmp_path / f"{CANARY}.key"
     key.write_text(TEST_MASK_SECRET, encoding="utf-8")
-    key.chmod(0o644)
+    key.chmod(0o600)
     return f"file:{key}"
 
 
@@ -92,7 +94,7 @@ def _double(base: type[Exception] | None, code: str):
 
 def _argv(surface: str, tmp_path: Path, written: tuple[Path, Path]) -> list[str]:
     masked, vault = written
-    ref = _unsafe_ref(tmp_path)
+    ref = _doubled_ref(tmp_path)
     cfg = _pipeline(tmp_path / "bad", ref, tokenize=surface == "tokenize")
     return {
         "run": ["run", str(cfg), "--vault", str(tmp_path / "fresh.bin")],
@@ -184,21 +186,33 @@ def test_unmask_runtime_failure_prints_the_type_only(
         assert CANARY not in result.output
 
 
-def test_unreadable_masked_csv_prints_the_path_and_type_not_the_cell(
+def test_unreadable_masked_csv_prints_the_type_only(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, written
 ) -> None:
-    """T-4b.3 (F-5): a parse error can quote a cell; only the given path and the type print."""
+    """T-4b.3 (F-5): a parse error can quote a cell; only the exception type prints, never the
+    masked file's path, its name or its content."""
+    import shutil
+
     import pandas
 
     def _parse_error(*_a, **_k):
         raise pandas.errors.ParserError(f"unexpected field near {CANARY!r}")
 
-    masked, _ = written
+    masked_src, _ = written
+    masked = tmp_path / "named" / f"{CANARY}-masked.csv"
+    masked.parent.mkdir()
+    shutil.copy(masked_src, masked)
     cfg = _pipeline(tmp_path / "ok", TEST_MASK_SECRET_REF)
     monkeypatch.setattr(pandas, "read_csv", _parse_error)
     for extra in ([], ["--json"]):
         result = runner.invoke(app, ["unmask", str(cfg), str(masked), *extra])
         assert result.exit_code == EXIT_USAGE, result.output
-        flat = "".join(result.output.split())
-        assert "".join(str(masked).split()) in flat and "ParserError" in flat
-        assert CANARY not in result.output
+        flat = " ".join(result.output.split())
+        assert "could not read the masked file: ParserError" in flat
+        if extra:
+            assert (
+                json.loads(result.stdout)["error"] == "could not read the masked file: ParserError"
+            )
+        squashed = "".join(result.output.split())
+        for needle in (CANARY, masked.name, str(masked), str(masked.parent)):
+            assert "".join(needle.split()) not in squashed, (needle, result.output)

@@ -193,16 +193,20 @@ def unmask(
     try:
         df = pd.read_csv(masked, dtype=str)
     except Exception as exc:
-        # The path the user gave and the type only: a parse error can quote a cell.
-        _emit_error(f"could not read {masked}: {type(exc).__name__}")
+        # The type only: a parse error can quote a cell, and the path is not ours to print.
+        _emit_error(f"could not read the masked file: {type(exc).__name__}")
         raise typer.Exit(code=EXIT_USAGE)
 
     try:
-        result = unmask_pipeline(
-            raw,
-            {target_table: pa.Table.from_pandas(df, preserve_index=False)},
-            vault_path=str(vault) if vault is not None else None,
-        )
+        # Admitted the way `run` admits it (an owner-only `file:` is checked on its open
+        # descriptor); the engine gets the provider and never reads the ref itself.
+        with _mask_secret.admitted_key_provider(raw) as key_provider:
+            result = unmask_pipeline(
+                raw,
+                {target_table: pa.Table.from_pandas(df, preserve_index=False)},
+                vault_path=str(vault) if vault is not None else None,
+                key_provider=key_provider,
+            )
     except MaskSecretError as exc:
         # Before the class branches: a secret refusal gets its remedy whatever else it is.
         _emit_error(_mask_secret_guidance.secret_error_text(exc, _mask_secret_guidance.UNMASK))

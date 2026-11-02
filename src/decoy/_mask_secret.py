@@ -9,13 +9,23 @@ the ref again (`secret_providers.admit_mask_key`: "a programmatic key_provider w
 
 No implicit source: nothing here reads an environment variable, a default file or generates key
 bytes; the ref names the secret and the engine resolves it. Errors never echo the ref value.
+
+A `file:` secret must be owner-only. The engine's file provider opens the path with no mode
+check, so the CLI opens it first, checks the mode on the open descriptor (`fstat`, after the
+symlink is followed, so the target is what is checked), and hands the engine that same file as
+`file:/dev/fd/N`: a swap of the path after the check changes nothing, because the engine reads
+the inode that was checked (the check-then-use shape OpenSSH uses for private keys:
+`sshkey_perm_ok` on the opened descriptor). Skipped on Windows, where POSIX mode bits do not
+describe who can read the file.
 """
 
 from __future__ import annotations
 
+import os
+import stat
 from collections.abc import Iterator
 from contextlib import contextmanager
-from typing import Any
+from typing import Any, NoReturn
 
 # `vault://` parses in the engine; the CLI registers no provider for it, so the engine refuses
 # it with `secret_provider_unknown` instead of the CLI calling it malformed.
@@ -79,10 +89,90 @@ def apply_mask_secret(
         raise error(invalid)
 
 
+UNSAFE_CODE = "secret_file_permissions_unsafe"
+# Any group or other bit. The owner's own bits are the owner's business (0400, 0600, 0700 pass).
+_GROUP_OR_OTHER = 0o077
+
+
+def _refuse_unsafe() -> NoReturn:
+    from decoy_engine.keyprovider import MaskSecretError
+
+    # Each surface prints the constant text registered for this code, never this message.
+    raise MaskSecretError(code=UNSAFE_CODE, message="the mask secret file is not owner-only")
+
+
+def _refuse_missing() -> NoReturn:
+    from decoy_engine.keyprovider import MissingMaskSecret
+
+    raise MissingMaskSecret("the referenced mask secret file could not be opened")
+
+
+def _open_checked(locator: str) -> int:
+    """Open the secret file and check the OPEN descriptor: a regular file, owner-only.
+
+    Opening follows a symlink, so the target's mode is checked. O_NONBLOCK keeps a FIFO from
+    hanging the open; anything that is not a regular file (a directory, a FIFO, a device) is
+    refused with the same owner-only text."""
+    flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NONBLOCK", 0)
+    flags |= getattr(os, "O_NOCTTY", 0)
+    # Raised outside the handlers: an OSError's text and filename carry the path.
+    fd = mode = None
+    try:
+        fd = os.open(locator, flags)
+        mode = os.fstat(fd).st_mode
+    except OSError:
+        pass
+    if fd is None or mode is None:
+        if fd is not None:
+            os.close(fd)
+        _refuse_missing()
+    if not stat.S_ISREG(mode) or mode & _GROUP_OR_OTHER:
+        os.close(fd)
+        _refuse_unsafe()
+    return fd
+
+
+@contextmanager
+def _checked_secret_file(config_dict: dict) -> Iterator[dict]:
+    """`config_dict` with a `file:` ref replaced by the checked descriptor, open for the body.
+
+    Only a mapping `global_settings` holding a `file:` string is touched; anything else (no ref,
+    `env:`, a non-mapping `global_settings` from unvalidated YAML) passes through unchanged to
+    the engine's own handling."""
+    settings = config_dict.get("global_settings")
+    ref = settings.get("mask_secret_ref") if isinstance(settings, dict) else None
+    if (
+        os.name == "nt"
+        or not isinstance(settings, dict)
+        or not isinstance(ref, str)
+        or not ref.startswith("file:")
+    ):
+        yield config_dict
+        return
+    from decoy_engine.secret_providers import parse_ref
+
+    rest = ref[len("file:") :]
+    locator = parse_ref(ref).locator  # a malformed ref is the engine's bad_secret_ref
+    if not rest.startswith(locator):
+        _refuse_missing()
+    fd = _open_checked(locator)
+    try:
+        checked = f"file:/dev/fd/{fd}{rest[len(locator) :]}"
+        yield {**config_dict, "global_settings": {**settings, "mask_secret_ref": checked}}
+    finally:
+        os.close(fd)
+
+
 @contextmanager
 def admitted_key_provider(config_dict: dict) -> Iterator[Any]:
-    """The command's one admitted provider; None when nothing is keyed and no ref is set."""
+    """The command's one admitted provider; None when nothing is keyed and no ref is set.
+
+    Every surface that admits the secret (`run`, `tokenize`, `unmask`, `report vault`,
+    `decoy.mask()`) comes through here and hands the engine this provider, so the engine never
+    reads the ref itself. The checked file is closed once admission has read it."""
     from decoy_engine.secret_providers import AdmissionScope, admit_mask_key
 
     with AdmissionScope() as scope:
-        yield scope.adopt(admit_mask_key(config_dict)).key_provider
+        with _checked_secret_file(config_dict) as checked:
+            admitted = scope.adopt(admit_mask_key(checked))
+        yield admitted.key_provider

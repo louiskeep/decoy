@@ -326,23 +326,28 @@ def tokenize(
         with spinner(state, "Tokenizing..."):
             sources = _load_sources_from_config(config_dict, config.parent)
             instance_locale = (config_dict.get("global_settings") or {}).get("default_locale")
-            token_vault = LocalTokenVault(vault, create=True)
-            result = run_pipeline(
-                config_dict,
-                sources,
-                engine_version=engine_version,
-                instance_default_locale=instance_locale,
-                token_vault_writer=token_vault,
-            )
-            _write_mask_outputs(config_dict, result, config.parent)
+            # The CLI admits the secret (an owner-only `file:` is checked on its open
+            # descriptor) and hands the engine the provider, so the engine never reads the
+            # ref itself.
+            with _mask_secret.admitted_key_provider(config_dict) as key_provider:
+                token_vault = LocalTokenVault(vault, create=True)
+                result = run_pipeline(
+                    config_dict,
+                    sources,
+                    engine_version=engine_version,
+                    instance_default_locale=instance_locale,
+                    token_vault_writer=token_vault,
+                    key_provider=key_provider,
+                )
             vault_count = token_vault.count()
             row_count = sum(len(tbl) for tbl in result.outputs.values())
-            # Make the mapping durable only now that the run succeeded AND the
-            # output is written -- a failure before here leaves no partial vault.
-            # commit() is the last fallible statement so `committed` is an exact
-            # "mappings are on disk" flag for the finally's cleanup.
+            # The mapping is durable BEFORE any output is published: tokenized output whose
+            # mapping was never committed can never be reversed. A failure before commit
+            # leaves no partial vault; `committed` is the exact "mappings are on disk" flag
+            # for the finally's cleanup.
             token_vault.commit()
             committed = True
+            _write_mask_outputs(config_dict, result, config.parent)
     except TokenVaultError as exc:
         _emit_error(f"{exc.code}: {exc.message}")
         raise typer.Exit(code=EXIT_USAGE)
@@ -359,11 +364,18 @@ def tokenize(
         # Never echo the exception text: engine tokenize errors are value-free
         # today, but a future non-vault error (e.g. a pandas codec error) could
         # embed a source cell value. Surface the type only -- never the message.
-        _emit_error(
-            f"tokenize failed with an unexpected {type(exc).__name__}; the run was "
-            "aborted before the vault was committed, so it holds no mappings from "
-            "this run. Discard any output files this run produced."
-        )
+        if committed:
+            _emit_error(
+                f"tokenize failed with an unexpected {type(exc).__name__} while writing "
+                "the output; the vault was committed first, so it holds this run's "
+                "mappings. Discard any partial output files and re-run."
+            )
+        else:
+            _emit_error(
+                f"tokenize failed with an unexpected {type(exc).__name__}; the run was "
+                "aborted before the vault was committed, so it holds no mappings from "
+                "this run. No output was written."
+            )
         raise typer.Exit(code=EXIT_RUNTIME) from exc
     finally:
         if token_vault is not None:

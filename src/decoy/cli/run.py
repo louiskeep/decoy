@@ -125,6 +125,16 @@ class _VaultUsageError(Exception):
     """--vault on a config that cannot vault; user error (exits EXIT_USAGE)."""
 
 
+VAULT_WRITE_FAILED = (
+    "vault_write_failed: the vault could not be written durably, so no masked output was "
+    "written. Check the vault's directory (free space, permissions) and re-run."
+)
+
+
+class _VaultWriteError(Exception):
+    """The vault could not be made durable (exits EXIT_RUNTIME); its text is constant."""
+
+
 class _ChunkedGenerateError(Exception):
     """--chunked with a generate-table config; user error (exits EXIT_USAGE)."""
 
@@ -821,6 +831,10 @@ def run(
                 # evidence BEFORE the first write on this path. A no-op for
                 # default/--no-native intent.
                 _native_gate.post_run_verify(intent=native_intent, route=_native_route)
+                # The vault is durable BEFORE any output is published: masked output whose
+                # vault was lost can never be reversed.
+                if vault_writer is not None:
+                    _commit_vault(vault_writer, vault)
                 _write_mask_outputs(config_dict, result, config.parent)
                 # S5: capture the quality metrics so the tail can render the
                 # requested report sections and apply the enforce -> EXIT_FINDINGS
@@ -834,8 +848,6 @@ def run(
                 _ev_timings = result.timings
                 _ev_engine_warnings = result.warnings
                 _notify_row_count = sum(len(tbl) for tbl in result.outputs.values())
-            if vault_writer is not None:
-                vault_writer.write(vault)
     except typer.Exit:
         # CLI QA fix (2026-06-02, F7): an inner call site that raises
         # typer.Exit (e.g. a library that vendored Typer) has already
@@ -1537,6 +1549,78 @@ def _load_sources_from_config(config_dict: dict, base_dir: Path) -> dict:
             continue
         out[table_name] = read_source(table_name, src, base_dir)
     return out
+
+
+def _fsync_directory(directory: Path) -> None:
+    fd = os.open(directory, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))
+    try:
+        os.fsync(fd)
+    finally:
+        os.close(fd)
+
+
+def _commit_vault(vault_writer, vault: Path) -> None:
+    """Write the vault durably: 0600 temp file in its directory, fsync, rename, fsync the directory.
+
+    The standard atomic-replace sequence (SQLite's rollback-journal commit and
+    `ext4`'s documented rename guidance: data fsync, rename, directory fsync). Any failure
+    leaves no temp file. A vault renamed in before a failed directory fsync is removed, and a
+    pre-existing vault (kept as a hard link until the rename is durable) is put back, so a
+    failed rewrite never loses the previous vault (on a filesystem without hard links the
+    rewrite proceeds unbacked). Any failure is reported as the constant `vault_write_failed`
+    text, except a coded engine `VaultError` (value-free, e.g. the install-the-vault-extra
+    remedy), which keeps its own text after the same cleanup.
+    """
+    import secrets
+    import tempfile
+
+    from decoy_engine import VaultError
+
+    vault = Path(os.path.abspath(vault))
+    directory = vault.parent
+    tmp: Path | None = None
+    backup: Path | None = None
+    renamed = False
+    failed: BaseException | None = None
+    try:
+        fd, name = tempfile.mkstemp(prefix=f".{vault.name}.", suffix=".tmp", dir=directory)
+        tmp = Path(name)
+        os.close(fd)  # mkstemp made it 0600; the engine writer reopens it by path
+        vault_writer.write(tmp)
+        fd = os.open(tmp, os.O_RDWR)
+        try:
+            os.fsync(fd)
+        finally:
+            os.close(fd)
+        if os.path.lexists(vault):
+            backup = directory / f".{vault.name}.{secrets.token_hex(8)}.bak"
+            try:
+                os.link(vault, backup, follow_symlinks=False)
+            except OSError:  # no hard links here: the rewrite still proceeds, unbacked
+                backup = None
+        os.replace(tmp, vault)
+        tmp, renamed = None, True
+        _fsync_directory(directory)
+    except Exception as exc:
+        failed = exc
+    finally:
+        if failed is not None and renamed:
+            with contextlib.suppress(OSError):
+                if backup is not None:
+                    os.replace(backup, vault)
+                    backup = None
+                else:
+                    os.unlink(vault)
+                _fsync_directory(directory)
+        for leftover in (tmp, backup):
+            if leftover is not None:
+                with contextlib.suppress(OSError):
+                    os.unlink(leftover)
+    if isinstance(failed, VaultError):
+        raise failed
+    if failed is not None:
+        # Raised outside the handler: an OSError's text names the path.
+        raise _VaultWriteError(VAULT_WRITE_FAILED)
 
 
 def _write_mask_outputs(config_dict: dict, result, base_dir: Path) -> None:

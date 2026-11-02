@@ -500,18 +500,28 @@ def mask(
         )
 
         try:
-            result = run_pipeline(
-                config_dict,
-                sources,
-                engine_version=engine_version,
-                derive_key=resolver,
-                instance_default_locale=instance_locale,
-                **extra_run_pipeline_kwargs,
-            )
+            # The same admission `decoy run` uses (an owner-only `file:` is checked on its
+            # open descriptor); the engine gets the provider and never reads the ref itself.
+            # None keeps run_pipeline's call shape for an unkeyed config.
+            with _mask_secret.admitted_key_provider(config_dict) as key_provider:
+                key_kwargs = {} if key_provider is None else {"key_provider": key_provider}
+                result = run_pipeline(
+                    config_dict,
+                    sources,
+                    engine_version=engine_version,
+                    derive_key=resolver,
+                    instance_default_locale=instance_locale,
+                    **key_kwargs,
+                    **extra_run_pipeline_kwargs,
+                )
         except Exception as exc:
             # The documented error type, with the `mask()` remedy instead of the engine's.
             if _mask_secret_guidance.is_keyed_secret_refusal(exc):
                 raise MaskSecretConfigError(_mask_secret_guidance.API) from None
+            if getattr(exc, "code", None) == _mask_secret.UNSAFE_CODE:
+                raise MaskSecretConfigError(
+                    _mask_secret_guidance.SECRET_REMEDIES[_mask_secret.UNSAFE_CODE]
+                ) from None
             raise
 
         route = _native_gate.classify_route(
