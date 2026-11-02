@@ -10,13 +10,16 @@ the ref again (`secret_providers.admit_mask_key`: "a programmatic key_provider w
 No implicit source: nothing here reads an environment variable, a default file or generates key
 bytes; the ref names the secret and the engine resolves it. Errors never echo the ref value.
 
-A `file:` secret must be owner-only. The engine's file provider opens the path with no mode
-check, so the CLI opens it first, checks the mode on the open descriptor (`fstat`, after the
-symlink is followed, so the target is what is checked), and hands the engine that same file as
-`file:/dev/fd/N`: a swap of the path after the check changes nothing, because the engine reads
-the inode that was checked (the check-then-use shape OpenSSH uses for private keys:
-`sshkey_perm_ok` on the opened descriptor). Skipped on Windows, where POSIX mode bits do not
-describe who can read the file.
+A `file:` secret must be owner-only. The CLI opens it first, checks the mode on the open
+descriptor (`fstat`, after the symlink is followed, so the target is what is checked), and hands
+the engine that same file as `file:/dev/fd/N`: a swap of the path after the check changes
+nothing, because the engine reads the inode that was checked (the check-then-use shape OpenSSH
+uses for private keys: `sshkey_perm_ok` on the opened descriptor). The engine (>=0.18.0) runs the
+same owner-only check on the descriptor it reads (`secret_file_permissions_unsafe`), so a mode
+widened after this check is still refused, with the same constant text. The CLI's check also
+refuses a directory or any non-regular file with the owner-only text; the engine's calls a
+directory a missing secret. Skipped on Windows, where POSIX mode bits do not describe who can
+read the file.
 """
 
 from __future__ import annotations
