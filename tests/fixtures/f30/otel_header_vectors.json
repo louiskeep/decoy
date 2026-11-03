@@ -1,0 +1,19 @@
+[
+  {"id": "empty", "input": "", "ok": true, "headers": {}},
+  {"id": "whitespace_only", "input": "   ", "ok": true, "headers": {}},
+  {"id": "single", "input": "authorization=Bearer abc", "ok": true, "headers": {"authorization": "Bearer abc"}},
+  {"id": "two", "input": "a=1,b=2", "ok": true, "headers": {"a": "1", "b": "2"}},
+  {"id": "trimmed", "input": " a = 1 , b=2 ", "ok": true, "headers": {"a": "1", "b": "2"}},
+  {"id": "value_with_equals", "input": "x=a=b", "ok": true, "headers": {"x": "a=b"}},
+  {"id": "no_percent_decoding", "input": "k=a%20b", "ok": true, "headers": {"k": "a%20b"}},
+  {"id": "no_equals", "input": "MARKER", "ok": false},
+  {"id": "empty_name", "input": "=MARKER", "ok": false},
+  {"id": "empty_value", "input": "MARKER=", "ok": false},
+  {"id": "empty_entry", "input": "a=MARKER,,b=2", "ok": false},
+  {"id": "trailing_comma", "input": "a=MARKER,", "ok": false},
+  {"id": "space_in_name", "input": "a b=MARKER", "ok": false},
+  {"id": "colon_in_name", "input": "a:b=MARKER", "ok": false},
+  {"id": "control_char_value", "input": "k=MAR\nKER", "ok": false},
+  {"id": "non_ascii_value", "input": "k=MARKÉR", "ok": false},
+  {"id": "duplicate_name", "input": "k=1,K=MARKER", "ok": false}
+]

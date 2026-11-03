@@ -2,7 +2,7 @@
 # Write or check requirements-dev.lock, the exact closure bootstrap.sh installs.
 # Usage: scripts/dev/lock.sh [--check]
 #   --check  exit 1 if the lock is missing or stale against pyproject.toml / ci.yml
-# Inputs mirror ci.yml: pyproject [dev], the pytest job's engine git ref (locked to its
+# Inputs mirror ci.yml: pyproject [dev,otel], the pytest job's engine git ref (locked to its
 # commit) and the ruff job's pin. Profile: CPython 3.10 on x86_64 Linux, with hashes.
 # Stale means a re-resolve that prefers the current pins (pip-compile style) changes
 # the file. pyproject.toml is never edited here.
@@ -21,7 +21,7 @@ command -v uv >/dev/null || fail "uv not on PATH" "install uv, https://docs.astr
 compile() {  # $1 output file (its pins are kept where still valid), rest: extra uv flags
   local out=$1; shift
   printf 'decoy-engine @ %s\nruff==%s\n' "$ENGINE_SPEC" "$RUFF_PIN" |
-    uv pip compile -q pyproject.toml - --extra dev --python-version 3.10 \
+    uv pip compile -q pyproject.toml - --extra dev --extra otel --python-version 3.10 \
       --python-platform x86_64-unknown-linux-gnu --generate-hashes \
       --custom-compile-command scripts/dev/lock.sh "$@" -o "$out"
 }
