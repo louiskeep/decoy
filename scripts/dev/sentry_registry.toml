@@ -1,0 +1,3 @@
+# Binds each sentry id to exactly one baseline file under tests/sentry/baselines/.
+# scripts/dev/ratchet_check.py compares every baseline with its merge-base copy and fails
+# when keys are added. A new sentry adds its row here in the slice that introduces it.

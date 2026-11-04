@@ -13,7 +13,13 @@ REPO_NAME=decoy
 RUFF_PATHS=(src tests)
 MYPY_ARGS=()           # ci.yml has no mypy gate; the step reports SKIP
 FORMAT_GATE=0          # ci.yml runs ruff check only (main is not format-clean); SKIP
-SENTRY_PATHS=(tests/sentry)
+# test_sentry_manifest.py fails when a file in its SENTRIES manifest is not collected here
+SENTRY_PATHS=(
+  tests/sentry
+  tests/unit/test_cli_surface.py
+  tests/unit/test_surface_docs_consistency.py
+  tests/unit/test_no_dead_command_strings.py
+)
 PYTEST_ARGS=()
 SRC_MATCH='src/*.py'   # changed files that map to a dotted module
 SRC_STRIP='src/'       # prefix removed before turning a path into a module
@@ -80,7 +86,9 @@ run_steps() {  # $1 label, $2 tree
       ruff) cmd=("$BIN/ruff" check "${RUFF_PATHS[@]}") ;;
       format) cmd=("$BIN/ruff" format --check "${RUFF_PATHS[@]}") ;;
       mypy) cmd=("$BIN/mypy" "${MYPY_ARGS[@]}") ;;
-      sentry) cmd=("$BIN/python" -m pytest "${junit[@]}" "${SENTRY_PATHS[@]}") ;;
+      # ratchet_check first (baselines never grow); skipped in trees that predate it (the baseline worktree)
+      sentry)
+        cmd=(bash -c 'if [ -f scripts/dev/ratchet_check.py ]; then "$0" scripts/dev/ratchet_check.py || exit 1; fi; exec "$0" -m pytest "$@"' "$BIN/python" ${junit[@]+"${junit[@]}"} ${SENTRY_PATHS[@]+"${SENTRY_PATHS[@]}"}) ;;
       tests)
         tests=(); for p in "${PATHS[@]}"; do [ -e "$tree/${p%%::*}" ] && tests+=("$p"); done
         cmd=("$BIN/python" -m pytest "${junit[@]}" "${tests[@]}") ;;
