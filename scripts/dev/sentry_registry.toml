@@ -1,3 +1,15 @@
 # Binds each sentry id to exactly one baseline file under tests/sentry/baselines/.
 # scripts/dev/ratchet_check.py compares every baseline with its merge-base copy and fails
 # when keys are added. A new sentry adds its row here in the slice that introduces it.
+
+[[sentry]]
+id = "engine-internal-allow"
+baseline = "tests/sentry/baselines/engine-internal-allow.json"
+
+[[sentry]]
+id = "root-help-omitted"
+baseline = "tests/sentry/baselines/root-help-omitted.json"
+
+[[sentry]]
+id = "readme-table-omitted"
+baseline = "tests/sentry/baselines/readme-table-omitted.json"

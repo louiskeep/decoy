@@ -32,7 +32,7 @@ PLACEHOLDERS = frozenset({"todo", "tbd", "fixme", "xxx", "n/a", "none"})
 @dataclass(frozen=True)
 class Baseline:
     sentry_id: str
-    created_in: str  # "" when missing or not a string
+    created_in: str  # as written; "" when missing or not a string
     keys: frozenset[str]
     reasons: dict[str, object]
 
@@ -62,7 +62,7 @@ def parse_baseline(text: str) -> Baseline:
     created_in = data.get("created_in")
     return Baseline(
         str(data.get("sentry_id", "")),
-        created_in.strip() if isinstance(created_in, str) else "",
+        created_in if isinstance(created_in, str) else "",
         frozenset(entries),
         entries,
     )
@@ -124,7 +124,7 @@ def check(root: Path, base_ref: str, slice_name: str | None = None) -> tuple[lis
             findings.append(
                 f"{path}: sentry_id {base.sentry_id!r} does not match registry id {sid}"
             )
-        if not base.created_in:
+        if not base.created_in.strip():
             findings.append(f"{path}: created_in is missing or not a non-empty string")
         findings += reason_findings(path, base)
 

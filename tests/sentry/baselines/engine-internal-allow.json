@@ -1,0 +1,36 @@
+{
+ "sentry_id": "engine-internal-allow",
+ "created_in": "X0a",
+ "entries": {
+  "ci/engine_logging.py::decoy_engine.internal.logging": {
+   "reason": "Silences the engine's cwd-relative file logger during `decoy ci` and restores its singleton; the engine has no public logging configuration (only the `Logger` protocol)."
+  },
+  "ci/engine_logging.py::decoy_engine.internal.logging._LOGGER_INSTANCE": {
+   "reason": "Silences the engine's cwd-relative file logger during `decoy ci` and restores its singleton; the engine has no public logging configuration (only the `Logger` protocol)."
+  },
+  "ci/engine_logging.py::decoy_engine.internal.logging.get_logger": {
+   "reason": "Silences the engine's cwd-relative file logger during `decoy ci` and restores its singleton; the engine has no public logging configuration (only the `Logger` protocol)."
+  },
+  "cli/cockpit.py::decoy_engine.checksums._KNOWN_SCHEMES": {
+   "reason": "`decoy list checksums` reads the live scheme set; no public listing."
+  },
+  "cli/cockpit.py::decoy_engine.execution._strategies.SCALAR_HANDLERS": {
+   "reason": "`decoy list/show strategy` reads the live SCALAR_HANDLERS registry; no public listing."
+  },
+  "cli/cockpit.py::decoy_engine.execution._strategies.SCALAR_HANDLERS.get": {
+   "reason": "`decoy list/show strategy` reads the live SCALAR_HANDLERS registry; no public listing."
+  },
+  "cli/cockpit.py::decoy_engine.execution._strategies.SCALAR_HANDLERS.items": {
+   "reason": "`decoy list/show strategy` reads the live SCALAR_HANDLERS registry; no public listing."
+  },
+  "cli/cockpit.py::decoy_engine.execution._strategies.SCALAR_HANDLERS.keys": {
+   "reason": "`decoy list/show strategy` reads the live SCALAR_HANDLERS registry; no public listing."
+  },
+  "cli/cockpit.py::decoy_engine.validators._registry._REGISTRY": {
+   "reason": "`decoy list validators` reads the live validator registry; no public listing."
+  },
+  "cli/cockpit.py::decoy_engine.validators._registry._REGISTRY.keys": {
+   "reason": "`decoy list validators` reads the live validator registry; no public listing."
+  }
+ }
+}

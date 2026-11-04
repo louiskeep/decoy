@@ -94,7 +94,20 @@ def test_baseline_gaining_a_key_fails(repo: Path) -> None:
     _assert_red(repo, "gained key(s) not in the merge base: m::new")
 
 
-@pytest.mark.parametrize("reason", ["", "   ", "todo", "TBD.", "FIXME", "too short"])
+# The last two clear MIN_REASON, so only the placeholder rule can reject them.
+PLACEHOLDER_REASONS = [
+    "",
+    "   ",
+    "todo",
+    "TBD.",
+    "FIXME",
+    "too short",
+    "todo" + "." * 11,
+    "N/A!!!!!!!!!!!!",
+]
+
+
+@pytest.mark.parametrize("reason", PLACEHOLDER_REASONS)
 def test_empty_or_placeholder_reason_fails(repo: Path, reason: str) -> None:
     _write(repo, A, _baseline("a", ["m::f"], reason=reason))
     _assert_red(repo, "reason for m::f is empty, a placeholder or under")
@@ -186,6 +199,12 @@ def test_first_inventory_created_in_must_match_slice(repo: Path) -> None:
     _assert_red(repo, "n: created_in 'S0' is not slice 'X0a'", "--slice", "X0a")
     res = _run(repo, "--slice", "S0")
     assert res.returncode == 0, res.stdout + res.stderr
+
+
+def test_padded_created_in_does_not_match_the_slice(repo: Path) -> None:
+    _write(repo, N, _baseline("n", ["m::one"], created_in=" X0a "))
+    _write(repo, REG, _registry({"a": A, "n": N}))
+    _assert_red(repo, "n: created_in ' X0a ' is not slice 'X0a'", "--slice", "X0a")
 
 
 def test_kept_sentry_is_not_held_to_the_slice(repo: Path) -> None:
