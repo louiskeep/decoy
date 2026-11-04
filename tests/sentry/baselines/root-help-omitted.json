@@ -1,0 +1,15 @@
+{
+ "sentry_id": "root-help-omitted",
+ "created_in": "X0a",
+ "entries": {
+  "doctor": {
+   "reason": "top-level command deliberately kept out of the curated root help quick-start; the full surface is in decoy --help"
+  },
+  "schema": {
+   "reason": "top-level command deliberately kept out of the curated root help quick-start; the full surface is in decoy --help"
+  },
+  "upgrade": {
+   "reason": "top-level command deliberately kept out of the curated root help quick-start; the full surface is in decoy --help"
+  }
+ }
+}
