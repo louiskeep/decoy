@@ -26,7 +26,8 @@ if sys.version_info >= (3, 11):
 else:
     import tomli as tomllib
 
-LIST_NAME = re.compile(r"ALLOW|EXEMPT|WAIVER|BASELINE|EXCEPTIONS")
+LIST_NAME = re.compile(r"ALLOW|EXEMPT|WAIVER|BASELINE|EXCEPTIONS|OMIT")
+COLLECTION_CALLS = frozenset({"frozenset", "set", "tuple", "list"})
 DATA_LITERAL = re.compile(r"[\w.\-]+\.(?:json|toml)$")
 SENTRIES: tuple[str, ...] = bs.load_module(bs.SENTRY / "test_sentry_manifest.py").SENTRIES
 
@@ -51,6 +52,12 @@ def test_registry_has_no_source_less_sentry() -> None:
     assert set(registry()) == {s.sentry_id for s in bs.SOURCES}
 
 
+def _is_collection(value: ast.expr | None) -> bool:
+    if isinstance(value, ast.Call):
+        return isinstance(value.func, ast.Name) and value.func.id in COLLECTION_CALLS
+    return isinstance(value, (ast.Dict, ast.Tuple, ast.List, ast.Set))
+
+
 def unregistered_readers(
     sources: dict[str, str],
     data_files: set[str],
@@ -67,9 +74,7 @@ def unregistered_readers(
             )
             for t in targets:
                 is_list = isinstance(t, ast.Name) and LIST_NAME.search(t.id)
-                is_coll = isinstance(
-                    getattr(node, "value", None), (ast.Dict, ast.Tuple, ast.List, ast.Set)
-                )
+                is_coll = _is_collection(getattr(node, "value", None))
                 if is_list and is_coll and (name, t.id) not in covered_consts:
                     found.append(f"{name}: constant {t.id}")
         for node in ast.walk(tree):

@@ -5,3 +5,11 @@
 [[sentry]]
 id = "engine-internal-allow"
 baseline = "tests/sentry/baselines/engine-internal-allow.json"
+
+[[sentry]]
+id = "root-help-omitted"
+baseline = "tests/sentry/baselines/root-help-omitted.json"
+
+[[sentry]]
+id = "readme-table-omitted"
+baseline = "tests/sentry/baselines/readme-table-omitted.json"
