@@ -14,6 +14,7 @@ is not a new key; the boundary sentry's exact-count check and review hold it.
 
 from __future__ import annotations
 
+import ast
 import importlib.util
 import json
 import sys
@@ -45,17 +46,47 @@ def load_module(path: Path) -> Any:
     return mod
 
 
+def _literal_constant(path: Path, constant: str) -> Any:
+    for node in ast.parse(path.read_text(encoding="utf-8")).body:
+        target = node.target if isinstance(node, ast.AnnAssign) else None
+        if isinstance(node, ast.Assign) and len(node.targets) == 1:
+            target = node.targets[0]
+        if isinstance(target, ast.Name) and target.id == constant and node.value is not None:
+            value = node.value
+            if (
+                isinstance(value, ast.Call)
+                and isinstance(value.func, ast.Name)
+                and value.func.id in {"frozenset", "set", "tuple", "list"}
+                and len(value.args) == 1
+            ):
+                value = value.args[0]
+            return ast.literal_eval(value)
+    raise ValueError(f"{path.name}: no literal {constant}")
+
+
 @dataclass(frozen=True)
 class InCode:
-    """Keys of a module-level collection in a ``tests/sentry`` file."""
+    """Keys of a module-level collection in a sentry file (path relative to the repo root).
+
+    ``literal`` reads the constant from the source with ``ast.literal_eval`` (unwrapping one
+    ``frozenset``/``set``/``tuple``/``list`` call) instead of importing a module whose import
+    has side effects, such as building the live Typer app.
+    """
 
     test_file: str
     constant: str
     key: Callable[[Any], str] = _flat
     reason: Callable[[Any], str] | None = None
+    literal: bool = False
+
+    @property
+    def name(self) -> str:
+        return Path(self.test_file).name
 
     def items(self) -> tuple[Any, ...]:
-        return tuple(getattr(load_module(SENTRY / self.test_file), self.constant))
+        if self.literal:
+            return tuple(_literal_constant(ROOT / self.test_file, self.constant))
+        return tuple(getattr(load_module(ROOT / self.test_file), self.constant))
 
     def __call__(self) -> set[str]:
         return {self.key(e) for e in self.items()}
@@ -77,16 +108,35 @@ class Source:
     keys: InCode
 
 
+_SURFACE = "tests/unit/test_surface_docs_consistency.py"
+_ROOT_HELP_WHY = (
+    "top-level command deliberately kept out of the curated root help quick-start; "
+    "the full surface is in decoy --help"
+)
+_README_WHY = (
+    "real command the README Common commands table deliberately does not repeat; "
+    "the table points readers to decoy --help"
+)
 SOURCES: tuple[Source, ...] = (
     Source(
         "engine-internal-allow",
-        "test_engine_internal_boundary.py",
+        "tests/sentry/test_engine_internal_boundary.py",
         InCode(
-            "test_engine_internal_boundary.py",
+            "tests/sentry/test_engine_internal_boundary.py",
             "ALLOWLIST",
             key=lambda e: f"{e.file}::{e.symbol}",
             reason=lambda e: e.reason,
         ),
+    ),
+    Source(
+        "root-help-omitted",
+        _SURFACE,
+        InCode(_SURFACE, "_ROOT_HELP_OMITTED", reason=lambda e: _ROOT_HELP_WHY, literal=True),
+    ),
+    Source(
+        "readme-table-omitted",
+        _SURFACE,
+        InCode(_SURFACE, "_README_TABLE_OMITTED", reason=lambda e: _README_WHY, literal=True),
     ),
 )
 
@@ -106,13 +156,14 @@ def baseline_path(sentry_id: str) -> Path:
 
 
 def write_initial() -> None:
-    """One-off: write each baseline from its live source. Refuses to overwrite (no add mode)."""
+    """First inventory of each source that has no baseline yet. Never rewrites one that exists:
+    after its first inventory a baseline only shrinks, by hand."""
     BASELINES.mkdir(exist_ok=True)
     rows = []
     for src in SOURCES:
         path = baseline_path(src.sentry_id)
         if path.exists():
-            raise SystemExit(f"{path} exists; baselines only shrink after the first inventory")
+            continue
         reasons = src.keys.reasons()
         short = sorted(k for k, r in reasons.items() if len(r.strip()) < MIN_REASON)
         if short:
@@ -123,6 +174,8 @@ def write_initial() -> None:
         rows.append(
             f'[[sentry]]\nid = "{src.sentry_id}"\nbaseline = "tests/sentry/baselines/{path.name}"\n'
         )
+    if not rows:
+        raise SystemExit("every source already has a baseline; nothing to write")
     REGISTRY.write_text(
         REGISTRY.read_text(encoding="utf-8").rstrip("\n") + "\n\n" + "\n".join(rows),
         encoding="utf-8",

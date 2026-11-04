@@ -85,7 +85,7 @@ def unregistered_readers(
 
 
 def _covered() -> tuple[set[tuple[str, str]], set[str]]:
-    consts = {(s.keys.test_file, s.keys.constant) for s in bs.SOURCES} | set(bs.NOT_A_LIST_CONSTS)
+    consts = {(s.keys.name, s.keys.constant) for s in bs.SOURCES} | set(bs.NOT_A_LIST_CONSTS)
     files = {Path(p).name for p in registry().values()}
     return consts, files
 
@@ -108,6 +108,12 @@ def _manifest_sources() -> dict[str, str]:
     return out
 
 
+def test_scan_reaches_the_tests_unit_sentries() -> None:
+    unit = {Path(s).name for s in SENTRIES if s.startswith("tests/unit/")}
+    assert len(unit) == 3
+    assert unit <= set(_manifest_sources())
+
+
 def test_no_sentry_reads_an_unregistered_baseline() -> None:
     consts, files = _covered()
     assert unregistered_readers(_manifest_sources(), _data_files(), consts, files) == []
@@ -123,12 +129,30 @@ def test_not_a_list_consts_still_exist() -> None:
     assert stale == []
 
 
+@pytest.mark.parametrize(
+    "seed",
+    [
+        'NEW_ALLOWLIST = {"a": "b"}',
+        'NEW_ALLOWLIST = frozenset({"bypass::site"})',
+        'NEW_ALLOWLIST = set(["a"])',
+        'NEW_ALLOWLIST = tuple(["a"])',
+        'NEW_ALLOWLIST = list(("a",))',
+        'NEW_ALLOWLIST = ("a",)',
+        'NEW_ALLOWLIST = {"a"}',
+        'NEW_ALLOWLIST: frozenset[str] = frozenset({"a"})',
+        '_NEW_OMITTED = frozenset({"a"})',
+    ],
+)
+def test_seeded_unregistered_constants_are_caught(seed: str) -> None:
+    consts, files = _covered()
+    name = seed.split(" ", 1)[0].rstrip(":")
+    assert unregistered_readers({"test_new.py": seed + "\n"}, set(), consts, files) == [
+        f"test_new.py: constant {name}"
+    ]
+
+
 def test_seeded_unregistered_readers_are_caught() -> None:
     consts, files = _covered()
-    seeded_const = {"test_new.py": 'NEW_ALLOWLIST = {"a": "b"}\n'}
-    assert unregistered_readers(seeded_const, set(), consts, files) == [
-        "test_new.py: constant NEW_ALLOWLIST"
-    ]
     seeded_file = {"test_new.py": 'P = ROOT / "tests" / "fixtures" / "fresh-list.json"\n'}
     assert unregistered_readers(seeded_file, {"fresh-list.json"}, consts, files) == [
         "test_new.py: data file fresh-list.json"
