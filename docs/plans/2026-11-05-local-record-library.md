@@ -36,6 +36,41 @@ Owner direction, 2026-11-05:
   Linux and macOS, and Windows if possible. The paid platform comes later and
   must be able to import or mirror the same records.
 
+## Revision 2 (2026-11-05): owner and orchestrator answers
+
+Applied to head 43ccfb01. Answers to section 6:
+
+- **Q5 (owner): option 1.** The default `.decoy/.gitignore` ignores `logs/`,
+  `scratch/` and the index (plus `library/tmp/` and `library/quarantine/`).
+  Records stay committable, so baselines reach CI. No change to 4.9.
+- **Q8 (owner): yes.** "anytime a job runs it should write a log." Every
+  `decoy run` writes its job log and its run-result record by default.
+  `--no-library` (and `DECOY_LIBRARY=off`) is an explicit opt-out for records
+  only. The job log cannot be opted out: it is always written to the resolved
+  root, and the only time a run has no log is when that root is not writable,
+  which warns (4.16, 4.17).
+- **Q2 (owner): option (b), self-hosted lanes.** macOS runs on the Mac mini
+  as a self-hosted GitHub Actions runner; Windows runs on a new self-hosted
+  runner on a GCP VM, provisioned when the first slice that needs it starts
+  (L1b). The slices that need these lanes now name them (section 5, "OS
+  lanes").
+- **Q1 (orchestrator): owner-only ACL on `scratch/` on Windows**, the only
+  class that holds rows. Records, logs and the rest of `.decoy/` keep the
+  inherited ACL in V1 (4.6). L1b grows by about 80 lines.
+- **Q3 (orchestrator):** a failed library write on a successful run warns and
+  keeps the exit code. `--require-library` is a later, additive flag (4.17).
+- **Q4 (orchestrator): confirmed.** Logs: last 50 runs per pipeline or 30
+  days. Sample scratch: 24 hours, replaced by the next sample. Records: kept
+  forever unless pruned.
+- **Q6 (orchestrator):** exports strip paths to file names unless
+  `--keep-paths` is given (4.11, unchanged).
+- **Q7 (orchestrator):** the user-level store comes after V1 (4.1,
+  unchanged).
+- **Progress-event hook:** `decoy run` does not use the engine's
+  `ProgressSink` today. L5 now owns wiring it, and is split in two to stay
+  under 800 lines: L5a wires the sink into `decoy run` and the progress
+  display, L5b writes, rotates and shows job logs.
+
 ## 1. FRAME
 
 ### Problem
@@ -135,8 +170,9 @@ Platform mapping, for later (no platform work in this plan):
    canary tests for every registered kind. Scratch is the only Decoy area that
    holds rows.
 4. Files Decoy creates in the library are 0600 and directories it creates are
-   0700 on Linux and macOS, at creation time. On Windows they inherit the
-   parent directory's ACL (section 4.6 names the limit).
+   0700 on Linux and macOS, at creation time. On Windows `scratch/` gets an
+   owner-only ACL; records and logs inherit the parent directory's ACL
+   (section 4.6 names the limit).
 5. A record write is atomic on Linux, macOS and Windows: a reader sees the
    whole record or no record. A crash leaves at most a temp file that `fsck`
    removes.
@@ -145,6 +181,7 @@ Platform mapping, for later (no platform work in this plan):
    ref or a kept record links to.
 7. Records are kept until the user prunes them. Job logs and scratch follow
    their own defaults, configurable in one file (`.decoy/library.yaml`).
+   Every `decoy run` writes a job log; only the records can be opted out.
 8. `decoy library export` writes one self-verifying file
    (`decoy-library-export/v1`) that the platform can import idempotently.
 9. A library written by this version stays readable by every later V1 CLI
@@ -171,7 +208,7 @@ Platform mapping, for later (no platform work in this plan):
 
 | Case | V1 behavior |
 |---|---|
-| Library root not writable (read-only container, CI checkout) | The command's own work still runs. A record or log write failure prints one warning naming the root and the error class, and `--json` output carries `library: {status: "failed", code}`. Exit code unchanged (4.17). `--no-library` silences it. |
+| Library root not writable (read-only container, CI checkout) | The command's own work still runs. A record or log write failure prints one warning naming the root and the error class, and `--json` output carries `library: {status: "failed", code}`. Exit code unchanged (4.17). `--no-library` skips records but not the log, so the warning still appears for the log; pointing `--library` or `DECOY_LIBRARY` at a writable directory clears it. |
 | Crash or kill mid-write | Only a temp file under `library/tmp/` can remain. Readers never see it. `fsck` removes temp files older than one hour. |
 | Two processes write records at once | Each writes its own uniquely named temp file and renames it to its own content id. No conflict. The index takes each insert in its own SQLite transaction with a busy timeout. |
 | Two processes move the same ref at once | Ref updates run under the library lock (an SQLite `BEGIN IMMEDIATE` on the index). The loser waits up to the busy timeout and then fails with `library_busy`; it never overwrites silently. |
@@ -510,14 +547,16 @@ property that evidence depends on.
   `O_EXCL`) in `library/tmp/`; directories the library creates get 0700 at
   creation, and an existing parent is never re-permissioned (the token-vault
   rule). `fsck` reports any library file that is group- or world-readable.
-- Windows: `os.chmod` cannot express 0600. V1 relies on the ACL the files
-  inherit from the project directory, which on a normal user profile grants
-  the user, SYSTEM and Administrators. This is acceptable because records and
-  logs hold no values; scratch, which can hold rows, gets the same
-  inheritance, and the limit is written in the docs. Alternative: set a
-  protected DACL (owner, SYSTEM, Administrators) on `.decoy/` with
-  `SetNamedSecurityInfo` through `ctypes` or by calling `icacls`, which closes
-  the gap for scratch on a shared machine (owner question Q1).
+- Windows: `os.chmod` cannot express 0600. `scratch/`, the only class that
+  can hold rows, gets a protected DACL when the library creates it: the
+  current user and SYSTEM only, inheritance from the parent disabled,
+  inherited by every child, set with `SetNamedSecurityInfoW` through `ctypes`
+  (no new dependency). If the ACL cannot be applied, scratch allocation fails
+  with `scratch_acl_failed` and the sample run stops before it writes a row
+  (fail closed, the token-vault rule). Records and logs hold no values, so in
+  V1 they keep the ACL inherited from the project directory, which on a
+  normal user profile grants the user, SYSTEM and Administrators; the docs
+  say so (decided in Revision 2, Q1).
 
 ### 4.7 Retention and prune
 
@@ -734,32 +773,64 @@ state.
 ### 4.16 `decoy run` writes by default
 
 S4 made the CLI stateless (D3), partly on the clig rule "make external
-actions explicit". The owner now wants records kept, so `decoy run` writes its
-evidence, result and log by default. To keep the action explicit, the run
-card and `--json` output always name the record ids and the library root, and
-`--no-library` or `DECOY_LIBRARY=off` turns it off. `--evidence-out` keeps
-working and writes the same manifest to the path given.
+actions explicit". The owner now wants records kept ("anytime a job runs it
+should write a log"), so `decoy run` writes its job log, its run-result
+record and its evidence record by default. To keep the action explicit, the
+run card and `--json` output always name the log path, the record ids and the
+library root.
+
+- `--no-library` or `DECOY_LIBRARY=off` skips the records for that run.
+- The job log has no opt-out. It is always written to the resolved root
+  (`--library` and `DECOY_LIBRARY=<dir>` move it with the records). The only
+  run without a log is one whose root is not writable, and that run warns
+  (4.17).
+- `--evidence-out` keeps working and writes the same manifest to the path
+  given.
 
 ### 4.17 Library write failure on a run that worked
 
-**Recommendation: warn, keep the exit code.** In a production pipeline the
-data outcome is what the exit code reports; a full disk under `.decoy/` must
-not turn a delivered run into a failure that an orchestrator retries
-(delivering twice). The warning goes to stderr and into `--json`
-(`library.status = "failed"` with a code). Alternative: exit 3 (runtime),
-or an opt-in `--require-library` that does so (owner question Q3).
+**Decision: warn, keep the exit code** (Revision 2, Q3). In a production
+pipeline the data outcome is what the exit code reports; a full disk under
+`.decoy/` must not turn a delivered run into a failure that an orchestrator
+retries (delivering twice). The warning goes to stderr and into `--json`
+(`library.status = "failed"` with a code; `log.status` the same for the job
+log). An opt-in `--require-library` that exits 3 is a later, additive flag,
+not V1.
 
 ## 5. Slices
 
 Order: L1a-engine, engine release and CLI repin, L1b, L1c, then L2, L3a,
-L3b, L4 and L5, which depend only on L1c and their feature rows and can run
+L3b, L4, L5a and L5b, which depend only on L1c and their feature rows and can run
 in parallel on non-overlapping files. Test depth: T0 per edit, T1
 impact-selected per commit. L1a adds frozen tags and moves the CLI's
 canonical-JSON call; L1b moves the engine pin; L1b, L1c and L4 add a
 destructive command and a concurrency scheme. These are escalation
 triggers, so each merge head gets the full suite against the saved main
-baseline. Windows and macOS acceptance needs the OS lanes in owner
-question Q2.
+baseline.
+
+**OS lanes (Revision 2, Q2).** macOS tests run on the Mac mini as a
+self-hosted GitHub Actions runner. Windows tests run on a self-hosted runner
+on a GCP VM, provisioned before L1b starts and stopped when idle (the
+existing `vm-reap` rule). A lane runs the library test paths only
+(`tests/unit/library/`, `tests/e2e/test_library_*.py`,
+`tests/e2e/test_job_logs.py`, the guard in
+`tests/sentry/test_library_writer.py`), not the full suite. Required lanes
+per slice:
+
+| Slice | Linux | macOS (Mac mini) | Windows (GCP VM) | Why |
+|---|---|---|---|---|
+| L1a-engine | yes | no | no | pure functions; no filesystem |
+| L1b-cli | yes | yes | yes | atomic writes, retries, modes, scratch ACL, ref lock |
+| L1c-cli | yes | yes | yes | SQLite locking, degraded mode, fsck |
+| L2-cli | yes | yes | no | scan writes through L1b paths already proven on Windows |
+| L3a-cli | yes | no | no | uses L1 primitives only |
+| L3b-cli | yes | yes | yes | scratch ACL and TTL deletion on a real sample |
+| L4-cli | yes | yes | yes | prune under concurrency, clean |
+| L5a-cli | yes | no | no | in-process event wiring |
+| L5b-cli | yes | yes | yes | append, kill mid-run, rotation |
+
+A Windows or macOS lane result counts toward the slice's T1 and the gate's
+T2 for the library paths; it is not the T3 full suite.
 
 ### L1a-engine: records module (engine, about 520 lines)
 
@@ -804,7 +875,7 @@ on.
 **Frozen-contract effects.** Four new tags in §3.1, additive public API, a
 compatibility corpus sample per tag. No determinism or vault effect.
 
-### L1b-cli: store, atomic writes, refs, scratch (CLI, about 620 lines)
+### L1b-cli: store, atomic writes, refs, scratch (CLI, about 700 lines)
 
 Depends on L1a released and repinned.
 
@@ -813,8 +884,9 @@ Depends on L1a released and repinned.
   `_paths.py` (root resolution, subdirectory names), `_fs.py`
   (`write_atomic`, `create_private_file`, `ensure_private_dir`, Windows
   retry, directory fsync), `_store.py` (`put`, `get`, `resolve`), `_refs.py`,
-  `_scratch.py` (`scratch(owner, ttl)`, expiry), `_policy.py`
-  (`RetentionPolicy`, reads `.decoy/library.yaml`).
+  `_scratch.py` (`scratch(owner, ttl)`, expiry), `_winacl.py` (the
+  owner-only DACL for `scratch/`, `ctypes` over `SetNamedSecurityInfoW`),
+  `_policy.py` (`RetentionPolicy`, reads `.decoy/library.yaml`).
 - `src/decoy/cli/evidence.py`: `compute_manifest_hash` calls the engine
   canonical form.
 - `pyproject.toml` engine pin; `CHANGELOG.md`; `docs/library.md` (new).
@@ -840,6 +912,8 @@ Until L1c lands, ref updates take the lock through a minimal
 | B1-win-retry | with the ref file held open (Windows lane), the update succeeds once the holder closes within the retry window, and fails with `library_busy` after it | MB1-noretry |
 | B1-no-path-in-error | a write failure's message has the code and error class, not the path's text in `str(exc)` | MB1-exc |
 | B1-gitignore | the first write creates `.decoy/.gitignore` with the scratch and logs entries and never edits an existing one | MB1-clobber |
+| B1-win-scratch-acl | (Windows lane) the `scratch/` DACL is protected and lists only the current user and SYSTEM; a file created inside inherits it; records and logs keep the inherited ACL | MB1-inherit: skip the DACL |
+| B1-acl-fail-closed | with the ACL call forced to fail, scratch allocation raises `scratch_acl_failed` and no scratch directory remains | MB1-acl-warn: warn and continue |
 | G-LIB-WRITER | no import of `_library._fs`, `.decoy` literal or `records.encode` outside `decoy/cli/_library/`; seeded bypass shown red | M-LIB-INLINE |
 
 **Frozen-contract effects.** New on-disk location `.decoy/` (layout 1). No
@@ -967,7 +1041,7 @@ first.
 | L3-failed-run | a run that fails at runtime writes a run-result record with status `error` and the exit code, and no evidence record | ML3-evidence-on-fail |
 | L3-baseline-link | with `scan_baseline` set, the run-result links to that scan record | ML3-path-only: store the path, not the id |
 | L3-evidence-same | the record payload equals the `--evidence-out` file after canonicalization | ML3-drift: build the manifest twice |
-| L3-no-library | `--no-library` and `DECOY_LIBRARY=off` write nothing under `.decoy/` | ML3-ignore |
+| L3-no-library | `--no-library` and `DECOY_LIBRARY=off` write no record under `.decoy/library/` (once L5b lands, the job log is still written) | ML3-ignore |
 | L3-readonly | read-only library root: run exits with its normal code, stderr has one warning with the code, `--json` has `library.status = "failed"` | ML3-fail: exit 3 |
 | L3-canary | canary fixture: no canary in either record | M-PAYLOAD-LEAK |
 | L3-report-id | `decoy report verify <id>` equals `report verify <file>` | ML3-file-only |
@@ -1031,18 +1105,46 @@ Depends on L1c; `diff` for `run-result` needs L3a.
 **Frozen-contract effects.** Additive `library` verbs; export format frozen
 under `decoy-library-export/v1`.
 
-### L5-cli: job logs (CLI, about 560 lines)
+### L5a-cli: wire the engine ProgressSink into `decoy run` (CLI, about 380 lines)
 
-Depends on L1c and L3a (the run-result link). Its FRAME first checks how
-`decoy run` reaches the engine's `ProgressSink` today: the CLI shows a
-spinner (`run.py:41`) and no sink use was found, so wiring may be part of
-this slice (unverified).
+Depends on L1c. Owns the hook found missing in the first pass: `decoy run`
+shows a spinner (`run.py:41`) and passes no `ProgressSink` to the engine
+today.
 
 **Files.**
-- new `src/decoy/cli/_library/_logs.py` (writer, rotation, reader).
-- `src/decoy/cli/run.py` and multi-table `scan.py`: pass a sink that fans
-  events to the progress display and the log writer; CLI-side events built
-  from engine event classes.
+- new `src/decoy/cli/_progress_fanout.py`: a `ProgressSink` that forwards
+  each engine event to registered consumers (the terminal progress display
+  now, the log writer in L5b), so the engine sees one sink.
+- `src/decoy/cli/run.py`: pass the sink on every route `decoy run` uses
+  (full-frame, chunked, sequential, out-of-core, sample); replace the bare
+  spinner with a display that reads phase and rate events; mint the run's
+  `invocation_id` here so L3a records and L5b logs share it.
+- `src/decoy/ui/progress.py`: phase and rate rendering on stderr.
+- tests: `tests/unit/test_progress_fanout.py`,
+  `tests/e2e/test_run_progress_events.py`; `CHANGELOG.md`.
+
+**Acceptance tests and named mutations.**
+
+| Test | Asserts | Mutation |
+|---|---|---|
+| L5a-every-route | a test consumer receives a terminal event and at least one phase event on each route `decoy run` can take (route forced per case) | ML5a-route: pass the sink on the full-frame route only |
+| L5a-order | events reach consumers in emission order with increasing `sequence` | ML5a-buffer: reorder through a set |
+| L5a-consumer-fault | a consumer that raises does not change the run's outcome or exit code; the failure is counted, not retried | ML5a-propagate: let the consumer error escape |
+| L5a-quiet-json | `--quiet` and `--json` keep stdout free of progress; events still reach non-display consumers | ML5a-stdout |
+| L5a-no-value | events carry only engine-sanitized fields (the canary fixture produces no canary in any event dict) | ML5a-wrap: add a CLI message field |
+
+**Frozen-contract effects.** None persisted. stderr progress text changes
+(not a contract).
+
+### L5b-cli: job logs (CLI, about 500 lines)
+
+Depends on L5a and L3a (the run-result link).
+
+**Files.**
+- new `src/decoy/cli/_library/_logs.py` (writer as an L5a consumer,
+  rotation, reader).
+- `src/decoy/cli/run.py` and multi-table `scan.py`: register the log writer
+  on every run; CLI-side events built from engine event classes.
 - `src/decoy/cli/library.py`: `show --log`.
 - tests: `tests/e2e/test_job_logs.py`, log canary in
   `test_library_canary.py`; docs, `CHANGELOG.md`.
@@ -1052,6 +1154,7 @@ this slice (unverified).
 | Test | Asserts | Mutation |
 |---|---|---|
 | L5-written | a run writes one log with the header and a terminal event; the run-result links to it with a matching hash | ML5-nolink |
+| L5-always | `--no-library` and `DECOY_LIBRARY=off` still write the log; only an unwritable root skips it, with one warning and `log.status = "failed"` in `--json` | ML5-optout: honor `--no-library` for the log |
 | L5-value-free | canary fixture, including a failure whose exception text quotes a cell: no canary in the log, and the terminal line has the class name only | M-LOG-MSG |
 | L5-verbose | `--verbose` traceback appears on stderr and not in the log | ML5-tee: copy stderr into the log |
 | L5-truncated | a run killed mid-way leaves a log whose complete lines parse; readers skip the partial last line | ML5-strict: fail on a partial line |
@@ -1067,13 +1170,14 @@ log lines are the engine's frozen event schema.
 | Slice | Repo | Lines (est.) | Depends on |
 |---|---|---|---|
 | L1a-engine | engine | ~520 | none |
-| L1b-cli | CLI | ~620 | L1a release and repin |
+| L1b-cli | CLI | ~700 | L1a release and repin; Windows runner provisioned |
 | L1c-cli | CLI | ~560 | L1b |
 | L2-cli | CLI | ~380 | L1c, SCAN-MULTI S1c (replaces S1d) |
 | L3a-cli | CLI | ~520 | L1c; RESULT for the run-result half |
 | L3b-cli | CLI | ~450 | L1c, SAMPLE |
 | L4-cli | CLI | ~720 | L1c (L3a for run-result diff) |
-| L5-cli | CLI | ~560 | L1c, L3a |
+| L5a-cli | CLI | ~380 | L1c |
+| L5b-cli | CLI | ~500 | L5a, L3a |
 
 Each slice is under 800 hand-written lines including tests. Logging per
 slice: one operational line per library write failure and per prune or clean
@@ -1081,6 +1185,9 @@ slice: one operational line per library write failure and per prune or clean
 log itself in L5.
 
 ## 6. Owner questions
+
+All eight questions are answered; see Revision 2 at the top. The original
+text is kept below for the record.
 
 - **Q1. Windows permissions.** V1 relies on inherited ACLs on Windows (records
   and logs hold no values; scratch can). Accept that, or set a protected
