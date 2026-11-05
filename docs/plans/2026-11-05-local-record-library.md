@@ -37,6 +37,31 @@ Owner direction, 2026-11-05:
   Linux and macOS, and Windows if possible. The paid platform comes later and
   must be able to import or mirror the same records.
 
+## Revision 6 (2026-11-05): joint Codex review of LIB e636baaf and SCAN-MULTI bcb25eb5
+
+Codex returned GO-WITH-FIXES on both plans. Each claim was checked against CLI
+`origin/main` 8fba6af and engine `origin/main` 41a86f47; all held. This
+revision also takes in the RESULT build handoff
+(`10_Projects/decoy/handoffs/phase0.5/p05-result-build-handoff.md`, Status
+plan). SCAN-MULTI carries the matching Revision 6.
+
+| Finding | Change |
+|---|---|
+| LIB 1 (circular ids) | Confirmed: ids hash `links`, so two records cannot link to each other. Links point one way only, from a newer record to records that already exist (4.3); run-result links to evidence, and evidence is found from a run-result, or the reverse, by `invocation_id`. L3-records rewritten; new test A1-link-acyclic. |
+| LIB 2 (lossy export by older readers) | `decode` returns the verified `raw` envelope next to the typed `view`; export and every copy use `raw`. A record carrying fields this version does not know is exported byte for byte, unstripped, and listed in the export header (4.11). Tests A1-raw-preserved, A1-export-newer, L4b-export-newer. |
+| LIB 3 (vault rollback) | Confirmed: `_commit_vault` (`run.py:1628-1690`) keeps a hard-link backup and restores it, or removes the new vault, after a failed directory fsync, pinned by `tests/e2e/test_vault_commit_order.py:101`. The vault commit is not moved onto `_atomic.write_atomic`. It stays its own transaction, a permanent G-ONE-ATOMIC-WRITER allowlist entry with that reason. L5a moves it byte for byte into `_vault_commit.py` (the allowlist entry follows the file), and `test_vault_commit_order.py` stays unchanged and green. New mutation ML5a-vault-generic. |
+| LIB 4 (unknown future kinds) | New 4.3a: a record of an unregistered kind is an opaque record. It is indexed and listed as "unknown kind", never deleted by prune in this version, its links still protect their targets, `fsck` checks its id only, and export copies it verbatim. Tests A1-opaque-kind, C1-unknown-kind, L4b-prune-unknown, L4b-export-unknown. |
+| LIB 5 and SCAN-MULTI ENGINE 1 (Windows fallback spill) | Confirmed: `out_of_core/_scratch.py:46-65` uses `mkdtemp` and `chmod`. New engine slice L0: one protected scratch allocator (`protected_scratch_dir`, `create_protected_dir`) with the owner-only DACL at `CreateDirectoryW`, failing closed with `scratch_acl_failed`. Library scratch (L1d), SCAN-MULTI S1b's `spill_dir=None` fallback and the engine's own out-of-core spill all use it. `_winacl.py` is dropped from the CLI. Guard G-ONE-PROTECTED-DIR; real Windows DACL test P0-win-dacl. |
+| SCAN-MULTI ENGINE 2 (cell values in `--output`) | Handled in SCAN-MULTI. Here: L2 adds `--output-detail`, which writes the value-bearing detail only into protected library scratch with a 24-hour TTL and refuses when the library is off. Tests L2-detail-scratch, L2-detail-refused. |
+| V2-LOG C1-list-speed | Replaced by C1-list-no-parse, which has a red mutation (MC1-parse-all); the time budget stays a T4 marker. |
+| V2-LOG slice accounting | Estimates now count source, tests and docs together, with a stated rate. L1a is cut into L1a.1 and L1a.2, L1b into L1b.1 to L1b.3, L1c into L1c.1 and L1c.2; every part is under about 800. Other slices re-estimated. |
+| V2-LOG SM2 status | The owner confirmed SM2; "pending" is removed from both plans. |
+| V2-LOG 5.0 "identical" | The OS-lane text moved out of 5.0 into a new 5.1 (LIB only), so 5.0 is word-for-word the same in both plans. |
+| RESULT handoff (a) | The `run-result` kind points at the engine's `decoy_engine.run_result.RunResult` and `RunResultRead` (RESULT E1); path fields `/payload/tables/*/delivery/output` and `/payload/links/log/path`; reserved until the engine release that carries RESULT E1 and E2, planned to be L1a's release. Test A1-run-result-model. |
+| RESULT handoff (b) | Link direction run-result to evidence, reverse lookup by `invocation_id`: the LIB 1 fix. |
+| RESULT handoff (c) | L5a's chunked-route case needs RESULT E2 (the chunked path emits no progress events today); L5a now depends on the engine release with E2. |
+| RESULT handoff (d) | L3a stores the payload that `_run_outcome.finish` (RESULT C1) returns and builds nothing itself; L3a depends on RESULT C1, and the `run.py` lane order is updated in 5.0. |
+
 ## Revision 5 (2026-11-05): joint Dennis review of LIB 6b50e729 and SCAN-MULTI 9b7cd9ab
 
 Numbered 5 to match the SCAN-MULTI revision written in the same pass; LIB had
@@ -453,10 +478,10 @@ read each hit in context).
 
 | Concern | Existing copies found | Decision | Choke point, guard, mutation |
 |---|---|---|---|
-| Atomic file write (temp in the target directory, fsync, replace, directory fsync, temp removed on failure) | CLI `cli/ci.py:111-115`, `ci/debug.py:44-48`, `run.py:1622-1686` (`_fsync_directory`, vault commit), `distribution/installer.py:219,659-664`, `distribution/layout.py:144-157`, `distribution/first_install.py:71`; engine `fileaccess._output` and `write_private` | One CLI module, `src/decoy/_atomic.py` (L1b, ~150 lines): `write_atomic(dir, name, data, mode)` with `CREATE_ONCE` and `REPLACE`, the Windows retry and the POSIX directory fsync. The library's `_fs` calls it. L5a moves `run.py`'s vault commit onto it (which also shrinks `run.py`); SCAN-MULTI S1c writes `--output` and S3a writes the YAML through it. `ci.py` and `ci/debug.py` start on the allowlist and move when next touched. The distribution files stay allowlisted on purpose: they flip symlinks and swap whole runtime directories under the install lock, a different operation. The engine writers stay engine-side (file-access policy, `openat2`); the library is CLI-owned and must run on Windows (4.9). | Guard G-ONE-ATOMIC-WRITER (`tests/sentry/test_atomic_writer.py`): syntax-tree walk of `src/decoy/` for `os.replace`, `os.rename`, `os.link` and `tempfile.mkstemp` outside `_atomic.py`; ratchet allowlist with a reason per entry, recorded size 7 at L1b (`cli/ci.py`, `ci/debug.py`, `run.py`, the `api.py:252` staging temp file, `distribution/installer.py`, `distribution/layout.py`, `distribution/first_install.py`), 6 after L5a. Mutation M-ATOMIC-INLINE: `_library/_fs.py` calls `os.replace` itself; red. |
+| Atomic file write (temp in the target directory, fsync, replace, directory fsync, temp removed on failure) | CLI `cli/ci.py:111-115`, `ci/debug.py:44-48`, `run.py:1622-1690` (`_fsync_directory`, `_commit_vault`), `distribution/installer.py:219,659-664`, `distribution/layout.py:144-157`, `distribution/first_install.py:71`; engine `fileaccess._output` and `write_private` | One CLI module, `src/decoy/_atomic.py` (L1b.1, ~150 lines): `write_atomic(dir, name, data, mode)` with `CREATE_ONCE` and `REPLACE`, the Windows retry and the POSIX directory fsync. The library's `_fs` calls it; SCAN-MULTI S1c writes `--output` and S3a writes the YAML through it. The vault commit is not a generic atomic write: it keeps a hard-link backup and restores the old vault, or removes the new one, when the directory fsync fails (`run.py:1628-1690`, pinned by `tests/e2e/test_vault_commit_order.py:101`). It stays its own transaction and a permanent allowlist entry; L5a moves it byte for byte into `_vault_commit.py` to shrink `run.py`. `ci.py` and `ci/debug.py` start on the allowlist and move when next touched. The distribution files stay allowlisted on purpose: they flip symlinks and swap whole runtime directories under the install lock, a different operation. The engine writers stay engine-side (file-access policy, `openat2`); the library is CLI-owned and must run on Windows (4.9). | Guard G-ONE-ATOMIC-WRITER (`tests/sentry/test_atomic_writer.py`): syntax-tree walk of `src/decoy/` for `os.replace`, `os.rename`, `os.link` and `tempfile.mkstemp` outside `_atomic.py`; ratchet allowlist with a reason per entry, recorded size 7 at L1b.1 (`cli/ci.py`, `ci/debug.py`, `run.py` for `_commit_vault`, the `api.py:252` staging temp file, `distribution/installer.py`, `distribution/layout.py`, `distribution/first_install.py`); still 7 after L5a, whose move renames the vault entry to `_vault_commit.py`. Mutation M-ATOMIC-INLINE: `_library/_fs.py` calls `os.replace` itself; red. |
 | Canonical JSON and content hashing | CLI `evidence.compute_manifest_hash` (`evidence.py:104-121`); `distribution/signing.py:23,48` (same form, release signatures); `notify.py:240` (webhook HMAC body, no `ensure_ascii=False`); `distribution/installer.py:192` | One form, `decoy_engine.records._canonical` (L1a). `evidence.compute_manifest_hash` calls it (byte-identical, test A1-canonical-shared). `signing.py` stays: it is the frozen release-signature input, and rewiring it would couple release verification to an engine version. `notify.py` stays: different bytes on the wire by design. | Guard G-ONE-CANONICAL (`tests/sentry/test_canonical_json.py`): walk for `json.dumps(..., sort_keys=True, separators=(",", ":"))` outside the engine call site; allowlist `signing.py`, `notify.py`, `installer.py`, size 3. Mutation M-CANON-COPY: `_library/_store.py` hashes its own `json.dumps`; red. |
-| Private directories and files | CLI `_token_vault.py:100-115` (0700 only when it creates the parent, 0600 pre-create before SQLite opens); engine `out_of_core/_scratch.py` (`private_dir`, `engine_scratch_root`) | `_fs.ensure_private_dir` and `_fs.create_private_file` follow the token-vault recipe; the index pre-create (LL3) uses the same call. The token vault moves onto `_fs` helpers in a later slice; not in this plan (it is not library code and is gated separately). The scan spill reuses the engine helper when the library is off (SCAN-MULTI S1b). | B1-mode walks every created file and directory (M-MODE). |
-| Windows ACL | none in the CLI or engine | new `_winacl.py` (L1d), the only `ctypes` ACL code | B1-win-scratch-acl (MB1-inherit) |
+| Private directories and files | CLI `_token_vault.py:100-115` (0700 only when it creates the parent, 0600 pre-create before SQLite opens); engine `out_of_core/_scratch.py:26-65` (`mkdtemp` plus `chmod`, no Windows DACL) | Value-free library files: `_fs.ensure_private_dir` and `_fs.create_private_file` follow the token-vault recipe; the index pre-create (LL3) uses the same call. The token vault moves onto `_fs` helpers in a later slice, not in this plan. Row-bearing directories: one engine allocator (L0) for library scratch, the scan spill fallback and the out-of-core spill. | B1-mode (M-MODE); G-ONE-PROTECTED-DIR (M-MKDTEMP-INLINE) |
+| Windows ACL | none in the CLI or engine | one engine module, `fileaccess/_protected_dir.py` (L0); the CLI has no `ctypes` ACL code | P0-win-dacl (MP0-set-after), D1-win-scratch-acl |
 | Locks | CLI `distribution/lock.py` (`fcntl`, no-op on Windows) | not reused: it locks the runtime home and does nothing on Windows. The library lock is SQLite `BEGIN IMMEDIATE` (4.8). | C1-lock-unavailable (MC1-unlocked-ref) |
 | Error codes and messages | engine reason registry; CLI ad hoc `type(exc).__name__` messages (19 sites) | Library and log codes are engine reason identities (L1a, LM8). One CLI builder, `_library/_errors.py` `library_error(code, exc)`, formats "code plus class name, no path" for every library failure. | B1-no-path-in-error (MB1-exc); the engine's registered-code check turns any unregistered code into `unregistered_reason`, which L5-value-free asserts never appears |
 | Retention | none in the CLI; the platform has its own (F26) | one policy model, `_policy.py` | single site, no registry |
@@ -574,6 +599,14 @@ refused with the same code.
 - `links` are typed (`rel` from a closed set: `baseline`, `scan`, `evidence`,
   `result`, `sample`, `log`, `publication`, `checkpoint`, `supersedes`). A
   `log` link also carries the log file's SHA-256 (section 4.12).
+- Links point one way: a record may link only to records that already exist
+  when it is built, because its id hashes its links and a later record's id
+  cannot be known in advance. So the link graph has no cycles by
+  construction, and "linked both ways" is never a design. The reverse
+  direction is a query: records of one invocation share `invocation_id`, and
+  the index answers "which records link to X" from the `links` table. For a
+  run, evidence is written first and the run-result links to it
+  (`rel: evidence`), to the scan baseline (`rel: baseline`) and to the log.
 
 Kinds registered in V1:
 
@@ -581,7 +614,7 @@ Kinds registered in V1:
 |---|---|---|---|
 | `scan-set` | `scan-set/v1` (`ScanSetCore`, the `detail=False` dump) | engine, SCAN-MULTI S1a | L2 |
 | `evidence` | `cli-local-1` (the existing manifest, unchanged) | engine model in `records/_kinds.py`, mirroring CLI `evidence.py` (LM7) | L3a |
-| `run-result` | `decoy-run-result/v1` | RESULT row (UX map 5.4) | L3a, once RESULT defines it |
+| `run-result` | `decoy-run-result/v1` | engine `decoy_engine.run_result` (RESULT E1; built only by `build_run_result`) | L3a, once RESULT C1 lands |
 | `sample-run` | `sample-run/v1` (new, section 4.13) | this plan | L3b |
 | `publication` | reserved | DELIV plan | not in this plan |
 | `checkpoint` | reserved (`checkpoint-index/v1`) | F23 plan | not in this plan |
@@ -591,9 +624,13 @@ read model (the same fields with `extra="ignore"`, nested models included, so
 an older CLI reads a record a newer one wrote with an added optional field),
 its path fields as JSON-pointer patterns (for example
 `/payload/tables/*/descriptor/path` for `scan-set`,
-`/payload/sources/*/path` and `/payload/targets/*/path` for `evidence`), its
-diff rule and its canary fixture id. The major check stays on read: an unknown
-payload major gives `RecordNeedsNewer`.
+`/payload/sources/*/path` and `/payload/targets/*/path` for `evidence`,
+`/payload/tables/*/delivery/output` and `/payload/links/log/path` for
+`run-result`), its diff rule and its canary fixture id. The major check stays
+on read: an unknown payload major gives `RecordNeedsNewer`. The read model is
+a view for this version's commands only; `decode` also returns the verified
+raw envelope, and anything that writes a record out again (export, a copy)
+uses the raw form, so fields this version does not know are never dropped.
 
 A reserved kind is registered with no payload model; `records.build` refuses
 it with `record_kind_reserved` until its plan adds the model. `scan-set` is
@@ -604,6 +641,29 @@ activation record stays with the staged artifacts in the run's delivery root
 (UX map 6.1); the library holds only a value-free index entry pointing at it.
 F23 may reuse the engine envelope and the CLI atomic writer for the
 activation record itself.
+
+### 4.3a Records of a kind this version does not know
+
+Kinds keep arriving, and records are committed, so an older V1 CLI will meet
+records of a kind registered after it shipped (a `git pull`, a teammate on a
+newer CLI). Such a record is opaque, not an error:
+
+- `decode` verifies its id by the 4.3 rule and checks the envelope major
+  (`decoy-record/v1`), then returns an `OpaqueRecord`: kind name, id,
+  `created_at`, `invocation_id`, labels, links and the raw payload, with no
+  payload validation. A record with an unknown envelope major stays under the
+  existing rule (skipped with a notice).
+- Index: one row with its kind name and a flag `known = 0`; its links go into
+  the `links` table like any other.
+- `list` shows it as "unknown kind `<name>`, needs a newer Decoy" with id and
+  time; `list --kind <name>` filters on the name; `show` prints the envelope
+  fields and says the payload cannot be read by this version; `diff` refuses
+  with a usage error.
+- Prune never deletes it in this version, whatever the arguments, and its
+  links still count for reachability, so the records it points at are kept.
+- `fsck` checks its id and envelope only. `export` copies it byte for byte
+  (no path stripping, since this version does not know its path fields) and
+  lists its id in the export header under `unstripped`.
 
 Alternatives: *a bare payload file per feature* (the earlier S1d design) gives
 no common listing, linking or import; *one big JSON per run holding all
@@ -691,13 +751,16 @@ property that evidence depends on.
   0644, so for them it is an advisory note that does not change the exit code;
   they hold no values.
 - Windows: `os.chmod` cannot express 0600. `scratch/`, the only class that
-  can hold rows, and every allocation directory under it are created with a
-  protected DACL already attached: SDDL
+  can hold rows, and every allocation directory under it are created by the
+  engine's one protected allocator (L0, `decoy_engine.protected_scratch_dir`
+  and `create_protected_dir`) with a protected DACL already attached: SDDL
   `D:P(A;OICI;FA;;;<current user SID>)(A;OICI;FA;;;SY)`, converted with
   `ConvertStringSecurityDescriptorToSecurityDescriptorW` and passed in the
   `SECURITY_ATTRIBUTES` of `CreateDirectoryW` through `ctypes` (no new
   dependency). There is no window in which the directory exists without it,
-  and inheritance from the parent is off. If the ACL cannot be applied, scratch allocation fails
+  and inheritance from the parent is off. The same allocator makes the scan
+  integrity spill when the library is off and the engine's out-of-core spill,
+  so every directory Decoy puts rows in is protected the same way. If the ACL cannot be applied, scratch allocation fails
   with `scratch_acl_failed` and the sample run stops before it writes a row
   (fail closed, the token-vault rule). Records and logs hold no values, so in
   V1 they keep the ACL inherited from the project directory, which on a
@@ -858,7 +921,13 @@ findings (the CLI's findings code). `fsck --repair` moves corrupt objects to
   that existed before it, so the order always exists), each line's `links`
   are rewritten from the old-to-new map before its own id is computed, and
   the header's refs are remapped the same way. A link to a record outside the
-  export keeps its original id. Scratch is never exportable.
+  export keeps its original id. Every line is written from the record's raw
+  verified envelope, never from this version's typed view, so a record
+  carrying payload fields this version does not know, or an opaque-kind
+  record (4.3a), is exported byte for byte with its original id: its path
+  fields cannot be identified, so it is not stripped, and its id is listed in
+  the header under `unstripped` with a notice on stderr. Scratch is never
+  exportable.
 - The engine owns the codec (`records.export_lines`, `records.read_export`),
   so the platform importer upserts by id with the same code.
 
@@ -993,9 +1062,12 @@ the saved main baseline.
 
 ### 5.0 Sequencing (shared with the other plan, identical text)
 
-This section is the same in SCAN-MULTI (engine branch `plan/scan-multi`) and
-LIB (CLI branch `plan/local-record-library`). The platform `docs/ROADMAP.md`
-gets its rows from the orchestrator; neither plan edits it.
+This section is word-for-word the same in SCAN-MULTI (engine branch
+`plan/scan-multi`) and LIB (CLI branch `plan/local-record-library`); anything
+specific to one plan sits outside it. The platform `docs/ROADMAP.md` gets its
+rows from the orchestrator; neither plan edits it. A slice cut into parts
+(`L1b.2`, `S1c.1`) is named by its part where the part matters; a bare name
+means every part has merged.
 
 **Outside dependencies.**
 
@@ -1008,9 +1080,14 @@ gets its rows from the orchestrator; neither plan edits it.
   `has_header`, names its columns through `column_names` or
   `column_names_file`, and lists every column in the YAML. Planned by another
   author. S1c's `--column-names-file` flag and S3-engine depend on it.
-- RESULT (`decoy-run-result/v1`, F29 C1) for LIB L3a's run-result half, and
-  SAMPLE (`decoy run --sample N`) for LIB L3b. Neither is defined on any branch
-  today; both halves wait.
+- RESULT (`decoy-run-result/v1`), handoff
+  `10_Projects/decoy/handoffs/phase0.5/p05-result-build-handoff.md` (Status
+  plan): E1 (engine model and `build_run_result`), E2 (engine per-table
+  collector; adds progress events to the chunked path; one registry minor), C1
+  (CLI `_run_outcome.finish`, after F29 C1, LIB L1b and LIB L5a), C2 (CLI
+  capacity widening). LIB L1a's `run-result` kind points at E1's models; LIB
+  L5a's chunked case needs E2; LIB L3a's run-result half needs C1.
+- SAMPLE (`decoy run --sample N`) for LIB L3b; not defined on any branch today.
 - CLI-CLOUD for any cloud integrity pass (V2 of S1b, section 5 S1b).
 
 **Reason-registry chain.** Engine main is at `REGISTRY_VERSION = "1.5.0"`
@@ -1020,31 +1097,35 @@ merge time through REG-RENUMBER (`scripts/dev/registry_renumber.py`, handoff
 `10_Projects/decoy/handoffs/phase0.5/p05-reg-renumber-build-handoff.md`): such
 slices may build in parallel but merge one at a time, one new minor per branch,
 and never write a version where it does not mean the slice's own minor. The
-roadmap rows already on the chain (F35 E1a, F32 E1b, F36 slice 4) interleave by
-merge order. Registry-touching slices in these plans:
+roadmap rows already on the chain (F35 E1a, F32 E1b, F36 slice 4) and RESULT E2
+interleave by merge order. Registry-touching slices in these plans:
 
 | Slice | Identities |
 |---|---|
-| LIB L1a-engine | the CLI-side library and log event codes (LIB LM8) |
-| SCAN-MULTI S1a-engine | `warning.scan_header_suspect`, `warning.scan_key_type_mismatch` (S1b adds none) |
-| SCAN-MULTI S3-engine | `config.namespace_placeholder_unset` |
+| LIB L0-engine | `runtime.scratch_acl_failed` |
+| LIB L1a.1-engine | the CLI-side library and log event codes (LIB LM8) |
+| SCAN-MULTI S1a.1-engine | `warning.scan_header_suspect`, `warning.scan_key_type_mismatch` (S1b adds none) |
+| SCAN-MULTI S3-engine.1 | `config.namespace_placeholder_unset` |
 
 **Engine releases** go one at a time. Each is followed by one cumulative CLI
-repin that follows the engine repin checklist.
+repin that follows the engine repin checklist. Planned grouping: LIB L0, LIB
+L1a (both parts) and RESULT E1 and E2 in one release; SCAN-MULTI S1a and S1b
+in the next; SCAN-MULTI S3-engine (both parts) after CONFIG-EXPLICIT.
 
 **Build order.**
 
-1. LIB L1a-engine, engine release, then LIB L1b-cli (with the repin), L1c-cli
-   and L1d-cli.
-2. SCAN-MULTI S1a-engine, then S1b-engine on a branch from S1a; one engine
-   release holds both.
-3. CLI-DIALECT, then SCAN-MULTI S1c-cli (repin to the step 2 release; needs
-   LIB L1b), then LIB L2-cli (needs L1c and L1d).
-4. CONFIG-EXPLICIT, then SCAN-MULTI S3-engine and its release, then S3a-cli
-   (repin), then S3b-cli.
-5. LIB L4a after L1c, then L4b. LIB run side in the `run.py` lane: L5a (needs
-   L1b), L5b (also needs L4a), L3a, L3b; RESULT and SAMPLE gate their halves.
-   LIB L5c after L5b and S3b-cli.
+1. LIB L0-engine, L1a.1, L1a.2 and RESULT E1, E2; one engine release. LIB
+   L1b.1 may start at once (it needs no engine change); then the repin with
+   L1b.2, then L1b.3, L1c.1, L1c.2 and L1d.
+2. SCAN-MULTI S1a.1, S1a.2, then S1b-engine on a branch from S1a; one engine
+   release holds them. S1b uses L0's allocator, so L0 merges first.
+3. CLI-DIALECT, then SCAN-MULTI S1c.1 and S1c.2 (repin to the step 2 release;
+   need LIB L1b.1), then LIB L2-cli (needs L1c and L1d).
+4. CONFIG-EXPLICIT, then SCAN-MULTI S3-engine.1 and S3-engine.2 and their
+   release, then S3a.1-cli and S3a.2-cli (repin), then S3b-cli.
+5. LIB L4a after L1c, then L4b. In the `run.py` lane: LIB L5a (needs L1b.1
+   and the step 1 release), F29 C1, RESULT C1, LIB L5b (also needs L4a), LIB
+   L3a, LIB L3b; SAMPLE gates L3b. LIB L5c after L5b and S3b-cli.
 
 Steps 1 and 2 can run at the same time on different branches; their releases
 go out one after the other.
@@ -1052,14 +1133,16 @@ go out one after the other.
 **One writer at a time per shared file.** The roadmap allows one `run.py`
 writer at a time (`ROADMAP.md:548`), and the same rule applies here to the
 other files several slices edit. Default order, which the orchestrator may
-interleave with other rows (F29 C1 and F32 C0 also write `run.py`):
+interleave with other rows (F32 C0 and CLI-FMT also write `run.py`):
 
 | File | Writers, in order |
 |---|---|
-| `src/decoy/cli/run.py` | L5a, L5b, L3a, L3b |
-| `src/decoy/cli/scan.py` | S1c, L2, S3a-cli, S3b-cli, L5c |
-| `src/decoy/cli/library.py` | L1c, L4a, then L4b and L5b in either order |
-| `src/decoy_engine/profiling/scan_set.py` | S1a, S1b |
+| `src/decoy/cli/run.py` | L5a, F29 C1, RESULT C1, L5b, L3a, L3b |
+| `src/decoy/cli/scan.py` | S1c.1, S1c.2, L2, S3a.2, S3b, L5c |
+| `src/decoy/cli/library.py` | L1c.2, L4a, then L4b and L5b in either order |
+| `src/decoy_engine/profiling/scan_set.py` | S1a.1, S1a.2, S1b |
+
+### 5.1 OS lanes (LIB only)
 
 **OS lanes (Revision 2, Q2).** macOS tests run on the Mac mini as a
 self-hosted GitHub Actions runner. Windows tests run on a self-hosted runner
@@ -1067,15 +1150,16 @@ on a GCP VM, provisioned before L1b starts and stopped when idle (the
 existing `vm-reap` rule). A lane runs the library test paths only
 (`tests/unit/library/`, `tests/e2e/test_library_*.py`,
 `tests/e2e/test_job_logs.py`, the guards in `tests/sentry/test_library_writer.py`
-and `tests/sentry/test_atomic_writer.py`), not the full suite. Required lanes
+and `tests/sentry/test_atomic_writer.py`), not the full suite. The same Windows runner runs L0's engine allocator tests (`tests/unit/fileaccess/test_protected_dir.py`, `tests/windows/`). Required lanes
 per slice:
 
 | Slice | Linux | macOS (Mac mini) | Windows (GCP VM) | Why |
 |---|---|---|---|---|
+| L0-engine | yes | yes | yes | real DACL read back, fail-closed path, umask |
 | L1a-engine | yes | no | no | pure functions; no filesystem |
 | L1b-cli | yes | yes | yes | atomic writes, no-clobber link, retries, modes, ref lock, path budget |
 | L1c-cli | yes | yes | yes | SQLite locking, freshness, remote-fs detection, fsck |
-| L1d-cli | yes | yes | yes | scratch ACL at creation, best-effort deletes |
+| L1d-cli | yes | yes | yes | scratch through the engine allocator, best-effort deletes |
 | L2-cli | yes | yes | no | scan writes through paths L1b and L1d already proved on Windows |
 | L3a-cli | yes | no | no | uses L1 primitives only |
 | L3b-cli | yes | yes | yes | scratch ACL and TTL deletion on a real sample, open handles |
@@ -1088,88 +1172,163 @@ per slice:
 A Windows or macOS lane result counts toward the slice's T1 and the gate's
 T2 for the library paths; it is not the T3 full suite.
 
-### L1a-engine: records module (engine, about 600 lines)
+Line estimates in this section count hand-written source, tests and docs
+together. Tests are estimated at about 15 lines per unit case and about 25 to
+35 per end-to-end case; generated fixtures are not counted. A slice whose
+total passes about 800 is cut into parts (`.1`, `.2`, ...), each its own
+branch, PR and gate, merged in order. "Depends on L1b" means every part of
+L1b has merged, unless a part is named.
+
+### L0-engine: one protected scratch allocator (engine, about 420 lines)
+
+Revision 6 (Codex LIB 5, ENGINE 1). Every directory that can hold rows (the
+library's `scratch/`, the scan integrity spill when the library is off, and
+the engine's own out-of-core spill) is created by one function, so Windows
+gets an owner-only DACL wherever rows land, and a failure to apply it fails
+closed. Today the engine's `execution/out_of_core/_scratch.py:46-65`
+(`engine_scratch_root`, `scratch_root`) uses `tempfile.mkdtemp` and
+`os.chmod(0o700)`, which on Windows sets only the read-only flag.
 
 **Files and sizes.**
-- new `src/decoy_engine/records/__init__.py` (~40), `_envelope.py` (~130:
-  `RecordEnvelope`, `Link`, `Labels`, `Producer`), `_canonical.py` (~40),
-  `_registry.py` (~110: `register_kind`, `registered_kinds`, `kind_spec`; a
-  spec holds tag, write model, read model, path fields, diff rule id, canary
-  fixture id), `_kinds.py` (~150: `cli-local-1` evidence, run-result,
-  sample-run, reserved publication and checkpoint, and `scan-set` as reserved
-  or pointed at SCAN-MULTI's `ScanSetCore` when S1a has merged), `_export.py`
-  (~90), `_joblog.py` (~50: header model with the closed `command` enum, line
-  reader).
-- `src/decoy_engine/reasons/warning/_part1.py` (51) and
-  `reasons/runtime/` as fits: the CLI-side event identities
-  (`warning.library_write_failed`, `warning.job_log_write_failed`,
-  `warning.library_degraded`, `warning.library_delete_skipped`, and the
-  phase names the CLI emits if the event sanitizer requires registration; the
-  builder lists every CLI event construction in L5a to L5c and registers each
-  code). One manifest fixture; the minor is assigned at merge by
-  REG-RENUMBER (section 5.0).
-- `src/decoy_engine/__init__.py` (496): additive exports, about 10 lines.
-- `docs/compatibility-contract.md` §3.1 (new tags `decoy-record/v1`,
-  `decoy-library-export/v1`, `decoy-job-log/v1`, `sample-run/v1`), the
-  compatibility corpus samples, `docs/reasons.md`, `CHANGELOG.md`.
-- tests: `tests/unit/records/test_envelope.py`, `test_registry.py`,
-  `test_export.py`, `test_joblog.py`, `test_kinds.py`.
+- new `src/decoy_engine/fileaccess/_protected_dir.py` (~170):
+  `protected_scratch_dir(parent: Path | None, prefix: str)`, a context
+  manager that creates a fresh directory and removes it on every exit, and
+  `create_protected_dir(path)` for a long-lived one (the library's
+  `scratch/`). POSIX: `os.mkdir(path, 0o700)` then `os.chmod(path, 0o700)`
+  (the umask can only narrow). Windows: SDDL
+  `D:P(A;OICI;FA;;;<current user SID>)(A;OICI;FA;;;SY)` converted with
+  `ConvertStringSecurityDescriptorToSecurityDescriptorW` and passed in the
+  `SECURITY_ATTRIBUTES` of `CreateDirectoryW` through `ctypes`, so the
+  directory never exists without it. Any failure raises
+  `runtime.scratch_acl_failed` and leaves no directory.
+- `src/decoy_engine/execution/out_of_core/_scratch.py` (153): `scratch_root`
+  and `engine_scratch_root` create their roots through the new function;
+  net change about zero. This is a changed `execution/` file, so it gets its
+  physical-seam sentry allowlist entry in the same PR.
+- `src/decoy_engine/reasons/runtime/` (as fits): `runtime.scratch_acl_failed`
+  (on the registry chain, section 5.0); `src/decoy_engine/__init__.py`:
+  export `protected_scratch_dir`.
+- tests (~200): `tests/unit/fileaccess/test_protected_dir.py` (POSIX modes,
+  removal on exception, fail closed with the ACL call forced to fail), the
+  Windows-lane file `tests/windows/test_protected_dir_acl.py`; docs and
+  `CHANGELOG.md` (~30).
+
+| Test | Asserts | Mutation |
+|---|---|---|
+| P0-posix-mode | a directory from either function is 0700 under umask 000 and 077 | MP0-umask: rely on `mkdir`'s mode alone |
+| P0-removed | `protected_scratch_dir` removes its directory on normal exit and on an exception | MP0-leak |
+| P0-win-dacl | (Windows lane, real ACL read back with `GetNamedSecurityInfoW`) the DACL is protected and lists only the current user and SYSTEM; a child file inherits it | MP0-set-after: create the directory, then set the DACL; MP0-skip: no DACL |
+| P0-fail-closed | the ACL conversion forced to fail raises `scratch_acl_failed` and no directory remains | MP0-warn: warn and continue |
+| P0-ooc-routed | the out-of-core route's spill root comes from the new function (spy) and the existing out-of-core tests pass unchanged | MP0-old-mkdtemp: keep `mkdtemp` in `_scratch.py` |
+| G-ONE-PROTECTED-DIR | (engine `tests/sentry/test_protected_dir.py`; the CLI twin lands in L1d) syntax-tree walk of the package: no `tempfile.mkdtemp` or `os.mkdir` for a row-bearing directory outside `_protected_dir.py`; existing non-row sites (for example `fileaccess/_local.py` output staging beside the target) are a ratchet allowlist with reasons; a seeded bypass is shown red | M-MKDTEMP-INLINE: SCAN-MULTI S1b calls `mkdtemp` for its spill |
+
+**Frozen-contract effects.** Additive public API; one reason identity. On
+Windows the out-of-core spill root now fails closed when the DACL cannot be
+applied (a deliberate V1 tightening; CHANGELOG line).
+
+### L1a-engine: records module (engine, two parts, about 1 080 lines)
 
 **Behavior.** `build(kind, payload, *, producer, invocation_id, labels,
 links, created_at)` validates the payload with the kind's write model and
 returns a frozen envelope with `id` and `payload_digest`. `encode(envelope)`
-returns canonical bytes; `decode(bytes)` parses, recomputes the id by the 4.3
-rule, checks the envelope major and the payload tag, validates the payload
-with the kind's read model, and returns the envelope (unknown payload major
-gives `RecordNeedsNewer`, not an error that stops a listing). The `run-result`
-model is a placeholder until RESULT fixes `decoy-run-result/v1`; if RESULT
-is not ready when L1a lands, the kind is registered reserved and L3a turns it
-on.
+returns canonical bytes. `decode(bytes)` parses, recomputes the id by the 4.3
+rule, checks the envelope major, and returns a `DecodedRecord` holding two
+things: `raw`, the verified parsed envelope exactly as stored (every field,
+known or not), and `view`, the payload validated with the kind's read model
+for this version's commands. Writers of exports and copies use `raw` only
+(4.11); listing, diff and show use `view`. An unknown payload major gives
+`RecordNeedsNewer`; an unknown kind gives an opaque record (4.3a); neither
+stops a listing. The `run-result` kind points at the engine RESULT package's
+models (`decoy_engine.run_result.RunResult` and `RunResultRead`) with path
+fields `/payload/tables/*/delivery/output` and `/payload/links/log/path`; it
+is reserved until the engine release that carries RESULT E1 and E2, which is
+planned to be the same release as L1a (if E1 merges first, L1a points at it;
+if L1a merges first, E1 does).
+
+**L1a.1: envelope, canonical form, registry, kinds (~770 lines).**
+- new `src/decoy_engine/records/__init__.py` (~30), `_envelope.py` (~110:
+  `RecordEnvelope`, `Link`, `Labels`, `Producer`, `DecodedRecord`,
+  `OpaqueRecord`), `_canonical.py` (~30), `_registry.py` (~90:
+  `register_kind`, `registered_kinds`, `kind_spec`; a spec holds tag, write
+  model, read model, path fields, diff rule id, canary fixture id),
+  `_kinds.py` (~120: `cli-local-1` evidence, `run-result` pointer, sample-run,
+  reserved publication and checkpoint, and `scan-set` as reserved or pointed
+  at SCAN-MULTI's `ScanSetCore`).
+- `src/decoy_engine/reasons/warning/_part1.py` (51): the CLI-side event
+  identities (`warning.library_write_failed`, `warning.job_log_write_failed`,
+  `warning.library_degraded`, `warning.library_delete_skipped`, and any phase
+  name the event sanitizer requires; the builder lists every CLI event
+  construction in L5a to L5c and registers each code), ~30 lines; one
+  manifest fixture; minor assigned at merge by REG-RENUMBER.
+- `src/decoy_engine/__init__.py` (496): ~10 lines of exports.
+- tests (~300): `tests/unit/records/test_envelope.py`, `test_registry.py`,
+  `test_kinds.py`, `test_opaque.py`; docs (~50): `docs/compatibility-contract.md`
+  §3.1 (`decoy-record/v1`, `sample-run/v1`), corpus samples, `docs/reasons.md`,
+  `CHANGELOG.md`.
+
+**L1a.2: export codec and job-log header (~310 lines).**
+- new `src/decoy_engine/records/_export.py` (~100), `_joblog.py` (~50: header
+  model with the closed `command` enum, line reader); tests (~140)
+  `test_export.py`, `test_joblog.py`; docs (~20): §3.1
+  `decoy-library-export/v1`, `decoy-job-log/v1`.
 
 **Acceptance tests (written first) and named mutations.**
 
-| Test | Asserts | Mutation that must turn it red |
-|---|---|---|
-| A1-id-stable | the same inputs give the same id across two processes and match a fixture recorded on another machine | MA1-unsorted: drop `sort_keys` |
-| A1-id-covers-all | changing any envelope field or payload byte changes the id | MA1-skip: exclude `labels` from the hashed body |
-| A1-id-parsed | a record re-serialized with CRLF line endings and two-space indent decodes and keeps its id | MA1-raw-bytes: hash the file bytes |
-| A1-canonical-shared | `evidence.compute_manifest_hash` and `records._canonical` give identical bytes for the manifest corpus | MA1-ascii: `ensure_ascii=True` |
-| A1-strict-payload | building with an unknown payload field raises `record_invalid` naming the field, not its value | MA1-extra: `extra="ignore"` on the write model |
-| A1-read-tolerant | a record whose payload carries an extra optional field (as a later CLI would write under the same tag) decodes on this version, the extra field dropped; a wrong type in a known field still fails | MA1-read-strict: decode with the write model |
-| A1-no-float-envelope | a float in a label raises | MA1-float: allow floats |
-| A1-reserved | building a reserved kind raises `record_kind_reserved` | MA1-open: treat reserved as free-form |
-| A1-decode-verify | changing one payload value fails decode with `record_corrupt` | MA1-trust: skip the id check |
-| A1-newer | payload tag `scan-set/v9` decodes to `RecordNeedsNewer` | MA1-crash: raise instead |
-| A1-export-roundtrip | export then read gives the same envelopes; a tampered line is rejected alone | MA1-batch: reject the whole file on one bad line |
-| A1-registry-walk | `registered_kinds()` lists every kind defined in `_kinds.py` (walked from the module, not a hand list) | MA1-hidden: define a kind outside the registry |
-| A1-scan-model-same | once SCAN-MULTI S1a is in, `kind_spec("scan-set").write_model is profiling.scan_set.ScanSetCore` | MA1-copy-model: define a second scan-set model in `_kinds.py` |
-| A1-evidence-model | the CLI manifest corpus validates against the engine `cli-local-1` model | MA1-evidence-drift: drop a manifest field from the model |
-| A1-codes-registered | every code in the L1a manifest fixture is `reasons.is_registered` | MA1-unregistered: emit a code missing from the registry |
+| Test | Part | Asserts | Mutation that must turn it red |
+|---|---|---|---|
+| A1-id-stable | .1 | the same inputs give the same id across two processes and match a fixture recorded on another machine | MA1-unsorted: drop `sort_keys` |
+| A1-id-covers-all | .1 | changing any envelope field or payload byte changes the id | MA1-skip: exclude `labels` from the hashed body |
+| A1-id-parsed | .1 | a record re-serialized with CRLF line endings and two-space indent decodes and keeps its id | MA1-raw-bytes: hash the file bytes |
+| A1-canonical-shared | .1 | `evidence.compute_manifest_hash` and `records._canonical` give identical bytes for the manifest corpus | MA1-ascii: `ensure_ascii=True` |
+| A1-strict-payload | .1 | building with an unknown payload field raises `record_invalid` naming the field, not its value | MA1-extra: `extra="ignore"` on the write model |
+| A1-read-tolerant | .1 | a record whose payload carries an extra optional field (as a later CLI would write under the same tag) decodes; `view` lacks the field, `raw` keeps it; a wrong type in a known field still fails | MA1-read-strict: decode with the write model |
+| A1-raw-preserved | .1 | `encode(decoded.raw)` of that newer record gives the original canonical bytes and id | MA1-reencode-view: rebuild the envelope from `view` |
+| A1-opaque-kind | .1 | an envelope with kind `future-thing` (valid id, envelope v1) decodes to an `OpaqueRecord` with kind, id, `created_at`, labels and links, and no error | MA1-unknown-raise: raise on an unregistered kind |
+| A1-no-float-envelope | .1 | a float in a label raises | MA1-float: allow floats |
+| A1-reserved | .1 | building a reserved kind raises `record_kind_reserved` | MA1-open: treat reserved as free-form |
+| A1-decode-verify | .1 | changing one payload value fails decode with `record_corrupt` | MA1-trust: skip the id check |
+| A1-newer | .1 | payload tag `scan-set/v9` decodes to `RecordNeedsNewer` | MA1-crash: raise instead |
+| A1-registry-walk | .1 | `registered_kinds()` lists every kind defined in `_kinds.py` (walked from the module, not a hand list) | MA1-hidden: define a kind outside the registry |
+| A1-scan-model-same | .1 | once SCAN-MULTI S1a is in, `kind_spec("scan-set").write_model is profiling.scan_set.ScanSetCore` | MA1-copy-model: define a second scan-set model in `_kinds.py` |
+| A1-run-result-model | .1 | once RESULT E1 is in, `kind_spec("run-result").write_model is run_result.RunResult` and its path fields are the two above | MA1-copy-result: define a run-result model in `_kinds.py` |
+| A1-evidence-model | .1 | the CLI manifest corpus validates against the engine `cli-local-1` model | MA1-evidence-drift: drop a manifest field from the model |
+| A1-codes-registered | .1 | every code in the L1a manifest fixture is `reasons.is_registered` | MA1-unregistered: emit a code missing from the registry |
+| A1-export-roundtrip | .2 | export then read gives the same envelopes; a tampered line is rejected alone | MA1-batch: reject the whole file on one bad line |
+| A1-export-newer | .2 | exporting a newer record (extra payload field) and an opaque-kind record from this version keeps each line's bytes and id unchanged | MA1-export-view: export from `view` |
 
 **Frozen-contract effects.** Four new tags in §3.1, additive public API, a
 compatibility corpus sample per tag, new reason identities at one minor. No
 determinism or vault effect.
 
-### L1b-cli: store, atomic writes, refs (CLI, about 620 lines)
+### L1b-cli: atomic writer, store, refs (CLI, three parts, about 1 500 lines)
 
-Depends on L1a released and repinned.
+Depends on L1a released and repinned. L1b.1 can start before the repin (it
+does not use the records module).
 
-**Files and sizes.**
+**L1b.1: the shared atomic writer and its guards (~440 lines).**
 - new `src/decoy/_atomic.py` (~150): `write_atomic` (section 4.9), Windows
   retry, POSIX directory fsync.
-- new `src/decoy/cli/_library/__init__.py` (~80: `Library`, `open_library`),
-  `_paths.py` (~120: `resolve_root`, subdirectory names, Windows path budget),
-  `_fs.py` (~110: `create_private_file`, `ensure_private_dir`, calls into
-  `_atomic`), `_store.py` (~120: `put`, `get`, `resolve`), `_refs.py` (~80),
-  `_errors.py` (~40: `library_error`), `_policy.py` (~60).
 - `src/decoy/cli/evidence.py` (557): `compute_manifest_hash` calls the engine
-  canonical form; net change about zero.
-- `pyproject.toml` engine pin; `CHANGELOG.md`; `docs/library.md` (new).
-- tests: `tests/unit/library/test_fs.py`, `test_store.py`, `test_refs.py`,
-  `test_paths.py`, `test_policy.py`, `tests/unit/test_atomic.py`; guards
-  G-LIB-WRITER in `tests/sentry/test_library_writer.py`, G-ONE-ATOMIC-WRITER
-  in `tests/sentry/test_atomic_writer.py` and G-ONE-CANONICAL in
-  `tests/sentry/test_canonical_json.py`, all registered in the sentry registry.
+  canonical form (needs the L1a repin; if L1b.1 lands first, this line moves
+  to L1b.2); net change about zero.
+- tests (~250): `tests/unit/test_atomic.py`, G-ONE-ATOMIC-WRITER in
+  `tests/sentry/test_atomic_writer.py`, G-ONE-CANONICAL in
+  `tests/sentry/test_canonical_json.py`, both registered; docs (~20).
+
+**L1b.2: store core (~760 lines).**
+- new `src/decoy/cli/_library/__init__.py` (~60: `Library`, `open_library`),
+  `_paths.py` (~100: `resolve_root`, subdirectory names, Windows path budget),
+  `_fs.py` (~80: `create_private_file`, `ensure_private_dir`, calls into
+  `_atomic`), `_errors.py` (~30: `library_error`), `_store.py` (~110: `put`,
+  `get`, `resolve`).
+- `pyproject.toml` engine pin; `CHANGELOG.md`; `docs/library.md` (new) (~50).
+- tests (~330): `tests/unit/library/test_fs.py`, `test_store.py`,
+  `test_paths.py`; G-LIB-WRITER in `tests/sentry/test_library_writer.py`,
+  registered.
+
+**L1b.3: refs and the retention policy model (~310 lines).**
+- new `src/decoy/cli/_library/_refs.py` (~80), `_policy.py` (~60); tests
+  (~150) `test_refs.py`, `test_policy.py`; docs (~20).
 
 **Behavior.** Sections 4.1, 4.2, 4.5, 4.6 (modes), 4.8 (record and ref
 parts), 4.9. Until L1c lands, ref updates take the lock through a minimal
@@ -1177,75 +1336,80 @@ parts), 4.9. Until L1c lands, ref updates take the lock through a minimal
 
 **Acceptance tests and named mutations.**
 
-| Test | Asserts | Mutation |
-|---|---|---|
-| B1-resolve | resolution order `--library`, `DECOY_LIBRARY`, YAML directory, cwd; for scan, `--emit-config` directory before `--config` directory; `off` turns records off and the log root skips the env step | MB1-order: env before flag; MB1-scan-cwd: scan ignores `--emit-config` |
-| B1-mode | after puts and refs, every created file is 0600 and directory 0700 (POSIX); a pre-existing parent keeps its mode | M-MODE |
-| B1-atomic-kill | a child process killed (SIGKILL on POSIX, `TerminateProcess` on Windows) during `put` leaves no readable partial record; only a temp file | MB1-direct: write to the final name |
-| B1-idempotent | putting the same envelope twice gives one file and no error, including on Windows while another process holds the file open | MB1-replace: always `os.replace` |
-| B1-no-clobber | two processes race `put` of the same envelope 50 times; no call raises, one file remains, it decodes, and a spy shows no `os.replace` on the record path | MB1-check-then-replace: `exists()` then `os.replace` |
-| B1-existing-corrupt | an existing object with a different payload makes `put` raise `record_corrupt` | MB1-trust-existing |
-| B1-concurrent | two processes put 50 records each; 100 files, each decodes | MB1-shared-tmp: fixed temp name |
-| B1-ref-race | two processes set the same ref 20 times each; the final ref is one of the written ids and no update raises anything but `library_busy` | MB1-nolock: write refs without the lock |
-| B1-win-retry | with the ref file held open (Windows lane), the update succeeds once the holder closes within the retry window, and fails with `library_busy` after it | MB1-noretry |
-| B1-win-long-root | (Windows lane) a 160-character root is refused with `library_path_too_long` before any file is created; a 140-character root works | MB1-no-budget: skip the length check |
-| B1-no-path-in-error | a write failure's message has the code and error class, not the path's text in `str(exc)` | MB1-exc |
-| B1-gitfiles | the first write creates `.decoy/.gitignore` (scratch, logs, index, tmp, quarantine) and `.decoy/.gitattributes` (`library/objects/** -text`) and never edits an existing one | MB1-clobber |
-| G-LIB-WRITER | no import of `_library._fs`, no `records.encode` call and no non-docstring literal with a `.decoy` path component outside `decoy/cli/_library/`, except the allowlisted runtime home; seeded bypass shown red | M-LIB-INLINE |
-| G-ONE-ATOMIC-WRITER | no `os.replace`, `os.rename`, `os.link` or `mkstemp` outside `_atomic.py` except the allowlist (size 7 at L1b); seeded bypass shown red | M-ATOMIC-INLINE |
-| G-ONE-CANONICAL | no canonical `json.dumps` outside the engine call except the allowlist (size 3); seeded bypass shown red | M-CANON-COPY |
+| Test | Part | Asserts | Mutation |
+|---|---|---|---|
+| B1-atomic-unit | .1 | `write_atomic` leaves the old file or the new file after a fault at each step, never neither, and no temp file | MB1-no-cleanup |
+| G-ONE-ATOMIC-WRITER | .1 | no `os.replace`, `os.rename`, `os.link` or `mkstemp` outside `_atomic.py` except the allowlist (size 7 at L1b.1); seeded bypass shown red | M-ATOMIC-INLINE |
+| G-ONE-CANONICAL | .1 | no canonical `json.dumps` outside the engine call except the allowlist (size 3); seeded bypass shown red | M-CANON-COPY |
+| B1-resolve | .2 | resolution order `--library`, `DECOY_LIBRARY`, YAML directory, cwd; for scan, `--emit-config` directory before `--config` directory; `off` turns records off and the log root skips the env step | MB1-order: env before flag; MB1-scan-cwd: scan ignores `--emit-config` |
+| B1-mode | .2 | after puts, every created file is 0600 and directory 0700 (POSIX); a pre-existing parent keeps its mode | M-MODE |
+| B1-atomic-kill | .2 | a child process killed (SIGKILL on POSIX, `TerminateProcess` on Windows) during `put` leaves no readable partial record; only a temp file | MB1-direct: write to the final name |
+| B1-idempotent | .2 | putting the same envelope twice gives one file and no error, including on Windows while another process holds the file open | MB1-replace: always `os.replace` |
+| B1-no-clobber | .2 | two processes race `put` of the same envelope 50 times; no call raises, one file remains, it decodes, and a spy shows no `os.replace` on the record path | MB1-check-then-replace: `exists()` then `os.replace` |
+| B1-existing-corrupt | .2 | an existing object with a different payload makes `put` raise `record_corrupt` | MB1-trust-existing |
+| B1-concurrent | .2 | two processes put 50 records each; 100 files, each decodes | MB1-shared-tmp: fixed temp name |
+| B1-win-long-root | .2 | (Windows lane) a 160-character root is refused with `library_path_too_long` before any file is created; a 140-character root works | MB1-no-budget: skip the length check |
+| B1-no-path-in-error | .2 | a write failure's message has the code and error class, not the path's text in `str(exc)` | MB1-exc |
+| B1-gitfiles | .2 | the first write creates `.decoy/.gitignore` (scratch, logs, index, tmp, quarantine) and `.decoy/.gitattributes` (`library/objects/** -text`) and never edits an existing one | MB1-clobber |
+| G-LIB-WRITER | .2 | no import of `_library._fs`, no `records.encode` call and no non-docstring literal with a `.decoy` path component outside `decoy/cli/_library/`, except the allowlisted runtime home; seeded bypass shown red | M-LIB-INLINE |
+| B1-ref-race | .3 | two processes set the same ref 20 times each; the final ref is one of the written ids and no update raises anything but `library_busy` | MB1-nolock: write refs without the lock |
+| B1-win-retry | .3 | with the ref file held open (Windows lane), the update succeeds once the holder closes within the retry window, and fails with `library_busy` after it | MB1-noretry |
 
 **Frozen-contract effects.** New on-disk location `.decoy/` (layout 1). No
 CLI verb yet.
 
-### L1c-cli: index, freshness, degraded mode, fsck (CLI, about 600 lines)
+### L1c-cli: index, freshness, degraded mode, fsck (CLI, two parts, about 1 120 lines)
 
 Depends on L1b.
 
-**Files and sizes.**
+**L1c.1: index, freshness, remote filesystems (~640 lines).**
 - new `src/decoy/cli/_library/_index.py` (~260: schema, 0600 pre-create,
-  insert, query, freshness sync, rebuild), `_remote.py` (~80: remote
-  filesystem detection per OS), `_fsck.py` (~160).
-- new `src/decoy/cli/library.py` (~90 here: the command group with `path` and
-  `fsck`), `src/decoy/__main__.py` (164) registration,
-  `docs/cli-reference.md` regenerated, `docs/library.md`, `CHANGELOG.md`.
-- tests: `tests/unit/library/test_index.py`, `test_remote.py`,
-  `test_fsck.py`, `tests/e2e/test_library_fsck.py`.
+  insert, query, freshness sync, rebuild, opaque rows), `_remote.py` (~80);
+  tests (~280) `tests/unit/library/test_index.py`, `test_remote.py`; docs
+  (~20).
 
-**Behavior.** Sections 4.4, 4.8 (index, remote filesystems, degraded mode),
-4.10.
+**L1c.2: fsck and the `library` command group (~480 lines).**
+- new `src/decoy/cli/_library/_fsck.py` (~160), `src/decoy/cli/library.py`
+  (~90 here: `path`, `fsck`), `src/decoy/__main__.py` (164) registration;
+  tests (~180) `test_fsck.py`, `tests/e2e/test_library_fsck.py`; docs (~50):
+  `docs/cli-reference.md` regenerated, `docs/library.md`, `CHANGELOG.md`.
+
+**Behavior.** Sections 4.3a (opaque rows), 4.4, 4.8 (index, remote
+filesystems, degraded mode), 4.10.
 
 **Acceptance tests and named mutations.**
 
-| Test | Asserts | Mutation |
-|---|---|---|
-| C1-rebuild | delete the index; the next open rebuilds it under the lock, rows equal to before | MC1-norebuild |
-| C1-corrupt-index | random bytes in `index.sqlite`: commands still list, and the next locked open rebuilds it | MC1-crash: propagate the SQLite error |
-| C1-hand-added | copy a valid object file into `objects/` by hand (as `git pull` would): the next `list` and `latest` include it without `fsck` | MC1-trust-index: skip the freshness listing |
-| C1-crash-gap | kill a writer after the object link and before the index insert: the next open shows the record | MC1-insert-first: insert the row before the link (a crash then leaves a row with no file) |
-| C1-gone-file | delete an object file by hand: the next open drops its row and `list` does not show it | MC1-keep-rows |
-| C1-index-mode | the index file is 0600 at creation (POSIX), before any SQL runs | MC1-umask: let `sqlite3.connect` create it |
-| C1-lock-unavailable | with SQLite locking forced to fail, `put` succeeds; ref set, prune and clean exit with `library_lock_unavailable` | MC1-unlocked-ref: allow refs without the lock |
-| C1-remote-fs | with the filesystem probe returning remote, open enters degraded mode, `library path` reports it, and ref set refuses; with a local result, refs work | MC1-trust-lock: ignore the probe |
-| C1-crlf | a committed record rewritten with CRLF endings passes `fsck` | MC1-raw-hash: hash bytes in fsck |
-| C1-fsck-findings | a corrupt object, a dangling ref, a stale temp file and a 0644 log file each produce one finding and exit 4; a 0644 record produces an advisory note and exit 0 | MC1-silent: skip the hash check; MC1-record-mode: treat record modes as findings |
-| C1-repair-safe | `--repair` quarantines the corrupt object, deletes the stale temp, keeps every valid record | MC1-delete: delete instead of quarantine |
-| C1-layout-newer | `LAYOUT` 2 makes writes refuse with `library_layout_newer` | MC1-ignore |
-| C1-list-speed | 5 000 records list in under 1 second from the index, freshness listing included (performance marker, T4) | none (budget check) |
+| Test | Part | Asserts | Mutation |
+|---|---|---|---|
+| C1-rebuild | .1 | delete the index; the next open rebuilds it under the lock, rows equal to before | MC1-norebuild |
+| C1-corrupt-index | .1 | random bytes in `index.sqlite`: commands still list, and the next locked open rebuilds it | MC1-crash: propagate the SQLite error |
+| C1-hand-added | .1 | copy a valid object file into `objects/` by hand (as `git pull` would): the next `list` and `latest` include it without `fsck` | MC1-trust-index: skip the freshness listing |
+| C1-crash-gap | .1 | kill a writer after the object link and before the index insert: the next open shows the record | MC1-insert-first: insert the row before the link (a crash then leaves a row with no file) |
+| C1-gone-file | .1 | delete an object file by hand: the next open drops its row and `list` does not show it | MC1-keep-rows |
+| C1-unknown-kind | .1 | an object of kind `future-thing` pulled into the library: open and `list` succeed, the row is listed as "unknown kind, needs a newer Decoy" with its id and time, and `latest` for known kinds is unchanged | MC1-unknown-crash: index only registered kinds and raise on others |
+| C1-index-mode | .1 | the index file is 0600 at creation (POSIX), before any SQL runs | MC1-umask: let `sqlite3.connect` create it |
+| C1-lock-unavailable | .1 | with SQLite locking forced to fail, `put` succeeds; ref set, prune and clean exit with `library_lock_unavailable` | MC1-unlocked-ref: allow refs without the lock |
+| C1-remote-fs | .1 | with the filesystem probe returning remote, open enters degraded mode, `library path` reports it, and ref set refuses; with a local result, refs work | MC1-trust-lock: ignore the probe |
+| C1-list-no-parse | .1 | with a fresh index over 5 000 records, `list` opens no object file (a spy on `open` under `objects/` counts zero); the 1-second budget is a separate T4 performance marker | MC1-parse-all: list by parsing every object file |
+| C1-crlf | .2 | a committed record rewritten with CRLF endings passes `fsck` | MC1-raw-hash: hash bytes in fsck |
+| C1-fsck-findings | .2 | a corrupt object, a dangling ref, a stale temp file and a 0644 log file each produce one finding and exit 4; a 0644 record produces an advisory note and exit 0; an opaque-kind record is checked by id only | MC1-silent: skip the hash check; MC1-record-mode: treat record modes as findings |
+| C1-repair-safe | .2 | `--repair` quarantines the corrupt object, deletes the stale temp, keeps every valid record, including opaque ones | MC1-delete: delete instead of quarantine |
+| C1-layout-newer | .2 | `LAYOUT` 2 makes writes refuse with `library_layout_newer` | MC1-ignore |
 
 **Frozen-contract effects.** New CLI noun `library` with `path` and `fsck`
 (additive). `docs/cli-reference.md` and the surface sentry move.
 
-### L1d-cli: scratch and the Windows ACL (CLI, about 330 lines)
+### L1d-cli: library scratch (CLI, about 300 lines)
 
-Depends on L1b. Split out of L1b (Revision 5, LM13). Needed before L2 (scan
-spill) and L3b (sample output).
+Depends on L1b and on L0 released and repinned. Needed before L2 (scan spill)
+and L3b (sample output). The Windows ACL code is L0's; this slice has no
+`ctypes`.
 
 **Files and sizes.**
-- new `src/decoy/cli/_library/_scratch.py` (~130: `scratch(owner, ttl)`,
-  `delete_on_exit`, best-effort delete with per-file report), `_winacl.py`
-  (~90: SDDL at `CreateDirectoryW`, section 4.6).
-- tests: `tests/unit/library/test_scratch.py`, `test_winacl.py`.
+- new `src/decoy/cli/_library/_scratch.py` (~120: `scratch(owner, ttl)` on top
+  of the engine's `create_protected_dir` and `protected_scratch_dir`,
+  `delete_on_exit`, best-effort delete with per-file report).
+- tests (~160): `tests/unit/library/test_scratch.py`; docs (~20).
 
 **Acceptance tests and named mutations.**
 
@@ -1253,13 +1417,14 @@ spill) and L3b (sample output).
 |---|---|---|
 | D1-mode | a scratch allocation is 0700 on POSIX, files in it 0600 | M-MODE |
 | D1-delete-on-exit | a `delete_on_exit` allocation is gone after the owner's block exits, on success and on an exception | MD1-leak |
-| D1-win-scratch-acl | (Windows lane) the `scratch/` and allocation DACLs are protected and list only the current user and SYSTEM; a file created inside inherits it; records and logs keep the inherited ACL | MB1-inherit: create the directory, then set the DACL (or skip it) |
-| D1-acl-fail-closed | with the ACL call forced to fail, allocation raises `scratch_acl_failed` and no scratch directory remains | MB1-acl-warn: warn and continue |
+| D1-uses-allocator | `scratch/` and every allocation come from the engine allocator (spy); the CLI twin of G-ONE-PROTECTED-DIR (`tests/sentry/test_protected_dir.py`) finds no `mkdtemp` or `mkdir` for scratch outside `_scratch.py`'s allocator calls | MD1-own-mkdir: create the allocation with `Path.mkdir` |
+| D1-win-scratch-acl | (Windows lane) the `scratch/` and allocation DACLs are protected and list only the current user and SYSTEM; records and logs keep the inherited ACL | MP0-skip (L0) seen through the CLI |
+| D1-acl-fail-closed | with the engine allocator forced to raise `scratch_acl_failed`, allocation fails, no scratch directory remains, and the sample stops before any row is written | MB1-acl-warn: warn and continue |
 | D1-delete-open | (Windows lane) a file held open inside an allocation is reported and skipped; the call returns normally; the next cleanup removes it once closed | MD1-raise: let `PermissionError` escape |
 
 **Frozen-contract effects.** None beyond layout 1.
 
-### L2-cli: scan records on the library (CLI, about 460 lines; the only build slice for SCAN-MULTI's scan record)
+### L2-cli: scan records on the library (CLI, about 700 lines counting tests and docs; the only build slice for SCAN-MULTI's scan record)
 
 Depends on L1c, L1d, and SCAN-MULTI S1c (and so S1a and S1b released).
 SCAN-MULTI S1d is a pointer to this slice.
@@ -1292,8 +1457,21 @@ SCAN-MULTI S1d is a pointer to this slice.
   `decoy run`.
 - Integrity spill: `scan_sources(..., spill_dir=Library.scratch(
   "scan-integrity", delete_on_exit))`. With `--no-save`, `DECOY_LIBRARY=off`,
-  or an unwritable root, `spill_dir=None`, and the engine uses its own
-  private temp root, removed on exit (SCAN-MULTI S1b).
+  or an unwritable root, `spill_dir=None`, and the engine creates the spill
+  through the same protected allocator (L0) in the system temp directory,
+  removed on exit (SCAN-MULTI S1b). Either way the directory has the
+  owner-only DACL on Windows, or the scan stops with `scratch_acl_failed`
+  before reading a key.
+- `--output-detail` (SCAN-MULTI Revision 6, ENGINE 2): `--output` holds only
+  the value-free core. The value-bearing per-table detail (`top_values`, min,
+  max, mode) is written only by `--output-detail`, only into
+  `Library.scratch("scan-detail", ttl=24h)` as `scan-detail.json` (0600, or
+  the protected DACL on Windows), with the path printed; it expires like
+  sample output (4.7) and `decoy library clean` removes it. With the library
+  off or unwritable, `--output-detail` is refused (exit 2) before any read.
+  `scan fields` and `show` render every file through `_safe_field_record`,
+  which has no value field, so even a detail file never puts a value on the
+  terminal; the user opens the detail file directly.
 - `load_scan_set(path)`: when the JSON has `record_schema`, call
   `records.decode` (id rule, `RecordNeedsNewer`), check that the id matches
   the object file name when the path is under `objects/`, and return the
@@ -1317,6 +1495,8 @@ their mutation names.
 | L2-save-failed | read-only root: exit code 0, one warning with the code, `library.status = "failed"` | ML2-fail: exit 3 |
 | L2-value-free | canary fixture with a declared relationship: no canary under `.decoy/` after the scan, and no spill file remains anywhere under `.decoy/scratch/` | M6-detail: save with `detail=True`; M-PAYLOAD-LEAK; ML2-keep-spill: allocate the spill without `delete_on_exit` |
 | L2-spill-scratch | with integrity on, a spy on `scan_sources` sees `spill_dir` under `.decoy/scratch/`; with `--no-save` it sees `None` | ML2-system-tmp: always pass `None` |
+| L2-detail-scratch | `--output-detail` writes the detail file under `.decoy/scratch/scan-detail-*/`, 0600; the canary appears there and nowhere else under `.decoy/` or the working directory; `scan fields` on that file prints no canary; after the TTL the next command removes it | ML2-detail-cwd: write the detail file next to `--output` |
+| L2-detail-refused | `--output-detail` with `DECOY_LIBRARY=off` or `--no-save` exits 2 before any read and writes nothing | ML2-detail-fallback: fall back to a temp file |
 | L2-atomic | a scan whose last table fails leaves no record and no temp file | M6-early: save before the last table |
 | L2-diff-latest | two scans with a column added: `scan diff --latest` reports it | M6-order: oldest two |
 | L2-same-instant | two records with the same `created_at`: `latest` picks the larger id on two machines and after an index rebuild | ML2-insert-order: order by index row id |
@@ -1331,20 +1511,26 @@ their mutation names.
 **Frozen-contract effects.** The earlier S1d location (`.decoy/scans/`) never
 ships. Additive scan flags and one additive `--json` key.
 
-### L3a-cli: evidence and run-result records (CLI, about 520 lines)
+### L3a-cli: evidence and run-result records (CLI, about 580 lines)
 
 Depends on L1c and on L5b in the `run.py` lane (section 5.0). The run-result
-half depends on RESULT (`decoy-run-result/v1`, F29 C1); the evidence half does
-not and may land first.
+half depends on RESULT C1 (`_run_outcome.finish`, CLI) and so on RESULT E1
+and E2 released and repinned; the evidence half does not and may land first.
+About 580 lines (source ~240, tests ~300, docs ~40).
 
 **Files and sizes.**
-- new `src/decoy/cli/_run_records.py` (~220): build and put the `evidence`
-  and `run-result` records, relativize path fields, link them to each other,
-  to the scan baseline record and to the job log (`rel: log` with its
-  SHA-256).
-- `src/decoy/cli/run.py` (1812, must not grow): `--no-library` and the call
-  into `_run_records.py`; the card and `--json` print the ids; net change at
-  or below zero (L5a's vault-commit move leaves room).
+- new `src/decoy/cli/_run_records.py` (~200): put the `evidence` record
+  first, then the `run-result` record whose payload is exactly what
+  `_run_outcome.finish` (RESULT C1) returns from the engine's
+  `build_run_result`; L3a builds no payload itself. The run-result envelope
+  links one way to the evidence record, the scan baseline record and the job
+  log (`rel: log` with its SHA-256). Path fields are relativized by the kind
+  spec before `build`.
+- `src/decoy/cli/_run_outcome.py` (RESULT C1): one call into
+  `_run_records.py` after the document is built, so every exit path stores
+  it; net change small.
+- `src/decoy/cli/run.py` (1812, must not grow): `--no-library` only; net
+  change at or below zero (L5a's vault-commit move leaves room).
 - `src/decoy/cli/report.py` (2382, must not grow): `report show`, `verify`
   and `diff` resolve an id or ref through one call into `_library`; net change
   at or below zero.
@@ -1355,7 +1541,8 @@ not and may land first.
 
 | Test | Asserts | Mutation |
 |---|---|---|
-| L3-records | a successful run writes one evidence and one run-result record sharing an invocation id and linked both ways | ML3-nolink |
+| L3-records | a successful run writes one evidence record, then one run-result record with the same invocation id that links to it; `library show <evidence id>` lists the run-result through the reverse `links` query and the invocation id | ML3-nolink; ML3-two-way: add a link from evidence to run-result (A1-link-acyclic red) |
+| L3-payload-from-finish | the run-result payload stored equals the `result` member of `--json` for the same run, byte for byte after canonicalization, on success, runtime failure and findings | ML3-rebuild: build the payload a second time in `_run_records.py` |
 | L3-failed-run | a run that fails at runtime writes a run-result record with status `error` and the exit code, and no evidence record | ML3-evidence-on-fail |
 | L3-baseline-link | end to end: `decoy scan data/*.csv --has-header --emit-config out/p.yaml` from the repo root, then `decoy run out/p.yaml` from another directory; the run-result links to the scan record by id, and that id resolves in `out/.decoy/library/` (the same library) | ML3-path-only: store the path, not the id; ML3-cwd-root: resolve the run's library from the current directory |
 | L3-log-link | the run-result's `log` link names `logs/<invocation_id>.jsonl` with a matching SHA-256 | ML3-no-log-link |
@@ -1368,7 +1555,7 @@ not and may land first.
 **Frozen-contract effects.** `decoy run` gains a default write (4.16) and one
 flag; `report` accepts ids (additive). `cli-local-1` shape unchanged.
 
-### L3b-cli: sample-run records and scratch lifecycle (CLI, about 450 lines)
+### L3b-cli: sample-run records and scratch lifecycle (CLI, about 530 lines)
 
 Depends on L1d, L3a (the `run.py` lane) and SAMPLE (`decoy run --sample N`
 through subset).
@@ -1398,7 +1585,7 @@ through subset).
 
 **Frozen-contract effects.** New tag `sample-run/v1` (registered in L1a).
 
-### L4a-cli: library read commands and refs (CLI, about 420 lines)
+### L4a-cli: library read commands and refs (CLI, about 480 lines)
 
 Depends on L1c; `diff` for `run-result` needs L3a.
 
@@ -1419,7 +1606,7 @@ Depends on L1c; `diff` for `run-result` needs L3a.
 
 **Frozen-contract effects.** Additive `library` verbs.
 
-### L4b-cli: prune, export, clean (CLI, about 480 lines)
+### L4b-cli: prune, export, clean (CLI, about 720 lines)
 
 Depends on L4a.
 
@@ -1441,15 +1628,21 @@ Depends on L4a.
 | L4b-export-import | export then `records.read_export` gives the same ids; `--ref` exports exactly the reachable set; only declared path fields are stripped unless `--keep-paths` | ML4-paths: keep paths by default; ML4-strip-all: strip every string that looks like a path |
 | L4b-export-remap | export a scan record and a run-result linking to it with paths stripped: the run-result's `baseline` link points at the scan line's new id, both lines verify, and header refs point at new ids | ML4-no-remap: keep old ids in links |
 | L4b-export-scratch | no export option includes scratch content | ML4-scratch |
+| L4b-export-newer | a record written by a newer CLI (extra payload field) and exported by this version keeps its bytes and id, is unstripped, and is named in the header's `unstripped` list | ML4-export-view: export from the typed view |
+| L4b-export-unknown | an opaque-kind record is exported verbatim with its id | ML4-skip-unknown: leave unknown kinds out |
+| L4b-prune-unknown | `prune --keep-last 0 --yes` and `prune --kind future-thing --keep-last 0 --yes` keep an opaque-kind record and every record it links to | ML4-prune-unknown: apply kind rules to opaque records |
 | L4b-clean | `clean` previews, then with `--yes` removes only `.decoy/scratch/`; a vault file inside the project is untouched | ML4-wide: remove `.decoy/` |
 | L4b-clean-open | (Windows lane) a scratch file held open: `clean --yes` lists it as left behind, removes the rest, exits 4 | ML4-clean-raise: stop at the first `PermissionError` |
 
 **Frozen-contract effects.** Additive `library` verbs; export format frozen
 under `decoy-library-export/v1`.
 
-### L5a-cli: wire the engine ProgressSink into `decoy run` (CLI, about 430 lines)
+### L5a-cli: wire the engine ProgressSink into `decoy run` (CLI, about 560 lines)
 
-Depends on L1b (the shared atomic writer). First writer in the `run.py` lane.
+Depends on L1b.1 and on the engine release that carries RESULT E2: the chunked
+path (`execution/_chunked.py`) emits no progress events until E2 adds them,
+so L5a-every-route's chunked case needs that release. First LIB writer in the
+`run.py` lane. Source ~320 (75 of it moved), tests ~210, docs ~30.
 Owns the hook found missing in the first pass: `decoy run` shows a spinner
 (`run.py:41`) and passes no `ProgressSink` to the engine today.
 
@@ -1457,36 +1650,41 @@ Owns the hook found missing in the first pass: `decoy run` shows a spinner
 - new `src/decoy/cli/_progress_fanout.py` (~150): a `ProgressSink` that
   forwards each engine event to registered consumers (the terminal progress
   display now, the log writer in L5b), so the engine sees one sink.
-- new `src/decoy/cli/_vault_commit.py` (~90): `run.py`'s vault commit
-  (`run.py:1622-1686`) moved onto `_atomic.write_atomic`, behavior unchanged;
-  this takes `run.py` off the G-ONE-ATOMIC-WRITER allowlist and pays for the
-  call-site lines below.
+- new `src/decoy/cli/_vault_commit.py` (~75, moved, not rewritten):
+  `_commit_vault` and `_fsync_directory` (`run.py:1622-1690`) moved byte for
+  byte, with their backup-and-restore transaction intact. They are not routed
+  through `_atomic.write_atomic`, which has no rollback. The
+  G-ONE-ATOMIC-WRITER allowlist entry moves from `run.py` to this file with
+  the reason "transactional vault replace with backup and rollback". The move
+  pays for the call-site lines below.
 - `src/decoy/cli/run.py` (1812): pass the sink on every route `decoy run` uses
-  (full-frame, chunked, sequential, out-of-core, sample); replace the bare
+  (full-frame, chunked, sequential, out-of-core, sample; the chunked route
+  emits events only once RESULT E2 is in the pinned engine); replace the bare
   spinner with a display that reads phase and rate events; mint the run's
   `invocation_id` here so L3a records and L5b logs share it. Net change below
   zero after the vault-commit move.
 - `src/decoy/ui/progress.py`: phase and rate rendering on stderr.
 - tests: `tests/unit/test_progress_fanout.py`,
-  `tests/e2e/test_run_progress_events.py`, the existing vault-commit tests
-  re-pointed at `_vault_commit.py` without changing their assertions;
+  `tests/e2e/test_run_progress_events.py`; `tests/e2e/test_vault_commit_order.py`
+  is not edited at all (it patches `os.fsync`, `os.replace` and
+  `VaultWriter.write`, not module names, so the move does not touch it);
   `CHANGELOG.md`.
 
 **Acceptance tests and named mutations.**
 
 | Test | Asserts | Mutation |
 |---|---|---|
-| L5a-every-route | a test consumer receives a terminal event and at least one phase event on each route `decoy run` can take (route forced per case) | ML5a-route: pass the sink on the full-frame route only |
+| L5a-every-route | a test consumer receives a terminal event and at least one phase event on each route `decoy run` can take, chunked included (route forced per case) | ML5a-route: pass the sink on the full-frame route only |
 | L5a-order | events reach consumers in emission order with increasing `sequence` | ML5a-buffer: reorder through a set |
 | L5a-consumer-fault | a consumer that raises does not change the run's outcome or exit code; the failure is counted, not retried | ML5a-propagate: let the consumer error escape |
 | L5a-quiet-json | `--quiet` and `--json` keep stdout free of progress; events still reach non-display consumers | ML5a-stdout |
 | L5a-no-value | events carry only engine-sanitized fields (the canary fixture produces no canary in any event dict) | ML5a-wrap: add a CLI message field |
-| L5a-vault-same | the existing vault-commit tests pass unchanged against `_vault_commit.py`, and the atomic-writer allowlist shrinks from 7 to 6 | ML5a-vault-inline: keep a private `os.replace` in `_vault_commit.py` (G-ONE-ATOMIC-WRITER red) |
+| L5a-vault-same | `tests/e2e/test_vault_commit_order.py` passes with no edit, including the directory-fsync cases (a pre-existing vault survives, a new vault is removed); the allowlist still has 7 entries, one now naming `_vault_commit.py` | ML5a-vault-generic: route the vault through `_atomic.write_atomic(REPLACE)` (the pre-existing-vault case goes red) |
 
 **Frozen-contract effects.** None persisted. stderr progress text changes
 (not a contract).
 
-### L5b-cli: job logs for `decoy run` (CLI, about 470 lines)
+### L5b-cli: job logs for `decoy run` (CLI, about 620 lines)
 
 Depends on L5a and L4a (`library show`). Does not depend on L3a or RESULT
 (Revision 5, LM10).
@@ -1530,7 +1728,7 @@ Depends on L5a and L4a (`library show`). Does not depend on L3a or RESULT
 **Frozen-contract effects.** New tag `decoy-job-log/v1` (registered in L1a);
 log lines are the engine's frozen event schema.
 
-### L5c-cli: job logs for multi-table `decoy scan` (CLI, about 160 lines)
+### L5c-cli: job logs for multi-table `decoy scan` (CLI, about 200 lines)
 
 Depends on L5b and SCAN-MULTI S3b-cli (last in the `scan.py` lane). Split out
 of L5b so the `run.py` and `scan.py` lanes stay separate (Revision 5, LM9).
@@ -1553,21 +1751,26 @@ of L5b so the `run.py` and `scan.py` lanes stay separate (Revision 5, LM9).
 
 | Slice | Repo | Lines (est.) | Depends on |
 |---|---|---|---|
-| L1a-engine | engine | ~600 | none |
-| L1b-cli | CLI | ~620 | L1a release and repin; Windows runner provisioned |
-| L1c-cli | CLI | ~600 | L1b |
-| L1d-cli | CLI | ~330 | L1b |
-| L2-cli | CLI | ~460 | L1c, L1d, SCAN-MULTI S1c (replaces S1d) |
-| L3a-cli | CLI | ~520 | L1c, L5b (run.py lane); RESULT for the run-result half |
-| L3b-cli | CLI | ~450 | L1d, L3a (run.py lane), SAMPLE |
-| L4a-cli | CLI | ~420 | L1c (L3a for run-result diff) |
-| L4b-cli | CLI | ~480 | L4a |
-| L5a-cli | CLI | ~430 | L1b |
-| L5b-cli | CLI | ~470 | L5a, L4a |
-| L5c-cli | CLI | ~160 | L5b, SCAN-MULTI S3b-cli |
+| L0-engine | engine | ~420 | none |
+| L1a.1-engine | engine | ~770 | none |
+| L1a.2-engine | engine | ~310 | L1a.1 |
+| L1b.1-cli | CLI | ~440 | none (the canonical rewire needs the L1a repin) |
+| L1b.2-cli | CLI | ~760 | L1b.1, L1a release and repin; Windows runner provisioned |
+| L1b.3-cli | CLI | ~310 | L1b.2 |
+| L1c.1-cli | CLI | ~640 | L1b |
+| L1c.2-cli | CLI | ~480 | L1c.1 |
+| L1d-cli | CLI | ~300 | L1b, L0 release and repin |
+| L2-cli | CLI | ~700 | L1c, L1d, SCAN-MULTI S1c (replaces S1d) |
+| L3a-cli | CLI | ~580 | L1c, L5b (run.py lane); RESULT C1 for the run-result half |
+| L3b-cli | CLI | ~530 | L1d, L3a (run.py lane), SAMPLE |
+| L4a-cli | CLI | ~480 | L1c (L3a for run-result diff) |
+| L4b-cli | CLI | ~720 | L4a |
+| L5a-cli | CLI | ~560 | L1b.1, engine release with RESULT E2 |
+| L5b-cli | CLI | ~620 | L5a, L4a |
+| L5c-cli | CLI | ~200 | L5b, SCAN-MULTI S3b-cli |
 
-Each slice is under 800 hand-written lines including tests, and every new file
-is under about 300. Logging per slice: one operational line per library write
+Each slice or part is under 800 hand-written lines counting source, tests and
+docs, and every new file is under about 300. Logging per slice: one operational line per library write
 failure, per skipped delete and per prune or clean (counts, kind, error class;
 never a path's contents or a value), plus the job log itself in L5b and L5c.
 
@@ -1576,9 +1779,9 @@ never a path's contents or a value), plus the job log itself in L5b and L5c.
 All eight questions are answered; see Revision 2 at the top. The original
 text is kept below for the record.
 
-No new LIB question in Revision 5. The one new owner question from the joint
-review, declared key columns getting `hash` with the relationship namespace
-(pending owner confirm), is SCAN-MULTI Q11; it changes no record shape here.
+No new LIB question in Revisions 5 and 6. The owner confirmed SCAN-MULTI Q11
+(declared key columns get `hash` with the relationship namespace); it changes
+no record shape here.
 
 - **Q1. Windows permissions.** V1 relies on inherited ACLs on Windows (records
   and logs hold no values; scratch can). Accept that, or set a protected
