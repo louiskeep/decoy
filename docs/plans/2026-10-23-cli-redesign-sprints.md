@@ -202,7 +202,7 @@ engine's Codex/dennis gate, shipped in an engine release the CLI's `pyproject.to
 
 ## ROADMAP indexing
 
-The cross-repo `decoy-platform/docs/ROADMAP.md` is the single what-to-do-next index and should carry one
+The cross-repo roadmap (`docs/ROADMAP.md` in this repo since 2026-11-05; earlier `decoy-platform/docs/ROADMAP.md`) is the single what-to-do-next index and should carry one
 entry for this redesign, linking here and to the per-sprint build plans as they are authored. Adding that
 entry is a `decoy-platform` change (its own small docs commit); flagged, not done here, to keep this a
 CLI-repo-only change.

@@ -8,7 +8,7 @@ Locked decisions (open questions below; question 1, the broken-companion default
 - `--native` means "require that a compiled kernel actually executed": it fails closed (writes no output) when the finished job carries no positive `compiled_kernel_executed` evidence, and refuses up front on an absent/broken companion. It is not a promise about companion health alone, because an ineligible or `--chunked` job finishes on Python even with a healthy companion.
 - The route indicator reports THREE distinct states, not native-vs-pandas: (a) compiled-kernel native, (b) unified-slice-without-compiled-kernel, (c) legacy pandas adapter. A passthrough/redact/truncate-only job activates the unified slice WITHOUT the companion, so companion-absence does not imply the legacy pandas adapter ran.
 - The CLI adds this three-state indicator, a `--no-native` rollback (`unified_slice_enabled=False`, legacy pandas adapter), and the `--native` require flag; it does NOT widen which shapes run native.
-Roadmap: `decoy-platform/docs/ROADMAP.md`, execution-consolidation program, Stage B item 7 ("Phase 3.1: CLI native packaging default-on-when-present"). Governing program plan: `decoy-engine/docs/plans/2026-09-09-execution-consolidation-and-native-throughput.md` (Phase 3, §6.2 one preflight decision, §9.2 native companion states).
+Roadmap (at the time): `decoy-platform/docs/ROADMAP.md`, now `docs/ROADMAP.md` in this repo; execution-consolidation program, Stage B item 7 ("Phase 3.1: CLI native packaging default-on-when-present"). Governing program plan: `decoy-engine/docs/plans/2026-09-09-execution-consolidation-and-native-throughput.md` (Phase 3, §6.2 one preflight decision, §9.2 native companion states).
 
 ## FRAME
 

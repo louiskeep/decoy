@@ -2,6 +2,8 @@
 
 CLI-specific guidance for Claude and other coding agents working in this repo.
 
+The one Decoy roadmap (engine, CLI, platform, web) is [docs/ROADMAP.md](docs/ROADMAP.md); the shipped log is [docs/RECENTLY-SHIPPED.md](docs/RECENTLY-SHIPPED.md). Do not start another roadmap or todo doc.
+
 Use [CODEMAP.md](CODEMAP.md) for repo navigation before broad searches. Use [CONTRIBUTING.md](CONTRIBUTING.md) for the contributor entrypoint.
 
 ## Engineering best practices

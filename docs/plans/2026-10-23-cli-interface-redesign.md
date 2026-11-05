@@ -16,7 +16,7 @@ that `docs/plans/2026-10-23-validate-consolidation-writeup.md` and
 `docs/plans/2026-09-30-cli-source-format-dispatch.md` call out as the thing that "sets the whole command
 surface." Those two remain the build slices for the `validate` gate and the file-format contract; this doc
 sets the surface they slot into and does not re-decide their internals. The cross-repo roadmap
-(`decoy-platform/docs/ROADMAP.md`) is the index; this plan lives in the repo that implements it.
+(`docs/ROADMAP.md` in this repo since 2026-11-05; earlier `decoy-platform/docs/ROADMAP.md`) is the index; this plan lives in the repo that implements it.
 
 ---
 

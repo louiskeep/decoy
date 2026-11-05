@@ -6,7 +6,7 @@ build-ready; the build itself runs after the V1 completion point.
 **Date:** 2026-10-22
 **Scope:** how the `decoy` CLI (with the Rust engine) is packaged, distributed,
 installed, and updated for the engine/CLI/web launch.
-**Roadmap home:** `§CLI-LAUNCH` in `decoy-platform/docs/ROADMAP.md`. Findings:
+**Roadmap home:** CLI-REL and REL-PKG in [`docs/ROADMAP.md`](../ROADMAP.md) (moved from `decoy-platform/docs/ROADMAP.md` `§CLI-LAUNCH` on 2026-11-05). Findings:
 `decoy-platform/docs/product/cli-launch-readiness-report-2026-10-22.md`.
 
 **Rules consulted:** universal, development-loop, risk-and-exceptions,
