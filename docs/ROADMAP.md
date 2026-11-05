@@ -207,7 +207,7 @@ on origin unless marked local. Detail for each row is in 5.4.
 | 6 | WIN-RUNNER: Windows self-hosted runner on a GCP VM; spend approved by the owner; stopped when idle (`~/bin/vm-reap`) | infra | NOT STARTED; provision when CI-L1 or LIB L1b first needs a Windows lane | LIB plan section 5 OS lanes | none |
 | 7 | FILE-SIZE: file-size ratchet sentry for engine and CLI (new, section 4.2) | engine, CLI | NOT STARTED; plan to write | none | CLI X0a ratchet (MERGED, CLI #81, #82) |
 | 8 | REG-RENUMBER: `E:scripts/dev/registry_renumber.py` renumbers an unmerged slice's registry minor to `main + 1` at merge; `--check` for the merge gate | engine | plan review (Dennis, then Codex; full plan gate) | `feat/reg-renumber-tool` (not built); `p05-reg-renumber-build-handoff.md` | none; first useful after SUB-STOP |
-| 9 | X0a-h engine and CLI parts (E1, E2, C1, C2): vendor `_ratchet.py`, `_approval.py`, `approve_growth.py`, `merge_check.py` byte-identical from the platform | engine, CLI | NOT STARTED; BLOCKED, see 5.6 Q-A | plan `P:docs/plans/2026-11-05-x0a-h-ratchet-hardening.md` (#181) | platform H1, H2, H4, H6 (parked) |
+| 9 | X0a-h engine and CLI parts (E1, E2, C1, C2): vendor `_ratchet.py`, `_approval.py`, `approve_growth.py`, `merge_check.py` byte-identical from the platform | engine, CLI | DEFERRED, off the V1 path (owner, 2026-11-05). Until it returns, the orchestrator flags any ratchet baseline growth by hand at each gate. Re-entry: a hidden exception slips past review, or the platform restarts | plan `P:docs/plans/2026-11-05-x0a-h-ratchet-hardening.md` (#181) | platform H1, H2, H4, H6 (parked) |
 
 **B. Registry chain, gated engine branches and the first release**
 
@@ -387,8 +387,8 @@ work; the plan decides.
 **PHASE 0.5 cross-cutting foundations (engine and CLI parts).** Plan
 `P:docs/plans/2026-11-04-cross-cutting-v1-foundations.md` (Codex GO `04b92412`). Engine and CLI
 slices merged: X0a ratchet and manifest (engine #378, #379), X0a self-hosted gate (engine #380), X4d
-(engine #384, #385), X7b (engine #382), CLI X0a (CLI #81, #82). Open here: X7c (row 24), X0a-h E1,
-E2, C1, C2 (row 9). Test trust (owner, 2026-11-05): a green suite counts only when each test was seen
+(engine #384, #385), X7b (engine #382), CLI X0a (CLI #81, #82). Open here: X7c (row 24). X0a-h E1,
+E2, C1, C2 (row 9) are deferred off the V1 path. Test trust (owner, 2026-11-05): a green suite counts only when each test was seen
 red under a named mutation; the platform test-trust slices are parked; the CLI journey row is 75.
 The dev-rule `cross-cutting-concerns.md` is the standing rule (section 4).
 
@@ -556,11 +556,6 @@ Source: `C:docs/plans/2026-10-22-cli-distribution-and-packaging-spec.md`.
 
 ### 5.6 Open questions for the owner (CLI V1)
 
-- **Q-A (new, 2026-11-05).** X0a-h engine and CLI parts (row 9) vendor platform H1, H2, H4 and H6,
-  which owner OQ-1 = A1 put on the platform finish-out list. With the platform parked except Group 1,
-  those four are parked too. Options: (1) un-park H1, H2, H4, H6 as shared gate tooling and finish them
-  on the platform; (2) re-plan row 9 so the engine and CLI build the tooling first and the platform
-  vendors it at restart. Recommendation: (2), because no platform merges are planned until CLI V1.
 - Owner Q4: is R-c the F34 release?
 - UX map Q6 (CLI cloud I/O) and Q12 (resume level).
 - H-1 Q3 (engine `execution/` restructure timing) and the other open H-1 questions.
@@ -851,6 +846,10 @@ is post-V1; GEN-API go-live merged (#153); B-11 and A-2 are R2 validation; B-12 
   REG-RENUMBER renumbering at merge. Engine releases every 2 to 3 days with a cumulative CLI repin.
   A Windows self-hosted runner on GCP is approved spend. Platform: Group 1 merges, the rest is
   parked.
+- **2026-11-05 (X0a-h off the V1 path).** Platform H1, H2, H4 and H6 stay parked, and the engine
+  and CLI ports (E1, E2, C1, C2) leave the CLI V1 path. Meanwhile the orchestrator flags any ratchet
+  baseline growth by hand at each gate. Re-entry trigger: a hidden exception slips past review, or the
+  platform restarts.
 - **2026-11-05 (CLI 1.0 scope).** CLI 1.0 is everything on the CLI V1 track; no early 1.0 cut with
   later phases as 1.x.
 - **2026-11-05 (detector role floor).** Developers can manage detector settings (custom detectors
@@ -859,7 +858,7 @@ is post-V1; GEN-API go-live merged (#153); B-11 and A-2 are R2 validation; B-12 
   This supersedes the 2026-11-03 "STORM detector mutations stay admin-only" wording; docs that said
   admin-only are corrected. New V2 row: detection settings profiles (section 13).
 - **2026-11-05 late night (OQ-1 to OQ-4).** OQ-1 = A1: X0a-h H1, H2, H4 are shared gate tooling on
-  the finish-out list (now parked; see Q-A). OQ-2 = B1: re-cut the STORM CLI half; CLI V1 ships the
+  the finish-out list (now parked; see the X0a-h entry above). OQ-2 = B1: re-cut the STORM CLI half; CLI V1 ships the
   new names. OQ-3 = C1: SUB-STOP 1.6.0, STORM E1 1.7.0, then build order. OQ-4: Windows "would be
   ideal if possible" (WIN-FEAS). SAMPLE confirmed CLI V1. The starter YAML defaults columns with no PII
   to `redact`. LIB rows added before SCAN-MULTI; SCAN-MULTI S1d becomes LIB L2.
