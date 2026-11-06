@@ -514,6 +514,7 @@ state.
 | [roadmap/decisions.md](roadmap/decisions.md) | dated owner decisions |
 | [roadmap/branch-register.md](roadmap/branch-register.md) | engine and CLI branches with no row, and their disposition |
 | [roadmap/out-of-scope.md](roadmap/out-of-scope.md) | Council-V2 features, V2 rows, post-V1 items |
+| [roadmap/v2-v3-expansion-candidates.md](roadmap/v2-v3-expansion-candidates.md) | V2 and V3 core expansion candidates (formats, masks, generators, documents, media); proposal, not scheduled |
 | [roadmap/sources.md](roadmap/sources.md) | source documents |
 | [RECENTLY-SHIPPED.md](RECENTLY-SHIPPED.md) | the shipped log; older entries in [archive/](archive/README.md) |
 
