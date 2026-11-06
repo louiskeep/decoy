@@ -37,6 +37,22 @@ Owner direction, 2026-11-05:
   Linux and macOS, and Windows if possible. The paid platform comes later and
   must be able to import or mirror the same records.
 
+## Revision 7 (2026-11-06): Codex round 2 on LIB 3585cc0f and SCAN-MULTI 6103684e
+
+Codex returned GO-WITH-FIXES on both. Each code claim was checked against
+engine and CLI `origin/main` (41a86f47, 8fba6af); all held. SCAN-MULTI carries
+the matching Revision 7.
+
+| Finding | Change |
+|---|---|
+| V1 export dangling links | A path-stripped record gets a new id, so a verbatim newer or opaque record linking to it would dangle. Now the envelope `links` of every exported record, opaque and newer ones included, are rewritten from the old-to-new map (the envelope is v1, which this version knows), and its id is recomputed; only the payload stays byte for byte. A link to a record outside the export is listed in the header. Test L4b-export-closure: every internal link resolves after a round trip. |
+| V1 L0 reopening persistent scratch | New `open_protected_dir(path, create=...)`, idempotent and fail closed: refuses symlinks, reparse points, non-directories and foreign owners; checks the POSIX mode and the Windows DACL; tightens an empty directory, refuses a non-empty one (`runtime.scratch_unsafe`). Tests P0-reopen, P0-permissive-empty, P0-permissive-full, P0-symlink, P0-not-dir, P0-foreign-owner. |
+| V1 + DESIGN L0 not universal | Confirmed every site. `out_of_core/_scratch.py` (both creators), `_isolated_run.py:367-369`, `postgres_snapshot.py:217-218` and the quarantine validator (`_quarantine_local.py:182-194`, which becomes the reopen rule) move onto L0. `postgres_snapshot.py:459` and `fileaccess/_local.py:221` stage the user's own output and are a reasoned ratchet (size 2) with tests. L0 is cut into L0.1 and L0.2. |
+| V2-LOG A1-link-acyclic | The rule is enforced at write time, so the test is B1-link-exists in L1b.2: `put` refuses a link to an id not in the library (`record_link_missing`); a two-way pair can therefore never be written. |
+| V2-LOG `finish` returns | RESULT's `finish` does not return. L3a now says `finish` hands the one payload it built to `_run_records.store(payload)` before it exits. |
+| V2-LOG status enum | L3-failed-run expects RESULT's `failed`, not `error`. |
+| V2-LOG `source_id` placement | Every export line is a wrapper `{"type": ..., ...}`; a record line is `{"type": "record", "source_id": <original id or null>, "record": <envelope>}`, so the envelope stays self-verifying and `source_id` sits outside it. |
+
 ## Revision 6 (2026-11-05): joint Codex review of LIB e636baaf and SCAN-MULTI bcb25eb5
 
 Codex returned GO-WITH-FIXES on both plans. Each claim was checked against CLI
@@ -482,6 +498,7 @@ read each hit in context).
 | Canonical JSON and content hashing | CLI `evidence.compute_manifest_hash` (`evidence.py:104-121`); `distribution/signing.py:23,48` (same form, release signatures); `notify.py:240` (webhook HMAC body, no `ensure_ascii=False`); `distribution/installer.py:192` | One form, `decoy_engine.records._canonical` (L1a). `evidence.compute_manifest_hash` calls it (byte-identical, test A1-canonical-shared). `signing.py` stays: it is the frozen release-signature input, and rewiring it would couple release verification to an engine version. `notify.py` stays: different bytes on the wire by design. | Guard G-ONE-CANONICAL (`tests/sentry/test_canonical_json.py`): walk for `json.dumps(..., sort_keys=True, separators=(",", ":"))` outside the engine call site; allowlist `signing.py`, `notify.py`, `installer.py`, size 3. Mutation M-CANON-COPY: `_library/_store.py` hashes its own `json.dumps`; red. |
 | Private directories and files | CLI `_token_vault.py:100-115` (0700 only when it creates the parent, 0600 pre-create before SQLite opens); engine `out_of_core/_scratch.py:26-65` (`mkdtemp` plus `chmod`, no Windows DACL) | Value-free library files: `_fs.ensure_private_dir` and `_fs.create_private_file` follow the token-vault recipe; the index pre-create (LL3) uses the same call. The token vault moves onto `_fs` helpers in a later slice, not in this plan. Row-bearing directories: one engine allocator (L0) for library scratch, the scan spill fallback and the out-of-core spill. | B1-mode (M-MODE); G-ONE-PROTECTED-DIR (M-MKDTEMP-INLINE) |
 | Windows ACL | none in the CLI or engine | one engine module, `fileaccess/_protected_dir.py` (L0); the CLI has no `ctypes` ACL code | P0-win-dacl (MP0-set-after), D1-win-scratch-acl |
+| Row-directory creation and reuse checks | engine `out_of_core/_scratch.py:26-65,105-119`, `_isolated_run.py:367-369`, `postgres_snapshot.py:217-218,459`, `_quarantine_local.py:182-194` (a reuse validator), `fileaccess/_local.py:221` | all routed through L0 except the two output-staging sites, which are a reasoned ratchet (L0 table) | G-ONE-PROTECTED-DIR (M-MKDTEMP-INLINE), P0-reopen and the P0 routing tests |
 | Locks | CLI `distribution/lock.py` (`fcntl`, no-op on Windows) | not reused: it locks the runtime home and does nothing on Windows. The library lock is SQLite `BEGIN IMMEDIATE` (4.8). | C1-lock-unavailable (MC1-unlocked-ref) |
 | Error codes and messages | engine reason registry; CLI ad hoc `type(exc).__name__` messages (19 sites) | Library and log codes are engine reason identities (L1a, LM8). One CLI builder, `_library/_errors.py` `library_error(code, exc)`, formats "code plus class name, no path" for every library failure. | B1-no-path-in-error (MB1-exc); the engine's registered-code check turns any unregistered code into `unregistered_reason`, which L5-value-free asserts never appears |
 | Retention | none in the CLI; the platform has its own (F26) | one policy model, `_policy.py` | single site, no registry |
@@ -753,7 +770,8 @@ property that evidence depends on.
 - Windows: `os.chmod` cannot express 0600. `scratch/`, the only class that
   can hold rows, and every allocation directory under it are created by the
   engine's one protected allocator (L0, `decoy_engine.protected_scratch_dir`
-  and `create_protected_dir`) with a protected DACL already attached: SDDL
+  and `open_protected_dir`, which also checks an existing directory before
+  reuse) with a protected DACL already attached: SDDL
   `D:P(A;OICI;FA;;;<current user SID>)(A;OICI;FA;;;SY)`, converted with
   `ConvertStringSecurityDescriptorToSecurityDescriptorW` and passed in the
   `SECURITY_ATTRIBUTES` of `CreateDirectoryW` through `ctypes` (no new
@@ -908,26 +926,37 @@ findings (the CLI's findings code). `fsck --repair` moves corrupt objects to
 - The index is a cache, so its schema changes by rebuild.
 - `LAYOUT` guards the directory layout. A newer layout refuses writes.
 - Export: `decoy library export --out FILE` writes `decoy-library-export/v1`
-  as JSON Lines: a header line (`export_schema`, `exported_at`, producer,
-  record count, refs), then one envelope per line in canonical form. Every
-  line is self-verifying (the importer recomputes `id`). Options: `--kind`,
+  as JSON Lines. Every line is a wrapper object with a `type`: first a
+  `{"type": "header", ...}` line (`export_schema`, `exported_at`, producer,
+  record count, refs, `paths_stripped`, `unstripped`, `external_links`), then
+  one `{"type": "record", "source_id": <original id or null>, "record":
+  <envelope>}` line per record with the envelope in canonical form, then any
+  `{"type": "log", ...}` lines. The envelope inside each record line is
+  self-verifying (the importer recomputes `id`); `source_id` sits in the
+  wrapper, outside the hashed envelope. Options: `--kind`,
   `--since`, `--ref` (a ref and everything reachable from it),
   `--include-logs` (logs appended as `log` lines with their hash),
   `--keep-paths`. Without `--keep-paths`, only the kind's declared path fields
   (4.3) are reduced to file names. Because that changes the bytes, each such
-  line gets a new id and carries the original id as `source_id`, and the
-  header says `paths_stripped: true`. Links inside the export are remapped to
-  the new ids: lines are written in link order (a record only links to ids
-  that existed before it, so the order always exists), each line's `links`
-  are rewritten from the old-to-new map before its own id is computed, and
-  the header's refs are remapped the same way. A link to a record outside the
-  export keeps its original id. Every line is written from the record's raw
-  verified envelope, never from this version's typed view, so a record
-  carrying payload fields this version does not know, or an opaque-kind
-  record (4.3a), is exported byte for byte with its original id: its path
-  fields cannot be identified, so it is not stripped, and its id is listed in
-  the header under `unstripped` with a notice on stderr. Scratch is never
-  exportable.
+  record gets a new id and its line carries the original id as `source_id`,
+  and the header says `paths_stripped: true`.
+- Link closure. Lines are written in link order (a record only links to ids
+  that existed before it, so the order always exists). For every exported
+  record, known, newer or opaque, the envelope's `links` are rewritten from
+  the old-to-new id map built so far, and then its id is recomputed by the
+  4.3 rule; a record whose links and payload are both unchanged keeps its id
+  and gets `source_id: null`. The envelope is `decoy-record/v1`, which this
+  version knows, so rewriting `links` is safe even when the payload is not
+  understood. The header's refs are remapped the same way. A link to a
+  record outside the export keeps its original id and is counted in the
+  header's `external_links` (with `--ref`, the export holds the whole
+  reachable set, so there are none).
+- Raw payloads. Every record is written from its raw verified envelope, never
+  from this version's typed view. A record carrying payload fields this
+  version does not know, or an opaque-kind record (4.3a), keeps its payload
+  byte for byte: its path fields cannot be identified, so they are not
+  stripped, and its id (old and new) is listed in the header under
+  `unstripped` with a notice on stderr. Scratch is never exportable.
 - The engine owns the codec (`records.export_lines`, `records.read_export`),
   so the platform importer upserts by id with the same code.
 
@@ -1102,7 +1131,7 @@ interleave by merge order. Registry-touching slices in these plans:
 
 | Slice | Identities |
 |---|---|
-| LIB L0-engine | `runtime.scratch_acl_failed` |
+| LIB L0.1-engine | `runtime.scratch_acl_failed`, `runtime.scratch_unsafe` |
 | LIB L1a.1-engine | the CLI-side library and log event codes (LIB LM8) |
 | SCAN-MULTI S1a.1-engine | `warning.scan_header_suspect`, `warning.scan_key_type_mismatch` (S1b adds none) |
 | SCAN-MULTI S3-engine.1 | `config.namespace_placeholder_unset` |
@@ -1114,7 +1143,7 @@ in the next; SCAN-MULTI S3-engine (both parts) after CONFIG-EXPLICIT.
 
 **Build order.**
 
-1. LIB L0-engine, L1a.1, L1a.2 and RESULT E1, E2; one engine release. LIB
+1. LIB L0.1, L0.2, L1a.1, L1a.2 and RESULT E1, E2; one engine release. LIB
    L1b.1 may start at once (it needs no engine change); then the repin with
    L1b.2, then L1b.3, L1c.1, L1c.2 and L1d.
 2. SCAN-MULTI S1a.1, S1a.2, then S1b-engine on a branch from S1a; one engine
@@ -1179,52 +1208,120 @@ total passes about 800 is cut into parts (`.1`, `.2`, ...), each its own
 branch, PR and gate, merged in order. "Depends on L1b" means every part of
 L1b has merged, unless a part is named.
 
-### L0-engine: one protected scratch allocator (engine, about 420 lines)
+### L0-engine: one protected row-directory allocator (engine, two parts, about 900 lines)
 
-Revision 6 (Codex LIB 5, ENGINE 1). Every directory that can hold rows (the
-library's `scratch/`, the scan integrity spill when the library is off, and
-the engine's own out-of-core spill) is created by one function, so Windows
-gets an owner-only DACL wherever rows land, and a failure to apply it fails
-closed. Today the engine's `execution/out_of_core/_scratch.py:46-65`
-(`engine_scratch_root`, `scratch_root`) uses `tempfile.mkdtemp` and
-`os.chmod(0o700)`, which on Windows sets only the read-only flag.
+Revision 6 (Codex LIB 5, ENGINE 1), widened in Revision 7 (Codex round 2).
+Every directory Decoy creates for rows of its own (the library's `scratch/`,
+the scan integrity spill when the library is off, the engine's out-of-core
+spill, the isolated-run work root and the Postgres snapshot spill) is created
+or reopened by one module, so Windows gets an owner-only DACL wherever such
+rows land, an unsafe existing directory is never used, and a failure fails
+closed. Output staging that becomes the user's own output is a reasoned
+exception (table below).
 
-**Files and sizes.**
-- new `src/decoy_engine/fileaccess/_protected_dir.py` (~170):
-  `protected_scratch_dir(parent: Path | None, prefix: str)`, a context
-  manager that creates a fresh directory and removes it on every exit, and
-  `create_protected_dir(path)` for a long-lived one (the library's
-  `scratch/`). POSIX: `os.mkdir(path, 0o700)` then `os.chmod(path, 0o700)`
-  (the umask can only narrow). Windows: SDDL
+**The API** (`src/decoy_engine/fileaccess/_protected_dir.py`):
+
+- `protected_scratch_dir(parent: Path | None, prefix: str)`: a context
+  manager that creates a fresh directory (under `parent`, or the system temp
+  directory) and removes it on every exit.
+- `open_protected_dir(path: Path, *, create: bool, parents: bool = False)`:
+  for a long-lived directory (the library's `scratch/`, a caller-named
+  staging root). Idempotent and fail closed:
+  1. `os.lstat` the path. Missing: create it protected (below), when
+     `create` is set; else raise.
+  2. Refuse with `runtime.scratch_unsafe` if it is a symlink, a Windows
+     reparse point (`FILE_ATTRIBUTE_REPARSE_POINT`: junction, mount point,
+     cloud placeholder) or not a directory.
+  3. Verify the owner: POSIX `st_uid == os.getuid()`; Windows the owner SID
+     from `GetSecurityInfo` equals the current user's SID. A foreign owner is
+     refused (`scratch_unsafe`).
+  4. Verify the protection: POSIX no group or other bits; Windows a protected
+     DACL whose entries are exactly the current user and SYSTEM with full
+     control. If the check fails and the directory is empty, tighten it
+     (`chmod 0o700`; `SetSecurityInfo` with the SDDL below and
+     `PROTECTED_DACL_SECURITY_INFORMATION`) and verify again. If it is not
+     empty, refuse with `scratch_unsafe`: files written while it was open to
+     others may already have been read, and their own ACLs may not inherit.
+  5. A directory that passes is returned unchanged, so a second, third or
+     hundredth open is a no-op.
+- Creation: POSIX `os.mkdir(path, 0o700)` then `os.chmod(path, 0o700)` (the
+  umask can only narrow); Windows SDDL
   `D:P(A;OICI;FA;;;<current user SID>)(A;OICI;FA;;;SY)` converted with
   `ConvertStringSecurityDescriptorToSecurityDescriptorW` and passed in the
-  `SECURITY_ATTRIBUTES` of `CreateDirectoryW` through `ctypes`, so the
-  directory never exists without it. Any failure raises
+  `SECURITY_ATTRIBUTES` of `CreateDirectoryW`, so the directory never exists
+  without it. `parents=True` applies the same to every level it creates
+  (the out-of-core `private_dir` rule). A conversion or create failure raises
   `runtime.scratch_acl_failed` and leaves no directory.
-- `src/decoy_engine/execution/out_of_core/_scratch.py` (153): `scratch_root`
-  and `engine_scratch_root` create their roots through the new function;
-  net change about zero. This is a changed `execution/` file, so it gets its
-  physical-seam sentry allowlist entry in the same PR.
+- Child directories and files inside a protected root use plain `mkdir` and
+  `open`: the DACL's `OICI` flags and the 0700 parent cover them.
+
+The quarantine arena's validator (`declared_casting/_quarantine_local.py:182-194`:
+`lstat`, refuse symlinks and non-directories, require own uid and no group or
+other bits) is the pattern for steps 1 to 4 and is replaced by a call to
+`open_protected_dir`, so it is one rule, not two. Its behavior is stricter
+after the move only on Windows (the DACL check).
+
+**Existing directory creators, reconciled** (engine `origin/main` 41a86f47):
+
+| Site | Holds | Decision |
+|---|---|---|
+| `execution/out_of_core/_scratch.py:26-65` (`scratch_root`, `engine_scratch_root`) and `:105-119` (`private_dir`) | out-of-core spill rows | routed through L0 (L0.2); `private_dir` becomes a one-line call to `open_protected_dir(path, create=True, parents=True)` and is kept for its callers |
+| `execution/_isolated_run.py:367-369` (`mkdtemp` default work root, or the caller's `staging_dir` with `mkdir`) and `:407` (`sources/` under it) | staged source Parquet rows | routed through L0 (L0.2): the default root from `protected_scratch_dir`, a caller-named `staging_dir` through `open_protected_dir(create=True)`; `sources/` stays a plain child `mkdir` |
+| `connectors/postgres_snapshot.py:217-218` (`spill_dir` `mkdir` plus `chmod 0o700`) | DuckDB spill of snapshot rows | routed through L0 (L0.2) with `open_protected_dir(create=True, parents=True)` |
+| `declared_casting/_quarantine_local.py:182-194` | quarantined rows | routed through L0 (L0.1), as above |
+| `connectors/postgres_snapshot.py:459` (`stage_dir` `mkdir(mode=0o700)` in the user's destination, renamed to `snapshot-<run>`) | the published snapshot itself | ratchet exception: it is output staging that becomes the user's output (retention class 4), published by rename; its 0700 mode is kept as today |
+| `fileaccess/_local.py:221` (`mkdtemp` beside the target for directory outputs) | the published output itself | ratchet exception for the same reason: the file-access output transaction stages beside the target so the publish is a same-volume rename, and the result belongs to the user; existing output-transaction tests cover removal on failure |
+
+**Guard G-ONE-PROTECTED-DIR** (engine `tests/sentry/test_protected_dir.py`):
+a syntax-tree walk of the engine package flags every `tempfile.mkdtemp` call
+and every `os.chmod(..., 0o700)` (the mark of a hand-rolled private directory)
+outside `_protected_dir.py`. The ratchet allowlist starts with the two
+exceptions above (`postgres_snapshot.py` stage, `fileaccess/_local.py`
+output staging), each with its reason and a test id, size 2. The CLI twin
+(L1d) walks the CLI package the same way. A seeded bypass is shown red.
+
+**L0.1: the allocator, reopen checks, quarantine move, guard (~640 lines).**
+- new `src/decoy_engine/fileaccess/_protected_dir.py` (~260).
+- `declared_casting/_quarantine_local.py`: the validator replaced by the call
+  (net about -10).
 - `src/decoy_engine/reasons/runtime/` (as fits): `runtime.scratch_acl_failed`
-  (on the registry chain, section 5.0); `src/decoy_engine/__init__.py`:
-  export `protected_scratch_dir`.
-- tests (~200): `tests/unit/fileaccess/test_protected_dir.py` (POSIX modes,
-  removal on exception, fail closed with the ACL call forced to fail), the
-  Windows-lane file `tests/windows/test_protected_dir_acl.py`; docs and
+  and `runtime.scratch_unsafe` (one registry minor, section 5.0);
+  `src/decoy_engine/__init__.py`: export `protected_scratch_dir` and
+  `open_protected_dir`.
+- tests (~320): `tests/unit/fileaccess/test_protected_dir.py`, the Windows-lane
+  file `tests/windows/test_protected_dir_acl.py`, the guard; docs and
   `CHANGELOG.md` (~30).
 
-| Test | Asserts | Mutation |
-|---|---|---|
-| P0-posix-mode | a directory from either function is 0700 under umask 000 and 077 | MP0-umask: rely on `mkdir`'s mode alone |
-| P0-removed | `protected_scratch_dir` removes its directory on normal exit and on an exception | MP0-leak |
-| P0-win-dacl | (Windows lane, real ACL read back with `GetNamedSecurityInfoW`) the DACL is protected and lists only the current user and SYSTEM; a child file inherits it | MP0-set-after: create the directory, then set the DACL; MP0-skip: no DACL |
-| P0-fail-closed | the ACL conversion forced to fail raises `scratch_acl_failed` and no directory remains | MP0-warn: warn and continue |
-| P0-ooc-routed | the out-of-core route's spill root comes from the new function (spy) and the existing out-of-core tests pass unchanged | MP0-old-mkdtemp: keep `mkdtemp` in `_scratch.py` |
-| G-ONE-PROTECTED-DIR | (engine `tests/sentry/test_protected_dir.py`; the CLI twin lands in L1d) syntax-tree walk of the package: no `tempfile.mkdtemp` or `os.mkdir` for a row-bearing directory outside `_protected_dir.py`; existing non-row sites (for example `fileaccess/_local.py` output staging beside the target) are a ratchet allowlist with reasons; a seeded bypass is shown red | M-MKDTEMP-INLINE: SCAN-MULTI S1b calls `mkdtemp` for its spill |
+**L0.2: route the engine's row directories through it (~260 lines).**
+- `execution/out_of_core/_scratch.py` (153), `execution/_isolated_run.py`,
+  `connectors/postgres_snapshot.py`: about 60 changed lines in total, net
+  about zero. Changed `execution/` files get their physical-seam sentry
+  allowlist entries in the same PR.
+- tests (~170): one spy test per routed site, the existing out-of-core,
+  isolated-run and Postgres snapshot suites unchanged; docs (~20).
 
-**Frozen-contract effects.** Additive public API; one reason identity. On
-Windows the out-of-core spill root now fails closed when the DACL cannot be
-applied (a deliberate V1 tightening; CHANGELOG line).
+| Test | Part | Asserts | Mutation |
+|---|---|---|---|
+| P0-posix-mode | .1 | a directory from either function is 0700 under umask 000 and 077 | MP0-umask: rely on `mkdir`'s mode alone |
+| P0-removed | .1 | `protected_scratch_dir` removes its directory on normal exit and on an exception | MP0-leak |
+| P0-reopen | .1 | opening an existing protected directory twice more changes nothing and raises nothing (mode, DACL and contents unchanged) | MP0-recreate: fail when the directory exists |
+| P0-permissive-empty | .1 | an empty pre-created 0755 directory (Windows lane: one with the inherited ACL) is tightened to 0700 (the protected DACL) and returned | MP0-trust-existing: return an existing directory unchecked |
+| P0-permissive-full | .1 | the same directory holding one file is refused with `scratch_unsafe` and left as it was | MP0-tighten-any: tighten a non-empty directory |
+| P0-symlink | .1 | a symlink to a directory (Windows lane: a junction) is refused with `scratch_unsafe`, and nothing is created at its target | MP0-follow: `stat` instead of `lstat` |
+| P0-not-dir | .1 | a regular file at the path is refused with `scratch_unsafe` | MP0-isdir-only: check existence only |
+| P0-foreign-owner | .1 | an owner other than the current user (POSIX: an `lstat` result double with another uid; Windows lane: a directory owned by a second local account) is refused | MP0-no-owner-check |
+| P0-win-dacl | .1 | (Windows lane, real ACL read back with `GetNamedSecurityInfoW`) a created directory's DACL is protected and lists only the current user and SYSTEM; a child file inherits it | MP0-set-after: create the directory, then set the DACL; MP0-skip: no DACL |
+| P0-fail-closed | .1 | the ACL conversion forced to fail raises `scratch_acl_failed` and no directory remains | MP0-warn: warn and continue |
+| P0-quarantine-same | .1 | the quarantine arena's existing tests pass unchanged through `open_protected_dir` | MP0-two-rules: keep the old validator beside the call |
+| G-ONE-PROTECTED-DIR | .1 | no `mkdtemp` or `chmod 0o700` outside `_protected_dir.py` except the two allowlisted output-staging sites; a seeded bypass is red | M-MKDTEMP-INLINE: SCAN-MULTI S1b calls `mkdtemp` for its spill |
+| P0-ooc-routed | .2 | the out-of-core spill root comes from the allocator (spy); the existing out-of-core tests pass unchanged | MP0-old-mkdtemp: keep `mkdtemp` in `_scratch.py` |
+| P0-isolated-routed | .2 | the isolated-run work root, default and caller-named, comes from the allocator (spy); a caller-named symlinked `staging_dir` is refused | MP0-isolated-mkdtemp |
+| P0-pg-spill-routed | .2 | the Postgres snapshot spill directory comes from `open_protected_dir` (spy) | MP0-pg-chmod: keep `mkdir` plus `chmod` |
+
+**Frozen-contract effects.** Additive public API; two reason identities. On
+Windows the out-of-core spill, isolated-run root and Postgres spill now fail
+closed when the DACL cannot be applied, and an unsafe pre-existing scratch
+directory is refused on every OS (a deliberate V1 tightening; CHANGELOG line).
 
 ### L1a-engine: records module (engine, two parts, about 1 080 lines)
 
@@ -1347,6 +1444,7 @@ parts), 4.9. Until L1c lands, ref updates take the lock through a minimal
 | B1-idempotent | .2 | putting the same envelope twice gives one file and no error, including on Windows while another process holds the file open | MB1-replace: always `os.replace` |
 | B1-no-clobber | .2 | two processes race `put` of the same envelope 50 times; no call raises, one file remains, it decodes, and a spy shows no `os.replace` on the record path | MB1-check-then-replace: `exists()` then `os.replace` |
 | B1-existing-corrupt | .2 | an existing object with a different payload makes `put` raise `record_corrupt` | MB1-trust-existing |
+| B1-link-exists | .2 | `put` of a record with a link to an id not in the library raises `record_link_missing` and writes nothing; so an evidence record linking to a run-result built after it cannot be stored | MB1-no-link-check: skip the target check |
 | B1-concurrent | .2 | two processes put 50 records each; 100 files, each decodes | MB1-shared-tmp: fixed temp name |
 | B1-win-long-root | .2 | (Windows lane) a 160-character root is refused with `library_path_too_long` before any file is created; a 140-character root works | MB1-no-budget: skip the length check |
 | B1-no-path-in-error | .2 | a write failure's message has the code and error class, not the path's text in `str(exc)` | MB1-exc |
@@ -1407,7 +1505,8 @@ and L3b (sample output). The Windows ACL code is L0's; this slice has no
 
 **Files and sizes.**
 - new `src/decoy/cli/_library/_scratch.py` (~120: `scratch(owner, ttl)` on top
-  of the engine's `create_protected_dir` and `protected_scratch_dir`,
+  of the engine's `open_protected_dir` (for `scratch/` itself, reopened on
+  every command) and `protected_scratch_dir` (per allocation),
   `delete_on_exit`, best-effort delete with per-file report).
 - tests (~160): `tests/unit/library/test_scratch.py`; docs (~20).
 
@@ -1420,6 +1519,7 @@ and L3b (sample output). The Windows ACL code is L0's; this slice has no
 | D1-uses-allocator | `scratch/` and every allocation come from the engine allocator (spy); the CLI twin of G-ONE-PROTECTED-DIR (`tests/sentry/test_protected_dir.py`) finds no `mkdtemp` or `mkdir` for scratch outside `_scratch.py`'s allocator calls | MD1-own-mkdir: create the allocation with `Path.mkdir` |
 | D1-win-scratch-acl | (Windows lane) the `scratch/` and allocation DACLs are protected and list only the current user and SYSTEM; records and logs keep the inherited ACL | MP0-skip (L0) seen through the CLI |
 | D1-acl-fail-closed | with the engine allocator forced to raise `scratch_acl_failed`, allocation fails, no scratch directory remains, and the sample stops before any row is written | MB1-acl-warn: warn and continue |
+| D1-reopen | a second and third command in the same project reuse `scratch/` without error; a `scratch/` pre-created 0755 and empty is tightened; one pre-created 0755 with a file in it makes allocation fail with `scratch_unsafe` and the command's own work stops before writing rows | MD1-skip-reopen-check: call `mkdir(exist_ok=True)` for `scratch/` |
 | D1-delete-open | (Windows lane) a file held open inside an allocation is reported and skipped; the call returns normally; the next cleanup removes it once closed | MD1-raise: let `PermissionError` escape |
 
 **Frozen-contract effects.** None beyond layout 1.
@@ -1519,10 +1619,12 @@ and E2 released and repinned; the evidence half does not and may land first.
 About 580 lines (source ~240, tests ~300, docs ~40).
 
 **Files and sizes.**
-- new `src/decoy/cli/_run_records.py` (~200): put the `evidence` record
-  first, then the `run-result` record whose payload is exactly what
-  `_run_outcome.finish` (RESULT C1) returns from the engine's
-  `build_run_result`; L3a builds no payload itself. The run-result envelope
+- new `src/decoy/cli/_run_records.py` (~200): `store(payload)` puts the
+  `evidence` record first, then the `run-result` record. `_run_outcome.finish`
+  (RESULT C1) never returns (it raises `typer.Exit`); it builds the one
+  payload through the engine's `build_run_result` and hands that same object
+  to `store` before it emits `--json` and exits. L3a builds no payload
+  itself. The run-result envelope
   links one way to the evidence record, the scan baseline record and the job
   log (`rel: log` with its SHA-256). Path fields are relativized by the kind
   spec before `build`.
@@ -1541,9 +1643,9 @@ About 580 lines (source ~240, tests ~300, docs ~40).
 
 | Test | Asserts | Mutation |
 |---|---|---|
-| L3-records | a successful run writes one evidence record, then one run-result record with the same invocation id that links to it; `library show <evidence id>` lists the run-result through the reverse `links` query and the invocation id | ML3-nolink; ML3-two-way: add a link from evidence to run-result (A1-link-acyclic red) |
+| L3-records | a successful run writes one evidence record, then one run-result record with the same invocation id that links to it; `library show <evidence id>` lists the run-result through the reverse `links` query and the invocation id | ML3-nolink; ML3-two-way: add a link from evidence to run-result (B1-link-exists makes the evidence put fail, so the test goes red) |
 | L3-payload-from-finish | the run-result payload stored equals the `result` member of `--json` for the same run, byte for byte after canonicalization, on success, runtime failure and findings | ML3-rebuild: build the payload a second time in `_run_records.py` |
-| L3-failed-run | a run that fails at runtime writes a run-result record with status `error` and the exit code, and no evidence record | ML3-evidence-on-fail |
+| L3-failed-run | a run that fails at runtime writes a run-result record with status `failed` (the RESULT enum) and the exit code, and no evidence record | ML3-evidence-on-fail |
 | L3-baseline-link | end to end: `decoy scan data/*.csv --has-header --emit-config out/p.yaml` from the repo root, then `decoy run out/p.yaml` from another directory; the run-result links to the scan record by id, and that id resolves in `out/.decoy/library/` (the same library) | ML3-path-only: store the path, not the id; ML3-cwd-root: resolve the run's library from the current directory |
 | L3-log-link | the run-result's `log` link names `logs/<invocation_id>.jsonl` with a matching SHA-256 | ML3-no-log-link |
 | L3-evidence-same | the record payload equals the `--evidence-out` file after canonicalization, apart from the relativized path fields | ML3-drift: build the manifest twice |
@@ -1629,7 +1731,8 @@ Depends on L4a.
 | L4b-export-remap | export a scan record and a run-result linking to it with paths stripped: the run-result's `baseline` link points at the scan line's new id, both lines verify, and header refs point at new ids | ML4-no-remap: keep old ids in links |
 | L4b-export-scratch | no export option includes scratch content | ML4-scratch |
 | L4b-export-newer | a record written by a newer CLI (extra payload field) and exported by this version keeps its bytes and id, is unstripped, and is named in the header's `unstripped` list | ML4-export-view: export from the typed view |
-| L4b-export-unknown | an opaque-kind record is exported verbatim with its id | ML4-skip-unknown: leave unknown kinds out |
+| L4b-export-unknown | an opaque-kind record that links only to unchanged records is exported with its payload and id unchanged | ML4-skip-unknown: leave unknown kinds out |
+| L4b-export-closure | a library with a scan record (path fields), an opaque-kind record and a newer-CLI run-result both linking to it: export without `--keep-paths`, then `read_export`; every link of every line resolves to an id in the export, the opaque and newer payloads are byte for byte unchanged, every envelope verifies, `source_id` is in the wrapper and names the original ids, and `external_links` is 0 | ML4-verbatim-links: keep opaque and newer envelopes byte for byte, links included |
 | L4b-prune-unknown | `prune --keep-last 0 --yes` and `prune --kind future-thing --keep-last 0 --yes` keep an opaque-kind record and every record it links to | ML4-prune-unknown: apply kind rules to opaque records |
 | L4b-clean | `clean` previews, then with `--yes` removes only `.decoy/scratch/`; a vault file inside the project is untouched | ML4-wide: remove `.decoy/` |
 | L4b-clean-open | (Windows lane) a scratch file held open: `clean --yes` lists it as left behind, removes the rest, exits 4 | ML4-clean-raise: stop at the first `PermissionError` |
@@ -1751,7 +1854,8 @@ of L5b so the `run.py` and `scan.py` lanes stay separate (Revision 5, LM9).
 
 | Slice | Repo | Lines (est.) | Depends on |
 |---|---|---|---|
-| L0-engine | engine | ~420 | none |
+| L0.1-engine | engine | ~640 | none |
+| L0.2-engine | engine | ~260 | L0.1 |
 | L1a.1-engine | engine | ~770 | none |
 | L1a.2-engine | engine | ~310 | L1a.1 |
 | L1b.1-cli | CLI | ~440 | none (the canonical rewire needs the L1a repin) |
@@ -1759,7 +1863,7 @@ of L5b so the `run.py` and `scan.py` lanes stay separate (Revision 5, LM9).
 | L1b.3-cli | CLI | ~310 | L1b.2 |
 | L1c.1-cli | CLI | ~640 | L1b |
 | L1c.2-cli | CLI | ~480 | L1c.1 |
-| L1d-cli | CLI | ~300 | L1b, L0 release and repin |
+| L1d-cli | CLI | ~340 | L1b, L0 release and repin |
 | L2-cli | CLI | ~700 | L1c, L1d, SCAN-MULTI S1c (replaces S1d) |
 | L3a-cli | CLI | ~580 | L1c, L5b (run.py lane); RESULT C1 for the run-result half |
 | L3b-cli | CLI | ~530 | L1d, L3a (run.py lane), SAMPLE |
