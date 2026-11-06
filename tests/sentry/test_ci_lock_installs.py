@@ -138,6 +138,9 @@ def test_seeded_tool_option_and_index_bypasses_are_found() -> None:
             "fetches a tool",
         ),
         "uv tool cache-dir": ("uv tool --cache-dir c install black", "fetches a tool"),
+        "uv tool empty option value": ("uv tool --python= run black", "fetches a tool"),
+        "uv tool unknown options before the verb": ("uv tool --a x y run black", "fetches a tool"),
+        "uv tool fetching verb later": ("uv tool --a b c install black", "fetches a tool"),
         "uv tool unknown verb": ("uv tool frobnicate black", "fetches a tool"),
         "uv tool unknown option": ("uv tool --brand-new v install black", "fetches a tool"),
         "uv tool run unfrozen with python": (
@@ -201,6 +204,8 @@ def test_clean_commands_that_look_like_package_commands_stay_clean() -> None:
         "uv tool dir",
         "uv tool --python 3.12 list",
         "uv tool --cache-dir c dir",
+        "uv tool --python= list",
+        "uv tool uninstall black",
         "uv tool update-shell",
         "uv run --frozen sync",
         "uv tool uninstall black",
@@ -498,7 +503,8 @@ def test_vendor_ledger_matches_the_copies(tmp_path: Path) -> None:
         local.write_bytes((ROOT / entry["local_path"]).read_bytes() + b"\n")
     n = len(ledger["vendored"])
     assert len(_vendor_findings({**ledger, "mirror": []}, tmp_path)) == n, "each copy is guarded"
-    assert "re-point" in _read("ci/vendored.toml"), "the post-merge re-point instruction stays"
+    note = "After both repositories merge to main, the orchestrator re-points every `commit`"
+    assert note in _read("ci/vendored.toml"), "the post-merge re-point instruction stays"
 
 
 def test_vendored_files_are_byte_identical_to_the_engine_at_their_commit() -> None:

@@ -29,7 +29,7 @@ commit = "c87cf58640a32fa36cd38b85366db87d1ed0e08b"
 [[vendored]]
 engine_path = "tests/sentry/ci_scan/_shell_tokens.py"
 local_path = "tests/sentry/ci_scan/_shell_tokens.py"
-blob_sha256 = "b8049d75d6557c8de6161975632d6edd2cb1a37fbc28c454a36dd82ce69d28c7"
+blob_sha256 = "38e9fddea1c22fdc56017b492193f38649fa448aa04461557645a5921e701b78"
 commit = "c87cf58640a32fa36cd38b85366db87d1ed0e08b"
 
 [[vendored]]
