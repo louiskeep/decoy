@@ -45,7 +45,13 @@ needs_uv = pytest.mark.skipif(shutil.which("uv") is None, reason="bootstrap.sh d
 
 def _bootstrap_copy(tmp_path: Path) -> Path:
     """The files bootstrap.sh reads, copied so a test can corrupt one of them."""
-    for rel in ("pyproject.toml", LOCK, ".github/workflows/ci.yml"):
+    for rel in (
+        "pyproject.toml",
+        LOCK,
+        "ci/ci-tools.in",
+        "ci/ci-tools.lock",
+        ".github/workflows/ci.yml",
+    ):
         (tmp_path / rel).parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(REPO / rel, tmp_path / rel)
     shutil.copytree(DEV, tmp_path / "scripts" / "dev")
