@@ -230,7 +230,7 @@ on origin unless marked local. Detail for each row is in [roadmap/row-detail.md]
 | # | Item | Repo | State | Branch, plan or handoff | After |
 |---|---|---|---|---|---|
 | 19 | CLI-DIALECT: `decoy run` honours `has_header`, `column_names` and `delimiter` (live V1 bug); owned by CONFIG-EXPLICIT, lands ahead of it | CLI | plan review | `p05-cli-dialect-build-handoff.md` | none |
-| 20 | CLI-FMT Part A: write file targets by declared `format` through one `_targets.py`; fixed width through the engine's `write_fixed_width`; format and suffix mismatch, and `--chunked` with fixed width, refused with exit 1 | CLI | handoff written, plan gate | `fix/cli-fmt-write-declared-format` (not built); `p05-cli-fmt-build-handoff.md` | CLI-DIALECT |
+| 20 | CLI-FMT Part A: write file targets by declared `format` through one `_targets.py`; fixed width through the engine's `write_fixed_width`; format and suffix mismatch, and `--chunked` with fixed width, refused with exit 1 Owner 2026-11-06: CLI-IO folds in here: one source-reader module and one target-writer module for every format (csv, parquet, fixed width, later cloud and database), whole and chunked, each with an allowlist sentry that fails on a direct `pd.read_*`, `pq.read_table`, `.to_csv` or `.to_parquet` outside them. | CLI | handoff written, plan gate | `fix/cli-fmt-write-declared-format` (not built); `p05-cli-fmt-build-handoff.md` | CLI-DIALECT |
 | 21 | CLI-FMT Part B: `detokenize`, `unmask` and `report diff` read CLI-written files by declared format; the evidence manifest records `format` and `layout` | CLI | handoff written, plan gate | `fix/cli-fmt-b-read-declared-format` (stacked on A); `p05-cli-fmt-b-build-handoff.md` | Part A; merges with A |
 | 22 | CONFIG-EXPLICIT: `has_header` required for CSV sources; headerless files declare `column_names` or a new `column_names_file` (exactly one); every source column listed in `columns:` (`passthrough` allowed), so an unlisted column always fails; `unconfigured_column_policy` retired or fixed to `error` | engine, CLI | plan being authored | none yet | registry order; CLI half after the release that carries it |
 | 23 | VALIDATE-ALWAYS: `decoy run` runs every `decoy validate` check (config, compile, preflight) first and stops on an error | CLI | NOT STARTED | none | none |
@@ -310,7 +310,8 @@ on `P:plan/h1-wave-b` `944fb295` (Codex GO). Only files no live branch touches.
 | 61 | CLI delivery (DELIV engine and CLI half): stage then deliver, strict and best-effort, local single-root rule, chunked path (G4) through the same sink; blocks CLI V1 (Q22) | engine, CLI | NOT STARTED | none | F22, POSTSCAN-STREAM; CLI half after R-d |
 | 62 | RESULT: run result document, exit 6, capacity widening (in F29 C1) | engine, CLI | NOT STARTED | `E:plan/f29-errors-progress-remainder` `a26994bf` | DELIV best-effort for exit 6; CLI half after R-d |
 | 63 | SAMPLE CLI half: `decoy run --sample N` through the subset; output to scratch, never to targets; same behavior on delimited, CSV, fixed-width and Parquet; blocks CLI V1 (Q24) | engine, CLI | NOT STARTED (owner: "very good feature") | none | SUB-RUN; CLI half after R-d |
-| 64 | CLI-CLOUD: S3 and GCS in the CLI through the DELIV cloud run prefix and conditional pointer | CLI | NOT STARTED; assumed CLI V1 (UX map Q6 open) | none | CLI delivery |
+| 64 | CLI-CLOUD: S3 and GCS in the CLI through the DELIV cloud run prefix and conditional pointer | CLI | NOT STARTED; owner 2026-11-06: CLI V1 (UX map Q6 closed) | none | CLI delivery |
+| 64b | CLI-DB-SRC: PostgreSQL as a pipeline source (`type: postgres` with a value-free connection reference, a table list and the CONFIG-EXPLICIT column rules) through the engine `postgres_snapshot` primitive; needs a Postgres CI lane (CI-P2 markers, unparked for the engine and CLI) | engine, CLI | NOT STARTED; owner 2026-11-06: CLI V1 | CONFIG-EXPLICIT, CLI-IO | CLI delivery |
 | 65 | F31: shared safe-output and redaction (remaining build slices) | engine, CLI | plan rev 9 GO; E0a, E0c MERGED (engine #368, #377) | `E:plan/f31-safe-output` `2340a45b` | none |
 | 66 | F29 remainder: CLI consumers (C1, which carries RESULT) and the F31 hook | engine, CLI | C0 MERGED (engine #367) | `E:plan/f29-errors-progress-remainder` | F31 for the hook |
 | 67 | F34 E3 and the F34 release | engine | E0, E1, E2 MERGED (engine #365, #370, #371) | `P:plan/f34-residual-canary-span` `785af293` | registry order; owner Q4 |
@@ -342,7 +343,7 @@ on `P:plan/h1-wave-b` `944fb295` (Codex GO). Only files no live branch touches.
 
 | # | Item | Repo | State | Branch, plan or handoff | After |
 |---|---|---|---|---|---|
-| 86 | F01: PostgreSQL application-ready write target (staging, constraint, index and sequence restore, atomic publish) and the type-mapping report | engine, CLI | NOT STARTED | none | Phase 2 rows; F22 |
+| 86 | F01: PostgreSQL application-ready write target (staging, constraint, index and sequence restore, atomic publish) and the type-mapping report | engine, CLI | NOT STARTED; owner 2026-11-06: CLI V1 | none | Phase 2 rows; F22 |
 | 87 | F02: SFTP, cloud scan, subset against cloud; retry executor; content digest on `WriteResult` | engine, CLI | NOT STARTED | none | CLI-CLOUD; F22 adapter |
 | 88 | F44 CLI half: signed bundles, `decoy upgrade` preflight, rollback and offline signature path, release-time SBOM | engine, CLI | SBOM generators MERGED (engine #355, CLI #75; polish #359) | `C:docs/plans/2026-10-22-cli-distribution-and-packaging-spec.md` | B-2 (merged); R1-c key before the first signed bundle |
 
