@@ -157,9 +157,12 @@ def _write(directory: Path, name: str, data: bytes, mode: WriteMode, tmp_dir: Pa
         if created and mode is WriteMode.CREATE_ONCE and not _WINDOWS:
             # The hard-link move leaves the temp name as a second link; drop it before the
             # directory sync so a crash cannot leave a stray hidden entry.
-            with contextlib.suppress(OSError):
+            try:
                 os.unlink(tmp)
-            tmp = None  # so the cleanup below cannot unlink a name another process reused
+            except OSError:
+                pass  # left for the cleanup below to retry
+            else:
+                tmp = None  # gone, so the cleanup cannot unlink a name another process reused
         if created:
             _sync_directories(directory, tmp_dir)
         return created

@@ -378,3 +378,21 @@ def test_posix_does_not_retry_permission_error(
     with pytest.raises(AtomicWriteError):
         write_atomic(tmp_path, "t", b"x", WriteMode.REPLACE)
     assert sleeps == []
+
+
+def test_failed_temp_unlink_after_link_is_retried_by_cleanup(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # A first unlink that fails (EBUSY) must not hide the temp link from the final cleanup.
+    real_unlink = os.unlink
+    calls = {"n": 0}
+
+    def flaky_unlink(path: str) -> None:
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise OSError(16, "busy")
+        real_unlink(path)
+
+    monkeypatch.setattr(_atomic.os, "unlink", flaky_unlink)
+    assert write_atomic(tmp_path, "r", b"x", WriteMode.CREATE_ONCE) is True
+    assert _names(tmp_path) == ["r"]
