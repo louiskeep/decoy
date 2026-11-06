@@ -1,0 +1,45 @@
+# The one registry for what a hosted CLI job may install, and how. tests/sentry/_ci_lock_scan.py
+# reads it; tests/sentry/test_ci_lock_installs.py walks every file under .github/workflows and
+# .github/actions against it. Every exception carries a reason. The drift canary, the engine sites
+# and the write scope are ratchets: the test pins their sizes, so growing one needs a reviewed change.
+
+consumers = ["pytest", "ruff", "decoy", "scripts/build_docs.py", "scripts/cert_smoke.py"]
+
+# Approved install route per job. `gates` run in this order and each must precede every consumer.
+#   lock-env: the lock-env action          constrained-wheel: wheel installed with -c dev lock
+#   drift-canary: the registered unconstrained install   certified-engine-wheel / certified-closure
+#   standalone: standalone exact-pin tools, no product consumer
+route = [
+  { workflow = "ci.yml", job = "ruff", gates = ["lock-env"] },
+  { workflow = "ci.yml", job = "pytest", gates = ["lock-env"] },
+  { workflow = "ci.yml", job = "fresh-install-smoke", gates = ["lock-env", "constrained-wheel"] },
+  { workflow = "ci.yml", job = "ci-template-lint", gates = ["standalone"] },
+  { workflow = "ci.yml", job = "certified-profile", gates = ["lock-env", "certified-engine-wheel", "certified-closure"] },
+  { workflow = "release-smoke.yml", job = "fresh-install", gates = ["lock-env", "constrained-wheel", "drift-canary"] },
+  { workflow = "regen-diagrams.yml", job = "regenerate", gates = ["lock-env"] },
+]
+
+[locks]
+dev = "requirements-dev.lock"            # bootstrap.sh syncs it; clean-venv installs use `-c`
+certified = "requirements-certified.txt" # `-r` only, after the certified engine-plus-wheel step
+
+# The only places an engine spec literal may appear. Each must equal `lock_version.sh --engine-spec`.
+[[engine_site]]
+kind = "certified"
+workflow = "ci.yml"
+job = "certified-profile"
+step = "Install engine and CLI wheel without dependencies"
+reason = "the certified closure pins the full runtime; --no-deps installs only the two named artifacts"
+[[engine_site]]
+kind = "drift-canary"
+workflow = "release-smoke.yml"
+job = "fresh-install"
+step = "Install engine and wheel unconstrained (weekly drift canary)"
+event = "schedule"
+reason = "the weekly run resolves today's index on purpose, to see transitive-dependency drift before a release"
+
+[[write_scope]]
+workflow = "regen-diagrams.yml"
+job = ""
+scopes = ["contents"]
+reason = "commit regenerated SVGs to main"
