@@ -5,11 +5,11 @@
 #                         pyproject.toml [tool.ruff] comment for rationale
 #                         -- 45 files would reformat on the first run; land
 #                         a formatting commit first).
-#   pytest             -- unit + sentry + e2e suites against an editable
-#                         install. Engine is not on PyPI yet (OSS.7 lands
-#                         the publish pipeline), so we install it from the
-#                         sibling repo's main branch via a git+https VCS
-#                         spec, mirroring the release-smoke.yml pattern.
+#   pytest             -- unit + sentry + e2e suites in the environment
+#                         requirements-dev.lock pins (the lock-env action; the
+#                         engine is locked to the commit of its pinned tag), on
+#                         Python 3.10, 3.11 and 3.12. The ruff job uses the same
+#                         environment, so its pin is the lock's.
 #   fresh-install-smoke -- S3 (OSS-launch sprint): builds the wheel via
 #                         hatchling and installs it NON-editable into a
 #                         clean venv (no source tree on PYTHONPATH), then
@@ -49,9 +49,9 @@
 #                         red CI, never a pass.
 #
 # Triggers: every push to main, every pull request targeting main, and a
-# weekly schedule. The schedule exists for certified-profile: the engine is
-# installed from its main branch, so an engine-side change can decertify the
-# CLI profile with no CLI commit to trigger a run.
+# weekly schedule. The schedule exists for certified-profile: an engine-side or
+# index-side change can decertify the CLI profile with no CLI commit to trigger
+# a run.
 # The gate must be green before a PR can merge.
 
 name: ci
@@ -81,13 +81,8 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v7
 
-      - name: Set up Python 3.10
-        uses: actions/setup-python@v6
-        with:
-          python-version: '3.10'
-
-      - name: Install ruff (pinned, matching engine)
-        run: pip install "ruff==0.15.14"
+      - name: Lock environment (the ruff pin comes from requirements-dev.lock)
+        uses: ./.github/actions/lock-env
 
       - name: ruff check
         run: ruff check src tests
@@ -106,23 +101,10 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v7
 
-      - name: Set up Python ${{ matrix.python }}
-        uses: actions/setup-python@v6
+      - name: Lock environment
+        uses: ./.github/actions/lock-env
         with:
-          python-version: ${{ matrix.python }}
-
-      - name: Install engine from sibling repo (pre-publish window)
-        # Engine is not on PyPI yet (OSS.7 lands the publish pipeline).
-        # Install from main of the sibling repo, mirroring release-smoke.yml.
-        # After OSS.7 publishes, swap to: pip install decoy-engine==<pinned>
-        run: |
-          pip install --upgrade pip
-          pip install "git+https://github.com/louiskeep/decoy-engine@v0.18.0"
-
-      - name: Install CLI in editable mode with dev extras
-        # Editable install wires the `decoy` console script so e2e tests
-        # that invoke the installed entry point work without a wheel build.
-        run: pip install -e ".[dev,otel]"
+          python: ${{ matrix.python }}
 
       - name: pytest unit + sentry
         run: pytest tests/unit tests/sentry --tb=short
@@ -140,35 +122,26 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v7
 
-      - name: Set up Python 3.11
-        uses: actions/setup-python@v6
+      - name: Lock environment
+        uses: ./.github/actions/lock-env
         with:
-          python-version: '3.11'
+          python: '3.11'
 
-      - name: Install build backend
-        run: pip install --upgrade pip build
+      - name: Install the build frontend (pinned, constrained by the lock)
+        run: uv pip install --python "$DECOY_VENV/bin/python" -c requirements-dev.lock "build==1.2.2"
 
       - name: Build wheel
-        run: python -m build --wheel
+        run: $DECOY_VENV/bin/python -m build --wheel
 
       - name: Create clean install venv
         # A fresh venv, never activated -- steps call into it by path so
         # the runner's own environment (which has the repo checked out
         # on disk) cannot leak an import path into the smoke.
-        run: python -m venv .smoke
-
-      - name: Install engine from sibling repo (pre-publish window)
-        # Mirrors the pytest job's engine-resolution step above and
-        # release-smoke.yml: decoy-engine is not on PyPI yet (OSS.7 lands
-        # the publish pipeline), so install from the sibling repo's main
-        # branch via a git+https VCS spec. After OSS.7 publishes, swap to
-        # `.smoke/bin/pip install decoy-engine`.
-        run: |
-          .smoke/bin/pip install --upgrade pip
-          .smoke/bin/pip install "git+https://github.com/louiskeep/decoy-engine@v0.18.0"
+        run: uv venv --python "$DECOY_PYTHON" .smoke
 
       - name: Install the freshly-built decoy wheel (non-editable)
-        run: .smoke/bin/pip install dist/*.whl
+        # The dev lock supplies the engine commit, so no engine spec is repeated here.
+        run: uv pip install --python .smoke/bin/python -c requirements-dev.lock dist/*.whl
 
       - name: decoy --version (smoke 1)
         run: .smoke/bin/decoy --version
@@ -211,6 +184,8 @@ jobs:
         run: |
           set -euo pipefail
           cd smoke_run
+          # The run above left output.csv; validation warns would_overwrite on an existing target.
+          rm -f output.csv
           git init -q
           printf 'schema_version: decoy-ci/v1\npipelines:\n  - {id: smoke, path: pipeline.yaml}\nchecks:\n  validation: {mode: config}\n' > .decoy-ci.yaml
           ../.smoke/bin/decoy ci check .decoy-ci.yaml --format sarif --output decoy.sarif
@@ -231,10 +206,19 @@ jobs:
         with:
           python-version: '3.12'
 
-      - name: Install the pinned linters
-        # actionlint-py downloads the matching actionlint release binary; both
-        # pins are exact so a lint verdict is attributable to one version.
-        run: pip install "actionlint-py==1.7.12.25" "check-jsonschema==0.39.0"
+      - name: Install check-jsonschema from the hash-checked lock
+        # ci/ci-tools.lock (compiled from ci/ci-tools.in by scripts/dev/lock.sh) pins
+        # check-jsonschema and its dependencies with hashes. --only-binary :all: refuses
+        # an sdist, which pip would build with unpinned build dependencies.
+        run: |
+          pip install --require-hashes --only-binary :all: -r ci/ci-tools.lock
+
+      - name: Fetch the pinned actionlint binary (sha256-checked)
+        # actionlint-py ships only an sdist, so the release binary is used instead. Its
+        # url and sha256 live in ci/install-policy.toml; a mismatch fails this step.
+        run: |
+          python scripts/dev/fetch_ci_binary.py actionlint --dest "$RUNNER_TEMP/actionlint-bin"
+          echo "$RUNNER_TEMP/actionlint-bin" >> "$GITHUB_PATH"
 
       - name: actionlint (GitHub Actions template)
         run: actionlint integrations/github-actions/decoy-ci.yml
@@ -253,8 +237,14 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v7
 
-      - name: Install uv
-        uses: astral-sh/setup-uv@v5
+      - name: Lock environment (builds the wheel)
+        uses: ./.github/actions/lock-env
+
+      - name: Install the build frontend (pinned, constrained by the lock)
+        run: uv pip install --python "$DECOY_VENV/bin/python" -c requirements-dev.lock "build==1.2.2"
+
+      - name: Build wheel
+        run: $DECOY_VENV/bin/python -m build --wheel
 
       - name: Pin the exact CPython patch
         # The certified row is keyed on the full patch (3.10.20.final), not
@@ -267,15 +257,13 @@ jobs:
         # profile and nothing else.
         run: uv venv --python 3.10.20 .venv-certified
 
-      - name: Install engine + CLI, then the pinned closure
-        # The install recipe from requirements-certified.txt's header. Engine
-        # comes from the sibling repo's main (pre-publish window, same as the
-        # pytest job above); the CLI from this checkout, non-editable.
-        env:
-          VIRTUAL_ENV: .venv-certified
-        run: |
-          uv pip install "git+https://github.com/louiskeep/decoy-engine@v0.18.0" .
-          uv pip install -r requirements-certified.txt
+      - name: Install engine and CLI wheel without dependencies
+        # Only the two named artifacts: --no-deps stops the resolver, and the
+        # next step installs the complete fingerprinted closure.
+        run: uv pip install --python .venv-certified/bin/python --no-deps "git+https://github.com/louiskeep/decoy-engine@v0.18.0" dist/*.whl
+
+      - name: Install the pinned closure
+        run: uv pip install --python .venv-certified/bin/python -r requirements-certified.txt
 
       - name: Certification smoke (fingerprint + manifest row + real DP fit)
         run: .venv-certified/bin/python scripts/cert_smoke.py
