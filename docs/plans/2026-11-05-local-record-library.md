@@ -21,6 +21,21 @@ files. `decoy run` gains a default side effect. Nothing is irreversible for
 user data: prune and clean only touch Decoy's own area and preview first.
 Approver: Cam.
 
+## Revision note (gap fix, 2026-11-06)
+
+- RESULT revision 4 names are authoritative: E3 owns the collector and
+  chunked progress events; CLI work is C1a then C1b.
+- A job log is not a record. Its only run-result reference is the RESULT
+  payload field `links.log: {path, sha256}`. Envelope links continue to point
+  only at existing record ids, so B1-link-exists has no exception.
+- L5b depends on RESULT C1b and fills `links.log` through `finish`'s typed
+  `links` argument. L3a stores that finished payload unchanged.
+- L4a has no L3a dependency. Its run-result diff tests construct registered
+  records directly with `records.build`, which removes the L4a, L5b, L3a
+  cycle.
+- L1c.2 creates G-KIND-CANARY with pending writable kinds. L2, L3a and L3b
+  each remove their own pending rows when their producer lands.
+
 Owner direction, 2026-11-05:
 
 - "local record library. we should plan this now so we can have a modular
@@ -85,8 +100,8 @@ plan). SCAN-MULTI carries the matching Revision 6.
 | V2-LOG 5.0 "identical" | The OS-lane text moved out of 5.0 into a new 5.1 (LIB only), so 5.0 is word-for-word the same in both plans. |
 | RESULT handoff (a) | The `run-result` kind points at the engine's `decoy_engine.run_result.RunResult` and `RunResultRead` (RESULT E1); path fields `/payload/tables/*/delivery/output` and `/payload/links/log/path`; reserved until the engine release that carries RESULT E1 and E2, planned to be L1a's release. Test A1-run-result-model. |
 | RESULT handoff (b) | Link direction run-result to evidence, reverse lookup by `invocation_id`: the LIB 1 fix. |
-| RESULT handoff (c) | L5a's chunked-route case needs RESULT E2 (the chunked path emits no progress events today); L5a now depends on the engine release with E2. |
-| RESULT handoff (d) | L3a stores the payload that `_run_outcome.finish` (RESULT C1) returns and builds nothing itself; L3a depends on RESULT C1, and the `run.py` lane order is updated in 5.0. |
+| RESULT handoff (c) | L5a's chunked-route case needs RESULT E3 (the chunked path emits no progress events today); L5a now depends on the engine release with E3. |
+| RESULT handoff (d) | L3a stores the payload that `_run_outcome.finish` (RESULT C1a and C1b) returns and builds nothing itself; L3a depends on both parts, and the `run.py` lane order is updated in 5.0. |
 
 ## Revision 5 (2026-11-05): joint Dennis review of LIB 6b50e729 and SCAN-MULTI 9b7cd9ab
 
@@ -117,7 +132,7 @@ before the fix was adopted; none was found wrong.
 | LM7 | The `cli-local-1` payload model moves to the engine (`records/_kinds.py`), so the platform importer can decode evidence records and G-KIND-CANARY does not depend on CLI import order. A CLI test pins that `build_manifest` output validates against it. |
 | LM8 | Verified: `_safe_registered_code` maps unregistered codes to `unregistered_reason` (`_progress_events.py:101-105`). L1a registers the CLI-side event codes in the engine registry, on the chain in section 5.0. |
 | LM9 | "Parallel on non-overlapping files" removed. Section 5.0 serializes the `run.py`, `scan.py` and `library.py` writers (orchestrator ruling). |
-| LM10 | L5b depends on L5a (and L4a for `show`) only. Logs are found by `invocation_id`; L3a adds the `log` link when it lands. |
+| LM10 | Superseded by the gap-fix revision: L5b also depends on RESULT C1b and fills payload `links.log`; L3a adds no envelope log link. |
 | LM11 | Verified: `tests/e2e/test_stateless_cli.py:89` asserts no `.decoy` path is created. L5b replaces that assertion with a named, stronger one (section 5 L5b); deleting it is a gate finding. |
 | LM12 | Each kind spec declares its path fields; export strips only those and remaps `links` inside the export to the new ids, in link order. Test L4b-export-remap. |
 | LM13 | L4 split into L4a (list, show, ref, diff) and L4b (prune, export, clean). `_scratch.py` and `_winacl.py` move from L1b into a new L1d. |
@@ -625,16 +640,18 @@ refused with the same code.
   no free text gets in through them. `pipeline` is the YAML path relative to
   the project root.
 - `links` are typed (`rel` from a closed set: `baseline`, `scan`, `evidence`,
-  `result`, `sample`, `log`, `publication`, `checkpoint`, `supersedes`). A
-  `log` link also carries the log file's SHA-256 (section 4.12).
+  `result`, `sample`, `publication`, `checkpoint`, `supersedes`) and always
+  name another record id that already exists. A job log is not a record; its
+  path and SHA-256 live only in the run-result payload's `links.log` field
+  (section 4.12).
 - Links point one way: a record may link only to records that already exist
   when it is built, because its id hashes its links and a later record's id
   cannot be known in advance. So the link graph has no cycles by
   construction, and "linked both ways" is never a design. The reverse
   direction is a query: records of one invocation share `invocation_id`, and
   the index answers "which records link to X" from the `links` table. For a
-  run, evidence is written first and the run-result links to it
-  (`rel: evidence`), to the scan baseline (`rel: baseline`) and to the log.
+  run, evidence is written first and the run-result envelope links to it
+  (`rel: evidence`) and to the scan baseline (`rel: baseline`).
 
 Kinds registered in V1:
 
@@ -642,7 +659,7 @@ Kinds registered in V1:
 |---|---|---|---|
 | `scan-set` | `scan-set/v1` (`ScanSetCore`, the `detail=False` dump) | engine, SCAN-MULTI S1a | L2 |
 | `evidence` | `cli-local-1` (the existing manifest, unchanged) | engine model in `records/_kinds.py`, mirroring CLI `evidence.py` (LM7) | L3a |
-| `run-result` | `decoy-run-result/v1` | engine `decoy_engine.run_result` (RESULT E1; built only by `build_run_result`) | L3a, once RESULT C1 lands |
+| `run-result` | `decoy-run-result/v1` | engine `decoy_engine.run_result` (RESULT E1; built only by `build_run_result`) | L3a, once RESULT C1a and C1b land |
 | `sample-run` | `sample-run/v1` (new, section 4.13) | this plan | L3b |
 | `publication` | reserved | DELIV plan | not in this plan |
 | `checkpoint` | reserved (`checkpoint-index/v1`) | F23 plan | not in this plan |
@@ -822,9 +839,9 @@ already parses YAML.
   `keep_last` makes `prune` with no arguments apply the policy; it still
   previews without `--yes`.
 - Logs: rotated automatically at the end of any command that wrote a log
-  (git's `gc --auto` idea). A log linked from a record that a ref keeps is
-  never rotated. Logs are derived and value-free, so automatic rotation is
-  safe.
+  (git's `gc --auto` idea). A log named by payload `links.log` in a run-result
+  record that a ref keeps is never rotated. Logs are derived and value-free,
+  so automatic rotation is safe.
 - Deletes are best effort per file. On Windows a file another program holds
   open cannot be deleted (`PermissionError`). Automatic deletes (sample
   replace, TTL expiry, log rotation) skip such a file, report it once on
@@ -997,9 +1014,10 @@ platform quirks.
   and `fsck` reports as a warning. The log is never renamed into place, so a
   reader can follow a running job.
 - A log is found by its `invocation_id` (the file name), so `decoy library
-  show <record> --log` works for any record of that invocation without a
-  link. Once L3a lands, the run-result record also links to the log
-  (`rel: log`) with its SHA-256, so `show` can detect edits.
+  show <record> --log` works for any record of that invocation without an
+  envelope link. RESULT's run-result payload has one typed `links.log`
+  member containing the relative path and SHA-256, filled by L5b before the
+  payload is built, so `show` can detect edits.
 - Verbose and debug output (tracebacks, `--verbose`) goes to stderr only and
   is never persisted. A future `--log-level debug` adds more events of the
   same classes to the file (rate samples, per-phase timings), still value
@@ -1020,7 +1038,8 @@ output tables to `.decoy/scratch/sample-<invocation_id>/` and then writes one
 row counts, the subset seed summary (counts, never key values), the columns
 labelled approximate (shuffle, categorical, UX map Q16), the scratch
 directory relative to the project root, a SHA-256 per output file, the TTL,
-and links to the scan baseline and the log. `library show` on that record says
+and an envelope link to the scan baseline. Its log is found by the shared
+`invocation_id`, not by an envelope link. `library show` on that record says
 whether the scratch output still exists and whether its hashes still match.
 Pruning the record does not touch scratch; cleaning scratch leaves the record
 (which then reports the output as expired). The throwaway vault the sample
@@ -1120,14 +1139,16 @@ means every part has merged.
 - CONFIG-EXPLICIT (plan in progress): the owner rule that a CSV source states
   `has_header`, names its columns through `column_names` or
   `column_names_file`, and lists every column in the YAML. Planned by another
-  author. S1c's `--column-names-file` flag and S3-engine depend on it.
+  author. S1c.2's `--column-names-file` and sources-only declaration mode need
+  E1, E2 and C1; S3-engine.1 needs E2; S3a.1 needs C1 and C2.
 - RESULT (`decoy-run-result/v1`), handoff
   `10_Projects/decoy/handoffs/phase0.5/p05-result-build-handoff.md` (Status
   plan): E1 (engine model and `build_run_result`), E2 (engine per-table
-  collector; adds progress events to the chunked path; one registry minor), C1
-  (CLI `_run_outcome.finish`, after F29 C1, LIB L1b and LIB L5a), C2 (CLI
-  capacity widening). LIB L1a's `run-result` kind points at E1's models; LIB
-  L5a's chunked case needs E2; LIB L3a's run-result half needs C1.
+  projection and builder), E3 (collector, chunked progress events and one
+  registry minor), C1a (CLI document and `_run_outcome.finish`), C1b
+  (evidence, notify and typed `links.log` inputs), and C2 (CLI capacity
+  widening). LIB L1a's `run-result` kind points at E1's models; LIB L5a's
+  chunked case needs E3; LIB L5b and L3a need C1a and C1b.
 - SAMPLE (`decoy run --sample N`) for LIB L3b; not defined on any branch today.
 - CLI-CLOUD for any cloud integrity pass (V2 of S1b, section 5 S1b).
 
@@ -1138,7 +1159,7 @@ merge time through REG-RENUMBER (`scripts/dev/registry_renumber.py`, handoff
 `10_Projects/decoy/handoffs/phase0.5/p05-reg-renumber-build-handoff.md`): such
 slices may build in parallel but merge one at a time, one new minor per branch,
 and never write a version where it does not mean the slice's own minor. The
-roadmap rows already on the chain (F35 E1a, F32 E1b, F36 slice 4) and RESULT E2
+roadmap rows already on the chain (F35 E1a, F32 E1b, F36 slice 4) and RESULT E3
 interleave by merge order. Registry-touching slices in these plans:
 
 | Slice | Identities |
@@ -1150,22 +1171,26 @@ interleave by merge order. Registry-touching slices in these plans:
 
 **Engine releases** go one at a time. Each is followed by one cumulative CLI
 repin that follows the engine repin checklist. Planned grouping: LIB L0, LIB
-L1a (both parts) and RESULT E1 and E2 in one release; SCAN-MULTI S1a and S1b
+L1a (both parts) and RESULT E1 to E3 in one release; SCAN-MULTI S1a and S1b
 in the next; SCAN-MULTI S3-engine (both parts) after CONFIG-EXPLICIT.
 
 **Build order.**
 
-1. LIB L0.1, L0.2, L1a.1, L1a.2 and RESULT E1, E2; one engine release. LIB
+1. LIB L0.1, L0.2, L1a.1, L1a.2 and RESULT E1 to E3; one engine release. LIB
    L1b.1 may start at once (it needs no engine change); then the repin with
    L1b.2, then L0.3 in the `run.py` lane, then L1b.3, L1c.1, L1c.2 and L1d.
 2. SCAN-MULTI S1a.1, S1a.2, then S1b-engine on a branch from S1a; one engine
    release holds them. S1b uses L0's allocator, so L0 merges first.
-3. CLI-DIALECT, then SCAN-MULTI S1c.1 and S1c.2 (repin to the step 2 release;
-   need LIB L1b.1), then LIB L2-cli (needs L1c and L1d).
-4. CONFIG-EXPLICIT, then SCAN-MULTI S3-engine.1 and S3-engine.2 and their
-   release, then S3a.1-cli and S3a.2-cli (repin), then S3b-cli.
+3. CLI-DIALECT, then SCAN-MULTI S1c.1 (repin to the step 2 release; needs LIB
+   L1b.1).
+4. CONFIG-EXPLICIT E1 and E2 and their engine release, then C1. SCAN-MULTI
+   S1c.2 uses that release and C1's config loader, then LIB L2-cli (needs L1c
+   and L1d). After CONFIG-EXPLICIT C2, build SCAN-MULTI S3-engine.1 and
+   S3-engine.2 and their release, then S3a.1-cli and S3a.2-cli (repin), then
+   S3b-cli.
 5. LIB L4a after L1c, then L4b. In the `run.py` lane after L0.3: LIB L5a
-   (needs L1b.1 and the step 1 release), F29 C1, RESULT C1, LIB L5b (also
+   (needs L1b.1 and the step 1 release), F29 C1, RESULT C1a, RESULT C1b,
+   LIB L5b (also
    needs L4a), LIB L3a, LIB L3b; SAMPLE gates L3b. LIB L5c after L5b and
    S3b-cli.
 
@@ -1179,7 +1204,7 @@ interleave with other rows (F32 C0 and CLI-FMT also write `run.py`):
 
 | File | Writers, in order |
 |---|---|
-| `src/decoy/cli/run.py` | L0.3, L5a, F29 C1, RESULT C1, L5b, L3a, L3b |
+| `src/decoy/cli/run.py` | L0.3, L5a, F29 C1, RESULT C1a, RESULT C1b, L5b, L3a, L3b |
 | `src/decoy/cli/scan.py` | S1c.1, S1c.2, L2, S3a.2, S3b, L5c |
 | `src/decoy/cli/library.py` | L1c.2, L4a, then L4b and L5b in either order |
 | `src/decoy_engine/profiling/scan_set.py` | S1a.1, S1a.2, S1b |
@@ -1507,6 +1532,12 @@ Depends on L1b.
   (~90 here: `path`, `fsck`), `src/decoy/__main__.py` (164) registration;
   tests (~180) `test_fsck.py`, `tests/e2e/test_library_fsck.py`; docs (~50):
   `docs/cli-reference.md` regenerated, `docs/library.md`, `CHANGELOG.md`.
+- create `tests/sentry/test_kind_canary.py` here. Its pending-kinds registry
+  starts with `scan-set`, `evidence`, `run-result` and `sample-run`; a
+  registered writable kind passes only when it has a canary fixture or one
+  pending row. L2 removes `scan-set`, L3a removes `evidence` and `run-result`,
+  and L3b removes `sample-run`. M-KIND-NOFIX registers a writable kind with
+  neither and must turn the guard red.
 
 **Behavior.** Sections 4.3a (opaque rows), 4.4, 4.8 (index, remote
 filesystems, degraded mode), 4.10.
@@ -1651,21 +1682,23 @@ ships. Additive scan flags and one additive `--json` key.
 ### L3a-cli: evidence and run-result records (CLI, about 580 lines)
 
 Depends on L1c and on L5b in the `run.py` lane (section 5.0). The run-result
-half depends on RESULT C1 (`_run_outcome.finish`, CLI) and so on RESULT E1
-and E2 released and repinned; the evidence half does not and may land first.
+half depends on RESULT C1a and C1b (`_run_outcome.finish`, CLI) and so on
+RESULT E1 to E3 released and repinned; the evidence half does not and may land
+first.
 About 580 lines (source ~240, tests ~300, docs ~40).
 
 **Files and sizes.**
 - new `src/decoy/cli/_run_records.py` (~200): `store(payload)` puts the
   `evidence` record first, then the `run-result` record. `_run_outcome.finish`
-  (RESULT C1) never returns (it raises `typer.Exit`); it builds the one
+  (RESULT C1a and C1b) never returns (it raises `typer.Exit`); it builds the one
   payload through the engine's `build_run_result` and hands that same object
   to `store` before it emits `--json` and exits. L3a builds no payload
   itself. The run-result envelope
-  links one way to the evidence record, the scan baseline record and the job
-  log (`rel: log` with its SHA-256). Path fields are relativized by the kind
-  spec before `build`.
-- `src/decoy/cli/_run_outcome.py` (RESULT C1): one call into
+  links one way to the evidence record and the scan baseline record. The job
+  log reference is already in the payload's typed `links.log` member, filled
+  by L5b through `finish`; L3a neither rebuilds nor copies it. Path fields are
+  relativized by the kind spec before `build`.
+- `src/decoy/cli/_run_outcome.py` (RESULT C1a and C1b): one call into
   `_run_records.py` after the document is built, so every exit path stores
   it; net change small.
 - `src/decoy/cli/run.py` (1812, must not grow): `--no-library` only; net
@@ -1684,7 +1717,7 @@ About 580 lines (source ~240, tests ~300, docs ~40).
 | L3-payload-from-finish | the run-result payload stored equals the `result` member of `--json` for the same run, byte for byte after canonicalization, on success, runtime failure and findings | ML3-rebuild: build the payload a second time in `_run_records.py` |
 | L3-failed-run | a run that fails at runtime writes a run-result record with status `failed` (the RESULT enum) and the exit code, and no evidence record | ML3-evidence-on-fail |
 | L3-baseline-link | end to end: `decoy scan data/*.csv --has-header --emit-config out/p.yaml` from the repo root, then `decoy run out/p.yaml` from another directory; the run-result links to the scan record by id, and that id resolves in `out/.decoy/library/` (the same library) | ML3-path-only: store the path, not the id; ML3-cwd-root: resolve the run's library from the current directory |
-| L3-log-link | the run-result's `log` link names `logs/<invocation_id>.jsonl` with a matching SHA-256 | ML3-no-log-link |
+| L3-log-link | the stored run-result payload's `links.log` names `logs/<invocation_id>.jsonl` with a matching SHA-256; the envelope has no log link | ML3-no-log-link |
 | L3-evidence-same | the record payload equals the `--evidence-out` file after canonicalization, apart from the relativized path fields | ML3-drift: build the manifest twice |
 | L3-no-library | `--no-library` and `DECOY_LIBRARY=off` write no record under `.decoy/library/`; the job log is still written | ML3-ignore |
 | L3-readonly | read-only library root: run exits with its normal code, stderr has one warning with the code, `--json` has `library.status = "failed"` | ML3-fail: exit 3 |
@@ -1726,7 +1759,9 @@ through subset).
 
 ### L4a-cli: library read commands and refs (CLI, about 480 lines)
 
-Depends on L1c; `diff` for `run-result` needs L3a.
+Depends on L1c only. The implementation dispatches by the registered kind.
+Its `run-result` diff tests build both records directly with `records.build`;
+they do not wait for the L3a producer.
 
 **Files and sizes.**
 - `src/decoy/cli/library.py` (+~180, stays under ~300): `list`, `show`,
@@ -1741,7 +1776,7 @@ Depends on L1c; `diff` for `run-result` needs L3a.
 | L4-list | filters by kind, pipeline, table and time; `--json` is stable | ML4-filter |
 | L4-show | `show <prefix>` resolves a unique 8-hex prefix and refuses an ambiguous one | ML4-first-match |
 | L4-ref | `library ref NAME ID` sets under the lock; `library ref NAME` prints it; an invalid name is a usage error | ML4-ref-nolock |
-| L4-diff | scan-set, evidence and run-result pairs give the kind-specific diff; mismatched kinds are a usage error | ML4-generic: structural diff for all |
+| L4-diff | scan-set, evidence and run-result pairs give the kind-specific diff; mismatched kinds are a usage error; run-result fixtures are built directly with `records.build` | ML4-generic: structural diff for all |
 
 **Frozen-contract effects.** Additive `library` verbs.
 
@@ -1779,8 +1814,8 @@ under `decoy-library-export/v1`.
 
 ### L5a-cli: wire the engine ProgressSink into `decoy run` (CLI, about 560 lines)
 
-Depends on L1b.1 and on the engine release that carries RESULT E2: the chunked
-path (`execution/_chunked.py`) emits no progress events until E2 adds them,
+Depends on L1b.1 and on the engine release that carries RESULT E3: the chunked
+path (`execution/_chunked.py`) emits no progress events until E3 adds them,
 so L5a-every-route's chunked case needs that release. First LIB writer in the
 `run.py` lane. Source ~320 (75 of it moved), tests ~210, docs ~30.
 Owns the hook found missing in the first pass: `decoy run` shows a spinner
@@ -1799,7 +1834,7 @@ Owns the hook found missing in the first pass: `decoy run` shows a spinner
   pays for the call-site lines below.
 - `src/decoy/cli/run.py` (1812): pass the sink on every route `decoy run` uses
   (full-frame, chunked, sequential, out-of-core, sample; the chunked route
-  emits events only once RESULT E2 is in the pinned engine); replace the bare
+  emits events only once RESULT E3 is in the pinned engine); replace the bare
   spinner with a display that reads phase and rate events; mint the run's
   `invocation_id` here so L3a records and L5b logs share it. Net change below
   zero after the vault-commit move.
@@ -1826,15 +1861,17 @@ Owns the hook found missing in the first pass: `decoy run` shows a spinner
 
 ### L5b-cli: job logs for `decoy run` (CLI, about 620 lines)
 
-Depends on L5a and L4a (`library show`). Does not depend on L3a or RESULT
-(Revision 5, LM10).
+Depends on L5a, L4a (`library show`) and RESULT C1b. It follows RESULT C1a and
+C1b in the `run.py` lane. It does not depend on L3a.
 
 **Files and sizes.**
 - new `src/decoy/cli/_library/_logs.py` (~220: writer as an L5a consumer,
   rotation with best-effort deletes, reader, lookup by `invocation_id`).
 - `src/decoy/cli/run.py` (must not grow): register the log writer on every
   run; CLI-side events built from engine event classes with L1a's registered
-  codes.
+  codes. Close and hash the log inside `finish`, then pass its relative path
+  and SHA-256 through RESULT C1b's typed `links` argument. This is the only
+  writer of payload `links.log`; no `model_copy` and no envelope log link.
 - `src/decoy/cli/library.py`: `show --log`.
 - `tests/e2e/test_stateless_cli.py`: the assertion at line 89 ("no `.decoy`
   path is created") is replaced, not deleted, by a stronger one named
@@ -1859,11 +1896,11 @@ Depends on L5a and L4a (`library show`). Does not depend on L3a or RESULT
 | L5-value-free | canary fixture, including a failure whose exception text quotes a cell: no canary in the log, the terminal line has the class name only, and no line carries `unregistered_reason` | M-LOG-MSG; ML5-unregistered: emit a CLI code missing from the registry |
 | L5-verbose | `--verbose` traceback appears on stderr and not in the log | ML5-tee: copy stderr into the log |
 | L5-truncated | a run killed mid-way leaves a log whose complete lines parse; readers skip the partial last line | ML5-strict: fail on a partial line |
-| L5-rotate | with 52 logs for one pipeline, the next run leaves 50, never removing a log linked from a ref-protected record | ML5-noprotect |
+| L5-rotate | with 52 logs for one pipeline, the next run leaves 50, never removing a log named by payload `links.log` in a ref-protected run-result record | ML5-noprotect |
 | L5-rotate-open | (Windows lane) a log held open is skipped and reported; the run's exit code is unchanged | ML5-rotate-raise |
 | L5-age | logs older than `max_age_days` are rotated | ML5-noage |
 | L5-stateless-replaced | `test_run_writes_only_resolved_library` fails if a `.decoy` path appears in the current directory when the YAML is elsewhere | ML5-cwd-log: write the log under the current directory |
-| L5-tail | `library show <run> --log` prints the events in order and, once L3a's link exists, says if the hash no longer matches | ML5-nohash |
+| L5-tail | `library show <run> --log` prints the events in order and, for a run-result payload with `links.log`, says if the hash no longer matches | ML5-nohash |
 
 **Frozen-contract effects.** New tag `decoy-job-log/v1` (registered in L1a);
 log lines are the engine's frozen event schema.
@@ -1903,12 +1940,12 @@ of L5b so the `run.py` and `scan.py` lanes stay separate (Revision 5, LM9).
 | L1c.2-cli | CLI | ~480 | L1c.1 |
 | L1d-cli | CLI | ~340 | L1b, L0 release and repin |
 | L2-cli | CLI | ~700 | L1c, L1d, SCAN-MULTI S1c (replaces S1d) |
-| L3a-cli | CLI | ~580 | L1c, L5b (run.py lane); RESULT C1 for the run-result half |
+| L3a-cli | CLI | ~580 | L1c, L5b (run.py lane); RESULT C1a and C1b for the run-result half |
 | L3b-cli | CLI | ~530 | L1d, L3a (run.py lane), SAMPLE |
-| L4a-cli | CLI | ~480 | L1c (L3a for run-result diff) |
+| L4a-cli | CLI | ~480 | L1c; run-result diff fixtures use `records.build` |
 | L4b-cli | CLI | ~720 | L4a |
-| L5a-cli | CLI | ~560 | L1b.1, engine release with RESULT E2 |
-| L5b-cli | CLI | ~620 | L5a, L4a |
+| L5a-cli | CLI | ~560 | L1b.1, engine release with RESULT E3 |
+| L5b-cli | CLI | ~620 | L5a, L4a, RESULT C1b |
 | L5c-cli | CLI | ~200 | L5b, SCAN-MULTI S3b-cli |
 
 Each slice or part is under 800 hand-written lines counting source, tests and
