@@ -66,10 +66,12 @@ ATOMIC_NOCLOBBER_UNSUPPORTED = "atomic_noclobber_unsupported"
 # One allowlist for every OS, so a name that is safe here is safe on Windows too. Windows
 # also treats a device stem (CON, NUL, ...) as the device with or without an extension.
 _NAME_PATTERN = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,199}")
+# The reserved set follows CPython's os.path.isreserved (Lib/ntpath.py, 3.13): COM0 and
+# LPT0 are not devices, and the superscript forms are.
 _DEVICE_STEMS = frozenset(
-    {"CON", "PRN", "AUX", "NUL"}
-    | {f"COM{n}" for n in range(0, 10)}
-    | {f"LPT{n}" for n in range(0, 10)}
+    {"CON", "PRN", "AUX", "NUL", "CONIN$", "CONOUT$"}
+    | {f"COM{c}" for c in "123456789\u00b9\u00b2\u00b3"}
+    | {f"LPT{c}" for c in "123456789\u00b9\u00b2\u00b3"}
 )
 
 _WINDOWS = sys.platform == "win32"
@@ -157,6 +159,7 @@ def _write(directory: Path, name: str, data: bytes, mode: WriteMode, tmp_dir: Pa
             # directory sync so a crash cannot leave a stray hidden entry.
             with contextlib.suppress(OSError):
                 os.unlink(tmp)
+            tmp = None  # so the cleanup below cannot unlink a name another process reused
         if created:
             _sync_directories(directory, tmp_dir)
         return created
@@ -175,7 +178,7 @@ def _write(directory: Path, name: str, data: bytes, mode: WriteMode, tmp_dir: Pa
 
 def _require_component(name: str) -> None:
     seps = {"/", os.sep, os.altsep or "/"}
-    stem = name.split(".", 1)[0].upper()
+    stem = name.split(".", 1)[0].rstrip(" ").upper()
     if (
         not name
         or name in {".", ".."}
@@ -187,7 +190,7 @@ def _require_component(name: str) -> None:
 
 
 def _require_name(name: str) -> None:
-    stem = name.split(".", 1)[0].upper()
+    stem = name.split(".", 1)[0].rstrip(" ").upper()
     ok = (
         _NAME_PATTERN.fullmatch(name) is not None
         and not name.endswith(".")

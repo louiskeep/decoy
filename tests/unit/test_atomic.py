@@ -54,7 +54,7 @@ def test_tmp_dir_holds_the_temp_file(tmp_path: Path, monkeypatch: pytest.MonkeyP
 
 _BAD_NAMES = [
     "", ".", "..", "a/b", "a\\b", "a\0b", "../x",
-    "C:x", "a:b", "NUL", "nul", "con.txt", "CON.tar.gz", "COM0", "LPT0", "COM1", "lpt9.log", "AUX", "PRN.x",
+    "C:x", "a:b", "NUL", "nul", "con.txt", "CON.tar.gz", "COM1", "lpt9.log", "AUX", "PRN.x",
     "x.", "x ", " x", ".hidden", "a b", "caf\u00e9", "x" * 201,
 ]  # fmt: skip
 
@@ -67,7 +67,9 @@ def test_bad_name_fails_closed_before_any_file(tmp_path: Path, name: str) -> Non
     assert _names(tmp_path) == []
 
 
-@pytest.mark.parametrize("name", ["a.txt", "A-b_c.json", "0", "x" * 200, "console.txt", "COM10"])
+@pytest.mark.parametrize(
+    "name", ["a.txt", "A-b_c.json", "0", "x" * 200, "console.txt", "COM10", "COM0", "LPT0.log"]
+)
 def test_plain_names_are_accepted(tmp_path: Path, name: str) -> None:
     assert write_atomic(tmp_path, name, b"x", WriteMode.REPLACE) is True
 
@@ -214,7 +216,9 @@ def test_local_target_refuses_a_bad_component(name: str) -> None:
     assert info.value.code == _atomic.ATOMIC_BAD_NAME
 
 
-@pytest.mark.parametrize("name", ["NUL", "con.txt", "COM0", "lpt0.log"])
+@pytest.mark.parametrize(
+    "name", ["NUL", "con.txt", "COM1", "lpt9.log", "COM\u00b9", "CONIN$", "aux .txt"]
+)
 def test_local_target_refuses_windows_devices_on_windows(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, name: str
 ) -> None:
@@ -222,6 +226,15 @@ def test_local_target_refuses_windows_devices_on_windows(
     with pytest.raises(AtomicWriteError) as info:
         _atomic.write_local_target(tmp_path / name, b"x", WriteMode.REPLACE)
     assert info.value.code == _atomic.ATOMIC_BAD_NAME
+
+
+@pytest.mark.parametrize("name", ["COM0", "LPT0.log", "COM10", "console.txt"])
+def test_local_target_accepts_cpython_non_devices_on_windows(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, name: str
+) -> None:
+    # Parity with CPython os.path.isreserved: COM0 and LPT0 are ordinary names on Windows.
+    monkeypatch.setattr(_atomic, "_WINDOWS", True)
+    assert _atomic.write_local_target(tmp_path / name, b"x", WriteMode.REPLACE) is True
 
 
 def test_competitor_between_temp_and_link_survives(
