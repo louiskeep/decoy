@@ -3,7 +3,7 @@
 Mirror of the engine's tests/sentry/_ci_lock_scan.py (CI-E1); the tests are in
 test_ci_lock_installs.py and the policy is ci/install-policy.toml.
 The shell parsing (command splitting, basename and option normalisation, pip install arguments,
-uv run checks) is not here: it lives in _ci_shell_tokens.py, one byte-identical file the engine
+uv run checks) is not here: it lives in ci_scan/_shell_tokens.py, one byte-identical file the engine
 adopts too, so the two scanners parse alike. Differences from the engine scanner, each
 deliberate, and every rule the CLI drops is listed with its reason:
 - CLI policy in ci/install-policy.toml: three lock files, a per-job install route, engine spec and
@@ -29,7 +29,7 @@ from pathlib import Path
 from typing import Any
 
 import yaml
-from tests.sentry._ci_shell_tokens import (
+from tests.sentry.ci_scan._shell_tokens import (
     EXACT_PIN,
     base,
     commands,

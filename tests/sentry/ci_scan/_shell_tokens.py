@@ -2,7 +2,8 @@
 read pip and uv install arguments, find uv subcommands, tool fetches and index overrides.
 Repository-neutral: no policy, no file names, no package names.
 
-This file exists byte-identical in the CLI repository and the engine repository, at this path.
+This file exists byte-identical in the CLI repository and the engine repository, at this path
+(tests/sentry/ci_scan/_shell_tokens.py).
 Each repository's vendored ledger records the other repository's commit that holds the same
 bytes, and a test fetches that file and compares. That catches an edit made in one repository
 only, even when the local ledger hash was recomputed. It does not catch a deliberate change that
@@ -81,6 +82,10 @@ EXACT_PIN = re.compile(r"[A-Za-z0-9_.\-]+(\[[A-Za-z0-9_,.\-]+\])?==[^<>=!~\s]+")
 _TOKEN = re.compile(r"\"[^\"]*\"|'[^']*'|\S+")
 _TOOLS = {"uv", "uvx", "pipx", "python", "python3", "bash", "sh"}
 _SHELLS = {"bash", "sh", "zsh", "dash"}
+_UV_SUBCOMMANDS = {
+    "sync", "add", "remove", "lock", "run", "tool", "pip", "venv", "export", "tree", "init",
+    "build", "publish", "python", "cache", "self", "version", "format", "audit", "auth",
+}  # fmt: skip
 _SHORT_VALUE = re.compile(r"-[erific].+", re.S)
 _SHELL_C = re.compile(r"-[A-Za-z]*c")
 
@@ -181,35 +186,70 @@ def _skip_options(tokens: list[str], start: int, with_value: set[str]) -> int:
     return j
 
 
+def _uv_position(cmd: list[str]) -> int | None:
+    """Index in `cmd` of the uv subcommand. Known global options are skipped with their values; if
+    an option this scanner does not know took a value (`uv --preview-features x sync`), the first
+    known subcommand later in the command is used instead."""
+    if "uv" not in cmd:
+        return None
+    start = cmd.index("uv") + 1
+    j = _skip_options(cmd, start, _UV_GLOBAL_VALUE)
+    if j < len(cmd) and cmd[j] in _UV_SUBCOMMANDS:
+        return j
+    for k in range(start, len(cmd)):
+        if cmd[k] in _UV_SUBCOMMANDS:
+            return k
+    return j if j < len(cmd) else None
+
+
 def uv_subcommand(cmd: list[str]) -> str | None:
     """The uv subcommand after any global options: `sync`, `add`, `lock`, `run`, `tool`, or for
     pip `pip install` / `pip sync`. None when the command does not run uv."""
-    if "uv" not in cmd:
+    pos = _uv_position(cmd)
+    if pos is None:
         return None
-    rest = cmd[cmd.index("uv") + 1 :]
-    j = _skip_options(rest, 0, _UV_GLOBAL_VALUE)
-    if j >= len(rest):
-        return None
-    if rest[j] != "pip":
-        return rest[j]
-    k = _skip_options(rest, j + 1, _PIP_GLOBAL_VALUE)
-    return f"pip {rest[k]}" if k < len(rest) else "pip"
+    if cmd[pos] != "pip":
+        return cmd[pos]
+    k = _skip_options(cmd, pos + 1, _PIP_GLOBAL_VALUE)
+    return f"pip {cmd[k]}" if k < len(cmd) else "pip"
+
+
+def is_package_command(cmd: list[str]) -> bool:
+    """True when the command runs pip, uv, uvx or pipx, the only commands whose `-f`, `-i` and
+    index options mean a package source (`rm -f`, `tail -f` and `docker build -f` do not)."""
+    return any(t in {"uv", "uvx", "pipx"} or is_pip(t) for t in cmd)
+
+
+# Verbs that fetch packages from an index. `uv tool list|dir|uninstall` and `pipx list` do not.
+_UV_TOOL_FETCH = {"install", "run", "upgrade"}
+_PIPX_FETCH = {"install", "run", "inject", "upgrade", "upgrade-all", "reinstall", "reinstall-all"}
+
+
+def _uv_tool_verb(cmd: list[str], pos: int) -> str:
+    k = _skip_options(cmd, pos + 1, set())
+    return cmd[k] if k < len(cmd) else ""
 
 
 def tool_fetch(cmd: list[str]) -> tuple[str, list[str]] | None:
     """(label, arguments) when the command fetches a tool from an index: `uvx`, `uv tool
-    run|install`, `pipx run|install`. None otherwise."""
+    install|run|upgrade`, and the pipx verbs that install or upgrade (`runpip ... install` too).
+    None for the rest, so `uv tool list` and `pipx list` stay clean."""
     if "uvx" in cmd:
         return "uvx", cmd[cmd.index("uvx") + 1 :]
-    if uv_subcommand(cmd) == "tool":
-        rest = cmd[cmd.index("tool") + 1 :]
-        verb = rest[0] if rest else ""
-        return f"uv tool {verb}".strip(), rest[1:]
+    pos = _uv_position(cmd)
+    if pos is not None and cmd[pos] == "tool":
+        verb = _uv_tool_verb(cmd, pos)
+        if verb in _UV_TOOL_FETCH:
+            return f"uv tool {verb}", cmd[cmd.index(verb, pos) + 1 :]
+        return None
     if "pipx" in cmd:
-        rest = cmd[cmd.index("pipx") + 1 :]
-        j = _skip_options(rest, 0, set())
-        if j < len(rest) and rest[j] in {"install", "run"}:
-            return f"pipx {rest[j]}", rest[j + 1 :]
+        i = cmd.index("pipx")
+        k = _skip_options(cmd, i + 1, set())
+        verb = cmd[k] if k < len(cmd) else ""
+        if verb in _PIPX_FETCH:
+            return f"pipx {verb}", cmd[k + 1 :]
+        if verb == "runpip" and "install" in cmd[k + 1 :]:
+            return "pipx runpip install", cmd[k + 1 :]
     return None
 
 
@@ -262,9 +302,12 @@ def parse_install_args(args: list[str]) -> InstallArgs:
 
 
 def uv_run_findings(cmd: list[str], *, frozen_env: bool = False) -> list[str]:
-    """`uv run` resolves and installs on its own: `--with*` adds packages, and without `--frozen`
-    (or UV_FROZEN=1 in the environment) it may re-lock."""
-    if uv_subcommand(cmd) != "run":
+    """`uv run` and `uv tool run` resolve and install on their own: `--with*` adds packages, and
+    without `--frozen` (or UV_FROZEN=1 in the environment) they may re-lock."""
+    pos = _uv_position(cmd)
+    if pos is None:
+        return []
+    if cmd[pos] != "run" and not (cmd[pos] == "tool" and _uv_tool_verb(cmd, pos) == "run"):
         return []
     after = cmd[cmd.index("uv") + 1 :]
     found = []

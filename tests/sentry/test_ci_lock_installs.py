@@ -16,8 +16,6 @@ import shutil
 import subprocess
 import sys
 import tarfile
-import urllib.error
-import urllib.request
 from pathlib import Path
 from typing import Any
 
@@ -38,7 +36,8 @@ from tests.sentry._ci_lock_scan import (
     scan_repo,
     scan_workflow,
 )
-from tests.sentry._ci_shell_tokens import normalise
+from tests.sentry.ci_scan._identity import fetch_raw, identity_findings, should_skip
+from tests.sentry.ci_scan._shell_tokens import normalise
 
 POLICY = load_policy()
 SHA = "d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86"
@@ -132,6 +131,16 @@ def test_seeded_tool_option_and_index_bypasses_are_found() -> None:
         "pipx install": ("pipx install requests", "fetches a tool"),
         "uv tool run": ("uv tool run black", "fetches a tool"),
         "uvx": ("uvx black", "fetches a tool"),
+        "uv unknown option value before sync": ("uv --preview-features x sync", "re-resolves"),
+        "uv tool install": ("uv tool install black", "fetches a tool"),
+        "uv tool upgrade": ("uv tool upgrade black", "fetches a tool"),
+        "uv tool run unfrozen": ("uv tool run black", "uv run without --frozen"),
+        "pipx inject": ("pipx inject app requests", "fetches a tool"),
+        "pipx upgrade": ("pipx upgrade app", "fetches a tool"),
+        "pipx upgrade-all": ("pipx upgrade-all", "fetches a tool"),
+        "pipx reinstall": ("pipx reinstall app", "fetches a tool"),
+        "pipx runpip install": ("pipx runpip app install requests", "fetches a tool"),
+        "uv --quiet pip sync": ("uv --quiet pip sync r.txt", "re-resolves"),
         "pip global --python": ("pip --python .venv/bin/python install requests", "not an exact"),
         "uv pip --python before install": ("uv pip --python p install requests", "not an exact"),
         "pip --python=": ("pip --python=p install requests", "not an exact"),
@@ -171,6 +180,24 @@ def test_seeded_tool_option_and_index_bypasses_are_found() -> None:
     )
 
 
+def test_clean_commands_that_look_like_package_commands_stay_clean() -> None:
+    clean = (
+        "uv tool list",
+        "uv tool dir",
+        "uv tool uninstall black",
+        "pipx list",
+        "pipx uninstall app",
+        "pipx runpip app list",
+        "rm -f build.log",
+        "docker build -f Dockerfile .",
+        "tail -f server.log",
+        "grep -f patterns.txt data.txt",
+        "ls -i",
+    )
+    for cmd in clean:
+        assert _scan("fresh-install-smoke", LE, cmd) == [], cmd
+
+
 def test_validators_are_anchored_with_fullmatch() -> None:
     newline = "build==1.2.2\n"
     assert _has(classify_install([newline], POLICY)[1], "not an exact")
@@ -179,7 +206,7 @@ def test_validators_are_anchored_with_fullmatch() -> None:
     newer = {"uses": f"astral-sh/setup-uv@{SHA}", "with": {"version": "0.11.19\n"}}
     assert _has(_scan("setup-uv", newer, role="setup-uv"), "exact x.y.z")
     assert normalise(["pip", "install", "-rx\ny"]) == ["pip", "install", "-r", "x\ny"]
-    for source in ("_ci_lock_scan.py", "_ci_shell_tokens.py"):
+    for source in ("_ci_lock_scan.py", "ci_scan/_shell_tokens.py", "ci_scan/_identity.py"):
         text = _read(f"tests/sentry/{source}")
         assert not re.search(r"\.match\(|compile\(r?\"\^", text), f"{source} uses fullmatch"
 
@@ -425,81 +452,52 @@ def _vendor_findings(ledger: dict[str, Any], root: Path = ROOT) -> list[str]:
     return found
 
 
+def _ledger() -> dict[str, Any]:
+    return tomli.loads(_read("ci/vendored.toml"))
+
+
 def test_vendor_ledger_matches_the_copies(tmp_path: Path) -> None:
-    ledger = tomli.loads(_read("ci/vendored.toml"))
-    assert len(ledger["vendored"]) == 2 and len(ledger["mirror"]) == 3
+    ledger = _ledger()
+    vendored = {v["local_path"] for v in ledger["vendored"]}
+    shared = {
+        f"tests/sentry/ci_scan/{p.name}" for p in (ROOT / "tests/sentry/ci_scan").glob("*.py")
+    }
+    assert shared <= vendored, (
+        f"files in ci_scan missing from the ledger: {sorted(shared - vendored)}"
+    )
+    assert vendored - shared == {".github/actions/setup-uv/action.yml"}, "only setup-uv besides"
+    assert len(ledger["mirror"]) == 3
     assert _vendor_findings(ledger) == []
     wrong = copy.deepcopy(ledger)
     wrong["vendored"][0]["blob_sha256"] = "0" * 64
     moved = copy.deepcopy(ledger)
     moved["vendored"][0]["engine_path"] = "scripts/other.yml"
     assert _vendor_findings(wrong) and _vendor_findings(moved)
-    for entry, old in zip(ledger["vendored"], (b"0.11.19", b"def base"), strict=True):
-        local = entry["local_path"]
-        (tmp_path / local).parent.mkdir(parents=True, exist_ok=True)
-        (tmp_path / local).write_bytes((ROOT / local).read_bytes().replace(old, old + b" "))
-    assert len(_vendor_findings({**ledger, "mirror": []}, tmp_path)) == 2, "each copy is guarded"
-
-
-def _identity_findings(entry: dict[str, str], local: bytes, other: bytes | None) -> list[str]:
-    """A vendored file is guarded twice: against this ledger, and against the engine's bytes at the
-    recorded commit. Editing the file and recomputing the ledger hash still fails the second."""
-    found = []
-    if hashlib.sha256(local).hexdigest() != entry["blob_sha256"]:
-        found.append("local copy differs from the sha256 in the ledger")
-    if other is None:
-        found.append("the engine's copy could not be fetched")
-    elif other != local:
-        found.append("local copy differs from the engine's copy at the recorded commit")
-    return found
-
-
-def _fetch_engine(entry: dict[str, str]) -> bytes | None:
-    url = (
-        "https://raw.githubusercontent.com/louiskeep/decoy-engine"
-        f"/{entry['commit']}/{entry['engine_path']}"
-    )
-    for _ in range(3):
-        try:
-            with urllib.request.urlopen(url, timeout=20) as response:
-                return bytes(response.read())
-        except urllib.error.HTTPError:
-            return b""  # the commit or path does not exist: a definite mismatch, not "offline"
-        except (urllib.error.URLError, TimeoutError):
-            continue
-    return None
+    for entry in ledger["vendored"]:
+        local = tmp_path / entry["local_path"]
+        local.parent.mkdir(parents=True, exist_ok=True)
+        local.write_bytes((ROOT / entry["local_path"]).read_bytes() + b"\n")
+    n = len(ledger["vendored"])
+    assert len(_vendor_findings({**ledger, "mirror": []}, tmp_path)) == n, "each copy is guarded"
+    assert "re-point" in _read("ci/vendored.toml"), "the post-merge re-point instruction stays"
 
 
 def test_vendored_files_are_byte_identical_to_the_engine_at_their_commit() -> None:
-    for entry in tomli.loads(_read("ci/vendored.toml"))["vendored"]:
-        assert re.fullmatch(r"[0-9a-f]{40}", entry["commit"]), (
-            f"{entry['engine_path']}: not a commit"
-        )
-        other = _fetch_engine(entry)
-        if other is None and not os.environ.get("CI"):
+    for entry in _ledger()["vendored"]:
+        assert re.fullmatch(r"[0-9a-f]{40}", entry["commit"]), f"{entry['engine_path']}: no commit"
+        fetched = fetch_raw("louiskeep/decoy-engine", entry["commit"], entry["engine_path"])
+        if should_skip(fetched, os.environ):
             pytest.skip("offline: the cross-repository check runs in CI and on networked builders")
         local = (ROOT / entry["local_path"]).read_bytes()
-        assert _identity_findings(entry, local, other) == [], entry["engine_path"]
-
-
-def test_vendor_identity_catches_one_sided_edits() -> None:
-    for entry in tomli.loads(_read("ci/vendored.toml"))["vendored"]:
-        local = (ROOT / entry["local_path"]).read_bytes()
-        assert _identity_findings(entry, local, local) == []
-        edited = local + b"\n"
-        rehashed = {**entry, "blob_sha256": hashlib.sha256(edited).hexdigest()}
-        found = _identity_findings(rehashed, edited, local)
-        assert found == ["local copy differs from the engine's copy at the recorded commit"]
-        assert _identity_findings(entry, edited, local), "an edit without a rehash fails the ledger"
-        assert _identity_findings(entry, local, None), "an unreachable engine is a finding"
+        assert identity_findings(local, entry["blob_sha256"], fetched) == [], entry["engine_path"]
 
 
 def test_shared_shell_core_is_repo_neutral() -> None:
-    text = _read("tests/sentry/_ci_shell_tokens.py")
+    text = _read("tests/sentry/ci_scan/_shell_tokens.py")
     for policy_word in ("install-policy", "requirements-", "decoy", "tomllib", "_ci_lock_scan"):
         assert policy_word not in text, f"the shared core must not know {policy_word}"
-    assert "_ci_shell_tokens" in _read("tests/sentry/_ci_lock_scan.py")
     scanner = _read("tests/sentry/_ci_lock_scan.py")
+    assert "ci_scan._shell_tokens" in scanner
     for owned in ("def commands", "def normalise", "def parse_install_args", "_SHORT_VALUE"):
         assert owned not in scanner, f"{owned} belongs to the shared core only"
 

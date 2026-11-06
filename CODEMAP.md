@@ -50,7 +50,7 @@ First row of the layout map the LAYOUT slice completes (one line per kind of mod
 | Composite CI actions (`action.yml`) | `.github/actions/<name>/` | `setup-uv`, `lock-env` |
 | CI install, vendor and lane policy (`*.toml`) | `ci/` | `ci/install-policy.toml` (the install registry), `ci/vendored.toml`, `ci/ci-tools.in`, `ci/ci-tools.lock` |
 | Developer environment scripts | `scripts/dev/` | `lock.sh`, `bootstrap.sh`, `lock_version.sh`, `fetch_ci_binary.py` |
-| Repository policy sentries and their scanners | `tests/sentry/` | `_ratchet.py`, `_ci_lock_scan.py`, `_ci_shell_tokens.py`, `test_ci_lock_installs.py` |
+| Repository policy sentries and their scanners (CI scan helpers shared with the engine in the `ci_scan/` sub-package) | `tests/sentry/` | `_ratchet.py`, `_ci_lock_scan.py`, `test_ci_lock_installs.py`; shared CI scan helpers in `tests/sentry/ci_scan/` |
 | Build and gate evidence records | `docs/records/` | `2026-11-06-ci-l1-build.md` |
 
 ## Where Do I Find...
