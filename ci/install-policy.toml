@@ -8,12 +8,14 @@ consumers = ["pytest", "ruff", "decoy", "scripts/build_docs.py", "scripts/cert_s
 # Approved install route per job. `gates` run in this order and each must precede every consumer.
 #   lock-env: the lock-env action          constrained-wheel: wheel installed with -c dev lock
 #   drift-canary: the registered unconstrained install   certified-engine-wheel / certified-closure
-#   ci-tools: the hash-checked CI linter lock (ci/ci-tools.lock), installed with --require-hashes
+#   ci-tools: the hash-checked CI linter lock (ci/ci-tools.lock), installed with
+#             --require-hashes --only-binary :all: so no sdist build resolves a floating dependency
+#   tool-binary: a [[binary_tool]] release binary fetched by scripts/dev/fetch_ci_binary.py
 route = [
   { workflow = "ci.yml", job = "ruff", gates = ["lock-env"] },
   { workflow = "ci.yml", job = "pytest", gates = ["lock-env"] },
   { workflow = "ci.yml", job = "fresh-install-smoke", gates = ["lock-env", "constrained-wheel"] },
-  { workflow = "ci.yml", job = "ci-template-lint", gates = ["ci-tools"] },
+  { workflow = "ci.yml", job = "ci-template-lint", gates = ["ci-tools", "tool-binary"] },
   { workflow = "ci.yml", job = "certified-profile", gates = ["lock-env", "certified-engine-wheel", "certified-closure"] },
   { workflow = "release-smoke.yml", job = "fresh-install", gates = ["lock-env", "constrained-wheel", "drift-canary"] },
   { workflow = "regen-diagrams.yml", job = "regenerate", gates = ["lock-env"] },
@@ -22,7 +24,7 @@ route = [
 [locks]
 dev = "requirements-dev.lock"            # bootstrap.sh syncs it; clean-venv installs use `-c`
 certified = "requirements-certified.txt" # `-r` only, after the certified engine-plus-wheel step
-ci_tools = "ci/ci-tools.lock"            # `-r --require-hashes`; compiled from ci/ci-tools.in
+ci_tools = "ci/ci-tools.lock"            # `-r --require-hashes --only-binary :all:`; compiled from ci/ci-tools.in by lock.sh
 
 # The only places an engine spec literal may appear. Each must equal `lock_version.sh --engine-spec`.
 # `kind` says what the install is; a drift-canary also names the `event` it runs under, and the
@@ -46,3 +48,13 @@ workflow = "regen-diagrams.yml"
 job = ""
 scopes = ["contents"]
 reason = "commit regenerated SVGs to main"
+
+# Release binaries a job may download. The archive sha256 is checked before anything is extracted;
+# a mismatch fails the job. Value from the project's own checksums file for the release.
+[[binary_tool]]
+name = "actionlint"
+version = "1.7.12"
+url = "https://github.com/rhysd/actionlint/releases/download/v1.7.12/actionlint_1.7.12_linux_amd64.tar.gz"
+sha256 = "8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8"
+member = "actionlint"
+reason = "actionlint-py is sdist-only, so pip would build it with floating build dependencies; the release binary is the same tool"

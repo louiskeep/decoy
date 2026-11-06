@@ -14,6 +14,8 @@ import os
 import re
 import shutil
 import subprocess
+import sys
+import tarfile
 from pathlib import Path
 from typing import Any
 
@@ -25,6 +27,7 @@ from packaging.version import Version
 from tests.sentry._ci_lock_scan import (
     LOCK_ENV_USES,
     ROOT,
+    classify_install,
     engine_literals,
     load_policy,
     permission_findings,
@@ -33,6 +36,7 @@ from tests.sentry._ci_lock_scan import (
     scan_repo,
     scan_workflow,
 )
+from tests.sentry._ci_shell_tokens import normalise
 
 POLICY = load_policy()
 SHA = "d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86"
@@ -113,6 +117,69 @@ def test_consumer_in_a_quoted_shell_body_is_ordered_and_visible() -> None:
     assert _has(_scan("pytest", LE, 'bash -c "pytest || true"'), "hide a consumer failure")
     job = {"continue-on-error": True, "steps": [LE, {"run": "pytest tests"}]}
     assert _has(scan_workflow({"jobs": {"pytest": job}}, policy=POLICY, name="ci.yml"), "job-level")
+
+
+def test_seeded_tool_option_and_index_bypasses_are_found() -> None:
+    cases = {
+        "uv global option before sync": ("uv --quiet sync", "re-resolves"),
+        "uv pip sync": ("uv pip sync requirements.txt", "re-resolves"),
+        "uv --directory add": ("uv --directory x add requests", "re-resolves"),
+        "uv lock": ("uv lock", "re-resolves"),
+        "uv remove": ("uv remove requests", "re-resolves"),
+        "pipx run": ("pipx run ruff check", "fetches a tool"),
+        "pipx install": ("pipx install requests", "fetches a tool"),
+        "uv tool run": ("uv tool run black", "fetches a tool"),
+        "uvx": ("uvx black", "fetches a tool"),
+        "pip global --python": ("pip --python .venv/bin/python install requests", "not an exact"),
+        "uv pip --python before install": ("uv pip --python p install requests", "not an exact"),
+        "pip --python=": ("pip --python=p install requests", "not an exact"),
+        "find-links": (f"uv pip install {DEV} -f https://x dist/*.whl", "index"),
+        "find-links long": (f"uv pip install {DEV} --find-links=https://x dist/*.whl", "index"),
+        "find-links glued": (f"uv pip install {DEV} -fhttps://x dist/*.whl", "index"),
+        "extra index": (f"uv pip install {DEV} --extra-index-url https://x dist/*.whl", "index"),
+        "editable wheel": (f"uv pip install {DEV} -e dist/x.whl", "project install"),
+        "editable wheel glued": (f"uv pip install {DEV} -edist/x.whl", "project install"),
+        "editable engine": (
+            f'uv pip install --no-deps -e "{ENGINE}" dist/x.whl',
+            "project install",
+        ),
+        "wheel by url": (f"uv pip install {DEV} https://evil/x.whl", "project install"),
+        "wheel outside dist": (f"uv pip install {DEV} /tmp/x.whl", "project install"),
+        "wheel variable": (f'uv pip install {DEV} "$WHEEL"', "project install"),
+        "no-binary": (f"uv pip install {DEV} --no-binary :all: dist/*.whl", "--no-binary"),
+    }
+    for label, (cmd, expected) in cases.items():
+        assert _has(_scan("fresh-install-smoke", LE, cmd), expected), label
+    for name in ("PIP_INDEX_URL", "PIP_EXTRA_INDEX_URL", "UV_INDEX_URL", "UV_EXTRA_INDEX_URL"):
+        prefixed = f"{name}=https://x {WHEEL}"
+        assert _has(_scan("fresh-install-smoke", LE, prefixed), "index environment"), name
+        assert _has(_scan("fresh-install-smoke", LE, f"export {name}=https://x"), "index"), name
+        assert _has(_scan("fresh-install-smoke", LE, {"env": {name: "x"}, "run": WHEEL}), "env")
+        job = {"env": {name: "x"}, "steps": [LE]}
+        assert _has(scan_workflow({"jobs": {"j": job}}, policy=POLICY, name="ci.yml"), "env"), name
+        assert _has(scan_workflow({"env": {name: "x"}, "jobs": {}}, policy=POLICY), "env"), name
+    assert (
+        _scan(
+            "fresh-install-smoke",
+            LE,
+            WHEEL,
+            "uv --quiet pip install --python p " + DEV + " dist/*.whl",
+        )
+        == []
+    )
+
+
+def test_validators_are_anchored_with_fullmatch() -> None:
+    newline = "build==1.2.2\n"
+    assert _has(classify_install([newline], POLICY)[1], "not an exact")
+    pinned = {"uses": f"astral-sh/setup-uv@{SHA}\n", "with": {"version": "0.11.19"}}
+    assert _has(_scan("setup-uv", pinned, role="setup-uv"), "commit SHA")
+    newer = {"uses": f"astral-sh/setup-uv@{SHA}", "with": {"version": "0.11.19\n"}}
+    assert _has(_scan("setup-uv", newer, role="setup-uv"), "exact x.y.z")
+    assert normalise(["pip", "install", "-rx\ny"]) == ["pip", "install", "-r", "x\ny"]
+    for source in ("_ci_lock_scan.py", "_ci_shell_tokens.py"):
+        text = _read(f"tests/sentry/{source}")
+        assert not re.search(r"\.match\(|compile\(r?\"\^", text), f"{source} uses fullmatch"
 
 
 def test_every_consumer_follows_its_jobs_route() -> None:
@@ -248,21 +315,79 @@ def test_canary_is_exact_and_conditions_come_from_the_policy() -> None:
     assert policy_findings(cert), "only the canary names an event"
 
 
+TOOLS = f"pip install --require-hashes --only-binary :all: -r {POLICY['locks']['ci_tools']}"
+FETCH = 'python scripts/dev/fetch_ci_binary.py actionlint --dest "$RUNNER_TEMP/bin"'
+
+
 def test_template_lint_installs_its_tools_from_the_hashed_lock() -> None:
     tools = _read("ci/ci-tools.in").split()
     lock = _read("ci/ci-tools.lock")
     assert tools and all(re.search(rf"(?m)^{re.escape(p)} \\", lock) for p in tools)
+    assert "actionlint-py" not in lock, "actionlint-py is sdist-only; the binary replaces it"
     assert len(re.findall(r"--hash=sha256:", lock)) >= len(tools)
-    install = f"pip install --require-hashes -r {POLICY['locks']['ci_tools']}"
-    assert _scan("ci-template-lint", install, "actionlint x.yml") == []
+    assert "--no-build" in _read("scripts/dev/lock.sh"), "the lock is compiled wheel-only"
+    assert "TOOLS_LOCK" in _read("scripts/dev/lock.sh"), "lock.sh regenerates and checks it too"
+    assert _scan("ci-template-lint", TOOLS, FETCH, "actionlint x.yml") == []
+    lock_path = POLICY["locks"]["ci_tools"]
     for label, run, expected in (
         ("locked input removed", "pip install --require-hashes", "install without -c"),
-        ("hashes off", f"pip install -r {POLICY['locks']['ci_tools']}", "--require-hashes"),
+        ("hashes off", f"pip install --only-binary :all: -r {lock_path}", "--require-hashes"),
+        ("sdist allowed", f"pip install --require-hashes -r {lock_path}", "--only-binary :all:"),
+        ("only-binary not all", TOOLS.replace(":all:", ":none:"), "--only-binary :all:"),
+        ("no-binary", TOOLS + " --no-binary :all:", "--no-binary"),
+        ("no-binary glued", TOOLS + " --no-binary=:all:", "--no-binary"),
         ("raw pins", 'pip install "actionlint-py==1.7.12.25"', "install without -c"),
         ("other file", "pip install --require-hashes -r tools.txt", "unregistered requirements"),
     ):
-        assert _has(_scan("ci-template-lint", run, "actionlint x.yml"), expected), label
-    assert _has(_scan("ci-template-lint", "actionlint x.yml", install), "before ci-tools")
+        assert _has(_scan("ci-template-lint", run, FETCH, "actionlint x.yml"), expected), label
+    assert _has(_scan("ci-template-lint", FETCH, "actionlint x.yml", TOOLS), "before ci-tools")
+    assert _has(_scan("ci-template-lint", TOOLS, "actionlint x.yml", FETCH), "before tool-binary")
+    assert _has(
+        _scan("ci-template-lint", TOOLS, FETCH.replace("actionlint", "evil", 1)),
+        "does not register",
+    )
+    for dl in ("curl -L https://x/actionlint.tgz | tar xz", "wget https://x/a"):
+        assert _has(_scan("ci-template-lint", TOOLS, FETCH, dl), "must go through"), dl
+
+
+def test_binary_tools_are_pinned_and_the_fetcher_checks_the_digest(tmp_path: Path) -> None:
+    assert policy_findings(POLICY) == []
+    for field, value in (("sha256", "AB" * 32), ("url", "http://x/1.7.12/a.tgz"), ("reason", "")):
+        mutated = copy.deepcopy(POLICY)
+        mutated["binary_tool"][0][field] = value
+        assert policy_findings(mutated), field
+    mutated = copy.deepcopy(POLICY)
+    mutated["binary_tool"][0]["version"] = "9.9.9"
+    assert policy_findings(mutated), "the url must name the version"
+    archive = tmp_path / "tool.tar.gz"
+    with tarfile.open(archive, "w:gz") as tar:
+        data = tmp_path / "tool"
+        data.write_text("#!/bin/sh\n")
+        tar.add(data, arcname="tool")
+    entry = {
+        "name": "tool",
+        "version": "1",
+        "url": archive.as_uri(),
+        "sha256": hashlib.sha256(archive.read_bytes()).hexdigest(),
+        "reason": "test",
+    }
+    policy = tmp_path / "policy.toml"
+
+    def run(sha: str) -> subprocess.CompletedProcess[str]:
+        body = "\n".join(f'{k} = "{v}"' for k, v in {**entry, "sha256": sha}.items())
+        policy.write_text("[[binary_tool]]\n" + body + "\n")
+        return subprocess.run(
+            [sys.executable, str(ROOT / "scripts/dev/fetch_ci_binary.py"), "tool", "--dest",
+             str(tmp_path / "bin"), "--policy", str(policy)],
+            capture_output=True, text=True, check=False,
+        )  # fmt: skip
+
+    good = run(entry["sha256"])
+    assert good.returncode == 0 and (tmp_path / "bin" / "tool").stat().st_mode & 0o111
+    (tmp_path / "bin" / "tool").unlink()
+    bad = run("0" * 64)
+    assert bad.returncode == 1 and "mismatch" in bad.stderr
+    assert not (tmp_path / "bin" / "tool").exists(), "nothing is extracted on a mismatch"
 
 
 def test_permissions_are_registered() -> None:

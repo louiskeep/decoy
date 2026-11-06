@@ -204,11 +204,19 @@ jobs:
         with:
           python-version: '3.12'
 
-      - name: Install the linters from the hash-checked lock
-        # ci/ci-tools.lock (compiled from ci/ci-tools.in) pins both tools and every
-        # transitive dependency with hashes, so a lint verdict is attributable to
-        # one set of versions and a new upstream release cannot change it.
-        run: pip install --require-hashes -r ci/ci-tools.lock
+      - name: Install check-jsonschema from the hash-checked lock
+        # ci/ci-tools.lock (compiled from ci/ci-tools.in by scripts/dev/lock.sh) pins
+        # check-jsonschema and its dependencies with hashes. --only-binary :all: refuses
+        # an sdist, which pip would build with unpinned build dependencies.
+        run: |
+          pip install --require-hashes --only-binary :all: -r ci/ci-tools.lock
+
+      - name: Fetch the pinned actionlint binary (sha256-checked)
+        # actionlint-py ships only an sdist, so the release binary is used instead. Its
+        # url and sha256 live in ci/install-policy.toml; a mismatch fails this step.
+        run: |
+          python scripts/dev/fetch_ci_binary.py actionlint --dest "$RUNNER_TEMP/actionlint-bin"
+          echo "$RUNNER_TEMP/actionlint-bin" >> "$GITHUB_PATH"
 
       - name: actionlint (GitHub Actions template)
         run: actionlint integrations/github-actions/decoy-ci.yml

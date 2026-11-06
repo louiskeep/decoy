@@ -49,16 +49,40 @@ _COMMANDS: dict[str, Callable[[str, str, str], list[str]]] = {
     "unmask": lambda cfg, src, out: ["unmask", cfg, out, "--json"],
     "run": lambda cfg, src, out: ["run", cfg, "--json"],
     "report fidelity --config": lambda cfg, src, out: [
-        "report", "fidelity", src, out, "--config", cfg, "--json"
+        "report",
+        "fidelity",
+        src,
+        out,
+        "--config",
+        cfg,
+        "--json",
     ],
     "report fidelity --policy": lambda cfg, src, out: [
-        "report", "fidelity", src, out, "--policy", cfg, "--json"
+        "report",
+        "fidelity",
+        src,
+        out,
+        "--policy",
+        cfg,
+        "--json",
     ],
     "report integrity --config": lambda cfg, src, out: [
-        "report", "integrity", out, "--source", src, "--config", cfg, "--json"
+        "report",
+        "integrity",
+        out,
+        "--source",
+        src,
+        "--config",
+        cfg,
+        "--json",
     ],
     "report vault --config": lambda cfg, src, out: [
-        "report", "vault", out, "--config", cfg, "--json"
+        "report",
+        "vault",
+        out,
+        "--config",
+        cfg,
+        "--json",
     ],
 }
 

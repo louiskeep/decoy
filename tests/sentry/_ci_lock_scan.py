@@ -4,11 +4,18 @@ Mirror of the engine's tests/sentry/_ci_lock_scan.py (CI-E1); the tests are in
 test_ci_lock_installs.py and the policy is ci/install-policy.toml.
 The shell parsing (command splitting, basename and option normalisation, pip install arguments,
 uv run checks) is not here: it lives in _ci_shell_tokens.py, one byte-identical file the engine
-adopts after CI-E1 merges. Differences from the engine scanner, deliberate until then:
-- CLI policy: three lock files, a per-job install route, engine spec and the drift-canary event
-  only at registered sites.
-- Dropped: the wheel-variable rule (`pip install "$WHEEL"` is a finding here; stricter, never
-  looser), pip-audit, pyarrow parity-smoke and Mac-gate rules; the CLI has no such job.
+adopts too, so the two scanners parse alike. Differences from the engine scanner, each
+deliberate, and every rule the CLI drops is listed with its reason:
+- CLI policy in ci/install-policy.toml: three lock files, a per-job install route, engine spec and
+  the drift-canary event only at registered sites, release binaries only through
+  scripts/dev/fetch_ci_binary.py with a checked sha256.
+- Dropped, stricter in the CLI: the wheel-variable rule (`pip install "$WHEEL"` is a finding here),
+  pinned-tool allowance (uvx, `uv tool` and pipx fetches are all findings), `uv lock --check` and
+  `uv sync --frozen` (every uv sync or lock is a finding; bootstrap.sh owns the install).
+- Dropped, no such job in the CLI: pip-audit matrix rules, pyarrow parity-smoke, the Mac gate
+  exemption, and the CodSpeed `with.run` step text.
+- Replaced: the inline-lock-parsing target (`requirements-dev.lock` and the other registered lock
+  files instead of `uv.lock`) and the write-scope allowlist (policy `write_scope`).
 - Discovery is bounded to .github/workflows and .github/actions. Customer templates under
   integrations/ are shipped product and are never scanned.
 Order is checked by step index, not data flow.
@@ -26,9 +33,13 @@ from tests.sentry._ci_shell_tokens import (
     EXACT_PIN,
     base,
     commands,
+    env_mapping_index_names,
+    index_env_names,
     parse_install_args,
     pip_install_args,
+    tool_fetch,
     uv_run_findings,
+    uv_subcommand,
 )
 
 if sys.version_info >= (3, 11):
@@ -40,8 +51,12 @@ ROOT = Path(__file__).resolve().parents[2]
 POLICY_FILE = ROOT / "ci" / "install-policy.toml"
 LOCK_ENV_USES = "./.github/actions/lock-env"
 SETUP_UV_USES = "./.github/actions/setup-uv"
-VERSION = re.compile(r"^\d+\.\d+\.\d+$")
-SETUP_UV_SHA = re.compile(r"^astral-sh/setup-uv@[0-9a-f]{40}$")
+VERSION = re.compile(r"\d+\.\d+\.\d+")
+SETUP_UV_SHA = re.compile(r"astral-sh/setup-uv@[0-9a-f]{40}")
+LOCAL_WHEEL = re.compile(r"(\./)?dist/[^/\s]+\.whl")
+FETCH_SCRIPT = "fetch_ci_binary.py"
+# uv subcommands that resolve or edit outside the lock.
+UV_REFRESH = {"sync", "add", "remove", "lock", "pip sync"}
 ENGINE_URL = re.compile(r"git\+https://[^\s\"']*decoy-engine@[^\s\"']+")
 ENV_NAMES = ("UV_PROJECT_ENVIRONMENT", "DECOY_VENV", "DECOY_PYTHON")
 _HIDES = re.compile(r"\|\|\s*(true|:|exit(\s+0)?)\b|\bset\s+(\+e\b|\+o\s+errexit)|\bexit\s+0\b")
@@ -56,7 +71,7 @@ def load_policy(path: Path = POLICY_FILE) -> dict[str, Any]:
 
 
 def _is_consumer(cmd: list[str], consumers: list[str]) -> bool:
-    if pip_install_args(cmd) is not None:
+    if pip_install_args(cmd) is not None or FETCH_SCRIPT in map(base, cmd):
         return False
     return any(base(t) in consumers or t.endswith(tuple(consumers)) for t in cmd)
 
@@ -75,15 +90,17 @@ def classify_install(args: list[str], policy: dict[str, Any]) -> tuple[str | Non
     for arg in parsed.positionals:
         if ENGINE_URL.fullmatch(arg):
             engines += 1
-        elif arg.endswith(".whl"):
+        elif LOCAL_WHEEL.fullmatch(arg):
             wheels += 1
         elif arg.startswith((".", "/", "$", "~")) or ("/" in arg and "==" not in arg):
             found.append(f"project install by pip ({arg})")
-        elif not EXACT_PIN.match(arg):
+        elif not EXACT_PIN.fullmatch(arg):
             found.append(f"requirement is not an exact == pin ({arg})")
         else:
             bare = True
     nodeps = "--no-deps" in flags
+    if "--no-binary" in parsed.values or "--no-binary" in flags:
+        found.append("source builds (--no-binary) resolve unpinned build dependencies")
     found += [f"unregistered constraint file ({c})" for c in cons if c != dev]
     closures = {locks[k]: g for k, g in REQ_GATES.items()}
     found += [f"unregistered requirements file ({r})" for r in reqs if r not in closures]
@@ -93,6 +110,8 @@ def classify_install(args: list[str], policy: dict[str, Any]) -> tuple[str | Non
         gate = closures[reqs[0]]
         if gate == "ci-tools" and "--require-hashes" not in flags:
             found.append("the ci-tools lock must be installed with --require-hashes")
+        if gate == "ci-tools" and parsed.values.get("--only-binary") != [":all:"]:
+            found.append("the ci-tools lock must be installed with --only-binary :all:")
     elif exact_pair:
         gate = "certified-engine-wheel" if nodeps else "drift-canary"
     elif engines:
@@ -147,20 +166,29 @@ def _step_findings(
         out.append("engine spec literal outside the registered install sites")
     if _RUFF.search(text):
         out.append(f"ruff must come from {LOCK_ENV_USES}, not a literal pin or uvx")
+    out += [
+        f"index environment variable ({n}) in env" for n in env_mapping_index_names(step.get("env"))
+    ]
     for cmd in commands(text):
         out += uv_run_findings(cmd, frozen_env=ctx["frozen"])
+        out += [f"index environment variable ({n})" for n in index_env_names(cmd)]
+        if (sub := uv_subcommand(cmd)) in UV_REFRESH:
+            out.append(f"uv {sub} re-resolves outside the lock")
+        if fetch := tool_fetch(cmd):
+            out.append(f"{fetch[0]} fetches a tool from the index; use the lock")
+        if any(base(t) in {"curl", "wget"} for t in cmd):
+            out.append(f"downloads must go through {FETCH_SCRIPT} (sha256-checked)")
+        if FETCH_SCRIPT in map(base, cmd):
+            gates.append("tool-binary")
+            tool = cmd[list(map(base, cmd)).index(FETCH_SCRIPT) + 1 :][:1]
+            if not tool or tool[0] not in {t["name"] for t in policy.get("binary_tool", [])}:
+                out.append(f"{FETCH_SCRIPT} names a tool the policy does not register")
         args = pip_install_args(cmd)
         if args is None:
             if any(lk in tok for tok in cmd for lk in policy["locks"].values()):
                 out.append("inline lock parsing; use scripts/dev/lock_version.sh")
-            if "uv" in cmd and cmd[cmd.index("uv") + 1 : cmd.index("uv") + 2] in (
-                [["add"], ["remove"], ["lock"], ["sync"]]
-            ):
-                out.append("uv add, remove, lock or sync re-resolves outside the lock")
             if ctx["role"] == "workflow" and any(base(t) == "bootstrap.sh" for t in cmd):
                 out.append(f"installs outside {LOCK_ENV_USES}")
-            if "uvx" in cmd or ("uv" in cmd and "tool" in cmd):
-                out.append("uvx and uv tool fetch tools from the index; use the lock")
             continue
         gate, found = classify_install(args, policy)
         out += found
@@ -191,6 +219,10 @@ def scan_workflow(
     findings: list[str] = []
     if role == "workflow" and any(n in (wf.get("env") or {}) for n in ENV_NAMES):
         findings.append("workflow: copies the venv env block; use " + LOCK_ENV_USES)
+    findings += [
+        f"workflow: index environment variable ({n}) in env"
+        for n in env_mapping_index_names(wf.get("env"))
+    ]
     for job_name, job in (wf.get("jobs") or {}).items():
         steps = job.get("steps") or []
         entry = next(
@@ -204,6 +236,10 @@ def scan_workflow(
         gate_at: dict[str, int] = {}
         installs = consumer_seen = False
         uses = [str(s.get("uses", "")) for s in steps]
+        findings += [
+            f"{job_name}: index environment variable ({n}) in env"
+            for n in env_mapping_index_names(job.get("env"))
+        ]
         if role == "workflow" and any(n in (job.get("env") or {}) for n in ENV_NAMES):
             findings.append(f"{job_name}: copies the venv env block; use {LOCK_ENV_USES}")
         for index, step in enumerate(steps):
@@ -214,7 +250,7 @@ def scan_workflow(
             for gate in gates:
                 gate_at.setdefault(gate, index)
             cmds = commands(str(step.get("run", "")))
-            installs = installs or any(pip_install_args(c) is not None for c in cmds)
+            installs = installs or bool(gates) or any(pip_install_args(c) is not None for c in cmds)
             if role == "workflow" and not {LOCK_ENV_USES, SETUP_UV_USES} & set(uses):
                 if any(t in {"uv", "uvx"} for c in cmds for t in c):
                     findings.append(f"{job_name}: runs uv without the setup-uv or lock-env action")
@@ -245,9 +281,9 @@ def scan_workflow(
             ref = str(step.get("uses", ""))
             if not ref.startswith("astral-sh/setup-uv"):
                 continue
-            if not VERSION.match(str((step.get("with") or {}).get("version", ""))):
+            if not VERSION.fullmatch(str((step.get("with") or {}).get("version", ""))):
                 findings.append(f"{job_name}: setup-uv version is not an exact x.y.z")
-            if not SETUP_UV_SHA.match(ref):
+            if not SETUP_UV_SHA.fullmatch(ref):
                 findings.append(f"{job_name}: setup-uv is not pinned to a commit SHA")
             if role != "setup-uv":
                 findings.append(f"{job_name}: raw setup-uv; use {SETUP_UV_USES}")
@@ -286,11 +322,11 @@ def engine_literals(root: Path = ROOT) -> list[tuple[str, str, str, str]]:
 
 
 def policy_findings(policy: dict[str, Any]) -> list[str]:
-    """Every engine site and write scope names a reason; a drift canary also names its event and
+    """Every engine site, binary tool and write scope names a reason; a drift canary also names its event and
     no other site does. That is what makes each one a decision."""
     found = [
-        f"{t} {e.get('workflow')}/{e.get('job')} has no reason"
-        for t in ("engine_site", "write_scope")
+        f"{t} {e.get('workflow') or e.get('name')}/{e.get('job', '')} has no reason"
+        for t in ("engine_site", "write_scope", "binary_tool")
         for e in policy.get(t, [])
         if not str(e.get("reason", "")).strip()
     ]
@@ -300,6 +336,15 @@ def policy_findings(policy: dict[str, Any]) -> list[str]:
             found.append(f"{where} has unknown kind {site.get('kind')!r}")
         if (site.get("kind") == "drift-canary") != bool(str(site.get("event", "")).strip()):
             found.append(f"{where}: only a drift-canary names an event, and it must")
+    for tool in policy.get("binary_tool", []):
+        where = f"binary_tool {tool.get('name')}"
+        if not re.fullmatch(r"[0-9a-f]{64}", str(tool.get("sha256", ""))):
+            found.append(f"{where}: sha256 is not 64 lowercase hex digits")
+        if not (
+            str(tool.get("url", "")).startswith("https://")
+            and str(tool.get("version", "x")) in str(tool.get("url", ""))
+        ):
+            found.append(f"{where}: url is not https or does not name the version")
     return found
 
 
