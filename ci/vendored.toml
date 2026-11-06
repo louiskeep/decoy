@@ -20,7 +20,7 @@ commit = "f2b7b3da4b9374b8745e089530b3e1c7815ce638"
 engine_path = "tests/sentry/_ci_shell_tokens.py"
 local_path = "tests/sentry/_ci_shell_tokens.py"
 blob_sha256 = "ea9a90ff78878359c3cf19f5d133b6ee3179a6637a92edddc3898e491c9058fc"
-commit = "7b9788a8c1a854fde29b07b7d684ead7a18e41b0"
+commit = "1871f30bc788c53311bd4307ddb99880563f41fb"
 
 [[mirror]]
 engine_path = ".github/actions/lock-env/action.yml"
