@@ -16,6 +16,8 @@ import shutil
 import subprocess
 import sys
 import tarfile
+import urllib.error
+import urllib.request
 from pathlib import Path
 from typing import Any
 
@@ -432,6 +434,57 @@ def test_vendor_ledger_matches_the_copies(tmp_path: Path) -> None:
         (tmp_path / local).parent.mkdir(parents=True, exist_ok=True)
         (tmp_path / local).write_bytes((ROOT / local).read_bytes().replace(old, old + b" "))
     assert len(_vendor_findings({**ledger, "mirror": []}, tmp_path)) == 2, "each copy is guarded"
+
+
+def _identity_findings(entry: dict[str, str], local: bytes, other: bytes | None) -> list[str]:
+    """A vendored file is guarded twice: against this ledger, and against the engine's bytes at the
+    recorded commit. Editing the file and recomputing the ledger hash still fails the second."""
+    found = []
+    if hashlib.sha256(local).hexdigest() != entry["blob_sha256"]:
+        found.append("local copy differs from the sha256 in the ledger")
+    if other is None:
+        found.append("the engine's copy could not be fetched")
+    elif other != local:
+        found.append("local copy differs from the engine's copy at the recorded commit")
+    return found
+
+
+def _fetch_engine(entry: dict[str, str]) -> bytes | None:
+    url = (
+        "https://raw.githubusercontent.com/louiskeep/decoy-engine"
+        f"/{entry['commit']}/{entry['engine_path']}"
+    )
+    for _ in range(3):
+        try:
+            with urllib.request.urlopen(url, timeout=20) as response:
+                return bytes(response.read())
+        except (urllib.error.URLError, TimeoutError):
+            continue
+    return None
+
+
+def test_vendored_files_are_byte_identical_to_the_engine_at_their_commit() -> None:
+    for entry in tomli.loads(_read("ci/vendored.toml"))["vendored"]:
+        assert re.fullmatch(r"[0-9a-f]{40}", entry["commit"]), (
+            f"{entry['engine_path']}: not a commit"
+        )
+        other = _fetch_engine(entry)
+        if other is None and not os.environ.get("CI"):
+            pytest.skip("offline: the cross-repository check runs in CI and on networked builders")
+        local = (ROOT / entry["local_path"]).read_bytes()
+        assert _identity_findings(entry, local, other) == [], entry["engine_path"]
+
+
+def test_vendor_identity_catches_one_sided_edits() -> None:
+    for entry in tomli.loads(_read("ci/vendored.toml"))["vendored"]:
+        local = (ROOT / entry["local_path"]).read_bytes()
+        assert _identity_findings(entry, local, local) == []
+        edited = local + b"\n"
+        rehashed = {**entry, "blob_sha256": hashlib.sha256(edited).hexdigest()}
+        found = _identity_findings(rehashed, edited, local)
+        assert found == ["local copy differs from the engine's copy at the recorded commit"]
+        assert _identity_findings(entry, edited, local), "an edit without a rehash fails the ledger"
+        assert _identity_findings(entry, local, None), "an unreachable engine is a finding"
 
 
 def test_shared_shell_core_is_repo_neutral() -> None:

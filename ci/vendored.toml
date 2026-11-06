@@ -1,8 +1,12 @@
-# Files copied from the engine's CI-E1 work. A vendored file is byte-identical: its local sha256
-# must equal blob_sha256 and its engine_path must equal its local_path. A mirror is adapted: its
-# header names engine_path and the differences, and blob_sha256 records the engine blob it was
-# adapted from. `commit` is informational provenance; re-point it to the CI-E1 merge on engine
-# main before L1b (the paths and blob hashes do not move). CI-X compares engine main to this file.
+# Files shared with the engine repository (louiskeep/decoy-engine). A [[vendored]] file is
+# byte-identical there: its local sha256 must equal blob_sha256, engine_path must equal local_path,
+# and `commit` is an engine commit that holds the same bytes, which tests/sentry/
+# test_ci_lock_installs.py fetches and compares. So editing the file and this hash together, in
+# this repository only, still fails; changing a vendored file means landing it in the engine first
+# and pointing `commit` at that commit. A [[mirror]] is adapted: its header names engine_path and
+# the differences, and blob_sha256 records the engine blob it was adapted from. Not caught: a
+# deliberate change that lands in both repositories and re-points both ledgers (a reviewed
+# change), and mirrors, which are not byte-identical.
 
 [[vendored]]
 engine_path = ".github/actions/setup-uv/action.yml"
@@ -10,13 +14,13 @@ local_path = ".github/actions/setup-uv/action.yml"
 blob_sha256 = "91b5aa05410a96702c57818a966cf29c45ef1c2b204d929ffc36694b84de86ec"
 commit = "f2b7b3da4b9374b8745e089530b3e1c7815ce638"
 
-# The shell-parsing core starts here: the engine adopts this same file after CI-E1 merges (a CI-X
-# row), so `commit` names the CLI commit that introduced it until the engine row replaces it.
+# The shell-parsing core. It originated in this repository (commit 79201ffd) and the engine holds
+# the same bytes at `commit`; the engine's own ledger names 79201ffd for the reverse check.
 [[vendored]]
 engine_path = "tests/sentry/_ci_shell_tokens.py"
 local_path = "tests/sentry/_ci_shell_tokens.py"
 blob_sha256 = "ea9a90ff78878359c3cf19f5d133b6ee3179a6637a92edddc3898e491c9058fc"
-commit = "cli-origin"
+commit = "7b9788a8c1a854fde29b07b7d684ead7a18e41b0"
 
 [[mirror]]
 engine_path = ".github/actions/lock-env/action.yml"
