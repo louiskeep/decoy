@@ -9,6 +9,10 @@ duplicate `_check_target_overwrite`; M1 routes run's YAML parse through the gate
 capacity refusal a warning on the chunked route; M3 caps each message and adds a corrupt-CSV marker
 test; M4 lists each retargeted test; L1 to L3 as listed under section 7.
 
+Revision note r3 (Codex applying Dennis r2, 2026-11-06). The run path now has one YAML parse in
+`_load_raw_config`, the run envelope alone caps gate messages, and Dennis r2's missing retarget,
+dialect parity cell, exact sentry exemptions and follow-ups are explicit below.
+
 Rules consulted: `~/dev-rules/README.md` (routing table), `00-universal.md`,
 `risk-and-exceptions.md`, `development-loop.md` (PLAN, plan-lint), `cross-cutting-concerns.md`,
 `architecture.md` (Layout), `testing.md` (Test depth), `api-and-compatibility.md` (exit codes and
@@ -40,7 +44,7 @@ The change promises:
    `location`) and `error_kind`. `error_kind` keeps today's values where today has one:
    `"capacity"` with `code`, and `"missing_extra"` with `extra` for an absent optional extra (spaCy
    for NER). Every other refusal is `"validation"`. Each `messages[].message` and `error` is capped
-   at run's 500-character limit.
+   in run's envelope at run's 500-character limit.
 5. There is one gate. `decoy validate` (default and `config`), `decoy ci check` and `decoy run` call
    it; `run.py` and `validate.py` call no layer check and parse no pipeline YAML themselves.
 
@@ -90,7 +94,8 @@ command body (`preflight.py:624-767`) is a third copy of steps 1-3 (CONFIG-EXPLI
 
 `decoy run` (`src/decoy/cli/run.py`, 1805 lines, over the cap and frozen):
 
-- `:243` `_load_raw_config`; `:576-588` YAML re-parse with `sanitize_yaml_error`; `:590-622` DE-02
+- `:243-258` `_load_raw_config` parses with `yaml.safe_load`, returns only dicts, and swallows every
+  parse failure; `:576-588` re-parses with `yaml.safe_load` and `sanitize_yaml_error`; `:590-622` DE-02
   `mask_secret_ref` guard; `:628-668` `--duckdb-source` staging; `:684` `PipelineConfig.model_validate`
   is the only config check, rendered with `str(exc)` (`:686`, which includes Pydantic's
   `input_value`); `:697` `--mask-secret` applied; `:821` native pre-execution gate; `:842`
@@ -155,7 +160,9 @@ and stderr line. No library applies.
 - **One choke point, two entries.** The gate moves out of `validate.py` into a package with a parse
   entry and a config entry:
   - `parse_pipeline_yaml(config_path, source_text=None) -> (raw, findings)`: YAML syntax only
-    (`yaml.parse_error` through `sanitize_yaml_error`).
+    (`yaml.parse_error` through `sanitize_yaml_error`). It returns `raw` unchanged, including
+    `None`, lists and scalar values, so `run_gate_on_config` emits `yaml.empty` or
+    `yaml.not_mapping` rather than the parser hiding those cases.
   - `run_gate_on_config(raw, config_path, route=GateRoute.PLAIN) -> GateResult`: owns the empty
     (`yaml.empty`) and non-mapping (`yaml.not_mapping`) refusals, then the three layers.
     `config_path` is used only for its directory, as today.
@@ -181,7 +188,9 @@ and stderr line. No library applies.
   finding as a warning and leaves `capacity_insufficient` false. No CLI flag is added; the route is
   a fact the run already knows.
 - **Message cap (M3).** `gate/_run.py` defines `ERROR_TEXT_CAP = 500`; `run.py:1072-1073` reads it
-  instead of the literal (net zero lines), and every `messages[].message` is capped with it. The
+  instead of the literal (net zero lines). Only the run adapter caps each `messages[].message`
+  when it builds `PreRunCheckError`; `GateResult` and the output of `validate`, `validate preflight`
+  and `ci check` stay unchanged. The
   `capacity.source_unreadable` finding uses fixed text with the source table and the exception type
   name, never the reader's exception text (one line in `preflight.py:514-518`, net zero).
 - **Run policy sits beside the gate.** `gate/_run.py` holds
@@ -189,10 +198,15 @@ and stderr line. No library applies.
   prints the warning-count line, and returns `GateResult.config` or raises `PreRunCheckError`. The
   error carries `exit_code`, `error_kind`, `code`, `extra` and `messages`. Its `str()` is a one-line
   summary (count, first error with its location, "run `decoy validate CONFIG` for the full
-  report").
-- **Order inside `run` (M1).** `run.py:576-588` (the YAML re-parse) becomes one
-  `parse_pipeline_yaml` call that raises `PreRunCheckError` on a syntax error. Then the DE-02 guard
-  and `--duckdb-source` staging, unchanged. Then `check_before_run` in place of `run.py:670-686`,
+  report"). `PreRunCheckError.from_findings(...)` is the one run-envelope error builder: both
+  `check_before_run` and the saved YAML-finding path use it, so exit mapping, message capping and
+  JSON members cannot drift.
+- **Order inside `run` (M1).** `run.py:243-258` `_load_raw_config` becomes the run path's single
+  call to `parse_pipeline_yaml(config)`, returns the `(raw, findings)` pair, and derives
+  `raw_cfg = raw if isinstance(raw, dict) else None` only for `_detect_mode` and `_build_resolver`.
+  At `run.py:576-588`, the spinner raises `PreRunCheckError.from_findings(saved_findings)` and
+  deletes the re-parse. Then the DE-02 guard and `--duckdb-source` staging, unchanged. Then
+  `check_before_run(raw, config_path, route, state)` in place of `run.py:670-686`,
   before `--mask-secret`, the native gate and any source read. The handler gains one
   `isinstance(exc, PreRunCheckError)` branch that takes the exit code and merges the JSON members.
   The refusal still goes through the one handler, so `--notify` and the temp-dir cleanup behave as
@@ -219,7 +233,7 @@ renamed to `ci.adapters -> cli.gate` in the same diff (same count, class 11).
 | Rule | Choke point | Guard (walks) | Red mutation |
 |---|---|---|---|
 | Every pre-run command runs the whole gate | `decoy.cli.gate.run_gate_on_config` | `tests/e2e/test_run_validate_always.py` parity matrix: one broken config per finding kind (YAML syntax, empty YAML, list YAML, schema, config-only check, NER extra absent, compile error, missing source, unreadable source, capacity fan-in through T8). For each, `decoy validate` and `decoy run` refuse with the same exit code and the same first `code`, and spies on `read_source`, `iter_source_chunks` and `run_pipeline` record zero calls | delete the `check_before_run` call in `run.py`: red; move it below `_load_sources_from_config`: red (spy) |
-| No layer check or pipeline-YAML parse outside the gate | `gate/_layers.py` | `tests/sentry/test_gate_single_entry.py`: AST walk of `src/decoy`. Each call is resolved through the module's import table to a `(module, name)` pair (`import x as y`, `from x import y as z`, attribute calls on module aliases; recurring class 5), never matched by bare name. Flagged targets: `decoy_engine.run_config_only_checks`, `decoy_engine.plan.compile_plan` with `no_profile=True`, `decoy.cli.preflight._check_source_files`, `_check_target_overwrite`, `_check_capacity`, `_check_native`, and `yaml.safe_load` in `run.py` and `validate.py`, outside `decoy/cli/gate/`. Exemptions (named, ratchet): `preflight.py` (the `validate preflight` command, until CONFIG-EXPLICIT C2) and `compile_explain.py` (the explicit `validate compile` command). No new exemption: `validate config` goes through the gate | add `_check_source_files(raw, ...)` to `run.py`: red; `import decoy_engine as de; de.run_config_only_checks(x)` in a scratch module: red; `from yaml import safe_load as s` in `run.py`: red; restore `validate.py`'s `_check_target_overwrite` and call it: red |
+| No layer check or pipeline-YAML parse outside the gate | `gate/_layers.py` | `tests/sentry/test_gate_single_entry.py`: AST walk of `src/decoy`. Each call is resolved through the module's import table to a `(module, name)` pair (`import x as y`, `from x import y as z`, attribute calls on module aliases; recurring class 5), never matched by bare name. Flagged targets: `decoy_engine.run_config_only_checks`, `decoy_engine.plan.compile_plan` with `no_profile=True`, `decoy.cli.preflight._check_source_files`, `_check_target_overwrite`, `_check_capacity`, `_check_native`, and `yaml.safe_load` in `run.py` and `validate.py`, outside `decoy/cli/gate/`. Exemptions are exact `(module, function)` identities in a ratchet: `("decoy.cli.preflight", "preflight")`, until CONFIG-EXPLICIT C2, and `("decoy.cli.compile_explain", "compile")`. No new exemption: `validate config` goes through the gate | add `_check_source_files(raw, ...)` to `run.py`: red; `import decoy_engine as de; de.run_config_only_checks(x)` in a scratch module: red; `from yaml import safe_load as s` in `run.py`: red; restore `run.py:243-258` `_load_raw_config`'s `safe_load`: red; restore `validate.py`'s `_check_target_overwrite` and call it: red |
 | One config validation in the run path | `GateResult.config` | the same sentry flags `decoy_engine.PipelineConfig.model_validate` in `run.py` and `validate.py` | restore `run.py:684`: red |
 
 The sentry is seeded-bypass tested, registered in `SENTRIES` and `scripts/dev/sentry_registry.toml`,
@@ -247,13 +261,14 @@ Each names the mutation that turns it red; red-first evidence is an assertion fa
   error severity.
 - AT-5 (JSON shape): for every refusal in the parity matrix, the envelope has `command`, `status`,
   `config`, `mode`, `error`, `error_kind`, and `messages` equal to `decoy validate --json`'s
-  `messages` for the same config. Mutation: emit `messages` only for config-layer failures.
+  `messages` for the same config after applying the same `ERROR_TEXT_CAP` to each validate message.
+  Mutation: emit `messages` only for config-layer failures.
 - AT-5e (missing extra; H1a): NER-absent config (spaCy import patched out): `decoy run --json`
   exits 1 with `error_kind: "missing_extra"` and `extra: "ner"`, as today. Mutation: drop `extra`
   from `GateFinding`: red.
 - AT-5y (YAML; M1): empty file, a YAML list, and a syntax error: `decoy run` exits 1 with
   `yaml.empty`, `yaml.not_mapping` and `yaml.parse_error`, the same codes `decoy validate` gives.
-  Mutation: restore `run.py:576-588`; the sentry is red and the codes differ.
+  Mutation: restore `run.py:243-258` `_load_raw_config`'s `safe_load`; the sentry is red.
 - AT-6 (warnings): a target that already exists: `decoy run` exit 0 and one stderr line with the
   warning count; `--json` stdout is one JSON document; `--quiet` prints nothing. Mutation: print
   each warning to stdout.
@@ -262,8 +277,9 @@ Each names the mutation that turns it red; red-first evidence is an assertion fa
   `--mask-secret env:X` passes the gate. Mutation: move the gate above the DE-02 guard.
 - AT-7m (corrupt CSV; M3): a CSV source with a marker in a malformed row: `decoy run`, `decoy run
   --json` and `decoy validate --json` exit 1 with `capacity.source_unreadable`, and the marker is
-  in no output. A 600-character finding message is cut to 500 plus `...` in `messages`. Mutation:
-  restore the engine message in `_check_capacity`; drop the per-message cap.
+  in no output. A 600-character finding message is cut to 500 plus `...` in run's `messages`, while
+  `decoy validate --json` keeps the uncapped gate message. Mutation: restore the engine message in
+  `_check_capacity`; drop the run-envelope cap.
 - AT-8 (duckdb): `--duckdb-source` with a declared table runs the gate on the staged Parquet path
   and exits 0; after a gate refusal the temp dir is gone. Mutation: run the gate on the YAML before
   staging.
@@ -277,6 +293,8 @@ Each names the mutation that turns it red; red-first evidence is an assertion fa
   target-overwrite advisory from the config layer.
 - AT-12 (chain): `PreRunCheckError` has `__cause__ is None` and `__context__ is None`. Mutation:
   raise it inside an `except` block.
+- AT-13 (CLI-DIALECT parity): after CLI-DIALECT merges, a dialect CSV passes both `decoy validate`
+  and `decoy run`. Mutation: make the gate bypass the engine reader used by `profile_source`.
 - AT-14 (runtime still 3; L1): a valid config whose `run_pipeline` raises `RuntimeError` after the
   gate passes exits 3 with `error_kind` absent. Mutation: classify every exception after the gate
   as usage.
@@ -288,6 +306,7 @@ Retargeted tests (M4). Each keeps its assertion and moves its lookup site only:
 | `tests/unit/test_ci_rule_codes.py:143-150` `_cli_gate_codes` | walks `decoy.cli.validate`'s AST for `_GateFinding(...)` | walks `decoy.cli.gate._layers` for `GateFinding(...)` | the walk covers the module that builds findings |
 | `tests/unit/test_ci_rule_codes.py:292` | `{"yaml.parse_error", "missing_extra", "validation_error"} <= codes` | adds `compile.needs_profile` to the required set | the new code must be allowlisted |
 | `tests/e2e/test_ci_unexpected_failures.py:70` | patches `("decoy.cli.validate", "run_gate")` | patches `("decoy.cli.gate", "run_gate")` | patch where the adapter looks it up |
+| `tests/unit/test_ci_rule_codes.py:357-367` canary leak test | builds `cli_validate._GateFinding` / `GateResult` and patches `cli_validate.run_gate` | builds `decoy.cli.gate.GateFinding` / `GateResult` and patches `("decoy.cli.gate", "run_gate")` | keep the rule-id and leak assertions aimed at the adapter's lookup site |
 | `tests/e2e/test_validate_gate.py:295-296` | patches `validate_mod._run_compile_layer`, `_run_preflight_layer` | patches the same names on `decoy.cli.gate._layers` | same short-circuit assertion, new lookup site |
 | `tests/e2e/test_run_command.py:331-344` | missing source exits 3 | becomes AT-1 (exit 1) | Q2, owner-approved contract change |
 
@@ -315,7 +334,7 @@ retargeted tests and the sentry with its seeded cases. Subject:
 `refactor(cli): move the pre-run gate into cli/gate`.
 
 **P2.** `gate/_run.py`, the `run.py` parse call, gate call and handler branch with the offsetting
-deletions, `ERROR_TEXT_CAP` read at `run.py:1072-1073`, AT-1 to AT-3c, AT-5 to AT-10, AT-12, AT-14,
+deletions, `ERROR_TEXT_CAP` read at `run.py:1072-1073`, AT-1 to AT-3c, AT-5 to AT-10, AT-12 to AT-14,
 the CHANGELOG `### Changed` entry (Q2: exit-code moves, `--json` members, Q1 severity, `ci check`
 rule-id change), and `docs/cli-reference.md` for `run`. Subject:
 `feat(cli): run the validate gate before decoy run reads data`.
@@ -324,7 +343,7 @@ rule-id change), and `docs/cli-reference.md` for `run`. Subject:
 
 | In flight | Touches | Effect |
 |---|---|---|
-| CLI-DIALECT (row 19; engine `feat/csv-source-reader`; CLI part not on origin yet) | `cli/_sources.py`, the run read points | P2 waits for its `run.py` writer (lane rule 5.2.2). The gate reads no rows, so no reader conflict |
+| CLI-DIALECT (row 19; engine `feat/csv-source-reader`; CLI part not on origin yet) | `cli/_sources.py`, the run read points | P2 waits for its `run.py` writer (lane rule 5.2.2). The gate reads up to 10k rows per file source via engine `profile_source`. CLI-DIALECT's engine reader lands in `profile_source`, so the gate picks up dialects with no CLI wiring. AT-13 pins parity after it merges |
 | CONFIG-EXPLICIT (row 22, plan pending; C1 adds `_config_load.py`, C2 edits `validate.py:277,466`) | the gate's config site, `validate config`, `run.py:683` | P1 is expected first (C1 waits on two engine releases). C1 and C2 then edit `gate/_layers.py` only; `validate.py:277` and `run.py:683` are already gone. Their header and column checks reach `run` with no extra wiring |
 | VALUE-FREE-ERRORS (engine `plan/value-free-errors`, CLI part A3) | sites `validate.py:277,462`, `run.py:684` | P1 leaves one site, in `gate/_layers.py`; P2 deletes `run.py:684`. A3 re-measures; its Click-tree walk covers `run` through the gate. Names stay visible and values hidden, per its Q1 |
 | RESULT (row 62, CLI half after R-d) | `run.py` error path and envelope | lands after P2; its exit map classifies `PreRunCheckError` as `usage` or `capacity` and its document records the gate (FU-3) |
@@ -353,15 +372,16 @@ Full-suite trigger: P2 (exit-code mapping on a public contract). P1 runs T1: tes
 Class 3: `PreRunCheckError` is raised after any `except` closes (AT-12). Class 5: the sentry
 resolves imports and aliases to `(module, name)`, with a seeded case per spelling. Class 9:
 mutations re-run on each part's final head. Class 11: no pin raised; `run.py` and `preflight.py`
-do not grow; `_CLI_GATE_CODES` swaps one code for another. Classes 1, 2, 4, 6, 7, 8 and 10 are not
-touched: no regex, no persisted model, no new reader, no new private import (the existing
-`preflight._check_*` imports move with the gate), no CI script.
+do not grow; `_CLI_GATE_CODES` swaps one code for another. Class 10: sentry exemptions use exact
+`(module, function)` identities, and the sentry checks all other callers. Classes 1, 2, 4, 6, 7
+and 8 are not touched: no regex, no persisted model, no new reader, no new private import (the
+existing `preflight._check_*` imports move with the gate), no CI script.
 
 ## 11a. General review taxonomy (plan contract)
 
 | # | Class | Applies | Closing structure | Proof and mutation |
 |---|---|---|---|---|
-| 1 | Value-bearing output | Yes: run's schema error stops printing `str(exc)` (with `input_value`); the unreadable-source finding stops embedding reader text; every message is capped | one config site in `gate/_layers.py`; fixed capacity text; `ERROR_TEXT_CAP` | AT-5, AT-7, AT-7m |
+| 1 | Value-bearing output | Yes: run's schema error stops printing `str(exc)` (with `input_value`); the unreadable-source finding stops embedding reader text; every run-envelope message is capped | one config site in `gate/_layers.py`; fixed capacity text; run-only `ERROR_TEXT_CAP` | AT-5, AT-7, AT-7m |
 | 2 | Cleanup on an exit path | Yes: a gate refusal must still remove the `--duckdb-source` temp dir and send `--notify` | the refusal raises into run's one handler and `finally` | AT-8, AT-10; mutation: `typer.Exit` from the adapter: red |
 | 3 | State machine and concurrency | N/A: one synchronous call, no shared state | none | none |
 | 4 | Route parity and silent fallback | Yes: plain and `--chunked` runs, `--duckdb-source`, `validate`, `validate config` and `ci check` must see the same gate; the chunked route differs only by the named capacity rule | one entry, `GateRoute`, parity matrix, sentry | AT-1, AT-3c, AT-9, AT-11 |
@@ -466,7 +486,9 @@ capacity is advisory on the chunked route; the target-overwrite advisory lives i
 ## 14. Follow-ups
 
 - FU-1: `decoy tokenize`, `decoy demo` and `decoy.mask()` call `check_before_run`, and the sentry
-  gains a Click-tree walk over every command that calls `run_pipeline`.
+  gains a Click-tree walk over every command that calls `run_pipeline`. Consolidate the same
+  500-character error cap in `demo.py:544-545` and `tokenize.py:245,542` when those CLI paths join
+  the shared run policy.
 - FU-2: check `--duckdb-source` relations before staging (CONFIG-EXPLICIT's `DESCRIBE` boundary).
 - FU-3: RESULT records gate findings as a `checks[]` entry; `--json` success carries warnings
   through the result document.
@@ -474,6 +496,8 @@ capacity is advisory on the chunked route; the target-overwrite advisory lives i
 - FU-5: fold the `validate preflight` command body onto the gate (CONFIG-EXPLICIT C2) and drop its
   sentry exemption.
 - FU-6: a chunked-route capacity estimate, if the chunked path ever gains its own memory gate.
+- FU-7: map `UnicodeDecodeError` to `yaml.parse_error` in `parse_pipeline_yaml`, then delete the
+  pre-existing copy in `ci/adapters.py:85-104`; today the gate read at `validate.py:444` can crash.
 
 ## 15. Done when
 
