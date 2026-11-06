@@ -327,8 +327,13 @@ def test_template_lint_installs_its_tools_from_the_hashed_lock() -> None:
     assert tools and all(re.search(rf"(?m)^{re.escape(p)} \\", lock) for p in tools)
     assert "actionlint-py" not in lock, "actionlint-py is sdist-only; the binary replaces it"
     assert len(re.findall(r"--hash=sha256:", lock)) >= len(tools)
-    assert "--no-build" in _read("scripts/dev/lock.sh"), "the lock is compiled wheel-only"
-    assert "TOOLS_LOCK" in _read("scripts/dev/lock.sh"), "lock.sh regenerates and checks it too"
+    script = _read("scripts/dev/lock.sh")
+    assert re.search(r"compile_tools\(\) \{.*?--no-build.*?\n\}", script, re.S), (
+        "wheel-only compile"
+    )
+    assert re.search(r"(?m)^TOOLS_LOCK=ci/ci-tools\.lock$", script), "lock.sh owns the tools lock"
+    assert 'compile_tools "$TOOLS_LOCK"' in script, "lock.sh regenerates it"
+    assert 'check_one "$TOOLS_LOCK" compile_tools' in script, "lock.sh --check covers it"
     assert _scan("ci-template-lint", TOOLS, FETCH, "actionlint x.yml") == []
     lock_path = POLICY["locks"]["ci_tools"]
     for label, run, expected in (
@@ -458,6 +463,8 @@ def _fetch_engine(entry: dict[str, str]) -> bytes | None:
         try:
             with urllib.request.urlopen(url, timeout=20) as response:
                 return bytes(response.read())
+        except urllib.error.HTTPError:
+            return b""  # the commit or path does not exist: a definite mismatch, not "offline"
         except (urllib.error.URLError, TimeoutError):
             continue
     return None
