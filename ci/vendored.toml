@@ -15,7 +15,7 @@
 engine_path = ".github/actions/setup-uv/action.yml"
 local_path = ".github/actions/setup-uv/action.yml"
 blob_sha256 = "91b5aa05410a96702c57818a966cf29c45ef1c2b204d929ffc36694b84de86ec"
-commit = "f2b7b3da4b9374b8745e089530b3e1c7815ce638"
+commit = "d9e18fa60b09beda88c86673806ca28ac698f28a"
 
 # The shared sentry package tests/sentry/ci_scan: the shell-parsing core, the cross-repository
 # identity helper, and its tests. It originated here; the engine holds the same bytes at `commit`
@@ -24,40 +24,40 @@ commit = "f2b7b3da4b9374b8745e089530b3e1c7815ce638"
 engine_path = "tests/sentry/ci_scan/__init__.py"
 local_path = "tests/sentry/ci_scan/__init__.py"
 blob_sha256 = "957ed128539114a8d15c4e03ac77f486f9abee53294fb6b1aadbba536f76ca21"
-commit = "b72b7465cefdb94534d067d3413972ff24eca4ce"
+commit = "d9e18fa60b09beda88c86673806ca28ac698f28a"
 
 [[vendored]]
 engine_path = "tests/sentry/ci_scan/_shell_tokens.py"
 local_path = "tests/sentry/ci_scan/_shell_tokens.py"
 blob_sha256 = "38e9fddea1c22fdc56017b492193f38649fa448aa04461557645a5921e701b78"
-commit = "b72b7465cefdb94534d067d3413972ff24eca4ce"
+commit = "d9e18fa60b09beda88c86673806ca28ac698f28a"
 
 [[vendored]]
 engine_path = "tests/sentry/ci_scan/_identity.py"
 local_path = "tests/sentry/ci_scan/_identity.py"
 blob_sha256 = "82e09cfd65539afb6289750017a79dbcb5663116010309e821bc699e2f48b096"
-commit = "b72b7465cefdb94534d067d3413972ff24eca4ce"
+commit = "d9e18fa60b09beda88c86673806ca28ac698f28a"
 
 [[vendored]]
 engine_path = "tests/sentry/ci_scan/test_identity.py"
 local_path = "tests/sentry/ci_scan/test_identity.py"
 blob_sha256 = "ea864e19cd4ea0804f792520e23dec5fd181ebaae1bee8681e5cb80be97fea30"
-commit = "c686f3855d394a416ca21c31dbcc456e91a055f0"
+commit = "d9e18fa60b09beda88c86673806ca28ac698f28a"
 
 [[mirror]]
 engine_path = ".github/actions/lock-env/action.yml"
 local_path = ".github/actions/lock-env/action.yml"
 blob_sha256 = "af3006d2dc48407112037059d799d53266c1ef266c532a78087c5d4466980908"
-commit = "f2b7b3da4b9374b8745e089530b3e1c7815ce638"
+commit = "d9e18fa60b09beda88c86673806ca28ac698f28a"
 
 [[mirror]]
 engine_path = "scripts/dev/lock_version.sh"
 local_path = "scripts/dev/lock_version.sh"
 blob_sha256 = "8f0f32ec3efbfff7a499537ecdf2ed32ea472d9c8211bc13ac16b22529e5efd8"
-commit = "f2b7b3da4b9374b8745e089530b3e1c7815ce638"
+commit = "d9e18fa60b09beda88c86673806ca28ac698f28a"
 
 [[mirror]]
 engine_path = "tests/sentry/_ci_lock_scan.py"
 local_path = "tests/sentry/_ci_lock_scan.py"
 blob_sha256 = "5aadca8ff81f674e4d64eda290dff571d33e03b38cd29ba77ed41ca197bb3f9f"
-commit = "f2b7b3da4b9374b8745e089530b3e1c7815ce638"
+commit = "2986fd5a55cfad59e30e5f97424bf775830737c7"
