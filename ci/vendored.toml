@@ -41,8 +41,8 @@ commit = "b72b7465cefdb94534d067d3413972ff24eca4ce"
 [[vendored]]
 engine_path = "tests/sentry/ci_scan/test_identity.py"
 local_path = "tests/sentry/ci_scan/test_identity.py"
-blob_sha256 = "82a95e1fcaabc7248cc9d1abb883ac104bb3e018854789202813d484cabb5b93"
-commit = "b72b7465cefdb94534d067d3413972ff24eca4ce"
+blob_sha256 = "ea864e19cd4ea0804f792520e23dec5fd181ebaae1bee8681e5cb80be97fea30"
+commit = "c686f3855d394a416ca21c31dbcc456e91a055f0"
 
 [[mirror]]
 engine_path = ".github/actions/lock-env/action.yml"
