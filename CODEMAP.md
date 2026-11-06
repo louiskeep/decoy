@@ -36,14 +36,14 @@ Installable Typer/Rich CLI that wraps `decoy-engine` for local validation, runs,
 | `src/decoy/templates/` | Packaged YAML templates |
 | `examples/` | Example YAML configs |
 | `tests/` | CLI tests |
-| `docs/` | Local CLI docs (release smoke, versioning). Active planning lives in the commercial platform repo. |
+| `docs/` | CLI docs, plus the one Decoy roadmap (`docs/ROADMAP.md`, `docs/roadmap/`) and the shipped log (`docs/RECENTLY-SHIPPED.md`) |
 | `logs/`, `.pytest_cache/`, `__pycache__/` | Ignore generated/runtime content |
 
 ## Where Do I Find...
 
 | Task | Start Here |
 |---|---|
-| Current roadmap | Maintained in the commercial platform repo |
+| Current roadmap (all repos) | [docs/ROADMAP.md](docs/ROADMAP.md); shipped log [docs/RECENTLY-SHIPPED.md](docs/RECENTLY-SHIPPED.md) |
 | CLI role guide | [AGENTS.md](AGENTS.md) (summary) |
 | Command registration | `src/decoy/__main__.py` |
 | Run command | `src/decoy/cli/run.py` |

@@ -2,6 +2,8 @@
 
 CLI-specific guidance for Claude and other coding agents working in this repo.
 
+This repo holds the one Decoy roadmap for all repos; [CODEMAP.md](CODEMAP.md) says where it and the shipped log live. Do not start another roadmap or todo doc.
+
 Use [CODEMAP.md](CODEMAP.md) for repo navigation before broad searches. Use [CONTRIBUTING.md](CONTRIBUTING.md) for the contributor entrypoint.
 
 ## Engineering best practices
