@@ -63,6 +63,7 @@ from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from typing import Callable
 
+from decoy._atomic import AtomicWriteError, WriteMode, write_atomic
 from decoy.distribution import layout, lock, verify_extracted
 from decoy.distribution import manifest as manifest_mod
 from decoy.distribution import targets as targets_mod
@@ -214,9 +215,14 @@ def check_document_freshness(
     # ``latest`` is recorded for diagnostics only: a signer may legitimately move it back
     # (pull a bad release) under a HIGHER serial, so the serial alone gates rollback.
     home.mkdir(parents=True, exist_ok=True)
-    tmp = home / f".{_TRUST_STATE}.{os.getpid()}.tmp"
-    tmp.write_text(_trust_state_text(latest, serial), encoding="utf-8")
-    os.replace(tmp, home / _TRUST_STATE)
+    try:
+        write_atomic(
+            home, _TRUST_STATE, _trust_state_text(latest, serial).encode("utf-8"), WriteMode.REPLACE
+        )
+    except AtomicWriteError as exc:
+        raise InstallError(
+            f"could not record the trust state ({exc.code}) -- refusing to continue"
+        ) from None
 
 
 def _urllib_download(url: str) -> bytes:

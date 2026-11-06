@@ -129,6 +129,16 @@ SOURCES: tuple[Source, ...] = (
         ),
     ),
     Source(
+        "atomic-writer-allow",
+        "tests/sentry/test_atomic_writer.py",
+        InCode(
+            "tests/sentry/test_atomic_writer.py",
+            "ALLOWLIST",
+            key=lambda e: e.file,
+            reason=lambda e: e.reason,
+        ),
+    ),
+    Source(
         "root-help-omitted",
         _SURFACE,
         InCode(_SURFACE, "_ROOT_HELP_OMITTED", reason=lambda e: _ROOT_HELP_WHY, literal=True),

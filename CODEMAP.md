@@ -39,6 +39,15 @@ Installable Typer/Rich CLI that wraps `decoy-engine` for local validation, runs,
 | `docs/` | CLI docs, plus the one Decoy roadmap (`docs/ROADMAP.md`, `docs/roadmap/`) and the shipped log (`docs/RECENTLY-SHIPPED.md`) |
 | `logs/`, `.pytest_cache/`, `__pycache__/` | Ignore generated/runtime content |
 
+## Where things go
+
+First row of the layout map the LAYOUT slice completes (one line per kind of module).
+
+| Kind of module | Where | Examples |
+|---|---|---|
+| Private shared filesystem or process primitives used by more than one package | top-level `src/decoy/`, file named `_<noun>.py`, tests in `tests/unit/test_<noun>.py`, its sentry in `tests/sentry/` | `_atomic.py`, `_mask_secret.py`, `_native_gate.py` |
+| CLI source readers and target writers (owner rule 2026-11-06: new ones go here from now on; `cli/` is frozen) | `src/decoy/cli/io/`, file named `_<noun>.py` | target writer `cli/io/_targets.py` (CLI-FMT); today's exception `cli/_sources.py` moves here under H-1 |
+
 ## Where Do I Find...
 
 | Task | Start Here |
