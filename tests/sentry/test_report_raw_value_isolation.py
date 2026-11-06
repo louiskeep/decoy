@@ -284,6 +284,4 @@ def test_compare_data_sentry_setup_negative_control(tmp_path: Path) -> None:
         encoding="utf-8",
     )
     content = csv_a.read_text(encoding="utf-8")
-    assert _STRING_SENTINEL in content, (
-        "Setup error: string sentinel not written to test file."
-    )
+    assert _STRING_SENTINEL in content, "Setup error: string sentinel not written to test file."
