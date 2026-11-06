@@ -102,9 +102,9 @@ def test_build_run_event_folds_error_summary_verbatim_so_caller_must_redact():
 
 def _write_mask_config(tmp_path: Path) -> Path:
     src = tmp_path / "in.csv"
-    pd.DataFrame(
-        {"customer_id": ["1", "2"], "email": [f"{_SENTINEL_PII}@x.com", "b@x.com"]}
-    ).to_csv(src, index=False)
+    pd.DataFrame({"customer_id": ["1", "2"], "email": [f"{_SENTINEL_PII}@x.com", "b@x.com"]}).to_csv(
+        src, index=False
+    )
     cfg = {
         "version": 2,
         "global_settings": {"seed": 42, "mask_secret_ref": TEST_MASK_SECRET_REF},

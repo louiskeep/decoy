@@ -61,9 +61,7 @@ _LOG_WHY = (
     "singleton; the engine has no public logging configuration (only the `Logger` protocol)."
 )
 _LOG_GONE = f"Engine exports a public logging opt-out ({_NEEDS} #1); then delete this entry."
-_STRAT_WHY = (
-    "`decoy list/show strategy` reads the live SCALAR_HANDLERS registry; no public listing."
-)
+_STRAT_WHY = "`decoy list/show strategy` reads the live SCALAR_HANDLERS registry; no public listing."
 _STRAT_GONE = f"Engine exports a strategy-registry accessor ({_NEEDS} #2); then delete this entry."
 _REG_WHY = "`decoy list validators` reads the live validator registry; no public listing."
 _REG_GONE = f"Engine exports a validator-name accessor ({_NEEDS} #4); then delete this entry."
@@ -120,14 +118,7 @@ def _non_except_binding(n: ast.AST) -> str | None:
         return n.asname or n.name.split(".")[0]
     if isinstance(n, ast.MatchMapping):
         return n.rest
-    named = (
-        ast.arg,
-        ast.FunctionDef,
-        ast.AsyncFunctionDef,
-        ast.ClassDef,
-        ast.MatchAs,
-        ast.MatchStar,
-    )
+    named = (ast.arg, ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef, ast.MatchAs, ast.MatchStar)
     return (getattr(n, "arg", None) or getattr(n, "name", None)) if isinstance(n, named) else None
 
 
@@ -139,13 +130,7 @@ def _dynamic_import(call: ast.Call) -> tuple[list[str], list[str]] | None:
     """For a literal `import_module(...)` / `__import__(...)` of an engine module: (path of
     the value the call returns, every engine path it names)."""
     func = call.func
-    callee = (
-        func.id
-        if isinstance(func, ast.Name)
-        else func.attr
-        if isinstance(func, ast.Attribute)
-        else ""
-    )
+    callee = func.id if isinstance(func, ast.Name) else func.attr if isinstance(func, ast.Attribute) else ""
     if callee not in {"import_module", "__import__"}:
         return None
     name = _literal(_arg(call, 0, "name"))
@@ -193,11 +178,7 @@ class _Scan:
         for name, paths in self.table.items():
             if len(paths) > 1 and name not in self.caught - self.other:
                 self.found.append(
-                    (
-                        rel,
-                        f"ambiguous binding of {name!r}: " + " vs ".join(sorted(paths)),
-                        f"{rel}:{max(paths.values())}",
-                    )
+                    (rel, f"ambiguous binding of {name!r}: " + " vs ".join(sorted(paths)), f"{rel}:{max(paths.values())}")
                 )
         self.visit(tree)
 
@@ -216,9 +197,7 @@ class _Scan:
             elif isinstance(n, ast.Import):
                 for a in n.names:
                     if _is_engine(a.name):
-                        self.bind(
-                            a.asname or a.name.split(".")[0], a.name if a.asname else _ENGINE, n
-                        )
+                        self.bind(a.asname or a.name.split(".")[0], a.name if a.asname else _ENGINE, n)
             elif isinstance(n, ast.Assign):
                 pairs += [(t.id, n.value, n, False) for t in n.targets if isinstance(t, ast.Name)]
             elif isinstance(n, (ast.AnnAssign, ast.NamedExpr)) and isinstance(n.target, ast.Name):
@@ -237,11 +216,7 @@ class _Scan:
             if size == (size := sum(len(v) for v in self.table.values())):
                 return
             for name, value, node, iterates in pairs:
-                exprs = (
-                    value.elts
-                    if iterates and isinstance(value, (ast.List, ast.Tuple, ast.Set))
-                    else [value]
-                )
+                exprs = value.elts if iterates and isinstance(value, (ast.List, ast.Tuple, ast.Set)) else [value]
                 for expr in exprs:
                     if (path := self.resolve(expr)) is not None:
                         self.bind(name, ".".join(path), node)
@@ -252,11 +227,7 @@ class _Scan:
         if isinstance(expr, ast.Name):
             paths = self.table.get(expr.id)
             # several paths only for an `except` name: prefer a bad one so nothing is dropped
-            return (
-                min(paths, key=lambda p: (not _bad_path(p.split(".")), p)).split(".")
-                if paths
-                else None
-            )
+            return min(paths, key=lambda p: (not _bad_path(p.split(".")), p)).split(".") if paths else None
         if isinstance(expr, ast.NamedExpr):
             return self.resolve(expr.value)
         if isinstance(expr, ast.Attribute):
@@ -320,9 +291,7 @@ class _Scan:
         while True:
             if isinstance(node, (ast.Attribute, ast.NamedExpr)):
                 node = node.value
-            elif (
-                isinstance(node, ast.Call) and (refl := _reflective(node)) and self.resolve(refl[0])
-            ):
+            elif isinstance(node, ast.Call) and (refl := _reflective(node)) and self.resolve(refl[0]):
                 for extra in [*node.args[1:], *(k.value for k in node.keywords)]:
                     self.visit(extra)
                 node = refl[0]
@@ -342,9 +311,7 @@ def internal_refs(root: Path) -> list[tuple[str, str, str]]:
     for path in sorted(root.rglob("*.py")):
         if "__pycache__" not in path.parts:
             rel = path.relative_to(root).as_posix()
-            found.extend(
-                _Scan(rel, ast.parse(path.read_text(encoding="utf-8"), filename=rel)).found
-            )
+            found.extend(_Scan(rel, ast.parse(path.read_text(encoding="utf-8"), filename=rel)).found)
     return found
 
 
@@ -378,7 +345,9 @@ def test_cli_does_not_import_engine_internals() -> None:
     )
 
 
-def allowlist_problems(root: Path, allowlist: tuple[AllowedInternal, ...] = ALLOWLIST) -> list[str]:
+def allowlist_problems(
+    root: Path, allowlist: tuple[AllowedInternal, ...] = ALLOWLIST
+) -> list[str]:
     live: dict[tuple[str, str], int] = {}
     for rel, symbol, _ in internal_refs(root):
         live[(rel, symbol)] = live.get((rel, symbol), 0) + 1
@@ -486,10 +455,7 @@ def test_flags_literal_dynamic_imports(tmp_path: Path) -> None:
         "m = importlib.import_module('decoy_engine.internal.logging')\n"
         "n = __import__('decoy_engine.internal.base')\n"
     )
-    assert _scan(tmp_path, source) == [
-        "decoy_engine.internal.logging",
-        "decoy_engine.internal.base",
-    ]
+    assert _scan(tmp_path, source) == ["decoy_engine.internal.logging", "decoy_engine.internal.base"]
 
 
 def test_does_not_flag_public_engine_use_or_unrelated_private_names(tmp_path: Path) -> None:
@@ -589,13 +555,17 @@ def test_flags_reflective_access_with_a_literal_name(tmp_path: Path) -> None:
 
 
 def test_one_name_bound_to_two_engine_targets_fails_closed(tmp_path: Path) -> None:
-    source = "from decoy_engine import kernel as m\nfrom decoy_engine import sdk as m\nm.fine\n"
+    source = (
+        "from decoy_engine import kernel as m\nfrom decoy_engine import sdk as m\nm.fine\n"
+    )
     assert any("ambiguous" in r for r in _scan(tmp_path, source))
 
 
 def test_allowlist_count_is_exact_not_a_floor(tmp_path: Path) -> None:
     (tmp_path / "x.py").write_text(
-        "import decoy_engine.internal.logging as a\na.get_logger()\na.get_logger()\n",
+        "import decoy_engine.internal.logging as a\n"
+        "a.get_logger()\n"
+        "a.get_logger()\n",
         encoding="utf-8",
     )
     allow = (
@@ -658,10 +628,7 @@ def test_reflective_calls_keep_their_other_arguments(tmp_path: Path) -> None:
             "setattr(decoy_engine.kernel, '_c', decoy_engine.internal.x)\n",
             ["decoy_engine.kernel._c", "decoy_engine.internal.x"],
         ),
-        (
-            "hasattr(decoy_engine, '_a', default=decoy_engine._b)\n",
-            ["decoy_engine._a", "decoy_engine._b"],
-        ),
+        ("hasattr(decoy_engine, '_a', default=decoy_engine._b)\n", ["decoy_engine._a", "decoy_engine._b"]),
     ):
         assert sorted(_scan(tmp_path, _IMPORT_DE + source)) == sorted(expected), source
 
@@ -669,14 +636,8 @@ def test_reflective_calls_keep_their_other_arguments(tmp_path: Path) -> None:
 def test_every_binding_construct_registers_an_engine_alias(tmp_path: Path) -> None:
     imp = "import importlib\n"
     cases = (
-        (
-            imp + "(m := importlib.import_module('decoy_engine.kernel'))\nm._c\n",
-            ["decoy_engine.kernel._c"],
-        ),
-        (
-            imp + "(m := importlib.import_module('decoy_engine.kernel'))._c\n",
-            ["decoy_engine.kernel._c"],
-        ),
+        (imp + "(m := importlib.import_module('decoy_engine.kernel'))\nm._c\n", ["decoy_engine.kernel._c"]),
+        (imp + "(m := importlib.import_module('decoy_engine.kernel'))._c\n", ["decoy_engine.kernel._c"]),
         (_IMPORT_DE + "for m in (decoy_engine.kernel,):\n    m._c\n", ["decoy_engine.kernel._c"]),
         (_IMPORT_DE + "x = [m._c for m in (decoy_engine.kernel,)]\n", ["decoy_engine.kernel._c"]),
         (
@@ -684,8 +645,7 @@ def test_every_binding_construct_registers_an_engine_alias(tmp_path: Path) -> No
             ["decoy_engine.kernel._c"],
         ),
         (
-            _IMPORT_DE
-            + "try:\n    pass\nexcept decoy_engine.errors.DecoyError as e:\n    e._detail\n",
+            _IMPORT_DE + "try:\n    pass\nexcept decoy_engine.errors.DecoyError as e:\n    e._detail\n",
             ["decoy_engine.errors.DecoyError._detail"],
         ),
     )
@@ -706,13 +666,11 @@ def test_dunder_import_with_a_non_literal_fromlist_returns_the_submodule(tmp_pat
 
 def test_a_dynamic_import_at_the_root_of_a_chain_is_reported_once(tmp_path: Path) -> None:
     imp = "import importlib\n"
-    assert _scan(
-        tmp_path, imp + "importlib.import_module('decoy_engine.internal.logging').get_logger()\n"
-    ) == ["decoy_engine.internal.logging.get_logger"]
-    # the touched module is not a prefix of the chain here, so it is still reported
-    assert _scan(tmp_path, "__import__('decoy_engine.internal.x').sdk\n") == [
-        "decoy_engine.internal.x"
+    assert _scan(tmp_path, imp + "importlib.import_module('decoy_engine.internal.logging').get_logger()\n") == [
+        "decoy_engine.internal.logging.get_logger"
     ]
+    # the touched module is not a prefix of the chain here, so it is still reported
+    assert _scan(tmp_path, "__import__('decoy_engine.internal.x').sdk\n") == ["decoy_engine.internal.x"]
 
 
 def test_counting_rule_one_per_import_name_and_one_per_access_chain(tmp_path: Path) -> None:
@@ -731,27 +689,12 @@ def test_counting_rule_one_per_import_name_and_one_per_access_chain(tmp_path: Pa
 def test_dynamic_import_arguments_are_read_uniformly_by_keyword_or_position(tmp_path: Path) -> None:
     imp = "import importlib\n"
     for source, expected in (
-        (
-            imp + "importlib.import_module(name='.internal.fs', package='decoy_engine')\n",
-            "decoy_engine.internal.fs",
-        ),
-        (
-            imp + "importlib.import_module('.internal.fs', package='decoy_engine')\n",
-            "decoy_engine.internal.fs",
-        ),
-        (
-            imp + "importlib.import_module(package='decoy_engine', name='.internal.fs')\n",
-            "decoy_engine.internal.fs",
-        ),
+        (imp + "importlib.import_module(name='.internal.fs', package='decoy_engine')\n", "decoy_engine.internal.fs"),
+        (imp + "importlib.import_module('.internal.fs', package='decoy_engine')\n", "decoy_engine.internal.fs"),
+        (imp + "importlib.import_module(package='decoy_engine', name='.internal.fs')\n", "decoy_engine.internal.fs"),
         ("__import__('decoy_engine', fromlist=['internal'])\n", "decoy_engine.internal"),
-        (
-            "__import__('decoy_engine', None, None, fromlist=['internal'])\n",
-            "decoy_engine.internal",
-        ),
-        (
-            "__import__('decoy_engine', globals(), locals(), ['internal'])\n",
-            "decoy_engine.internal",
-        ),
+        ("__import__('decoy_engine', None, None, fromlist=['internal'])\n", "decoy_engine.internal"),
+        ("__import__('decoy_engine', globals(), locals(), ['internal'])\n", "decoy_engine.internal"),
         (
             "__import__(name='decoy_engine', globals=None, locals=None, fromlist=['internal'], level=0)\n",
             "decoy_engine.internal",

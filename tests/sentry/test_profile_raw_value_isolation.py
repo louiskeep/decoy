@@ -70,7 +70,9 @@ def test_profile_text_output_no_raw_values(tmp_path: Path) -> None:
     csv_path = tmp_path / "data.csv"
     _write_sentinel_csv(csv_path)
 
-    result = runner.invoke(app, ["scan", str(csv_path), "--show-fields"], env=_WIDE_ENV)
+    result = runner.invoke(
+        app, ["scan", str(csv_path), "--show-fields"], env=_WIDE_ENV
+    )
     assert result.exit_code == 0, result.output
 
     assert _STRING_SENTINEL not in result.output, (
@@ -107,7 +109,9 @@ def test_text_sentry_bites_if_raw_value_injected(tmp_path: Path) -> None:
         return rec
 
     with patch.object(profile_mod, "_safe_field_record", leaky_safe_field_record):
-        result = runner.invoke(app, ["scan", str(csv_path), "--show-fields"], env=_WIDE_ENV)
+        result = runner.invoke(
+            app, ["scan", str(csv_path), "--show-fields"], env=_WIDE_ENV
+        )
 
     assert result.exit_code == 0, result.output
     # With a leaky implementation the sentinel MUST appear in the wide output.
@@ -131,7 +135,9 @@ def test_profile_json_output_no_raw_values(tmp_path: Path) -> None:
         f"profile --json leaked sentinel '{_STRING_SENTINEL}'. "
         "JSON output must emit only aggregate fields -- no raw cell values."
     )
-    assert _SENTINEL_SSN not in payload_str, f"profile --json leaked sentinel '{_SENTINEL_SSN}'."
+    assert _SENTINEL_SSN not in payload_str, (
+        f"profile --json leaked sentinel '{_SENTINEL_SSN}'."
+    )
 
 
 def test_sentinel_is_present_in_source_file(tmp_path: Path) -> None:
