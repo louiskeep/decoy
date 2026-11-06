@@ -39,6 +39,16 @@ Installable Typer/Rich CLI that wraps `decoy-engine` for local validation, runs,
 | `docs/` | CLI docs, plus the one Decoy roadmap (`docs/ROADMAP.md`, `docs/roadmap/`) and the shipped log (`docs/RECENTLY-SHIPPED.md`) |
 | `logs/`, `.pytest_cache/`, `__pycache__/` | Ignore generated/runtime content |
 
+## Where things go
+
+| New file | Directory | Neighbor |
+|---|---|---|
+| Composite CI actions (`action.yml`) | `.github/actions/<name>/` | workflow files |
+| CI install, vendor and lane policy (`*.toml`) | `ci/` | none; `ci/install-policy.toml` is the install registry |
+| Developer environment scripts | `scripts/dev/` | `lock.sh`, `bootstrap.sh`, `lock_version.sh` |
+| Repository policy sentries and their scanners | `tests/sentry/` | `_ratchet.py`, `test_ratchet_check.py` |
+| Build and gate evidence records | `docs/records/` | existing build records |
+
 ## Where Do I Find...
 
 | Task | Start Here |
@@ -50,6 +60,7 @@ Installable Typer/Rich CLI that wraps `decoy-engine` for local validation, runs,
 | Tokenize / detokenize | `src/decoy/cli/tokenize.py` (store: `_token_vault.py`) |
 | Validate command | `src/decoy/cli/validate.py` |
 | CI checks / SARIF / pre-commit | `src/decoy/ci/`, `src/decoy/cli/ci.py`, `docs/ci-contracts.md`, `.pre-commit-hooks.yaml`, `integrations/` |
+| Hosted CI installs (lock-env, setup-uv, install policy, scanner) | `.github/actions/`, `ci/install-policy.toml`, `scripts/dev/lock_version.sh`, `tests/sentry/_ci_lock_scan.py` |
 | STORM command | `src/decoy/cli/storm.py` |
 | Plan command | `src/decoy/cli/plan.py` |
 | Output formatting | `src/decoy/ui/` |
