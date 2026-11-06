@@ -80,3 +80,37 @@ def test_trust_state_failure_is_an_install_error_without_a_path(
         installer.check_document_freshness(_document(), tmp_path)
     assert str(tmp_path) not in str(info.value)
     assert not (tmp_path / "trust_state.json").exists()
+
+
+_USER_NAMES = ["report final.json", "_report.json", ".report.sarif", "r\u00e9sum\u00e9.json"]
+
+
+def _ci_run(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, name: str) -> tuple[int, Path]:
+    from tests.ci_support import MANIFEST_NAME, ci_manifest, make_repo, write, write_clean_pipeline
+
+    from decoy.__main__ import app
+
+    repo = make_repo(tmp_path / "repo")
+    write_clean_pipeline(repo)
+    write(repo, MANIFEST_NAME, ci_manifest())
+    monkeypatch.chdir(repo)
+    result = CliRunner().invoke(app, ["ci", "check", MANIFEST_NAME, "--output", name])
+    return result.exit_code, repo
+
+
+@pytest.mark.parametrize("name", _USER_NAMES)
+def test_ci_report_accepts_the_names_it_always_accepted(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, name: str
+) -> None:
+    baseline, _ = _ci_run(tmp_path / "base", monkeypatch, "report.json")
+    code, repo = _ci_run(tmp_path / "named", monkeypatch, name)
+    assert (repo / name).is_file()
+    assert code == baseline
+
+
+@pytest.mark.parametrize("name", ["debug log.txt", "_debug.txt", ".debug", "d\u00e9bug.log"])
+def test_debug_log_accepts_the_names_it_always_accepted(tmp_path: Path, name: str) -> None:
+    sink = DebugSink(tmp_path / name)
+    sink.add("label", "line")
+    sink.flush()
+    assert b"[label] line" in (tmp_path / name).read_bytes()

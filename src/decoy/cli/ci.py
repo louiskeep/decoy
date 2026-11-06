@@ -15,7 +15,7 @@ from pathlib import Path
 import typer
 
 from decoy import __version__
-from decoy._atomic import AtomicWriteError, WriteMode, write_atomic
+from decoy._atomic import AtomicWriteError, WriteMode, write_local_target
 from decoy.ci import reporting
 from decoy.ci.contracts import NOTE_TEXTS, SafeCiReport
 from decoy.ci.debug import DebugSink
@@ -186,7 +186,7 @@ def check(
         sys.stdout.flush()
     else:
         try:
-            write_atomic(out_path.parent, out_path.name, text.encode("utf-8"), WriteMode.REPLACE)
+            write_local_target(out_path, text.encode("utf-8"), WriteMode.REPLACE)
         except (OSError, AtomicWriteError):
             typer.echo("error: could not write the report.", err=True)
             raise typer.Exit(code=EXIT_RUNTIME) from None

@@ -253,3 +253,73 @@ def test_walk_resolves_aliases_and_method_forms() -> None:
 )
 def test_walk_sees_each_common_form(source: str, expected: list[str]) -> None:
     assert [what for _, what in inline_sites(source)] == expected
+
+
+def dir_fsync_sites(source: str) -> list[int]:
+    """Lines of `os.open(..., O_DIRECTORY)` in a module that also calls `os.fsync`.
+
+    That pair is a hand-written directory fsync; `_atomic.fsync_directory` is the one copy.
+    """
+    tree = ast.parse(source)
+    modules, members = _os_names(tree)
+    opens: list[int] = []
+    fsyncs = 0
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        what = _os_call(node.func, modules, members)
+        if what == "fsync":
+            fsyncs += 1
+        elif what == "open" and any(
+            (isinstance(n, ast.Attribute) and n.attr == "O_DIRECTORY")
+            or (isinstance(n, ast.Name) and n.id == "O_DIRECTORY")
+            or (isinstance(n, ast.Constant) and n.value == "O_DIRECTORY")
+            for arg in [*node.args, *(k.value for k in node.keywords)]
+            for n in ast.walk(arg)
+        ):
+            opens.append(node.lineno)
+    return opens if fsyncs else []
+
+
+def _os_names(tree: ast.AST) -> tuple[set[str], dict[str, str]]:
+    modules: set[str] = set()
+    members: dict[str, str] = {}
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            modules |= {a.asname or "os" for a in node.names if a.name.split(".")[0] == "os"}
+        elif isinstance(node, ast.ImportFrom) and node.module == "os":
+            members |= {a.asname or a.name: a.name for a in node.names}
+    return modules, members
+
+
+def _os_call(func: ast.expr, modules: set[str], members: dict[str, str]) -> str | None:
+    if isinstance(func, ast.Name):
+        return members.get(func.id)
+    if isinstance(func, ast.Attribute) and isinstance(func.value, ast.Name):
+        return func.attr if func.value.id in modules else None
+    return None
+
+
+def test_no_second_directory_fsync_outside_the_choke_point() -> None:
+    found = {
+        rel: lines
+        for path in sorted(SRC.rglob("*.py"))
+        if (rel := path.relative_to(SRC).as_posix()) != CHOKE_POINT
+        if (lines := dir_fsync_sites(path.read_text(encoding="utf-8")))
+    }
+    assert found == {}
+
+
+@pytest.mark.parametrize(
+    ("source", "expected"),
+    [
+        ("import os\nfd = os.open(d, os.O_RDONLY | os.O_DIRECTORY)\nos.fsync(fd)\n", [2]),
+        ("import os\nfd = os.open(d, os.O_RDONLY | getattr(os, 'O_DIRECTORY', 0))\nos.fsync(fd)\n", [2]),
+        ("from os import open as op, fsync, O_DIRECTORY\nfd = op(d, O_DIRECTORY)\nfsync(fd)\n", [2]),
+        ("import os\nfd = os.open(d, os.O_RDONLY)\nos.fsync(fd)\n", []),
+        ("import os\nfd = os.open(d, os.O_DIRECTORY)\n", []),
+    ],
+)  # fmt: skip
+def test_seeded_directory_fsync_is_red(source: str, expected: list[int]) -> None:
+    """M-ATOMIC-DIRFSYNC: a hand-written directory fsync is seen; a plain file open is not."""
+    assert dir_fsync_sites(source) == expected

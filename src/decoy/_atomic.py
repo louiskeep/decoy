@@ -7,7 +7,8 @@ SQLite's rollback-journal commit and the ext4 documentation on rename and fsync
 deprecated `atomicwrites` package (https://github.com/untitaker/python-atomicwrites);
 the engine's `fileaccess.write_private` recipe, which this mirrors without the
 engine's file-access policy so it runs on Windows. Local plan:
-docs/plans/2026-11-05-local-record-library.md section 4.9.
+`plan/local-record-library:docs/plans/2026-11-05-local-record-library.md` section 4.9 (a branch
+not yet on main).
 
 Rules this module owns (see tests/sentry/test_atomic_writer.py, which fails when
 `os.replace`, `os.rename`, `os.link` or `tempfile.mkstemp` appear elsewhere in
@@ -17,8 +18,11 @@ Rules this module owns (see tests/sentry/test_atomic_writer.py, which fails when
   neither, and no temp file is left behind.
 * An error carries a fixed code and an errno, never a path (an `OSError` text
   names the path), and its cause is not chained.
-* The caller's `name` passes an allowlist (portable on Windows and POSIX) before any
-  file is made.
+* `write_atomic` (library-controlled names, such as record ids) checks the name against an
+  allowlist portable on Windows and POSIX before any file is made. `write_local_target`
+  (a path the user chose and the caller already resolved and contained) accepts any single
+  path component except `.`, `..`, an empty name, a separator, NUL or a Windows device name.
+  Both run the same private write, move and fsync core.
 * `CREATE_ONCE` never replaces a file. Where the mount offers no atomic no-clobber
   move, it fails with `atomic_noclobber_unsupported` instead of checking then replacing.
 
@@ -49,6 +53,7 @@ __all__ = [
     "WriteMode",
     "fsync_directory",
     "write_atomic",
+    "write_local_target",
 ]
 
 ATOMIC_WRITE_FAILED = "atomic_write_failed"
@@ -63,8 +68,8 @@ ATOMIC_NOCLOBBER_UNSUPPORTED = "atomic_noclobber_unsupported"
 _NAME_PATTERN = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,199}")
 _DEVICE_STEMS = frozenset(
     {"CON", "PRN", "AUX", "NUL"}
-    | {f"COM{n}" for n in range(1, 10)}
-    | {f"LPT{n}" for n in range(1, 10)}
+    | {f"COM{n}" for n in range(0, 10)}
+    | {f"LPT{n}" for n in range(0, 10)}
 )
 
 _WINDOWS = sys.platform == "win32"
@@ -123,6 +128,23 @@ def write_atomic(
     match as success. Raises `AtomicWriteError`.
     """
     _require_name(name)
+    return _write(directory, name, data, mode, tmp_dir)
+
+
+def write_local_target(path: Path, data: bytes, mode: WriteMode) -> bool:
+    """Write `data` to `path`, a target the user chose and the caller already resolved.
+
+    For `--output` style paths where `write_atomic`'s portable-name allowlist would reject
+    names that always worked (spaces, a leading `_` or `.`, non-ASCII). The caller owns
+    containment; this checks only that the last component is one safe path component.
+    Same semantics, return value and errors as `write_atomic`.
+    """
+    _require_component(path.name)
+    return _write(path.parent, path.name, data, mode, None)
+
+
+def _write(directory: Path, name: str, data: bytes, mode: WriteMode, tmp_dir: Path | None) -> bool:
+    """The one write, move and fsync recipe both public entry points share."""
     target = directory / name
     tmp: str | None = None
     failed_errno: int | None = None
@@ -130,6 +152,11 @@ def write_atomic(
         fd, tmp = tempfile.mkstemp(dir=tmp_dir or directory, prefix=".", suffix=".tmp")
         _write_and_sync(fd, data)
         created = _move_into_place(tmp, target, mode)
+        if created and mode is WriteMode.CREATE_ONCE and not _WINDOWS:
+            # The hard-link move leaves the temp name as a second link; drop it before the
+            # directory sync so a crash cannot leave a stray hidden entry.
+            with contextlib.suppress(OSError):
+                os.unlink(tmp)
         if created:
             _sync_directories(directory, tmp_dir)
         return created
@@ -137,13 +164,26 @@ def write_atomic(
         failed_errno = exc.errno
     finally:
         # Runs on every exit, including KeyboardInterrupt. After a successful replace the
-        # temp name is gone; after a successful link it still names the second hard link.
+        # temp name is gone; after a successful link it may still name the second hard link.
         if tmp is not None:
             with contextlib.suppress(OSError):
                 os.unlink(tmp)
     # Raised outside the except block so the OSError (its text names the path) is not
     # kept as `__context__`.
     raise AtomicWriteError(ATOMIC_WRITE_FAILED, failed_errno)
+
+
+def _require_component(name: str) -> None:
+    seps = {"/", os.sep, os.altsep or "/"}
+    stem = name.split(".", 1)[0].upper()
+    if (
+        not name
+        or name in {".", ".."}
+        or "\0" in name
+        or any(sep in name for sep in seps)
+        or (_WINDOWS and (stem in _DEVICE_STEMS or "\\" in name or ":" in name))
+    ):
+        raise AtomicWriteError(ATOMIC_BAD_NAME)
 
 
 def _require_name(name: str) -> None:

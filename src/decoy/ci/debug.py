@@ -10,7 +10,7 @@ from __future__ import annotations
 import traceback
 from pathlib import Path
 
-from decoy._atomic import WriteMode, write_atomic
+from decoy._atomic import WriteMode, write_local_target
 
 
 class DebugSink:
@@ -40,9 +40,4 @@ class DebugSink:
             return
         header = "# decoy ci check UNSAFE debug log: may contain secrets and sample values.\n"
         body = header + "\n".join(self._lines) + "\n"
-        write_atomic(
-            self._path.parent,
-            self._path.name,
-            body.encode("utf-8", errors="replace"),
-            WriteMode.REPLACE,
-        )
+        write_local_target(self._path, body.encode("utf-8", errors="replace"), WriteMode.REPLACE)

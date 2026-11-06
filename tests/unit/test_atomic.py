@@ -54,7 +54,7 @@ def test_tmp_dir_holds_the_temp_file(tmp_path: Path, monkeypatch: pytest.MonkeyP
 
 _BAD_NAMES = [
     "", ".", "..", "a/b", "a\\b", "a\0b", "../x",
-    "C:x", "a:b", "NUL", "nul", "con.txt", "CON.tar.gz", "COM1", "lpt9.log", "AUX", "PRN.x",
+    "C:x", "a:b", "NUL", "nul", "con.txt", "CON.tar.gz", "COM0", "LPT0", "COM1", "lpt9.log", "AUX", "PRN.x",
     "x.", "x ", " x", ".hidden", "a b", "caf\u00e9", "x" * 201,
 ]  # fmt: skip
 
@@ -164,18 +164,64 @@ def test_create_once_without_hard_links_fails_closed(
 def test_no_hard_links_never_overwrites_a_competing_writer(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """V1: the old check-then-replace let os.replace clobber a file created after the check."""
-    real_replace = os.replace
+    """V1: the old check-then-replace let a file created after the check be clobbered."""
 
-    def competitor_then_replace(src: str, dst: Path) -> None:
+    def competitor_then_refuse(*_a: object, **_k: object) -> None:
         (tmp_path / "r").write_bytes(b"competitor")
-        real_replace(src, dst)
+        raise OSError(errno.EPERM, "no links at /secret/path")
 
-    monkeypatch.setattr(os, "link", _no_link)
-    monkeypatch.setattr(os, "replace", competitor_then_replace)
-    with pytest.raises(AtomicWriteError):
+    monkeypatch.setattr(os, "link", competitor_then_refuse)
+    with pytest.raises(AtomicWriteError) as info:
         write_atomic(tmp_path, "r", b"mine", WriteMode.CREATE_ONCE)
-    assert not (tmp_path / "r").exists() or (tmp_path / "r").read_bytes() == b"competitor"
+    assert info.value.code == _atomic.ATOMIC_NOCLOBBER_UNSUPPORTED
+    assert (tmp_path / "r").read_bytes() == b"competitor"
+    assert _names(tmp_path) == ["r"]
+
+
+@pytest.mark.skipif(os.name == "nt", reason="the hard-link move is POSIX only")
+def test_create_once_drops_the_temp_link_before_the_directory_sync(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    seen: list[list[str]] = []
+    monkeypatch.setattr(_atomic, "fsync_directory", lambda d: seen.append(_names(d)))
+    assert write_atomic(tmp_path, "r", b"x", WriteMode.CREATE_ONCE) is True
+    assert seen == [["r"]]
+
+
+@pytest.mark.parametrize(
+    "name",
+    ["report final.json", "_report.json", ".report.sarif", "r\u00e9sum\u00e9.json", "a b", "COM0"],
+)
+def test_local_target_accepts_any_single_component(tmp_path: Path, name: str) -> None:
+    assert _atomic.write_local_target(tmp_path / name, b"x", WriteMode.REPLACE) is True
+    assert (tmp_path / name).read_bytes() == b"x"
+    assert not [n for n in _names(tmp_path) if n.endswith(".tmp")]
+
+
+def test_local_target_shares_the_write_core(tmp_path: Path) -> None:
+    assert _atomic.write_local_target(tmp_path / "r", b"a", WriteMode.CREATE_ONCE) is True
+    assert _atomic.write_local_target(tmp_path / "r", b"b", WriteMode.CREATE_ONCE) is False
+    assert (tmp_path / "r").read_bytes() == b"a"
+    if os.name != "nt":
+        assert (tmp_path / "r").stat().st_mode & 0o777 == 0o600
+
+
+@pytest.mark.parametrize("name", [".", "..", "", "a\0b"])
+def test_local_target_refuses_a_bad_component(name: str) -> None:
+    # A Path splits on separators, so the last component never holds one; the rest can fail.
+    with pytest.raises(AtomicWriteError) as info:
+        _atomic.write_local_target(Path(name), b"x", WriteMode.REPLACE)
+    assert info.value.code == _atomic.ATOMIC_BAD_NAME
+
+
+@pytest.mark.parametrize("name", ["NUL", "con.txt", "COM0", "lpt0.log"])
+def test_local_target_refuses_windows_devices_on_windows(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, name: str
+) -> None:
+    monkeypatch.setattr(_atomic, "_WINDOWS", True)
+    with pytest.raises(AtomicWriteError) as info:
+        _atomic.write_local_target(tmp_path / name, b"x", WriteMode.REPLACE)
+    assert info.value.code == _atomic.ATOMIC_BAD_NAME
 
 
 def test_competitor_between_temp_and_link_survives(

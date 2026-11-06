@@ -24,6 +24,7 @@ from rich.text import Text
 
 from decoy import __version__ as _cli_version
 from decoy import _mask_secret, _mask_secret_guidance, _native_gate
+from decoy._atomic import fsync_directory
 from decoy.cli._duckdb_source import DuckDBSourceError, acquire_relation, parse_flag
 from decoy.cli._sources import iter_source_chunks, read_source
 from decoy.cli._yaml_errors import sanitize_yaml_error
@@ -1619,14 +1620,6 @@ def _load_sources_from_config(config_dict: dict, base_dir: Path) -> dict:
     return out
 
 
-def _fsync_directory(directory: Path) -> None:
-    fd = os.open(directory, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))
-    try:
-        os.fsync(fd)
-    finally:
-        os.close(fd)
-
-
 def _commit_vault(vault_writer, vault: Path) -> None:
     """Write the vault durably: 0600 temp file in its directory, fsync, rename, fsync the directory.
 
@@ -1672,7 +1665,7 @@ def _commit_vault(vault_writer, vault: Path) -> None:
                 raise
         os.replace(tmp, vault)
         tmp, renamed = None, True
-        _fsync_directory(directory)
+        fsync_directory(directory)
     except Exception as exc:
         failed = exc
     finally:
@@ -1683,7 +1676,7 @@ def _commit_vault(vault_writer, vault: Path) -> None:
                     backup = None
                 else:
                     os.unlink(vault)
-                _fsync_directory(directory)
+                fsync_directory(directory)
         for leftover in (tmp, backup):
             if leftover is not None:
                 with contextlib.suppress(OSError):
