@@ -25,8 +25,9 @@ from tests.ci_support import MANIFEST_NAME, ci_manifest, make_repo, write, write
 from typer.testing import CliRunner
 
 import decoy.cli.evidence as cli_evidence
+import decoy.cli.gate as cli_gate
+import decoy.cli.gate._layers as cli_gate_layers
 import decoy.cli.preflight as cli_preflight
-import decoy.cli.validate as cli_validate
 from decoy.ci.rule_codes import (
     EVIDENCE_KINDS,
     UNKNOWN_CODE,
@@ -144,8 +145,8 @@ def _cli_gate_codes() -> tuple[set[str], set[str]]:
     """Codes `run_gate` attaches itself, and the f-string preflight check names."""
     codes: set[str] = set()
     templates: set[str] = set()
-    for node in ast.walk(_module_tree(cli_validate)):
-        if isinstance(node, ast.Call) and _call_name(node) == "_GateFinding":
+    for node in ast.walk(_module_tree(cli_gate_layers)):
+        if isinstance(node, ast.Call) and _call_name(node) == "GateFinding":
             if len(node.args) > 2 and isinstance(node.args[2], ast.Constant):
                 codes.add(node.args[2].value)
         # The pydantic fallback: `e.get("type", "validation_error")`.
@@ -289,7 +290,7 @@ def test_every_pydantic_error_type_is_allowlisted() -> None:
 
 def test_every_cli_gate_code_and_preflight_template_is_allowlisted() -> None:
     codes, templates = _cli_gate_codes()
-    assert {"yaml.parse_error", "missing_extra", "validation_error"} <= codes
+    assert {"yaml.parse_error", "missing_extra", "validation_error", "compile.needs_profile"} <= codes
     assert sorted(codes - validation_codes()) == []
     assert templates, "the preflight scan found no templated check names"
     for template in templates:
@@ -354,17 +355,17 @@ def test_an_unknown_upstream_code_never_reaches_any_report_format(
         f"Mixed Case {CANARY}!",
     ]
 
-    def _gate(*_a: object, **_k: object) -> cli_validate.GateResult:
+    def _gate(*_a: object, **_k: object) -> cli_gate.GateResult:
         findings = [
-            cli_validate._GateFinding("config", "error", code, f"msg {CANARY}")
+            cli_gate.GateFinding("config", "error", code, f"msg {CANARY}")
             for code in gate_codes
         ]
-        return cli_validate.GateResult(findings, frozenset({"config"}), False)
+        return cli_gate.GateResult(findings, frozenset({"config"}), False)
 
     def _issues(*_a: object, **_k: object) -> list[cli_evidence.EvidenceIssue]:
         return [cli_evidence.EvidenceIssue(f"kind_{CANARY}", f"msg {CANARY}")]
 
-    monkeypatch.setattr(cli_validate, "run_gate", _gate)
+    monkeypatch.setattr(cli_gate, "run_gate", _gate)
     monkeypatch.setattr(cli_evidence, "verify_manifest_issues", _issues)
     monkeypatch.chdir(repo)
     result = CliRunner().invoke(app, ["ci", "check", MANIFEST_NAME, "--format", fmt])

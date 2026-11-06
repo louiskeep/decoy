@@ -475,7 +475,7 @@ def _check_capacity(raw: dict[str, Any], config_path: Path, acc: _PreflightAccum
             raise
         acc.add_fail(
             name="capacity.source_unreadable",
-            message=f"Cannot estimate capacity -- {exc.message}",
+            message=f"Cannot estimate capacity -- source not parsed ({type(exc.__cause__).__name__})",
             code=exc.code,
         )
         return

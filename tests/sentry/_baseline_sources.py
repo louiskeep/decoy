@@ -139,6 +139,16 @@ SOURCES: tuple[Source, ...] = (
         ),
     ),
     Source(
+        "gate-single-entry-allow",
+        "tests/sentry/test_gate_single_entry.py",
+        InCode(
+            "tests/sentry/test_gate_single_entry.py",
+            "ALLOWLIST",
+            key=lambda e: f"{e.module}::{e.function}::{e.rule}",
+            reason=lambda e: e.reason,
+        ),
+    ),
+    Source(
         "root-help-omitted",
         _SURFACE,
         InCode(_SURFACE, "_ROOT_HELP_OMITTED", reason=lambda e: _ROOT_HELP_WHY, literal=True),

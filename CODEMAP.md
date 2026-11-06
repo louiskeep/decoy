@@ -46,6 +46,7 @@ First row of the layout map the LAYOUT slice completes (one line per kind of mod
 | Kind of module | Where | Examples |
 |---|---|---|
 | Private shared filesystem or process primitives used by more than one package | top-level `src/decoy/`, file named `_<noun>.py`, tests in `tests/unit/test_<noun>.py`, its sentry in `tests/sentry/` | `_atomic.py`, `_mask_secret.py`, `_native_gate.py` |
+| Pre-run check gate shared by `validate`, `ci check` and `run` | `src/decoy/cli/gate/`, file named `_<noun>.py`, tests in `tests/unit/test_gate_*.py` and `tests/e2e/test_run_validate_always.py` | `_layers.py` (layers and entries); `cli/io/` is the sibling sub-package |
 | CLI source readers and target writers (owner rule 2026-11-06: new ones go here from now on; `cli/` is frozen) | `src/decoy/cli/io/`, file named `_<noun>.py` | target writer `cli/io/_targets.py` (CLI-FMT); today's exception `cli/_sources.py` moves here under H-1 |
 | Composite CI actions (`action.yml`) | `.github/actions/<name>/` | `setup-uv`, `lock-env` |
 | CI install, vendor and lane policy (`*.toml`) | `ci/` | `ci/install-policy.toml` (the install registry), `ci/vendored.toml`, `ci/ci-tools.in`, `ci/ci-tools.lock` |
@@ -62,7 +63,7 @@ First row of the layout map the LAYOUT slice completes (one line per kind of mod
 | Command registration | `src/decoy/__main__.py` |
 | Run command | `src/decoy/cli/run.py` |
 | Tokenize / detokenize | `src/decoy/cli/tokenize.py` (store: `_token_vault.py`) |
-| Validate command | `src/decoy/cli/validate.py` |
+| Validate command | `src/decoy/cli/validate.py` (gate: `src/decoy/cli/gate/`) |
 | CI checks / SARIF / pre-commit | `src/decoy/ci/`, `src/decoy/cli/ci.py`, `docs/ci-contracts.md`, `.pre-commit-hooks.yaml`, `integrations/` |
 | Hosted CI installs (lock-env, setup-uv, install policy, scanner) | `.github/actions/`, `ci/install-policy.toml`, `scripts/dev/lock_version.sh`, `tests/sentry/_ci_lock_scan.py` |
 | STORM command | `src/decoy/cli/storm.py` |
