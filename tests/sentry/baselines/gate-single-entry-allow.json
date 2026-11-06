@@ -1,0 +1,24 @@
+{
+ "sentry_id": "gate-single-entry-allow",
+ "created_in": "VALIDATE-ALWAYS-P1",
+ "entries": {
+  "decoy.cli.compile_explain::compile::compile_plan_no_profile": {
+   "reason": "`validate compile --no-profile` is the single-layer command the gate's compile layer reuses helpers from; it keeps its own compile call and its unique-column error."
+  },
+  "decoy.cli.preflight::preflight::preflight_check": {
+   "reason": "The `validate preflight` command body is the third copy of steps 1-3 and calls the layer checks itself until CONFIG-EXPLICIT C2 folds it onto the gate."
+  },
+  "decoy.cli.preflight::preflight::run_config_only_checks": {
+   "reason": "The same third copy of steps 1-3 also runs the config-only checks itself until CONFIG-EXPLICIT C2 folds it onto the gate."
+  },
+  "decoy.cli.run::_load_raw_config::yaml_safe_load": {
+   "reason": "P1 does not touch run.py; P2 replaces this parse with parse_pipeline_yaml and deletes this entry."
+  },
+  "decoy.cli.run::run::pipeline_model_validate": {
+   "reason": "P1 does not touch run.py; P2 reads GateResult.config instead of validating again and deletes this entry."
+  },
+  "decoy.cli.run::run::yaml_safe_load": {
+   "reason": "P1 does not touch run.py; P2 deletes the re-parse in `run` and this entry."
+  }
+ }
+}

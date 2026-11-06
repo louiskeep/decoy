@@ -29,6 +29,7 @@ SENTRIES = (
     "tests/sentry/test_engine_import_surface.py",
     "tests/sentry/test_engine_internal_boundary.py",
     "tests/sentry/test_engine_secret_file_check.py",
+    "tests/sentry/test_gate_single_entry.py",
     "tests/sentry/test_mask_secret_error_text.py",
     "tests/sentry/test_mask_secret_file_mode.py",
     "tests/sentry/test_mask_secret_ref_shape.py",
