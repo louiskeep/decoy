@@ -39,8 +39,8 @@ _TEMPLATED_CODES = frozenset(
 _CLI_GATE_CODES: frozenset[str] = frozenset(
     {
         "capacity.out_of_core_fk", "capacity.source_unreadable", "compile_error",
-        "compile_warning", "missing_extra", "native.companion", "native.eligibility",
-        "no_profile_unique_incompatible", "pipeline.validation_error", "validation_error",
+        "compile.needs_profile", "compile_warning", "missing_extra", "native.companion",
+        "native.eligibility", "pipeline.validation_error", "validation_error",
         "yaml.empty", "yaml.not_mapping", "yaml.parse_error",
     }
 )

@@ -125,10 +125,19 @@ def _schema_error_config(tmp_path: Path) -> Path:
     return p
 
 
-def _compile_fail_config(tmp_path: Path, *, with_source: bool = True) -> Path:
-    """Passes the config base (schema + config-only checks) but fails the
-    compile layer: a `cardinality_mode: unique` column is incompatible with the
-    gate's no-profile compile (the H2 guard reused from `validate compile`)."""
+def _patch_compile_error(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Make the gate's no-profile `compile_plan` raise a typed PlanCompileError."""
+    import decoy_engine.plan as engine_plan
+
+    def _boom(*_a: Any, **_k: Any) -> Any:
+        raise engine_plan.PlanCompileError("synthetic_compile_failure", "tables.x", "forced")
+
+    monkeypatch.setattr(engine_plan, "compile_plan", _boom)
+
+
+def _unique_column_config(tmp_path: Path, *, with_source: bool = True) -> Path:
+    """Passes the config base (schema + config-only checks); a `cardinality_mode: unique`
+    column needs profile data, so the gate's compile layer skips it with a warning."""
     src = tmp_path / "in.csv"
     pd.DataFrame({"email": ["a@b.com", "c@d.com"]}).to_csv(src, index=False)
     path = str(src) if with_source else str(tmp_path / "ABSENT.csv")
@@ -160,11 +169,10 @@ def _compile_fail_config(tmp_path: Path, *, with_source: bool = True) -> Path:
     return p
 
 
-def _fk_config(tmp_path: Path, *, unique_cardinality: bool = False) -> Path:
+def _fk_config(tmp_path: Path) -> Path:
     """A real FK parquet job (mirrors test_preflight_capacity._write_config). The
     capacity estimator is monkeypatched in the tests; this just provides sources
-    that exist so the capacity check actually reaches the estimator. With
-    `unique_cardinality`, the compile layer ALSO fails (for the outranks test)."""
+    that exist so the capacity check actually reaches the estimator."""
     parent = pa.table({"id": pa.array([f"p{i}" for i in range(8)], type=pa.string())})
     child = pa.table(
         {
@@ -175,8 +183,6 @@ def _fk_config(tmp_path: Path, *, unique_cardinality: bool = False) -> Path:
     pq.write_table(parent, tmp_path / "parent.parquet")
     pq.write_table(child, tmp_path / "child.parquet")
     parent_cols: list[dict[str, Any]] = [{"name": "id", "strategy": "hash", "namespace": "ns"}]
-    if unique_cardinality:
-        parent_cols[0]["cardinality_mode"] = "unique"
     cfg = {
         "version": 2,
         "global_settings": {"seed": 7},
@@ -280,7 +286,7 @@ def test_gate_schema_error_short_circuits(tmp_path: Path) -> None:
 def test_gate_schema_error_does_not_run_compile_or_preflight(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    import decoy.cli.validate as validate_mod
+    import decoy.cli.gate._layers as validate_mod
 
     tripped = {"compile": False, "preflight": False}
 
@@ -304,14 +310,31 @@ def test_gate_schema_error_does_not_run_compile_or_preflight(
 # ---------------------------------------------------------------------------
 
 
-def test_gate_failed_compile_check_exits_usage(tmp_path: Path) -> None:
-    result = _gate(_compile_fail_config(tmp_path))
+def test_gate_failed_compile_check_exits_usage(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _patch_compile_error(monkeypatch)
+    result = _gate(_clean_config(tmp_path))
     assert result.exit_code == EXIT_USAGE, result.output
-    payload = _json.loads(_gate(_compile_fail_config(tmp_path), "--json").output)
+    payload = _json.loads(_gate(_clean_config(tmp_path), "--json").output)
     compile_errors = [
         m for m in payload["messages"] if m["layer"] == "compile" and m["severity"] == "error"
     ]
     assert compile_errors, payload
+
+
+def test_gate_unique_column_is_a_warning_not_an_error(tmp_path: Path) -> None:
+    """AT-4 (owner Q1): the aggregate gate skips the compile for a unique column with a
+    warning; `--fail-on-warning` blocks it; `validate compile --no-profile` keeps its error."""
+    cfg = _unique_column_config(tmp_path)
+    ok = _gate(cfg, "--json")
+    assert ok.exit_code == EXIT_OK, ok.output
+    warned = [m for m in _json.loads(ok.output)["messages"] if m["code"] == "compile.needs_profile"]
+    assert [(m["layer"], m["severity"]) for m in warned] == [("compile", "warning")]
+    assert _gate(cfg, "--fail-on-warning").exit_code == EXIT_WARNINGS
+    direct = runner.invoke(app, ["validate", "compile", str(cfg), "--no-profile"])
+    assert direct.exit_code == EXIT_USAGE, direct.output
+    assert "cardinality_mode:unique" in "".join(direct.output.split())
 
 
 # ---------------------------------------------------------------------------
@@ -362,8 +385,9 @@ def test_gate_capacity_outranks_compile_fail(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     _patch_fanin(monkeypatch)
-    # unique_cardinality makes the compile layer ALSO fail; capacity must win.
-    result = _gate(_fk_config(tmp_path, unique_cardinality=True), "--json")
+    # A forced compile error makes the compile layer ALSO fail; capacity must win.
+    _patch_compile_error(monkeypatch)
+    result = _gate(_fk_config(tmp_path), "--json")
     assert result.exit_code == EXIT_CAPACITY, result.output
     payload = _json.loads(result.output)
     layers = {(m["layer"], m["severity"]) for m in payload["messages"]}
@@ -433,7 +457,8 @@ def test_gate_json_message_item_shape_and_severity_map(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     _patch_fanin(monkeypatch)
-    result = _gate(_fk_config(tmp_path, unique_cardinality=True), "--json")
+    _patch_compile_error(monkeypatch)
+    result = _gate(_fk_config(tmp_path), "--json")
     payload = _json.loads(result.output)
     assert payload["command"] == "validate"
     assert payload["status"] == "error"  # any error finding -> status error
@@ -457,3 +482,67 @@ def test_gate_json_status_warn_only_under_fail_on_warning(
     # With the flag: the same warning promotes the envelope status to "warn".
     flagged = _json.loads(_gate(_fk_config(tmp_path), "--json", "--fail-on-warning").output)
     assert flagged["status"] == "warn"
+
+
+# ---------------------------------------------------------------------------
+# P1 of validate-always: `validate config` runs on the gate; value-free unreadable source
+# ---------------------------------------------------------------------------
+
+
+def _config_cmd(config_path: Path, *extra: str) -> Any:
+    return runner.invoke(app, ["validate", "config", str(config_path), *extra])
+
+
+def test_validate_config_reports_target_overwrite_from_the_gate(tmp_path: Path) -> None:
+    """AT-11: `validate config` keeps the same envelope keys and shows the advisory under the
+    gate's code. Mutation: drop the target-overwrite advisory from the config layer."""
+    cfg = _clean_config(tmp_path)
+    (tmp_path / "out.csv").write_text("x\n", encoding="utf-8")
+    result = _config_cmd(cfg, "--json")
+    assert result.exit_code == EXIT_OK, result.output
+    payload = _json.loads(result.output)
+    assert set(payload) == {"command", "status", "config", "messages", "checks_run"}
+    assert payload["status"] == "ok"
+    assert payload["messages"] == [
+        {
+            "severity": "warning",
+            "code": "target.customers.would_overwrite",
+            "message": f"Output target already exists and would be overwritten: {tmp_path}/out.csv",
+            "location": "targets.customers.path",
+        }
+    ]
+    assert _config_cmd(cfg, "--fail-on-warning").exit_code == EXIT_WARNINGS
+
+
+def test_validate_config_error_envelope_keeps_its_shape(tmp_path: Path) -> None:
+    result = _config_cmd(_schema_error_config(tmp_path), "--json")
+    assert result.exit_code == EXIT_USAGE, result.output
+    payload = _json.loads(result.output)
+    assert set(payload) == {"command", "status", "config", "error", "messages"}
+    assert payload["status"] == "error"
+    assert payload["error"] == payload["messages"][0]["message"]
+    assert set(payload["messages"][0]) <= {"severity", "code", "message", "location"}
+
+
+MARKER = "gatemarker91c3d7"
+
+
+@pytest.mark.parametrize("flags", [(), ("--json",)])
+def test_corrupt_source_leaves_no_reader_text(tmp_path: Path, flags: tuple[str, ...]) -> None:
+    """AT-7m (validate cells): a present-but-corrupt source exits 1 with the unprofilable code
+    and nothing the reader said. Mutation: restore `{exc.message}` in `_check_capacity`."""
+    cfg = _unique_column_config(tmp_path)  # a source plus targets; the compile is skipped
+    data = yaml.safe_load(cfg.read_text(encoding="utf-8"))
+    data["sources"]["customers"] = {
+        "type": "file",
+        "format": "parquet",
+        "path": str(tmp_path / "bad.parquet"),
+    }
+    (tmp_path / "bad.parquet").write_bytes(f"NOT_PARQUET_{MARKER}".encode())
+    cfg.write_text(yaml.dump(data), encoding="utf-8")
+    result = _gate(cfg, *flags)
+    assert result.exit_code == EXIT_USAGE, result.output
+    assert MARKER not in result.output
+    if flags:
+        codes = [m["code"] for m in _json.loads(result.output)["messages"]]
+        assert "capacity_source_unprofilable" in codes

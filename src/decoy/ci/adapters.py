@@ -75,7 +75,7 @@ def validation_outcome(
 ) -> CheckOutcome:
     check_id = f"validation.{ref.id}"
     try:
-        from decoy.cli.validate import gate_exit_code, run_config_gate, run_gate
+        from decoy.cli.gate import gate_exit_code, run_config_gate, run_gate
 
         path = loaded.resolve(ref.path)
         rel = loaded.repo_relative(path)
