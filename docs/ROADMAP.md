@@ -115,7 +115,7 @@ Choke points the CLI V1 track builds on or adds:
 | Private file writes | engine `_private_file` (X7b, engine #382); CLI `_private_file.py` | write-mode sentries | X7c |
 | CLI source readers | `C:src/decoy/cli/_sources.py` (`read_source`, `iter_source_chunks`) | CLI-DIALECT tests | CLI-DIALECT |
 | CLI target writers and readers | one `C:src/decoy/cli/_targets.py` | format and suffix tests | CLI-FMT A and B |
-| Local record library writes | one library writer (LIB L1b) | `C:tests/sentry/test_library_writer.py` | LIB rows |
+| Local record library writes | one library writer (LIB L1b; the shared atomic writer `C:src/decoy/_atomic.py` merged in #85) | `C:tests/sentry/test_atomic_writer.py` (G-ONE-ATOMIC-WRITER) | LIB rows |
 | Scratch and quotas | the F25 scratch manager | registration sentry | F25 |
 | Publication and delivery | F22 publication descriptor, DELIV transactional sink | delivery tests | F22, CLI delivery |
 | Module size | the size census per repo | `test_module_size.py` | FILE-SIZE |
@@ -264,7 +264,7 @@ retention classes under one project root `.decoy/`; `decoy run` writes records b
 | # | Item | Repo | State | Branch, plan or handoff | After |
 |---|---|---|---|---|---|
 | 33 | L1a-engine: records module (~520 lines) | engine | plan fix round | `plan/local-record-library` | plan GO |
-| 34 | L1b-cli: store, atomic writes, refs, scratch (~700 lines); Linux, macOS and Windows lanes | CLI | plan fix round | same | L1a release and repin; WIN-RUNNER |
+| 34 | L1b-cli: store, atomic writes, refs, scratch (~700 lines); Linux, macOS and Windows lanes | CLI | L1b.1 shared atomic writer MERGED (#85, `c16a5fa`); L1b.2 and L1b.3 waiting | same | L1a release and repin; WIN-RUNNER |
 | 35 | L1c-cli: index, fsck, degraded mode (~560 lines); three OS lanes | CLI | plan fix round | same | L1b |
 | 36 | L2-cli: scan snapshots on the library (~380 lines; replaces SCAN-MULTI S1d) | CLI | plan fix round | same | L1c; SCAN-MULTI S1c |
 | 37 | L3a-cli: evidence and run-result records (~520 lines) | CLI | plan fix round | same | L1c; RESULT for the run-result half |

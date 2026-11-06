@@ -13,3 +13,7 @@ baseline = "tests/sentry/baselines/root-help-omitted.json"
 [[sentry]]
 id = "readme-table-omitted"
 baseline = "tests/sentry/baselines/readme-table-omitted.json"
+
+[[sentry]]
+id = "atomic-writer-allow"
+baseline = "tests/sentry/baselines/atomic-writer-allow.json"

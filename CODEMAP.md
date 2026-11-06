@@ -41,13 +41,17 @@ Installable Typer/Rich CLI that wraps `decoy-engine` for local validation, runs,
 
 ## Where things go
 
-| New file | Directory | Neighbor |
+First row of the layout map the LAYOUT slice completes (one line per kind of module).
+
+| Kind of module | Where | Examples |
 |---|---|---|
-| Composite CI actions (`action.yml`) | `.github/actions/<name>/` | workflow files |
-| CI install, vendor and lane policy (`*.toml`) | `ci/` | none; `ci/install-policy.toml` is the install registry |
+| Private shared filesystem or process primitives used by more than one package | top-level `src/decoy/`, file named `_<noun>.py`, tests in `tests/unit/test_<noun>.py`, its sentry in `tests/sentry/` | `_atomic.py`, `_mask_secret.py`, `_native_gate.py` |
+| CLI source readers and target writers (owner rule 2026-11-06: new ones go here from now on; `cli/` is frozen) | `src/decoy/cli/io/`, file named `_<noun>.py` | target writer `cli/io/_targets.py` (CLI-FMT); today's exception `cli/_sources.py` moves here under H-1 |
+| Composite CI actions (`action.yml`) | `.github/actions/<name>/` | `setup-uv`, `lock-env` |
+| CI install, vendor and lane policy (`*.toml`) | `ci/` | `ci/install-policy.toml` (the install registry), `ci/vendored.toml` |
 | Developer environment scripts | `scripts/dev/` | `lock.sh`, `bootstrap.sh`, `lock_version.sh` |
-| Repository policy sentries and their scanners | `tests/sentry/` | `_ratchet.py`, `test_ratchet_check.py` |
-| Build and gate evidence records | `docs/records/` | existing build records |
+| Repository policy sentries and their scanners | `tests/sentry/` | `_ratchet.py`, `_ci_lock_scan.py`, `test_ci_lock_installs.py` |
+| Build and gate evidence records | `docs/records/` | `2026-11-06-ci-l1-build.md` |
 
 ## Where Do I Find...
 

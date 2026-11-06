@@ -7,9 +7,7 @@ comments, or touches the network.
 
 from __future__ import annotations
 
-import os
 import sys
-import tempfile
 import traceback
 from enum import Enum
 from pathlib import Path
@@ -17,6 +15,7 @@ from pathlib import Path
 import typer
 
 from decoy import __version__
+from decoy._atomic import AtomicWriteError, WriteMode, write_local_target
 from decoy.ci import reporting
 from decoy.ci.contracts import NOTE_TEXTS, SafeCiReport
 from decoy.ci.debug import DebugSink
@@ -107,17 +106,6 @@ def _safe_target(raw: str, root: Path) -> Path:
     return final
 
 
-def _write_atomic(path: Path, text: str) -> None:
-    fd, tmp = tempfile.mkstemp(dir=path.parent, prefix=".decoy-ci-")
-    try:
-        with os.fdopen(fd, "w", encoding="utf-8", newline="") as handle:
-            handle.write(text)
-        os.replace(tmp, path)
-    except BaseException:
-        Path(tmp).unlink(missing_ok=True)
-        raise
-
-
 @ci_app.command(name="check", epilog=CHECK_EPILOG)
 def check(
     manifest: Path = typer.Argument(
@@ -198,8 +186,8 @@ def check(
         sys.stdout.flush()
     else:
         try:
-            _write_atomic(out_path, text)
-        except OSError:
+            write_local_target(out_path, text.encode("utf-8"), WriteMode.REPLACE)
+        except (OSError, AtomicWriteError):
             typer.echo("error: could not write the report.", err=True)
             raise typer.Exit(code=EXIT_RUNTIME) from None
 
@@ -207,7 +195,7 @@ def check(
     if sink.enabled:
         try:
             sink.flush()
-        except OSError:
+        except (OSError, AtomicWriteError):
             typer.echo("error: could not write the debug log.", err=True)
             # The operator asked for a diagnostic that does not exist; a clean report must not
             # hide that, but a worse code from the checks themselves is never masked.
