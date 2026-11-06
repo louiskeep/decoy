@@ -15,8 +15,20 @@ Moved here from `decoy-platform/docs/backlog/RECENTLY-SHIPPED.md` on 2026-11-05 
 ([ROADMAP.md](ROADMAP.md)). The platform copy is frozen at that date. Entries below 2026-11-05 are
 copied unchanged; paths in them are relative to the repo they name.
 
-Last updated: 2026-11-05 (entries for 2026-10-27 to 2026-10-30 are not filled in here; see the repos'
+Last updated: 2026-11-06 (entries for 2026-10-27 to 2026-10-30 are not filled in here; see the repos'
 git logs).
+
+---
+
+## 2026-11-06
+
+- **CLI** (`c16a5fa`, #85): LIB L1b.1, one shared atomic file writer (`src/decoy/_atomic.py`) with
+  `write_atomic` for library-controlled names and `write_local_target` for user-chosen paths, on one
+  write, move and fsync core. CREATE_ONCE never overwrites a competing writer. Windows reserved names
+  follow CPython. `cli/ci.py`, `ci/debug.py`, the installer trust-state write and the `run.py`
+  directory fsync use it, and the G-ONE-ATOMIC-WRITER sentry blocks new inline copies (allowlist 5).
+  Dennis GO, Codex GO, full suite 0 branch-only. Follow-up: the Windows behavior needs a run on the
+  Windows lane (WIN-RUNNER).
 
 ---
 
