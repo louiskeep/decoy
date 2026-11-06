@@ -16,7 +16,7 @@ masking-policy export. Detail: `P:docs/backlog/v2-candidate-plan.md`.
 | V2 row | What | Source |
 |---|---|---|
 | DETECT-PROFILES | Detection settings profiles: named sets of detection settings (detectors, overrides, thresholds, ML on or off) that a pipeline picks by name | owner, 2026-11-05 |
-| EXPAND | Core expansion candidates for V2 and V3 (more inputs and outputs, masks, generators, documents, images, video and audio), each with method, users, difficulty and placement: [v2-v3-expansion-candidates.md](v2-v3-expansion-candidates.md). Proposal for the V2/V3 discussion; not scheduled | owner, 2026-11-06 |
+| EXPAND | Core expansion candidates for V2 and V3 (more inputs and outputs, masks, generators, documents, images, video and audio), each with method, users, difficulty and placement: [v2-v3-expansion-candidates.md](v2-v3-expansion-candidates.md); effort, dependencies and product shape (one CLI or several engines): [v2-v3-complexity-and-ecosystem.md](v2-v3-complexity-and-ecosystem.md). Proposal for the V2/V3 discussion; not scheduled | owner, 2026-11-06 |
 
 Post-V1 on demand: route-coverage phase 2 (OOC address faker, FPE FK key, resident escape hatch, OOC
 quarantine); the CLI init wizard (spec CLI #73); value-based FK discovery (SCAN-MULTI plan section 7);
