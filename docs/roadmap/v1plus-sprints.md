@@ -55,7 +55,7 @@ CHANGELOG entry for each slice says "V1+ track" and links back here.
 | Slice | Repo | Plan branch | Build branch | State |
 |---|---|---|---|---|
 | V1P-2.1 check-digit schemes | engine | `plan/v1plus-p2.1-check-digit-schemes` | `feat/v1plus-p2.1-check-digit-schemes` | built, head `3e2c99fe`. Plan review PASS WITH CONCERNS (rev 2); code review PASS WITH CONCERNS (round 2, advisory fixed); T1 gates green. Still to do: Codex gate, T3 full suite on the merge head, merge by the orchestrator |
-| V1P-2.3 national identifier generators | engine | `plan/v1plus-p2.3-national-id-generators` (stacked on V1P-2.1) | not started | plan rev 1, not reviewed; needs the owner decision in its section 9 (new providers appear in the CLI cockpit listing) |
+| V1P-2.3 national identifier generators | engine | `plan/v1plus-p2.3-national-id-generators` (stacked on V1P-2.1) | `feat/v1plus-p2.3-national-id-generators` | built, head `d432b373`; plan review PASS WITH CONCERNS (rev 2); T1 gates green; code review in progress. **Merge held until after CLI-REL** (owner decision: the new providers appear in the CLI cockpit listing) |
 
 ## Defaults for every slice
 
