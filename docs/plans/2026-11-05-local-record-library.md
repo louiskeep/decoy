@@ -2,7 +2,7 @@ Status: plan
 
 # LIB: the local record library and its retention classes
 
-Owner: Cam. Date: 2026-11-05. Scope: CLI V1 (CLI repo, plus one engine module).
+Owner: Cam. Date: 2026-11-05. Scope: CLI V1 (engine and CLI repos).
 Planned against CLI `origin/main` 8fba6af and engine `origin/main` 41a86f47, and
 the SCAN-MULTI plan on engine branch `plan/scan-multi` at 9b7cd9ab plus its
 Revision 5 (written in the same pass as this plan's Revision 5).
@@ -37,6 +37,16 @@ Owner direction, 2026-11-05:
   Linux and macOS, and Windows if possible. The paid platform comes later and
   must be able to import or mirror the same records.
 
+## Revision note (Codex remediation, 2026-11-06)
+
+| Round-3 finding | Change |
+|---|---|
+| V1 + DESIGN, L0 missed CLI DuckDB staging | L0.3 routes `run.py:654-670` through `protected_scratch_dir`, adds fail-closed Windows coverage, and takes the first `run.py` writer slot. |
+| DESIGN, G-ONE-PROTECTED-DIR missed raw creators | The guard now covers `mkdtemp`, `Path.mkdir`, `os.mkdir`, `os.makedirs` and direct `CreateDirectoryW`. Every bypass outside L0 is a reasoned ratchet entry with a test. The row-directory inventory names the existing isolated-run and published-output sites. |
+| V2-LOG | No plan action: add a reverse-`created_at` canary to the export link-order test in later test polish. |
+
+SCAN-MULTI carries the saved-scan stdin and null-safe duplicate-count fixes.
+
 ## Revision 7 (2026-11-06): Codex round 2 on LIB 3585cc0f and SCAN-MULTI 6103684e
 
 Codex returned GO-WITH-FIXES on both. Each code claim was checked against
@@ -47,7 +57,7 @@ the matching Revision 7.
 |---|---|
 | V1 export dangling links | A path-stripped record gets a new id, so a verbatim newer or opaque record linking to it would dangle. Now the envelope `links` of every exported record, opaque and newer ones included, are rewritten from the old-to-new map (the envelope is v1, which this version knows), and its id is recomputed; only the payload stays byte for byte. A link to a record outside the export is listed in the header. Test L4b-export-closure: every internal link resolves after a round trip. |
 | V1 L0 reopening persistent scratch | New `open_protected_dir(path, create=...)`, idempotent and fail closed: refuses symlinks, reparse points, non-directories and foreign owners; checks the POSIX mode and the Windows DACL; tightens an empty directory, refuses a non-empty one (`runtime.scratch_unsafe`). Tests P0-reopen, P0-permissive-empty, P0-permissive-full, P0-symlink, P0-not-dir, P0-foreign-owner. |
-| V1 + DESIGN L0 not universal | Confirmed every site. `out_of_core/_scratch.py` (both creators), `_isolated_run.py:367-369`, `postgres_snapshot.py:217-218` and the quarantine validator (`_quarantine_local.py:182-194`, which becomes the reopen rule) move onto L0. `postgres_snapshot.py:459` and `fileaccess/_local.py:221` stage the user's own output and are a reasoned ratchet (size 2) with tests. L0 is cut into L0.1 and L0.2. |
+| V1 + DESIGN L0 not universal | Superseded by the remediation note above. L0.1 and L0.2 route the engine sites; L0.3 routes CLI DuckDB source staging. The expanded AST guard and reasoned ratchet cover protected children and every published-output creator named in the L0 table. |
 | V2-LOG A1-link-acyclic | The rule is enforced at write time, so the test is B1-link-exists in L1b.2: `put` refuses a link to an id not in the library (`record_link_missing`); a two-way pair can therefore never be written. |
 | V2-LOG `finish` returns | RESULT's `finish` does not return. L3a now says `finish` hands the one payload it built to `_run_records.store(payload)` before it exits. |
 | V2-LOG status enum | L3-failed-run expects RESULT's `failed`, not `error`. |
@@ -469,9 +479,10 @@ database.
     parameter. The canary fixture includes a failure whose exception message
     quotes a cell. Mutation M-LOG-MSG: the writer adds `str(exc)` to the
     terminal line; canary test red.
-  - *Scratch is the only data area.* Allocation goes through
-    `Library.scratch(owner, ttl)`; the sample runner and any staging take
-    their directory from it. G-LIB-WRITER covers it (same `_fs` rule).
+  - *Protected scratch is the only Decoy-owned row-staging class.* Library
+    allocations go through `Library.scratch(owner, ttl)`. Transient engine and
+    CLI staging, including `--duckdb-source`, goes through L0. G-LIB-WRITER and
+    G-ONE-PROTECTED-DIR guard the two owning choke points.
   - *Private modes.* All creation goes through `_fs.create_private_file` and
     `_fs.ensure_private_dir`. Test B1-mode walks every file and directory the
     library created after a full producer run and asserts 0600 and 0700 on
@@ -496,9 +507,9 @@ read each hit in context).
 |---|---|---|---|
 | Atomic file write (temp in the target directory, fsync, replace, directory fsync, temp removed on failure) | CLI `cli/ci.py:111-115`, `ci/debug.py:44-48`, `run.py:1622-1690` (`_fsync_directory`, `_commit_vault`), `distribution/installer.py:219,659-664`, `distribution/layout.py:144-157`, `distribution/first_install.py:71`; engine `fileaccess._output` and `write_private` | One CLI module, `src/decoy/_atomic.py` (L1b.1, ~150 lines): `write_atomic(dir, name, data, mode)` with `CREATE_ONCE` and `REPLACE`, the Windows retry and the POSIX directory fsync. The library's `_fs` calls it; SCAN-MULTI S1c writes `--output` and S3a writes the YAML through it. The vault commit is not a generic atomic write: it keeps a hard-link backup and restores the old vault, or removes the new one, when the directory fsync fails (`run.py:1628-1690`, pinned by `tests/e2e/test_vault_commit_order.py:101`). It stays its own transaction and a permanent allowlist entry; L5a moves it byte for byte into `_vault_commit.py` to shrink `run.py`. `ci.py` and `ci/debug.py` start on the allowlist and move when next touched. The distribution files stay allowlisted on purpose: they flip symlinks and swap whole runtime directories under the install lock, a different operation. The engine writers stay engine-side (file-access policy, `openat2`); the library is CLI-owned and must run on Windows (4.9). | Guard G-ONE-ATOMIC-WRITER (`tests/sentry/test_atomic_writer.py`): syntax-tree walk of `src/decoy/` for `os.replace`, `os.rename`, `os.link` and `tempfile.mkstemp` outside `_atomic.py`; ratchet allowlist with a reason per entry, recorded size 7 at L1b.1 (`cli/ci.py`, `ci/debug.py`, `run.py` for `_commit_vault`, the `api.py:252` staging temp file, `distribution/installer.py`, `distribution/layout.py`, `distribution/first_install.py`); still 7 after L5a, whose move renames the vault entry to `_vault_commit.py`. Mutation M-ATOMIC-INLINE: `_library/_fs.py` calls `os.replace` itself; red. |
 | Canonical JSON and content hashing | CLI `evidence.compute_manifest_hash` (`evidence.py:104-121`); `distribution/signing.py:23,48` (same form, release signatures); `notify.py:240` (webhook HMAC body, no `ensure_ascii=False`); `distribution/installer.py:192` | One form, `decoy_engine.records._canonical` (L1a). `evidence.compute_manifest_hash` calls it (byte-identical, test A1-canonical-shared). `signing.py` stays: it is the frozen release-signature input, and rewiring it would couple release verification to an engine version. `notify.py` stays: different bytes on the wire by design. | Guard G-ONE-CANONICAL (`tests/sentry/test_canonical_json.py`): walk for `json.dumps(..., sort_keys=True, separators=(",", ":"))` outside the engine call site; allowlist `signing.py`, `notify.py`, `installer.py`, size 3. Mutation M-CANON-COPY: `_library/_store.py` hashes its own `json.dumps`; red. |
-| Private directories and files | CLI `_token_vault.py:100-115` (0700 only when it creates the parent, 0600 pre-create before SQLite opens); engine `out_of_core/_scratch.py:26-65` (`mkdtemp` plus `chmod`, no Windows DACL) | Value-free library files: `_fs.ensure_private_dir` and `_fs.create_private_file` follow the token-vault recipe; the index pre-create (LL3) uses the same call. The token vault moves onto `_fs` helpers in a later slice, not in this plan. Row-bearing directories: one engine allocator (L0) for library scratch, the scan spill fallback and the out-of-core spill. | B1-mode (M-MODE); G-ONE-PROTECTED-DIR (M-MKDTEMP-INLINE) |
+| Private directories and files | CLI `_token_vault.py:100-115` (0700 only when it creates the parent, 0600 pre-create before SQLite opens); engine `out_of_core/_scratch.py:26-65` (`mkdtemp` plus `chmod`, no Windows DACL) | Value-free library files: `_fs.ensure_private_dir` and `_fs.create_private_file` follow the token-vault recipe; the index pre-create (LL3) uses the same call. The token vault moves onto `_fs` helpers in a later slice, not in this plan. Row-bearing directories use L0 for library scratch, scan spill fallback, out-of-core spill and CLI DuckDB source staging. | B1-mode (M-MODE); G-ONE-PROTECTED-DIR (M-PATH-MKDIR-INLINE, M-OS-MAKEDIRS-INLINE) |
 | Windows ACL | none in the CLI or engine | one engine module, `fileaccess/_protected_dir.py` (L0); the CLI has no `ctypes` ACL code | P0-win-dacl (MP0-set-after), D1-win-scratch-acl |
-| Row-directory creation and reuse checks | engine `out_of_core/_scratch.py:26-65,105-119`, `_isolated_run.py:367-369`, `postgres_snapshot.py:217-218,459`, `_quarantine_local.py:182-194` (a reuse validator), `fileaccess/_local.py:221` | all routed through L0 except the two output-staging sites, which are a reasoned ratchet (L0 table) | G-ONE-PROTECTED-DIR (M-MKDTEMP-INLINE), P0-reopen and the P0 routing tests |
+| Row-directory creation and reuse checks | CLI `run.py:654-670,1734`, `demo.py:296,511`; engine `out_of_core/_scratch.py:26-65,105-119`, `_isolated_run.py:367-369,407`, `_isolated_commit.py:56-69,79`, `_isolated_worker.py:113-133`, `postgres_snapshot.py:217-218,455,459`, `_quarantine_local.py:182-194`, `fileaccess/_local.py:164,220-221,238,279,355-356,385`, `_output.py:328,365` | own-row roots route through L0; protected children, output parents and published-output staging are reasoned ratchet entries in the L0 table | G-ONE-PROTECTED-DIR (M-PATH-MKDIR-INLINE, M-OS-MAKEDIRS-INLINE), P0-reopen and the P0 routing tests |
 | Locks | CLI `distribution/lock.py` (`fcntl`, no-op on Windows) | not reused: it locks the runtime home and does nothing on Windows. The library lock is SQLite `BEGIN IMMEDIATE` (4.8). | C1-lock-unavailable (MC1-unlocked-ref) |
 | Error codes and messages | engine reason registry; CLI ad hoc `type(exc).__name__` messages (19 sites) | Library and log codes are engine reason identities (L1a, LM8). One CLI builder, `_library/_errors.py` `library_error(code, exc)`, formats "code plus class name, no path" for every library failure. | B1-no-path-in-error (MB1-exc); the engine's registered-code check turns any unregistered code into `unregistered_reason`, which L5-value-free asserts never appears |
 | Retention | none in the CLI; the platform has its own (F26) | one policy model, `_policy.py` | single site, no registry |
@@ -506,8 +517,8 @@ read each hit in context).
 
 Oversize files at 8fba6af that slices here touch: `src/decoy/cli/run.py`
 (1812 lines), `scan.py` (1442), `report.py` (2382). A slice that edits one keeps
-its net line change at or below zero by moving code into a new module, and the
-gate checks `git diff --stat` for it. The per-slice layout with sizes is in
+its net line change at or below zero by moving or deleting code, and the gate
+checks `git diff --stat` for it. The per-slice layout with sizes is in
 each slice below.
 
 ## 4. Decisions
@@ -777,10 +788,11 @@ property that evidence depends on.
   `SECURITY_ATTRIBUTES` of `CreateDirectoryW` through `ctypes` (no new
   dependency). There is no window in which the directory exists without it,
   and inheritance from the parent is off. The same allocator makes the scan
-  integrity spill when the library is off and the engine's out-of-core spill,
-  so every directory Decoy puts rows in is protected the same way. If the ACL cannot be applied, scratch allocation fails
-  with `scratch_acl_failed` and the sample run stops before it writes a row
-  (fail closed, the token-vault rule). Records and logs hold no values, so in
+  integrity spill when the library is off, the engine's out-of-core and
+  isolated-run roots, the Postgres spill and CLI DuckDB source staging, so
+  every Decoy-owned row directory is protected the same way. If the ACL cannot
+  be applied, allocation fails with `scratch_acl_failed` and that operation
+  stops before it writes a row (fail closed, the token-vault rule). Records and logs hold no values, so in
   V1 they keep the ACL inherited from the project directory, which on a
   normal user profile grants the user, SYSTEM and Administrators; the docs
   say so (decided in Revision 2, Q1).
@@ -1145,16 +1157,17 @@ in the next; SCAN-MULTI S3-engine (both parts) after CONFIG-EXPLICIT.
 
 1. LIB L0.1, L0.2, L1a.1, L1a.2 and RESULT E1, E2; one engine release. LIB
    L1b.1 may start at once (it needs no engine change); then the repin with
-   L1b.2, then L1b.3, L1c.1, L1c.2 and L1d.
+   L1b.2, then L0.3 in the `run.py` lane, then L1b.3, L1c.1, L1c.2 and L1d.
 2. SCAN-MULTI S1a.1, S1a.2, then S1b-engine on a branch from S1a; one engine
    release holds them. S1b uses L0's allocator, so L0 merges first.
 3. CLI-DIALECT, then SCAN-MULTI S1c.1 and S1c.2 (repin to the step 2 release;
    need LIB L1b.1), then LIB L2-cli (needs L1c and L1d).
 4. CONFIG-EXPLICIT, then SCAN-MULTI S3-engine.1 and S3-engine.2 and their
    release, then S3a.1-cli and S3a.2-cli (repin), then S3b-cli.
-5. LIB L4a after L1c, then L4b. In the `run.py` lane: LIB L5a (needs L1b.1
-   and the step 1 release), F29 C1, RESULT C1, LIB L5b (also needs L4a), LIB
-   L3a, LIB L3b; SAMPLE gates L3b. LIB L5c after L5b and S3b-cli.
+5. LIB L4a after L1c, then L4b. In the `run.py` lane after L0.3: LIB L5a
+   (needs L1b.1 and the step 1 release), F29 C1, RESULT C1, LIB L5b (also
+   needs L4a), LIB L3a, LIB L3b; SAMPLE gates L3b. LIB L5c after L5b and
+   S3b-cli.
 
 Steps 1 and 2 can run at the same time on different branches; their releases
 go out one after the other.
@@ -1166,7 +1179,7 @@ interleave with other rows (F32 C0 and CLI-FMT also write `run.py`):
 
 | File | Writers, in order |
 |---|---|
-| `src/decoy/cli/run.py` | L5a, F29 C1, RESULT C1, L5b, L3a, L3b |
+| `src/decoy/cli/run.py` | L0.3, L5a, F29 C1, RESULT C1, L5b, L3a, L3b |
 | `src/decoy/cli/scan.py` | S1c.1, S1c.2, L2, S3a.2, S3b, L5c |
 | `src/decoy/cli/library.py` | L1c.2, L4a, then L4b and L5b in either order |
 | `src/decoy_engine/profiling/scan_set.py` | S1a.1, S1a.2, S1b |
@@ -1178,13 +1191,14 @@ self-hosted GitHub Actions runner. Windows tests run on a self-hosted runner
 on a GCP VM, provisioned before L1b starts and stopped when idle (the
 existing `vm-reap` rule). A lane runs the library test paths only
 (`tests/unit/library/`, `tests/e2e/test_library_*.py`,
-`tests/e2e/test_job_logs.py`, the guards in `tests/sentry/test_library_writer.py`
+`tests/e2e/test_job_logs.py`, `tests/e2e/test_duckdb_source.py`, the guards in `tests/sentry/test_library_writer.py`
 and `tests/sentry/test_atomic_writer.py`), not the full suite. The same Windows runner runs L0's engine allocator tests (`tests/unit/fileaccess/test_protected_dir.py`, `tests/windows/`). Required lanes
 per slice:
 
 | Slice | Linux | macOS (Mac mini) | Windows (GCP VM) | Why |
 |---|---|---|---|---|
-| L0-engine | yes | yes | yes | real DACL read back, fail-closed path, umask |
+| L0.1/L0.2-engine | yes | yes | yes | real DACL read back, fail-closed path, umask |
+| L0.3-cli | yes | yes | yes | DuckDB source Parquet staging uses the allocator; real DACL and fail-closed path |
 | L1a-engine | yes | no | no | pure functions; no filesystem |
 | L1b-cli | yes | yes | yes | atomic writes, no-clobber link, retries, modes, ref lock, path budget |
 | L1c-cli | yes | yes | yes | SQLite locking, freshness, remote-fs detection, fsck |
@@ -1208,16 +1222,17 @@ total passes about 800 is cut into parts (`.1`, `.2`, ...), each its own
 branch, PR and gate, merged in order. "Depends on L1b" means every part of
 L1b has merged, unless a part is named.
 
-### L0-engine: one protected row-directory allocator (engine, two parts, about 900 lines)
+### L0: one protected row-directory allocator (engine plus CLI routing, three parts, about 1 060 lines)
 
 Revision 6 (Codex LIB 5, ENGINE 1), widened in Revision 7 (Codex round 2).
 Every directory Decoy creates for rows of its own (the library's `scratch/`,
 the scan integrity spill when the library is off, the engine's out-of-core
-spill, the isolated-run work root and the Postgres snapshot spill) is created
-or reopened by one module, so Windows gets an owner-only DACL wherever such
-rows land, an unsafe existing directory is never used, and a failure fails
-closed. Output staging that becomes the user's own output is a reasoned
-exception (table below).
+spill, the isolated-run work root, the Postgres snapshot spill and CLI DuckDB
+source staging) is created or reopened by one module, so Windows gets an
+owner-only DACL wherever such rows land, an unsafe existing directory is never
+used, and a failure fails closed. Protected child directories and output
+staging that becomes the user's own output are reasoned ratchet entries in the
+guard table below.
 
 **The API** (`src/decoy_engine/fileaccess/_protected_dir.py`):
 
@@ -1269,16 +1284,25 @@ after the move only on Windows (the DACL check).
 | `execution/_isolated_run.py:367-369` (`mkdtemp` default work root, or the caller's `staging_dir` with `mkdir`) and `:407` (`sources/` under it) | staged source Parquet rows | routed through L0 (L0.2): the default root from `protected_scratch_dir`, a caller-named `staging_dir` through `open_protected_dir(create=True)`; `sources/` stays a plain child `mkdir` |
 | `connectors/postgres_snapshot.py:217-218` (`spill_dir` `mkdir` plus `chmod 0o700`) | DuckDB spill of snapshot rows | routed through L0 (L0.2) with `open_protected_dir(create=True, parents=True)` |
 | `declared_casting/_quarantine_local.py:182-194` | quarantined rows | routed through L0 (L0.1), as above |
-| `connectors/postgres_snapshot.py:459` (`stage_dir` `mkdir(mode=0o700)` in the user's destination, renamed to `snapshot-<run>`) | the published snapshot itself | ratchet exception: it is output staging that becomes the user's output (retention class 4), published by rename; its 0700 mode is kept as today |
-| `fileaccess/_local.py:221` (`mkdtemp` beside the target for directory outputs) | the published output itself | ratchet exception for the same reason: the file-access output transaction stages beside the target so the publish is a same-volume rename, and the result belongs to the user; existing output-transaction tests cover removal on failure |
+| CLI `src/decoy/cli/run.py:654-670` (`mkdtemp`) | Parquet snapshots acquired from `--duckdb-source` | routed through L0 (L0.3): enter `protected_scratch_dir(None, "decoy-duckdb-")` on the existing `ExitStack` before the first `acquire_relation`; the context spans validation and the run, then removes every staged file |
+| `execution/_isolated_run.py:407`, `_isolated_commit.py:56-69,79`, `_isolated_worker.py:113-133` | protected children holding staged source or output Parquet, plus the caller output parent | ratchet entries in categories `protected_child` and `output_parent`: children are beneath the L0-validated work root; the existing isolated-run cleanup and commit tests are named on the entries |
+| `connectors/postgres_snapshot.py:455,459` (`dest_dir` parent and `stage_dir.mkdir(mode=0o700)`, renamed to `snapshot-<run>`) | the caller output parent and published snapshot | ratchet entries in categories `output_parent` and `published_output`: same-volume output staging that becomes the user's output (retention class 4); snapshot failure and publish tests are named on the entries |
+| `fileaccess/_local.py:164,220-221,238,279,355-356,385` and `_output.py:328,365` | children, parents and stages for caller-owned outputs | ratchet entries in categories `published_output` or `output_parent`: the file-access transaction must stage beside the target for same-volume publication; every entry names its output-transaction test |
+| CLI `src/decoy/cli/demo.py:296,511` and `run.py:1734` | caller-owned output parents and demo output directory | ratchet entries in category `output_parent`; existing demo and output-mode tests are named on the entries |
+| CLI `_token_vault.py:99`, `distribution/installer.py:216,308,524,647`, `distribution/lock.py:48` | value-free vault parent and runtime installation directories | ratchet entries in category `non_row`; token-vault and distribution tests are named on the entries |
 
-**Guard G-ONE-PROTECTED-DIR** (engine `tests/sentry/test_protected_dir.py`):
-a syntax-tree walk of the engine package flags every `tempfile.mkdtemp` call
-and every `os.chmod(..., 0o700)` (the mark of a hand-rolled private directory)
-outside `_protected_dir.py`. The ratchet allowlist starts with the two
-exceptions above (`postgres_snapshot.py` stage, `fileaccess/_local.py`
-output staging), each with its reason and a test id, size 2. The CLI twin
-(L1d) walks the CLI package the same way. A seeded bypass is shown red.
+**Guard G-ONE-PROTECTED-DIR** (engine and CLI
+`tests/sentry/test_protected_dir.py`): a syntax-tree walk flags every call to
+`tempfile.mkdtemp`, `Path.mkdir`, `os.mkdir`, `os.makedirs` and direct
+`CreateDirectoryW` outside `_protected_dir.py`. Each call must be an L0 call
+or have one ratchet entry keyed by path and qualified function, with category,
+reason and a named behavior test. The ratchet covers protected children,
+published-output staging, output-parent creation and non-row directories; it
+may shrink, and a new entry is a reviewed design change. The test walks the
+real packages and fails when a call has no entry or an entry no longer maps to
+one call. Its seeded mutations add `Path.mkdir(mode=0o700)` beside the CLI
+DuckDB source acquisition and `os.makedirs` beside the isolated worker; both
+must go red. This replaces the prior size-2 allowlist claim.
 
 **L0.1: the allocator, reopen checks, quarantine move, guard (~640 lines).**
 - new `src/decoy_engine/fileaccess/_protected_dir.py` (~260).
@@ -1300,6 +1324,15 @@ output staging), each with its reason and a test id, size 2. The CLI twin
 - tests (~170): one spy test per routed site, the existing out-of-core,
   isolated-run and Postgres snapshot suites unchanged; docs (~20).
 
+**L0.3: route CLI DuckDB source staging through it (~160 lines).**
+- `src/decoy/cli/run.py` (over 800 lines, net decrease): remove the inline
+  `mkdtemp`, the outer `_duckdb_tmpdir` sentinel and its manual `rmtree`
+  `finally`; enter `protected_scratch_dir` on the existing `ExitStack`. No
+  second allocator, cleanup path or helper is added.
+- tests (~130): extend `tests/e2e/test_duckdb_source.py` with POSIX, Windows,
+  cleanup and fail-closed cases; guard and docs (~30). Depends on the L0 engine
+  release and CLI repin. It is the first `run.py` writer in section 5.0.
+
 | Test | Part | Asserts | Mutation |
 |---|---|---|---|
 | P0-posix-mode | .1 | a directory from either function is 0700 under umask 000 and 077 | MP0-umask: rely on `mkdir`'s mode alone |
@@ -1313,15 +1346,18 @@ output staging), each with its reason and a test id, size 2. The CLI twin
 | P0-win-dacl | .1 | (Windows lane, real ACL read back with `GetNamedSecurityInfoW`) a created directory's DACL is protected and lists only the current user and SYSTEM; a child file inherits it | MP0-set-after: create the directory, then set the DACL; MP0-skip: no DACL |
 | P0-fail-closed | .1 | the ACL conversion forced to fail raises `scratch_acl_failed` and no directory remains | MP0-warn: warn and continue |
 | P0-quarantine-same | .1 | the quarantine arena's existing tests pass unchanged through `open_protected_dir` | MP0-two-rules: keep the old validator beside the call |
-| G-ONE-PROTECTED-DIR | .1 | no `mkdtemp` or `chmod 0o700` outside `_protected_dir.py` except the two allowlisted output-staging sites; a seeded bypass is red | M-MKDTEMP-INLINE: SCAN-MULTI S1b calls `mkdtemp` for its spill |
+| G-ONE-PROTECTED-DIR | .1 | every raw directory creator in the engine and CLI is either L0 or one reasoned ratchet entry; seeded `Path.mkdir` and `os.makedirs` bypasses are red | M-PATH-MKDIR-INLINE; M-OS-MAKEDIRS-INLINE |
 | P0-ooc-routed | .2 | the out-of-core spill root comes from the allocator (spy); the existing out-of-core tests pass unchanged | MP0-old-mkdtemp: keep `mkdtemp` in `_scratch.py` |
 | P0-isolated-routed | .2 | the isolated-run work root, default and caller-named, comes from the allocator (spy); a caller-named symlinked `staging_dir` is refused | MP0-isolated-mkdtemp |
 | P0-pg-spill-routed | .2 | the Postgres snapshot spill directory comes from `open_protected_dir` (spy) | MP0-pg-chmod: keep `mkdir` plus `chmod` |
+| P0-cli-duckdb-routed | .3 | `--duckdb-source` stages under `protected_scratch_dir`, has 0700 on POSIX and the protected owner-only DACL on Windows, survives through the run, and is removed on success and error | MP0-cli-mkdtemp: keep the inline `mkdtemp` |
+| P0-cli-duckdb-acl-fail | .3 | an allocator `scratch_acl_failed` stops before `acquire_relation` and leaves no stage | MP0-cli-warn: continue after allocator failure |
 
 **Frozen-contract effects.** Additive public API; two reason identities. On
-Windows the out-of-core spill, isolated-run root and Postgres spill now fail
-closed when the DACL cannot be applied, and an unsafe pre-existing scratch
-directory is refused on every OS (a deliberate V1 tightening; CHANGELOG line).
+Windows the out-of-core spill, isolated-run root, Postgres spill and CLI DuckDB
+source stage now fail closed when the DACL cannot be applied, and an unsafe
+pre-existing scratch directory is refused on every OS (a deliberate V1
+tightening; CHANGELOG line).
 
 ### L1a-engine: records module (engine, two parts, about 1 080 lines)
 
@@ -1516,7 +1552,7 @@ and L3b (sample output). The Windows ACL code is L0's; this slice has no
 |---|---|---|
 | D1-mode | a scratch allocation is 0700 on POSIX, files in it 0600 | M-MODE |
 | D1-delete-on-exit | a `delete_on_exit` allocation is gone after the owner's block exits, on success and on an exception | MD1-leak |
-| D1-uses-allocator | `scratch/` and every allocation come from the engine allocator (spy); the CLI twin of G-ONE-PROTECTED-DIR (`tests/sentry/test_protected_dir.py`) finds no `mkdtemp` or `mkdir` for scratch outside `_scratch.py`'s allocator calls | MD1-own-mkdir: create the allocation with `Path.mkdir` |
+| D1-uses-allocator | `scratch/` and every allocation come from the engine allocator (spy); the CLI half of G-ONE-PROTECTED-DIR finds no unregistered raw directory creator | MD1-own-mkdir: create the allocation with `Path.mkdir` |
 | D1-win-scratch-acl | (Windows lane) the `scratch/` and allocation DACLs are protected and list only the current user and SYSTEM; records and logs keep the inherited ACL | MP0-skip (L0) seen through the CLI |
 | D1-acl-fail-closed | with the engine allocator forced to raise `scratch_acl_failed`, allocation fails, no scratch directory remains, and the sample stops before any row is written | MB1-acl-warn: warn and continue |
 | D1-reopen | a second and third command in the same project reuse `scratch/` without error; a `scratch/` pre-created 0755 and empty is tightened; one pre-created 0755 with a file in it makes allocation fail with `scratch_unsafe` and the command's own work stops before writing rows | MD1-skip-reopen-check: call `mkdir(exist_ok=True)` for `scratch/` |
@@ -1572,11 +1608,12 @@ SCAN-MULTI S1d is a pointer to this slice.
   `scan fields` and `show` render every file through `_safe_field_record`,
   which has no value field, so even a detail file never puts a value on the
   terminal; the user opens the detail file directly.
-- `load_scan_set(path)`: when the JSON has `record_schema`, call
+- `load_scan_set(path_or_dash)`: when the JSON has `record_schema`, call
   `records.decode` (id rule, `RecordNeedsNewer`), check that the id matches
-  the object file name when the path is under `objects/`, and return the
-  payload; otherwise the bare-file branch from S1c. Every saved-scan reader
-  already calls it (SCAN-MULTI guard G-ONE-SCAN-READER).
+  the object file name when a filesystem path is under `objects/`, and return
+  the payload; otherwise the bare-input branch from S1c. `-` stays stdin and
+  has no file-name check. Every saved-scan reader already calls it
+  (SCAN-MULTI guard G-ONE-SCAN-READER).
 - `scan diff` accepts ids, refs, record paths, bare `scan-set/v1` files and
   `--latest` (the virtual `latest` and `latest~1` filtered by the same table
   set, ordered by `(created_at, id)`).
@@ -1856,6 +1893,7 @@ of L5b so the `run.py` and `scan.py` lanes stay separate (Revision 5, LM9).
 |---|---|---|---|
 | L0.1-engine | engine | ~640 | none |
 | L0.2-engine | engine | ~260 | L0.1 |
+| L0.3-cli | CLI | ~160 | L0 release and repin; first in the `run.py` lane |
 | L1a.1-engine | engine | ~770 | none |
 | L1a.2-engine | engine | ~310 | L1a.1 |
 | L1b.1-cli | CLI | ~440 | none (the canonical rewire needs the L1a repin) |
