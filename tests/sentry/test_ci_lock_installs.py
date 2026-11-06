@@ -328,9 +328,9 @@ def test_template_lint_installs_its_tools_from_the_hashed_lock() -> None:
     assert "actionlint-py" not in lock, "actionlint-py is sdist-only; the binary replaces it"
     assert len(re.findall(r"--hash=sha256:", lock)) >= len(tools)
     script = _read("scripts/dev/lock.sh")
-    assert re.search(r"compile_tools\(\) \{.*?--no-build.*?\n\}", script, re.S), (
-        "wheel-only compile"
-    )
+    body = re.search(r"compile_tools\(\) \{(.*?)\n\}", script, re.S)
+    code = re.sub(r"#[^\n]*", "", body.group(1) if body else "")
+    assert "--no-build" in code, "the tools lock is compiled wheel-only (comments do not count)"
     assert re.search(r"(?m)^TOOLS_LOCK=ci/ci-tools\.lock$", script), "lock.sh owns the tools lock"
     assert 'compile_tools "$TOOLS_LOCK"' in script, "lock.sh regenerates it"
     assert 'check_one "$TOOLS_LOCK" compile_tools' in script, "lock.sh --check covers it"
