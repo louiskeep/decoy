@@ -40,6 +40,7 @@ DEV = "-c requirements-dev.lock"
 ENGINE = "git+https://github.com/louiskeep/decoy-engine@v0.18.0"
 LE = {"uses": LOCK_ENV_USES}
 WHEEL = f"uv pip install --python .smoke/bin/python {DEV} dist/*.whl"
+SMOKE_CERT = ".venv-certified/bin/python scripts/cert_smoke.py"
 needs_bash = pytest.mark.skipif(shutil.which("bash") is None, reason="needs bash")
 
 
@@ -85,10 +86,33 @@ def test_seeded_install_bypasses_are_found() -> None:
         "tool without -c": ([LE, "uv pip install build==1.2.2"], "install without -c"),
         "uvx ruff": ([LE, "uvx ruff==0.15.14 check"], "ruff must come from"),
         "literal ruff": ([LE, 'pip install "ruff==0.15.14"'], "ruff must come from"),
+        # Spellings the shared tokenizer normalises (catalog class 5).
+        "env-var pip": ([LE, "$DECOY_VENV/bin/pip install pydantic-core"], "not an exact == pin"),
+        "absolute pip -e": ([LE, "/usr/bin/pip install -e ."], "project install"),
+        "smoke pip after wheel": ([LE, WHEEL, ".smoke/bin/pip install pydantic"], "not an exact"),
+        "glued -r": ([LE, f"uv pip install {DEV} -rextra.txt"], "unregistered requirements"),
+        "glued -i": ([LE, f"uv pip install {DEV} -ihttps://x/simple build==1.2.2"], "index"),
+        "glued -e": ([LE, f"uv pip install {DEV} -e."], "project install"),
+        "pip -rfile": ([LE, "pip install -rreqs.txt"], "unregistered requirements"),
+        "uv run --with": ([LE, "uv run --with requests pytest"], "uv run --with"),
+        "uv run unfrozen": ([LE, "uv run pytest"], "uv run without --frozen"),
+        "bash -c body": ([LE, 'bash -c "pip install -e ."'], "project install"),
+        "pip --opt=v": ([LE, "pip install --index-url=https://x/simple build==1.2.2"], "index"),
+        "pip leading option": ([LE, "pip --quiet install requests"], "not an exact"),
+        "pip3.11": ([LE, "pip3.11 install requests"], "not an exact"),
+        "python -m pip": ([LE, "python -m pip install requests"], "not an exact"),
     }
     for label, (steps, expected) in cases.items():
         assert _has(_scan("fresh-install-smoke", *steps), expected), label
     assert _scan("fresh-install-smoke", LE, WHEEL, ".smoke/bin/decoy --version") == []
+    assert _scan("pytest", LE, "uv run --frozen pytest") == []
+
+
+def test_consumer_in_a_quoted_shell_body_is_ordered_and_visible() -> None:
+    assert _has(_scan("pytest", 'bash -c "pytest tests"', LE), "before lock-env")
+    assert _has(_scan("pytest", LE, 'bash -c "pytest || true"'), "hide a consumer failure")
+    job = {"continue-on-error": True, "steps": [LE, {"run": "pytest tests"}]}
+    assert _has(scan_workflow({"jobs": {"pytest": job}}, policy=POLICY, name="ci.yml"), "job-level")
 
 
 def test_every_consumer_follows_its_jobs_route() -> None:
@@ -177,11 +201,68 @@ def test_certified_halves_are_each_required() -> None:
         "run": f'uv pip install --python p --no-deps "{ENGINE}" dist/*.whl',
     }
     closure = "uv pip install --python p -r requirements-certified.txt"
-    smoke = ".venv-certified/bin/python scripts/cert_smoke.py"
+    extra = {**eng, "run": eng["run"] + " pydantic-core==2.50.4"}
+    for bad in (
+        extra,
+        {**eng, "run": eng["run"] + " other.whl"},
+        {**eng, "run": eng["run"] + f' "{ENGINE}"'},
+    ):
+        assert _scan("certified-profile", LE, bad, closure, SMOKE_CERT), bad["run"]
+    smoke = SMOKE_CERT
     assert _scan("certified-profile", LE, eng, closure, smoke) == []
     no_nodeps = {**eng, "run": eng["run"].replace("--no-deps ", "")}
     assert _scan("certified-profile", LE, no_nodeps, closure, smoke)
     assert _has(_scan("certified-profile", LE, eng, smoke), "before certified-closure")
+
+
+def test_canary_is_exact_and_conditions_come_from_the_policy() -> None:
+    site = next(s for s in POLICY["engine_site"] if s["kind"] == "drift-canary")
+    cond = f"github.event_name == '{site['event']}'"
+    step = {
+        "name": site["step"],
+        "if": cond,
+        "run": f'uv pip install --python p "{ENGINE}" dist/*.whl',
+    }
+    ok = {"name": "wheel", "if": cond.replace("==", "!="), "run": WHEEL}
+    scan = lambda *s, p=POLICY: scan_workflow(  # noqa: E731
+        {"jobs": {"fresh-install": {"steps": [LE, *s]}}}, policy=p, name="release-smoke.yml"
+    )
+    assert scan(ok, step) == []
+    assert scan(ok, {**step, "run": step["run"] + " pydantic-core==2.50.4"})
+    assert scan(ok, {**step, "run": step["run"] + " other.whl"})
+    for bad_if in ("github.event_name == 'push'", "always()", None):
+        assert scan(ok, {**step, "if": bad_if}), bad_if
+        assert scan({**ok, "if": bad_if}, step), bad_if
+    # Each policy field, mutated, turns the real workflow red.
+    real = real_files()["release-smoke.yml"][0]
+    for field, value in (("event", "workflow_dispatch"), ("kind", "certified"), ("step", "x")):
+        mutated = copy.deepcopy(POLICY)
+        next(s for s in mutated["engine_site"] if s["kind"] == "drift-canary")[field] = value
+        assert scan_workflow(real, policy=mutated, name="release-smoke.yml"), field
+    for field in ("event", "reason"):
+        mutated = copy.deepcopy(POLICY)
+        next(s for s in mutated["engine_site"] if s["kind"] == "drift-canary")[field] = ""
+        assert policy_findings(mutated), field
+    cert = copy.deepcopy(POLICY)
+    next(s for s in cert["engine_site"] if s["kind"] == "certified")["event"] = "schedule"
+    assert policy_findings(cert), "only the canary names an event"
+
+
+def test_template_lint_installs_its_tools_from_the_hashed_lock() -> None:
+    tools = _read("ci/ci-tools.in").split()
+    lock = _read("ci/ci-tools.lock")
+    assert tools and all(re.search(rf"(?m)^{re.escape(p)} \\", lock) for p in tools)
+    assert len(re.findall(r"--hash=sha256:", lock)) >= len(tools)
+    install = f"pip install --require-hashes -r {POLICY['locks']['ci_tools']}"
+    assert _scan("ci-template-lint", install, "actionlint x.yml") == []
+    for label, run, expected in (
+        ("locked input removed", "pip install --require-hashes", "install without -c"),
+        ("hashes off", f"pip install -r {POLICY['locks']['ci_tools']}", "--require-hashes"),
+        ("raw pins", 'pip install "actionlint-py==1.7.12.25"', "install without -c"),
+        ("other file", "pip install --require-hashes -r tools.txt", "unregistered requirements"),
+    ):
+        assert _has(_scan("ci-template-lint", run, "actionlint x.yml"), expected), label
+    assert _has(_scan("ci-template-lint", "actionlint x.yml", install), "before ci-tools")
 
 
 def test_permissions_are_registered() -> None:
@@ -214,17 +295,28 @@ def _vendor_findings(ledger: dict[str, Any], root: Path = ROOT) -> list[str]:
 
 def test_vendor_ledger_matches_the_copies(tmp_path: Path) -> None:
     ledger = tomli.loads(_read("ci/vendored.toml"))
-    assert len(ledger["vendored"]) == 1 and len(ledger["mirror"]) == 3
+    assert len(ledger["vendored"]) == 2 and len(ledger["mirror"]) == 3
     assert _vendor_findings(ledger) == []
     wrong = copy.deepcopy(ledger)
     wrong["vendored"][0]["blob_sha256"] = "0" * 64
     moved = copy.deepcopy(ledger)
     moved["vendored"][0]["engine_path"] = "scripts/other.yml"
     assert _vendor_findings(wrong) and _vendor_findings(moved)
-    local = ledger["vendored"][0]["local_path"]
-    (tmp_path / local).parent.mkdir(parents=True)
-    (tmp_path / local).write_bytes((ROOT / local).read_bytes().replace(b"0.11.19", b"0.11.18"))
-    assert _vendor_findings({**ledger, "mirror": []}, tmp_path)
+    for entry, old in zip(ledger["vendored"], (b"0.11.19", b"def base"), strict=True):
+        local = entry["local_path"]
+        (tmp_path / local).parent.mkdir(parents=True, exist_ok=True)
+        (tmp_path / local).write_bytes((ROOT / local).read_bytes().replace(old, old + b" "))
+    assert len(_vendor_findings({**ledger, "mirror": []}, tmp_path)) == 2, "each copy is guarded"
+
+
+def test_shared_shell_core_is_repo_neutral() -> None:
+    text = _read("tests/sentry/_ci_shell_tokens.py")
+    for policy_word in ("install-policy", "requirements-", "decoy", "tomllib", "_ci_lock_scan"):
+        assert policy_word not in text, f"the shared core must not know {policy_word}"
+    assert "_ci_shell_tokens" in _read("tests/sentry/_ci_lock_scan.py")
+    scanner = _read("tests/sentry/_ci_lock_scan.py")
+    for owned in ("def commands", "def normalise", "def parse_install_args", "_SHORT_VALUE"):
+        assert owned not in scanner, f"{owned} belongs to the shared core only"
 
 
 @needs_bash

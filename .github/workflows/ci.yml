@@ -204,10 +204,11 @@ jobs:
         with:
           python-version: '3.12'
 
-      - name: Install the pinned linters
-        # actionlint-py downloads the matching actionlint release binary; both
-        # pins are exact so a lint verdict is attributable to one version.
-        run: pip install "actionlint-py==1.7.12.25" "check-jsonschema==0.39.0"
+      - name: Install the linters from the hash-checked lock
+        # ci/ci-tools.lock (compiled from ci/ci-tools.in) pins both tools and every
+        # transitive dependency with hashes, so a lint verdict is attributable to
+        # one set of versions and a new upstream release cannot change it.
+        run: pip install --require-hashes -r ci/ci-tools.lock
 
       - name: actionlint (GitHub Actions template)
         run: actionlint integrations/github-actions/decoy-ci.yml

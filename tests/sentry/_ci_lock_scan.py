@@ -2,10 +2,13 @@
 
 Mirror of the engine's tests/sentry/_ci_lock_scan.py (CI-E1); the tests are in
 test_ci_lock_installs.py and the policy is ci/install-policy.toml.
-Differences, deliberate until CI-X extracts one shared core:
-- Same command tokenizer, install-argument parsing and setup-uv checks.
-- CLI policy: two lock files, a per-job install route, engine spec only at registered sites.
-- No pip-audit, pyarrow parity-smoke or Mac-gate rules; the CLI has no such job.
+The shell parsing (command splitting, basename and option normalisation, pip install arguments,
+uv run checks) is not here: it lives in _ci_shell_tokens.py, one byte-identical file the engine
+adopts after CI-E1 merges. Differences from the engine scanner, deliberate until then:
+- CLI policy: three lock files, a per-job install route, engine spec and the drift-canary event
+  only at registered sites.
+- Dropped: the wheel-variable rule (`pip install "$WHEEL"` is a finding here; stricter, never
+  looser), pip-audit, pyarrow parity-smoke and Mac-gate rules; the CLI has no such job.
 - Discovery is bounded to .github/workflows and .github/actions. Customer templates under
   integrations/ are shipped product and are never scanned.
 Order is checked by step index, not data flow.
@@ -19,6 +22,14 @@ from pathlib import Path
 from typing import Any
 
 import yaml
+from tests.sentry._ci_shell_tokens import (
+    EXACT_PIN,
+    base,
+    commands,
+    parse_install_args,
+    pip_install_args,
+    uv_run_findings,
+)
 
 if sys.version_info >= (3, 11):
     import tomllib
@@ -32,15 +43,11 @@ SETUP_UV_USES = "./.github/actions/setup-uv"
 VERSION = re.compile(r"^\d+\.\d+\.\d+$")
 SETUP_UV_SHA = re.compile(r"^astral-sh/setup-uv@[0-9a-f]{40}$")
 ENGINE_URL = re.compile(r"git\+https://[^\s\"']*decoy-engine@[^\s\"']+")
-INDEX_OPTIONS = {"--index-url", "--extra-index-url", "-i", "--index", "--default-index"}
-SKIP_VALUE = {"--python", "-f", "--find-links", "-t", "--target", "--prefix", *INDEX_OPTIONS}
-EXACT_PIN = re.compile(r"^[A-Za-z0-9_.\-]+(\[[A-Za-z0-9_,.\-]+\])?==[^<>=!~\s]+$")
-_TOKEN = re.compile(r"\"[^\"]*\"|'[^']*'|\S+")
 ENV_NAMES = ("UV_PROJECT_ENVIRONMENT", "DECOY_VENV", "DECOY_PYTHON")
 _HIDES = re.compile(r"\|\|\s*(true|:|exit(\s+0)?)\b|\bset\s+(\+e\b|\+o\s+errexit)|\bexit\s+0\b")
 _RUFF = re.compile(r"\bruff(\[[^\]]*\])?==|\buvx?\b[^\n]*\bruff\b")
-DRIFT_IF = "github.event_name == 'schedule'"
-NOT_DRIFT_IF = "github.event_name != 'schedule'"
+# Lock key in the policy -> the install gate `-r <that file>` provides.
+REQ_GATES = {"certified": "certified-closure", "ci_tools": "ci-tools"}
 CERT_KINDS = {"certified-engine-wheel": "certified", "drift-canary": "drift-canary"}
 
 
@@ -48,74 +55,25 @@ def load_policy(path: Path = POLICY_FILE) -> dict[str, Any]:
     return tomllib.loads(path.read_text(encoding="utf-8"))
 
 
-def _base(token: str) -> str:
-    return token.rsplit("/", 1)[-1]
-
-
-def _commands(text: str) -> list[list[str]]:
-    """Commands of a step's shell: continuations joined, comments dropped, `--opt=v` split."""
-    text = re.sub(r"\\\n\s*", " ", text.replace('\\"', '"'))
-    commands: list[list[str]] = []
-    for line in (ln.strip() for ln in text.splitlines()):
-        if not line or line.startswith("#"):
-            continue
-        current: list[str] = []
-        for raw in _TOKEN.findall(line):
-            token = raw.strip("\"'") if raw[0] in "\"'" else raw
-            if token in {"&&", "||", ";", "|"} or (token.endswith(";") and len(token) > 1):
-                commands.append(current + ([token[:-1]] if token.endswith(";") else []))
-                current = []
-            elif token.startswith("--") and "=" in token:
-                current += token.split("=", 1)
-            else:
-                current.append(token)
-        commands.append(current)
-    return [c for c in commands if c]
-
-
-def _pip_install_args(cmd: list[str]) -> list[str] | None:
-    """Arguments after `pip install` (pip, python -m pip, uv pip), or None if not one."""
-    for i, tok in enumerate(cmd):
-        if re.fullmatch(r"pip[0-9.]*", tok) and "install" in cmd[i + 1 :]:
-            return cmd[cmd.index("install", i) + 1 :]
-    return None
-
-
 def _is_consumer(cmd: list[str], consumers: list[str]) -> bool:
-    if _pip_install_args(cmd) is not None:
+    if pip_install_args(cmd) is not None:
         return False
-    return any(_base(t) in consumers or t.endswith(tuple(consumers)) for t in cmd)
+    return any(base(t) in consumers or t.endswith(tuple(consumers)) for t in cmd)
 
 
-def classify_install(
-    args: list[str], policy: dict[str, Any], *, standalone: bool = False
-) -> tuple[str | None, list[str]]:
+def classify_install(args: list[str], policy: dict[str, Any]) -> tuple[str | None, list[str]]:
     """The gate one pip install provides (constrained-wheel, drift-canary, certified-engine-wheel,
-    certified-closure, or None for a constrained tool install) and its findings."""
-    dev, cert = policy["locks"]["dev"], policy["locks"]["certified"]
-    found: list[str] = []
-    cons: list[str] = []
-    reqs: list[str] = []
+    certified-closure, ci-tools, or None for a constrained tool install) and its findings."""
+    locks = policy["locks"]
+    dev = locks["dev"]
+    parsed = parse_install_args(args)
+    cons, reqs, flags = parsed.constraints, parsed.requirements, parsed.flags
+    found = [f"package index override ({o})" for o in parsed.index_overrides]
+    found += [f"project install by pip (-e {e})" for e in parsed.editables]
     wheels = engines = 0
-    nodeps = bare = False
-    it = iter(args)
-    for arg in it:
-        if arg in {"-c", "--constraint"}:
-            cons.append(next(it, ""))
-        elif arg in {"-r", "--requirement"}:
-            reqs.append(next(it, ""))
-        elif arg in INDEX_OPTIONS:
-            found.append(f"package index override ({arg})")
-            next(it, None)
-        elif arg in SKIP_VALUE:
-            next(it, None)
-        elif arg in {"-e", "--editable"}:
-            found.append(f"project install by pip ({arg})")
-        elif arg == "--no-deps":
-            nodeps = True
-        elif arg.startswith("-"):
-            continue
-        elif ENGINE_URL.fullmatch(arg):
+    bare = False
+    for arg in parsed.positionals:
+        if ENGINE_URL.fullmatch(arg):
             engines += 1
         elif arg.endswith(".whl"):
             wheels += 1
@@ -125,18 +83,25 @@ def classify_install(
             found.append(f"requirement is not an exact == pin ({arg})")
         else:
             bare = True
+    nodeps = "--no-deps" in flags
     found += [f"unregistered constraint file ({c})" for c in cons if c != dev]
-    found += [f"unregistered requirements file ({r})" for r in reqs if r != cert]
+    closures = {locks[k]: g for k, g in REQ_GATES.items()}
+    found += [f"unregistered requirements file ({r})" for r in reqs if r not in closures]
     gate: str | None = None
-    if reqs == [cert] and not (cons or wheels or engines or bare):
-        gate = "certified-closure"
-    elif engines and wheels and not (cons or reqs):
+    exact_pair = engines == 1 and wheels == 1 and not bare and not (cons or reqs)
+    if len(reqs) == 1 and reqs[0] in closures and not (cons or wheels or engines or bare):
+        gate = closures[reqs[0]]
+        if gate == "ci-tools" and "--require-hashes" not in flags:
+            found.append("the ci-tools lock must be installed with --require-hashes")
+    elif exact_pair:
         gate = "certified-engine-wheel" if nodeps else "drift-canary"
     elif engines:
-        found.append("engine spec outside the registered certified and drift-canary installs")
+        found.append(
+            "engine spec outside the exact engine-plus-wheel certified and canary installs"
+        )
     elif cons == [dev] and not reqs:
         gate = "constrained-wheel" if wheels else None
-    elif not (standalone and not (cons or reqs or wheels)):
+    else:
         found.append(f"install without -c {dev}")
     if nodeps and gate != "certified-engine-wheel":
         found.append("--no-deps outside the certified engine-plus-wheel install")
@@ -148,6 +113,22 @@ def _is_site(policy: dict[str, Any], name: str, job: str, step: dict[str, Any], 
     return any(
         (s["workflow"], s["job"], s["step"], s["kind"]) == key for s in policy["engine_site"]
     )
+
+
+def canary_event(policy: dict[str, Any], name: str, job: str) -> str | None:
+    """The event the job's registered drift canary runs on; the policy is the only source."""
+    return next(
+        (
+            s.get("event")
+            for s in policy["engine_site"]
+            if s["kind"] == "drift-canary" and (s["workflow"], s["job"]) == (name, job)
+        ),
+        None,
+    )
+
+
+def _event_if(event: str | None, op: str) -> str:
+    return f"github.event_name {op} '{event}'"
 
 
 def _step_findings(
@@ -166,8 +147,9 @@ def _step_findings(
         out.append("engine spec literal outside the registered install sites")
     if _RUFF.search(text):
         out.append(f"ruff must come from {LOCK_ENV_USES}, not a literal pin or uvx")
-    for cmd in _commands(text):
-        args = _pip_install_args(cmd)
+    for cmd in commands(text):
+        out += uv_run_findings(cmd, frozen_env=ctx["frozen"])
+        args = pip_install_args(cmd)
         if args is None:
             if any(lk in tok for tok in cmd for lk in policy["locks"].values()):
                 out.append("inline lock parsing; use scripts/dev/lock_version.sh")
@@ -175,25 +157,22 @@ def _step_findings(
                 [["add"], ["remove"], ["lock"], ["sync"]]
             ):
                 out.append("uv add, remove, lock or sync re-resolves outside the lock")
-            if ctx["role"] == "workflow" and any(_base(t) == "bootstrap.sh" for t in cmd):
+            if ctx["role"] == "workflow" and any(base(t) == "bootstrap.sh" for t in cmd):
                 out.append(f"installs outside {LOCK_ENV_USES}")
             if "uvx" in cmd or ("uv" in cmd and "tool" in cmd):
                 out.append("uvx and uv tool fetch tools from the index; use the lock")
             continue
-        gate, found = classify_install(args, policy, standalone=route == ["standalone"])
+        gate, found = classify_install(args, policy)
         out += found
         if gate:
             gates.append(gate)
         if gate in CERT_KINDS and not _is_site(policy, name, job, step, CERT_KINDS[gate]):
             out.append(f"{gate} install is not a registered engine site")
-        if gate == "drift-canary" and step.get("if") != DRIFT_IF:
-            out.append(f"the drift canary must run only when {DRIFT_IF}")
-        if (
-            gate == "constrained-wheel"
-            and "drift-canary" in route
-            and step.get("if") != NOT_DRIFT_IF
-        ):
-            out.append(f"the constrained install must skip the drift-canary event ({NOT_DRIFT_IF})")
+        event = canary_event(policy, name, job)
+        want = {"drift-canary": "==", "constrained-wheel": "!="}.get(gate or "")
+        if want and (gate == "drift-canary" or "drift-canary" in route):
+            if event is None or step.get("if") != _event_if(event, want):
+                out.append(f"the {gate} install must run under `{_event_if(event, want)}`")
     return [f"{job}: {m}" for m in out], gates
 
 
@@ -218,9 +197,12 @@ def scan_workflow(
             (r for r in policy["route"] if (r["workflow"], r["job"]) == (name, job_name)), None
         )
         route = entry["gates"] if entry else []
-        ctx = {"policy": policy, "role": role, "route": route}
+        frozen = any(
+            str((e or {}).get("UV_FROZEN")) == "1" for e in (wf.get("env"), job.get("env"))
+        )
+        ctx = {"policy": policy, "role": role, "route": route, "frozen": frozen}
         gate_at: dict[str, int] = {}
-        installs = False
+        installs = consumer_seen = False
         uses = [str(s.get("uses", "")) for s in steps]
         if role == "workflow" and any(n in (job.get("env") or {}) for n in ENV_NAMES):
             findings.append(f"{job_name}: copies the venv env block; use {LOCK_ENV_USES}")
@@ -231,13 +213,14 @@ def scan_workflow(
             findings += found
             for gate in gates:
                 gate_at.setdefault(gate, index)
-            cmds = _commands(str(step.get("run", "")))
-            installs = installs or any(_pip_install_args(c) is not None for c in cmds)
+            cmds = commands(str(step.get("run", "")))
+            installs = installs or any(pip_install_args(c) is not None for c in cmds)
             if role == "workflow" and not {LOCK_ENV_USES, SETUP_UV_USES} & set(uses):
                 if any(t in {"uv", "uvx"} for c in cmds for t in c):
                     findings.append(f"{job_name}: runs uv without the setup-uv or lock-env action")
             if not any(_is_consumer(c, policy["consumers"]) for c in cmds):
                 continue
+            consumer_seen = True
             if not route:
                 findings.append(
                     f"{job_name}: consumer step {index} but no install route in the policy"
@@ -251,6 +234,8 @@ def scan_workflow(
                 str(step.get("run", ""))
             ):
                 findings.append(f"{job_name}: step {index} can hide a consumer failure")
+        if consumer_seen and job.get("continue-on-error") not in (None, False, "false"):
+            findings.append(f"{job_name}: job-level continue-on-error can hide a consumer failure")
         if installs and not route:
             findings.append(f"{job_name}: installs packages but has no route in the policy")
         order = [gate_at[g] for g in route if g in gate_at]
@@ -301,13 +286,21 @@ def engine_literals(root: Path = ROOT) -> list[tuple[str, str, str, str]]:
 
 
 def policy_findings(policy: dict[str, Any]) -> list[str]:
-    """Every engine site and write scope names a reason; that is what makes it a decision."""
-    return [
+    """Every engine site and write scope names a reason; a drift canary also names its event and
+    no other site does. That is what makes each one a decision."""
+    found = [
         f"{t} {e.get('workflow')}/{e.get('job')} has no reason"
         for t in ("engine_site", "write_scope")
         for e in policy.get(t, [])
         if not str(e.get("reason", "")).strip()
     ]
+    for site in policy.get("engine_site", []):
+        where = f"engine_site {site.get('workflow')}/{site.get('job')}"
+        if site.get("kind") not in set(CERT_KINDS.values()):
+            found.append(f"{where} has unknown kind {site.get('kind')!r}")
+        if (site.get("kind") == "drift-canary") != bool(str(site.get("event", "")).strip()):
+            found.append(f"{where}: only a drift-canary names an event, and it must")
+    return found
 
 
 def permission_findings(name: str, wf: dict[str, Any], policy: dict[str, Any]) -> list[str]:

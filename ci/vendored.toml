@@ -10,6 +10,14 @@ local_path = ".github/actions/setup-uv/action.yml"
 blob_sha256 = "91b5aa05410a96702c57818a966cf29c45ef1c2b204d929ffc36694b84de86ec"
 commit = "f2b7b3da4b9374b8745e089530b3e1c7815ce638"
 
+# The shell-parsing core starts here: the engine adopts this same file after CI-E1 merges (a CI-X
+# row), so `commit` names the CLI commit that introduced it until the engine row replaces it.
+[[vendored]]
+engine_path = "tests/sentry/_ci_shell_tokens.py"
+local_path = "tests/sentry/_ci_shell_tokens.py"
+blob_sha256 = "1cc8ac0e9ac689eae5c61c52be1405e26242928bc7c0be893387b17a0381f5bd"
+commit = "cli-origin"
+
 [[mirror]]
 engine_path = ".github/actions/lock-env/action.yml"
 local_path = ".github/actions/lock-env/action.yml"
