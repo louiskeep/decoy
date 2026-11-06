@@ -516,6 +516,8 @@ state.
 | [roadmap/out-of-scope.md](roadmap/out-of-scope.md) | Council-V2 features, V2 rows, post-V1 items |
 | [roadmap/v2-v3-expansion-candidates.md](roadmap/v2-v3-expansion-candidates.md) | V2 and V3 core expansion candidates (formats, masks, generators, documents, media); proposal, not scheduled |
 | [roadmap/v2-v3-complexity-and-ecosystem.md](roadmap/v2-v3-complexity-and-ecosystem.md) | effort, dependencies and models per tier, and the one-CLI-several-engines product shape; proposal |
+| [roadmap/v1plus-sprints.md](roadmap/v1plus-sprints.md) | V1+ sprint outline (secrets, international identifiers, meaning-preserving masks, Avro and ORC) with FRAME and PLAN inputs per slice; proposal |
+| [roadmap/v2-sprints.md](roadmap/v2-sprints.md) | V2 sprint outline (core: plugin SDK, JSON, DICOM, anonymity enforcement, copula synthesis; then extended) with FRAME and PLAN inputs per slice; proposal |
 | [roadmap/sources.md](roadmap/sources.md) | source documents |
 | [RECENTLY-SHIPPED.md](RECENTLY-SHIPPED.md) | the shipped log; older entries in [archive/](archive/README.md) |
 

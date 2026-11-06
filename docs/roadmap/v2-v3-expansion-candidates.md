@@ -5,6 +5,7 @@ Status: proposal (for the V2/V3 planning discussion; nothing here is scheduled)
 Part of the roadmap: [ROADMAP.md](../ROADMAP.md). Path shorthand (`E:`, `C:`, `P:`, vault) is defined there.
 Indexed from the V2 backlog in [out-of-scope.md](out-of-scope.md).
 Effort, dependencies and product shape for these candidates: [v2-v3-complexity-and-ecosystem.md](v2-v3-complexity-and-ecosystem.md).
+Sprint outlines: [v1plus-sprints.md](v1plus-sprints.md) and [v2-sprints.md](v2-sprints.md).
 
 This document proposes features that widen Decoy's core: more kinds of input and output, more mask
 and privacy techniques, more generators, documents, and media (images, video, audio). Each entry
