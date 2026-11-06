@@ -7,10 +7,10 @@ to stdout/stderr or any report. Nothing is created unless a path was given.
 
 from __future__ import annotations
 
-import os
-import tempfile
 import traceback
 from pathlib import Path
+
+from decoy._atomic import WriteMode, write_atomic
 
 
 class DebugSink:
@@ -40,12 +40,9 @@ class DebugSink:
             return
         header = "# decoy ci check UNSAFE debug log: may contain secrets and sample values.\n"
         body = header + "\n".join(self._lines) + "\n"
-        directory = self._path.parent
-        fd, tmp = tempfile.mkstemp(dir=directory, prefix=".decoy-debug-")
-        try:
-            with os.fdopen(fd, "w", encoding="utf-8", errors="replace") as handle:
-                handle.write(body)
-            os.replace(tmp, self._path)
-        except BaseException:
-            Path(tmp).unlink(missing_ok=True)
-            raise
+        write_atomic(
+            self._path.parent,
+            self._path.name,
+            body.encode("utf-8", errors="replace"),
+            WriteMode.REPLACE,
+        )

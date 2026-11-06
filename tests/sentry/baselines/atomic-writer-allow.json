@@ -3,24 +3,23 @@
  "created_in": "L1b.1",
  "entries": {
   "api.py": {
+   "sites": 1,
    "reason": "Spools a DataFrame to a throwaway parquet temp file for the engine to read; never replaced onto a target, so the atomic-write rules do not apply."
   },
-  "ci/debug.py": {
-   "reason": "decoy ci debug log flush; own temp-file recipe, moves onto write_atomic when next touched."
-  },
-  "cli/ci.py": {
-   "reason": "decoy ci output writer; own temp-file recipe, moves onto write_atomic when next touched."
-  },
   "cli/run.py": {
+   "sites": 4,
    "reason": "_commit_vault keeps a hard-link backup and restores or removes the vault when the directory fsync fails (tests/e2e/test_vault_commit_order.py); a transaction, not a plain atomic write. L5a moves it to _vault_commit.py and renames this entry."
   },
   "distribution/first_install.py": {
+   "sites": 1,
    "reason": "Moves the unpacked bundle into place on first install; not a file write."
   },
   "distribution/installer.py": {
-   "reason": "Swaps whole runtime directories and the launcher shim under the install lock; a different operation from writing one file."
+   "sites": 3,
+   "reason": "Moves a staged runtime directory into versions/ and writes the 0755 launcher shim (temp file, chmod, replace); a directory move and an executable-mode write, not a 0600 data write."
   },
   "distribution/layout.py": {
+   "sites": 1,
    "reason": "Flips the current-version symlink under the install lock; not a file write."
   }
  }

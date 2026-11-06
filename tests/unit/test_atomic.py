@@ -52,12 +52,24 @@ def test_tmp_dir_holds_the_temp_file(tmp_path: Path, monkeypatch: pytest.MonkeyP
     assert _names(out) == ["f"] and _names(tmp) == []
 
 
-@pytest.mark.parametrize("name", ["", ".", "..", "a/b", "a\\b", "a\0b", "../x"])
+_BAD_NAMES = [
+    "", ".", "..", "a/b", "a\\b", "a\0b", "../x",
+    "C:x", "a:b", "NUL", "nul", "con.txt", "CON.tar.gz", "COM1", "lpt9.log", "AUX", "PRN.x",
+    "x.", "x ", " x", ".hidden", "a b", "caf\u00e9", "x" * 201,
+]  # fmt: skip
+
+
+@pytest.mark.parametrize("name", _BAD_NAMES)
 def test_bad_name_fails_closed_before_any_file(tmp_path: Path, name: str) -> None:
     with pytest.raises(AtomicWriteError) as info:
         write_atomic(tmp_path, name, b"x", WriteMode.REPLACE)
     assert info.value.code == _atomic.ATOMIC_BAD_NAME
     assert _names(tmp_path) == []
+
+
+@pytest.mark.parametrize("name", ["a.txt", "A-b_c.json", "0", "x" * 200, "console.txt", "COM10"])
+def test_plain_names_are_accepted(tmp_path: Path, name: str) -> None:
+    assert write_atomic(tmp_path, name, b"x", WriteMode.REPLACE) is True
 
 
 @pytest.mark.parametrize("step", ["fsync_file", "replace", "dir_fsync"])
@@ -107,6 +119,7 @@ def test_dir_fsync_failure_has_its_own_code(
     with pytest.raises(AtomicWriteError) as info:
         write_atomic(tmp_path, "t", b"new", WriteMode.CREATE_ONCE)
     assert info.value.code == _atomic.ATOMIC_SYNC_FAILED
+    assert info.value.__context__ is None
     assert _names(tmp_path) == ["t"]
 
 
@@ -116,7 +129,7 @@ def test_error_carries_no_path_or_cause(tmp_path: Path, monkeypatch: pytest.Monk
         write_atomic(tmp_path, "t", b"x", WriteMode.REPLACE)
     exc = info.value
     assert str(exc) == _atomic.ATOMIC_WRITE_FAILED and exc.errno == errno.EIO
-    assert exc.__cause__ is None and exc.__suppress_context__
+    assert exc.__cause__ is None and exc.__context__ is None
     assert "secret" not in repr(exc) and str(tmp_path) not in repr(exc)
 
 
@@ -132,17 +145,116 @@ def test_keyboard_interrupt_cleans_up_and_propagates(
     assert _names(tmp_path) == []
 
 
-def test_create_once_without_hard_links_falls_back(
+def _no_link(*_a: object, **_k: object) -> None:
+    raise OSError(errno.EPERM, "no links at /secret/path")
+
+
+def test_create_once_without_hard_links_fails_closed(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    def no_link(*_a: object, **_k: object) -> None:
-        raise OSError(errno.EPERM, "no links")
+    monkeypatch.setattr(os, "link", _no_link)
+    with pytest.raises(AtomicWriteError) as info:
+        write_atomic(tmp_path, "r", b"a", WriteMode.CREATE_ONCE)
+    assert info.value.code == _atomic.ATOMIC_NOCLOBBER_UNSUPPORTED
+    assert info.value.errno == errno.EPERM
+    assert info.value.__cause__ is None and info.value.__context__ is None
+    assert _names(tmp_path) == []
 
-    monkeypatch.setattr(os, "link", no_link)
-    assert write_atomic(tmp_path, "r", b"a", WriteMode.CREATE_ONCE) is True
-    assert write_atomic(tmp_path, "r", b"b", WriteMode.CREATE_ONCE) is False
-    assert (tmp_path / "r").read_bytes() == b"a"
+
+def test_no_hard_links_never_overwrites_a_competing_writer(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """V1: the old check-then-replace let os.replace clobber a file created after the check."""
+    real_replace = os.replace
+
+    def competitor_then_replace(src: str, dst: Path) -> None:
+        (tmp_path / "r").write_bytes(b"competitor")
+        real_replace(src, dst)
+
+    monkeypatch.setattr(os, "link", _no_link)
+    monkeypatch.setattr(os, "replace", competitor_then_replace)
+    with pytest.raises(AtomicWriteError):
+        write_atomic(tmp_path, "r", b"mine", WriteMode.CREATE_ONCE)
+    assert not (tmp_path / "r").exists() or (tmp_path / "r").read_bytes() == b"competitor"
+
+
+def test_competitor_between_temp_and_link_survives(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    real_link = os.link
+
+    def competitor_then_link(src: str, dst: Path) -> None:
+        (tmp_path / "r").write_bytes(b"competitor")
+        real_link(src, dst)
+
+    monkeypatch.setattr(os, "link", competitor_then_link)
+    assert write_atomic(tmp_path, "r", b"mine", WriteMode.CREATE_ONCE) is False
+    assert (tmp_path / "r").read_bytes() == b"competitor"
     assert _names(tmp_path) == ["r"]
+
+
+def test_windows_create_once_uses_rename_and_keeps_a_competitor(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def rename_refuses(src: str, dst: Path) -> None:
+        (tmp_path / "r").write_bytes(b"competitor")
+        raise FileExistsError(errno.EEXIST, "exists")
+
+    def forbidden(*_a: object, **_k: object) -> None:
+        raise AssertionError("no link or replace on the Windows no-clobber path")
+
+    monkeypatch.setattr(_atomic, "_WINDOWS", True)
+    monkeypatch.setattr(os, "rename", rename_refuses)
+    monkeypatch.setattr(os, "link", forbidden)
+    monkeypatch.setattr(os, "replace", forbidden)
+    assert write_atomic(tmp_path, "r", b"mine", WriteMode.CREATE_ONCE) is False
+    assert (tmp_path / "r").read_bytes() == b"competitor"
+    assert _names(tmp_path) == ["r"]
+
+
+def _fsync_kinds(monkeypatch: pytest.MonkeyPatch) -> list[str]:
+    import stat
+
+    real, kinds = os.fsync, []
+
+    def fsync(fd: int) -> None:
+        kinds.append("dir" if stat.S_ISDIR(os.fstat(fd).st_mode) else "file")
+        real(fd)
+
+    monkeypatch.setattr(os, "fsync", fsync)
+    return kinds
+
+
+def test_create_once_miss_does_not_fsync_the_directory(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    write_atomic(tmp_path, "r", b"first", WriteMode.CREATE_ONCE)
+    kinds = _fsync_kinds(monkeypatch)
+    assert write_atomic(tmp_path, "r", b"second", WriteMode.CREATE_ONCE) is False
+    assert kinds == ["file"]
+
+
+def test_one_directory_is_synced_once(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    kinds = _fsync_kinds(monkeypatch)
+    write_atomic(tmp_path, "r", b"x", WriteMode.REPLACE, tmp_dir=tmp_path)
+    assert kinds == ["file", "dir"]
+
+
+def test_separate_tmp_dir_is_synced_too(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    out, tmp = tmp_path / "out", tmp_path / "tmp"
+    out.mkdir()
+    tmp.mkdir()
+    kinds = _fsync_kinds(monkeypatch)
+    write_atomic(out, "r", b"x", WriteMode.REPLACE, tmp_dir=tmp)
+    assert kinds == ["file", "dir", "dir"]
+
+
+@pytest.mark.skipif(os.name == "nt", reason="Windows cannot open a directory")
+def test_public_fsync_directory_raises_plain_oserror(tmp_path: Path) -> None:
+    _atomic.fsync_directory(tmp_path)
+    with pytest.raises(OSError) as info:
+        _atomic.fsync_directory(tmp_path / "missing")
+    assert not isinstance(info.value, AtomicWriteError)
 
 
 def test_cross_device_link_error_is_not_a_fallback(

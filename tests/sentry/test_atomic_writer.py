@@ -2,34 +2,44 @@
 
 Walks the syntax tree of every module under `src/decoy/` for the calls that make up an
 inline atomic write: `os.replace`, `os.rename`, `os.renames`, `os.link`,
-`tempfile.mkstemp` and `shutil.move` (resolved through import aliases and
-`from x import y`), plus `.rename(x)` and one-argument `.replace(x)` method calls
-(`Path.rename` / `Path.replace`; `str.replace` always takes two arguments). A site
-outside `_atomic.py` fails unless its file is in ALLOWLIST with the exact recorded
-site count, so a new copy inside an allowlisted file is also red.
+`tempfile.mkstemp` and `shutil.move` (resolved through `import x`, `import x.y`,
+`import x as y` and `from x import y`), `Path.hardlink_to` / `Path.link_to`, `.rename(...)`,
+`.replace(x)` with exactly one argument, or the keyword `target=` (`str.replace` takes two), and the unbound
+`Path.replace(a, b)` / `Path.rename(a, b)` (also through `pathlib.Path` and aliases). A site
+outside `_atomic.py` fails unless its file is in ALLOWLIST with the exact recorded site count,
+so a new copy inside an allowlisted file is also red.
 
-Named limits: a call through a name bound at runtime (`getattr(os, "replace")`) is
-invisible to a syntax walk; `Path.hardlink_to` is not scanned (no use in the tree).
-Size 7 is today's baseline (L1b.1). Entries leave this list when their file moves onto
-`_atomic.write_atomic`; none may be added without a reviewed change (shrink-only
-ratchet, tests/sentry/baselines/atomic-writer-allow.json).
+Named limits, all invisible to a syntax walk: a call through a runtime-bound name
+(`getattr(os, "replace")`), alias by assignment (`mv = os.replace; mv(a, b)`), a starred
+argument list on `.replace(*args)`, and `from os import *`.
+Size 5 is today's baseline (L1b.1, after `cli/ci.py` and `ci/debug.py` moved onto
+`_atomic.write_atomic`). Entries leave this list when their file moves onto the writer;
+none may be added without a reviewed change (shrink-only ratchet,
+tests/sentry/baselines/atomic-writer-allow.json, which also records each entry's site count).
 """
 
 from __future__ import annotations
 
 import ast
+import json
 from dataclasses import dataclass
 from pathlib import Path
+
+import pytest
 
 ROOT = Path(__file__).resolve().parents[2]
 SRC = ROOT / "src" / "decoy"
 CHOKE_POINT = "_atomic.py"
+BASELINE = ROOT / "tests" / "sentry" / "baselines" / "atomic-writer-allow.json"
 
-_MODULE_CALLS = {
+_MODULE_CALLS: dict[str, set[str]] = {
     "os": {"replace", "rename", "renames", "link"},
     "tempfile": {"mkstemp"},
     "shutil": {"move"},
+    "pathlib": set(),  # tracked only to resolve the Path class
 }
+_PATH_CLASSES = {"Path", "PosixPath", "WindowsPath"}
+_PATH_ALWAYS = {"rename", "hardlink_to", "link_to"}
 
 
 @dataclass(frozen=True)
@@ -40,16 +50,6 @@ class AllowedInline:
 
 
 ALLOWLIST: tuple[AllowedInline, ...] = (
-    AllowedInline(
-        "cli/ci.py",
-        2,
-        "decoy ci output writer; own temp-file recipe, moves onto write_atomic when next touched.",
-    ),
-    AllowedInline(
-        "ci/debug.py",
-        2,
-        "decoy ci debug log flush; own temp-file recipe, moves onto write_atomic when next touched.",
-    ),
     AllowedInline(
         "cli/run.py",
         4,
@@ -65,9 +65,10 @@ ALLOWLIST: tuple[AllowedInline, ...] = (
     ),
     AllowedInline(
         "distribution/installer.py",
-        4,
-        "Swaps whole runtime directories and the launcher shim under the install lock; "
-        "a different operation from writing one file.",
+        3,
+        "Moves a staged runtime directory into versions/ and writes the 0755 launcher shim "
+        "(temp file, chmod, replace); a directory move and an executable-mode write, not a "
+        "0600 data write.",
     ),
     AllowedInline(
         "distribution/layout.py",
@@ -89,12 +90,30 @@ def _aliases(tree: ast.AST) -> tuple[dict[str, str], dict[str, tuple[str, str]]]
     for node in ast.walk(tree):
         if isinstance(node, ast.Import):
             for a in node.names:
-                if a.name in _MODULE_CALLS:
-                    modules[a.asname or a.name] = a.name
+                top = a.name.split(".")[0]
+                if a.asname and a.name in _MODULE_CALLS:
+                    modules[a.asname] = a.name
+                elif not a.asname and top in _MODULE_CALLS:
+                    modules[top] = top  # `import os.path` binds the name `os`
         elif isinstance(node, ast.ImportFrom) and node.module in _MODULE_CALLS:
             for a in node.names:
                 members[a.asname or a.name] = (node.module, a.name)
     return modules, members
+
+
+def _is_path_class(
+    node: ast.expr, modules: dict[str, str], members: dict[str, tuple[str, str]]
+) -> bool:
+    if isinstance(node, ast.Name):
+        return members.get(node.id, ("", ""))[0] == "pathlib" and (
+            members[node.id][1] in _PATH_CLASSES
+        )
+    return (
+        isinstance(node, ast.Attribute)
+        and node.attr in _PATH_CLASSES
+        and isinstance(node.value, ast.Name)
+        and modules.get(node.value.id) == "pathlib"
+    )
 
 
 def inline_sites(source: str) -> list[tuple[int, str]]:
@@ -117,8 +136,12 @@ def inline_sites(source: str) -> list[tuple[int, str]]:
                 if func.attr in _MODULE_CALLS[mod]:
                     found.append((node.lineno, f"{mod}.{func.attr}"))
                 continue
-            one_arg = len(node.args) == 1 and not node.keywords
-            if func.attr == "rename" or (func.attr == "replace" and one_arg):
+            keywords = [k.arg for k in node.keywords]
+            one_arg = (len(node.args) == 1 and not keywords) or (
+                not node.args and keywords == ["target"]
+            )
+            unbound = func.attr == "replace" and _is_path_class(base, modules, members)
+            if func.attr in _PATH_ALWAYS or unbound or (func.attr == "replace" and one_arg):
                 found.append((node.lineno, f"Path.{func.attr}"))
     return found
 
@@ -155,10 +178,17 @@ def test_no_inline_atomic_write_outside_the_choke_point() -> None:
     assert findings(scan(SRC)) == []
 
 
-def test_allowlist_baseline_is_seven_with_reasons() -> None:
-    assert len(ALLOWLIST) == 7
-    assert len({e.file for e in ALLOWLIST}) == 7
+def test_allowlist_baseline_is_five_with_reasons() -> None:
+    assert len(ALLOWLIST) == 5
+    assert len({e.file for e in ALLOWLIST}) == 5
     assert all(len(e.reason.strip()) >= 15 and e.sites > 0 for e in ALLOWLIST)
+
+
+def test_baseline_json_records_the_same_sites_and_reasons() -> None:
+    entries = json.loads(BASELINE.read_text(encoding="utf-8"))["entries"]
+    assert {k: (v["sites"], v["reason"]) for k, v in entries.items()} == {
+        e.file: (e.sites, e.reason) for e in ALLOWLIST
+    }
 
 
 def test_choke_point_exists_and_is_excluded() -> None:
@@ -182,8 +212,12 @@ def test_seeded_inline_copy_is_red(tmp_path: Path) -> None:
 
 def test_seeded_copy_in_an_allowlisted_file_is_red() -> None:
     real = {k: v for k, v in scan(SRC).items() if k in {e.file for e in ALLOWLIST}}
-    seeded = {**real, "cli/ci.py": [*real["cli/ci.py"], (999, "os.replace")]}
-    assert findings(seeded) == ["cli/ci.py: 3 site(s), allowlist records 2 (111, 115, 999)"]
+    seeded = {**real, "cli/run.py": [*real["cli/run.py"], (999, "os.replace")]}
+    lines = ", ".join(str(n) for n, _ in seeded["cli/run.py"])
+    recorded = next(e.sites for e in ALLOWLIST if e.file == "cli/run.py")
+    assert findings(seeded) == [
+        f"cli/run.py: {recorded + 1} site(s), allowlist records {recorded} ({lines})"
+    ]
 
 
 def test_walk_resolves_aliases_and_method_forms() -> None:
@@ -196,3 +230,26 @@ def test_walk_resolves_aliases_and_method_forms() -> None:
     assert [what for _, what in inline_sites(src)] == [
         "os.link", "os.replace", "tempfile.mkstemp", "Path.rename", "Path.replace",
     ]  # fmt: skip
+
+
+@pytest.mark.parametrize(
+    ("source", "expected"),
+    [
+        ("import os.path\nos.replace(a, b)\n", ["os.replace"]),
+        ("import os.path\nos.path.join(a, b)\n", []),
+        ("from pathlib import Path\nPath(a).replace(target=b)\n", ["Path.replace"]),
+        ("from pathlib import Path\nPath(a).rename(target=b)\n", ["Path.rename"]),
+        ("from pathlib import Path\nPath.replace(a, b)\n", ["Path.replace"]),
+        ("from pathlib import Path\nPath.rename(a, b)\n", ["Path.rename"]),
+        ("from pathlib import Path as P\nP.replace(a, b)\n", ["Path.replace"]),
+        ("import pathlib\npathlib.Path.replace(a, b)\n", ["Path.replace"]),
+        ("from pathlib import Path\nPath(a).hardlink_to(b)\n", ["Path.hardlink_to"]),
+        ("from os import link\nlink(a, b)\n", ["os.link"]),
+        ("from os import link as ln\nln(a, b)\n", ["os.link"]),
+        ("'x'.replace('a', 'b')\ns.replace(old='a', new='b')\n", []),
+        ("import datetime as dt\nd.replace(tzinfo=dt.timezone.utc)\n", []),
+        ("from collections import OrderedDict\nOrderedDict.replace(a, b)\n", []),
+    ],
+)
+def test_walk_sees_each_common_form(source: str, expected: list[str]) -> None:
+    assert [what for _, what in inline_sites(source)] == expected
