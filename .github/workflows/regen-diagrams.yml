@@ -39,23 +39,16 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      - uses: actions/setup-python@v6
+      - name: Lock environment (engine commit and CLI come from requirements-dev.lock)
+        uses: ./.github/actions/lock-env
         with:
-          python-version: '3.11'
-          cache: pip
+          python: '3.11'
 
       - name: Install graphviz (for the dot binary pyreverse uses)
         run: sudo apt-get update && sudo apt-get install -y graphviz
 
-      - name: Install Python tools + package
-        run: |
-          python -m pip install --upgrade pip
-          pip install pydeps pylint
-          # decoy-engine is not on PyPI yet, so install it from the repo first. This job holds a
-          # write token (it pushes regenerated diagrams), so pin an exact engine commit (the
-          # v0.18.0 release commit) instead of tracking main; bump it with each engine release.
-          pip install "git+https://github.com/louiskeep/decoy-engine@f5b46a2c109f7b901e8ed3d36e48798bb6179b1d"
-          pip install -e .
+      - name: Install diagram tools (pinned, constrained by the lock)
+        run: uv pip install --python "$DECOY_VENV/bin/python" -c requirements-dev.lock "pydeps==3.0.9" "pylint==4.1.3"
 
       - name: Regenerate diagrams
         run: python scripts/build_docs.py
