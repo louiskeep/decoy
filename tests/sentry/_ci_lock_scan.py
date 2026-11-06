@@ -39,7 +39,7 @@ from tests.sentry.ci_scan._shell_tokens import (
     pip_install_args,
     tool_fetch,
     uv_run_findings,
-    uv_subcommand,
+    uv_subcommands,
 )
 
 if sys.version_info >= (3, 11):
@@ -172,8 +172,8 @@ def _step_findings(
     for cmd in commands(text):
         out += uv_run_findings(cmd, frozen_env=ctx["frozen"])
         out += [f"index environment variable ({n})" for n in index_env_names(cmd)]
-        if (sub := uv_subcommand(cmd)) in UV_REFRESH:
-            out.append(f"uv {sub} re-resolves outside the lock")
+        if refresh := [sub for sub in uv_subcommands(cmd) if sub in UV_REFRESH]:
+            out.append(f"uv {refresh[0]} re-resolves outside the lock")
         if fetch := tool_fetch(cmd):
             out.append(f"{fetch[0]} fetches a tool from the index; use the lock")
         if any(base(t) in {"curl", "wget"} for t in cmd):

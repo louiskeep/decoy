@@ -76,6 +76,21 @@ _UV_GLOBAL_VALUE = _PIP_GLOBAL_VALUE | {
     "--python-fetch",
     "--allow-insecure-host",
     "--env-file",
+    "--preview-features",
+    "--default-index",
+    "--index",
+    "--index-url",
+    "-i",
+    "--extra-index-url",
+    "--find-links",
+    "-f",
+    "--index-strategy",
+    "--exclude-newer",
+    "--resolution",
+    "--prerelease",
+    "--link-mode",
+    "--python-platform",
+    "--python-version",
 }
 # Use with fullmatch: `$` would also accept a trailing newline.
 EXACT_PIN = re.compile(r"[A-Za-z0-9_.\-]+(\[[A-Za-z0-9_,.\-]+\])?==[^<>=!~\s]+")
@@ -186,32 +201,44 @@ def _skip_options(tokens: list[str], start: int, with_value: set[str]) -> int:
     return j
 
 
-def _uv_position(cmd: list[str]) -> int | None:
-    """Index in `cmd` of the uv subcommand. Known global options are skipped with their values; if
-    an option this scanner does not know took a value (`uv --preview-features x sync`), the first
-    known subcommand later in the command is used instead."""
+def _uv_positions(cmd: list[str]) -> list[int]:
+    """Indexes in `cmd` of the candidates for the uv subcommand. Normally one: the first
+    positional after the global options, which are skipped with their values, plus any known
+    subcommand names that follow it directly. If that positional is not a known subcommand, an option this scanner does not know took a value
+    (`uv --some-new-option x sync`), so every known subcommand after `uv` is a candidate and a
+    scanner that flags any of them fails closed."""
     if "uv" not in cmd:
-        return None
+        return []
     start = cmd.index("uv") + 1
     j = _skip_options(cmd, start, _UV_GLOBAL_VALUE)
     if j < len(cmd) and cmd[j] in _UV_SUBCOMMANDS:
-        return j
-    for k in range(start, len(cmd)):
-        if cmd[k] in _UV_SUBCOMMANDS:
-            return k
-    return j if j < len(cmd) else None
+        # Known subcommand names right after it may be the real one if an unknown option took
+        # the first as its value (`uv --new-option run sync`).
+        run = [j]
+        while run[-1] + 1 < len(cmd) and cmd[run[-1] + 1] in _UV_SUBCOMMANDS:
+            run.append(run[-1] + 1)
+        return run
+    found = [k for k in range(start, len(cmd)) if cmd[k] in _UV_SUBCOMMANDS]
+    return found or ([j] if j < len(cmd) else [])
 
 
-def uv_subcommand(cmd: list[str]) -> str | None:
-    """The uv subcommand after any global options: `sync`, `add`, `lock`, `run`, `tool`, or for
-    pip `pip install` / `pip sync`. None when the command does not run uv."""
-    pos = _uv_position(cmd)
-    if pos is None:
-        return None
+def _uv_name(cmd: list[str], pos: int) -> str:
     if cmd[pos] != "pip":
         return cmd[pos]
     k = _skip_options(cmd, pos + 1, _PIP_GLOBAL_VALUE)
     return f"pip {cmd[k]}" if k < len(cmd) else "pip"
+
+
+def uv_subcommands(cmd: list[str]) -> list[str]:
+    """Every candidate uv subcommand (see `_uv_positions`): `sync`, `add`, `lock`, `run`, `tool`, or
+    for pip `pip install` / `pip sync`. Empty when the command does not run uv."""
+    return [_uv_name(cmd, pos) for pos in _uv_positions(cmd)]
+
+
+def uv_subcommand(cmd: list[str]) -> str | None:
+    """The first candidate of `uv_subcommands`, or None when the command does not run uv."""
+    names = uv_subcommands(cmd)
+    return names[0] if names else None
 
 
 def is_package_command(cmd: list[str]) -> bool:
@@ -220,28 +247,33 @@ def is_package_command(cmd: list[str]) -> bool:
     return any(t in {"uv", "uvx", "pipx"} or is_pip(t) for t in cmd)
 
 
-# Verbs that fetch packages from an index. `uv tool list|dir|uninstall` and `pipx list` do not.
-_UV_TOOL_FETCH = {"install", "run", "upgrade"}
+# Verbs that fetch packages from an index. For uv the rule fails closed: any `uv tool` verb that is
+# not known to fetch nothing counts as a fetch. `pipx` lists the fetching verbs it knows.
+_UV_TOOL_NO_FETCH = {"list", "dir", "uninstall", "update-shell"}
 _PIPX_FETCH = {"install", "run", "inject", "upgrade", "upgrade-all", "reinstall", "reinstall-all"}
 
 
-def _uv_tool_verb(cmd: list[str], pos: int) -> str:
-    k = _skip_options(cmd, pos + 1, set())
-    return cmd[k] if k < len(cmd) else ""
+def _uv_tool_verb(cmd: list[str], pos: int) -> tuple[str, int]:
+    """The `uv tool` verb and its index; options before it are skipped with their values."""
+    k = _skip_options(cmd, pos + 1, _UV_GLOBAL_VALUE)
+    return (cmd[k], k) if k < len(cmd) else ("", k)
+
+
+def _uv_tool_fetches(cmd: list[str], pos: int) -> tuple[str, int] | None:
+    verb, k = _uv_tool_verb(cmd, pos)
+    return None if not verb or verb in _UV_TOOL_NO_FETCH else (verb, k)
 
 
 def tool_fetch(cmd: list[str]) -> tuple[str, list[str]] | None:
-    """(label, arguments) when the command fetches a tool from an index: `uvx`, `uv tool
-    install|run|upgrade`, and the pipx verbs that install or upgrade (`runpip ... install` too).
-    None for the rest, so `uv tool list` and `pipx list` stay clean."""
+    """(label, arguments) when the command fetches a tool from an index: `uvx`, any `uv tool` verb
+    not known to be harmless (so `uv tool install|run|upgrade`, and an unrecognised verb), and the
+    pipx verbs that install or upgrade (`runpip ... install` too). None for the rest, so
+    `uv tool list|dir|uninstall` and `pipx list` stay clean."""
     if "uvx" in cmd:
         return "uvx", cmd[cmd.index("uvx") + 1 :]
-    pos = _uv_position(cmd)
-    if pos is not None and cmd[pos] == "tool":
-        verb = _uv_tool_verb(cmd, pos)
-        if verb in _UV_TOOL_FETCH:
-            return f"uv tool {verb}", cmd[cmd.index(verb, pos) + 1 :]
-        return None
+    for pos in _uv_positions(cmd):
+        if cmd[pos] == "tool" and (fetch := _uv_tool_fetches(cmd, pos)):
+            return f"uv tool {fetch[0]}", cmd[fetch[1] + 1 :]
     if "pipx" in cmd:
         i = cmd.index("pipx")
         k = _skip_options(cmd, i + 1, set())
@@ -303,11 +335,17 @@ def parse_install_args(args: list[str]) -> InstallArgs:
 
 def uv_run_findings(cmd: list[str], *, frozen_env: bool = False) -> list[str]:
     """`uv run` and `uv tool run` resolve and install on their own: `--with*` adds packages, and
-    without `--frozen` (or UV_FROZEN=1 in the environment) they may re-lock."""
-    pos = _uv_position(cmd)
-    if pos is None:
-        return []
-    if cmd[pos] != "run" and not (cmd[pos] == "tool" and _uv_tool_verb(cmd, pos) == "run"):
+    without `--frozen` (or UV_FROZEN=1 in the environment) they may re-lock. A `uv tool` command
+    whose verb is unclear but contains `run` counts as `uv tool run`."""
+
+    def runs(pos: int) -> bool:
+        if cmd[pos] == "run":
+            return True
+        if cmd[pos] != "tool" or not (fetch := _uv_tool_fetches(cmd, pos)):
+            return False
+        return fetch[0] == "run" or "run" in cmd[fetch[1] :]
+
+    if not any(runs(pos) for pos in _uv_positions(cmd)):
         return []
     after = cmd[cmd.index("uv") + 1 :]
     found = []
