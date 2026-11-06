@@ -118,7 +118,8 @@ Choke points the CLI V1 track builds on or adds:
 | Local record library writes | one library writer (LIB L1b) | `C:tests/sentry/test_library_writer.py` | LIB rows |
 | Scratch and quotas | the F25 scratch manager | registration sentry | F25 |
 | Publication and delivery | F22 publication descriptor, DELIV transactional sink | delivery tests | F22, CLI delivery |
-| Module size | the size census per repo | `test_module_size.py` | FILE-SIZE |
+| Module size | the size census per repo, one verdict function (`tests/sentry/_layout.py`, vendored engine to CLI) | `test_module_size.py` | LAYOUT |
+| Package layout and import layers | CODEMAP "Where things go" map; `.importlinter` layer contracts (`exhaustive`) per repo | `test_package_fanout.py`, `test_import_layers.py`, CODEMAP path sentry | LAYOUT |
 
 A plan that adds a call site names the choke point it goes through. A plan that adds a new concern
 names its registry and its guard test, or says why none is needed. A review finding that is a class
@@ -135,6 +136,10 @@ has no size sentry yet); engine `storm/detectors.py` 1046, `execution/native/_dr
 985, `storm/eval/corpus.py` 976, `execution/_chunked_fk.py` 970, `execution/native/_determinism_protocol.py`
 928, `quality/synth_report.py` 863. A slice is at most about 800 hand-written lines including tests;
 bigger work is split into stacked parts.
+Placement (LAYOUT): each repo's CODEMAP has a "Where things go" map, every plan that adds a file
+carries a Placement table checked against it, a package holds at most 25 modules (packages over that
+are frozen by a fan-out ratchet and grow only through named sub-packages), and import-linter
+contracts fix the import direction between layers.
 
 **4.3 The owner's review question.** Owner (2026-11-05): every plan, build and gate asks "is this
 doing something that every other class does differently? could it be rolled into a central location
@@ -207,7 +212,7 @@ on origin unless marked local. Detail for each row is in [roadmap/row-detail.md]
 | 4 | ENGINE-PAR: engine parallel tests (pytest-xdist), engine full suite from about 66 minutes to roughly 15 to 20 on the 4-core VMs and the Mac; serial marks only for exclusive resources; same baseline-compare rules | engine | handoff to write | ports P:`feat/parallel-tests` (parked; origin `2804b2af`, local `28507dce`) | CI-E1 |
 | 5 | CI-L1: CLI CI (`ci.yml` installs `uv`, runs pytest; `ci/required-jobs.toml`, `ci/unlaned.toml`, sentry) | CLI | NOT STARTED | CI lanes plan `P:docs/plans/2026-11-05-ci-lanes.md` (#187) | none |
 | 6 | WIN-RUNNER: Windows self-hosted runner on a GCP VM; spend approved by the owner; stopped when idle (`~/bin/vm-reap`) | infra | NOT STARTED; provision when CI-L1 or LIB L1b first needs a Windows lane | LIB plan section 5 OS lanes | none |
-| 7 | FILE-SIZE: file-size ratchet sentry for engine and CLI (new, section 4.2) | engine, CLI | NOT STARTED; plan to write | none | CLI X0a ratchet (MERGED, CLI #81, #82) |
+| 7 | LAYOUT (absorbs FILE-SIZE): CODEMAP "Where things go" map, fan-out ratchet (25 modules per package), import-linter layer contracts, CLI 800-line size census; one census helper vendored from the engine | engine, CLI | plan written, review next (Dennis, then Codex); parts E1 and C1 (maps) can build now | `E:plan/layout` `docs/plans/2026-11-06-layout-map-and-guards.md` | E2: CI-E1, SUB-STOP; E3: CI-E1s (lock); C2: E2, LIB L1b.1; C3: C2 (lock) |
 | 8 | REG-RENUMBER: `E:scripts/dev/registry_renumber.py` renumbers an unmerged slice's registry minor to `main + 1` at merge; `--check` for the merge gate | engine | plan review (Dennis, then Codex; full plan gate) | `feat/reg-renumber-tool` (not built); `p05-reg-renumber-build-handoff.md` | none; first useful after SUB-STOP |
 | 9 | X0a-h engine and CLI parts (E1, E2, C1, C2): vendor `_ratchet.py`, `_approval.py`, `approve_growth.py`, `merge_check.py` byte-identical from the platform | engine, CLI | DEFERRED, off the V1 path (owner, 2026-11-05). Until it returns, the orchestrator flags any ratchet baseline growth by hand at each gate. Re-entry: a hidden exception slips past review, or the platform restarts | plan `P:docs/plans/2026-11-05-x0a-h-ratchet-hardening.md` (#181) | platform H1, H2, H4, H6 (parked) |
 
