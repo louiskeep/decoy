@@ -114,7 +114,7 @@ Choke points the CLI V1 track builds on or adds:
 | Outbound clients | engine connector client limits (X4d, engine #384, #385) | construction sentry | CLI-CLOUD, F02 |
 | Private file writes | engine `_private_file` (X7b, engine #382); CLI `_private_file.py` | write-mode sentries | X7c |
 | CLI source readers | `C:src/decoy/cli/_sources.py` (`read_source`, `iter_source_chunks`) | CLI-DIALECT tests | CLI-DIALECT |
-| CLI target writers and readers | one `C:src/decoy/cli/_targets.py` | format and suffix tests | CLI-FMT A and B |
+| CLI target writers and readers | one `C:src/decoy/cli/io/_targets.py` (new `cli/io/` sub-package, owner 2026-11-06) | format and suffix tests | CLI-FMT A and B |
 | Local record library writes | one library writer (LIB L1b) | `C:tests/sentry/test_library_writer.py` | LIB rows |
 | Scratch and quotas | the F25 scratch manager | registration sentry | F25 |
 | Publication and delivery | F22 publication descriptor, DELIV transactional sink | delivery tests | F22, CLI delivery |
