@@ -24,6 +24,39 @@ research the development loop asks for (`/home/cam/dev-rules/development-loop.md
 - **Releases:** one engine point release per sprint, then a CLI repin. Each sprint ships on its
   own; none blocks another except where "Depends on" says so.
 
+## Building ahead of CLI V1 (parallel track)
+
+V1+ slices are built now, in parallel with CLI V1, through the standard dev loop, under three rules
+so they cause neither V1 delays nor later rework:
+
+1. **Dark.** A slice merges to main only if V1 behavior is unchanged: new capabilities are opt-in
+   (not in default detector sets, starter configs or disguises). Defaults switch on after CLI-REL.
+   Nothing merges during the D-4 launch freeze.
+2. **No collisions with live V1 work.** A slice starts only when no live V1 branch writes its
+   files, and it adds no reason codes until REG-RENUMBER (row 8) merges, because the registry
+   chain is serial until then.
+3. **Short-lived branches.** One branch per slice, rebased on main and merged; never a long-lived
+   V1+ integration branch. V1 rows have priority in the gate queue.
+
+**When each slice can start** (engine branches checked 2026-11-06):
+
+| When | Slices | Why |
+|---|---|---|
+| Now | V1P-2.1 check digits; V1P-2.3 generators | `checksums.py` and `providers_v2/identifiers/` are touched by no live branch; no new reason codes |
+| Now, if no new reason codes | V1P-3.3 card BIN, V1P-3.4 IP prefix | strategy options need route refusals; otherwise after row 8 |
+| After STORM E1 (row 16) and a split of `detection/detectors.py` (1046 lines, over the engine maximum) | V1P-1.1, V1P-2.2, then V1P-3.2 and V1P-3.5 | STORM E1 rewrites `detection/` and `profiling/`; detectors cannot be added to an over-maximum file |
+| After CLI V1 lanes clear | V1P-1.2, V1P-2.4 (census-limited `faker_setup.py`), V1P-4 | `scan.py` lane, SCAN-MULTI S3, F16; CLI-FMT and CONFIG-EXPLICIT; `feat/csv-source-reader` is rewriting the readers |
+
+**Build status and branches.** Each slice has its own plan (in the engine's `docs/plans/`, named
+`2026-11-06-v1plus-<slice>-...`) and a pair of branches: `plan/v1plus-<slice>-<name>` for the plan
+and its review, and `feat/v1plus-<slice>-<name>` for the build, stacked on the plan. The engine
+CHANGELOG entry for each slice says "V1+ track" and links back here.
+
+| Slice | Repo | Plan branch | Build branch | State |
+|---|---|---|---|---|
+| V1P-2.1 check-digit schemes | engine | `plan/v1plus-p2.1-check-digit-schemes` | `feat/v1plus-p2.1-check-digit-schemes` | built, head `3e2c99fe`. Plan review PASS WITH CONCERNS (rev 2); code review PASS WITH CONCERNS (round 2, advisory fixed); T1 gates green. Still to do: Codex gate, T3 full suite on the merge head, merge by the orchestrator |
+| V1P-2.3 national identifier generators | engine | `plan/v1plus-p2.3-national-id-generators` (stacked on V1P-2.1) | not started | plan rev 1, not reviewed; needs the owner decision in its section 9 (new providers appear in the CLI cockpit listing) |
+
 ## Defaults for every slice
 
 These apply unless a slice says otherwise, so the slices below do not repeat them.
@@ -138,11 +171,11 @@ locale-correct names, addresses and phone numbers.
   - Non-goals: detectors and generators (next slices).
   - Reuse check: the existing registry API (`validate`, compute) and its tests.
 - **PLAN**
-  - Established solutions: `python-stdnum` is the reference for formats and algorithms but is
-    LGPL-2.1; implement from the published specifications and use stdnum only as an external
-    test oracle in a dev-only test (licence review decides whether even that is allowed).
-    ISO/IEC 7064 for the mod schemes; government publications for NINO, NHS, SIN, Aadhaar, DNI,
-    codice fiscale and NIR.
+  - Established solutions: `python-stdnum` (LGPL-2.1) is already a core engine dependency and
+    already backs `checksums.py`'s luhn, iban, isbn and ean schemes, so the new schemes use it
+    for validation and, where it has one, its calculator. ISO/IEC 7064 for the mod schemes;
+    government publications for NHS and TFN, whose calculators stdnum lacks. (Updated
+    2026-11-06 after the code survey; see the slice plan.)
   - Choke point: the scheme registry in `checksums.py`; guard test enumerates schemes and checks
     each has test vectors. Mutation: register a scheme with no vectors; guard goes red.
   - Acceptance: published test vectors per scheme, plus property tests (compute then validate
@@ -282,7 +315,6 @@ For each slice:
 
 ## Questions to settle before V1P-1 starts
 
-1. Is python-stdnum allowed as a dev-only test oracle (LGPL-2.1), or do we rely on published
-   vectors only?
+1. Settled 2026-11-06: python-stdnum is already a core engine dependency, so it is used directly.
 2. Which countries first for V1P-2? The list above is a default; customer pull should reorder it.
 3. Does V1P-4 wait for CLI-FMT, or does the engine half ship first so the platform can use it?

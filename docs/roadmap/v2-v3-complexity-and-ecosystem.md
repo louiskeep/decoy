@@ -64,7 +64,7 @@ engine plans, routes or proves.
 | Feature | New packages (licence) | Models | Slices |
 |---|---|---|---|
 | X-01 Avro and ORC | `fastavro` (MIT); ORC is in `pyarrow` already | none | 2 |
-| X-08 International detectors and generators | `phonenumbers` (Apache-2.0); `python-stdnum` is LGPL-2.1, so use it as a format reference and implement the checks in `checksums.py` | none | 4 to 5 |
+| X-08 International detectors and generators | `phonenumbers` (Apache-2.0); `python-stdnum` (LGPL-2.1) is already a core engine dependency and is used directly | none | 4 to 5 |
 | X-09 Secrets detection | none required; rule patterns adapted from detect-secrets (Apache-2.0) and gitleaks (MIT), with attribution | none | 2 |
 | X-10 Meaning-preserving masks | none; CryptoPAn is a published algorithm on our existing crypto primitives | none | 3 to 5 |
 | **Total** | | | **11 to 14** |
@@ -325,7 +325,7 @@ Models, libraries and licences:
 - [Whisper hallucination study coverage](https://www.futuremedicine.com/articles/study-finds-openais-popular-transcription-tool-whisper-hallucinates-text)
 
 Facts from general knowledge, not re-checked in this research pass: the licences of `fastavro`,
-`phonenumbers`, `python-stdnum` (LGPL), `fastexcel`, `openpyxl`, `lxml`, `deltalake`, `pyiceberg`,
+`phonenumbers`, `fastexcel`, `openpyxl`, `lxml`, `deltalake`, `pyiceberg`,
 `sqlglot`, `pydicom`, Tesseract, OpenCV, PyAV, `confluent-kafka` and `pymongo`; that the n2c2 2014
 corpus needs a data use agreement; and the MIDI-B benchmark's hosting on TCIA. Confirm each before
 adoption, as the dependency licence check requires anyway.
