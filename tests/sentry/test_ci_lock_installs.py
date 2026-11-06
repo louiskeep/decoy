@@ -164,6 +164,7 @@ def test_seeded_tool_option_and_index_bypasses_are_found() -> None:
         "uv --quiet pip sync": ("uv --quiet pip sync r.txt", "re-resolves"),
         "uv pip --system sync": ("uv pip --system sync r.txt", "re-resolves"),
         "uv pip -q sync": ("uv pip -q sync r.txt", "re-resolves"),
+        "uv pip --python sync": ("uv pip --python p sync r.txt", "re-resolves"),
         "uv --directory run sync": ("uv --directory run sync --frozen", "re-resolves"),
         "pip global --python": ("pip --python .venv/bin/python install requests", "not an exact"),
         "uv pip --python before install": ("uv pip --python p install requests", "not an exact"),
@@ -223,6 +224,8 @@ def test_clean_commands_that_look_like_package_commands_stay_clean() -> None:
         "tail -f server.log",
         "grep -f patterns.txt data.txt",
         "ls -i",
+        # `sync` is the value of --directory here; only `run` is the subcommand.
+        "uv --directory sync run --frozen true",
     )
     for cmd in clean:
         assert _scan("fresh-install-smoke", LE, cmd) == [], cmd

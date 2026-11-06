@@ -184,6 +184,8 @@ jobs:
         run: |
           set -euo pipefail
           cd smoke_run
+          # The run above left output.csv; validation warns would_overwrite on an existing target.
+          rm -f output.csv
           git init -q
           printf 'schema_version: decoy-ci/v1\npipelines:\n  - {id: smoke, path: pipeline.yaml}\nchecks:\n  validation: {mode: config}\n' > .decoy-ci.yaml
           ../.smoke/bin/decoy ci check .decoy-ci.yaml --format sarif --output decoy.sarif
