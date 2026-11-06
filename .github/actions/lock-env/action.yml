@@ -1,0 +1,25 @@
+# Mirror of decoy-engine .github/actions/lock-env/action.yml (CI-E1). Differences: the CLI always
+# runs scripts/dev/bootstrap.sh (no extras or bootstrap inputs), takes a CPython minor instead of a
+# patch, exports DECOY_PYTHON for bootstrap and later steps, and runs no second key-dependency
+# check because bootstrap owns the one verification pass.
+name: lock-env
+description: Install the dev environment from requirements-dev.lock into a venv outside the workspace and verify it.
+inputs:
+  python:
+    description: CPython minor for the venv. Empty means the lock profile (scripts/dev/lock_version.sh --python-minor).
+    default: ""
+runs:
+  using: composite
+  steps:
+    - uses: ./.github/actions/setup-uv
+    - name: Lock venv outside the workspace
+      shell: bash
+      env:
+        PYTHON: ${{ inputs.python }}
+      run: |
+        [ -z "$PYTHON" ] || echo "DECOY_PYTHON=$PYTHON" >> "$GITHUB_ENV"
+        echo "DECOY_VENV=$RUNNER_TEMP/venv" >> "$GITHUB_ENV"
+        echo "$RUNNER_TEMP/venv/bin" >> "$GITHUB_PATH"
+    - name: Install from requirements-dev.lock
+      shell: bash
+      run: bash scripts/dev/bootstrap.sh
