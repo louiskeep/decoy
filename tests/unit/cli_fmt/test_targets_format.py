@@ -196,6 +196,9 @@ def test_entry_format(entry: dict, expected: tuple) -> None:
         {"path": "o.csv", "format": None},
         {"path": "o.txt", "format": "fixed_width"},
         {"path": "o.txt", "format": "fixed_width", "layout": 5},
+        {"path": "o.txt", "format": "fixed_width", "layout": True},
+        {"path": "o.txt", "format": "fixed_width", "layout": "x"},
+        {"path": "o.txt", "format": "fixed_width", "layout": [1]},
         {"path": "o.txt", "format": "fixed_width", "layout": {}},
     ],
 )

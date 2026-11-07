@@ -4,7 +4,9 @@ Status: record
 
 ## Environment
 
-Base: Part A2 head `16e82b1` on Part A `1586b29`, `origin/main` `05bf840`. GCP VM `cli` slot 6, venv `venv-cli-vmrun`, Python 3.10.22, engine 0.19.0, ruff 0.15.14 (mypy is not installed in that venv; the repo has no mypy gate). No repin.
+Final base: Part A2 head `4153c99` (rebased on Part A `b0b716e`), `origin/main` `05bf840`. The build started on the old A2 head `16e82b1` (Part A `1586b29`). GCP VM `cli` slot 6, venv `venv-cli-vmrun`, Python 3.10.22, engine 0.19.0, ruff 0.15.14 (mypy is not installed in that venv; the repo has no mypy gate). No repin.
+
+Rebase note: B's commits were replayed with `git rebase --onto 4153c99 16e82b1`. The rebase changed only imports, the `qualified_scopes=False` flag on the read sentry's `_owns_csv` call, and the conflict resolutions in `tokenize.py`, `unmask.py` and `CHANGELOG.md` (A's import names and A's changelog bullet kept, B's added). No logic changed. The original mutation run (M1 to M16) was on the pre-rebase code, which was B at `d1c1a08` over the old A2; the post-rebase heads are listed under Gate round 1.
 
 ## Reader table
 
@@ -57,7 +59,25 @@ Finding: the undecodable-CSV case in AT-B12 does not exercise `DecoyError`. With
 
 ## Gates
 
-See the report: `gates.sh --keep-going --baseline` on the final head, VM slot 6.
+`gates.sh --keep-going --baseline` on the rebased head `ffc2e4a`: sentry 529 passed, tests 764 passed (1 skipped), failing ids branch 0 baseline 0. Final head: see Gate round 1.
+
+## Gate round 1 (Dennis GO with LOWs)
+
+Fixes, one commit `fix(CLI-FMT): fail closed on unreadable layouts and wrong-format unmask input` plus the export commit:
+
+1. `cli/io/__init__.py` exports `check_output_path`, `format_for_path`, `input_format`, `write_table` besides the earlier names; `tokenize.py` and `unmask.py` import them from `decoy.cli.io`.
+2. The unreadable refusal prints `target_format_unreadable: ...` in detokenize and unmask. Test: `test_unreadable_declaration_prints_its_code`. Red on the old code (`DID NOT RAISE` / missing code); mutation N2 (print `str(exc)`) turns it red.
+3. `test_every_declared_format_has_a_display_name` asserts `_FORMAT_NAMES` and `_FORMATS` have the same keys; mutation N4 (drop a name) turns it red.
+4. `_unreadable` requires a non-empty `Mapping` layout for fixed width. A manifest `layout: 5` raised `TypeError` out of `compare_data` (red on the old code); now the table degrades to the missing-file note, and `--require-data` exits 1 (cases `layout_not_a_mapping`, `layout_without_columns` in `test_unreadable_entries_are_value_free`, unit cases in `test_entry_format_refuses_what_it_cannot_read`). Mutation N3 turns both red.
+5. Off-target unmask of a fixed-width file copied to another name was read as CSV, gave a one-column frame, and exited 0 with "0 column(s) reversed, 1 untouched" (probe on the VM). `unmask` now exits 1 with `unmask_columns_missing` when the input holds none of the table's configured columns (value-free: no names, no values). Test: `test_unmask_of_a_file_in_the_wrong_format_fails_closed`, red before (exit 0). Mutation N1 (disable the check) turns it red. The existing unmask, vault and tokenize test files stay green. A frame that holds some but not all configured columns is not refused (unchanged; V2-LOG).
+6. This record names the real heads and the mutation head (above).
+7. The read sentry now also watches polars `read_*` and `scan_*`, `pyarrow.dataset.dataset` and `parquet_dataset`, and the whole `pyarrow.parquet` package prefix (`pyarrow.parquet.core.read_table`). Spellings added to `test_walk_sees_each_spelling`; mutations N5a, N5b, N5c each turn their spelling red.
+
+Mutations on the new code ran on head `9b6a407`. Gates on `9b6a407` (VM slot 6, `gates.sh --keep-going --baseline`): ruff pass, sentry 532 passed, tests 772 passed (1 skipped), failing ids branch 0 baseline 0 branch-only 0.
+
+## Gate round 1, Codex
+
+Codex NO-GO on one V1: a fixed-width manifest entry whose `layout` is any truthy non-mapping (`true`, `5`, `"x"`, `[1]`) raised `TypeError` out of `report diff`. Fixed at the source in `_unreadable` (non-empty `Mapping` required). Tests now cover `5`, `true`, `"x"`, `[1]` and `{}` through the soft path and `--require-data` (`test_unreadable_entries_are_value_free`) and `entry_format` (unit). Mutation N3 (`not layout` again) turns both red. Raw exceptions kept in traceback chains in detokenize and unmask (`raise ... from exc`) stay as they were: V2-LOG.
 
 ## Files vs allowed list
 
@@ -99,6 +119,8 @@ Hand-written insertions exceed the plan's 800 line cap (tests, about 710 of them
 
 ## V2-LOG
 
+- Raw exceptions stay in the `__cause__` chain of detokenize and unmask read failures (admin-visible traceback only).
+- `unmask` refuses an input that holds none of the configured columns but still accepts one holding only some of them.
 - `decoy report fidelity` (`report.py` near :1812, :1817) and `decoy report integrity` (near :2082) read CSV only through `read_report_source`.
 - `build_manifest` records target paths as written in the YAML, not resolved against the config folder (`evidence.py` output loop); `report verify` and `report diff` resolve them against the current folder. No test runs from another folder.
 - The read sentry's file and id still say "csv"; H-1 renames them.
