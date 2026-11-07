@@ -253,10 +253,10 @@ and can ship alone; order by customer pull.
 
 | Slice | Option | Method to cite | Depends on |
 |---|---|---|---|
-| V1P-3.1 | Email: keep domain or domain class | Domain list for free mail (public lists); hash or faker on the local part | built, head `e010155a` (main `b5b1ad16` merged in). New strategy `email_mask` (`keep: domain` or `domain_class`); refused without a mask secret. Plan review PASS WITH CONCERNS (rev 2); code review PASS WITH CONCERNS, all findings fixed and re-reviewed. T1 gates all green (sentry 4286, tests 6041), registry consistent, no ratchet growth. Still to do: Codex gate, T3 on the merge head. Not merged (owner instruction 2026-11-07: do not merge) |
+| V1P-3.1 | Email: keep domain or domain class | Domain list for free mail (public lists); hash or faker on the local part | none |
 | V1P-3.2 | Phone: keep country and area code | libphonenumber parsing, FF1 on the subscriber digits | V1P-2.2 |
-| V1P-3.3 | Card: keep BIN or IIN and brand, valid Luhn | ISO/IEC 7812 structure, FF1 on the account digits, Luhn recompute | built, head `60b7d802` (main `b5b1ad16` merged in). `fpe` option `keep_bin: 6 | 8` with `checksum: luhn`. Plan review PASS WITH CONCERNS (rev 2); code review PASS after one remediation round. T1 gates all green (sentry 4261, tests 3597), registry consistent, no ratchet growth. Owner item: option left out of `strategy_catalog()` until a `requires` field exists. Still to do: Codex gate, T3. Not merged (owner instruction 2026-11-07) |
-| V1P-3.4 | IP address: keep subnet prefix | CryptoPAn (Xu et al. 2002; the Crypto-PAn paper), AES-based prefix-preserving mapping | built, head `ee6a4a5d` (main `b5b1ad16` merged in). New strategy `ip_prefix` (verbatim prefix + Crypto-PAn, reference vectors pass). Plan review PASS WITH CONCERNS (rev 2); code review FAIL then PASS after three remediation rounds. T1: all steps green except the sentry ratchet, which flags 3 `gcs-call-kwargs` rows (`OpaqueBox.open` calls, same as FPE's) needing an owner exception; tests 6934 passed; registry consistent. Owner items: the 3 rows; Crypto-PAn self-map rate (about 1 in 15 hosts unchanged at /24, documented) vs a non-reference variant. Merge held until after CLI-REL (published capability listing). Not merged (owner instruction 2026-11-07) |
+| V1P-3.3 | Card: keep BIN or IIN and brand, valid Luhn | ISO/IEC 7812 structure, FF1 on the account digits, Luhn recompute | none |
+| V1P-3.4 | IP address: keep subnet prefix | CryptoPAn (Xu et al. 2002; the Crypto-PAn paper), AES-based prefix-preserving mapping | none |
 | V1P-3.5 | Names: keep likely gender and culture | Attribute-tagged name pools from public name data (US SSA, ONS) | V1P-2.4 |
 
 For each slice:
