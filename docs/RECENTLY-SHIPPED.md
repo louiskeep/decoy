@@ -22,6 +22,31 @@ git logs).
 
 ## 2026-11-07
 
+- **Engine** (`b5b1ad16`, #402): ENGINE-PAR P2. The gate's test step runs under pytest-xdist
+  (`GATES_WORKERS`, default auto) with tests marked `serial` in a second plain pass; stored-baseline
+  writes and compares stay serial. A collection guard refuses test ids that carry a memory address,
+  which made every worker collect different ids (one test on main fixed). Mac full suite went from
+  24 to about 13 minutes. Dennis GO, Codex GO; the id guard closed at the 3-round cap by owner call.
+- **CLI** (`586eb18`, #99): CLI-DIALECT Part C. Every CSV read (run plain and chunked, tokenize,
+  demo, init, the `data=` override, both report verbs) goes through the engine 0.19.0 reader with
+  the source's declared `has_header`, `column_names` and `delimiter`; before this `decoy run`
+  ignored them. Repins `decoy-engine==0.19.0`. Sentry G-ONE-CSV-READ keeps reads on one reader. A
+  chunked run failing after chunk one can still leave a partial target (strict xfail, row 61a).
+- **Engine** (`4a0d5b1f`, #399): R-c, engine `v0.19.0` release prep and tag.
+- **Engine** (`2335fcce`, #400): init-wizard slice E0. `decoy_engine.strategy_catalog()` returns one
+  `StrategyInfo` row per scalar strategy with its options, for the CLI wizard.
+- **Engine** (`d46dbc85`, #398): REG-RENUMBER. `scripts/dev/registry_renumber.py` moves a branch's
+  reason-registry version to the next free number after a merge race; `--check` for the merge gate.
+  Version policy lives in one module, with a sentry against copies.
+- **Engine** (`4c6ca215`, #397): RESULT E1. The frozen `decoy-run-result/v1` document, one record per
+  `decoy run`; `derive_outcome` is the one place that maps failure category, delivery state and
+  blocking check to run status and exit code.
+- **Engine** (`ab7a36fc`, #396): SCAN-ML M0. The `ner` extra declares click (spaCy needs it), the
+  model wheel is pinned by version and sha256 (`NER_MODEL_WHEELS`), and a `ner-gate` CI job runs the
+  NER tests with the extra installed.
+- **Engine** (`dd31ea91`, #401): a flaky secret-provider test checks the refused mode only in the
+  error text.
+- **CLI** (#95 to #98): ledger re-point at engine main, and roadmap text (SCAN-ML-MD, REL-IMAGE).
 - **Engine** (`79f229d0`, #393): ENGINE-PAR P1. `scripts/dev/gates.sh` can store main's failing test
   ids once (`--write-baseline`) and compare each candidate against that file (`--baseline-file`), so
   a full merge test is one suite run instead of two. One strict reader (`load_baseline`) refuses a
