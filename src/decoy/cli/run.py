@@ -574,7 +574,7 @@ def run(
             if config_read_error is not None:
                 raise config_read_error
             if saved_findings:
-                raise PreRunCheckError.from_findings(saved_findings, config_str)
+                raise PreRunCheckError.from_findings(saved_findings)
 
             # DE-02 secret-disclosure ROOT guard: validate the RAW YAML
             # `mask_secret_ref` BEFORE PipelineConfig.model_validate(raw). A

@@ -468,7 +468,7 @@ def test_pre_run_check_error_has_no_cause_or_context(tmp_path: Path) -> None:
     assert caught.value.__cause__ is None and caught.value.__context__ is None
     assert caught.value.exit_code == EXIT_USAGE
     result = run_gate(path)
-    refusal = PreRunCheckError.from_findings(result.findings, str(path))
+    refusal = PreRunCheckError.from_findings(result.findings)
     assert refusal.__cause__ is None and refusal.__context__ is None
 
 

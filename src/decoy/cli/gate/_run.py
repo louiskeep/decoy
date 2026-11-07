@@ -61,12 +61,12 @@ class PreRunCheckError(Exception):
         self.messages = messages
 
     @classmethod
-    def from_findings(cls, findings: list[GateFinding], config_str: str) -> PreRunCheckError:
+    def from_findings(cls, findings: list[GateFinding]) -> PreRunCheckError:
         """A refusal from config-layer findings alone (a YAML syntax error saved at parse)."""
-        return cls.from_result(GateResult(findings, frozenset({"config"}), False), config_str)
+        return cls.from_result(GateResult(findings, frozenset({"config"}), False))
 
     @classmethod
-    def from_result(cls, result: GateResult, config_str: str) -> PreRunCheckError:
+    def from_result(cls, result: GateResult) -> PreRunCheckError:
         """The one run-envelope error builder for a refused `GateResult`."""
         errors = [f for f in result.findings if f.severity == "error"]
         exit_code = gate_exit_code(result, fail_on_warning=False)
@@ -87,7 +87,7 @@ class PreRunCheckError(Exception):
         summary = (
             f"{len(errors)} error(s) found before the run; first: "
             f"{cap_error_text(first.message)}{where}. "
-            f"Run `decoy validate {config_str}` for the full report."
+            "Run `decoy validate CONFIG` for the full report."
         )
         return cls(
             summary,
@@ -128,14 +128,14 @@ def check_before_run(raw: Any, config_path: Path, route: GateRoute, state: Any) 
     """
     result = run_gate_on_config(raw, config_path, route)
     if gate_exit_code(result, fail_on_warning=False) != 0:
-        raise PreRunCheckError.from_result(result, str(config_path))
+        raise PreRunCheckError.from_result(result)
     warnings = sum(1 for f in result.findings if f.severity == "warning")
     if warnings and _is_human(state):
         from decoy.ui.theme import warn
 
         state.err_console.print(
             warn("warning:"),
-            f"{warnings} pre-run warning(s); run `decoy validate {config_path}` to list them.",
+            f"{warnings} pre-run warning(s); run `decoy validate CONFIG` to list them.",
             markup=False,
         )
     assert result.config is not None  # a passing gate always carries its config
