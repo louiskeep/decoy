@@ -112,7 +112,7 @@ def _run_config_base(
 ) -> tuple[dict[str, Any] | None, tuple[str, ...], list[GateFinding]]:
     """The config layer: the empty and non-mapping refusals, schema validation, the
     profile-free plan-compile checks, the target-overwrite advisory and the target format
-    contradictions (`_targets.target_format_issues`, the same rule `decoy run` refuses on).
+    contradictions (`target_format_issues`, the same rule `decoy run` refuses on).
 
     `run_config_only_checks` is called here EXACTLY ONCE for the whole gate (F5 dedup).
     Returns `(config, checks_run, findings)`; `config` is None when the layer failed, so the
@@ -183,7 +183,7 @@ def _run_config_base(
         )
         return None, (), [finding]
 
-    from decoy.cli.io import _targets
+    from decoy.cli.io import target_format_issues
     from decoy.cli.preflight import _check_target_overwrite, _PreflightAccumulator
 
     advisory = _PreflightAccumulator()
@@ -192,7 +192,7 @@ def _run_config_base(
     # The route is unknown here, so only the route-free contradictions (chunked=False).
     findings.extend(
         GateFinding("config", "error", i.code, i.message, location=f"targets.{i.table}.format")
-        for i in _targets.target_format_issues(raw, chunked=False)
+        for i in target_format_issues(raw, chunked=False)
     )
     return validated, tuple(checks_run), findings
 

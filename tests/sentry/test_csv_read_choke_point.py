@@ -102,7 +102,8 @@ def _owns(package: str, name: str) -> bool:
 
 def read_sites(source: str) -> list[tuple[int, str]]:
     """Return (line, enclosing function or '<module>') for each watched call."""
-    return call_sites(source, qualified_match=_owns)
+    # Leaf scope names: the baseline keys (`cli/report.py::_load`) are recorded that way.
+    return call_sites(source, qualified_match=_owns, qualified_scopes=False)
 
 
 def _tally(root: Path) -> dict[tuple[str, str], int]:

@@ -45,6 +45,19 @@ Read sentry: real-tree tally is identical before and after the refactor (7 keys,
 
 Scanner limits (runtime-bound names, assignment aliases, star imports); unwatched writers (polars, feather, other pandas writers); chunked-only refusals stay run-time until `decoy run` adopts the gate (`_layers.py` `GateRoute.CHUNKED` branch); `csv.writer` and `write_text` unwatched.
 
+## Gate round 1
+
+Rebased onto Part A `b0b716e` (CHANGELOG conflict kept both sentences). Sentry and WRITERS hold on A's new code (`check_output_path`, compression backstop add no write site outside `write_table`, `write_chunked_output`, `_write_fixed_width`).
+
+- Codex DESIGN: the gate imports `target_format_issues` from `decoy.cli.io` (`__all__` holds only that name), not the private module.
+- Dennis MEDIUM: a watched member is reported wherever it is named, so `pool.submit(pq.write_table, ...)` and `functools.partial(pq.write_table, ...)` are seen.
+- Dennis LOW: `pyarrow.dataset.write_dataset` is watched; `pyarrow.parquet`, `pyarrow.csv`, `pyarrow.dataset` and `decoy_engine` match as module prefixes (`pyarrow.parquet.core.write_table`).
+- Dennis LOW: scopes are qualified names (`Class.method`, `outer.inner`); a nested `def write_table` is not the writer.
+- Codex V2-LOG: bindings are per scope now (an import binds in its own module, function or class and what it contains). A parameter or local that shadows an import is still a named limit.
+- Deviation: the read sentry passes `qualified_scopes=False`, because its frozen baseline key `cli/report.py::_load` is a nested function (`compare_data._load` when qualified). Part B can re-key it. Read tally still 7 keys, 13 sites.
+
+Red first: 9 new cases failed on the old scanner (value references, `pyarrow.parquet.core`, `write_dataset`, scope names, nested writer, scoped imports). Mutations, each red then reverted: value references ignored (spelling cases), exact module match (`core` case), drop `write_dataset`, leaf scope names (`test_scopes_are_qualified_names`, nested-writer case), global bindings (`test_imports_are_scoped_to_where_they_are_made`); the earlier eleven mutations re-run, all red.
+
 ## Not verified
 
 macOS arm64 run (not done). mypy (not installed in the VM venv; ruff check and format clean).

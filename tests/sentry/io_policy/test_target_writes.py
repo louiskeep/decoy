@@ -8,11 +8,12 @@ scripts/dev/ratchet_check.py). The scanner is shared with G-ONE-CSV-READ (`_call
 
 Watched:
 - any receiver: `.to_csv(`, `.to_parquet(`
-- `pyarrow.parquet`: `write_table`, `ParquetWriter`, `write_to_dataset`
+- `pyarrow.parquet` (and submodules): `write_table`, `ParquetWriter`, `write_to_dataset`
+- `pyarrow.dataset`: `write_dataset`
 - `pyarrow.csv`: `write_csv`, `CSVWriter`
 - `decoy_engine` (any submodule): `write_fixed_width`
 
-Named limits of a syntax walk: a call through a runtime-bound name (`getattr(pd, "to_csv")`),
+Named limits of a syntax walk: a reference through a runtime-bound name (`getattr(pd, "to_csv")`),
 an alias by assignment (`w = pq.write_table; w(t, p)`), `from x import *`, and `exec`. Writer
 families not watched (the CLI uses none today): polars `.write_csv` and `.write_parquet`,
 `pyarrow.feather`, pandas `to_feather`, `to_excel` and `to_json`. A slice that adds one also
@@ -37,6 +38,7 @@ BASELINE = ROOT / "tests" / "sentry" / "baselines" / "target-writes-allow.json"
 _METHODS = frozenset({"to_csv", "to_parquet"})
 _PARQUET = {"write_table", "ParquetWriter", "write_to_dataset"}
 _ARROW_CSV = {"write_csv", "CSVWriter"}
+_ARROW_DATASET = {"write_dataset"}
 
 
 @dataclass(frozen=True)
@@ -58,12 +60,18 @@ ALLOWLIST: tuple[AllowedWrite, ...] = (
 )
 
 
+def _under(module: str, package: str) -> bool:
+    return module == package or module.startswith(package + ".")
+
+
 def _owns(module: str, name: str) -> bool:
-    if module == "pyarrow.parquet":
+    if _under(module, "pyarrow.parquet"):
         return name in _PARQUET
-    if module == "pyarrow.csv":
+    if _under(module, "pyarrow.csv"):
         return name in _ARROW_CSV
-    return module.split(".")[0] == "decoy_engine" and name == "write_fixed_width"
+    if _under(module, "pyarrow.dataset"):
+        return name in _ARROW_DATASET
+    return _under(module, "decoy_engine") and name == "write_fixed_width"
 
 
 def write_sites(source: str) -> list[tuple[int, str]]:
@@ -126,6 +134,13 @@ def test_writer_module_writes_only_in_its_writers() -> None:
         "import pyarrow.parquet as pq\ndef f(t, p):\n    pq.write_to_dataset(t, p)\n",
         "import pyarrow.csv\ndef f(t, p):\n    pyarrow.csv.write_csv(t, p)\n",
         "import pyarrow.csv as pc\ndef f(p, s):\n    pc.CSVWriter(p, s)\n",
+        "import pyarrow.parquet.core\ndef f(t, p):\n    pyarrow.parquet.core.write_table(t, p)\n",
+        "import pyarrow.dataset as ds\ndef f(t, p):\n    ds.write_dataset(t, p)\n",
+        "import pyarrow as pa\ndef f(t, p):\n    pa.parquet.write_table(t, p)\n",
+        "import pyarrow.parquet as pq\ndef f(pool, t, p):\n    pool.submit(pq.write_table, t, p)\n",
+        "import functools\nimport pyarrow.parquet as pq\ndef f(t, p):\n    return functools.partial(pq.write_table, t, p)\n",
+        "from pyarrow.parquet import write_table\ndef f(pool, t, p):\n    pool.submit(write_table, t, p)\n",
+        "def f(pool, frame, p):\n    pool.submit(frame.to_csv, p)\n",
         "def f(frame, p):\n    frame.to_parquet(p)\n",
         "def f(frame, p):\n    frame.to_csv(p)\n",
         "def f(t, p):\n    t.to_pandas().to_csv(p)\n",
@@ -150,6 +165,32 @@ def test_walk_sees_each_spelling(source: str) -> None:
 )
 def test_walk_ignores_lookalikes(source: str) -> None:
     assert write_sites(source) == []
+
+
+def test_scopes_are_qualified_names() -> None:
+    src = (
+        "class C:\n    def m(self, df, p):\n        df.to_csv(p)\n"
+        "def outer(df, p):\n    def inner():\n        df.to_csv(p)\n    inner()\n"
+    )
+    assert [scope for _l, scope in write_sites(src)] == ["C.m", "outer.inner"]
+
+
+def test_nested_function_named_like_a_writer_does_not_count_as_the_writer() -> None:
+    source = (SRC / CHOKE_POINT).read_text(encoding="utf-8")
+    seeded = source + "\n\ndef other(df, p):\n    def write_table():\n        df.to_csv(p)\n"
+    assert _outside_writers(seeded) == ["other.write_table"]
+
+
+def test_imports_are_scoped_to_where_they_are_made() -> None:
+    inner_only = (
+        "def g():\n    import pyarrow.parquet as pq\n    return pq\n"
+        "def f(t, p):\n    pq.write_table(t, p)\n"
+    )
+    assert write_sites(inner_only) == []
+    visible = "import pyarrow.parquet as pq\ndef f(t, p):\n    pq.write_table(t, p)\n"
+    assert [scope for _l, scope in write_sites(visible)] == ["f"]
+    own = "def f(t, p):\n    import pyarrow.parquet as pq\n    pq.write_table(t, p)\n"
+    assert [scope for _l, scope in write_sites(own)] == ["f"]
 
 
 def test_seeded_bypass_is_red(tmp_path: Path) -> None:
