@@ -389,3 +389,35 @@ def test_write_local_target_failure_is_a_value_free_atomic_error(
     assert caught.value.__cause__ is None and caught.value.__context__ is None
     monkeypatch.undo()
     assert target.read_bytes() == b"old" and _names(tmp_path) == ["out.json"]
+
+
+@pytest.mark.skipif(not Path("/dev/shm").is_dir(), reason="needs /dev/shm")
+@pytest.mark.parametrize("private", [True, False])
+def test_a_regular_file_under_dev_shm_is_staged(private: bool) -> None:
+    import tempfile
+
+    with tempfile.TemporaryDirectory(dir="/dev/shm") as shm:
+        target = Path(shm) / "out.csv"
+        target.write_bytes(b"old")
+        with staged_local_target(target, private=private) as tmp:
+            assert tmp != target and tmp.name.startswith(".out.csv.decoy-")
+            tmp.write_bytes(b"new")
+        assert target.read_bytes() == b"new"
+        if private:
+            assert _mode(target) == 0o600
+        assert _names(Path(shm)) == ["out.csv"]
+
+
+@pytest.mark.skipif(not Path("/dev").is_dir(), reason="needs /dev")
+@pytest.mark.parametrize("name", ["/dev/stdoutx", "/dev/fd/1x", "/dev/fd/", "/dev/xstdout"])
+def test_near_misses_of_the_fd_aliases_are_not_aliases(name: str) -> None:
+    from decoy._atomic import _FD_ALIAS
+
+    assert _FD_ALIAS.fullmatch(name) is None
+
+
+@pytest.mark.parametrize("name", ["/dev/stdout", "/dev/stderr", "/dev/fd/7", "/proc/self/fd/1"])
+def test_fd_aliases_match(name: str) -> None:
+    from decoy._atomic import _FD_ALIAS
+
+    assert _FD_ALIAS.fullmatch(name) is not None

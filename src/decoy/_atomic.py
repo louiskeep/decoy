@@ -171,7 +171,9 @@ def describe(exc: AtomicWriteError) -> str:
 
 _SPECIAL_KINDS = (stat.S_ISFIFO, stat.S_ISCHR, stat.S_ISBLK, stat.S_ISSOCK)
 _OWNER_RW = 0o600
-_STREAM_DIRS = ("/dev/", "/proc/")  # the user-given path, before any symlink is resolved
+# The fd aliases, matched on the user-given path before any symlink is resolved. Not all of
+# /dev or /proc: /dev/shm is a real tmpfs and must be staged.
+_FD_ALIAS = re.compile(r"/dev/(?:stdin|stdout|stderr|fd/[0-9]+)|/proc/self/fd/[0-9]+")
 _FALLBACK_NAME_MAX = 255
 
 
@@ -242,12 +244,12 @@ def staged_local_target(path: Path, *, private: bool) -> Iterator[Path]:
 
     The shape of `atomicwrites.atomic_write`. An exception from the block removes the temp
     and propagates unchanged, so `path` keeps its old bytes or stays missing. A symlink is
-    followed and its destination replaced. A FIFO, device or socket, and any path under /dev/
-    or /proc/, is yielded as is, with no staging. Setup and commit failures raise `AtomicWriteError` with no
+    followed and its destination replaced. A FIFO, device or socket, and an fd alias (/dev/stdout,
+    /dev/fd/N, /proc/self/fd/N), is yielded as is, with no staging. Setup and commit failures raise `AtomicWriteError` with no
     exception context.
     """
     _require_component(path.name)
-    if not _WINDOWS and os.path.abspath(path).startswith(_STREAM_DIRS):
+    if not _WINDOWS and _FD_ALIAS.fullmatch(os.path.abspath(path)):
         yield path  # /dev/stdout, /dev/fd/N, /proc/self/fd/N: a redirect is written through
         return
     existing: os.stat_result | None = None
