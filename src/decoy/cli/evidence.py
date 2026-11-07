@@ -49,6 +49,16 @@ Interop note: the producer/schema markers make this manifest routable by a
 future platform importer; no import adapter exists today (that is R4+ work).
 
 Evidence manifest schema version: "cli-local-1"
+
+Output entry format keys (additive to cli-local-1)
+--------------------------------------------------
+An `output_fingerprints` entry for a file target also records `format` (`csv`, `parquet` or
+`fixed_width`, the format the file was written in) and, for fixed width only, `layout` (the
+target's validated layout: column names and positions, no data). The version string does not
+change. A reader treats an entry without `format` as written by an older CLI and applies the
+legacy rule: `.parquet` is Parquet, everything else CSV. It must not use the suffix rule of
+`format_for_path` for those entries, because the old writer put CSV bytes into a `.pq` path.
+`manifest_hash` covers the new keys on new manifests; old manifests verify unchanged.
 """
 
 from __future__ import annotations
@@ -61,6 +71,7 @@ from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
+from decoy.cli.io._targets import TargetFormatError, resolve_target_format
 from decoy.ui.theme import warn
 
 _SCHEMA_VERSION = "cli-local-1"
@@ -124,6 +135,25 @@ def compute_manifest_hash(manifest: dict[str, Any]) -> str:
         ensure_ascii=False,
     )
     return f"sha256:{hashlib.sha256(canonical.encode('utf-8')).hexdigest()}"
+
+
+def _format_keys(table: str, tgt: dict[str, Any]) -> dict[str, Any]:
+    """The `format` (and fixed-width `layout`) keys of a file target; none for any other target.
+
+    A target the writer would have refused (suffix contradiction) cannot reach here after a
+    successful run; if one does, the entry stays in the legacy shape rather than failing a
+    finished run.
+    """
+    if tgt.get("type", "file") != "file":
+        return {}
+    try:
+        fmt = resolve_target_format(table, tgt)
+    except TargetFormatError:
+        return {}
+    keys: dict[str, Any] = {"format": fmt}
+    if fmt == "fixed_width" and tgt.get("layout") is not None:
+        keys["layout"] = tgt["layout"]
+    return keys
 
 
 def build_manifest(
@@ -199,20 +229,17 @@ def build_manifest(
         if not tgt_path_str:
             continue
         tgt_path = Path(tgt_path_str)
+        entry: dict[str, Any] = {"path": str(tgt_path)}
+        entry.update(_format_keys(table_name, tgt))
         if tgt_path.exists():
-            output_fingerprints[table_name] = {
-                "path": str(tgt_path),
-                "fingerprint": hash_file(tgt_path),
-                "fingerprint_method": "full",
-                "size_bytes": tgt_path.stat().st_size,
-            }
+            entry.update(
+                fingerprint=hash_file(tgt_path),
+                fingerprint_method="full",
+                size_bytes=tgt_path.stat().st_size,
+            )
         else:
-            output_fingerprints[table_name] = {
-                "path": str(tgt_path),
-                "fingerprint": None,
-                "fingerprint_method": None,
-                "size_bytes": None,
-            }
+            entry.update(fingerprint=None, fingerprint_method=None, size_bytes=None)
+        output_fingerprints[table_name] = entry
 
     # --- Row counts ---
     row_counts = (run_result or {}).get("row_counts") or {}

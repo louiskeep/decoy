@@ -151,9 +151,9 @@ def _load_dataframe(input_file: Path):
         from decoy.cli._sources import read_csv_frame
 
         return read_csv_frame(_TABLE_NAME, descriptor, Path.cwd(), dtype=None, nrows=10_000)
-    import pandas as pd
+    from decoy.cli._sources import read_file
 
-    return pd.read_parquet(input_file)
+    return read_file(input_file, "parquet", None, table=_TABLE_NAME)
 
 
 def _yaml_quote(value: str) -> str:

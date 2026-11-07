@@ -11,10 +11,13 @@ from decoy.cli.io._targets import (
     FORMAT_UNKNOWN,
     STREAMING_UNSUPPORTED,
     SUFFIX_MISMATCH,
+    UNREADABLE,
     TargetFormatError,
     check_target_formats,
     claimed_format,
+    entry_format,
     format_for_path,
+    input_format,
     target_format_issues,
 )
 
@@ -120,3 +123,82 @@ def test_canonical_int_strings(value: str, canonical: bool) -> None:
 
     got = _targets._coerce_canonical_int_strings(pd.Series([value], dtype=object))
     assert (got is not None) == canonical
+
+
+# ---------------------------------------------------------------------------
+# CLI-FMT Part B: the read-side rule
+# ---------------------------------------------------------------------------
+
+_LAYOUT = {"columns": [{"name": "a", "start": 0, "width": 3}]}
+
+
+def _targets_config(fmt: object, path: str, **extra: object) -> dict:
+    return {"targets": {"t": {"type": "file", "format": fmt, "path": path, **extra}}}
+
+
+def test_input_format_uses_the_declaration_for_the_target_file(tmp_path: Path) -> None:
+    target = tmp_path / "out.dat"
+    config = _targets_config("parquet", "out.dat")
+    assert input_format(config, "t", target, tmp_path) == ("parquet", None)
+    config = _targets_config("fixed_width", "out.dat", layout=_LAYOUT)
+    assert input_format(config, "t", target, tmp_path) == ("fixed_width", _LAYOUT)
+    # Any other file, or another table's name, has no declaration: the suffix rule.
+    other = tmp_path / "copy.pq"
+    assert input_format(config, "t", other, tmp_path) == ("parquet", None)
+    assert input_format(config, "u", target, tmp_path) == ("csv", None)
+
+
+@pytest.mark.parametrize(
+    "target",
+    [
+        _targets_config("xml", "out.dat"),
+        _targets_config("fixed_width", "out.dat"),
+        _targets_config(None, "out.dat"),
+    ],
+)
+def test_input_format_refuses_an_unreadable_declaration_before_any_open(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, target: dict
+) -> None:
+    import builtins
+
+    def boom(*_a: object, **_k: object) -> None:
+        raise AssertionError("opened a file before the refusal")
+
+    monkeypatch.setattr(builtins, "open", boom)
+    monkeypatch.setattr("decoy.cli._sources.read_csv_frame", boom)
+    with pytest.raises(TargetFormatError) as err:
+        input_format(target, "t", tmp_path / "out.dat", tmp_path)
+    assert err.value.code == UNREADABLE
+    assert err.value.__cause__ is None and err.value.__context__ is None
+    assert "xml" not in str(err.value) and "out.dat" not in str(err.value)
+
+
+@pytest.mark.parametrize(
+    ("entry", "expected"),
+    [
+        ({"path": "o.parquet"}, ("parquet", None)),
+        ({"path": "o.PARQUET"}, ("parquet", None)),
+        ({"path": "o.pq"}, ("csv", None)),
+        ({"path": "o.dat"}, ("csv", None)),
+        ({"path": "o.pq", "format": "parquet"}, ("parquet", None)),
+        ({"path": "o.parquet", "format": "csv"}, ("csv", None)),
+        ({"path": "o", "format": "fixed_width", "layout": _LAYOUT}, ("fixed_width", _LAYOUT)),
+    ],
+)
+def test_entry_format(entry: dict, expected: tuple) -> None:
+    assert entry_format(entry) == expected
+
+
+@pytest.mark.parametrize(
+    "entry",
+    [
+        {"path": "o.csv", "format": "xml"},
+        {"path": "o.csv", "format": None},
+        {"path": "o.txt", "format": "fixed_width"},
+    ],
+)
+def test_entry_format_refuses_what_it_cannot_read(entry: dict) -> None:
+    with pytest.raises(TargetFormatError) as err:
+        entry_format(entry)
+    assert err.value.code == UNREADABLE
+    assert "xml" not in str(err.value) and "o.csv" not in str(err.value)

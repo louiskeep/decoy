@@ -1,4 +1,4 @@
-"""Read a declared `sources:` entry into Arrow, dispatching on its `format`.
+"""Read every data file the CLI reads, dispatching on a declared `format`.
 
 `FileSource.format` is required by the engine's config schema and every
 entry point (run, demo, the `mask()` API) validates before reading, so the
@@ -8,13 +8,16 @@ named `.dat` both read correctly.
 
 The engine owns the CSV dialect (`has_header`, `column_names`, `delimiter`) and
 the headerless width scan. This module owns path resolution and the format
-dispatch. It is the one place the CLI reads a data file, and `read_csv_frame` is
-the one place a declared CSV source is read.
+dispatch. It is the one place the CLI reads a data file (the sentry in
+tests/sentry/test_csv_read_choke_point.py keeps it that way), and `read_csv_frame` is the one
+place a CSV is read. `read_file` reads a file whose format is already decided: a CLI-written
+target read back, or the Parquet input of `decoy init` and `decoy scan`. The format decision
+for CLI-written files lives with their writer, in `cli/io/_targets.py`.
 """
 
 from __future__ import annotations
 
-from collections.abc import Iterator
+from collections.abc import Iterator, Mapping
 from pathlib import Path
 from typing import Any
 
@@ -30,9 +33,9 @@ def resolve_path(raw_path: str, base_dir: Path) -> Path:
     return p if p.is_absolute() else (base_dir / p).resolve()
 
 
-def _unknown_format(table_name: str, fmt: object) -> ValueError:
+def _unknown_format(table_name: str, fmt: object, kind: str = "source") -> ValueError:
     return ValueError(
-        f"source {table_name!r}: unsupported format {fmt!r} "
+        f"{kind} {table_name!r}: unsupported format {fmt!r} "
         "(expected one of csv, parquet, fixed_width)"
     )
 
@@ -85,6 +88,27 @@ def read_report_source(path: Path, config_dict: dict[str, Any], config_dir: Path
             return read_csv_frame(name, src, config_dir, dtype=None)
     # The user's own path is relative to the current folder, never to the config directory.
     return read_csv_frame(path.stem, {"path": str(target)}, config_dir, dtype=None)
+
+
+def read_file(path: Path, fmt: str, layout: Mapping[str, Any] | None, *, table: str) -> Any:
+    """Read one whole file whose format is already decided; returns a `pandas.DataFrame`.
+
+    csv is read all-text through `read_csv_frame` (tokens and masked values match byte for
+    byte), parquet keeps its native types, fixed_width is typed per `layout`. Any other
+    format raises before the file is opened.
+    """
+    if fmt == "csv":
+        # Absolute, so `resolve_path` does not join a relative path onto its own folder.
+        return read_csv_frame(table, {"path": str(path.resolve())}, path.parent, dtype=str)
+    if fmt == "parquet":
+        import pandas as pd
+
+        return pd.read_parquet(path)
+    if fmt == "fixed_width" and layout is not None:
+        from decoy_engine import read_fixed_width
+
+        return read_fixed_width(path, dict(layout))
+    raise _unknown_format(table, fmt, kind="file")
 
 
 def read_source(table_name: str, src: dict[str, Any], base_dir: Path) -> pa.Table:

@@ -1,12 +1,20 @@
-"""G-ONE-CSV-READ: a declared CSV source is read through `_sources.read_csv_frame` only.
+"""G-ONE-CSV-READ: every data-file read goes through `cli/_sources.py`.
 
-Walks the syntax tree of every module under `src/decoy/` for calls to `read_csv`, `read_table`
-and `read_fwf` (pandas delimited and fixed-width text readers, in any spelling: `pd.read_csv`,
-`from pandas import read_csv`, an `import ... as` alias) and `read_csv_source` (the engine reader). A call outside `cli/_sources.py` fails unless its
-(file, enclosing function) is in ALLOWLIST with the exact recorded site count. The allowlisted
-readers read files the CLI wrote itself or that a caller named with their own flags, not a
-declared source. The baseline may shrink and never grow
-(tests/sentry/baselines/csv-read-allow.json, checked by scripts/dev/ratchet_check.py).
+Walks the syntax tree of every module under `src/decoy/` for calls to a watched reader, in any
+spelling (`pd.read_csv`, `from pandas import read_csv`, an `import ... as` alias,
+`from pyarrow import parquet`). The watch table:
+
+- any module: `read_csv`, `read_parquet`;
+- pandas: every `read_*` (`read_table`, `read_fwf`, `read_json`, `read_excel`, ...);
+- `pyarrow.parquet`: `read_table`, `read_pandas`, `ParquetFile`, `ParquetDataset`,
+  `read_schema`, `read_metadata`;
+- `decoy_engine`: `read_csv_source` and `read_fixed_width`.
+
+A call outside `cli/_sources.py` fails unless its (file, enclosing function) is in ALLOWLIST with
+the exact recorded site count. The allowlisted readers read files a caller named with their own
+flags, or the bundled demo sample, not a declared source or a CLI-written target. The baseline
+may shrink and never grow (tests/sentry/baselines/csv-read-allow.json, checked by
+scripts/dev/ratchet_check.py). The sentry keeps its CSV-era name and id; H-1 renames it.
 
 Named limits of a syntax walk: a call through a runtime-bound name (`getattr(pd, "read_csv")`),
 an alias by assignment (`rc = pd.read_csv; rc(p)`), and `from pandas import *`.
@@ -51,12 +59,6 @@ ALLOWLIST: tuple[AllowedRead, ...] = (
         "A caller-named file with its own parse flags; not a declared source.",
     ),
     AllowedRead(
-        "cli/report.py",
-        "_load",
-        1,
-        "Reads CLI-written masked files; CLI-FMT Part B moves it to the format dispatch.",
-    ),
-    AllowedRead(
         "cli/scan.py",
         "_load_csv_with_sampling",
         4,
@@ -68,34 +70,39 @@ ALLOWLIST: tuple[AllowedRead, ...] = (
         3,
         "A caller-named fixed-width file with its own layout flags; not a declared source.",
     ),
-    AllowedRead(
-        "cli/tokenize.py",
-        "detokenize",
-        1,
-        "Reads the CLI-written tokenized file; CLI-FMT Part B owns its format.",
-    ),
-    AllowedRead(
-        "cli/unmask.py",
-        "unmask",
-        1,
-        "Reads the CLI-written masked file; CLI-FMT Part B owns its format.",
-    ),
 )
 
 
-_PANDAS_ONLY = {"read_table", "read_fwf"}
+_ANY_MODULE = {"read_csv", "read_parquet"}
+_PYARROW_PARQUET = {
+    "read_table",
+    "read_pandas",
+    "ParquetFile",
+    "ParquetDataset",
+    "read_schema",
+    "read_metadata",
+}
+_ENGINE = {"read_csv_source", "read_fixed_width"}
 
 
 def _owns(package: str, name: str) -> bool:
-    """Whether `name` from `package` is a watched reader.
+    """Whether `name` from `package` is a watched reader (see the module docstring)."""
+    if name in _ANY_MODULE:
+        return True
+    top = package.split(".")[0]
+    if top == "pandas":
+        return name.startswith("read_")
+    if package == "pyarrow.parquet":
+        return name in _PYARROW_PARQUET
+    return top == "decoy_engine" and name in _ENGINE
 
-    `read_csv` is watched on any module (pandas, pyarrow.csv, polars, ...). `read_table` and
-    `read_fwf` only on pandas, because `pyarrow.parquet.read_table` is a Parquet read.
-    """
+
+def _owns_csv(package: str, name: str) -> bool:
+    """The CSV-kind readers: the ones `read_csv_frame` must be the only call of."""
     top = package.split(".")[0]
     if name == "read_csv":
         return True
-    if name in _PANDAS_ONLY:
+    if name in {"read_table", "read_fwf"}:
         return top == "pandas"
     return top == "decoy_engine" and name == "read_csv_source"
 
@@ -138,7 +145,8 @@ def test_baseline_json_records_the_same_entries_and_reasons() -> None:
 
 
 def test_the_choke_point_reads_through_the_engine() -> None:
-    sites = read_sites((SRC / CHOKE_POINT).read_text(encoding="utf-8"))
+    source = (SRC / CHOKE_POINT).read_text(encoding="utf-8")
+    sites = call_sites(source, qualified_match=_owns_csv)
     assert [scope for _l, scope in sites] == ["read_csv_frame"]
 
 
@@ -155,6 +163,13 @@ def test_the_choke_point_reads_through_the_engine() -> None:
         "import pandas as pd\ndef f(p):\n    return pd.read_fwf(p)\n",
         "from pandas import read_fwf\ndef f(p):\n    return read_fwf(p)\n",
         "import decoy_engine as de\ndef f(p, d):\n    return de.read_csv_source(p, d, table='t')\n",
+        "import pandas as pd\ndef f(p):\n    return pd.read_parquet(p)\n",
+        "import pandas\ndef f(p):\n    return pandas.read_json(p)\n",
+        "import pyarrow.parquet as pq\ndef f(p):\n    return pq.read_table(p)\n",
+        "import pyarrow.parquet\ndef f(p):\n    return pyarrow.parquet.read_table(p)\n",
+        "from pyarrow import parquet\ndef f(p):\n    return parquet.read_table(p)\n",
+        "import pyarrow.parquet as pq\ndef f(p):\n    return pq.ParquetFile(p)\n",
+        "from decoy_engine import read_fixed_width\ndef f(p, lay):\n    return read_fixed_width(p, lay)\n",
     ],
 )
 def test_walk_sees_each_spelling(source: str) -> None:
@@ -166,9 +181,9 @@ def test_walk_ignores_lookalikes() -> None:
     assert read_sites(src) == []
 
 
-def test_parquet_read_table_is_not_a_hit() -> None:
+def test_parquet_reads_are_hits() -> None:
     src = "import pyarrow.parquet as pq\ndef f(p):\n    return pq.read_table(p)\n"
-    assert read_sites(src) == []
+    assert [scope for _l, scope in read_sites(src)] == ["f"]
 
 
 def test_seeded_bypass_is_red(tmp_path: Path) -> None:
@@ -188,3 +203,7 @@ def test_seeded_bypass_is_red(tmp_path: Path) -> None:
         encoding="utf-8",
     )
     assert _tally(tmp_path)[("cli/sneaky3.py", "load")] == 1
+    (pkg / "sneaky4.py").write_text(
+        "import pandas as pd\ndef load(p):\n    return pd.read_parquet(p)\n", encoding="utf-8"
+    )
+    assert _tally(tmp_path)[("cli/sneaky4.py", "load")] == 1

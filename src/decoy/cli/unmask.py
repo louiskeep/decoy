@@ -19,12 +19,14 @@ import typer
 import yaml as _yaml
 
 from decoy import _mask_secret, _mask_secret_guidance
+from decoy.cli._sources import read_file
 from decoy.cli._yaml_errors import sanitize_yaml_error
 from decoy.cli.exit_codes import EXIT_RUNTIME, EXIT_USAGE
 from decoy.cli.io._targets import (
     TargetFormatError,
     check_output_path,
     format_for_path,
+    input_format,
     write_table,
 )
 from decoy.ui.output import OutputMode, emit_json, setup_output
@@ -195,7 +197,6 @@ def unmask(
         )
         raise typer.Exit(code=EXIT_USAGE)
 
-    import pandas as pd
     import pyarrow as pa
     from decoy_engine import VaultError, unmask_pipeline
     from decoy_engine.errors import ConfigError
@@ -203,8 +204,15 @@ def unmask(
     from decoy_engine.keyprovider import MaskSecretError
     from decoy_engine.plan import PlanCompileError
 
+    # The declared format of the table's target when `masked` is that file, else the suffix rule.
     try:
-        df = pd.read_csv(masked, dtype=str)
+        in_format, in_layout = input_format(raw, target_table, masked, config.parent)
+    except TargetFormatError as exc:
+        _emit_error(str(exc))
+        raise typer.Exit(code=EXIT_USAGE)
+
+    try:
+        df = read_file(masked, in_format, in_layout, table=target_table)
     except Exception as exc:
         # The type only: a parse error can quote a cell, and the path is not ours to print.
         _emit_error(f"could not read the masked file: {type(exc).__name__}")
