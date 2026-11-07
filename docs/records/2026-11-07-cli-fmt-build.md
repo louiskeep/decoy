@@ -30,7 +30,7 @@ Survivor: routing the detokenize pandas Parquet write through `pa.Table` (the by
 
 ## Gates
 
-VM `gates.sh --keep-going --baseline`: ruff pass, tests pass (447). Sentry: one branch-only failure, `test_cli_reference_is_up_to_date`, caused by the generated reference being edited while the run was in flight; the three surface tests pass on a rerun. mypy is not installed on the VM; mypy on the devbox shows no error in the touched new module.
+VM `gates.sh --keep-going --baseline` on the round-1 head `ab1d2bb`: ruff pass, sentry 485 passed, tests 456 passed, 0 branch-only failures. The first run on `1586b29` passed 447. Sentry: one branch-only failure, `test_cli_reference_is_up_to_date`, caused by the generated reference being edited while the run was in flight; the three surface tests pass on a rerun. mypy is not installed on the VM; mypy on the devbox shows no error in the touched new module.
 macOS arm64: named, behavior-kept, `git grep` files and `tests/sentry`: 904 passed, 4 skipped, 1 xfailed (the strict xfail), no failure outside the surface test above, which passes with `PYTHONPATH=src`.
 
 ## Gate round 1

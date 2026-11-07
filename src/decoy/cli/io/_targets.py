@@ -96,7 +96,7 @@ def _uncompressed_only_message(label: str, fmt: str, path: Path) -> str | None:
         return None
     return (
         f"{label}: declared format '{fmt}' cannot be written under the compression "
-        f"suffix '{name[len(stem):]}'; rename the file or change the format"
+        f"suffix '{name[len(stem) :]}'; rename the file or change the format"
     )
 
 
