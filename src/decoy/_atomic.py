@@ -171,6 +171,7 @@ def describe(exc: AtomicWriteError) -> str:
 
 _SPECIAL_KINDS = (stat.S_ISFIFO, stat.S_ISCHR, stat.S_ISBLK, stat.S_ISSOCK)
 _OWNER_RW = 0o600
+_STREAM_DIRS = ("/dev/", "/proc/")  # the user-given path, before any symlink is resolved
 _FALLBACK_NAME_MAX = 255
 
 
@@ -241,10 +242,14 @@ def staged_local_target(path: Path, *, private: bool) -> Iterator[Path]:
 
     The shape of `atomicwrites.atomic_write`. An exception from the block removes the temp
     and propagates unchanged, so `path` keeps its old bytes or stays missing. A symlink is
-    followed and its destination replaced. A FIFO, device or socket is yielded as is, with
-    no staging. Setup and commit failures raise `AtomicWriteError` with no exception context.
+    followed and its destination replaced. A FIFO, device or socket, and any path under /dev/
+    or /proc/, is yielded as is, with no staging. Setup and commit failures raise `AtomicWriteError` with no
+    exception context.
     """
     _require_component(path.name)
+    if not _WINDOWS and os.path.abspath(path).startswith(_STREAM_DIRS):
+        yield path  # /dev/stdout, /dev/fd/N, /proc/self/fd/N: a redirect is written through
+        return
     existing: os.stat_result | None = None
     failed_errno: int | None = None
     failed = False
@@ -264,7 +269,8 @@ def staged_local_target(path: Path, *, private: bool) -> Iterator[Path]:
     created = 0
     try:
         tmp, created = _create_temp(real.parent, real.name, private)
-        os.chmod(tmp, created | _OWNER_RW)  # a restrictive umask must not lock the writer out
+        # Owner-only while written, and a restrictive umask must not lock the writer out.
+        os.chmod(tmp, _OWNER_RW)
     except OSError as exc:
         failed, failed_errno = True, exc.errno
     if failed:

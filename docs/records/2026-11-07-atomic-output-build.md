@@ -49,3 +49,14 @@ Each mutation turned the named test red; the full table is in the builder report
 - ACLs and xattrs of an old output are not copied.
 - Unify the `mkstemp` core of `write_atomic` and `CREATE_ONCE` with `_create_temp`.
 - `_atomic.py` over 400 lines: split staging from the record writer.
+
+## Gate round 1
+
+Dennis NO-GO on one HIGH, two MEDIUM.
+
+- H1: a stdout redirected to a regular file stats as a regular file, so the staged path replaced it (Linux) or failed at the temp create (macOS). Fixed at the classification: a user-given absolute path under `/dev/` or `/proc/` is written through before any stat. Tests: `test_a_redirected_stdout_is_written_through_not_replaced` (subprocess, stdout to a file, bytes written, inode unchanged; red on the old head on the VM and on the Mac) and the pipe case.
+- M1: the temp is now chmod 0600 right after creation for every target; the final bits are applied at publish as before.
+- M2: `test_the_temp_is_owner_only_while_it_is_written` asserts the temp mode inside the block for private and non-private targets (new, existing 0600, existing 0644) under umask 022, 002 and 000. Mutation "temp chmod keeps the umask bits" turns it red. Creating the private temp at 0666 is now an equivalent mutant, because the chmod follows before the block runs.
+- The classify-by-stat-only mutation is killed by the redirect test.
+
+V2-LOG, left as is: the second temp-create path (`write_atomic`, `CREATE_ONCE`); `_atomic.py` size; a KeyboardInterrupt during the temp chmod can leave an empty hidden temp; ENOSPC raised inside the writer block is not mapped to `atomic_write_failed`.

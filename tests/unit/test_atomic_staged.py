@@ -236,6 +236,39 @@ def test_private_output_is_0600_even_over_a_wider_old_file(tmp_path: Path) -> No
     assert _mode(target) == 0o600
 
 
+_PROBE = (
+    "import os, stat, sys\n"
+    "from pathlib import Path\n"
+    "from decoy._atomic import staged_local_target\n"
+    "os.umask(int(sys.argv[1], 8))\n"
+    "with staged_local_target(Path(sys.argv[2]), private=sys.argv[3] == '1') as tmp:\n"
+    "    print(oct(stat.S_IMODE(os.stat(tmp).st_mode)))\n"
+    "    tmp.write_bytes(b'x')\n"
+)
+
+
+@posix_only
+@pytest.mark.parametrize("umask", ["022", "002", "000"])
+@pytest.mark.parametrize(
+    ("private", "old_bits"),
+    [(True, None), (True, 0o644), (False, None), (False, 0o600), (False, 0o644)],
+)
+def test_the_temp_is_owner_only_while_it_is_written(
+    tmp_path: Path, umask: str, private: bool, old_bits: int | None
+) -> None:
+    target = tmp_path / "out.csv"
+    if old_bits is not None:
+        target.write_bytes(b"old")
+        target.chmod(old_bits)
+    done = subprocess.run(
+        [sys.executable, "-c", _PROBE, umask, str(target), "1" if private else "0"],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    assert done.stdout.strip() == "0o600"
+
+
 @posix_only
 def test_a_different_group_with_a_failed_chown_grants_no_extra_bits(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -277,12 +310,34 @@ def test_a_fifo_and_a_link_to_it_are_written_through(tmp_path: Path) -> None:
 
 
 @pytest.mark.skipif(not Path("/dev/stdout").exists(), reason="needs /dev/stdout")
-def test_dev_stdout_is_classified_before_realpath() -> None:
+@pytest.mark.parametrize("device", ["/dev/stdout", "/dev/fd/1"])
+def test_a_redirected_stdout_is_written_through_not_replaced(tmp_path: Path, device: str) -> None:
+    """A stdout redirected to a regular file stats as a regular file; the user-given /dev path
+    decides, so the redirect target keeps its inode and receives the bytes."""
+    code = (
+        "import sys\n"
+        "from pathlib import Path\n"
+        "from decoy._atomic import staged_local_target\n"
+        "with staged_local_target(Path(sys.argv[1]), private=False) as p:\n"
+        "    assert p == Path(sys.argv[1]), p\n"
+        "    p.write_bytes(b'hello')\n"
+    )
+    sink = tmp_path / "sink.txt"
+    sink.write_bytes(b"")
+    inode = sink.stat().st_ino
+    with open(sink, "wb") as handle:
+        done = subprocess.run([sys.executable, "-c", code, device], stdout=handle, timeout=60)
+    assert done.returncode == 0
+    assert sink.read_bytes() == b"hello" and sink.stat().st_ino == inode
+    assert _names(tmp_path) == ["sink.txt"]
+
+
+@pytest.mark.skipif(not Path("/dev/stdout").exists(), reason="needs /dev/stdout")
+def test_dev_stdout_to_a_pipe_is_written_through() -> None:
     code = (
         "from pathlib import Path\n"
         "from decoy._atomic import staged_local_target\n"
         "with staged_local_target(Path('/dev/stdout'), private=False) as p:\n"
-        "    assert p == Path('/dev/stdout'), p\n"
         "    p.write_bytes(b'hello')\n"
     )
     done = subprocess.run([sys.executable, "-c", code], capture_output=True, timeout=60)
