@@ -41,6 +41,12 @@ M4 (not E2); `ModelRef` lives in `detection/types.py`; the answers example uses 
 `pre_scan: {detectors: [...]}` shape; an NER suggestion's entry is `text_redact` with `ner`; and 4.5
 no longer cites `decoy-run-result/v1`, which is not on CLI main.
 
+Revision 4 (2026-11-07): Codex confirm round (GO; one placement row added for `_yaml_marks.py`,
+one stale RESULT sentence dropped). Then aligned with SCAN-ML revision 2: `StrategyOption.location`
+gains `provider_config.ner` and `text_redact`/`text_mask` declare `ner_model` and `ner_entities`;
+`band` is only `high` or `review`; `confidence_bucket` also carries the NER rate bucket; a
+dismissal's `strategy` may be null; an NER finding marked `promoted: true` may be rejected.
+
 Risk: R2. The plan changes a public CLI command, adds a file format (the answers file), adds public
 engine API, edits a user's existing pipeline YAML in place, and its output must stay value-free.
 Nothing is destructive beyond an atomic replace of a file the user named, which the wizard shows and
@@ -157,7 +163,7 @@ findings against an existing file.
 | An `edit` or `confirm` gives a key column of a declared relationship a strategy the catalog does not mark `join_safe` (anything but an injective, deterministic per-value map: today `hash` and `fpe`), or a namespace other than the relationship's | Refused (`config.key_column_not_join_safe`, naming the column path and the relationship's position) at the prompt, or exit 1 from an answers file. The gate does not catch this today (SCAN-MULTI probe: `redact` on a relationship key compiles), so the engine review functions own the check. |
 | Post-scan review: the pipeline YAML is a symlink | Refused (`init.yaml_symlink`); the message says to pass the link's target path. Replacing the link would leave the real file unedited. |
 | Post-scan review: no report given, the report has the wrong schema or no `tables_checked` manifest, or it was made from another version of this YAML (its `config_sha256` differs from the file's) | Exit 1 (`init.report_missing`, `init.report_schema`, `init.report_stale`) with a hint naming the command that writes a fresh report. |
-| Post-scan review: `n` on a `fail` finding | Not offered: a failed mask check cannot be dismissed (4.6, dismissal rule). The prompt offers confirm, edit or skip. From an answers file: exit 1 (`post_scan.dismiss_refused`). |
+| Post-scan review: `n` on a `fail` finding (other than an NER finding marked `promoted: true`) | Not offered: a failed mask check cannot be dismissed (4.6, dismissal rule). The prompt offers confirm, edit or skip. From an answers file: exit 1 (`post_scan.dismiss_refused`). |
 
 ## 2. Established solutions
 
@@ -376,8 +382,8 @@ decoy init --review-findings pipeline.yaml --report integrity.json
 - **Where findings come from.** `decoy run` does not save the post-scan report today: the engine
   computes it when `post_scan.integrity` is on and keeps it in memory
   (`execution/_pipeline_finalize.py:503`, report-only), and `src/decoy/cli/run.py` never reads it.
-  The run `--json` record carries no detector, severity or match rate (`run.py:1210`); the planned
-  run result `decoy-run-result/v1` (RESULT plan) is not on CLI main at `be5ba11`. Per-finding data exists only in the `post-scan-integrity/v2` report, which
+  The run `--json` record carries no detector, severity or match rate (`run.py:1210`). Per-finding
+  data exists only in the `post-scan-integrity/v2` report, which
   `decoy report integrity MASKED --source SRC --config pipeline.yaml --output FILE` writes today
   (`src/decoy/cli/report.py:1949`, with the file write at `:2092`). W3.2 reads that report through
   `--report`. SCAN-ML owns the two
@@ -398,7 +404,7 @@ decoy init --review-findings pipeline.yaml --report integrity.json
 - **Reading the report.** `--report` is read with a 16 MiB cap. The schema is engine-owned and may
   gain keys, so the model ignores unknown keys but requires, with strict types, the schema tag,
   `config_sha256`, `tables_checked` and each finding's table, column, detector, severity, source and
-  model. Duplicate checked-table names or duplicate finding identities are refused. An oversize file
+  model, plus `promoted` (a bool, default false when absent). Duplicate checked-table names or duplicate finding identities are refused. An oversize file
   or a missing or mistyped field exits 1 (`init.report_schema`).
 - `confirm` on a finding for a column with no entry, or with `passthrough`, sets the entry
   `column_entry` builds for the finding's detector (4.6); `edit` picks one.
@@ -438,7 +444,7 @@ class StrategyOption:
     name: str
     wire_type: Literal["str", "int", "float", "bool", "str_list", "float_list"]
     required: bool
-    location: Literal["column", "provider_config"]
+    location: Literal["column", "provider_config", "provider_config.ner"]
     choices: tuple[str, ...] | None
     example: str | int | float | bool | tuple[str, ...] | tuple[float, ...]
 
@@ -478,6 +484,12 @@ def strategy_catalog() -> tuple[StrategyInfo, ...]      # sorted by name; export
   derived views above let tests build every offered entry and let prompts enumerate required fields
   without parallel tables. Terminal list options accept one JSON array and answers files use a YAML
   sequence; both are exact-typed element by element. AT-E0b guards the derivation.
+- `text_redact` and `text_mask` declare two NER options for SCAN-ML's suggestions (SCAN-ML 4.3):
+  `ner_model` (`str`, not required) and `ner_entities` (`str_list`, not required, `choices` the
+  detector ids `NER_ENTITY_MAP` maps to, `detection/ner.py:54`), both with location
+  `provider_config.ner`. `column_entry` writes them as `provider_config: {ner: {model, entities}}`,
+  dropping the `ner_` prefix, which is the shape `_ner_config.py:36` and `:53` read; with neither
+  option the entry has no `ner` key, as today.
 
 The CLI's `_NAMESPACE_REQUIRED_STRATEGIES` (`init.py:180`) and SCAN-MULTI's descriptor copy of it
 (planned in `profiling/recommendations.py` and `_starter_inference.py`, S3-engine.1) derive from this
@@ -515,8 +527,10 @@ class ColumnSuggestion:
     source: Literal["regex", "classifier", "ner"]   # always "regex" until SCAN-ML
     detector_id: str              # regex detector id, or the model label mapped to a detector id
     model: ModelRef | None        # None for regex
-    band: Literal["high", "review", "low"] | None   # classifier band; None for regex and ner
-    confidence_bucket: str | None # the regex bucket the CLI inference reads today; None for models
+    band: Literal["high", "review"] | None   # classifier band (a `low` band yields no
+                                  # suggestion, SCAN-ML 4.3); None for regex and ner
+    confidence_bucket: str | None # regex: the bucket the CLI inference reads today; ner: the
+                                  # NER rate bucket (SCAN-ML 4.3); None for the classifier
     entry: Mapping[str, Any]      # built by column_entry: detector_id's default strategy, or for
                                   # source ner `text_redact` with an `ner` option (SCAN-ML 4.3)
     live: bool                    # True when starter_config wrote this entry into config
@@ -601,14 +615,18 @@ class ConfigEdit:                        # what to change; the CLI decides how t
 
 **Dismissal (shape owned here, field owned by SCAN-ML).** A `post_scan.dismissed` entry is
 `{table, column, detector_id, source, model_id, model_version, strategy}`, where `strategy` is the
-column's configured strategy when the dismissal was made. A post-scan finding is reported as `info`
+column's configured strategy when the dismissal was made, or `null` when the column had none (an
+unconfigured column, SCAN-ML 4.1). A post-scan finding is reported as `info`
 instead of `warning` only when every field matches the finding and the column's current strategy.
 Rules:
 
 - Only `warning`-severity residual-PII findings that come from a detector match can be dismissed.
   A `fail` finding, and any finding raised from source-identity evidence (`source_compared` true with
   `source_identity_rate` at or over `_LEAK_WARN_RATE`, `verification/postmask/residual_pii.py:122`),
-  is never lowered by a dismissal and cannot be rejected in the review.
+  is never lowered by a dismissal and cannot be rejected in the review. One exception: an NER
+  finding the report marks `promoted: true` is a `warning` that `post_scan.ner_findings: fail`
+  raised to `fail` (SCAN-ML 4.5). It can be rejected, because SCAN-ML matches dismissals against
+  the warn-mode severity before that promotion (SCAN-ML owner question Q6).
 - A dismissal stops applying when the column's configured strategy changes, or the detector's model
   version changes; the finding is then reported again at its own severity, and the stale dismissal is
   counted in the run log.
@@ -708,8 +726,8 @@ full gate runs on the edited config before the replace. AT-W12 covers each shape
 - `ResidualPIIFinding` (`decoy_engine/verification/postmask/types.py:24`): `table`, `column`,
   `detector_id`, `match_rate`, `severity`, `configured_strategy`, `sample_match_count`, `message`,
   `source_identity_rate`, `source_compared`. The review shows table, column, detector, severity and
-  match rate; it never shows `message` (free text built elsewhere), and SCAN-ML adds `source` and
-  `model`; the report gains `config_sha256` and `tables_checked` (4.5).
+  match rate; it never shows `message` (free text built elsewhere), and SCAN-ML adds `source`,
+  `model`, `band`, `dismissed` and `promoted`; the report gains `config_sha256` and `tables_checked` (4.5).
 - `StrategyOption`: `name`, `wire_type`, `required`, `location`, `choices`, `example`; `StrategyInfo`:
   `name`, `namespace_required`, `join_safe`, `options`, `offer_in_wizard`, with required names and
   example values derived from `options` (4.6, part E0).
@@ -855,10 +873,11 @@ The plan contract section 4 asks for these; each is an acceptance test above.
 ## 11. Placement
 
 CLI `CODEMAP.md` "Where things go" has no row for an interactive command helper package, and `cli/` is
-frozen (LAYOUT draft: "new commands go in a named sub-package"; owner 2026-11-06 Q4). Map change made
-in W1.1: add the row "Interactive review wizard for `decoy init`: `src/decoy/cli/wizard/`, files
-`_<noun>.py`, tests `tests/unit/test_wizard_*.py` and `tests/e2e/test_init_wizard*.py`, sentries in
-`tests/sentry/`".
+frozen (LAYOUT draft: "new commands go in a named sub-package"; owner 2026-11-06 Q4). W1.1 adds two
+map rows: "Interactive review wizard for `decoy init`: `src/decoy/cli/wizard/`, files `_<noun>.py`,
+tests `tests/unit/test_wizard_*.py` and `tests/e2e/test_init_wizard*.py`, sentries in
+`tests/sentry/`"; and "Shared YAML document structure and source-mark indexing:
+`src/decoy/_yaml_marks.py`, tests in `tests/unit/test_yaml_marks.py`".
 
 | New file | Directory | Map line that places it | Sits beside |
 |---|---|---|---|
@@ -869,7 +888,7 @@ in W1.1: add the row "Interactive review wizard for `decoy init`: `src/decoy/cli
 | `cli/wizard/_flow.py` | same | same | |
 | `cli/wizard/_findings.py` (W3.2) | same | same | |
 | `cli/wizard/_yaml_edit.py` (W3.1) | same | same | |
-| `src/decoy/_yaml_marks.py` (W1.1) | `src/decoy/` | "Private shared filesystem or process primitives used by more than one package" (used by `ci/` and `cli/wizard/`) | `src/decoy/_atomic.py` |
+| `src/decoy/_yaml_marks.py` (W1.1) | `src/decoy/` | new "Shared YAML document structure and source-mark indexing" row above (map change in W1.1; used by `ci/` and `cli/wizard/`) | `src/decoy/_atomic.py` |
 | `tests/sentry/test_wizard_prompt_boundary.py`, `test_wizard_no_exc_text.py`, `test_one_editor.py` | `tests/sentry/` | "Repository policy sentries and their scanners" | `test_gate_single_entry.py` |
 | engine `profiling/starter_review.py` | `src/decoy_engine/profiling/` | engine CODEMAP Directory Map, `profiling/` row (profiling and detector suggestions; the engine map has no "Where things go" section until LAYOUT E1) | `profiling/starter_config.py` (SCAN-MULTI S3-engine.2) |
 | engine `tests/unit/profiling/test_starter_review.py` | engine `tests/unit/profiling/` | same convention as SCAN-MULTI's `test_starter_config.py` | |
@@ -922,7 +941,7 @@ Sizes are hand-written lines (source + tests + docs), estimated. Every part stay
 |---|---|---|---|---|
 | E0 | engine | ~540 (190 + 320 + 30) | four class attributes on each of the 25 strategy handlers, `StrategyOption`, `StrategyInfo`, derived required/example views, `strategy_catalog()`, export; `_KEY_STRATEGIES` derived from `join_safe`; G-CATALOG; AT-E0a, AT-E0b | none (engine main) |
 | E1 | engine | ~640 (280 + 330 + 30) | `starter_review.py`: `SuggestionRef`, `ModelRef` in `detection/types.py` unless SCAN-ML M1 added it first, verdict enum, `ReviewDecision`, `column_entry`, `apply_review`, `ReviewInputError` and its reason identities; the full `ColumnSuggestion` fields and `StarterConfig.suggestions`; `starter_config` builds entries through `column_entry`; AT-E1 to AT-E4 | E0; SCAN-MULTI S3-engine.2 merged |
-| W1.1 | CLI | ~760 (400 + 330 + 30) | `src/decoy/_yaml_marks.py` (index moved from `ci/locations.py`, which keeps its names; its tests pass unchanged); `cli/wizard/` package: `_prompts.py` (Prompter protocol, terminal and answers implementations, key table), `_answers.py` (model, strict loader, save with quoted names), `_review.py` (per-table loop over a Prompter); CODEMAP row; sentries for prompt boundary, no exception text, no strategy literal (on G-ONE-GATE's resolver); AT-W5, AT-W6, AT-W11 | E0 and E1 released and repinned |
+| W1.1 | CLI | ~760 (400 + 330 + 30) | `src/decoy/_yaml_marks.py` (index moved from `ci/locations.py`, which keeps its names; its tests pass unchanged); `cli/wizard/` package: `_prompts.py` (Prompter protocol, terminal and answers implementations, key table), `_answers.py` (model, strict loader, save with quoted names), `_review.py` (per-table loop over a Prompter); two CODEMAP rows; sentries for prompt boundary, no exception text, no strategy literal (on G-ONE-GATE's resolver); AT-W5, AT-W6, AT-W11 | E0 and E1 released and repinned |
 | W1.2 | CLI | ~780 (300 + 440 + 40) | `cli/wizard/_flow.py` (sections, path-role check, write step, gate); `init.py` rewired to it, template prompts moved behind the Prompter; `--answers`, `--save-answers`, `--no-input`, `--fail-on-warning`; stale-confirm check; G-ONE-EMITTER extended; CHANGELOG, `docs/cli-reference.md`; AT-W1 to AT-W4, AT-W7 to AT-W10, AT-W15, AT-W19 (regex half), AT-W22 (project route) | W1.1; SCAN-MULTI S3a.1 merged (renderer and the `init` rewrite) |
 | W2 | CLI | ~460 (170 + 260 + 30) | detector section (pre-scan and post-scan choices, NER availability, the SCAN-ML install command), model and band in the summary, `detectors` in the answers schema (frozen here, snapshot); AT-W16, AT-W17, AT-W19 (model half), AT-W8 for this route | W1.2; SCAN-ML engine parts with the config fields, classifier suggestions and the NER availability probe, released and repinned |
 | E2 | engine | ~420 (180 + 210 + 30) | `FindingDecision`, `ConfigEdit`, order-independent `finding_edits` with the dismissal and key-column rules; AT-E5; FK-shape cases for AT-W12 at engine level | E1; SCAN-ML M1 (`post_scan.dismissed`) and M4 (the report's `source`, `model` and `tables_checked`) |
