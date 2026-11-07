@@ -224,8 +224,9 @@ def _stage_source_entry(name: str, value: Any, tmp_paths: list[Path], declared: 
     `declared` is the config's own `sources[name]` entry, if any. A path
     `value` replaces the source with a local file. When the declaration
     is a file source with a `format`, that format (and `layout`, for
-    fixed_width) is the user's statement of how the bytes are laid out
-    and wins over the file suffix; a file declaration without a valid
+    fixed_width) and any CSV dialect keys (`has_header`, `column_names`,
+    `delimiter`) are the user's statement of how the bytes are laid out
+    and win over the file suffix; a file declaration without a valid
     format is left for schema validation to reject. A cloud (s3/gcs)
     declaration, or none at all, falls back to inferring the format from
     the suffix."""
@@ -241,6 +242,11 @@ def _stage_source_entry(name: str, value: Any, tmp_paths: list[Path], declared: 
                 entry["format"] = declared["format"]
             if declared.get("format") == "fixed_width" and "layout" in declared:
                 entry["layout"] = declared["layout"]
+            # Carried whatever the format: schema validation rejects a dialect key on a
+            # non-csv source instead of the override dropping it silently.
+            for key in ("has_header", "column_names", "delimiter"):
+                if key in declared:
+                    entry[key] = declared[key]
             return entry
         fmt = "parquet" if path.suffix.lower() in (".parquet", ".pq") else "csv"
         return {"type": "file", "format": fmt, "path": str(path)}
