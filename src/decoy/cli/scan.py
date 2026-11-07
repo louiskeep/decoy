@@ -37,6 +37,7 @@ from pathlib import Path
 
 import typer
 
+from decoy._atomic import AtomicWriteError, WriteMode, describe, write_local_target
 from decoy.cli._default_group import make_default_group
 from decoy.cli.exit_codes import EXIT_RUNTIME, EXIT_USAGE
 from decoy.ui.card import render_card
@@ -771,12 +772,20 @@ def _scan(
             if out_path is not None:
                 # The on-disk artifact keeps the engine's richer profile.to_dict()
                 # (pre-existing); the inline/--json field output stays privacy-safe.
-                out_path.write_text(_json.dumps(profile.to_dict(), indent=2))
+                write_local_target(
+                    out_path,
+                    _json.dumps(profile.to_dict(), indent=2).encode("utf-8"),
+                    WriteMode.REPLACE,
+                )
             ms.complete()
     except Exception as exc:
         # Do NOT interpolate str(exc) -- engine parse errors can embed raw cell
         # data in their messages. Report only the exception class name.
-        msg = f"scan failed: {type(exc).__name__}"
+        msg = (
+            f"scan failed: {describe(exc)}"
+            if isinstance(exc, AtomicWriteError)
+            else f"scan failed: {type(exc).__name__}"
+        )
         if state.mode is OutputMode.json:
             emit_json(
                 state,

@@ -114,6 +114,48 @@ def _hit(
     return qualified_match(module, member)
 
 
+def call_contexts(
+    source: str,
+    *,
+    qualified_match: Callable[[str, str], bool],
+    method_names: frozenset[str] = frozenset(),
+    with_call: str,
+) -> list[tuple[ast.Call, str, frozenset[str]]]:
+    """Return (call, qualified scope, names bound by enclosing `with <with_call>(...) as name`).
+
+    Matches a call's callee with the same resolution as `call_sites`. A `with` binds its name
+    for its own body only, and nested `with` statements add to the set.
+    """
+    tree = ast.parse(source)
+    found: list[tuple[ast.Call, str, frozenset[str]]] = []
+
+    def opens(item: ast.withitem) -> str | None:
+        ctx, var = item.context_expr, item.optional_vars
+        if not (isinstance(ctx, ast.Call) and isinstance(var, ast.Name)):
+            return None
+        callee = ctx.func
+        name = callee.id if isinstance(callee, ast.Name) else getattr(callee, "attr", None)
+        return var.id if name == with_call else None
+
+    def visit(node: ast.AST, scope: str, bound: Bindings, names: frozenset[str]) -> None:
+        for child in ast.iter_child_nodes(node):
+            if isinstance(child, _SCOPES):
+                name = getattr(child, "name", "<lambda>")
+                inner = name if scope == "<module>" else f"{scope}.{name}"
+                visit(child, inner, {**bound, **bindings(child)}, frozenset())
+                continue
+            inner_names = names
+            if isinstance(child, (ast.With, ast.AsyncWith)):
+                inner_names = names | {n for n in map(opens, child.items) if n}
+            if isinstance(child, ast.Call) and isinstance(child.func, (ast.Name, ast.Attribute)):
+                if _hit(child.func, bound, qualified_match, method_names, False):
+                    found.append((child, scope, names))
+            visit(child, scope, bound, inner_names)
+
+    visit(tree, "<module>", bindings(tree), frozenset())
+    return found
+
+
 def tally(
     root: Path, *, skip: str, finder: Callable[[str], list[tuple[int, str]]]
 ) -> dict[tuple[str, str], int]:

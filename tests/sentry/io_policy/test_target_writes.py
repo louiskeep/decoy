@@ -22,17 +22,30 @@ adds it to the watch set. `csv.writer` and `write_text` are not table writers he
 
 from __future__ import annotations
 
+import ast
 import json
 from dataclasses import dataclass
 from pathlib import Path
 
 import pytest
-from tests.sentry.io_policy._calls import call_sites, tally
+from tests.sentry.io_policy._calls import call_contexts, call_sites, tally
 
 ROOT = Path(__file__).resolve().parents[3]
 SRC = ROOT / "src" / "decoy"
 CHOKE_POINT = "cli/io/_targets.py"
 WRITERS = ("write_table", "write_chunked_output", "_write_fixed_width")
+# These two stage their output: every path they write is the temp that `staged_local_target`
+# yields. `_write_fixed_width` is exempt: the engine's `write_fixed_width` stages and publishes
+# atomically by itself, so wrapping it would stage twice.
+STAGED_WRITERS = ("write_table", "write_chunked_output")
+STAGE_CALL = "staged_local_target"
+# Where each watched call takes its path: (positional index, keyword name).
+_PATH_SLOT = {
+    "to_csv": (0, "path_or_buf"),
+    "to_parquet": (0, "path"),
+    "write_table": (1, "where"),
+    "ParquetWriter": (0, "where"),
+}
 BASELINE = ROOT / "tests" / "sentry" / "baselines" / "target-writes-allow.json"
 
 _METHODS = frozenset({"to_csv", "to_parquet"})
@@ -207,3 +220,103 @@ def test_seeded_bypass_is_red(tmp_path: Path) -> None:
     for name, text in seeds.items():
         (pkg / name).write_text(text, encoding="utf-8")
     assert _tally(tmp_path) == {(f"cli/{name}", "save"): 1 for name in seeds}
+
+
+def _path_arg(call: ast.Call, member: str) -> ast.expr | None:
+    slot = _PATH_SLOT.get(member)
+    if slot is None:
+        return None
+    index, keyword = slot
+    for kw in call.keywords:
+        if kw.arg == keyword:
+            return kw.value
+    return call.args[index] if len(call.args) > index else None
+
+
+def _is_staged_name(arg: ast.expr | None, names: frozenset[str]) -> bool:
+    if isinstance(arg, ast.Call) and isinstance(arg.func, ast.Name) and arg.func.id == "str":
+        if len(arg.args) == 1 and not arg.keywords:
+            arg = arg.args[0]
+    return isinstance(arg, ast.Name) and arg.id in names
+
+
+def unstaged_writes(source: str) -> list[tuple[int, str]]:
+    """(line, scope) for each write in a staged writer whose path is not its staged temp."""
+    bad = []
+    for call, scope, names in call_contexts(
+        source, qualified_match=_owns, method_names=_METHODS, with_call=STAGE_CALL
+    ):
+        if scope not in STAGED_WRITERS:
+            continue
+        func = call.func
+        member = func.attr if isinstance(func, ast.Attribute) else getattr(func, "id", "")
+        if member == "write_fixed_width":
+            continue
+        if not _is_staged_name(_path_arg(call, member), names):
+            bad.append((call.lineno, scope))
+    return bad
+
+
+def test_staged_writers_write_only_to_their_staged_temp() -> None:
+    source = (SRC / CHOKE_POINT).read_text(encoding="utf-8")
+    assert unstaged_writes(source) == []
+    covered = {
+        scope
+        for _c, scope, _n in call_contexts(
+            source, qualified_match=_owns, method_names=_METHODS, with_call=STAGE_CALL
+        )
+    }
+    assert set(STAGED_WRITERS) <= covered, "a staged writer has no write call to check"
+
+
+_STAGED_PRELUDE = (
+    "import pyarrow.parquet as pq\nfrom decoy_engine import write_fixed_width\n"
+    "from decoy._atomic import staged_local_target\n"
+)
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        "    data.to_csv(path)\n",
+        "    with staged_local_target(path, private=False) as tmp:\n        data.to_csv(path)\n",
+        "    with staged_local_target(path, private=False) as tmp:\n        data.to_csv(other)\n",
+        "    with staged_local_target(path, private=False) as tmp:\n"
+        "        data.to_parquet(path=path)\n",
+        "    data.to_parquet(path=path)\n",
+        "    with staged_local_target(path, private=False) as tmp:\n        pq.write_table(data, path)\n",
+        "    with staged_local_target(path, private=False) as tmp:\n"
+        "        pq.ParquetWriter(where=str(path), schema=s)\n",
+        "    with staged_local_target(path, private=False) as tmp:\n        pass\n"
+        "    data.to_csv(tmp)\n",
+        "    with staged_local_target(path, private=False) as tmp:\n"
+        "        pq.write_to_dataset(data, tmp)\n",
+    ],
+)
+def test_staged_path_rule_is_red_on_seeds(body: str) -> None:
+    source = _STAGED_PRELUDE + "def write_table(data, path):\n" + body
+    assert unstaged_writes(source) != []
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        "    with staged_local_target(path, private=False) as tmp:\n        data.to_csv(tmp)\n",
+        "    with staged_local_target(path, private=False) as tmp:\n"
+        "        pq.write_table(data, str(tmp))\n",
+        "    with staged_local_target(path, private=False) as tmp:\n"
+        "        pq.ParquetWriter(where=str(tmp), schema=s)\n",
+        "    with staged_local_target(path, private=False) as tmp:\n"
+        "        data.to_parquet(path=tmp)\n",
+        "    write_fixed_width(frame, layout, path)\n",
+        "    with staged_local_target(path, private=True) as a, other() as b:\n"
+        "        data.to_csv(path_or_buf=a)\n",
+    ],
+)
+def test_staged_path_rule_is_green_on_staged_and_exempt_shapes(body: str) -> None:
+    assert unstaged_writes(_STAGED_PRELUDE + "def write_table(data, path):\n" + body) == []
+
+
+def test_staged_path_rule_only_covers_the_two_staged_writers() -> None:
+    source = _STAGED_PRELUDE + "def _write_fixed_width(data, path):\n    data.to_csv(path)\n"
+    assert unstaged_writes(source) == []

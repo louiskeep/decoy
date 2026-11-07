@@ -19,6 +19,7 @@ import typer
 import yaml as _yaml
 
 from decoy import _mask_secret, _mask_secret_guidance
+from decoy._atomic import AtomicWriteError, describe
 from decoy.cli._sources import read_file
 from decoy.cli._yaml_errors import sanitize_yaml_error
 from decoy.cli.exit_codes import EXIT_RUNTIME, EXIT_USAGE
@@ -281,7 +282,11 @@ def unmask(
         raise typer.Exit(code=EXIT_RUNTIME)
 
     out_path = output if output is not None else masked.with_suffix(".unmasked.csv")
-    write_table(result.outputs[target_table], format_for_path(out_path), out_path)
+    try:
+        write_table(result.outputs[target_table], format_for_path(out_path), out_path, private=True)
+    except AtomicWriteError as exc:
+        _emit_error(f"could not write the output: {describe(exc)}")
+        raise typer.Exit(code=EXIT_RUNTIME)
 
     entries = [
         {

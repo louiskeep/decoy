@@ -215,10 +215,6 @@ def test_headerless_misfit_fails_closed(
         assert leaked not in result.output
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="chunked writer is not atomic; follow-up slice ATOMIC-CHUNKED",
-)
 def test_chunked_failure_after_chunk_one_writes_no_target(tmp_path: Path) -> None:
     src = tmp_path / "in.csv"
     src.write_bytes(_LATE_QUOTE)

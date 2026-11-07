@@ -335,8 +335,8 @@ value it cannot vouch for. So does a file missing any tokenize column the
 config declares for the table, and an already-existing default output
 (<tokenized>.detokenized.<ext>); pass -o to choose a path deliberately.
 
-The recovered file is cleartext PII. Decoy does not chmod run outputs (this one
-is written at your default umask, unlike the 0600 vault): protect it yourself.
+The recovered file is cleartext PII. It is written owner-only (0600), like the
+vault; protect any copy you make.
 
 See also: decoy tokenize, decoy explain tokenize.
 

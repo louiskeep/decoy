@@ -25,7 +25,7 @@ from rich.text import Text
 
 from decoy import __version__ as _cli_version
 from decoy import _mask_secret, _mask_secret_guidance, _native_gate
-from decoy._atomic import fsync_directory
+from decoy._atomic import AtomicWriteError, WriteMode, describe, fsync_directory, write_local_target
 from decoy.cli._duckdb_source import DuckDBSourceError, acquire_relation, parse_flag
 from decoy.cli._sources import iter_source_chunks, parquet_schema, read_source
 from decoy.cli._sources import resolve_path as _resolve_path
@@ -926,15 +926,10 @@ def run(
                 _ev_engine_warnings = result.warnings
                 _notify_row_count = sum(len(tbl) for tbl in result.outputs.values())
     except typer.Exit:
-        # CLI QA fix (2026-06-02, F7): an inner call site that raises
-        # typer.Exit (e.g. a library that vendored Typer) has already
-        # set its intended exit code. Do not swallow it into the
-        # EXIT_RUNTIME catch-all below.
+        # An inner typer.Exit already set its exit code; keep it out of the catch-all below.
         raise
     except Exception as exc:
-        # Audit H10 (2026-06-12): dispatch on exception type so scripts
-        # can tell "your config is wrong" (EXIT_USAGE, per the
-        # exit_codes.py contract) from "the run blew up" (EXIT_RUNTIME).
+        # Dispatch on type: config wrong (EXIT_USAGE) vs run blew up (EXIT_RUNTIME).
         # Imported lazily to keep the engine import off the help path.
         from decoy_engine import ConfigError, PipelineValidationError
         from decoy_engine.plan import PlanCompileError
@@ -1078,7 +1073,7 @@ def run(
         # quote source-row content verbatim (pandas / pyarrow); without
         # the truncation a single malformed row's value can land in
         # downstream log aggregators.
-        error_text = str(exc)
+        error_text = describe(exc) if isinstance(exc, AtomicWriteError) else str(exc)
         if len(error_text) > 500:
             error_text = error_text[:500] + "..."
         keyed_refusal = _mask_secret_guidance.is_keyed_secret_refusal(exc)
@@ -1172,10 +1167,8 @@ def run(
 
     elapsed = time.perf_counter() - started
 
-    # Write evidence manifest if --evidence-out was given. Written for BOTH
-    # plain and chunked runs: the input/output fingerprints (the drift-detection
-    # core) are always populated. Chunked runs return no ExecutionResult, so
-    # row_counts/timings/warnings are empty for them (documented in the flag help).
+    # Evidence manifest (--evidence-out), for plain and chunked runs; chunked runs have
+    # no row_counts/timings/warnings (see the flag help).
     if evidence_out is not None and _ev_config_dict is not None:
         from decoy.cli.evidence import build_manifest
 
@@ -1189,7 +1182,13 @@ def run(
             timings=_ev_timings,
             engine_warnings=_ev_engine_warnings,
         )
-        evidence_out.write_text(_json.dumps(manifest, indent=2), encoding="utf-8")
+        try:
+            write_local_target(
+                evidence_out, _json.dumps(manifest, indent=2).encode("utf-8"), WriteMode.REPLACE
+            )
+        except AtomicWriteError as exc:
+            state.err_console.print(error("error:"), describe(exc), markup=False)
+            raise typer.Exit(code=EXIT_RUNTIME)
         if state.mode is not OutputMode.json and state.mode is not OutputMode.quiet:
             from decoy.ui.theme import success as _success
 
@@ -1531,6 +1530,7 @@ def _run_chunked_mask(
             empty_schema=(
                 partial(parquet_schema, src_path) if src_spec.get("format") == "parquet" else None
             ),
+            private=False,
         )
 
 
