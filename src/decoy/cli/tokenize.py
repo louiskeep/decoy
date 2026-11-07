@@ -31,6 +31,7 @@ from decoy import _mask_secret, _mask_secret_guidance
 from decoy.cli._token_vault import LocalTokenVault, TokenVaultError, iter_tokenize_columns
 from decoy.cli._yaml_errors import sanitize_yaml_error
 from decoy.cli.exit_codes import EXIT_RUNTIME, EXIT_USAGE
+from decoy.cli.io._targets import TargetFormatError, format_for_path, write_table
 from decoy.ui.output import OutputMode, emit_json, setup_output
 from decoy.ui.progress import spinner
 from decoy.ui.theme import code, error, hint, success, warn
@@ -355,7 +356,7 @@ def tokenize(
         # A fixable operator problem; dispatched on the code before the classes below.
         _emit_error(_mask_secret_guidance.secret_error_text(exc, _mask_secret_guidance.TOKENIZE))
         raise typer.Exit(code=EXIT_USAGE)
-    except (PlanCompileError, ExecutionError, ConfigError) as exc:
+    except (PlanCompileError, ExecutionError, ConfigError, TargetFormatError) as exc:
         _emit_error(f"{getattr(exc, 'code', type(exc).__name__)}: {getattr(exc, 'message', exc)}")
         raise typer.Exit(code=EXIT_USAGE)
     except typer.Exit:
@@ -692,10 +693,7 @@ def detokenize(
         # Output format follows the output path's extension: the default matches
         # the input (Parquet in -> Parquet out), and an explicit -o picks by its
         # own suffix.
-        if out_path.suffix.lower() == ".parquet":
-            df.to_parquet(out_path, index=False)
-        else:
-            df.to_csv(out_path, index=False)
+        write_table(df, format_for_path(out_path), out_path)
     except Exception as exc:
         # Value-free: a write failure is a path/permission problem, not a cell value.
         _emit_error(f"could not write {out_path}.")

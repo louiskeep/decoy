@@ -17,6 +17,7 @@ import os
 import time
 from datetime import datetime, timezone
 from enum import Enum
+from functools import partial
 from pathlib import Path
 
 import typer
@@ -26,7 +27,8 @@ from decoy import __version__ as _cli_version
 from decoy import _mask_secret, _mask_secret_guidance, _native_gate
 from decoy._atomic import fsync_directory
 from decoy.cli._duckdb_source import DuckDBSourceError, acquire_relation, parse_flag
-from decoy.cli._sources import iter_source_chunks, read_source
+from decoy.cli._sources import iter_source_chunks, parquet_schema, read_source
+from decoy.cli._sources import resolve_path as _resolve_path
 from decoy.cli._yaml_errors import sanitize_yaml_error
 from decoy.cli.exit_codes import EXIT_CAPACITY, EXIT_FINDINGS, EXIT_RUNTIME, EXIT_USAGE
 from decoy.cli.extras import (
@@ -36,6 +38,13 @@ from decoy.cli.extras import (
     check_cloud_endpoints_supported,
     translate_missing_extra,
     translate_ner_unavailable,
+)
+from decoy.cli.io._targets import (
+    TargetFormatError,
+    check_target_formats,
+    resolve_target_format,
+    write_chunked_output,
+    write_targets,
 )
 from decoy.ui.card import render_card
 from decoy.ui.output import OutputMode, emit_json, setup_output
@@ -333,8 +342,8 @@ def run(
             "text_redact, date_shift, bucketize), plus faker/categorical "
             "when deterministic with an explicit pool_size / categories "
             "declared in config; output is byte-identical to a plain run. "
-            "Sources are read by their declared format (csv or parquet; fixed_width is "
-            "not supported with --chunked); targets are written by file suffix. "
+            "Sources and targets use their declared format (csv or parquet; fixed_width "
+            "and CSV in a zip or tar archive are not supported with --chunked). "
             "See: decoy explain chunked."
         ),
     ),
@@ -1015,6 +1024,7 @@ def run(
                         ConfigError,
                         _ChunkedGenerateError,
                         _ChunkedFixedWidthError,
+                        TargetFormatError,
                         _ChunkedReportFlagError,
                         _ChunkedVaultError,
                         _VaultUsageError,
@@ -1481,11 +1491,12 @@ def _run_chunked_mask(
     because each chunk writes one row group.
 
     Formats: CSV and parquet, on either side independently. The source
-    reader follows the declared source `format`; the writer follows the
-    target path suffix. Parquet reads stream via ParquetFile.iter_batches; CSV reads keep
+    reader and the writer follow the declared `format` of the source and the
+    target. Parquet reads stream via ParquetFile.iter_batches; CSV reads keep
     the dtype=str contract of the plain path, so a csv -> parquet run
     produces an all-string schema."""
     _require_local_io_endpoints(config_dict)
+    check_target_formats(config_dict, chunked=True)
 
     from decoy_engine import __version__ as engine_version
     from decoy_engine import run_mask_pipeline_chunked
@@ -1513,13 +1524,19 @@ def _run_chunked_mask(
             engine_version=engine_version,
             key_provider=key_provider,
         )
-        _write_chunked_output(
-            masked_iter, out_path, src_path, src_is_parquet=src_spec.get("format") == "parquet"
+        write_chunked_output(
+            masked_iter,
+            resolve_target_format(name, tgt_spec),
+            out_path,
+            empty_schema=(
+                partial(parquet_schema, src_path) if src_spec.get("format") == "parquet" else None
+            ),
         )
 
 
 def _check_chunked_tables(config_dict: dict) -> None:
-    """The engine's config-only chunked check for every mask table (it repeats it per entry)."""
+    """The config-only chunked checks: target formats, then the engine's per mask table."""
+    check_target_formats(config_dict, chunked=True)
     from decoy_engine import get_default_registry
     from decoy_engine.execution import check_chunked_compatibility
 
@@ -1527,46 +1544,6 @@ def _check_chunked_tables(config_dict: dict) -> None:
     for entry in config_dict.get("tables") or []:
         if isinstance(entry, dict) and entry.get("columns"):
             check_chunked_compatibility(config_dict, table=entry["name"], registry=registry)
-
-
-def _write_chunked_output(
-    masked_iter, out_path: Path, src_path: Path, *, src_is_parquet: bool
-) -> None:
-    """Stream masked chunks to `out_path`, format picked by its suffix."""
-    if out_path.suffix.lower() == ".parquet":
-        import pyarrow.parquet as pq
-
-        writer = None
-        try:
-            for masked in masked_iter:
-                if writer is None:
-                    writer = pq.ParquetWriter(str(out_path), masked.schema)
-                writer.write_table(masked)
-            if writer is None and src_is_parquet:
-                # Empty parquet source: emit a valid zero-row file with the
-                # source schema, matching what a plain run writes. (An empty
-                # CSV source writes nothing, same as the CSV target path.)
-                schema = pq.ParquetFile(str(src_path)).schema_arrow
-                writer = pq.ParquetWriter(str(out_path), schema)
-        finally:
-            if writer is not None:
-                writer.close()
-        return
-    first = True
-    for masked in masked_iter:
-        masked.to_pandas().to_csv(out_path, index=False, header=first, mode="w" if first else "a")
-        first = False
-
-
-def _resolve_path(raw_path: str, base_dir: Path) -> Path:
-    """Resolve a YAML path against the config's directory.
-
-    Mirrors `decoy validate compile`'s source-loading behavior: relative paths
-    in the YAML resolve relative to the YAML file's directory, not the CWD.
-    Absolute paths pass through unchanged.
-    """
-    p = Path(raw_path)
-    return p if p.is_absolute() else (base_dir / p).resolve()
 
 
 def _require_local_io_endpoints(config_dict: dict) -> None:
@@ -1603,9 +1580,11 @@ def _load_sources_from_config(config_dict: dict, base_dir: Path) -> dict:
     Checks targets as well as sources (via `_require_local_io_endpoints`):
     this is the first I/O step on every non-chunked path, so an s3/gcs
     target is refused here, before the engine runs, not after the masking
-    work is done and `_write_mask_outputs` finds nowhere to put it.
+    work is done and `_write_mask_outputs` finds nowhere to put it. A target whose declared
+    format contradicts its suffix is refused here too, before the first read.
     """
     _require_local_io_endpoints(config_dict)
+    check_target_formats(config_dict, chunked=False)
 
     import pyarrow as pa
 
@@ -1691,47 +1670,21 @@ def _commit_vault(vault_writer, vault: Path) -> None:
 def _write_mask_outputs(config_dict: dict, result, base_dir: Path) -> None:
     """Write each declared target from the V2 ExecutionResult.
 
-    CLI.3 commit 2 (2026-06-02) fix: the V2 ExecutionResult exposes
-    masked tables on `outputs` (dict[table_name -> pa.Table]), not
-    `tables`. The V2 `targets:` block is a dict keyed by table name,
-    not a list of `{table, path}` entries. Pre-fix the CLI silently
-    skipped the writer (no errors, no output file), surfaced by the
-    demo + test_output_modes smoke runs.
-
-    The pandas adapter returns masked tables in-memory; the polars
-    adapter writes them via its own target-writer. CLI.1 bridges the
-    pandas path with this helper. Format inferred from the path
-    extension (csv or parquet).
+    The engine result exposes masked tables on `outputs` (dict[table_name -> pa.Table]);
+    the `targets:` block is a dict keyed by table name. Each file is written by its
+    declared `format` through `cli/io/_targets.py`, and a format that contradicts the path
+    suffix is refused before the first table is written.
 
     Refuses s3/gcs targets rather than skipping them, for a caller that
     writes without having gone through `_load_sources_from_config`.
     """
     _require_local_io_endpoints(config_dict)
+    check_target_formats(config_dict, chunked=False)
 
-    targets = config_dict.get("targets") or {}
-    if not isinstance(targets, dict):
-        return
     outputs = getattr(result, "outputs", None)
     if not isinstance(outputs, dict):
         return
-    for table_name, entry in targets.items():
-        if not isinstance(entry, dict):
-            continue
-        raw_path = entry.get("path")
-        if not isinstance(raw_path, str):
-            continue
-        table = outputs.get(table_name)
-        if table is None:
-            continue
-        path = _resolve_path(raw_path, base_dir)
-        path.parent.mkdir(parents=True, exist_ok=True)
-        suffix = path.suffix.lower()
-        if suffix == ".parquet":
-            import pyarrow.parquet as pq
-
-            pq.write_table(table, str(path))
-        else:
-            table.to_pandas().to_csv(path, index=False)
+    write_targets(config_dict, outputs, base_dir)
 
 
 def _dispatch_run_notifications(

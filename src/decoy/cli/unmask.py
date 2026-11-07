@@ -21,6 +21,7 @@ import yaml as _yaml
 from decoy import _mask_secret, _mask_secret_guidance
 from decoy.cli._yaml_errors import sanitize_yaml_error
 from decoy.cli.exit_codes import EXIT_RUNTIME, EXIT_USAGE
+from decoy.cli.io._targets import format_for_path, write_table
 from decoy.ui.output import OutputMode, emit_json, setup_output
 from decoy.ui.theme import code, error, hint, success, warn
 
@@ -245,7 +246,7 @@ def unmask(
         raise typer.Exit(code=EXIT_RUNTIME)
 
     out_path = output if output is not None else masked.with_suffix(".unmasked.csv")
-    result.outputs[target_table].to_pandas().to_csv(out_path, index=False)
+    write_table(result.outputs[target_table], format_for_path(out_path), out_path)
 
     entries = [
         {
