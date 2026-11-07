@@ -151,13 +151,13 @@ package it lands in. A gate that finds a plan missing either sends it back.
 
 ## 5. CLI V1 track
 
-### 5.1 Main tips (re-read from origin, 2026-11-05)
+### 5.1 Main tips (re-read from origin, 2026-11-07)
 
 | Repo | Tip | Recent merges | Pin and registry |
 |---|---|---|---|
-| decoy-engine | `41a86f47` (#383; highest merged PR #386) | #381 H-1 E5, #382 X7b, #383 golden suite repair (CI-E0), #384 and #385 X4d, #386 H-1 E3 | latest tag `v0.18.0` (`f5b46a2c`); `REGISTRY_VERSION` 1.5.0 |
-| decoy (CLI) | `8fba6af` (#82) | #80 F30 C1a, #81 and #82 CLI X0a | `decoy-engine==0.18.0` (#79) |
-| decoy-platform | `73a0bfca` (#196) | #178 to #196 (see section 6) | `decoy-engine==0.18.0` (#149) |
+| decoy-engine | `b4c6915d` (#395) | #387 docs pointer, #388 CI-E1, #389 SUB-STOP, #390 CI-X, #391 ledger re-point, #392 CLI-DIALECT Part E, #393 ENGINE-PAR P1, #394 CI-E1s, #395 merge gate on any `decoy-gate` runner | latest tag `v0.18.0` (`f5b46a2c`); `REGISTRY_VERSION` 1.6.0 on main |
+| decoy (CLI) | `be5ba11` (#94) | #85 L1b.1 atomic writer, #88 VALIDATE-ALWAYS P1, #93 CI-L1, #94 ledger re-point; #86, #87, #89 to #92 roadmap text | `decoy-engine==0.18.0` (#79) |
+| decoy-platform | `fbaee2a9` | parked (see section 6) | `decoy-engine==0.18.0` (#149) |
 
 ### 5.2 Sequencing rules
 
@@ -203,12 +203,12 @@ on origin unless marked local. Detail for each row is in [roadmap/row-detail.md]
 
 | # | Item | Repo | State | Branch, plan or handoff | After |
 |---|---|---|---|---|---|
-| 1 | CI-E1: engine CI installs from the lock (`uv sync --frozen`), stale bench kwargs, sphinx `-W` cross-refs, truthful `pip-audit`, two sentries | engine | Double gate passed (Codex GO, Dennis approve); full suite running on a GCP VM; merges when it shows no new failures. Owner: audit-guard gaps go to CI-E1s | `fix/ci-e1-frozen-installs` `f2b7b3da`; `p05-ci-e1-build-handoff.md` | CI-E0 (MERGED, engine #383) |
-| 2 | CI-E1s: lock security bump (26 known vulnerabilities in 8 packages) and DP certified-stack fingerprint re-pin | engine | NOT STARTED; also carries the two CI-E1 audit-guard gaps (`--dry-run`, export flags), owner 2026-11-06 | none | CI-E1 |
+| 1 | CI-E1: engine CI installs from the lock (`uv sync --frozen`), stale bench kwargs, sphinx `-W` cross-refs, truthful `pip-audit`, two sentries | engine | MERGED (engine #388, `2986fd5a`); its two audit-guard gaps closed in CI-E1s | done | CI-E0 (MERGED, engine #383) |
+| 2 | CI-E1s: lock security bump (26 known vulnerabilities in 8 packages) and DP certified-stack fingerprint re-pin | engine | MERGED (engine #394, `cf68a280`): eight locked packages past their advisories, one new 3.10.20 certified-stack row, and the audit step can no longer be hidden or narrowed | done | CI-E1 |
 | 3 | CI-E2: restore engine CI triggers, nightly `determinism`, `ci/required-jobs.toml`, `ci/unlaned.toml`, marker and trigger sentry, retire `engine-v2-substrate-matrix.yml` | engine | NOT STARTED | none | CI-E1, CI-E1s (until CI-E1s, CI-E2's gate exempts `security.yml`) |
-| 4 | ENGINE-PAR: engine parallel tests (pytest-xdist), engine full suite from about 66 minutes to roughly 15 to 20 on the 4-core VMs and the Mac; serial marks only for exclusive resources; same baseline-compare rules | engine | handoff to write | ports P:`feat/parallel-tests` (parked; origin `2804b2af`, local `28507dce`) | CI-E1 |
-| 5 | CI-L1: CLI CI (`ci.yml` installs `uv`, runs pytest; `ci/required-jobs.toml`, `ci/unlaned.toml`, sentry) | CLI | L1a final fix pass (past the 3-round cap): CLI side Dennis APPROVE, one Codex retry fix; hosted CI green; merges after CI-E1 and CI-X | `fix/ci-l1-cli-ci`; `p05-ci-l1-build-handoff.md` | none |
-| 5a | CI-X: the engine vendors the CLI's byte-identical shared CI shell parser (`tests/sentry/ci_scan/`) and its CI scanner parses through it; both repos check each other's copy | engine | final fix pass with CI-L1 (Codex and Dennis found two lost engine rules and a fan-out placement issue; fixes in progress) | `fix/ci-x-shared-shell-core` (stacked on CI-E1) | CI-E1 |
+| 4 | ENGINE-PAR: engine parallel tests (pytest-xdist), engine full suite from about 66 minutes to roughly 15 to 20 on the 4-core VMs and the Mac; serial marks only for exclusive resources; same baseline-compare rules | engine | P1 MERGED (engine #393, `79f229d0`): `gates.sh` stores main's failing test ids once (`--write-baseline`, `--baseline-file`), so a full merge test is one suite run. P2 (pytest-xdist workers) in review | P2 `feat/engine-par-p2-xdist` | CI-E1 |
+| 5 | CI-L1: CLI CI (`ci.yml` installs `uv`, runs pytest; `ci/required-jobs.toml`, `ci/unlaned.toml`, sentry) | CLI | MERGED (CLI #93, `d60d1fa`); both shared-file ledgers point at main commits (CLI #94, engine #391) | done | none |
+| 5a | CI-X: the engine vendors the CLI's byte-identical shared CI shell parser (`tests/sentry/ci_scan/`) and its CI scanner parses through it; both repos check each other's copy | engine | MERGED (engine #390, `d9e18fa6`) | done | CI-E1 |
 | 6 | WIN-RUNNER: Windows self-hosted runner on a GCP VM; spend approved by the owner; stopped when idle (`~/bin/vm-reap`) | infra | NOT STARTED; provision when CI-L1 or LIB L1b first needs a Windows lane | LIB plan section 5 OS lanes | none |
 | 7 | FILE-SIZE: file-size ratchet sentry for engine and CLI (new, section 4.2) | engine, CLI | Folded into LAYOUT (plan passed 2026-11-06): file-size and fan-out ratchets plus import-linter layer contracts; E1 and C1 (the maps) build after the CSV reader merges | engine `plan/layout`, CLI `plan/layout` | CLI X0a ratchet (MERGED, CLI #81, #82) |
 | 8 | REG-RENUMBER: `E:scripts/dev/registry_renumber.py` renumbers an unmerged slice's registry minor to `main + 1` at merge; `--check` for the merge gate | engine | Plan passed (Dennis, then Codex fixed it to green); builds right after SUB-STOP merges | `feat/reg-renumber-tool` (not built); `p05-reg-renumber-build-handoff.md` | none; first useful after SUB-STOP |
@@ -218,7 +218,7 @@ on origin unless marked local. Detail for each row is in [roadmap/row-detail.md]
 
 | # | Item | Repo | State | Branch, plan or handoff | After |
 |---|---|---|---|---|---|
-| 10 | SUB-STOP: every engine entry that runs a config refuses `subset:` before any read, `config.subset_run_unsupported`, registry 1.6.0 | engine | Double gate passed (Codex GO on the size fix); full suite running on a GCP VM; merges when it shows no new failures | `fix/sub-stop-refuse-unrun-subset`; `p05-sub-stop-build-handoff.md` | none |
+| 10 | SUB-STOP: every engine entry that runs a config refuses `subset:` before any read, `config.subset_run_unsupported`, registry 1.6.0 | engine | MERGED (engine #389, `adc212f3`), registry 1.6.0 | done | none |
 | 11 | Vault key floor and simpleeval floor (slice 0: 11.1, 12.3) | engine | Codex GO-WITH-FIXES; CLI consumer side met by CLI #78 | `fix/vault-key-floor` `b79e864b` | merge in R-c |
 | 12 | B-6 vault core | engine | Codex re-check GO (static trace) | `feat/b6-vault-core` `52df1da8` | row 11; merge in R-c |
 | 13 | Derived expression visibility (slice 0: 12.1 residue) | engine | Codex GO, 0 V1; no Dennis row | `fix/derived-visibility` `ac3da2a7` | Dennis, then merge |
@@ -232,11 +232,11 @@ on origin unless marked local. Detail for each row is in [roadmap/row-detail.md]
 
 | # | Item | Repo | State | Branch, plan or handoff | After |
 |---|---|---|---|---|---|
-| 19 | CLI-DIALECT: `decoy run` honours `has_header`, `column_names` and `delimiter` (live V1 bug); owned by CONFIG-EXPLICIT, lands ahead of it | CLI | Engine CSV reader (Part E): Dennis GO; owner 2026-11-06: merge, value-free error converter comes later (VALUE-FREE-ERRORS); full suite running on a GCP VM | `p05-cli-dialect-build-handoff.md` | none |
+| 19 | CLI-DIALECT: `decoy run` honours `has_header`, `column_names` and `delimiter` (live V1 bug); owned by CONFIG-EXPLICIT, lands ahead of it | CLI | Engine CSV reader (Part E) MERGED (engine #392, `b2ee6502`). Next: Part R, the engine `0.19.0` release prep and tag; then Part C, the CLI side, after the tag | `p05-cli-dialect-build-handoff.md` | none |
 | 20 | CLI-FMT Part A: write file targets by declared `format` through one `_targets.py`; fixed width through the engine's `write_fixed_width`; format and suffix mismatch, and `--chunked` with fixed width, refused with exit 1 Owner 2026-11-06: CLI-IO folds in here: one source-reader module and one target-writer module for every format (csv, parquet, fixed width, later cloud and database), whole and chunked, each with an allowlist sentry that fails on a direct `pd.read_*`, `pq.read_table`, `.to_csv` or `.to_parquet` outside them. | CLI | handoff written, plan gate | `fix/cli-fmt-write-declared-format` (not built); `p05-cli-fmt-build-handoff.md` | CLI-DIALECT |
 | 21 | CLI-FMT Part B: `detokenize`, `unmask` and `report diff` read CLI-written files by declared format; the evidence manifest records `format` and `layout` | CLI | handoff written, plan gate | `fix/cli-fmt-b-read-declared-format` (stacked on A); `p05-cli-fmt-b-build-handoff.md` | Part A; merges with A |
 | 22 | CONFIG-EXPLICIT: `has_header` required for CSV sources; headerless files declare `column_names` or a new `column_names_file` (exactly one); every source column listed in `columns:` (`passthrough` allowed), so an unlisted column always fails; `unconfigured_column_policy` retired or fixed to `error` | engine, CLI | Plan passed (owner answered Q1-Q4 with the recommended options, 2026-11-06); builds after CLI-DIALECT and the engine release that carries it | none yet | registry order; CLI half after the release that carries it |
-| 23 | VALIDATE-ALWAYS: `decoy run` runs every `decoy validate` check (config, compile, preflight) first and stops on an error | CLI | Plan passed 2026-11-06 (Dennis twice, then Codex fixed it to green; owner Q1-Q3 recommended: unique column is a validate warning, run uses validate's exit mapping, no skip flag). Part 1 building; Part 2 (`run.py` lane) after CLI-DIALECT | `plan/validate-always`; P1 `feat/validate-always-p1` | none |
+| 23 | VALIDATE-ALWAYS: `decoy run` runs every `decoy validate` check (config, compile, preflight) first and stops on an error | CLI | Part 1 MERGED (CLI #88, `4ab55d4`): the validate checks live in `C:src/decoy/cli/gate/`, a unique column is a validate warning. Part 2 (wires the gate into `decoy run`, the `run.py` lane) after CLI-DIALECT | `plan/validate-always` | none |
 | 24 | X7c: CLI private file writes (`_private_file.py`) | CLI | NOT STARTED; no branch | none | none |
 | 24a | VALUE-FREE-ERRORS: one config-error converter for every route; names (keys, tables, columns, file names, patterns) are shown, data values and secrets are hidden (owner Q1, 2026-11-06); exception-context ratchet | engine, CLI | Plan passed 2026-11-06 (Dennis twice, then Codex fixed it to green); V2 follow-ups FU-5 and FU-6 in the V2 corrective backlog | `E:plan/value-free-errors` | CLI-DIALECT, LAYOUT E1, row 14 |
 
@@ -414,11 +414,14 @@ F30 E1 (#369); F13 slices 0 to 2 (#339); STORM split and close-out (#329, #349);
 speedup (#327); D2 RSS sentry (#316); A-8 tokenize write seam (#322); estimator `estimate_job` (#328);
 B-9 DI1a (#326); B-6 stage 1 (#331); native-release workflow (#353, unexercised); worker bootstrap
 (#347); X0a (#378 to #380); X4d (#384, #385); X7b (#382); H-1 E5 (#381), E3 (#386); CI-E0 golden
-suite repair (#383).
+suite repair (#383); CI-E1 (#388); SUB-STOP (#389); CI-X shared shell-parsing core (#390, ledger
+#391); CLI-DIALECT Part E CSV reader (#392); ENGINE-PAR P1 stored failing-id baseline (#393);
+CI-E1s lock advisories (#394); merge gate on any `decoy-gate` runner, no docs path filter (#395).
 
 CLI: B-1 tokenize and local vault (#64); B-2 CLI-LAUNCH packaging (#66, #67); R1-a `resolve_substrate`
 fix (#71); worker bootstrap (#70); F43 (#69); SBOM generator (#75); repins to 0.17.0 and 0.18.0 (#76,
-#79); F13 4a/4b `--mask-secret` (#78); F30 C1a OTel exporter (#80); X0a ratchet (#81, #82); init
+#79); F13 4a/4b `--mask-secret` (#78); F30 C1a OTel exporter (#80); X0a ratchet (#81, #82); L1b.1 atomic
+writer (#85); VALIDATE-ALWAYS P1 (#88); CI-L1 (#93, ledger #94); init
 wizard spec (#73, post-V1).
 
 ---
