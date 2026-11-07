@@ -44,6 +44,7 @@ from typing import Any
 import typer
 
 from decoy import _mask_secret
+from decoy._atomic import AtomicWriteError, WriteMode, describe, write_local_target
 from decoy.cli._sources import read_file, read_report_source
 from decoy.cli._yaml_errors import sanitize_yaml_error
 from decoy.cli.evidence import _render_manifest_card, verify_manifest
@@ -77,6 +78,15 @@ report_app = typer.Typer(
 # Manifest loader (shared)
 # ---------------------------------------------------------------------------
 
+
+
+def _write_out(state: OutputState, path: Path, text: str) -> None:
+    """Write a report file atomically (owner-only); refuse with the rendered reason."""
+    try:
+        write_local_target(path, text.encode("utf-8"), WriteMode.REPLACE)
+    except AtomicWriteError as exc:
+        state.err_console.print(error("error:"), f"could not write {path}: {describe(exc)}")
+        raise typer.Exit(code=EXIT_USAGE)
 
 def _load_manifest(path: Path, state: OutputState, command: str) -> dict[str, Any]:
     """Load and parse a manifest file. Exit with EXIT_USAGE on any error."""
@@ -692,9 +702,9 @@ def _render(
         content = render_html(manifest)
 
     try:
-        out.write_text(content, encoding="utf-8")
-    except OSError as exc:
-        msg = f"could not write {out}: {exc}"
+        write_local_target(out, content.encode("utf-8"), WriteMode.REPLACE)
+    except AtomicWriteError as exc:
+        msg = f"could not write {out}: {describe(exc)}"
         if state.mode is OutputMode.json:
             emit_json(state, {"command": "report render", "status": "error", "error": msg})
         else:
@@ -1126,11 +1136,7 @@ def _show(
             content = render_markdown(manifest)
         else:
             content = render_html(manifest)
-        try:
-            out.write_text(content, encoding="utf-8")
-        except OSError as exc:
-            state.err_console.print(error("error:"), f"could not write {out}: {exc}")
-            raise typer.Exit(code=EXIT_USAGE)
+        _write_out(state, out, content)
         fmt_label = "Markdown" if fmt in ("markdown", "md") else "HTML"
         state.console.print(success("ok"), f"{fmt_label} report written to", code(str(out)))
         return
@@ -1816,10 +1822,7 @@ def _fidelity(
     policy_result = apply_quality_policy(report, policy_config, strategy_map=strategy_map)
 
     if report_out is not None:
-        report_out.write_text(
-            _json.dumps({**report, "policy": policy_result}, indent=2),
-            encoding="utf-8",
-        )
+        _write_out(state, report_out, _json.dumps({**report, "policy": policy_result}, indent=2))
 
     verdict = policy_result["verdict"]
     status = "ok" if verdict == "pass" else verdict
@@ -2029,11 +2032,7 @@ def _integrity(
                 # echo the offending source line. Re-raise a pre-sanitized message.
                 raise ValueError(sanitize_yaml_error(exc)) from None
             config_dict = PipelineConfig.model_validate(raw).model_dump()
-            # Pick the first declared table name. Mixed-mode configs
-            # can declare multiple; the CLI verb today handles a single
-            # source/masked pair, so we anchor on the first table the
-            # pipeline declared and warn if the user passed a source
-            # that points elsewhere.
+            # One source/masked pair: anchor on the first declared table.
             tables = config_dict.get("tables") or []
             table_name = tables[0]["name"] if tables else masked.stem
             declared_sources = config_dict.get("sources") or {}
@@ -2052,11 +2051,7 @@ def _integrity(
                     "as ground truth (suppress with --allow-source-mismatch).",
                 )
         else:
-            # No config: synthesize a minimal dict. The runner's
-            # residual_pii + policy_validation branches degrade
-            # gracefully when relationships + sources + tables are
-            # absent (verified against
-            # the decoy_engine.verification.postmask.runner docstring).
+            # No config: a minimal dict; the runner's branches degrade when it is bare.
             table_name = masked.stem
             config_dict = {
                 "version": 2,
@@ -2077,7 +2072,7 @@ def _integrity(
         )
 
         if out is not None:
-            out.write_text(_json.dumps(report, indent=2))
+            _write_out(state, out, _json.dumps(report, indent=2))
 
         # Decide exit code based on the report's severity counters.
         fail_count = int(report.get("fail_count") or 0)

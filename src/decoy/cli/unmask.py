@@ -19,6 +19,7 @@ import typer
 import yaml as _yaml
 
 from decoy import _mask_secret, _mask_secret_guidance
+from decoy._atomic import AtomicWriteError, describe
 from decoy.cli._sources import read_file
 from decoy.cli._yaml_errors import sanitize_yaml_error
 from decoy.cli.exit_codes import EXIT_RUNTIME, EXIT_USAGE
@@ -27,7 +28,7 @@ from decoy.cli.io import (
     check_output_path,
     format_for_path,
     input_format,
-    write_table,
+    write_private_table,
 )
 from decoy.ui.output import OutputMode, emit_json, setup_output
 from decoy.ui.theme import code, error, hint, success, warn
@@ -157,9 +158,7 @@ def unmask(
         _emit_error(sanitize_yaml_error(exc))
         raise typer.Exit(code=EXIT_USAGE)
     if not isinstance(raw, dict):
-        _emit_error(
-            f"Pipeline YAML must be a YAML mapping (object), not {type(raw).__name__}."
-        )
+        _emit_error(f"Pipeline YAML must be a YAML mapping (object), not {type(raw).__name__}.")
         raise typer.Exit(code=EXIT_USAGE)
     try:
         _mask_secret.apply_mask_secret(raw, mask_secret)
@@ -254,9 +253,7 @@ def unmask(
         _emit_error(f"{err_code}: {message}")
         raise typer.Exit(code=EXIT_USAGE)
     except (ExecutionError, ConfigError) as exc:
-        _emit_error(
-            f"{getattr(exc, 'code', type(exc).__name__)}: {getattr(exc, 'message', exc)}"
-        )
+        _emit_error(f"{getattr(exc, 'code', type(exc).__name__)}: {getattr(exc, 'message', exc)}")
         raise typer.Exit(code=EXIT_USAGE)
     except VaultError as exc:
         # A bad or mismatched vault is an input problem, not a CLI crash.
@@ -271,8 +268,7 @@ def unmask(
             )
         else:
             _emit_error(
-                f"{getattr(exc, 'code', type(exc).__name__)}: "
-                f"{getattr(exc, 'message', exc)}"
+                f"{getattr(exc, 'code', type(exc).__name__)}: {getattr(exc, 'message', exc)}"
             )
         raise typer.Exit(code=EXIT_USAGE)
     except Exception as exc:  # runtime failure, not a usage problem
@@ -281,7 +277,11 @@ def unmask(
         raise typer.Exit(code=EXIT_RUNTIME)
 
     out_path = output if output is not None else masked.with_suffix(".unmasked.csv")
-    write_table(result.outputs[target_table], format_for_path(out_path), out_path)
+    try:
+        write_private_table(result.outputs[target_table], format_for_path(out_path), out_path)
+    except AtomicWriteError as exc:
+        _emit_error(f"could not write the output: {describe(exc)}")
+        raise typer.Exit(code=EXIT_RUNTIME)
 
     entries = [
         {
@@ -354,9 +354,7 @@ def unmask(
     # Absent configured tables are their own clause so real columns and
     # missing tables are never conflated in one count.
     if table_missing:
-        summary = summary[:-1] + (
-            f", {len(table_missing)} configured table(s) not in this input."
-        )
+        summary = summary[:-1] + (f", {len(table_missing)} configured table(s) not in this input.")
     state.console.print(success("OK"), code(str(out_path)))
     state.console.print(summary)
     for e in entries:

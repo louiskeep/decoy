@@ -213,3 +213,12 @@ def test_every_declared_format_has_a_display_name() -> None:
     from decoy.cli import tokenize
 
     assert set(tokenize._FORMAT_NAMES) == set(_targets._FORMATS)
+
+
+def test_a_private_fixed_width_write_is_refused(tmp_path: Path) -> None:
+    import pyarrow as pa
+
+    out = tmp_path / "restored.txt"
+    with pytest.raises(_targets.TargetFormatError):
+        _targets.write_private_table(pa.table({"a": [1]}), "fixed_width", out, {"a": 4})
+    assert not out.exists()

@@ -12,6 +12,7 @@ from decoy.cli.io._targets import (
     input_format,
     resolve_target_format,
     target_format_issues,
+    write_private_table,
     write_table,
 )
 
@@ -23,5 +24,6 @@ __all__ = [
     "input_format",
     "resolve_target_format",
     "target_format_issues",
+    "write_private_table",
     "write_table",
 ]

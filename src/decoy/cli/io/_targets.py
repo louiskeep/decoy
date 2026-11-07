@@ -16,17 +16,21 @@ Source patterns: `cli/_sources.py` for the shape, and the platform's
 
 from __future__ import annotations
 
+import itertools
 import math
 import numbers
 import re
 from collections.abc import Callable, Iterable, Mapping
+from contextlib import AbstractContextManager
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 import pyarrow as pa
 
+from decoy._atomic import staged_local_target, staged_private_target
 from decoy.cli._sources import resolve_path
+from decoy.cli.io._compression import csv_compression, is_archive_csv, split_compression
 
 if TYPE_CHECKING:
     import pandas as pd
@@ -38,19 +42,7 @@ UNREADABLE = "target_format_unreadable"
 
 _FORMATS = ("csv", "parquet", "fixed_width")
 _SUFFIX_FORMAT = {".csv": "csv", ".parquet": "parquet", ".pq": "parquet"}
-# Longest suffix first, so `.tar.gz` is matched before `.gz`. Same set pandas infers.
-_COMPRESSION = (
-    (".tar.bz2", "tar"),
-    (".tar.gz", "tar"),
-    (".tar.xz", "tar"),
-    (".bz2", "bz2"),
-    (".tar", "tar"),
-    (".zip", "zip"),
-    (".zst", "zstd"),
-    (".gz", "gzip"),
-    (".xz", "xz"),
-)
-_ARCHIVES = ("zip", "tar")
+_EXHAUSTED = object()  # a yielded chunk is never mistaken for the end
 _INT64_MIN, _INT64_MAX = -(2**63), 2**63 - 1
 _CANONICAL_INT = re.compile(r"0|-?[1-9][0-9]*")
 _STREAMING_REFUSAL = (
@@ -76,15 +68,6 @@ class TargetFormatIssue:
     message: str
 
 
-def _split_compression(path: Path) -> tuple[str, str | None]:
-    """Return the file name without one recognised compression suffix, and its method."""
-    name = path.name.lower()
-    for suffix, method in _COMPRESSION:
-        if name.endswith(suffix):
-            return name[: -len(suffix)], method
-    return name, None
-
-
 def _uncompressed_only_message(label: str, fmt: str, path: Path) -> str | None:
     """Message for a Parquet or fixed-width file under a compression suffix, else None.
 
@@ -93,7 +76,7 @@ def _uncompressed_only_message(label: str, fmt: str, path: Path) -> str | None:
     if fmt == "csv":
         return None
     name = path.name.lower()
-    stem, method = _split_compression(path)
+    stem, method = split_compression(path)
     if method is None:
         return None
     return (
@@ -110,7 +93,7 @@ def check_output_path(path: Path) -> None:
 
 
 def _format_suffix(path: Path) -> str:
-    return Path(_split_compression(path)[0]).suffix
+    return Path(split_compression(path)[0]).suffix
 
 
 def claimed_format(path: Path) -> str | None:
@@ -121,10 +104,6 @@ def claimed_format(path: Path) -> str | None:
 def format_for_path(path: Path) -> str:
     """The format of a file with no declaration: parquet for `.parquet`/`.pq`, else csv."""
     return claimed_format(path) or "csv"
-
-
-def _is_archive_csv(fmt: str, path: Path) -> bool:
-    return fmt == "csv" and _split_compression(path)[1] in _ARCHIVES
 
 
 def _entry_issue(
@@ -149,7 +128,7 @@ def _entry_issue(
     message = _uncompressed_only_message(f"targets.{table}", fmt, path)
     if message is not None:
         return TargetFormatIssue(table, SUFFIX_MISMATCH, message)
-    if chunked and (fmt == "fixed_width" or _is_archive_csv(fmt, path)):
+    if chunked and (fmt == "fixed_width" or is_archive_csv(fmt, path)):
         return TargetFormatIssue(
             table,
             STREAMING_UNSUPPORTED,
@@ -358,37 +337,65 @@ def _write_fixed_width(table: pa.Table, layout: Mapping[str, Any] | None, path: 
     write_fixed_width(frame, dict(layout), path)
 
 
-def write_table(
+def _write_table(
     data: pa.Table | pd.DataFrame,
     fmt: str,
     path: Path,
-    layout: Mapping[str, Any] | None = None,
+    layout: Mapping[str, Any] | None,
+    stage: Callable[[Path], AbstractContextManager[Path]],
 ) -> None:
-    """Write one whole table. The only whole-table writer in the CLI."""
     import pandas as pd
     import pyarrow.parquet as pq
 
     message = _uncompressed_only_message("output", fmt, path)
     if message is not None:
         raise TargetFormatError(SUFFIX_MISMATCH, message)
-    if isinstance(data, pd.DataFrame):
-        if fmt == "csv":
-            data.to_csv(path, index=False)
-        elif fmt == "parquet":
-            data.to_parquet(path, index=False)
-        elif fmt == "fixed_width":
+    frame = isinstance(data, pd.DataFrame)
+    if fmt == "fixed_width":
+        if frame:
             raise TypeError("write_table: fixed_width needs a pyarrow Table")
-        else:
-            raise TargetFormatError(FORMAT_UNKNOWN, "unsupported target format")
-        return
-    if fmt == "csv":
-        data.to_pandas().to_csv(path, index=False)
-    elif fmt == "parquet":
-        pq.write_table(data, str(path))
-    elif fmt == "fixed_width":
         _write_fixed_width(data, layout, path)
-    else:
+        return
+    if fmt not in ("csv", "parquet"):
         raise TargetFormatError(FORMAT_UNKNOWN, "unsupported target format")
+    compression = csv_compression(path)
+    with stage(path) as tmp:
+        if fmt == "csv":
+            (data if frame else data.to_pandas()).to_csv(tmp, index=False, compression=compression)
+        elif frame:
+            data.to_parquet(tmp, index=False)
+        else:
+            pq.write_table(data, str(tmp))
+
+
+def write_table(
+    data: pa.Table | pd.DataFrame,
+    fmt: str,
+    path: Path,
+    layout: Mapping[str, Any] | None = None,
+) -> None:
+    """Write one whole table. The only whole-table writer in the CLI.
+
+    CSV and Parquet are staged beside `path` and published only when the write finishes, so a
+    failure keeps the old file. An existing file keeps its mode bits. Fixed width goes straight
+    to the engine writer, which stages and publishes by itself.
+    """
+    _write_table(data, fmt, path, layout, staged_local_target)
+
+
+def write_private_table(
+    data: pa.Table | pd.DataFrame,
+    fmt: str,
+    path: Path,
+    layout: Mapping[str, Any] | None = None,
+) -> None:
+    """`write_table` for restored original values (`unmask`, `detokenize`): owner-only (0600).
+
+    Fixed width is refused: the engine writer stages by itself and would not apply 0600.
+    """
+    if fmt == "fixed_width":
+        raise TargetFormatError(FORMAT_UNKNOWN, "a private output cannot be fixed_width")
+    _write_table(data, fmt, path, layout, staged_private_target)
 
 
 def write_targets(config_dict: dict, outputs: Mapping[str, pa.Table], base_dir: Path) -> None:
@@ -422,28 +429,39 @@ def write_chunked_output(
     *,
     empty_schema: Callable[[], pa.Schema] | None,
 ) -> None:
-    """Stream masked chunks to `out_path` in `fmt`. The only chunked writer in the CLI."""
+    """Stream masked chunks to `out_path` in `fmt`. The only chunked writer in the CLI.
+
+    The chunks go to a staged temp beside `out_path`, published only after the last one, so
+    a failure after chunk one keeps the old output. The first chunk is read before staging:
+    an empty source that writes nothing leaves the old output alone and makes no temp.
+    """
     import pyarrow.parquet as pq
 
-    if fmt not in ("csv", "parquet") or _is_archive_csv(fmt, out_path):
+    if fmt not in ("csv", "parquet") or is_archive_csv(fmt, out_path):
         raise TargetFormatError(STREAMING_UNSUPPORTED, _STREAMING_REFUSAL)
-    if fmt == "parquet":
-        writer = None
-        try:
-            for masked in masked_iter:
-                if writer is None:
-                    writer = pq.ParquetWriter(str(out_path), masked.schema)
-                writer.write_table(masked)
-            if writer is None and empty_schema is not None:
-                # Empty parquet source: emit a valid zero-row file with the source
-                # schema, matching what a plain run writes. (An empty CSV source writes
-                # nothing, same as the CSV target path.)
-                writer = pq.ParquetWriter(str(out_path), empty_schema())
-        finally:
-            if writer is not None:
-                writer.close()
-        return
-    first = True
-    for masked in masked_iter:
-        masked.to_pandas().to_csv(out_path, index=False, header=first, mode="w" if first else "a")
-        first = False
+    chunks = iter(masked_iter)
+    first = next(chunks, _EXHAUSTED)
+    schema = None
+    if first is _EXHAUSTED:
+        if fmt == "csv" or empty_schema is None:
+            return
+        # Empty parquet source: emit a valid zero-row file with the source schema, matching
+        # what a plain run writes. Read before staging so a schema error leaves no temp.
+        schema = empty_schema()
+    elif fmt == "parquet":
+        schema = cast("pa.Table", first).schema
+    with staged_local_target(out_path) as tmp:
+        if fmt == "parquet":
+            with pq.ParquetWriter(str(tmp), schema) as writer:
+                for masked in () if first is _EXHAUSTED else itertools.chain((first,), chunks):
+                    writer.write_table(masked)
+            return
+        compression = csv_compression(out_path)
+        for index, masked in enumerate(itertools.chain((first,), chunks)):
+            masked.to_pandas().to_csv(
+                tmp,
+                index=False,
+                header=index == 0,
+                mode="a" if index else "w",
+                compression=compression,
+            )
