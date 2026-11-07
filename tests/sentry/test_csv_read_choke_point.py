@@ -10,16 +10,18 @@ declared source. The baseline may shrink and never grow
 
 Named limits of a syntax walk: a call through a runtime-bound name (`getattr(pd, "read_csv")`),
 an alias by assignment (`rc = pd.read_csv; rc(p)`), and `from pandas import *`.
+
+The call scanner is shared with G-ONE-TARGET-WRITE (tests/sentry/io_policy/_calls.py).
 """
 
 from __future__ import annotations
 
-import ast
 import json
 from dataclasses import dataclass
 from pathlib import Path
 
 import pytest
+from tests.sentry.io_policy._calls import call_sites, tally
 
 ROOT = Path(__file__).resolve().parents[2]
 SRC = ROOT / "src" / "decoy"
@@ -98,58 +100,13 @@ def _owns(package: str, name: str) -> bool:
     return top == "decoy_engine" and name == "read_csv_source"
 
 
-def _imports(tree: ast.AST) -> tuple[set[str], dict[str, str]]:
-    """Return (names bound to a watched member, {local module name: full module name})."""
-    members: set[str] = set()
-    modules: dict[str, str] = {}
-    for node in ast.walk(tree):
-        if isinstance(node, ast.ImportFrom) and node.module:
-            for a in node.names:
-                if _owns(node.module, a.name):
-                    members.add(a.asname or a.name)
-        elif isinstance(node, ast.Import):
-            for a in node.names:
-                modules[a.asname or a.name.split(".")[0]] = a.name
-    return members, modules
-
-
 def read_sites(source: str) -> list[tuple[int, str]]:
     """Return (line, enclosing function or '<module>') for each watched call."""
-    tree = ast.parse(source)
-    members, modules = _imports(tree)
-    found: list[tuple[int, str]] = []
-
-    def visit(node: ast.AST, scope: str) -> None:
-        for child in ast.iter_child_nodes(node):
-            inner = (
-                child.name if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef)) else scope
-            )
-            if isinstance(child, ast.Call):
-                fn = child.func
-                if isinstance(fn, ast.Name) and fn.id in members:
-                    found.append((child.lineno, scope))
-                elif (
-                    isinstance(fn, ast.Attribute)
-                    and isinstance(fn.value, ast.Name)
-                    and fn.value.id in modules
-                    and _owns(modules[fn.value.id], fn.attr)
-                ):
-                    found.append((child.lineno, scope))
-            visit(child, inner)
-
-    visit(tree, "<module>")
-    return found
+    return call_sites(source, qualified_match=_owns)
 
 
 def _tally(root: Path) -> dict[tuple[str, str], int]:
-    counts: dict[tuple[str, str], int] = {}
-    for path in sorted(root.rglob("*.py")):
-        rel = path.relative_to(root).as_posix()
-        if rel == CHOKE_POINT:
-            continue
-        for _line, scope in read_sites(path.read_text(encoding="utf-8")):
-            counts[(rel, scope)] = counts.get((rel, scope), 0) + 1
-    return counts
+    return tally(root, skip=CHOKE_POINT, finder=read_sites)
 
 
 def _allowed() -> dict[tuple[str, str], int]:
