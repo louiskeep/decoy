@@ -83,6 +83,30 @@ def _split_compression(path: Path) -> tuple[str, str | None]:
     return name, None
 
 
+def _uncompressed_only_message(label: str, fmt: str, path: Path) -> str | None:
+    """Message for a Parquet or fixed-width file under a compression suffix, else None.
+
+    Those writers never compress, so a `.gz` name would hold an uncompressed file.
+    """
+    if fmt == "csv":
+        return None
+    name = path.name.lower()
+    stem, method = _split_compression(path)
+    if method is None:
+        return None
+    return (
+        f"{label}: declared format '{fmt}' cannot be written under the compression "
+        f"suffix '{name[len(stem):]}'; rename the file or change the format"
+    )
+
+
+def check_output_path(path: Path) -> None:
+    """Refuse a vault-reversal output (`-o`) whose suffix the writer cannot honour."""
+    message = _uncompressed_only_message("output", format_for_path(path), path)
+    if message is not None:
+        raise TargetFormatError(SUFFIX_MISMATCH, message)
+
+
 def _format_suffix(path: Path) -> str:
     return Path(_split_compression(path)[0]).suffix
 
@@ -120,6 +144,9 @@ def _entry_issue(
             f"targets.{table}: declared format '{fmt}' does not match the path suffix "
             f"'{_format_suffix(path)}'; rename the file or change the format",
         )
+    message = _uncompressed_only_message(f"targets.{table}", fmt, path)
+    if message is not None:
+        return TargetFormatIssue(table, SUFFIX_MISMATCH, message)
     if chunked and (fmt == "fixed_width" or _is_archive_csv(fmt, path)):
         return TargetFormatIssue(
             table,
@@ -280,6 +307,9 @@ def write_table(
     import pandas as pd
     import pyarrow.parquet as pq
 
+    message = _uncompressed_only_message("output", fmt, path)
+    if message is not None:
+        raise TargetFormatError(SUFFIX_MISMATCH, message)
     if isinstance(data, pd.DataFrame):
         if fmt == "csv":
             data.to_csv(path, index=False)

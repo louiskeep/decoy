@@ -21,7 +21,12 @@ import yaml as _yaml
 from decoy import _mask_secret, _mask_secret_guidance
 from decoy.cli._yaml_errors import sanitize_yaml_error
 from decoy.cli.exit_codes import EXIT_RUNTIME, EXIT_USAGE
-from decoy.cli.io._targets import format_for_path, write_table
+from decoy.cli.io._targets import (
+    TargetFormatError,
+    check_output_path,
+    format_for_path,
+    write_table,
+)
 from decoy.ui.output import OutputMode, emit_json, setup_output
 from decoy.ui.theme import code, error, hint, success, warn
 
@@ -159,6 +164,13 @@ def unmask(
     except _mask_secret.MaskSecretFlagError as exc:
         _emit_error(str(exc))
         raise typer.Exit(code=EXIT_USAGE)
+
+    if output is not None:
+        try:
+            check_output_path(output)
+        except TargetFormatError as exc:
+            _emit_error(f"{exc.code}: {exc}")
+            raise typer.Exit(code=EXIT_USAGE)
 
     mask_tables = [
         t.get("name")

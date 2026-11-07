@@ -31,7 +31,12 @@ from decoy import _mask_secret, _mask_secret_guidance
 from decoy.cli._token_vault import LocalTokenVault, TokenVaultError, iter_tokenize_columns
 from decoy.cli._yaml_errors import sanitize_yaml_error
 from decoy.cli.exit_codes import EXIT_RUNTIME, EXIT_USAGE
-from decoy.cli.io._targets import TargetFormatError, format_for_path, write_table
+from decoy.cli.io._targets import (
+    TargetFormatError,
+    check_output_path,
+    format_for_path,
+    write_table,
+)
 from decoy.ui.output import OutputMode, emit_json, setup_output
 from decoy.ui.progress import spinner
 from decoy.ui.theme import code, error, hint, success, warn
@@ -584,6 +589,11 @@ def detokenize(
         if output is not None
         else tokenized.with_suffix(".detokenized.parquet" if in_is_parquet else ".detokenized.csv")
     )
+    try:
+        check_output_path(out_path)
+    except TargetFormatError as exc:
+        _emit_error(f"{exc.code}: {exc}")
+        raise typer.Exit(code=EXIT_USAGE)
     # Only the DEFAULT name is guarded: it is derived, so two inputs differing
     # only in final extension (a.csv / a.tsv) or a re-run would silently clobber
     # recovered PII. An explicit --output is the operator's deliberate choice.

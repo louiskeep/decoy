@@ -102,7 +102,18 @@ def test_one_path_resolver() -> None:
 
 @pytest.mark.parametrize(
     ("value", "canonical"),
-    [("42", True), ("-7", True), ("0", True), ("42\n", False), ("007", False), ("-0", False)],
+    [
+        ("42", True),
+        ("-7", True),
+        ("0", True),
+        ("42\n", False),
+        ("007", False),
+        ("-0", False),
+        ("9223372036854775807", True),
+        ("-9223372036854775808", True),
+        ("9223372036854775808", False),
+        ("-9223372036854775809", False),
+    ],
 )
 def test_canonical_int_strings(value: str, canonical: bool) -> None:
     import pandas as pd

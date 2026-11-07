@@ -41,6 +41,7 @@ pytestmark = pytest.mark.usefixtures("mask_secret")
 runner = CliRunner()
 
 _PAR1 = b"PAR1"
+_DETOKENIZE_PARQUET_SHA256 = "af79fcce22552ef79447e2ef4ba35bb6fd3cba32bb4eef2f3e3bd3f524b1e980"
 _DEMO_MASKED_SHA256 = "d784565e2ae6bc228f266b8080ad49ab3fd80ee94269f7b7261f79e624723011"
 _CSV_HEADER = b"id,name,age"
 
@@ -389,10 +390,9 @@ def test_vault_reversal_outputs_follow_the_suffix(tmp_path: Path) -> None:
         assert runner.invoke(app, [*args, str(tok / name)]).exit_code == 0
     assert (tok / "out.pq").read_bytes().startswith(_PAR1)
     assert (tok / "out.csv").read_bytes().startswith(b"id,email")
-    # The pandas branch is unchanged: the same frame written with pandas gives the same bytes.
-    expect = tok / "expect.parquet"
-    pd.read_csv(tok / "out.csv", dtype=str).to_parquet(expect, index=False)
-    assert (tok / "out.parquet").read_bytes() == expect.read_bytes()
+    # The pandas branch is unchanged: bytes recorded on the base tree (05bf840).
+    got = hashlib.sha256((tok / "out.parquet").read_bytes()).hexdigest()
+    assert got == _DETOKENIZE_PARQUET_SHA256
 
 
 # ---------------------------------------------------------------------------
@@ -487,6 +487,68 @@ def test_csv_source_to_fixed_width_int(tmp_path: Path) -> None:
         result = runner.invoke(app, ["run", str(config)])
         assert result.exit_code == EXIT_RUNTIME, (bad, result.output)
         assert not out.exists()
-        # A cell value or row key never reaches the error text.
-        assert _ROW_ID not in result.output
-        assert "9223372036854775808" not in result.output
+        # A cell value or row key never reaches the error text. The temp path is cut out
+        # first, so a short value such as "-0" cannot match a directory name.
+        shown = result.output.replace(str(tmp_path), "")
+        assert _ROW_ID not in shown
+        assert bad not in shown
+
+
+# ---------------------------------------------------------------------------
+# Compression suffixes: only CSV can be compressed by its writer
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("declared", "name"),
+    [
+        ("parquet", "out.parquet.gz"),
+        ("parquet", "out.gz"),
+        ("fixed_width", "out.txt.gz"),
+        ("fixed_width", "out.zip"),
+    ],
+)
+def test_uncompressed_formats_refuse_a_compression_suffix(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, declared: str, name: str
+) -> None:
+    layout, _expected = _fixture(tmp_path)
+    out = tmp_path / name
+    config = _write_config(
+        tmp_path, _target(declared, out, layout if declared == "fixed_width" else None)
+    )
+    _refuse_reads(monkeypatch)
+    result = runner.invoke(app, ["run", str(config)])
+    assert result.exit_code == EXIT_USAGE, result.output
+    assert not out.exists()
+    flat = " ".join(result.output.split())
+    assert "compression" in flat
+    assert str(tmp_path) not in result.output
+
+
+def test_vault_reversal_outputs_refuse_a_compression_suffix(tmp_path: Path) -> None:
+    unmask_dir = tmp_path / "unmask"
+    unmask_dir.mkdir()
+    cfg = _run_mask(unmask_dir)
+    out = unmask_dir / "rec.parquet.gz"
+    result = runner.invoke(
+        app, ["unmask", str(cfg), str(unmask_dir / "masked.csv"), "-o", str(out)]
+    )
+    assert result.exit_code == EXIT_USAGE, result.output
+    assert not out.exists()
+
+    tok = tmp_path / "tok"
+    tok.mkdir()
+    tcfg = _tokenize_pipeline(tok, _TOKENIZE_COLS)
+    vault = tok / "tokens.db"
+    assert runner.invoke(app, ["tokenize", str(tcfg), "--vault", str(vault)]).exit_code == 0
+    out = tok / "out.parquet.gz"
+    args = ["detokenize", str(tcfg), str(tok / "tokenized.csv"), "--vault", str(vault)]
+    result = runner.invoke(app, [*args, "-o", str(out)])
+    assert result.exit_code == EXIT_USAGE, result.output
+    assert not out.exists()
+    assert "compression" in " ".join(result.output.split())
+    assert str(tok) not in result.output
+    # A CSV output stays compressible.
+    ok = tok / "out.csv.gz"
+    assert runner.invoke(app, [*args, "-o", str(ok)]).exit_code == 0
+    assert ok.read_bytes()[:2] == b"\x1f\x8b"
