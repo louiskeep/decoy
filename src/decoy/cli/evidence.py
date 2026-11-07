@@ -71,7 +71,7 @@ from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
-from decoy.cli.io._targets import TargetFormatError, resolve_target_format
+from decoy.cli.io import TargetFormatError, resolve_target_format
 from decoy.ui.theme import warn
 
 _SCHEMA_VERSION = "cli-local-1"

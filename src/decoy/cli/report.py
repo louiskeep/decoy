@@ -48,7 +48,7 @@ from decoy.cli._sources import read_file, read_report_source
 from decoy.cli._yaml_errors import sanitize_yaml_error
 from decoy.cli.evidence import _render_manifest_card, verify_manifest
 from decoy.cli.exit_codes import EXIT_FINDINGS, EXIT_RUNTIME, EXIT_USAGE
-from decoy.cli.io._targets import entry_format
+from decoy.cli.io import entry_format
 from decoy.ui.output import OutputMode, OutputState, emit_json, setup_output
 from decoy.ui.theme import accent, code, error, hint, info, risk_high, success, warn
 

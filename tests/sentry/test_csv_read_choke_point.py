@@ -146,7 +146,7 @@ def test_baseline_json_records_the_same_entries_and_reasons() -> None:
 
 def test_the_choke_point_reads_through_the_engine() -> None:
     source = (SRC / CHOKE_POINT).read_text(encoding="utf-8")
-    sites = call_sites(source, qualified_match=_owns_csv)
+    sites = call_sites(source, qualified_match=_owns_csv, qualified_scopes=False)
     assert [scope for _l, scope in sites] == ["read_csv_frame"]
 
 
