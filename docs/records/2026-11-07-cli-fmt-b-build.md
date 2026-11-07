@@ -79,6 +79,8 @@ Mutations on the new code ran on head `9b6a407`. Gates on `9b6a407` (VM slot 6, 
 
 Codex NO-GO on one V1: a fixed-width manifest entry whose `layout` is any truthy non-mapping (`true`, `5`, `"x"`, `[1]`) raised `TypeError` out of `report diff`. Fixed at the source in `_unreadable` (non-empty `Mapping` required). Tests now cover `5`, `true`, `"x"`, `[1]` and `{}` through the soft path and `--require-data` (`test_unreadable_entries_are_value_free`) and `entry_format` (unit). Mutation N3 (`not layout` again) turns both red. Raw exceptions kept in traceback chains in detokenize and unmask (`raise ... from exc`) stay as they were: V2-LOG.
 
+Gates on the code head after this fix (VM slot 6, `gates.sh --keep-going --baseline`): ruff pass, sentry 532 passed, tests 775 passed (1 skipped), failing ids branch 0 baseline 0 branch-only 0. The commit after that head only adds this line.
+
 ## Files vs allowed list
 
 All changed files are in the handoff list. Added beyond the list: none.
