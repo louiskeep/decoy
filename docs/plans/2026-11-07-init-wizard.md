@@ -48,7 +48,7 @@ gains `provider_config.ner` and `text_redact`/`text_mask` declare `ner_model` an
 dismissal's `strategy` may be null; an NER finding marked `promoted: true` may be rejected.
 
 Revision 5 (2026-11-07): owner answers folded in (`OWNER-ANSWERS-IW-SCANML-2026-11-07.md`): Q2 is
-decided (a reject persists as `post_scan.dismissed`); Q1 and Q3 stay recommended until answered.
+decided (a reject persists as `post_scan.dismissed`); Q1 and Q3 were then decided as recommended.
 From the E0 build: AT-E0b's `config.entry_invalid` refusals move to AT-E3, because `column_entry`
 (E1) is the code that raises them; the two catalog types live in `execution/_adapter.py`, which
 every handler already imports, since handlers need `StrategyOption` at class definition.
@@ -258,7 +258,7 @@ decoy init --preset NAME                                                template
 New flags: `--answers FILE`, `--save-answers FILE`, `--no-input`, `--fail-on-warning` (as in
 `decoy validate`, feeds `gate_exit_code`), `--review-findings PIPELINE`, `--report FILE`. Kept:
 `-o/--output`, `--preset`, `-y/--yes`, `--json`, `-q`, `-v`, and the header flags SCAN-MULTI S3a.1
-adds. `--json` and `-q` imply `--no-input`. Section mode spelling is owner question Q1 (section 9);
+adds. `--json` and `-q` imply `--no-input`. Section mode spelling is owner question Q1 (section 9, decided as recommended);
 `--review-findings` is the recommended form and the only edit entry in V1.
 
 Bare `decoy init` in a terminal asks first: "Start from data files, or from a template?" The template
@@ -632,7 +632,7 @@ Rules:
   is never lowered by a dismissal and cannot be rejected in the review. One exception: an NER
   finding the report marks `promoted: true` is a `warning` that `post_scan.ner_findings: fail`
   raised to `fail` (SCAN-ML 4.5). It can be rejected, because SCAN-ML matches dismissals against
-  the warn-mode severity before that promotion (SCAN-ML owner question Q6).
+  the warn-mode severity before that promotion (SCAN-ML owner question Q6, decided as recommended).
 - A dismissal stops applying when the column's configured strategy changes, or the detector's model
   version changes; the finding is then reported again at its own severity, and the stale dismissal is
   counted in the run log.
@@ -842,17 +842,17 @@ The plan contract section 4 asks for these; each is an acceptance test above.
 
 ## 9. Owner questions (each answerable alone; recommended answer first)
 
-- **Q1. How is the post-scan review spelled?** Pending owner answer. Recommended: `decoy init --review-findings
-  pipeline.yaml`. Alternatives: `decoy review pipeline.yaml` (a new verb) or `decoy init findings
-  pipeline.yaml` (the draft spec's section mode). Builders proceed with the recommended form; a rename
-  is one Typer option.
+- **Q1. How is the post-scan review spelled?** Owner decided 2026-11-07: recommended, `decoy init
+  --review-findings pipeline.yaml`. Alternatives were `decoy review pipeline.yaml` (a new verb) and
+  `decoy init findings pipeline.yaml` (the draft spec's section mode). The owner noted the review may
+  fit better outside the `init` family; revisit the spelling before release (one Typer option).
 - **Q2. Does rejecting a post-scan finding persist?** Owner decided 2026-11-07: yes, as a `post_scan.dismissed`
   entry in the pipeline YAML, so the next run reports it as `info` instead of warning again. The
   entry names the table, column, detector, source, model and the column's strategy; it never lowers a
   failed mask check and stops applying when the strategy or the model version changes (4.6). Without
   it, rejecting a finding changes nothing.
-- **Q3. Is `unlisted: confirm` allowed in an answers file?** Pending owner answer. Recommended: yes; it is the explicit CI
-  way to accept every suggestion and is visible in a file the user wrote.
+- **Q3. Is `unlisted: confirm` allowed in an answers file?** Owner decided 2026-11-07: recommended,
+  yes; it is the explicit CI way to accept every suggestion and is visible in a file the user wrote.
 
 ## 10. Reuse inventory
 
