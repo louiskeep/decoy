@@ -22,7 +22,7 @@ from decoy import _mask_secret, _mask_secret_guidance
 from decoy.cli._sources import read_file
 from decoy.cli._yaml_errors import sanitize_yaml_error
 from decoy.cli.exit_codes import EXIT_RUNTIME, EXIT_USAGE
-from decoy.cli.io._targets import (
+from decoy.cli.io import (
     TargetFormatError,
     check_output_path,
     format_for_path,
@@ -208,7 +208,7 @@ def unmask(
     try:
         in_format, in_layout = input_format(raw, target_table, masked, config.parent)
     except TargetFormatError as exc:
-        _emit_error(str(exc))
+        _emit_error(f"{exc.code}: {exc}")
         raise typer.Exit(code=EXIT_USAGE)
 
     try:
@@ -216,6 +216,21 @@ def unmask(
     except Exception as exc:
         # The type only: a parse error can quote a cell, and the path is not ours to print.
         _emit_error(f"could not read the masked file: {type(exc).__name__}")
+        raise typer.Exit(code=EXIT_USAGE)
+
+    declared = [
+        c.get("name")
+        for t in raw.get("tables") or []
+        if isinstance(t, dict) and t.get("name") == target_table
+        for c in t.get("columns") or []
+        if isinstance(c, dict)
+    ]
+    if declared and not any(name in df.columns for name in declared):
+        _emit_error(
+            "unmask_columns_missing: the input holds none of the configured columns for "
+            "this table; check that the file and --table match the run and that the file "
+            "is in the format the target declares."
+        )
         raise typer.Exit(code=EXIT_USAGE)
 
     try:

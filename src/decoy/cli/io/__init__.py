@@ -6,9 +6,22 @@ The pre-run gate imports `target_format_issues` from here, not from the private 
 
 from decoy.cli.io._targets import (
     TargetFormatError,
+    check_output_path,
     entry_format,
+    format_for_path,
+    input_format,
     resolve_target_format,
     target_format_issues,
+    write_table,
 )
 
-__all__ = ["TargetFormatError", "entry_format", "resolve_target_format", "target_format_issues"]
+__all__ = [
+    "TargetFormatError",
+    "check_output_path",
+    "entry_format",
+    "format_for_path",
+    "input_format",
+    "resolve_target_format",
+    "target_format_issues",
+    "write_table",
+]

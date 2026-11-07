@@ -467,6 +467,8 @@ def test_unreadable_entries_are_value_free(tmp_path: Path) -> None:
             "format": "fixed_width",
             "layout": refused_layout,
         },
+        "layout_not_a_mapping": {"format": "fixed_width", "layout": 5},
+        "layout_without_columns": {"format": "fixed_width", "layout": {"columns": 5}},
         "unknown_format": {"format": "xml"},
         "fixed_width_no_layout": {"format": "fixed_width"},
         "undecodable_csv": {"path": str(bad), "format": "csv"},
@@ -510,3 +512,41 @@ def test_init_and_scan_parquet_unchanged(tmp_path: Path) -> None:
         hashlib.sha256(t.replace(str(tmp_path), "<TMP>").encode()).hexdigest() for t in texts
     ]
     assert digests == [_INIT_YAML_SHA256, _SCAN_JSON_SHA256]
+
+
+@needs_vault
+def test_unmask_of_a_file_in_the_wrong_format_fails_closed(tmp_path: Path) -> None:
+    layout = _vault_layout(tmp_path)
+    cfg, vault = _masked_vault_run(tmp_path, _target("fixed_width", tmp_path / "m.txt", layout))
+    shutil.copy(tmp_path / "m.txt", tmp_path / "copy.dat")  # not the target: read as CSV
+    result = _unmask(cfg, tmp_path / "copy.dat", vault, tmp_path / "rec.csv")
+    assert result.exit_code == EXIT_USAGE, result.output
+    assert "unmask_columns_missing" in result.output
+    assert not (tmp_path / "rec.csv").exists()
+    assert "REDACTED" not in result.output
+
+
+@needs_vault
+def test_unreadable_declaration_prints_its_code(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    masked = tmp_path / "m.dat"
+    masked.write_text("id,email,name\nr0,a,b\n", encoding="utf-8")
+    cfg = _vault_config(tmp_path, {"format": "xml", "path": str(masked)})
+    result = runner.invoke(app, ["unmask", str(cfg), str(masked)])
+    assert result.exit_code == EXIT_USAGE, result.output
+    assert "target_format_unreadable" in result.output
+
+    import decoy.cli.tokenize as tokenize_module
+    from decoy.cli.io import TargetFormatError
+
+    def refuse(*_a: object, **_k: object) -> None:
+        raise TargetFormatError(
+            "target_format_unreadable", "the file's format cannot be determined"
+        )
+
+    tcfg, vault = _tokenize(tmp_path / "tok", "tok.csv", "csv")
+    monkeypatch.setattr(tokenize_module, "input_format", refuse)
+    result = _detok(tcfg, tmp_path / "tok" / "tok.csv", vault)
+    assert result.exit_code == EXIT_USAGE, result.output
+    assert "target_format_unreadable" in result.output

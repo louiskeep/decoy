@@ -213,7 +213,9 @@ def _legacy_format_for_path(path: Path) -> str:
 
 
 def _unreadable(fmt: object, layout: object) -> TargetFormatError | None:
-    if not isinstance(fmt, str) or fmt not in _FORMATS or (fmt == "fixed_width" and not layout):
+    if not isinstance(fmt, str) or fmt not in _FORMATS:
+        return TargetFormatError(UNREADABLE, "the file's format cannot be determined")
+    if fmt == "fixed_width" and (not isinstance(layout, Mapping) or not layout):
         return TargetFormatError(UNREADABLE, "the file's format cannot be determined")
     return None
 

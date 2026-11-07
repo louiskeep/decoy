@@ -6,7 +6,9 @@ spelling (`pd.read_csv`, `from pandas import read_csv`, an `import ... as` alias
 
 - any module: `read_csv`, `read_parquet`;
 - pandas: every `read_*` (`read_table`, `read_fwf`, `read_json`, `read_excel`, ...);
-- `pyarrow.parquet`: `read_table`, `read_pandas`, `ParquetFile`, `ParquetDataset`,
+- polars: every `read_*` and `scan_*`;
+- `pyarrow.dataset`: `dataset`, `parquet_dataset`;
+- `pyarrow.parquet` (and its `core` submodule): `read_table`, `read_pandas`, `ParquetFile`, `ParquetDataset`,
   `read_schema`, `read_metadata`;
 - `decoy_engine`: `read_csv_source` and `read_fixed_width`.
 
@@ -82,6 +84,7 @@ _PYARROW_PARQUET = {
     "read_schema",
     "read_metadata",
 }
+_PYARROW_DATASET = {"dataset", "parquet_dataset"}
 _ENGINE = {"read_csv_source", "read_fixed_width"}
 
 
@@ -92,8 +95,12 @@ def _owns(package: str, name: str) -> bool:
     top = package.split(".")[0]
     if top == "pandas":
         return name.startswith("read_")
-    if package == "pyarrow.parquet":
+    if top == "polars":
+        return name.startswith(("read_", "scan_"))
+    if package.startswith("pyarrow.parquet"):
         return name in _PYARROW_PARQUET
+    if package == "pyarrow.dataset":
+        return name in _PYARROW_DATASET
     return top == "decoy_engine" and name in _ENGINE
 
 
@@ -165,6 +172,9 @@ def test_the_choke_point_reads_through_the_engine() -> None:
         "import decoy_engine as de\ndef f(p, d):\n    return de.read_csv_source(p, d, table='t')\n",
         "import pandas as pd\ndef f(p):\n    return pd.read_parquet(p)\n",
         "import polars as pl\ndef f(p):\n    return pl.read_parquet(p)\n",
+        "import polars as pl\ndef f(p):\n    return pl.scan_csv(p)\n",
+        "import pyarrow.dataset as ds\ndef f(p):\n    return ds.dataset(p)\n",
+        "import pyarrow.parquet.core as core\ndef f(p):\n    return core.read_table(p)\n",
         "import pandas\ndef f(p):\n    return pandas.read_json(p)\n",
         "import pyarrow.parquet as pq\ndef f(p):\n    return pq.read_table(p)\n",
         "import pyarrow.parquet\ndef f(p):\n    return pyarrow.parquet.read_table(p)\n",

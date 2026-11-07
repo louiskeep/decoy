@@ -195,6 +195,8 @@ def test_entry_format(entry: dict, expected: tuple) -> None:
         {"path": "o.csv", "format": "xml"},
         {"path": "o.csv", "format": None},
         {"path": "o.txt", "format": "fixed_width"},
+        {"path": "o.txt", "format": "fixed_width", "layout": 5},
+        {"path": "o.txt", "format": "fixed_width", "layout": {}},
     ],
 )
 def test_entry_format_refuses_what_it_cannot_read(entry: dict) -> None:
@@ -202,3 +204,9 @@ def test_entry_format_refuses_what_it_cannot_read(entry: dict) -> None:
         entry_format(entry)
     assert err.value.code == UNREADABLE
     assert "xml" not in str(err.value) and "o.csv" not in str(err.value)
+
+
+def test_every_declared_format_has_a_display_name() -> None:
+    from decoy.cli import tokenize
+
+    assert set(tokenize._FORMAT_NAMES) == set(_targets._FORMATS)

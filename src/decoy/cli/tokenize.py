@@ -32,7 +32,7 @@ from decoy.cli._sources import read_file
 from decoy.cli._token_vault import LocalTokenVault, TokenVaultError, iter_tokenize_columns
 from decoy.cli._yaml_errors import sanitize_yaml_error
 from decoy.cli.exit_codes import EXIT_RUNTIME, EXIT_USAGE
-from decoy.cli.io._targets import (
+from decoy.cli.io import (
     TargetFormatError,
     check_output_path,
     format_for_path,
@@ -592,7 +592,7 @@ def detokenize(
     try:
         in_format, in_layout = input_format(config_dict, target_table, tokenized, config.parent)
     except TargetFormatError as exc:
-        _emit_error(str(exc))
+        _emit_error(f"{exc.code}: {exc}")
         raise typer.Exit(code=EXIT_USAGE)
     out_path = (
         output
