@@ -79,18 +79,18 @@ def test_whole_table_write_honours_the_compression_the_name_implies(
 
     target = tmp_path / f"out.csv{suffix}"
     data = pa.Table.from_pandas(_FRAME) if as_arrow else _FRAME
-    write_table(data, "csv", target, private=False)
+    write_table(data, "csv", target)
     assert _decoded(target) == _CSV
     assert [p.name for p in tmp_path.iterdir()] == [target.name]
 
 
 def test_a_compressed_tar_is_really_compressed(tmp_path: Path) -> None:
     target = tmp_path / "out.csv.tar.gz"
-    write_table(_FRAME, "csv", target, private=False)
+    write_table(_FRAME, "csv", target)
     assert target.read_bytes()[:2] == b"\x1f\x8b"
 
 
 def test_plain_csv_stays_plain(tmp_path: Path) -> None:
     target = tmp_path / "out.csv"
-    write_table(_FRAME, "csv", target, private=False)
+    write_table(_FRAME, "csv", target)
     assert target.read_bytes() == _CSV

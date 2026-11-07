@@ -38,7 +38,7 @@ from decoy.cli.io import (
     check_output_path,
     format_for_path,
     input_format,
-    write_table,
+    write_private_table,
 )
 from decoy.ui.output import OutputMode, emit_json, setup_output
 from decoy.ui.progress import spinner
@@ -101,8 +101,9 @@ value it cannot vouch for. So does a file missing any tokenize column the
 config declares for the table, and an already-existing default output
 (<tokenized>.detokenized.<ext>); pass -o to choose a path deliberately.
 
-The recovered file is cleartext PII. It is written owner-only (0600), like the
-vault; protect any copy you make.
+The recovered file is cleartext PII. On Linux and macOS it is written
+owner-only (0600), like the vault; on Windows it inherits its folder's permissions. Protect
+any copy you make.
 
 See also: decoy tokenize, decoy explain tokenize.
 """
@@ -720,7 +721,7 @@ def detokenize(
         # Output format follows the output path's extension: the default matches
         # the input (Parquet in -> Parquet out), and an explicit -o picks by its
         # own suffix.
-        write_table(df, format_for_path(out_path), out_path, private=True)
+        write_private_table(df, format_for_path(out_path), out_path)
     except AtomicWriteError as exc:
         _emit_error(f"could not write the output: {describe(exc)}")
         raise typer.Exit(code=EXIT_RUNTIME) from exc

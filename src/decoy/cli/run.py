@@ -1530,7 +1530,6 @@ def _run_chunked_mask(
             empty_schema=(
                 partial(parquet_schema, src_path) if src_spec.get("format") == "parquet" else None
             ),
-            private=False,
         )
 
 

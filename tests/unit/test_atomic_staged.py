@@ -20,6 +20,7 @@ from decoy._atomic import (
     WriteMode,
     describe,
     staged_local_target,
+    staged_private_target,
     write_local_target,
 )
 
@@ -34,8 +35,12 @@ def _mode(p: Path) -> int:
     return stat.S_IMODE(p.stat().st_mode)
 
 
+def _stager(private: bool):  # type: ignore[no-untyped-def]
+    return staged_private_target if private else staged_local_target
+
+
 def _stage(path: Path, data: bytes = b"new", *, private: bool = False) -> None:
-    with staged_local_target(path, private=private) as tmp:
+    with _stager(private)(path) as tmp:
         tmp.write_bytes(data)
 
 
@@ -48,7 +53,7 @@ def test_clean_exit_publishes_and_leaves_no_temp(tmp_path: Path) -> None:
 
 def test_the_temp_is_a_recognisable_hidden_sibling(tmp_path: Path) -> None:
     target = tmp_path / "out.csv"
-    with staged_local_target(target, private=False) as tmp:
+    with staged_local_target(target) as tmp:
         assert tmp.parent == tmp_path
         assert tmp.name.startswith(".out.csv.decoy-") and tmp.name.endswith(".tmp")
         assert not target.exists()
@@ -64,7 +69,7 @@ def test_a_failing_block_keeps_the_prior_state(
         target.write_bytes(prior)
     before = _names(tmp_path)
     with pytest.raises(type(raised)) as caught:
-        with staged_local_target(target, private=False) as tmp:
+        with staged_local_target(target) as tmp:
             tmp.write_bytes(b"partial")
             raise raised
     assert caught.value is raised
@@ -75,7 +80,7 @@ def test_a_failing_block_keeps_the_prior_state(
 def test_long_names_are_cut_by_characters_to_fit(tmp_path: Path) -> None:
     name = "é" * 120 + ".csv"  # 244 bytes; the temp name adds 28 more
     target = tmp_path / name
-    with staged_local_target(target, private=False) as tmp:
+    with staged_local_target(target) as tmp:
         assert len(os.fsencode(tmp.name)) <= 255
         tmp.write_bytes(b"x")
     assert target.read_bytes() == b"x"
@@ -187,9 +192,9 @@ def test_stat_failure_other_than_missing_is_an_atomic_error(
 _CHILD = (
     "import os, sys\n"
     "from pathlib import Path\n"
-    "from decoy._atomic import staged_local_target\n"
+    "from decoy._atomic import staged_local_target, staged_private_target\n"
     "os.umask(int(sys.argv[1], 8))\n"
-    "with staged_local_target(Path(sys.argv[2]), private=sys.argv[3] == '1') as tmp:\n"
+    "with (staged_private_target if sys.argv[3] == '1' else staged_local_target)(Path(sys.argv[2])) as tmp:\n"
     "    tmp.write_bytes(b'new')\n"
 )
 
@@ -239,9 +244,9 @@ def test_private_output_is_0600_even_over_a_wider_old_file(tmp_path: Path) -> No
 _PROBE = (
     "import os, stat, sys\n"
     "from pathlib import Path\n"
-    "from decoy._atomic import staged_local_target\n"
+    "from decoy._atomic import staged_local_target, staged_private_target\n"
     "os.umask(int(sys.argv[1], 8))\n"
-    "with staged_local_target(Path(sys.argv[2]), private=sys.argv[3] == '1') as tmp:\n"
+    "with (staged_private_target if sys.argv[3] == '1' else staged_local_target)(Path(sys.argv[2])) as tmp:\n"
     "    print(oct(stat.S_IMODE(os.stat(tmp).st_mode)))\n"
     "    tmp.write_bytes(b'x')\n"
 )
@@ -301,7 +306,7 @@ def test_a_fifo_and_a_link_to_it_are_written_through(tmp_path: Path) -> None:
         got.clear()
         reader = threading.Thread(target=drain, daemon=True)
         reader.start()
-        with staged_local_target(target, private=False) as out:
+        with staged_local_target(target) as out:
             assert out == target
             out.write_bytes(b"through")
         reader.join(timeout=10)
@@ -317,8 +322,8 @@ def test_a_redirected_stdout_is_written_through_not_replaced(tmp_path: Path, dev
     code = (
         "import sys\n"
         "from pathlib import Path\n"
-        "from decoy._atomic import staged_local_target\n"
-        "with staged_local_target(Path(sys.argv[1]), private=False) as p:\n"
+        "from decoy._atomic import staged_local_target, staged_private_target\n"
+        "with staged_local_target(Path(sys.argv[1])) as p:\n"
         "    assert p == Path(sys.argv[1]), p\n"
         "    p.write_bytes(b'hello')\n"
     )
@@ -336,8 +341,8 @@ def test_a_redirected_stdout_is_written_through_not_replaced(tmp_path: Path, dev
 def test_dev_stdout_to_a_pipe_is_written_through() -> None:
     code = (
         "from pathlib import Path\n"
-        "from decoy._atomic import staged_local_target\n"
-        "with staged_local_target(Path('/dev/stdout'), private=False) as p:\n"
+        "from decoy._atomic import staged_local_target, staged_private_target\n"
+        "with staged_local_target(Path('/dev/stdout')) as p:\n"
         "    p.write_bytes(b'hello')\n"
     )
     done = subprocess.run([sys.executable, "-c", code], capture_output=True, timeout=60)
@@ -399,7 +404,7 @@ def test_a_regular_file_under_dev_shm_is_staged(private: bool) -> None:
     with tempfile.TemporaryDirectory(dir="/dev/shm") as shm:
         target = Path(shm) / "out.csv"
         target.write_bytes(b"old")
-        with staged_local_target(target, private=private) as tmp:
+        with _stager(private)(target) as tmp:
             assert tmp != target and tmp.name.startswith(".out.csv.decoy-")
             tmp.write_bytes(b"new")
         assert target.read_bytes() == b"new"
@@ -421,3 +426,22 @@ def test_fd_aliases_match(name: str) -> None:
     from decoy._atomic import _FD_ALIAS
 
     assert _FD_ALIAS.fullmatch(name) is not None
+
+
+@pytest.mark.skipif(not Path("/dev/stdout").exists(), reason="needs /dev/stdout")
+def test_a_symlink_to_dev_stdout_is_classified_before_realpath(tmp_path: Path) -> None:
+    """The alias rule does not see a link by another name; the stat check must, and it must
+    run on the path as given because realpath turns a pipe into an unopenable `pipe:[id]`."""
+    link = tmp_path / "out-link"
+    link.symlink_to("/dev/stdout")
+    code = (
+        "import sys\n"
+        "from pathlib import Path\n"
+        "from decoy._atomic import staged_local_target\n"
+        "with staged_local_target(Path(sys.argv[1])) as p:\n"
+        "    assert p == Path(sys.argv[1]), p\n"
+        "    p.write_bytes(b'hello')\n"
+    )
+    done = subprocess.run([sys.executable, "-c", code, str(link)], capture_output=True, timeout=60)
+    assert done.returncode == 0, done.stderr
+    assert done.stdout == b"hello"

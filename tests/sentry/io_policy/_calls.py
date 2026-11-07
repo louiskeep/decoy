@@ -119,9 +119,9 @@ def call_contexts(
     *,
     qualified_match: Callable[[str, str], bool],
     method_names: frozenset[str] = frozenset(),
-    with_call: str,
+    with_calls: frozenset[str],
 ) -> list[tuple[ast.Call, str, frozenset[str]]]:
-    """Return (call, qualified scope, names bound by enclosing `with <with_call>(...) as name`).
+    """Return (call, qualified scope, names bound by enclosing `with <one of with_calls>(...) as name`).
 
     Matches a call's callee with the same resolution as `call_sites`. A `with` binds its name
     for its own body only, and nested `with` statements add to the set.
@@ -135,7 +135,7 @@ def call_contexts(
             return None
         callee = ctx.func
         name = callee.id if isinstance(callee, ast.Name) else getattr(callee, "attr", None)
-        return var.id if name == with_call else None
+        return var.id if name in with_calls else None
 
     def visit(node: ast.AST, scope: str, bound: Bindings, names: frozenset[str]) -> None:
         for child in ast.iter_child_nodes(node):

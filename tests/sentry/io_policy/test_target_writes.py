@@ -33,12 +33,14 @@ from tests.sentry.io_policy._calls import call_contexts, call_sites, tally
 ROOT = Path(__file__).resolve().parents[3]
 SRC = ROOT / "src" / "decoy"
 CHOKE_POINT = "cli/io/_targets.py"
-WRITERS = ("write_table", "write_chunked_output", "_write_fixed_width")
+WRITERS = ("_write_table", "write_chunked_output", "_write_fixed_width")
 # These two stage their output: every path they write is the temp that `staged_local_target`
 # yields. `_write_fixed_width` is exempt: the engine's `write_fixed_width` stages and publishes
 # atomically by itself, so wrapping it would stage twice.
-STAGED_WRITERS = ("write_table", "write_chunked_output")
-STAGE_CALL = "staged_local_target"
+STAGED_WRITERS = ("_write_table", "write_chunked_output")
+# `_write_table` receives its stager as `stage`; the callers below are checked to pass real ones.
+STAGE_CALLS = frozenset({"stage", "staged_local_target", "staged_private_target"})
+STAGERS = frozenset({"staged_local_target", "staged_private_target"})
 # Where each watched call takes its path: (positional index, keyword name).
 _PATH_SLOT = {
     "to_csv": (0, "path_or_buf"),
@@ -244,7 +246,7 @@ def unstaged_writes(source: str) -> list[tuple[int, str]]:
     """(line, scope) for each write in a staged writer whose path is not its staged temp."""
     bad = []
     for call, scope, names in call_contexts(
-        source, qualified_match=_owns, method_names=_METHODS, with_call=STAGE_CALL
+        source, qualified_match=_owns, method_names=_METHODS, with_calls=STAGE_CALLS
     ):
         if scope not in STAGED_WRITERS:
             continue
@@ -263,7 +265,7 @@ def test_staged_writers_write_only_to_their_staged_temp() -> None:
     covered = {
         scope
         for _c, scope, _n in call_contexts(
-            source, qualified_match=_owns, method_names=_METHODS, with_call=STAGE_CALL
+            source, qualified_match=_owns, method_names=_METHODS, with_calls=STAGE_CALLS
         )
     }
     assert set(STAGED_WRITERS) <= covered, "a staged writer has no write call to check"
@@ -271,7 +273,7 @@ def test_staged_writers_write_only_to_their_staged_temp() -> None:
 
 _STAGED_PRELUDE = (
     "import pyarrow.parquet as pq\nfrom decoy_engine import write_fixed_width\n"
-    "from decoy._atomic import staged_local_target\n"
+    "from decoy._atomic import staged_local_target, staged_private_target\n"
 )
 
 
@@ -279,44 +281,101 @@ _STAGED_PRELUDE = (
     "body",
     [
         "    data.to_csv(path)\n",
-        "    with staged_local_target(path, private=False) as tmp:\n        data.to_csv(path)\n",
-        "    with staged_local_target(path, private=False) as tmp:\n        data.to_csv(other)\n",
-        "    with staged_local_target(path, private=False) as tmp:\n"
-        "        data.to_parquet(path=path)\n",
+        "    with staged_local_target(path) as tmp:\n        data.to_csv(path)\n",
+        "    with staged_local_target(path) as tmp:\n        data.to_csv(other)\n",
+        "    with staged_local_target(path) as tmp:\n        data.to_parquet(path=path)\n",
         "    data.to_parquet(path=path)\n",
-        "    with staged_local_target(path, private=False) as tmp:\n        pq.write_table(data, path)\n",
-        "    with staged_local_target(path, private=False) as tmp:\n"
+        "    with staged_local_target(path) as tmp:\n        pq.write_table(data, path)\n",
+        "    with staged_local_target(path) as tmp:\n"
         "        pq.ParquetWriter(where=str(path), schema=s)\n",
-        "    with staged_local_target(path, private=False) as tmp:\n        pass\n"
-        "    data.to_csv(tmp)\n",
-        "    with staged_local_target(path, private=False) as tmp:\n"
-        "        pq.write_to_dataset(data, tmp)\n",
+        "    with staged_local_target(path) as tmp:\n        pass\n    data.to_csv(tmp)\n",
+        "    with staged_local_target(path) as tmp:\n        pq.write_to_dataset(data, tmp)\n",
     ],
 )
 def test_staged_path_rule_is_red_on_seeds(body: str) -> None:
-    source = _STAGED_PRELUDE + "def write_table(data, path):\n" + body
+    source = _STAGED_PRELUDE + "def _write_table(data, path):\n" + body
     assert unstaged_writes(source) != []
 
 
 @pytest.mark.parametrize(
     "body",
     [
-        "    with staged_local_target(path, private=False) as tmp:\n        data.to_csv(tmp)\n",
-        "    with staged_local_target(path, private=False) as tmp:\n"
-        "        pq.write_table(data, str(tmp))\n",
-        "    with staged_local_target(path, private=False) as tmp:\n"
+        "    with staged_local_target(path) as tmp:\n        data.to_csv(tmp)\n",
+        "    with staged_local_target(path) as tmp:\n        pq.write_table(data, str(tmp))\n",
+        "    with staged_local_target(path) as tmp:\n"
         "        pq.ParquetWriter(where=str(tmp), schema=s)\n",
-        "    with staged_local_target(path, private=False) as tmp:\n"
-        "        data.to_parquet(path=tmp)\n",
+        "    with staged_local_target(path) as tmp:\n        data.to_parquet(path=tmp)\n",
         "    write_fixed_width(frame, layout, path)\n",
-        "    with staged_local_target(path, private=True) as a, other() as b:\n"
+        "    with staged_private_target(path) as a, other() as b:\n"
         "        data.to_csv(path_or_buf=a)\n",
     ],
 )
 def test_staged_path_rule_is_green_on_staged_and_exempt_shapes(body: str) -> None:
-    assert unstaged_writes(_STAGED_PRELUDE + "def write_table(data, path):\n" + body) == []
+    assert unstaged_writes(_STAGED_PRELUDE + "def _write_table(data, path):\n" + body) == []
 
 
 def test_staged_path_rule_only_covers_the_two_staged_writers() -> None:
     source = _STAGED_PRELUDE + "def _write_fixed_width(data, path):\n    data.to_csv(path)\n"
     assert unstaged_writes(source) == []
+
+
+def _stagers_passed_to_write_table(source: str) -> list[str]:
+    """Names passed as the last argument of each `_write_table(...)` call in the module."""
+    names = []
+    for node in ast.walk(ast.parse(source)):
+        if isinstance(node, ast.Call) and getattr(node.func, "id", "") == "_write_table":
+            last = node.args[-1] if node.args else None
+            names.append(last.id if isinstance(last, ast.Name) else "<other>")
+    return names
+
+
+def test_the_public_whole_table_writers_pass_a_real_stager() -> None:
+    source = (SRC / CHOKE_POINT).read_text(encoding="utf-8")
+    passed = _stagers_passed_to_write_table(source)
+    assert sorted(passed) == ["staged_local_target", "staged_private_target"]
+    assert set(passed) <= STAGERS
+    seeded = source + "\ndef sneaky(d, f, p):\n    _write_table(d, f, p, None, open)\n"
+    assert "open" in _stagers_passed_to_write_table(seeded)
+
+
+# Restored original values must be written owner-only: these two commands may call only the
+# private entry point, never `write_table`, `write_targets` or `write_chunked_output`.
+PRIVATE_ONLY = ("cli/unmask.py", "cli/tokenize.py")
+_PUBLIC_WRITERS = frozenset({"write_table", "write_targets", "write_chunked_output"})
+
+
+def _owns_public_writer(module: str, name: str) -> bool:
+    return _under(module, "decoy.cli.io") and name in _PUBLIC_WRITERS
+
+
+def public_writer_uses(source: str) -> list[tuple[int, str]]:
+    return call_sites(source, qualified_match=_owns_public_writer)
+
+
+def test_restoring_commands_use_only_the_private_table_writer() -> None:
+    for rel in PRIVATE_ONLY:
+        source = (SRC / rel).read_text(encoding="utf-8")
+        assert public_writer_uses(source) == [], rel
+    unmask = (SRC / "cli/unmask.py").read_text(encoding="utf-8")
+    assert "write_private_table" in unmask
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        "from decoy.cli.io import write_table\ndef f(t, p):\n    write_table(t, 'csv', p)\n",
+        "from decoy.cli.io._targets import write_table as w\ndef f(t, p):\n    w(t, 'csv', p)\n",
+        "import decoy.cli.io as io\ndef f(t, p):\n    io.write_table(t, 'csv', p)\n",
+        "from decoy.cli.io import write_targets\ndef f(c, o, b):\n    write_targets(c, o, b)\n",
+    ],
+)
+def test_the_private_only_rule_is_red_on_seeds(source: str) -> None:
+    assert public_writer_uses(source) != []
+
+
+def test_the_private_only_rule_is_green_on_the_private_writer() -> None:
+    source = (
+        "from decoy.cli.io import write_private_table\n"
+        "def f(t, p):\n    write_private_table(t, 'csv', p)\n"
+    )
+    assert public_writer_uses(source) == []

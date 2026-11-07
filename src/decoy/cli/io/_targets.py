@@ -21,13 +21,14 @@ import math
 import numbers
 import re
 from collections.abc import Callable, Iterable, Mapping
+from contextlib import AbstractContextManager
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 
 import pyarrow as pa
 
-from decoy._atomic import staged_local_target
+from decoy._atomic import staged_local_target, staged_private_target
 from decoy.cli._sources import resolve_path
 from decoy.cli.io._compression import csv_compression, is_archive_csv, split_compression
 
@@ -336,20 +337,13 @@ def _write_fixed_width(table: pa.Table, layout: Mapping[str, Any] | None, path: 
     write_fixed_width(frame, dict(layout), path)
 
 
-def write_table(
+def _write_table(
     data: pa.Table | pd.DataFrame,
     fmt: str,
     path: Path,
-    layout: Mapping[str, Any] | None = None,
-    *,
-    private: bool,
+    layout: Mapping[str, Any] | None,
+    stage: Callable[[Path], AbstractContextManager[Path]],
 ) -> None:
-    """Write one whole table. The only whole-table writer in the CLI.
-
-    CSV and Parquet are staged beside `path` and published only when the write finishes, so a
-    failure keeps the old file. `private` makes the file owner-only (restored data). Fixed
-    width goes straight to the engine writer, which stages and publishes by itself.
-    """
     import pandas as pd
     import pyarrow.parquet as pq
 
@@ -365,13 +359,38 @@ def write_table(
     if fmt not in ("csv", "parquet"):
         raise TargetFormatError(FORMAT_UNKNOWN, "unsupported target format")
     compression = csv_compression(path)
-    with staged_local_target(path, private=private) as tmp:
+    with stage(path) as tmp:
         if fmt == "csv":
             (data if frame else data.to_pandas()).to_csv(tmp, index=False, compression=compression)
         elif frame:
             data.to_parquet(tmp, index=False)
         else:
             pq.write_table(data, str(tmp))
+
+
+def write_table(
+    data: pa.Table | pd.DataFrame,
+    fmt: str,
+    path: Path,
+    layout: Mapping[str, Any] | None = None,
+) -> None:
+    """Write one whole table. The only whole-table writer in the CLI.
+
+    CSV and Parquet are staged beside `path` and published only when the write finishes, so a
+    failure keeps the old file. An existing file keeps its mode bits. Fixed width goes straight
+    to the engine writer, which stages and publishes by itself.
+    """
+    _write_table(data, fmt, path, layout, staged_local_target)
+
+
+def write_private_table(
+    data: pa.Table | pd.DataFrame,
+    fmt: str,
+    path: Path,
+    layout: Mapping[str, Any] | None = None,
+) -> None:
+    """`write_table` for restored original values (`unmask`, `detokenize`): owner-only (0600)."""
+    _write_table(data, fmt, path, layout, staged_private_target)
 
 
 def write_targets(config_dict: dict, outputs: Mapping[str, pa.Table], base_dir: Path) -> None:
@@ -395,7 +414,7 @@ def write_targets(config_dict: dict, outputs: Mapping[str, pa.Table], base_dir: 
         fmt = resolve_target_format(str(table_name), entry)
         path = resolve_path(raw_path, base_dir)
         path.parent.mkdir(parents=True, exist_ok=True)
-        write_table(table, fmt, path, entry.get("layout"), private=False)
+        write_table(table, fmt, path, entry.get("layout"))
 
 
 def write_chunked_output(
@@ -404,7 +423,6 @@ def write_chunked_output(
     out_path: Path,
     *,
     empty_schema: Callable[[], pa.Schema] | None,
-    private: bool,
 ) -> None:
     """Stream masked chunks to `out_path` in `fmt`. The only chunked writer in the CLI.
 
@@ -427,7 +445,7 @@ def write_chunked_output(
         schema = empty_schema()
     elif fmt == "parquet":
         schema = cast("pa.Table", first).schema
-    with staged_local_target(out_path, private=private) as tmp:
+    with staged_local_target(out_path) as tmp:
         if fmt == "parquet":
             with pq.ParquetWriter(str(tmp), schema) as writer:
                 for masked in () if first is _EXHAUSTED else itertools.chain((first,), chunks):
