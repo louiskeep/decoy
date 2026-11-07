@@ -445,3 +445,73 @@ def test_a_symlink_to_dev_stdout_is_classified_before_realpath(tmp_path: Path) -
     done = subprocess.run([sys.executable, "-c", code, str(link)], capture_output=True, timeout=60)
     assert done.returncode == 0, done.stderr
     assert done.stdout == b"hello"
+
+
+_PRIVATE_THROUGH = (
+    "import sys\n"
+    "from pathlib import Path\n"
+    "from decoy._atomic import staged_private_target\n"
+    "with staged_private_target(Path(sys.argv[1])) as p:\n"
+    "    p.write_bytes(b'secret-value')\n"
+)
+
+
+@pytest.mark.skipif(os.name == "nt", reason="POSIX mode bits")
+@pytest.mark.skipif(not Path("/dev/stdout").exists(), reason="needs /dev/stdout")
+@pytest.mark.parametrize("device", ["/dev/stdout", "//dev/stdout", "/dev/fd/1"])
+def test_a_private_write_narrows_a_redirected_stdout_file_to_0600(
+    tmp_path: Path, device: str
+) -> None:
+    """The shell made the redirect target with the umask default; restored values must not
+    land in a group- or world-readable file."""
+    sink = tmp_path / "sink.csv"
+    sink.write_bytes(b"")
+    sink.chmod(0o644)
+    inode = sink.stat().st_ino
+    with open(sink, "ab") as handle:
+        done = subprocess.run(
+            [sys.executable, "-c", _PRIVATE_THROUGH, device], stdout=handle, timeout=60
+        )
+    assert done.returncode == 0
+    assert stat.S_IMODE(sink.stat().st_mode) == 0o600
+    assert sink.read_bytes() == b"secret-value" and sink.stat().st_ino == inode
+    assert _names(tmp_path) == ["sink.csv"]
+
+
+@pytest.mark.skipif(not Path("/dev/stdout").exists(), reason="needs /dev/stdout")
+def test_a_private_write_to_a_closed_fd_alias_is_refused() -> None:
+    code = (
+        "import os\n"
+        "from pathlib import Path\n"
+        "from decoy._atomic import AtomicWriteError, staged_private_target\n"
+        "os.close(1)\n"
+        "try:\n"
+        "    with staged_private_target(Path('/dev/stdout')) as p:\n"
+        "        raise SystemExit(3)\n"
+        "except AtomicWriteError:\n"
+        "    raise SystemExit(0)\n"
+    )
+    done = subprocess.run([sys.executable, "-c", code], capture_output=True, timeout=60)
+    assert done.returncode == 0, done.stderr
+
+
+@pytest.mark.skipif(not Path("/dev/stdout").exists(), reason="needs /dev/stdout")
+def test_a_double_slash_stdout_alias_is_written_through(tmp_path: Path) -> None:
+    code = (
+        "import sys\n"
+        "from pathlib import Path\n"
+        "from decoy._atomic import staged_local_target\n"
+        "with staged_local_target(Path(sys.argv[1])) as p:\n"
+        "    assert p == Path(sys.argv[1]), p\n"
+        "    p.write_bytes(b'tail')\n"
+    )
+    sink = tmp_path / "sink.txt"
+    sink.write_bytes(b"")
+    inode = sink.stat().st_ino
+    with open(sink, "wb") as handle:
+        done = subprocess.run(
+            [sys.executable, "-c", code, "//dev/stdout"], stdout=handle, timeout=60
+        )
+    assert done.returncode == 0
+    assert sink.read_bytes() == b"tail" and sink.stat().st_ino == inode
+    assert _names(tmp_path) == ["sink.txt"]

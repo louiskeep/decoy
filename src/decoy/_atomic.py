@@ -329,10 +329,38 @@ def _put_at(real: Path, data: bytes, mode: WriteMode, tmp_dir: Path | None) -> b
     return _put(stage, data, outcome)
 
 
+_STD_FDS = {"/dev/stdin": 0, "/dev/stdout": 1, "/dev/stderr": 2}
+
+
+def _restrict_fd_target(alias: str) -> None:
+    """Make a regular file behind an fd alias owner-only before private bytes reach it.
+
+    `decoy unmask -o /dev/stdout > out.csv` writes through the shell's file, which the shell
+    created with the umask default. A pipe or terminal keeps nothing, so only a regular file
+    is narrowed. If the fd is closed, or the file cannot be made 0600, the write is refused.
+    """
+    fd = _STD_FDS[alias] if alias in _STD_FDS else int(alias.rsplit("/", 1)[1])
+    failed_errno: int | None = None
+    narrowed = True
+    try:
+        info = os.fstat(fd)
+        if stat.S_ISREG(info.st_mode) and stat.S_IMODE(info.st_mode) & 0o077:
+            os.fchmod(fd, _OWNER_RW)
+            narrowed = not stat.S_IMODE(os.fstat(fd).st_mode) & 0o077
+    except OSError as exc:
+        narrowed, failed_errno = False, exc.errno
+    if not narrowed:
+        raise AtomicWriteError(ATOMIC_WRITE_FAILED, failed_errno)
+
+
 @contextlib.contextmanager
 def _staged_target(path: Path, private: bool) -> Iterator[Path]:
     _require_component(path.name)
-    if not _WINDOWS and _FD_ALIAS.fullmatch(os.path.abspath(path)):
+    # POSIX keeps a leading "//" in abspath; collapse it so //dev/stdout is still an alias.
+    alias = re.sub(r"^/+", "/", os.path.abspath(path))
+    if not _WINDOWS and _FD_ALIAS.fullmatch(alias):
+        if private:
+            _restrict_fd_target(alias)
         yield path  # /dev/stdout, /dev/fd/N, /proc/self/fd/N: a redirect is written through
         return
     existing: os.stat_result | None = None
@@ -367,6 +395,9 @@ def staged_local_target(path: Path) -> AbstractContextManager[Path]:
 
 def staged_private_target(path: Path) -> AbstractContextManager[Path]:
     """`staged_local_target` for restored or sensitive data: the published file is 0600.
+
+    An fd alias redirected to a regular file has that file narrowed to 0600 before the block
+    runs, or the write is refused.
 
     On Windows the mode bits do not apply: the file inherits its folder's permissions.
     """

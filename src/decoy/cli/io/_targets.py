@@ -389,7 +389,12 @@ def write_private_table(
     path: Path,
     layout: Mapping[str, Any] | None = None,
 ) -> None:
-    """`write_table` for restored original values (`unmask`, `detokenize`): owner-only (0600)."""
+    """`write_table` for restored original values (`unmask`, `detokenize`): owner-only (0600).
+
+    Fixed width is refused: the engine writer stages by itself and would not apply 0600.
+    """
+    if fmt == "fixed_width":
+        raise TargetFormatError(FORMAT_UNKNOWN, "a private output cannot be fixed_width")
     _write_table(data, fmt, path, layout, staged_private_target)
 
 

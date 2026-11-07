@@ -47,7 +47,7 @@ Each mutation turned the named test red; the full table is in the builder report
 
 - `.gz` header can store the staging basename.
 - ACLs and xattrs of an old output are not copied.
-- Unify the `mkstemp` core of `write_atomic` and `CREATE_ONCE` with `_create_temp`.
+- (Resolved in round 2: `write_atomic` and `CREATE_ONCE` now share `_create_temp` through `_staged`.)
 - `_atomic.py` over 400 lines (462 after round 2): split staging from the record writer.
 
 ## Gate round 1
