@@ -898,7 +898,7 @@ tests `tests/unit/test_wizard_*.py` and `tests/e2e/test_init_wizard*.py`, sentri
 | `tests/sentry/test_wizard_prompt_boundary.py`, `test_wizard_no_exc_text.py`, `test_one_editor.py` | `tests/sentry/` | "Repository policy sentries and their scanners" | `test_gate_single_entry.py` |
 | engine `profiling/starter_review.py` | `src/decoy_engine/profiling/` | engine CODEMAP Directory Map, `profiling/` row (profiling and detector suggestions; the engine map has no "Where things go" section until LAYOUT E1) | `profiling/starter_config.py` (SCAN-MULTI S3-engine.2) |
 | engine `tests/unit/profiling/test_starter_review.py` | engine `tests/unit/profiling/` | same convention as SCAN-MULTI's `test_starter_config.py` | |
-| engine `tests/unit/test_strategy_catalog.py` (E0) | engine `tests/unit/` | beside the existing strategy handler tests | |
+| engine `tests/unit/strategy_catalog/test_catalog.py` (E0) | engine `tests/unit/strategy_catalog/`, a new subpackage with a CODEMAP row | `tests/unit/` already holds 72 flat modules, over the ~25 fan-out cap, so the catalog tests get their own named directory | `tests/unit/execution/`, `tests/unit/profiling/` |
 
 E0 adds no module: the four attributes go on the existing handler classes, `StrategyOption` and
 `StrategyInfo` live in `execution/_adapter.py` beside `StrategyHandler`, and `strategy_catalog()`
@@ -907,7 +907,8 @@ lives in `execution/_strategies/__init__.py` beside `SCALAR_HANDLERS` and is re-
 `execution/` package therefore gains no module.
 
 Fan-out: `src/decoy/cli/wizard/` holds 7 modules at most; `profiling/` holds 10 entries today.
-Sizes: every new file under 400 lines; `cli/init.py` must not grow past its S3a.1 size (about 300):
+Sizes: every new source file under 400 lines (the E0 catalog test is about 620 lines: it holds the
+independent expected option table, and the engine's 600-line aim covers source modules); `cli/init.py` must not grow past its S3a.1 size (about 300):
 W1.2 moves the review body into `cli/wizard/_flow.py` and leaves `init.py` the option wiring.
 
 ## 12. Frozen contracts touched
