@@ -40,8 +40,9 @@ _CLI_GATE_CODES: frozenset[str] = frozenset(
     {
         "capacity.out_of_core_fk", "capacity.source_unreadable", "compile_error",
         "compile.needs_profile", "compile_warning", "missing_extra", "native.companion",
-        "native.eligibility", "pipeline.validation_error", "validation_error",
-        "yaml.empty", "yaml.not_mapping", "yaml.parse_error",
+        "native.eligibility", "pipeline.validation_error", "target_format_suffix_mismatch",
+        "target_format_unknown", "validation_error", "yaml.empty", "yaml.not_mapping",
+        "yaml.parse_error",
     }
 )
 

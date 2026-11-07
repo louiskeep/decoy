@@ -23,6 +23,7 @@ GATES = ROOT / "scripts" / "dev" / "gates.sh"
 
 SENTRIES = (
     "tests/sentry/test_atomic_writer.py",
+    "tests/sentry/io_policy/test_target_writes.py",
     "tests/sentry/test_csv_read_choke_point.py",
     "tests/sentry/test_baseline_registry.py",
     "tests/sentry/test_ci_lock_installs.py",

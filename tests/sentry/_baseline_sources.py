@@ -149,6 +149,16 @@ SOURCES: tuple[Source, ...] = (
         ),
     ),
     Source(
+        "target-writes-allow",
+        "tests/sentry/io_policy/test_target_writes.py",
+        InCode(
+            "tests/sentry/io_policy/test_target_writes.py",
+            "ALLOWLIST",
+            key=lambda e: f"{e.file}::{e.function}",
+            reason=lambda e: e.reason,
+        ),
+    ),
+    Source(
         "gate-single-entry-allow",
         "tests/sentry/test_gate_single_entry.py",
         InCode(
