@@ -20,18 +20,26 @@ It changes behavior only for an int column holding a null, and `write_fixed_widt
 
 ## Green
 
-`pytest tests/e2e/cli_fmt tests/unit/cli_fmt`: 62 passed on the VM, then 63 after AT-F7 gained the demo hash pin (`d784565e...`, measured on base, stable across two runs).
+`pytest tests/e2e/cli_fmt tests/unit/cli_fmt`: 71 collected and passed on the final head. AT-F7 pins the demo hash (`d784565e...`) and AT-F8 pins the detokenize Parquet hash (`af79fcce...`), both measured on base `05bf840`.
 
 ## Mutations (head `a83223e`)
 
 Each turns a named test red: suffix-keyed writer, dropped contradiction check, exit tuple, dropped chunked branch, dropped archive branch, dropped `.pq`, final-suffix-only compression, dropped `empty_schema`, header per chunk, check removed from `_load_sources_from_config`, local resolver in demo, unmask `to_csv`, dropped int coercion, leading zeros, `re.match` with `$`, override keeps declared format, override keeps layout, path in message, `format_for_path` always csv.
 
-Survivors: dropping the int64 range check (the Int64 build raises OverflowError, exit 3, no file, value-free, so the outcome is the same) and routing the detokenize pandas Parquet write through `pa.Table` (the bytes are identical).
+Survivor: routing the detokenize pandas Parquet write through `pa.Table` (the bytes are identical).
 
 ## Gates
 
 VM `gates.sh --keep-going --baseline`: ruff pass, tests pass (447). Sentry: one branch-only failure, `test_cli_reference_is_up_to_date`, caused by the generated reference being edited while the run was in flight; the three surface tests pass on a rerun. mypy is not installed on the VM; mypy on the devbox shows no error in the touched new module.
 macOS arm64: named, behavior-kept, `git grep` files and `tests/sentry`: 904 passed, 4 skipped, 1 xfailed (the strict xfail), no failure outside the surface test above, which passes with `PYTHONPATH=src`.
+
+## Gate round 1
+
+- Parquet and fixed-width targets, and `unmask`/`detokenize` `-o` outputs that resolve to Parquet, are refused under a compression suffix (exit 1, value-free). Red before: 5 e2e tests; mutations C1 (target check) and C2 (`-o` check) go red.
+- AT-F8 compares the detokenize Parquet bytes with the sha256 measured on base, not with pandas.
+- Unit cases for `9223372036854775808` and `-9223372036854775809`; dropping the range check now goes red.
+- AT-F13 asserts each bad value and the row key are absent from the output, with the temp path cut out first.
+- CHANGELOG names the `detokenize -o x.pq` change and the pre-read limits (demo, `--duckdb-source`, `mask(data=)`).
 
 ## Size
 
