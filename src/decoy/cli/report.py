@@ -44,6 +44,7 @@ from typing import Any
 import typer
 
 from decoy import _mask_secret
+from decoy.cli._sources import read_report_source
 from decoy.cli._yaml_errors import sanitize_yaml_error
 from decoy.cli.evidence import _render_manifest_card, verify_manifest
 from decoy.cli.exit_codes import EXIT_FINDINGS, EXIT_RUNTIME, EXIT_USAGE
@@ -1768,7 +1769,7 @@ def _fidelity(
         _emit_error(f"--mode must be one of report, warn, fail; got {mode!r}.")
         raise typer.Exit(code=EXIT_USAGE)
 
-    strategy_map: dict[str, str] = {}
+    config_dict: dict[str, Any] = {}
     if pipeline_config is not None:
         from decoy_engine import PipelineConfig
 
@@ -1782,7 +1783,7 @@ def _fidelity(
         except Exception as exc:
             _emit_error(f"could not parse --config {pipeline_config}: {exc}")
             raise typer.Exit(code=EXIT_USAGE)
-        strategy_map = _build_strategy_map(config_dict)
+    strategy_map = _build_strategy_map(config_dict)
 
     if policy is not None:
         try:
@@ -1804,16 +1805,16 @@ def _fidelity(
             thresholds["overall"] = {"min": _GRADE_MIN_SCORE[min_grade.upper()]}
         policy_config = {"mode": mode, "thresholds": thresholds}
 
-    import pandas as pd
     from decoy_engine.quality import apply_quality_policy, compute_quality_report
 
+    config_dir = pipeline_config.parent if pipeline_config is not None else Path.cwd()
     try:
-        src_df = pd.read_csv(source)
+        src_df = read_report_source(source, config_dict, config_dir)
     except Exception as exc:
         _emit_error(f"could not read {source}: {exc}")
         raise typer.Exit(code=EXIT_USAGE)
     try:
-        out_df = pd.read_csv(output)
+        out_df = read_report_source(output, {}, config_dir)
     except Exception as exc:
         _emit_error(f"could not read {output}: {exc}")
         raise typer.Exit(code=EXIT_USAGE)
@@ -2018,8 +2019,6 @@ def _integrity(
     1 EXIT_USAGE for missing files; 3 EXIT_RUNTIME for unexpected
     exceptions.
     """
-    import pandas as pd
-
     from decoy.ui.table import make_table
 
     state = setup_output(json_, quiet, verbose)
@@ -2028,9 +2027,6 @@ def _integrity(
 
     try:
         from decoy_engine.verification.postmask import run_post_mask
-
-        source_df = pd.read_csv(source)
-        masked_df = pd.read_csv(masked)
 
         config_dict: dict
         table_name: str
@@ -2082,6 +2078,9 @@ def _integrity(
                 "targets": {},
                 "relationships": [],
             }
+
+        source_df = read_report_source(source, config_dict, config.parent if config else Path.cwd())
+        masked_df = read_report_source(masked, {}, Path.cwd())
 
         report = run_post_mask(
             source_frames={table_name: source_df},

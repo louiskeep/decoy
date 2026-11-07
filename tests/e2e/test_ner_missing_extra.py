@@ -97,7 +97,7 @@ class TestNerMissingExtraThroughRealCompile:
         result = runner.invoke(app, ["validate", "config", str(cfg)])
         assert result.exit_code == EXIT_USAGE, result.output
         collapsed = " ".join(result.output.split())
-        assert "spacy download" in collapsed, result.output
+        assert "install its wheel" in collapsed, result.output
         assert "pip install decoy-cli[ner]" not in collapsed, result.output
 
 
