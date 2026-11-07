@@ -13,6 +13,15 @@ shared YAML mark index `src/decoy/_yaml_marks.py` for `ci/locations.py` and the 
 dismissals only for warning-severity detector matches, keyed by source, model and strategy (4.6,
 AT-W18); M1 to M11 and L1 to L7 in the sections they name.
 
+Revision 2 (2026-11-07): Dennis round 2 on baebeb0 (GO-WITH-FIXES, 0/1/7/7). Applied in place: H1 key
+columns need a `join_safe` strategy, a third catalog fact that `_KEY_STRATEGIES` derives from (4.6,
+AT-W12, M-W12b); M1 the mark-index move is in W1.1; M2 conditional namespace rule, `example_options`
+and `offer_in_wizard` (4.6); M3 report coverage (4.5); M4 span end for block scalars and a comment
+check that does not depend on the span (4.7, AT-W13); M5 engine reason codes in existing families
+(12); M6 confirm matches the model too (4.6); M7 preflight errors (Guarantee 7, AT-W10); lows in place.
+Not applied: the round-2 citation fix `types.py:17` to `:18`; line 17 is `SCHEMA_VERSION` at
+`3c01f877`.
+
 Rules consulted: `dev-rules/README.md`, `00-universal.md`, `risk-and-exceptions.md`,
 `development-loop.md`, `profiles/local-operations.md`, `feature-dev.md`, `api-and-compatibility.md`,
 `cross-cutting-concerns.md`, `reuse-first.md`, `architecture.md`, `testing.md`. Also the plan contract
@@ -63,7 +72,7 @@ findings against an existing file.
    A non-interactive run with no answers equals an interactive session where every item was skipped.
    A saved `confirm` names the suggestion it confirmed (source, detector id, model id and version,
    strategy); if the replayed scan suggests something else for that column, the run refuses
-   (`init.answers_stale`) instead of applying a suggestion nobody saw.
+   (`pre_scan.review_stale`) instead of applying a suggestion nobody saw.
 4. **No prompt without a terminal.** When stdin or stdout is not a TTY, or `--no-input`, `--json`, `-q`
    or `--answers` is given, the wizard never prompts. A required input that no flag or answer supplies
    is a usage error (exit 1) naming the flag, before any source is read.
@@ -79,7 +88,10 @@ findings against an existing file.
    namespace.** Before any write the result goes through the pre-run gate once
    (`run_gate_on_config(raw, out_path)`, `src/decoy/cli/gate/_layers.py:288`, all three layers; the
    path is used only for its directory). A config or compile error is a builder bug: exit 3, nothing
-   written. Preflight findings are shown and the exit code comes from `gate_exit_code`. Because the
+   written. Preflight findings (errors included, such as capacity or a missing native companion)
+   describe this machine, not the config, so the YAML is still written; they are shown, `--json`
+   carries `status: "written"` plus `gate: {errors, warnings, exit_code}`, and the exit code is
+   `gate_exit_code` (for example 5 for capacity). Because the
    gate does not check that a namespace-required strategy has a namespace (engine probe at
    `3c01f877`: `{strategy: hash}` with no namespace passes validate and no-profile compile;
    `hash_requires_namespace` is a runtime reason only), every entry the wizard writes is built by the
@@ -108,8 +120,8 @@ findings against an existing file.
 | Case | V1 behavior |
 |---|---|
 | No TTY and a required input is missing (sources, a CSV header flag) | Exit 1 before any read, naming the missing flag. No prompt, no hang. |
-| `--answers` file does not parse, has an unknown or duplicate key, a missing or wrong schema tag, a non-string key, is over 1 MiB, or names a table or column that is not in the scan | Exit 1 before any write. The error names the key path and the code (`init.answers_invalid`, `init.answers_duplicate`, `init.answers_unknown_column`) through the value-free error converter. Key paths are names (owner 2026-11-06: config keys, table and column names are shown); the value on the right of a key (a verdict, a strategy, an option) is never echoed. |
-| A saved `confirm` no longer matches what the scan suggests for that column (other source, detector, model version or strategy), or a `confirm` names a column with no matching suggestion | Exit 1 (`init.answers_stale`, naming the column path and the field that differs), nothing written. |
+| `--answers` file does not parse, has an unknown or duplicate key, a missing or wrong schema tag, a non-string key, is over 1 MiB, or names a table or column that is not in the scan | Exit 1 before any write. The error names the key path and the code (`init.answers_invalid` for parse, key, tag, type and size problems including a duplicate key; `pre_scan.review_unknown_column` for a name not in the scan) through the value-free error converter. Key paths are names (owner 2026-11-06: config keys, table and column names are shown); the value on the right of a key (a verdict, a strategy, an option) is never echoed. |
+| A saved `confirm` no longer matches what the scan suggests for that column (other source, detector, model version or strategy), or a `confirm` names a column with no matching suggestion | Exit 1 (`pre_scan.review_stale`, naming the column path and the field that differs), nothing written. |
 | User presses Ctrl-C or sends EOF at a prompt | Exit 1 (`cancelled`), nothing written, no answers file written. |
 | User answers `q` | Review stops; every remaining item counts as `skip`; the wizard goes on to the write step. |
 | A source fails to read or scan | Exit 3 naming the table and the exception class only (SCAN-MULTI S3a behavior). Nothing written. |
@@ -119,11 +131,11 @@ findings against an existing file.
 | Output file exists | Same as today: refuse without `--yes` in non-interactive modes; ask in a terminal. `--yes` only answers this question. |
 | NER chosen but spaCy or its model is not installed | The detector step says so, names the SCAN-ML install command, and offers to continue without NER. Non-interactive: exit 1 naming the command. |
 | Post-scan review: the pipeline YAML changed on disk after it was read | Refused before replace (`init.yaml_changed`), nothing written. |
-| Post-scan review: the entry to edit uses an anchor, alias, merge key or flow style, or the key is duplicated | Refused for that entry (`init.yaml_edit_unsupported`, naming the column path); the replacement entry is printed for a hand edit. Other entries still apply only if the user confirms the partial edit. |
-| An `edit` or `confirm` gives a key column of a declared relationship an unkeyed strategy (one the catalog marks `namespace_required: false`, such as `redact`) or a namespace other than the relationship's | Refused (`init.key_column_unkeyed`, naming the column path and the relationship's position) at the prompt, or exit 1 from an answers file. The gate does not catch this today (SCAN-MULTI probe: `redact` on a relationship key compiles), so the engine review functions own the check. |
+| Post-scan review: the entry to edit uses an anchor, alias, merge key or flow style, or the key is duplicated; or a dismissal must go into a flow-style `post_scan: {...}` block | Refused for that entry (`init.yaml_edit_unsupported`, naming the column path); the replacement entry is printed for a hand edit. Other entries still apply only if the user confirms the partial edit. |
+| An `edit` or `confirm` gives a key column of a declared relationship a strategy the catalog does not mark `join_safe` (anything but an injective, deterministic per-value map: today `hash` and `fpe`), or a namespace other than the relationship's | Refused (`config.key_column_not_join_safe`, naming the column path and the relationship's position) at the prompt, or exit 1 from an answers file. The gate does not catch this today (SCAN-MULTI probe: `redact` on a relationship key compiles), so the engine review functions own the check. |
 | Post-scan review: the pipeline YAML is a symlink | Refused (`init.yaml_symlink`); the message says to pass the link's target path. Replacing the link would leave the real file unedited. |
 | Post-scan review: no report given, the report has the wrong schema, or it was made from another version of this YAML (its `config_sha256` differs from the file's) | Exit 1 (`init.report_missing`, `init.report_schema`, `init.report_stale`) with a hint naming the command that writes a fresh report. |
-| Post-scan review: `n` on a `fail` finding | Not offered: a failed mask check cannot be dismissed (4.6, dismissal rule). The prompt offers confirm, edit or skip. From an answers file: exit 1 (`init.dismiss_refused`). |
+| Post-scan review: `n` on a `fail` finding | Not offered: a failed mask check cannot be dismissed (4.6, dismissal rule). The prompt offers confirm, edit or skip. From an answers file: exit 1 (`post_scan.dismiss_refused`). |
 
 ## 2. Established solutions
 
@@ -301,7 +313,7 @@ user has seen every suggestion it applies. This answers the draft spec's open qu
   `sources`; giving both for the same path with different values is a usage error.
 - A `confirm` carries the identity of the suggestion confirmed. A hand-written short form
   (`email: confirm`) means "confirm the only suggestion for this column"; it is refused
-  (`init.answers_stale`) when the column has none or more than one. `--save-answers` always writes the
+  (`pre_scan.review_stale`) when the column has none or more than one. `--save-answers` always writes the
   full form.
 - `unlisted: confirm` is the explicit "accept every suggestion" answer for CI. It is a user
   confirmation written in a file the user controls, so owner decision "the user confirms" holds. It is
@@ -342,6 +354,17 @@ decoy init --review-findings pipeline.yaml --report integrity.json
   it was made from, when `--config` is given) and per-finding `source` and `model`, and `decoy run`
   with post-scan on writes the same report beside its outputs. Until the run writes it, users run
   `decoy report integrity` by hand; the hint printed on `init.report_missing` names that command.
+  The hand command checks the first declared table only and takes one CSV per side
+  (`report.py:1918`), so for a multi-table pipeline the run-written report is the producer W3.2 is
+  built for.
+- **Coverage.** W3.2 compares the report's table set with the YAML's tables. Tables in the YAML with
+  no findings record in the report are listed before the review ("not covered by this report: ...");
+  a report table not in the YAML is refused (`init.report_stale`). `--json` carries the uncovered
+  list.
+- **Reading the report.** `--report` is read with a 16 MiB cap. The schema is engine-owned and may
+  gain keys, so the model ignores unknown keys but requires, with strict types, the schema tag,
+  `config_sha256` and each finding's table, column, detector, severity, source and model. An oversize
+  file or a missing or mistyped field exits 1 (`init.report_schema`).
 - `confirm` on a finding for a column with no entry, or with `passthrough`, sets the entry
   `column_entry` builds for the finding's detector (4.6); `edit` picks one.
 - `confirm` on a `fail` finding (the pattern survived the configured strategy, or the output matches
@@ -370,23 +393,44 @@ S3-engine.2 merges first with other fields, E1 reconciles them additively in the
 (`profiling/starter_config.py`), never with a second type.
 
 **Strategy catalog (E0).** Each scalar strategy handler (today the private table
-`execution/_strategies/__init__.py:44` `SCALAR_HANDLERS`, 25 handlers) declares two class attributes
-with no inherited default: `namespace_required: bool` and `required_options: tuple[str, ...]` (the
-`provider_config` keys, plus `provider` for `faker`, that must be present). A public function reads
-them:
+`execution/_strategies/__init__.py:44` `SCALAR_HANDLERS`, 25 handlers) declares five class attributes
+with no inherited default. A public function reads them:
 
 ```python
 @dataclass(frozen=True)
 class StrategyInfo:
     name: str
-    namespace_required: bool
-    required_options: tuple[str, ...]
+    namespace_required: bool            # true when ANY mode of the strategy needs a namespace
+    join_safe: bool                     # injective and deterministic per value: may mask a FK key
+    required_options: tuple[str, ...]   # option keys that must be present (see column_entry)
+    example_options: Mapping[str, Any]  # one known-valid option set, used by tests only
+    offer_in_wizard: bool               # listed at the wizard's `edit` prompt
 
 def strategy_catalog() -> tuple[StrategyInfo, ...]      # sorted by name; exported from decoy_engine
 ```
 
+- `namespace_required` is conservative: `shuffle` needs a namespace only when `deterministic`
+  (`_shuffle.py:43`) and `code_set` only in `gen` mode (`_code_set.py:139`); both are marked true and
+  `column_entry` always sets a namespace for them. A namespace is harmless where it is not read.
+- `join_safe` is the fact the native route already states in prose and in a private tuple:
+  "Only hash and fpe may be native FK keys ... both are injective, deterministic per-value maps"
+  (`execution/_sequential_native.py:13`, `_KEY_STRATEGIES` at `:129`). E0 marks `hash` and `fpe`
+  true and every other handler false, and derives `_KEY_STRATEGIES` from the catalog, so one place
+  holds it. `categorical`, `shuffle`, `date_shift` and `bucket_perturb` need a namespace but are not
+  join-safe (`categorical` maps many values to one pool entry, `_categorical.py:241`).
+- `offer_in_wizard` is true for the simple scalar strategies whose options are plain values (V1 bar):
+  `passthrough`, `redact`, `truncate`, `faker`, `hash`, `bucketize`, `top_code`, `shuffle`,
+  `categorical`, `date_shift`, `fpe`, `text_redact`, `text_mask`, `geo_generalize`, `code_set`,
+  `bucket_perturb`. Strategies whose options are expressions, column references, child strategies or
+  a vault (`formula`, `nested`, `joint_mask`, `derived`, `derived_aggregate`, `grouped_series`,
+  `windowed_date`, `group_key`, `tokenize`) are edited by hand in V1.
+- `example_options` exists so tests can build an entry for every row without a hand list; AT-E0b
+  runs it.
+
 The CLI's `_NAMESPACE_REQUIRED_STRATEGIES` (`init.py:180`) and SCAN-MULTI's descriptor copy of it
-derive from this catalog (S3-engine.1 reads it if E0 merges first; otherwise E0 replaces that copy).
+(planned in `profiling/recommendations.py` and `_starter_inference.py`, S3-engine.1) derive from this
+catalog: S3-engine.1 reads it if E0 merges first; otherwise E0 replaces that copy. This is a
+shared-file item for the orchestrator's ledger and a note for the SCAN-MULTI builder.
 
 **One entry helper (E1).** Every column entry the review writes is built by one function:
 
@@ -396,9 +440,13 @@ def column_entry(strategy: str, column: str, *, options: Mapping[str, Any] | Non
 ```
 
 It refuses an unknown strategy or a missing required option (`ReviewInputError`, code
-`init.entry_invalid`, naming the column and the option key), and sets `namespace` to the given value
-or, when the catalog says `namespace_required`, to the column name (today's starter rule,
-`init.py:200`). `starter_config` (S3-engine.2) builds its entries through the same function.
+`config.entry_invalid`, naming the column and the option key), and sets `namespace` to the given
+value or, when the catalog says `namespace_required`, to the column name (today's starter rule,
+`init.py:218`). `starter_config` (S3-engine.2) builds its entries through the same function. Option
+keys map onto `ColumnConfig` fields the way the config model defines them: a key that is a
+`ColumnConfig` field (`provider`, `deterministic`, and the other top-level fields of
+`config/_tables.py:55`) is set at the top level; every other key goes under `provider_config`. The
+EDIT call is `column_entry(entry["strategy"], column, options=rest_of_entry)`.
 
 **Suggestion.**
 
@@ -475,15 +523,15 @@ class ConfigEdit:                        # what to change; the CLI decides how t
     note: str | None                     # the new REVIEW note for a replaced column entry
 ```
 
-- `apply_review` returns a new `StarterConfig`. CONFIRM applies the suggestion whose identity and
-  strategy equal `confirmed`; if none does, it raises `ReviewInputError` (`init.answers_stale`,
+- `apply_review` returns a new `StarterConfig`. CONFIRM applies the suggestion whose identity,
+  model (id and version, or both absent) and strategy all equal `confirmed`; if none does, it raises `ReviewInputError` (`pre_scan.review_stale`,
   naming the column and the differing field). REJECT writes `column_entry("redact", column)` with the
   note "rejected (suggested X)". EDIT writes `column_entry(**entry)`. SKIP keeps the starter entry and
-  note. A decision for a column not in the starter raises `init.answers_unknown_column`; two for one
-  column raise `init.answers_duplicate`. Errors are raised `from None`.
+  note. A decision for a column not in the starter raises `pre_scan.review_unknown_column`; two for one
+  column raise `pre_scan.review_duplicate`. Errors are raised `from None`.
 - Relationship keys: for a column named in any declared relationship's `parent.columns` or
   `children[].columns` (all shapes in 5.3), CONFIRM and EDIT keep the relationship's namespace, and a
-  strategy whose catalog row says `namespace_required: false` is refused (`init.key_column_unkeyed`).
+  strategy whose catalog row says `join_safe: false` is refused (`config.key_column_not_join_safe`).
   REJECT on such a column keeps the SCAN-MULTI key entry (`hash` with the relationship namespace)
   instead of `redact`. `finding_edits` applies the same rule.
 - The returned config passes `PipelineConfig.model_validate` and `compile_plan` and every entry whose
@@ -498,25 +546,28 @@ Rules:
 
 - Only `warning`-severity residual-PII findings that come from a detector match can be dismissed.
   A `fail` finding, and any finding raised from source-identity evidence (`source_compared` true with
-  an identity rate over the warning threshold), is never lowered by a dismissal and cannot be
-  rejected in the review.
+  `source_identity_rate` at or over `_LEAK_WARN_RATE`, `verification/postmask/residual_pii.py:122`),
+  is never lowered by a dismissal and cannot be rejected in the review.
 - A dismissal stops applying when the column's configured strategy changes, or the detector's model
   version changes; the finding is then reported again at its own severity, and the stale dismissal is
   counted in the run log.
 - `finding_edits` never appends a duplicate dismissal (same fields); a repeat review is a no-op.
 
-### 4.7 The YAML editor and the shared mark index (W3.1)
+### 4.7 The YAML editor (W3.1) and the shared mark index (W1.1)
 
-- **One mark index.** W3.1 moves the compose pass, path resolution and refusals of
+- **One mark index.** W1.1 moves the compose pass, path resolution and refusals of
   `src/decoy/ci/locations.py` (numeric and semantic paths, alias, merge-key and duplicate-key
   refusal, the node cap) into `src/decoy/_yaml_marks.py`. `ci/locations.py` keeps its public names
   and calls the shared module; its existing tests are the characterization tests and must pass
   unchanged. `_yaml_edit.py` and the answers loader's duplicate-key check use the same module.
 - **Span rule.** The span of a column entry is whole lines: from the line of the sequence item's dash
-  through the line holding the end of the entry's last scalar (found by recursing to the last value
-  node, never the mapping's own `end_mark`). The REVIEW note directly above the entry is replaced
-  with it (4.5). Blank lines and comments after the last scalar belong to whatever follows and are
-  never touched.
+  through the last line of the entry's last scalar, found by recursing to the last value node, never
+  the mapping's own `end_mark`. A block scalar's `end_mark` can sit at column 0 of the next line after
+  its trailing blank lines (PyYAML 6.0.3 probe by the reviewer, 2026-11-07), so: when the end mark is
+  at column 0 the span ends on the previous line, and trailing blank lines are dropped from the span
+  unless the scalar's chomping indicator is keep (`|+` or `>+`). The REVIEW note directly above the
+  entry is replaced with it (4.5). Blank lines and comments after the span belong to whatever follows
+  and are never touched.
 - **Refusals** (`init.yaml_edit_unsupported`, naming the column path and the reason): an alias,
   anchor or merge key anywhere in the entry; a flow-style entry; a duplicate key; a comment line or
   trailing comment inside the entry's own lines (it would be lost); an entry sharing a line with
@@ -525,8 +576,13 @@ Rules:
   (`_scaffold_yaml`, the same emitter that writes new files) at the entry's original indentation, with
   the file's line ending (LF or CRLF) and no change to a BOM.
 - **Checks before the replace.** Re-parse the edited text; its `safe_load` result equals the original
-  with exactly the `ConfigEdit`s applied; every comment line outside the replaced lines is present in
-  the same order; the file's bytes on disk still hash to the value read at load (`init.yaml_changed`).
+  with exactly the `ConfigEdit`s applied; every comment line of the original file, except the REVIEW
+  notes of the edited entries, is present in the edited text in the same order (computed from the two
+  texts with the tokenizer, independent of the span); the file's bytes on disk still hash to the value
+  read at load (`init.yaml_changed`).
+- **Dismissal into an existing block.** `post_scan:` as a block mapping takes a `dismissed:` key
+  appended as its last child, or one list item appended to an existing block `dismissed:` list. A
+  flow-style `post_scan: {...}` or `dismissed: [...]` is refused (`init.yaml_edit_unsupported`).
 
 ## 5. Enumerations (from the code at the bases)
 
@@ -557,9 +613,10 @@ exit 1, unsupported entry (partial write only on confirm) exit 0 or 1; gate warn
 - `decoy init FILES...` in a terminal (prompter: terminal).
 - `decoy init FILES...` off a TTY, or with `--no-input`, `--json`, `-q` (prompter: answers, all skip).
 - `decoy init FILES... --answers A` (prompter: answers file).
-- bare `decoy init` in a terminal (first question: files or template) and off a TTY (preset
-  `minimal`, unchanged).
-- `decoy init --preset NAME` (template path, unchanged, `init.py:513` to `init.py:577`).
+- bare `decoy init` in a terminal (first question: files or template) and off a TTY (the `minimal`
+  preset in every mode; a behavior change in default mode, 4.1).
+- `decoy init --preset NAME` (template path, `init.py:513` to `init.py:577`; its prompts move behind
+  the `Prompter` in W1.2).
 - `-o -` (stdout): the review needs the screen, so `-o -` implies `--no-input`.
 - `decoy init --review-findings PIPELINE --report FILE` in a terminal; off a TTY or with `--json` only
   with `--answers` (finding decisions), else exit 1 naming `--answers`.
@@ -589,7 +646,8 @@ full gate runs on the edited config before the replace. AT-W12 covers each shape
   `source_identity_rate`, `source_compared`. The review shows table, column, detector, severity and
   match rate; it never shows `message` (free text built elsewhere), and SCAN-ML adds `source` and
   `model`; the report gains `config_sha256` (4.5).
-- `StrategyInfo`: `name`, `namespace_required`, `required_options` (4.6, part E0).
+- `StrategyInfo`: `name`, `namespace_required`, `join_safe`, `required_options`, `example_options`,
+  `offer_in_wizard` (4.6, part E0).
 - Answers model (`decoy-init-answers/v1`): `schema`, `sources` (`path`, `has_header`,
   `column_names`), `detectors`, `tables` (name to column to a verdict, or to `{verdict, source,
   detector_id, model, strategy}` for a confirm, or `{verdict: edit, entry}`), `unlisted`,
@@ -624,11 +682,11 @@ full gate runs on the edited config before the replace. AT-W12 covers each shape
 | 2 | Cleanup missing on an exit path | cancel, `q`, scan failure, write failure, gate refusal, answers write failure | Nothing is written until the single write step; YAML then answers file, each through `_atomic.write_local_target`, which removes its temp file on every failure; an answers failure after the YAML names both outcomes | AT-W10 exit-path matrix: Ctrl-C, EOF, `q`, scan error, `_atomic` failure on the YAML, on the answers file, gate refusal, YAML changed; asserts which files exist after each, and no temp file | M-W10: write the answers file before the YAML write succeeds |
 | 3 | State machine and concurrency | review state per item; duplicate decisions; YAML changed during post-scan review | The review is a pure fold of decisions over the starter (`apply_review`), no hidden state; duplicate keys in an answers file are refused at load by the shared mark index (PyYAML alone keeps the last one); duplicate decisions are refused in `apply_review`; the editor compares the file hash read at load with the bytes just before replace | AT-W11 property: any permutation of the same decision set gives the same config, and a file with a duplicate column key is refused; AT-W14 file changed between read and write is refused | M-W11a: drop the duplicate-key refusal in the loader; M-W11b: last-writer-wins in `apply_review`; M-W14: skip the hash check |
 | 4 | Route parity and silent fallback | terminal, answers file, no-TTY, `--json`, `-q`, template path, findings review | One review loop over a `Prompter` interface; the answers file and the terminal are two implementations; the template path's prompts move behind it (W1.2); no `if interactive` branch in steps | AT-W3 replay parity (byte-identical YAML); AT-W4 no-TTY equals all-skip and bare `decoy init` off a TTY takes the `minimal` preset; sentry `test_wizard_prompt_boundary.py` over `src/decoy/cli/init.py` and `src/decoy/cli/wizard/` (only `_prompts.py` may call): `typer.prompt`, `typer.confirm`, `click.prompt`, `click.confirm`, `click.termui.*`, `rich.prompt.Prompt.ask`, `Confirm.ask`, `IntPrompt.ask`, `input`, `getpass.getpass`, `sys.stdin.read*`, through aliases, resolved with G-ONE-GATE's resolver | M-W3: the answers path confirms classifier suggestions on `unlisted: skip`; M-W4a: a step calls `typer.prompt` directly; M-W4b: `from rich.prompt import Confirm as C` in `_flow.py` |
-| 5 | Referential integrity | review or post-scan edit of a key column (every FK shape in 5.3) | `apply_review` and `finding_edits` keep the relationship namespace and refuse a strategy the catalog marks `namespace_required: false` on a key column (`init.key_column_unkeyed`); REJECT keeps the key entry; the gate runs on the result | AT-W12 per FK shape, with a `decoy run` on a two-table fixture proving the join survives | M-W12: let `edit` set `redact` on a composite child key |
-| 6 | Untrusted producer | the answers file, the integrity report, the existing YAML | Strict pydantic models with `extra="forbid"`, strict types, a required schema tag and a 1 MiB cap; the report checked for schema and `config_sha256`; YAML read through the gate's `parse_pipeline_yaml` and indexed by the one mark index (`src/decoy/_yaml_marks.py`, node cap, alias and merge refusal) | AT-W5 hostile answers corpus (unknown keys, missing or wrong tag, oversize file, alias bombs, non-string keys, `yes` as a verdict, duplicate keys); AT-W13 hostile YAML shapes refused; AT-W20 stale or foreign report refused | M-W5: drop `extra="forbid"`; M-W13: accept an alias node span; M-W20: skip the `config_sha256` check |
+| 5 | Referential integrity | review or post-scan edit of a key column (every FK shape in 5.3) | `apply_review` and `finding_edits` keep the relationship namespace and refuse a strategy the catalog does not mark `join_safe` on a key column (`config.key_column_not_join_safe`); `_KEY_STRATEGIES` derives from the same fact; REJECT keeps the key entry; the gate runs on the result | AT-W12 per FK shape, with a `decoy run` on a two-table fixture proving the join survives; a join oracle that also masks the key with a namespaced non-injective strategy and shows orphans | M-W12: let `edit` set `redact` on a composite child key; M-W12b: allow `categorical` (namespaced, not join-safe) on a parent key |
+| 6 | Untrusted producer | the answers file, the integrity report, the existing YAML | Strict pydantic models with `extra="forbid"`, strict types, a required schema tag and a 1 MiB cap; the report read with a 16 MiB cap and checked for schema, required finding fields and `config_sha256`; YAML read through the gate's `parse_pipeline_yaml` and indexed by the one mark index (`src/decoy/_yaml_marks.py`, node cap, alias and merge refusal) | AT-W5 hostile answers corpus (unknown keys, missing or wrong tag, oversize file, alias bombs, non-string keys, `yes` as a verdict, duplicate keys); AT-W13 hostile YAML shapes refused; AT-W20 stale or foreign report refused | M-W5: drop `extra="forbid"`; M-W13: accept an alias node span; M-W20: skip the `config_sha256` check |
 | 7 | Check then use on a path (TOCTOU) | output exists then write; YAML read then replace; a symlinked YAML | Output uses `_atomic` (`CREATE_ONCE` when `--yes` is absent and the file did not exist at start); post-scan replace re-reads and compares the hash immediately before the replace; a symlinked pipeline is refused; the replace keeps the original mode. Residual window accepted for a single-operator CLI (SCAN-MULTI precedent) | AT-W14; AT-W21 symlink refused and mode kept | M-W14 (as row 3); M-W21: replace without the mode argument |
 | 8 | Weak tests and overclaimed evidence | every acceptance test | Each acceptance test names its mutation (section 7) and a real oracle (a `decoy run`, an explicit namespace assertion, a comment-survival check), not only the gate, which misses missing namespaces | Reviewer reruns the named mutations on the final head | removing any named mutation from the evidence record is a gate finding |
-| 9 | Behavior-preserving refactor drift | `decoy init --preset`, `decoy init FILE` with no answers, `ci/locations.py` after its index moves | Characterization tests first: today's preset output and the S3a.1 `decoy init FILE` output are pinned before W1.2 edits `init.py`; `ci/locations.py`'s existing tests pass unchanged after W3.1 moves its index | AT-W1 characterization; the existing `tests/` for `ci/locations` at W3.1 | M-W1: change the default preset; M-W9b: change the semantic-path spelling in the moved index |
+| 9 | Behavior-preserving refactor drift | `decoy init --preset`, `decoy init FILE` with no answers, `ci/locations.py` after its index moves | Characterization tests first: today's preset output and the S3a.1 `decoy init FILE` output are pinned before W1.2 edits `init.py`; `ci/locations.py`'s existing tests pass unchanged after W1.1 moves its index | AT-W1 characterization; the existing `tests/` for `ci/locations` at W1.1 | M-W1: change the default preset; M-W9b: change the semantic-path spelling in the moved index |
 | 10 | Frozen contract drift | CLI flags, exit codes, `--json` keys, engine public API, `PipelineConfig`, the answers schema | Additive only: new flags, new `--json` keys, new engine exports; the six exit codes unchanged; no config field added by this plan (SCAN-ML adds the detector fields and `post_scan.dismissed`); `decoy-init-answers/v1` frozen at W2, once SCAN-ML's detector names exist (W1.2 accepts no `detectors` key yet) | AT-W15 `--json` key snapshot; engine export snapshot test; answers-schema JSON snapshot at W2 | M-W15: rename `column_count` |
 
 ## 7. Acceptance tests (red first)
@@ -641,31 +699,31 @@ SCAN-MULTI fixture helpers.
 | Id | Part | Asserts | Mutation |
 |---|---|---|---|
 | AT-E0a | E0 | G-CATALOG: every handler in the handler table declares `namespace_required` and `required_options` itself (no inherited default), and `strategy_catalog()` has exactly one row per handler | M-E0a: remove the attributes from one handler; M-E0b: add a handler without a catalog row |
-| AT-E0b | E0 | for every catalog row, a column entry with exactly the required options (and a namespace when required) compiles and runs on a three-row frame; dropping any one required option fails at validate or at run with a named code | M-E0c: mark `hash` `namespace_required: false` (its run fails with `hash_requires_namespace`) |
+| AT-E0b | E0 | for every catalog row, a column entry built from its `example_options` (and a namespace when required) compiles and runs on a three-row frame; dropping any one required option fails at validate or at run with a named code; `_KEY_STRATEGIES` equals the rows marked `join_safe`; a test-local mapping of each `join_safe` row on 1,000 distinct values yields 1,000 distinct outputs, and the same input twice yields the same output | M-E0c: mark `hash` `namespace_required: false` (its run fails with `hash_requires_namespace`); M-E0d: mark `categorical` `join_safe` |
 | AT-E1 | E1 | `apply_review` over every verdict for a column with one regex suggestion gives: confirm = the suggestion entry, reject = `redact` with the rejected note, edit = the given entry, skip = unchanged entry and note; the result validates and compiles | M-E1a: reject keeps the suggestion entry |
 | AT-E2 | E1 | a classifier suggestion is never live in `starter_config` output and becomes the column entry only on a confirm whose `SuggestionRef` matches it | M-E2: mark classifier suggestions live |
 | AT-E3 | E1 | unknown column, duplicate decisions and a confirm with no matching suggestion raise with their codes; the message names the column, never a value; `__context__` is `None` | M-E3: silently ignore unknown columns |
-| AT-E4 | E1 | property (Hypothesis, fixed seed): for random decision sets over the fixture starter (edits drawn from the catalog), the result validates and compiles, every column not named keeps its starter entry, and every entry whose strategy is `namespace_required` has a namespace (explicit assertion; the gate does not check this) | M-E4: `column_entry` skips the namespace for an edit to `hash` |
-| AT-E5 | E2 | `finding_edits`: confirm on an unmasked column yields one `replace` built by `column_entry`; reject on a warning detector match yields one `append` (or `append_block` with no `post_scan:`) with every dismissal field; reject on a `fail` or identity finding raises `init.dismiss_refused`; skip yields none; a repeat reject yields none | M-E5a: reject edits the column; M-E5b: allow dismissing a `fail` finding |
+| AT-E4 | E1 | property (Hypothesis, fixed seed): for random decision sets over the fixture starter (edits drawn from the `offer_in_wizard` rows with their `example_options`), the result validates and compiles, every column not named keeps its starter entry, and every entry whose strategy is `namespace_required` has a namespace (explicit assertion; the gate does not check this) | M-E4: `column_entry` skips the namespace for an edit to `hash` |
+| AT-E5 | E2 | `finding_edits`: confirm on an unmasked column yields one `replace` built by `column_entry`; reject on a warning detector match yields one `append` (or `append_block` with no `post_scan:`) with every dismissal field; reject on a `fail` or identity finding raises `post_scan.dismiss_refused`; skip yields none; a repeat reject yields none | M-E5a: reject edits the column; M-E5b: allow dismissing a `fail` finding |
 | AT-W1 | W1.2 | characterization: `--preset` outputs and non-interactive `decoy init FILE` output equal the pinned bytes | M-W1 |
 | AT-W2 | W1.2 | scripted terminal session over the fixture: the YAML reflects each verdict typed, and `a`, `d`, `q` cover the right items; `a` is accepted only after the table summary has printed. Runs through a pty on the Linux and macOS lanes; the Windows lane runs the same script through the scripted `Prompter` | M-W2a: `d` skips the whole run instead of the table; M-W2b: offer `a` before the summary |
 | AT-W3 | W1.2 | `--save-answers A` from the AT-W2 session (the header flag answered by prompt; columns named `yes`, `null`, `on`), then `--answers A --no-input`: byte-identical YAML | M-W3; M-W3b: save names unquoted |
 | AT-W4 | W1.2 | off a TTY with no answers: YAML equals the S3a.1 unreviewed starter; a missing header flag exits 1 naming the flag before any read (spy on `scan_sources`); bare `decoy init` off a TTY in default mode writes the `minimal` preset without prompting (stdin left open) | M-W4 |
 | AT-W5 | W1.1 | hostile answers corpus: each case exits 1 with its code; key paths are named, no right-hand value is echoed (a canary strategy value is absent from stderr), nothing written | M-W5; M-W8c |
 | AT-W6 | W1.1 | the strategy list at an `edit` prompt equals `strategy_catalog()` names and the options asked equal `required_options`; sentry fails on a literal tuple, list or set of two or more catalog strategy names in `cli/wizard/` | M-W6: hard-code the list |
-| AT-W7 | W1.2 | for a seeded sample of 200 verdict sequences over the fixture (edits sampled from the catalog), the reviewed config passes the gate in-process and has a namespace on every `namespace_required` entry; for 5 of them, `decoy run` on a tiny fixture exits 0 | M-E4 |
+| AT-W7 | W1.2 | for a seeded sample of 200 verdict sequences over the fixture (edits sampled from the `offer_in_wizard` rows with their `example_options`), the reviewed config passes the gate in-process and has a namespace on every `namespace_required` entry; for 5 of them, `decoy run` on a tiny fixture exits 0 | M-E4 |
 | AT-W8 | W1.2, W2, W3.2 | canary corpus: no canary in stdout, stderr, `--json`, the YAML, the answers file or `-v` logs, on every route in 5.2; non-vacuity: the same corpus is found in the raw fixture bytes | M-W8a, M-W8b, M-W8c |
 | AT-W9 | W1.2 | every exit path in 5.1 prints exactly one error line in default mode, and none of the lines holds a canary | M-W9: restore the `is not OutputMode.default` guard |
-| AT-W10 | W1.2 | exit-path matrix (class row 2) | M-W10 |
+| AT-W10 | W1.2 | exit-path matrix (class row 2), plus a preflight error (a capacity or missing-companion finding injected into the gate): the YAML is written, `--json` shows `status: "written"` and `gate.errors`, and the exit code is the one `gate_exit_code` gives | M-W10; M-W10b: skip the write on a preflight error |
 | AT-W11 | W1.1 | permutation property and duplicate-key refusal (class row 3) | M-W11a, M-W11b |
 | AT-W15 | W1.2 | `--json` key snapshot and engine export snapshot | M-W15 |
-| AT-W19 | W1.2, W2 | stale confirm: replay a saved answers file after changing the regex fixture so the column's suggestion changes, and (W2) after bumping the classifier model version in the fixture manifest; both exit 1 with `init.answers_stale` naming the column and the field; the short form `email: confirm` on a column with two suggestions exits 1 | M-W19: match a confirm by source only |
+| AT-W19 | W1.2, W2 | stale confirm: replay a saved answers file after changing the regex fixture so the column's suggestion changes, and (W2) after bumping the classifier model version in the fixture manifest; both exit 1 with `pre_scan.review_stale` naming the column and the field; the short form `email: confirm` on a column with two suggestions exits 1 | M-W19: match a confirm by source only |
 | AT-W16 | W2 | detector step writes SCAN-ML's pre-scan and post-scan fields exactly as chosen; NER not installed: terminal offers to continue, non-interactive exits 1 naming the install command | M-W16: write NER into the config when it is not installed |
 | AT-W17 | W2 | a classifier suggestion is shown with its model id, version and band, applied only on a matching confirm, and the YAML note names the model | M-E2 |
-| AT-W12 | W3.2 | per FK shape (5.3): confirm and edit on a key column keep the namespace, an unkeyed strategy is refused with `init.key_column_unkeyed`, reject keeps the key entry; `decoy run` on the edited two-table fixture exits 0 and every masked child key still joins a masked parent key | M-W12 |
-| AT-W13 | W3.1 | `_yaml_edit` over a corpus (comments between entries and after the last entry, a table-level comment after the last column, blank lines, CRLF, BOM, last entry without trailing newline, unicode names, quoted keys): every comment line outside the replaced lines survives in order, every byte outside them is unchanged, and the re-parsed dict differs only at the edit paths; anchors, aliases, merge keys, flow-style entries, duplicate keys and comments inside the entry are refused | M-W13a: accept an alias node span; M-W13b: skip the structural check; M-W13c: use the mapping's own `end_mark` as the span end |
+| AT-W12 | W3.2 | per FK shape (5.3): confirm and edit on a key column keep the namespace, a strategy not marked `join_safe` (`redact`, and `categorical` with a namespace) is refused with `config.key_column_not_join_safe`, reject keeps the key entry; `decoy run` on the edited two-table fixture exits 0 and every masked child key still joins a masked parent key | M-W12 |
+| AT-W13 | W3.1 | `_yaml_edit` over a corpus (comments between entries and after the last entry, a table-level comment after the last column, blank lines, CRLF, BOM, last entry without trailing newline, unicode names, quoted keys, block scalars `|`, `|+` and `>-` as the last value, a multi-line quoted scalar, an entry at end of file with no newline): every comment line of the original except the edited entries' REVIEW notes survives in order (checked from the two texts, not from the span), every byte outside them is unchanged, and the re-parsed dict differs only at the edit paths; anchors, aliases, merge keys, flow-style entries, duplicate keys and comments inside the entry are refused | M-W13a: accept an alias node span; M-W13b: skip the structural check; M-W13c: use the mapping's own `end_mark` as the span end; M-W13d: end a block-scalar span on the end mark's line at column 0 |
 | AT-W14 | W3.1 | the YAML is changed between read and replace: refused, the file holds the second writer's bytes | M-W14 |
-| AT-W18 | W3.2 | reject on a warning finding writes a dismissal with every field; the next `decoy run` reports it as `info` (needs the SCAN-ML dismiss part); after the column's strategy changes, or the model version changes, it is reported at its own severity again; a `fail` finding cannot be rejected; a second review adds nothing | M-W18a: append twice on repeat review; M-W18b: match a dismissal without the strategy |
+| AT-W18 | W3.2 | reject on a warning finding writes a dismissal with every field; the next `decoy run` reports it as `info` (needs the SCAN-ML dismiss part); after the column's strategy changes, or the model version changes, it is reported at its own severity again; a `fail` finding cannot be rejected; a second review, against a fresh report from a re-run on the edited YAML, adds nothing; a review against the old report after a write is refused (`init.report_stale`, its `config_sha256` no longer matches), so a partial review is resumed only from a fresh report | M-W18a: append twice on repeat review; M-W18b: match a dismissal without the strategy |
 | AT-W20 | W3.2 | a report with another schema, no `config_sha256`, or a hash of an older YAML is refused with its code; a fresh report from `decoy report integrity --config` is accepted | M-W20 |
 | AT-W21 | W3.1 | a symlinked pipeline is refused and the link and its target are unchanged; a 0644 pipeline is still 0644 after an edit | M-W21 |
 | G-ONE-EMITTER | W1.2 | SCAN-MULTI's guard extended: the wizard's write and the editor's entry text reach `_scaffold_yaml`; no other module under `src/decoy/` emits pipeline YAML text | M-EMIT-W: the wizard writes `yaml.safe_dump` output |
@@ -681,16 +739,16 @@ The plan contract section 4 asks for these; each is an acceptance test above.
 3. A classifier suggestion confirmed by `unlisted: skip` through a default (AT-E2, M-W3).
 4. `q` at the first prompt, then a write that still applies suggestions (AT-W2); or `a` pressed
    before the summary was shown (AT-W2).
-11. A model upgrade, then CI replays a saved `confirm` (AT-W19).
-12. A post-scan edit deletes the next column's REVIEW comment (AT-W13, M-W13c).
-13. `e` to `hash` with no namespace: the gate is green and `decoy run` exits 3 (AT-E4, AT-W7).
-14. Reject a `fail` finding and the leak reads as `info` forever (AT-E5, AT-W18).
 5. Ctrl-C after `--save-answers` was given, leaving a half answers file (AT-W10).
 6. Off-TTY run that blocks on a prompt (AT-W4, class row 4 sentry).
 7. A post-scan edit that turns a composite child key into `redact` (AT-W12).
 8. A pipeline file whose column entry is an alias of another (AT-W13).
 9. The user edits the YAML in an editor while the review runs (AT-W14).
 10. The scan error text carrying a cell value printed at default verbosity (AT-W8, AT-W9).
+11. A model upgrade, then CI replays a saved `confirm` (AT-W19).
+12. A post-scan edit deletes the next column's REVIEW comment (AT-W13, M-W13c).
+13. `e` to `hash` with no namespace: the gate is green and `decoy run` exits 3 (AT-E4, AT-W7).
+14. Reject a `fail` finding and the leak reads as `info` forever (AT-E5, AT-W18).
 
 ## 9. Owner questions (each answerable alone; recommended answer first)
 
@@ -722,7 +780,8 @@ The plan contract section 4 asks for these; each is an acceptance test above.
 | Mask secret guidance | `decoy/_mask_secret_guidance.py` | the secrets step and keyed hint |
 | Strategy list and options | the private handler table `execution/_strategies/__init__.py:44`; no public catalog and no options metadata exist | E0 adds `strategy_catalog()` from per-handler attributes; the `edit` prompt and `column_entry` read it |
 | Column entry building | `init.py:184` `_emit_column_yaml` (namespace for `_NAMESPACE_REQUIRED_STRATEGIES`, `init.py:180`) | becomes engine `column_entry` (E1), used by `starter_config`, `apply_review` and `finding_edits` |
-| YAML node marks for the pipeline text | `src/decoy/ci/locations.py:1` (compose pass, path resolution, alias, merge and duplicate refusal, node cap) | moved to `src/decoy/_yaml_marks.py` in W3.1; `ci/locations.py` and `_yaml_edit.py` share it |
+| YAML node marks for the pipeline text | `src/decoy/ci/locations.py:1` (compose pass, path resolution, alias, merge and duplicate refusal, node cap) | moved to `src/decoy/_yaml_marks.py` in W1.1; `ci/locations.py`, the answers loader and `_yaml_edit.py` share it |
+| Join-safe key strategies | `execution/_sequential_native.py:129` `_KEY_STRATEGIES = (HASH, FPE)` | derived from the catalog's `join_safe` in E0; the key-column rule reads the same fact |
 | AST call resolution for sentries | `tests/sentry/test_gate_single_entry.py` (import-table resolver) | the new sentries reuse it, not a new scanner |
 | Post-scan findings | `post-scan-integrity/v2` report (`verification/postmask/types.py:17`), written by `decoy report integrity --output` (`report.py:1918`) | the `--report` input of W3.2 |
 | Sentry ratchet | `tests/sentry/_ratchet.py`, `scripts/dev/sentry_registry.toml` | new sentries register here |
@@ -744,7 +803,7 @@ in W1.1: add the row "Interactive review wizard for `decoy init`: `src/decoy/cli
 | `cli/wizard/_flow.py` | same | same | |
 | `cli/wizard/_findings.py` (W3.2) | same | same | |
 | `cli/wizard/_yaml_edit.py` (W3.1) | same | same | |
-| `src/decoy/_yaml_marks.py` (W3.1) | `src/decoy/` | "Private shared filesystem or process primitives used by more than one package" (used by `ci/` and `cli/wizard/`) | `src/decoy/_atomic.py` |
+| `src/decoy/_yaml_marks.py` (W1.1) | `src/decoy/` | "Private shared filesystem or process primitives used by more than one package" (used by `ci/` and `cli/wizard/`) | `src/decoy/_atomic.py` |
 | `tests/sentry/test_wizard_prompt_boundary.py`, `test_wizard_no_exc_text.py`, `test_one_editor.py` | `tests/sentry/` | "Repository policy sentries and their scanners" | `test_gate_single_entry.py` |
 | engine `profiling/starter_review.py` | `src/decoy_engine/profiling/` | engine CODEMAP Directory Map, `profiling/` row (profiling and detector suggestions; the engine map has no "Where things go" section until LAYOUT E1) | `profiling/starter_config.py` (SCAN-MULTI S3-engine.2) |
 | engine `tests/unit/profiling/test_starter_review.py` | engine `tests/unit/profiling/` | same convention as SCAN-MULTI's `test_starter_config.py` | |
@@ -779,9 +838,10 @@ W1.2 moves the review body into `cli/wizard/_flow.py` and leaves `init.py` the o
   (additive; the schema tag stays v2 if SCAN-ML confirms its readers ignore unknown keys, else v3).
 - `PipelineConfig`: untouched by this plan. The detector fields and `post_scan.dismissed` belong to
   SCAN-ML.
-- Error codes. Engine (`ReviewInputError`, reason identities claimed through REG-RENUMBER at merge):
-  `init.answers_unknown_column`, `init.answers_duplicate`, `init.answers_stale`,
-  `init.entry_invalid`, `init.key_column_unkeyed` (E1), `init.dismiss_refused` (E2). CLI-only, in the
+- Error codes. Engine (`ReviewInputError`, reason identities claimed through REG-RENUMBER at merge),
+  each in an existing family of `decoy_engine/reasons/`: `pre_scan.review_unknown_column`,
+  `pre_scan.review_duplicate`, `pre_scan.review_stale`, `config.entry_invalid`,
+  `config.key_column_not_join_safe` (E1), `post_scan.dismiss_refused` (E2). CLI-only, in the
   CLI's existing fixed-code convention: `init.answers_invalid`, `init.yaml_changed`,
   `init.yaml_edit_unsupported`, `init.yaml_symlink`, `init.report_missing`, `init.report_schema`,
   `init.report_stale`.
@@ -792,13 +852,13 @@ Sizes are hand-written lines (source + tests + docs), estimated. Every part stay
 
 | Part | Repo | Lines | Contents | Depends on |
 |---|---|---|---|---|
-| E0 | engine | ~420 (120 + 270 + 30) | two class attributes on each of the 25 strategy handlers, `StrategyInfo`, `strategy_catalog()`, export; G-CATALOG; AT-E0a, AT-E0b | none (engine main) |
+| E0 | engine | ~480 (150 + 300 + 30) | five class attributes on each of the 25 strategy handlers, `StrategyInfo`, `strategy_catalog()`, export; `_KEY_STRATEGIES` derived from `join_safe`; G-CATALOG; AT-E0a, AT-E0b | none (engine main) |
 | E1 | engine | ~640 (280 + 330 + 30) | `starter_review.py`: `ModelRef`, `SuggestionRef`, verdict enum, `ReviewDecision`, `column_entry`, `apply_review`, `ReviewInputError` and its reason identities; the full `ColumnSuggestion` fields and `StarterConfig.suggestions`; `starter_config` builds entries through `column_entry`; AT-E1 to AT-E4 | E0; SCAN-MULTI S3-engine.2 merged |
-| W1.1 | CLI | ~660 (340 + 290 + 30) | `cli/wizard/` package: `_prompts.py` (Prompter protocol, terminal and answers implementations, key table), `_answers.py` (model, strict loader, save with quoted names), `_review.py` (per-table loop over a Prompter); CODEMAP row; sentries for prompt boundary, no exception text, no strategy literal (on G-ONE-GATE's resolver); AT-W5, AT-W6, AT-W11 | E0 and E1 released and repinned |
+| W1.1 | CLI | ~760 (400 + 330 + 30) | `src/decoy/_yaml_marks.py` (index moved from `ci/locations.py`, which keeps its names; its tests pass unchanged); `cli/wizard/` package: `_prompts.py` (Prompter protocol, terminal and answers implementations, key table), `_answers.py` (model, strict loader, save with quoted names), `_review.py` (per-table loop over a Prompter); CODEMAP row; sentries for prompt boundary, no exception text, no strategy literal (on G-ONE-GATE's resolver); AT-W5, AT-W6, AT-W11 | E0 and E1 released and repinned |
 | W1.2 | CLI | ~760 (280 + 440 + 40) | `cli/wizard/_flow.py` (sections, write step, gate); `init.py` rewired to it, template prompts moved behind the Prompter; `--answers`, `--save-answers`, `--no-input`, `--fail-on-warning`; stale-confirm check; G-ONE-EMITTER extended; CHANGELOG, `docs/cli-reference.md`; AT-W1 to AT-W4, AT-W7 to AT-W10, AT-W15, AT-W19 (regex half) | W1.1; SCAN-MULTI S3a.1 merged (renderer and the `init` rewrite) |
 | W2 | CLI | ~460 (170 + 260 + 30) | detector section (pre-scan and post-scan choices, NER availability, the SCAN-ML install command), model and band in the summary, `detectors` in the answers schema (frozen here, snapshot); AT-W16, AT-W17, AT-W19 (model half), AT-W8 for this route | W1.2; SCAN-ML engine parts with the config fields, classifier suggestions and the NER availability probe, released and repinned |
 | E2 | engine | ~420 (170 + 220 + 30) | `FindingDecision`, `ConfigEdit`, `finding_edits` with the dismissal and key-column rules; AT-E5; FK-shape cases for AT-W12 at engine level | E1; SCAN-ML's `post_scan.dismissed` field and the report's `source` and `model` |
-| W3.1 | CLI | ~620 (260 + 330 + 30) | `src/decoy/_yaml_marks.py` (index moved from `ci/locations.py`, which keeps its names), `cli/wizard/_yaml_edit.py`, the `mode` argument of `_atomic.write_local_target`; G-ONE-EDITOR; AT-W13, AT-W14, AT-W21 | W1.2 |
+| W3.1 | CLI | ~540 (200 + 310 + 30) | `cli/wizard/_yaml_edit.py`, the `mode` argument of `_atomic.write_local_target`; G-ONE-EDITOR; AT-W13, AT-W14, AT-W21 | W1.2 |
 | W3.2 | CLI | ~560 (200 + 330 + 30) | `cli/wizard/_findings.py`, `--review-findings`, `--report`, findings in the answers schema; AT-W12, AT-W18, AT-W20, AT-W8 for this route | W3.1; E2 released and repinned; SCAN-ML's report changes (`config_sha256`, per-finding `source` and `model`) |
 
 Which parts need what:
@@ -810,13 +870,14 @@ Which parts need what:
   regex suggestions only, so the wizard ships its core and its editor before SCAN-ML.
 - Shared files: `cli/init.py` is written by S3a.1 then W1.2 (one writer at a time, after S3a.1
   merges). `profiling/starter_config.py` is written by S3-engine.2, then E1, then SCAN-ML.
-  `ci/locations.py` is written by W3.1 only (behavior-preserving move). `_atomic.py` gains one
-  argument in W3.1.
+  `ci/locations.py` is written by W1.1 only (behavior-preserving move). `_atomic.py` gains one
+  argument in W3.1. E0 replaces SCAN-MULTI's namespace-strategy copy in
+  `profiling/recommendations.py` and `_starter_inference.py` if S3-engine.1 merges first.
 
 Test depth per part: T0 per edit, T1 impact-selected per commit (`scripts/dev/gates.sh --baseline`).
 Escalation triggers: E0, E1 and E2 change engine public exports (frozen contract surface) and E1 and
-E2 touch the reason registry; W1.2, W2 and W3.2 repin the engine; W3.1 moves code under the CI
-location sentries and changes `_atomic.py`, a shared primitive. Each of those merge heads gets the full suite
+E2 touch the reason registry; W1.2, W2 and W3.2 repin the engine; W1.1 moves code under the CI
+location sentries; W3.1 changes `_atomic.py`, a shared primitive. Each of those merge heads gets the full suite
 diffed against the stored main baseline, run once by the orchestrator. Tests run on the Mac mini or
 `~/bin/vm-run`, never on the devbox.
 
