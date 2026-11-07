@@ -164,6 +164,7 @@ def test_the_choke_point_reads_through_the_engine() -> None:
         "from pandas import read_fwf\ndef f(p):\n    return read_fwf(p)\n",
         "import decoy_engine as de\ndef f(p, d):\n    return de.read_csv_source(p, d, table='t')\n",
         "import pandas as pd\ndef f(p):\n    return pd.read_parquet(p)\n",
+        "import polars as pl\ndef f(p):\n    return pl.read_parquet(p)\n",
         "import pandas\ndef f(p):\n    return pandas.read_json(p)\n",
         "import pyarrow.parquet as pq\ndef f(p):\n    return pq.read_table(p)\n",
         "import pyarrow.parquet\ndef f(p):\n    return pyarrow.parquet.read_table(p)\n",

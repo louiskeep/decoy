@@ -452,7 +452,21 @@ def test_unreadable_entries_are_value_free(tmp_path: Path) -> None:
     base = _manifest(tmp_path, "a", out, "csv")
     bad = tmp_path / "bad.csv"
     bad.write_bytes(b"id,name\n\xff\xfe\x80,\xc3\x28\n")
+    # A fixed-width file the engine refuses (a DecoyError, not a ValueError).
+    refused = tmp_path / "refused.txt"
+    refused.write_text(f"{_CELL}xyz\n", encoding="utf-8")
+    refused_layout = {
+        "columns": [
+            {"name": "id", "start": 0, "width": 7},
+            {"name": "n", "start": 7, "width": 3, "type": "int", "align": "right"},
+        ]
+    }
     cases = {
+        "engine_refused_fixed_width": {
+            "path": str(refused),
+            "format": "fixed_width",
+            "layout": refused_layout,
+        },
         "unknown_format": {"format": "xml"},
         "fixed_width_no_layout": {"format": "fixed_width"},
         "undecodable_csv": {"path": str(bad), "format": "csv"},
