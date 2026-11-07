@@ -102,3 +102,7 @@ V2-LOG, left as is: the second temp-create path (`write_atomic`, `CREATE_ONCE`);
 | CREATE_ONCE replaces instead of linking | `test_atomic::test_create_once_never_clobbers` |
 | private entry uses the public stager | `test_target_writes::test_the_public_whole_table_writers_pass_a_real_stager`, `test_atomic_output::test_unmask_and_detokenize_outputs_are_owner_only` |
 | unmask or detokenize calls the public writer | `test_target_writes::test_restoring_commands_use_only_the_private_table_writer` |
+
+## Final gate result (head `98d69db`, code unchanged by this note)
+
+`scripts/dev/gates.sh --keep-going --baseline` on the VM: ruff pass, sentry 556 passed, tests 762 passed, 0 branch-only failures. Mac (macOS arm64): atomic unit tests, io_policy sentries, `test_atomic_writer` and `test_atomic_output.py`, 267 passed, 2 skipped.
