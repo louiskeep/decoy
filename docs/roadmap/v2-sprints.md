@@ -58,6 +58,20 @@ These apply unless a slice says otherwise, so the slices below do not repeat the
   registry order (REG-RENUMBER), compatibility corpus extended for any new artifact.
 - **Close-out:** shipped log, roadmap, graph refresh and the plain-language Slack note.
 
+## Build status (V2 work built ahead of time; owner instruction 2026-11-07: do not merge)
+
+Built through the standard dev loop (plan, independent plan review, build, independent code
+review, remediation) in parallel with CLI V1. Engine plans live in `E:docs/plans/2026-11-07-v2-*.md`;
+each records every review finding and its fix. None of these slices changes CLI V1 behavior
+except by adding provider names (5.4), and none is merged. Each still needs the cross-model gate
+and a T3 full-suite run on a merge head before any merge.
+
+| Slice | Plan branch | Build branch (head) | Review state | Open |
+|---|---|---|---|---|
+| V2-3.2 anonymity metrics (k, l, t; F37 measurement half) | `plan/v2-3.2-anonymity-metrics` | `feat/v2-3.2-anonymity-metrics` (`0d8fdf0b`) | code review PASS (round 4) | follow-ups: profiler reuse, ARX cross-check |
+| V2-4.2 + 4.3 Gaussian copula fit and sample (F48 core) | `plan/v2-4.2-4.3-gaussian-copula` | `feat/v2-4.2-4.3-gaussian-copula` (`f6773297`) | code review round 3: all findings resolved | **owner exception for the secret-material census (2 `seed` keys)**; the sentry gate stays red until decided; differencing attacks need the DP follow-up |
+| V2-5.4 edge-case providers (F46) | `plan/v2-5.4-edge-case-providers` | `feat/v2-5.4-edge-case-providers` (`f6a31a52`) | code review PASS WITH CONCERNS (round 2; advisories recorded) | conflicts with V1P-2.3 on registry count pins at merge (combined 49) |
+
 ## Sprint order and dependencies
 
 | Sprint | Theme | Slices | Core | Depends on (outside this doc) |
