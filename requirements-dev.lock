@@ -369,7 +369,7 @@ cryptography==50.0.2 \
     # via
     #   decoy-cli (pyproject.toml)
     #   decoy-engine
-decoy-engine @ git+https://github.com/louiskeep/decoy-engine@f5b46a2c109f7b901e8ed3d36e48798bb6179b1d
+decoy-engine @ git+https://github.com/louiskeep/decoy-engine@4a0d5b1f0d2014f35e663d29f7794622a5c7d334
     # via decoy-cli (pyproject.toml)
 deprecated==1.3.1 \
     --hash=sha256:597bfef186b6f60181535a29fbe44865ce137a5079f295b479886c82729d5f3f \

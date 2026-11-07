@@ -1,6 +1,6 @@
 """Local token-vault store for `decoy tokenize` / `decoy detokenize` (B-1).
 
-The engine's `tokenize` mask strategy (A-8 token-vault seam, engine ==0.18.0) derives a
+The engine's `tokenize` mask strategy (A-8 token-vault seam) derives a
 deterministic surrogate per value and hands the `(plaintext, token)` pair to a
 platform-injected writer; the engine holds no vault itself (library code does
 not know its callers). This module is the CLI-side, single-operator, LOCAL

@@ -2,12 +2,12 @@
 #
 # This is not the dev/test lock (see pyproject.toml's `dev`/`lint`/`vault`
 # extras). It is the exact 63-package third-party set that, together with
-# decoy-engine 0.18.0 and decoy-cli on CPython 3.10.20 (Linux/x86-64/glibc),
+# decoy-engine 0.19.0 and decoy-cli on CPython 3.10.20 (Linux/x86-64/glibc),
 # reproduces proof-stack fingerprint:
 #
-#   b643894ded2ab84c4a0a9d9032a1de3d2330db89161f231e509024428b7533f3
+#   795732eb0808001d9c4591f3693637187637bb383a87b8caa95b8f2f269f9211
 #
-# (Was a7b40d54... on engine 0.17.0, f2a5910f... on engine 0.7.0 and
+# (Was b643894d... on engine 0.18.0, a7b40d54... on engine 0.17.0, f2a5910f... on engine 0.7.0 and
 # e75c87e9... on engine 0.6.0; only the decoy-engine version differs, so the
 # pins are unchanged (63 pins).)
 #
@@ -20,7 +20,7 @@
 # decoy-cli, with NO dev tooling (no pytest, ruff, mypy, hypothesis, or
 # anything else CI needs but a shipped runtime never touches):
 #
-#   uv pip install decoy-engine==0.18.0 decoy-cli
+#   uv pip install decoy-engine==0.19.0 decoy-cli
 #   uv pip install -r requirements-certified.txt
 #
 # Adding, removing, or re-pinning ANY line here changes the fingerprint and
