@@ -1,0 +1,388 @@
+"""Write every table the CLI produces, by the format its target declares.
+
+A target is written by its declared `format`, never inferred from the path. The one
+exception is a vault-reversal output (`decoy unmask -o`, `decoy detokenize -o`), which
+has no declaration and takes its format from the suffix through `format_for_path`.
+A declared format that contradicts the path suffix is refused before any source is read.
+
+This module holds every CLI table write, whole (`write_table`) and chunked
+(`write_chunked_output`), so one sentry can keep it that way. Part B adds the read-side
+format decisions here; the read calls stay in `cli/_sources.py`.
+
+Source patterns: `cli/_sources.py` for the shape, and the platform's
+`api/jobs/fixed_width_output.py` for the fixed-width frame conversion.
+"""
+
+from __future__ import annotations
+
+import math
+import numbers
+import re
+from collections.abc import Callable, Iterable, Mapping
+from dataclasses import dataclass
+from pathlib import Path
+from typing import TYPE_CHECKING, Any
+
+import pyarrow as pa
+
+from decoy.cli._sources import resolve_path
+
+if TYPE_CHECKING:
+    import pandas as pd
+
+SUFFIX_MISMATCH = "target_format_suffix_mismatch"
+STREAMING_UNSUPPORTED = "target_format_streaming_unsupported"
+FORMAT_UNKNOWN = "target_format_unknown"
+
+_FORMATS = ("csv", "parquet", "fixed_width")
+_SUFFIX_FORMAT = {".csv": "csv", ".parquet": "parquet", ".pq": "parquet"}
+# Longest suffix first, so `.tar.gz` is matched before `.gz`. Same set pandas infers.
+_COMPRESSION = (
+    (".tar.bz2", "tar"),
+    (".tar.gz", "tar"),
+    (".tar.xz", "tar"),
+    (".bz2", "bz2"),
+    (".tar", "tar"),
+    (".zip", "zip"),
+    (".zst", "zstd"),
+    (".gz", "gzip"),
+    (".xz", "xz"),
+)
+_ARCHIVES = ("zip", "tar")
+_INT64_MIN, _INT64_MAX = -(2**63), 2**63 - 1
+_CANONICAL_INT = re.compile(r"0|-?[1-9][0-9]*")
+_STREAMING_REFUSAL = (
+    "--chunked cannot write a fixed_width target or a CSV inside a zip or tar archive; "
+    "run without --chunked"
+)
+
+
+class TargetFormatError(ValueError):
+    """A target the CLI refuses to write. The message never holds a path or a value."""
+
+    def __init__(self, code: str, message: str) -> None:
+        super().__init__(message)
+        self.code = code
+
+
+@dataclass(frozen=True)
+class TargetFormatIssue:
+    """The non-raising form of `TargetFormatError`, for the config gate."""
+
+    table: str
+    code: str
+    message: str
+
+
+def _split_compression(path: Path) -> tuple[str, str | None]:
+    """Return the file name without one recognised compression suffix, and its method."""
+    name = path.name.lower()
+    for suffix, method in _COMPRESSION:
+        if name.endswith(suffix):
+            return name[: -len(suffix)], method
+    return name, None
+
+
+def _uncompressed_only_message(label: str, fmt: str, path: Path) -> str | None:
+    """Message for a Parquet or fixed-width file under a compression suffix, else None.
+
+    Those writers never compress, so a `.gz` name would hold an uncompressed file.
+    """
+    if fmt == "csv":
+        return None
+    name = path.name.lower()
+    stem, method = _split_compression(path)
+    if method is None:
+        return None
+    return (
+        f"{label}: declared format '{fmt}' cannot be written under the compression "
+        f"suffix '{name[len(stem) :]}'; rename the file or change the format"
+    )
+
+
+def check_output_path(path: Path) -> None:
+    """Refuse a vault-reversal output (`-o`) whose suffix the writer cannot honour."""
+    message = _uncompressed_only_message("output", format_for_path(path), path)
+    if message is not None:
+        raise TargetFormatError(SUFFIX_MISMATCH, message)
+
+
+def _format_suffix(path: Path) -> str:
+    return Path(_split_compression(path)[0]).suffix
+
+
+def claimed_format(path: Path) -> str | None:
+    """The format the suffix before any compression suffix claims: csv, parquet or None."""
+    return _SUFFIX_FORMAT.get(_format_suffix(path))
+
+
+def format_for_path(path: Path) -> str:
+    """The format of a file with no declaration: parquet for `.parquet`/`.pq`, else csv."""
+    return claimed_format(path) or "csv"
+
+
+def _is_archive_csv(fmt: str, path: Path) -> bool:
+    return fmt == "csv" and _split_compression(path)[1] in _ARCHIVES
+
+
+def _entry_issue(
+    table: str, entry: Mapping[str, Any], *, chunked: bool
+) -> TargetFormatIssue | None:
+    fmt = entry.get("format")
+    if not isinstance(fmt, str) or fmt not in _FORMATS:
+        return TargetFormatIssue(
+            table,
+            FORMAT_UNKNOWN,
+            f"targets.{table}: unsupported target format; expected csv, parquet or fixed_width",
+        )
+    path = Path(entry["path"])
+    claimed = claimed_format(path)
+    if claimed is not None and claimed != fmt:
+        return TargetFormatIssue(
+            table,
+            SUFFIX_MISMATCH,
+            f"targets.{table}: declared format '{fmt}' does not match the path suffix "
+            f"'{_format_suffix(path)}'; rename the file or change the format",
+        )
+    message = _uncompressed_only_message(f"targets.{table}", fmt, path)
+    if message is not None:
+        return TargetFormatIssue(table, SUFFIX_MISMATCH, message)
+    if chunked and (fmt == "fixed_width" or _is_archive_csv(fmt, path)):
+        return TargetFormatIssue(
+            table,
+            STREAMING_UNSUPPORTED,
+            f"targets.{table}: --chunked cannot stream declared format '{fmt}' to this "
+            "path (fixed_width, or CSV in a zip or tar archive); run without --chunked",
+        )
+    return None
+
+
+def target_format_issues(config_dict: dict, *, chunked: bool) -> list[TargetFormatIssue]:
+    """Every contradiction in the file targets, in sorted table order. Raises nothing.
+
+    Cloud targets and entries without a path are skipped: `_require_local_io_endpoints`
+    owns the first, and the writers skip the second.
+    """
+    targets = config_dict.get("targets") or {}
+    if not isinstance(targets, dict):
+        return []
+    issues = []
+    for name, entry in sorted(targets.items(), key=lambda item: str(item[0])):
+        table = str(name)
+        if not isinstance(entry, dict) or entry.get("type", "file") != "file":
+            continue
+        if not isinstance(entry.get("path"), str):
+            continue
+        issue = _entry_issue(table, entry, chunked=chunked)
+        if issue is not None:
+            issues.append(issue)
+    return issues
+
+
+def check_target_formats(config_dict: dict, *, chunked: bool) -> None:
+    """Raise `TargetFormatError` for the first issue, before any table is read or written."""
+    issues = target_format_issues(config_dict, chunked=chunked)
+    if not issues:
+        return
+    first = issues[0]
+    message = first.message
+    if first.code == STREAMING_UNSUPPORTED:
+        message = "; ".join(i.message for i in issues if i.code == STREAMING_UNSUPPORTED)
+    raise TargetFormatError(first.code, message)
+
+
+def resolve_target_format(table: str, entry: Mapping[str, Any]) -> str:
+    """The declared format of one target, after the suffix contradiction check.
+
+    The only function that reads a target's `format`.
+    """
+    issue = _entry_issue(table, entry, chunked=False)
+    if issue is not None:
+        raise TargetFormatError(issue.code, issue.message)
+    return str(entry["format"])
+
+
+def _coerce_canonical_int_strings(series: pd.Series) -> pd.Series | None:
+    """Strings that are canonical int64 digits become Int64; anything else stays as is.
+
+    A CSV source reads every cell as text. No value changes: a leading zero, `-0`, a
+    sign, spaces, a trailing newline or an out-of-range number leaves the column alone,
+    so the writer refuses it.
+    """
+    import pandas as pd
+
+    present = series.dropna()
+    for value in present:
+        if not isinstance(value, str) or _CANONICAL_INT.fullmatch(value) is None:
+            return None
+        if not _INT64_MIN <= int(value) <= _INT64_MAX:
+            return None
+    return pd.Series(
+        [pd.NA if pd.isna(v) else int(v) for v in series],
+        index=series.index,
+        dtype="Int64",
+        name=series.name,
+    )
+
+
+def _is_integral_in_range(value: float) -> bool:
+    return math.isfinite(value) and value == math.floor(value) and _INT64_MIN <= value <= _INT64_MAX
+
+
+def _coerce_object_series(series: pd.Series) -> pd.Series | None:
+    """Python ints and integral floats only; bool, Decimal and str stay untouched."""
+    import numpy as np
+    import pandas as pd
+
+    for value in series.dropna():
+        if isinstance(value, (bool, np.bool_)):
+            return None
+        if isinstance(value, numbers.Integral):
+            if not _INT64_MIN <= int(value) <= _INT64_MAX:
+                return None
+        elif isinstance(value, float):
+            if not _is_integral_in_range(value):
+                return None
+        else:
+            return None
+    return pd.Series(
+        [pd.NA if pd.isna(v) else int(v) for v in series],
+        index=series.index,
+        dtype="Int64",
+        name=series.name,
+    )
+
+
+def _coerce_int_columns(frame: pd.DataFrame, layout: Mapping[str, Any]) -> pd.DataFrame:
+    """Coerce float and object columns the layout types `int` to Int64, losslessly.
+
+    Ported from the platform's `coerce_int_columns`: a column is touched only when every
+    non-null value is finite, integral and in int64 range. Anything else is left for the
+    engine writer to refuse. Object columns of strings also take the CLI-only canonical
+    digit rule, because a CSV source arrives as text.
+    """
+    import pandas as pd
+
+    out = frame.copy()
+    for column in layout.get("columns") or []:
+        if not isinstance(column, Mapping) or column.get("type") != "int":
+            continue
+        name = column.get("name")
+        if name not in out.columns:
+            continue
+        series = out[name]
+        dtype = series.dtype
+        coerced: pd.Series | None = None
+        if pd.api.types.is_bool_dtype(dtype):
+            continue
+        if pd.api.types.is_float_dtype(dtype):
+            present = series.dropna()
+            if all(_is_integral_in_range(float(v)) for v in present):
+                coerced = series.astype("Int64")
+        elif pd.api.types.is_object_dtype(dtype):
+            coerced = _coerce_object_series(series)
+            if coerced is None:
+                coerced = _coerce_canonical_int_strings(series)
+        if coerced is not None:
+            out[name] = coerced
+    return out
+
+
+def _write_fixed_width(table: pa.Table, layout: Mapping[str, Any] | None, path: Path) -> None:
+    from decoy_engine import write_fixed_width
+
+    if layout is None:
+        raise TargetFormatError(FORMAT_UNKNOWN, "a fixed_width target needs a layout")
+    frame = _coerce_int_columns(table.to_pandas(), layout)
+    write_fixed_width(frame, dict(layout), path)
+
+
+def write_table(
+    data: pa.Table | pd.DataFrame,
+    fmt: str,
+    path: Path,
+    layout: Mapping[str, Any] | None = None,
+) -> None:
+    """Write one whole table. The only whole-table writer in the CLI."""
+    import pandas as pd
+    import pyarrow.parquet as pq
+
+    message = _uncompressed_only_message("output", fmt, path)
+    if message is not None:
+        raise TargetFormatError(SUFFIX_MISMATCH, message)
+    if isinstance(data, pd.DataFrame):
+        if fmt == "csv":
+            data.to_csv(path, index=False)
+        elif fmt == "parquet":
+            data.to_parquet(path, index=False)
+        elif fmt == "fixed_width":
+            raise TypeError("write_table: fixed_width needs a pyarrow Table")
+        else:
+            raise TargetFormatError(FORMAT_UNKNOWN, "unsupported target format")
+        return
+    if fmt == "csv":
+        data.to_pandas().to_csv(path, index=False)
+    elif fmt == "parquet":
+        pq.write_table(data, str(path))
+    elif fmt == "fixed_width":
+        _write_fixed_width(data, layout, path)
+    else:
+        raise TargetFormatError(FORMAT_UNKNOWN, "unsupported target format")
+
+
+def write_targets(config_dict: dict, outputs: Mapping[str, pa.Table], base_dir: Path) -> None:
+    """Write each declared file target from `outputs`, by its declared format.
+
+    Callers run `check_target_formats` first so a contradiction is refused before the
+    first table is written; this resolves each entry as it iterates.
+    """
+    targets = config_dict.get("targets") or {}
+    if not isinstance(targets, dict):
+        return
+    for table_name, entry in targets.items():
+        if not isinstance(entry, dict):
+            continue
+        raw_path = entry.get("path")
+        if not isinstance(raw_path, str):
+            continue
+        table = outputs.get(table_name)
+        if table is None:
+            continue
+        fmt = resolve_target_format(str(table_name), entry)
+        path = resolve_path(raw_path, base_dir)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        write_table(table, fmt, path, entry.get("layout"))
+
+
+def write_chunked_output(
+    masked_iter: Iterable[pa.Table],
+    fmt: str,
+    out_path: Path,
+    *,
+    empty_schema: Callable[[], pa.Schema] | None,
+) -> None:
+    """Stream masked chunks to `out_path` in `fmt`. The only chunked writer in the CLI."""
+    import pyarrow.parquet as pq
+
+    if fmt not in ("csv", "parquet") or _is_archive_csv(fmt, out_path):
+        raise TargetFormatError(STREAMING_UNSUPPORTED, _STREAMING_REFUSAL)
+    if fmt == "parquet":
+        writer = None
+        try:
+            for masked in masked_iter:
+                if writer is None:
+                    writer = pq.ParquetWriter(str(out_path), masked.schema)
+                writer.write_table(masked)
+            if writer is None and empty_schema is not None:
+                # Empty parquet source: emit a valid zero-row file with the source
+                # schema, matching what a plain run writes. (An empty CSV source writes
+                # nothing, same as the CSV target path.)
+                writer = pq.ParquetWriter(str(out_path), empty_schema())
+        finally:
+            if writer is not None:
+                writer.close()
+        return
+    first = True
+    for masked in masked_iter:
+        masked.to_pandas().to_csv(out_path, index=False, header=first, mode="w" if first else "a")
+        first = False

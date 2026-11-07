@@ -8,7 +8,8 @@ named `.dat` both read correctly.
 
 The engine owns the CSV dialect (`has_header`, `column_names`, `delimiter`) and
 the headerless width scan. This module owns path resolution and the format
-dispatch, and `read_csv_frame` is the one place a declared CSV source is read.
+dispatch. It is the one place the CLI reads a data file, and `read_csv_frame` is
+the one place a declared CSV source is read.
 """
 
 from __future__ import annotations
@@ -20,7 +21,11 @@ from typing import Any
 import pyarrow as pa
 
 
-def _resolve_path(raw_path: str, base_dir: Path) -> Path:
+def resolve_path(raw_path: str, base_dir: Path) -> Path:
+    """Resolve a YAML path against the config's directory; absolute paths pass through.
+
+    The one YAML path resolver: `run`, `demo` and the target writers share it.
+    """
     p = Path(raw_path)
     return p if p.is_absolute() else (base_dir / p).resolve()
 
@@ -53,7 +58,7 @@ def read_csv_frame(
     from decoy_engine import read_csv_source, resolve_csv_dialect
 
     return read_csv_source(
-        _resolve_path(src["path"], base_dir),
+        resolve_path(src["path"], base_dir),
         resolve_csv_dialect(src),
         table=table_name,
         dtype=dtype,
@@ -75,7 +80,7 @@ def read_report_source(path: Path, config_dict: dict[str, Any], config_dir: Path
             isinstance(src, dict)
             and src.get("format") == "csv"
             and src.get("path")
-            and _resolve_path(src["path"], config_dir).resolve() == target
+            and resolve_path(src["path"], config_dir).resolve() == target
         ):
             return read_csv_frame(name, src, config_dir, dtype=None)
     # The user's own path is relative to the current folder, never to the config directory.
@@ -91,7 +96,7 @@ def read_source(table_name: str, src: dict[str, Any], base_dir: Path) -> pa.Tabl
     way the platform reads it.
     """
     fmt = src.get("format")
-    path = _resolve_path(src["path"], base_dir)
+    path = resolve_path(src["path"], base_dir)
     if fmt == "parquet":
         import pyarrow.parquet as pq
 
@@ -125,7 +130,7 @@ def iter_source_chunks(
     backstop for any caller that skips that check.
     """
     fmt = src.get("format")
-    path = _resolve_path(src["path"], base_dir)
+    path = resolve_path(src["path"], base_dir)
     if fmt == "parquet":
         return _parquet_chunks(path, chunk_size)
     if fmt == "csv":
@@ -137,6 +142,13 @@ def iter_source_chunks(
             "chunks; run without --chunked"
         )
     raise _unknown_format(table_name, fmt)
+
+
+def parquet_schema(path: Path) -> pa.Schema:
+    """The Arrow schema of a Parquet file, without reading its rows."""
+    import pyarrow.parquet as pq
+
+    return pq.ParquetFile(str(path)).schema_arrow
 
 
 def _parquet_chunks(path: Path, chunk_size: int) -> Iterator[pa.Table]:

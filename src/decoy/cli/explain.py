@@ -309,9 +309,9 @@ _TOPICS: dict[str, _Topic] = {
             "text_redact, date_shift, bucketize (plus faker/categorical when the\n"
             "config declares an explicit pool). Anything that needs the whole column\n"
             "(e.g. shuffle) is rejected with a usage error.\n\n"
-            "Sources are read by their declared format (csv or parquet; fixed_width is\n"
-            "not supported with --chunked). Targets are written by file suffix (CSV\n"
-            "or Parquet), independently of the source format."
+            "Sources and targets use their declared format (csv or parquet), independently\n"
+            "of each other. fixed_width sources and targets, and CSV targets inside a\n"
+            "zip or tar archive, are not supported with --chunked."
         ),
         see_also=("decoy run --help", "decoy explain substrate"),
     ),
