@@ -22,6 +22,7 @@ git logs).
 
 ## 2026-11-07
 
+- **CLI** (`4cd24dd`, #105): ATOMIC-OUTPUT. Every CLI table write (CSV, Parquet, compressed CSV, chunked output) is staged in a temp file beside the output and replaces it in one rename, so a failed or interrupted run keeps the old file or writes none. An existing output keeps its mode bits. `unmask` and `detokenize` write owner-only (0600) on Linux and macOS, including a stdout redirected to a file. Closes row 61a (chunked partial target). Gate: Dennis GO r2, Codex GO r3.
 - **CLI** (`ff82bc9`, #101 to #103): CLI-FMT. Every file target is written in its declared format
   (csv, parquet, fixed width) through one writer module, `cli/io/_targets.py`; before this, Parquet and
   fixed-width targets could come out as CSV. A format that contradicts the suffix, or a compression
