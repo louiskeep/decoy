@@ -47,6 +47,12 @@ gains `provider_config.ner` and `text_redact`/`text_mask` declare `ner_model` an
 `band` is only `high` or `review`; `confidence_bucket` also carries the NER rate bucket; a
 dismissal's `strategy` may be null; an NER finding marked `promoted: true` may be rejected.
 
+Revision 5 (2026-11-07): owner answers folded in (`OWNER-ANSWERS-IW-SCANML-2026-11-07.md`): Q2 is
+decided (a reject persists as `post_scan.dismissed`); Q1 and Q3 stay recommended until answered.
+From the E0 build: AT-E0b's `config.entry_invalid` refusals move to AT-E3, because `column_entry`
+(E1) is the code that raises them; the two catalog types live in `execution/_adapter.py`, which
+every handler already imports, since handlers need `StrategyOption` at class definition.
+
 Risk: R2. The plan changes a public CLI command, adds a file format (the answers file), adds public
 engine API, edits a user's existing pipeline YAML in place, and its output must stay value-free.
 Nothing is destructive beyond an atomic replace of a file the user named, which the wizard shows and
@@ -415,7 +421,7 @@ decoy init --review-findings pipeline.yaml --report integrity.json
 - `reject` adds one dismissal (4.6) to `post_scan.dismissed`, only for findings the dismissal rule
   allows. When the file has no `post_scan:` block, the edit appends one at the end of the file
   (`ConfigEdit` op `append_block`); when it has one without `dismissed`, it appends the key inside it.
-  Owner question Q2 confirms that a reject persists; the recommended answer is yes.
+  A reject persists (owner decided 2026-11-07, Q2).
 - `skip` changes nothing.
 - Each edited column entry's REVIEW note (the comment lines directly above the entry that start with
   `# REVIEW:` and their `#   ` continuations) is replaced by the new note; no other comment changes.
@@ -782,10 +788,10 @@ SCAN-MULTI fixture helpers.
 | Id | Part | Asserts | Mutation |
 |---|---|---|---|
 | AT-E0a | E0 | G-CATALOG: every handler in the handler table declares `namespace_required`, `join_safe`, `wizard_options` (read into `StrategyInfo.options`) and `offer_in_wizard` itself (no inherited default), and `strategy_catalog()` has exactly one row per handler and no duplicate option name | M-E0a: remove the attributes from one handler; M-E0b: add a handler without a catalog row |
-| AT-E0b | E0 | for every `offer_in_wizard` row, a column entry built from its derived `example_options` (and a namespace when required) compiles and runs on that strategy's existing minimal fixture and required context; the test asserts the offered set is non-empty. Dropping any required option fails, and a wrong exact type, unknown option, invalid choice or wrong descriptor placement is refused with `config.entry_invalid`; changing a non-offered complex strategy to offered without complete option metadata and a runnable fixture fails. `_KEY_STRATEGIES` equals the rows marked `join_safe`; a test-local mapping of each `join_safe` row on 1,000 distinct values yields 1,000 distinct outputs, and the same input twice yields the same output | M-E0c: mark `hash` `namespace_required: false` (its run fails with `hash_requires_namespace`); M-E0d: mark `categorical` `join_safe`; M-E0e: move `truncate.length` to the column level; M-E0f: mark `tokenize` offered |
+| AT-E0b | E0 | for every `offer_in_wizard` row, a column entry built from its derived `example_options` (and a namespace when required) compiles and runs on that strategy's existing minimal fixture and required context; the test asserts the offered set is non-empty. Dropping any required option fails, and an option placed at the wrong level is refused by `ColumnConfig` (`extra="forbid"`); changing a non-offered complex strategy to offered without complete option metadata and a runnable fixture fails. `_KEY_STRATEGIES` equals the rows marked `join_safe`; a test-local mapping of each `join_safe` row on 1,000 distinct values yields 1,000 distinct outputs, and the same input twice yields the same output | M-E0c: mark `hash` `namespace_required: false` (its run fails with `hash_requires_namespace`); M-E0d: mark `categorical` `join_safe`; M-E0e: move `truncate.length` to the column level; M-E0f: mark `tokenize` offered |
 | AT-E1 | E1 | `apply_review` over every verdict for a column with one regex suggestion gives: confirm = the suggestion entry, reject = `redact` with the rejected note, edit = the given entry, skip = unchanged entry and note; the result validates and compiles | M-E1a: reject keeps the suggestion entry |
 | AT-E2 | E1 | a classifier suggestion is never live in `starter_config` output and becomes the column entry only on a confirm whose `SuggestionRef` matches it | M-E2: mark classifier suggestions live |
-| AT-E3 | E1 | unknown column, duplicate decisions and a confirm with no matching suggestion raise with their codes; the message names the column, never a value; `__cause__` and `__context__` are `None` | M-E3: silently ignore unknown columns |
+| AT-E3 | E1 | unknown column, duplicate decisions and a confirm with no matching suggestion raise with their codes; `column_entry` refuses a wrong exact type (bool for int), an unknown option, a value outside `choices`, a misplaced option and a missing required option with `config.entry_invalid`; the message names the column, never a value; `__cause__` and `__context__` are `None` | M-E3: silently ignore unknown columns; M-E3b: `column_entry` accepts `True` for an `int` option |
 | AT-E4 | E1 | property (Hypothesis, fixed seed): for random decision sets over the fixture starter (edits drawn from the `offer_in_wizard` rows with their `example_options`), the result validates and compiles, every column not named keeps its starter entry, and every entry whose strategy is `namespace_required` has a namespace (explicit assertion; the gate does not check this) | M-E4: `column_entry` skips the namespace for an edit to `hash` |
 | AT-E5 | E2 | `finding_edits`: confirm on an unmasked column yields one `replace` built by `column_entry`; reject on a warning detector match, or on an NER `fail` finding marked `promoted: true`, yields one `append` (or `append_block` with no `post_scan:`) with every dismissal field; reject on any other `fail` or identity finding raises `post_scan.dismiss_refused`; skip yields none; a repeat reject yields none. Property (Hypothesis, fixed seed): permutations of decisions for several findings on one column produce the same single replacement and dismissals bound to its final strategy; conflicting entries, unknown identities and duplicate identities are refused | M-E5a: reject edits the column; M-E5b: allow dismissing a non-promoted `fail` finding; M-E5c: create dismissals before folding the column edit |
 | AT-W1 | W1.2 | characterization: `--preset` outputs and non-interactive `decoy init FILE` output equal the pinned bytes | M-W1 |
@@ -836,16 +842,16 @@ The plan contract section 4 asks for these; each is an acceptance test above.
 
 ## 9. Owner questions (each answerable alone; recommended answer first)
 
-- **Q1. How is the post-scan review spelled?** Recommended: `decoy init --review-findings
+- **Q1. How is the post-scan review spelled?** Pending owner answer. Recommended: `decoy init --review-findings
   pipeline.yaml`. Alternatives: `decoy review pipeline.yaml` (a new verb) or `decoy init findings
   pipeline.yaml` (the draft spec's section mode). Builders proceed with the recommended form; a rename
   is one Typer option.
-- **Q2. Does rejecting a post-scan finding persist?** Recommended: yes, as a `post_scan.dismissed`
+- **Q2. Does rejecting a post-scan finding persist?** Owner decided 2026-11-07: yes, as a `post_scan.dismissed`
   entry in the pipeline YAML, so the next run reports it as `info` instead of warning again. The
   entry names the table, column, detector, source, model and the column's strategy; it never lowers a
   failed mask check and stops applying when the strategy or the model version changes (4.6). Without
   it, rejecting a finding changes nothing.
-- **Q3. Is `unlisted: confirm` allowed in an answers file?** Recommended: yes; it is the explicit CI
+- **Q3. Is `unlisted: confirm` allowed in an answers file?** Pending owner answer. Recommended: yes; it is the explicit CI
   way to accept every suggestion and is visible in a file the user wrote.
 
 ## 10. Reuse inventory
@@ -894,7 +900,8 @@ tests `tests/unit/test_wizard_*.py` and `tests/e2e/test_init_wizard*.py`, sentri
 | engine `tests/unit/profiling/test_starter_review.py` | engine `tests/unit/profiling/` | same convention as SCAN-MULTI's `test_starter_config.py` | |
 | engine `tests/unit/test_strategy_catalog.py` (E0) | engine `tests/unit/` | beside the existing strategy handler tests | |
 
-E0 adds no module: the four attributes go on the existing handler classes, and `strategy_catalog()`
+E0 adds no module: the four attributes go on the existing handler classes, `StrategyOption` and
+`StrategyInfo` live in `execution/_adapter.py` beside `StrategyHandler`, and `strategy_catalog()`
 lives in `execution/_strategies/__init__.py` beside `SCALAR_HANDLERS` and is re-exported from
 `decoy_engine/__init__.py` (an export line, a keep-both ledger line per owner 2026-11-06). The frozen
 `execution/` package therefore gains no module.
