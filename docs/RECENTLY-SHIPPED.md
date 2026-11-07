@@ -22,6 +22,16 @@ git logs).
 
 ## 2026-11-07
 
+- **CLI** (`ff82bc9`, #101 to #103): CLI-FMT. Every file target is written in its declared format
+  (csv, parquet, fixed width) through one writer module, `cli/io/_targets.py`; before this, Parquet and
+  fixed-width targets could come out as CSV. A format that contradicts the suffix, or a compression
+  suffix on a Parquet or fixed-width target, exits 1 before any write; a fixed-width value that does
+  not fit exits 3 with no file. A2 adds the G-ONE-TARGET-WRITE sentry and a shared scanner for the
+  read and write sentries, and `validate` / `ci check` report the contradiction. Part B reads
+  CLI-written files back by declared format (detokenize, unmask, `report diff`), records format and
+  layout in the evidence manifest, and makes unmask fail closed when its input has none of the
+  configured columns. One T3 on the stack top (2612 passed, 0 branch-only failures), then merged in
+  order. Dennis GO and Codex GO on each part (A and B at round 2, A2 at round 2).
 - **Engine** (`b5b1ad16`, #402): ENGINE-PAR P2. The gate's test step runs under pytest-xdist
   (`GATES_WORKERS`, default auto) with tests marked `serial` in a second plain pass; stored-baseline
   writes and compares stay serial. A collection guard refuses test ids that carry a memory address,
