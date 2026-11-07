@@ -43,7 +43,7 @@ so they cause neither V1 delays nor later rework:
 | When | Slices | Why |
 |---|---|---|
 | Now | V1P-2.1 check digits; V1P-2.3 generators | `checksums.py` and `providers_v2/identifiers/` are touched by no live branch; no new reason codes |
-| Now, if no new reason codes | V1P-3.3 card BIN, V1P-3.4 IP prefix | strategy options need route refusals; otherwise after row 8 |
+| Now (REG-RENUMBER merged 2026-11-07) | V1P-3.1 email domain, V1P-3.3 card BIN, V1P-3.4 IP prefix | no live V1 branch writes their files; reason codes allowed, renumbered at merge |
 | After STORM E1 (row 16) and a split of `detection/detectors.py` (1046 lines, over the engine maximum) | V1P-1.1, V1P-2.2, then V1P-3.2 and V1P-3.5 | STORM E1 rewrites `detection/` and `profiling/`; detectors cannot be added to an over-maximum file |
 | After CLI V1 lanes clear | V1P-1.2, V1P-2.4 (census-limited `faker_setup.py`), V1P-4 | `scan.py` lane, SCAN-MULTI S3, F16; CLI-FMT and CONFIG-EXPLICIT; `feat/csv-source-reader` is rewriting the readers |
 
@@ -54,9 +54,12 @@ CHANGELOG entry for each slice says "V1+ track" and links back here.
 
 | Slice | Repo | Plan branch | Build branch | State |
 |---|---|---|---|---|
-| V1P-2.1 check-digit schemes | engine | `plan/v1plus-p2.1-check-digit-schemes` | `feat/v1plus-p2.1-check-digit-schemes` | built, head `3e2c99fe`. Plan review PASS WITH CONCERNS (rev 2); code review PASS WITH CONCERNS (round 2, advisory fixed); T1 gates green. Still to do: Codex gate, T3 full suite on the merge head, merge by the orchestrator |
+| V1P-2.1 check-digit schemes | engine | `plan/v1plus-p2.1-check-digit-schemes` | `feat/v1plus-p2.1-check-digit-schemes` | built, head `22ab5e51` (engine main `dd31ea91`, 0.19.0 with REG-RENUMBER, merged in 2026-11-07; changelog conflict only). Plan review PASS WITH CONCERNS (rev 2); code review PASS WITH CONCERNS (round 2, advisory fixed); T1 gates green on the new head, `registry_renumber.py --check` consistent. Still to do: Codex gate, T3 full suite on the merge head. Not merged (owner instruction 2026-11-07: do not merge) |
 | V1P-2.3 national identifier generators | engine | `plan/v1plus-p2.3-national-id-generators` (stacked on V1P-2.1) | `feat/v1plus-p2.3-national-id-generators` | built, head `208f52f0`; plan review PASS WITH CONCERNS (rev 2); code review PASS WITH CONCERNS (4 P2, handled); T1 gates green. Still to do: Codex gate, T3 on the merge head. **Merge held until after CLI-REL** (owner decision: the new providers appear in the CLI cockpit listing) |
 | V1P-2.4 truthful Faker locales | engine | `plan/v1plus-p2.4-faker-locales` (from main) | `feat/v1plus-p2.4-faker-locales` | built, head `de34b864`; plan review PASS WITH CONCERNS (rev 3); code review PASS WITH CONCERNS (5 P2, handled); T1 gates green. Still to do: Codex gate, T3 on the merge head. **Merge held until after CLI-REL** (owner decision). Rescoped after a probe: locales already work for Faker providers; this slice makes the advertised locales true and codes locale faults. Follow-ups: V1P-2.4b plan-compile locale check (after REG-RENUMBER), V1P-2.4c coherent non-US addresses (needs licensed postal data, e.g. GeoNames). Pre-existing defects found: seeded `address_city` pools in Italian locales depend on `PYTHONHASHSEED` (not reproducible); unseeded multi-locale `generate()` raises `TypeError` (unhashable cache key) |
+| V1P-3.1 email keeps domain or domain class | engine | `plan/v1plus-p3.1-email-keep-domain` (from main `dd31ea91`) | `feat/v1plus-p3.1-email-keep-domain` | PLAN in progress (started 2026-11-07, after REG-RENUMBER merged). Opt-in strategy option with its own reason codes (registry minor renumbered at merge). Not merged (owner instruction 2026-11-07) |
+| V1P-3.3 card keeps BIN and valid Luhn | engine | `plan/v1plus-p3.3-card-keep-bin` (from main `dd31ea91`) | `feat/v1plus-p3.3-card-keep-bin` | PLAN in progress (started 2026-11-07, after REG-RENUMBER merged). Opt-in strategy option with its own reason codes (registry minor renumbered at merge). Not merged (owner instruction 2026-11-07) |
+| V1P-3.4 IP keeps subnet prefix | engine | `plan/v1plus-p3.4-ip-keep-prefix` (from main `dd31ea91`) | `feat/v1plus-p3.4-ip-keep-prefix` | PLAN in progress (started 2026-11-07, after REG-RENUMBER merged). Opt-in strategy option with its own reason codes (registry minor renumbered at merge). Not merged (owner instruction 2026-11-07) |
 
 ## Defaults for every slice
 
