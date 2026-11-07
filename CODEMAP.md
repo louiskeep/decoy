@@ -46,7 +46,15 @@ First row of the layout map the LAYOUT slice completes (one line per kind of mod
 | Kind of module | Where | Examples |
 |---|---|---|
 | Private shared filesystem or process primitives used by more than one package | top-level `src/decoy/`, file named `_<noun>.py`, tests in `tests/unit/test_<noun>.py`, its sentry in `tests/sentry/` | `_atomic.py`, `_mask_secret.py`, `_native_gate.py` |
+| Pre-run check gate shared by `validate`, `ci check` and `run` | `src/decoy/cli/gate/`, file named `_<noun>.py`, tests in `tests/unit/test_gate_*.py` and `tests/e2e/test_run_validate_always.py` | `_layers.py` (layers and entries); `cli/io/` is the sibling sub-package |
 | CLI source readers and target writers (owner rule 2026-11-06: new ones go here from now on; `cli/` is frozen) | `src/decoy/cli/io/`, file named `_<noun>.py` | target writer `cli/io/_targets.py` (CLI-FMT); today's exception `cli/_sources.py` moves here under H-1 |
+| Composite CI actions (`action.yml`) | `.github/actions/<name>/` | `setup-uv`, `lock-env` |
+| CI install, vendor and lane policy (`*.toml`) | `ci/` | `ci/install-policy.toml` (the install registry), `ci/vendored.toml`, `ci/ci-tools.in`, `ci/ci-tools.lock` |
+| Developer environment scripts | `scripts/dev/` | `lock.sh`, `bootstrap.sh`, `lock_version.sh`, `fetch_ci_binary.py` |
+| Repository policy sentries and their scanners (CI scan helpers shared with the engine in the `ci_scan/` sub-package) | `tests/sentry/` | `_ratchet.py`, `_ci_lock_scan.py`, `test_ci_lock_installs.py`; shared CI scan helpers in `tests/sentry/ci_scan/` |
+| I/O policy sentries (reads and writes) and their shared call scanner | `tests/sentry/io_policy/` | `_calls.py`, `test_target_writes.py` |
+| Build and gate evidence records | `docs/records/` | `2026-11-06-ci-l1-build.md` |
+| CLI format contract tests (new ones go in these named folders, not the flat `tests/e2e/` and `tests/unit/`) | `tests/e2e/cli_fmt/`, `tests/unit/cli_fmt/` | `test_target_format_dispatch.py`, `test_targets_format.py` |
 
 ## Where Do I Find...
 
@@ -57,8 +65,9 @@ First row of the layout map the LAYOUT slice completes (one line per kind of mod
 | Command registration | `src/decoy/__main__.py` |
 | Run command | `src/decoy/cli/run.py` |
 | Tokenize / detokenize | `src/decoy/cli/tokenize.py` (store: `_token_vault.py`) |
-| Validate command | `src/decoy/cli/validate.py` |
+| Validate command | `src/decoy/cli/validate.py` (gate: `src/decoy/cli/gate/`) |
 | CI checks / SARIF / pre-commit | `src/decoy/ci/`, `src/decoy/cli/ci.py`, `docs/ci-contracts.md`, `.pre-commit-hooks.yaml`, `integrations/` |
+| Hosted CI installs (lock-env, setup-uv, install policy, scanner) | `.github/actions/`, `ci/install-policy.toml`, `scripts/dev/lock_version.sh`, `tests/sentry/_ci_lock_scan.py` |
 | STORM command | `src/decoy/cli/storm.py` |
 | Plan command | `src/decoy/cli/plan.py` |
 | Output formatting | `src/decoy/ui/` |

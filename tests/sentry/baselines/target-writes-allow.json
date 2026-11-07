@@ -1,0 +1,9 @@
+{
+ "sentry_id": "target-writes-allow",
+ "created_in": "CLI-FMT-A2",
+ "entries": {
+  "api.py::_stage_source_entry": {
+   "reason": "Spools in-memory data= to a private temp Parquet read back as a source; not a target write."
+  }
+ }
+}

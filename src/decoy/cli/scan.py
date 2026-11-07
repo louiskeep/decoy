@@ -312,9 +312,9 @@ def _load_parquet_with_sampling(path: Path, rows: int | None, strategy: SampleSt
     For Parquet, 'head' and 'random' sampling work on the in-memory DataFrame
     after loading. Future optimization could use pyarrow row groups for head.
     """
-    import pandas as pd
+    from decoy.cli._sources import read_file
 
-    df = pd.read_parquet(path)
+    df = read_file(path, "parquet", None, table=path.stem)
     if rows is None or strategy is SampleStrategy.full or len(df) <= rows:
         return df
     if strategy is SampleStrategy.head:

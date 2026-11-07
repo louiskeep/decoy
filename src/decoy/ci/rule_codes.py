@@ -39,9 +39,10 @@ _TEMPLATED_CODES = frozenset(
 _CLI_GATE_CODES: frozenset[str] = frozenset(
     {
         "capacity.out_of_core_fk", "capacity.source_unreadable", "compile_error",
-        "compile_warning", "missing_extra", "native.companion", "native.eligibility",
-        "no_profile_unique_incompatible", "pipeline.validation_error", "validation_error",
-        "yaml.empty", "yaml.not_mapping", "yaml.parse_error",
+        "compile.needs_profile", "compile_warning", "missing_extra", "native.companion",
+        "native.eligibility", "pipeline.validation_error", "target_format_suffix_mismatch",
+        "target_format_unknown", "validation_error", "yaml.empty", "yaml.not_mapping",
+        "yaml.parse_error",
     }
 )
 
@@ -102,16 +103,18 @@ def _engine_registry_codes() -> frozenset[str]:
 
     return _codes_from_registry(reasons.manifest()["entries"])
 
-# Literal codes the engine emits outside the registry (sources at engine v0.18.0). The test
+# Literal codes the engine emits outside the registry (sources at engine v0.19.0). The test
 # holds this set equal to what an AST scan of the installed engine finds minus the registry.
 _ENGINE_LITERAL_CODES: frozenset[str] = frozenset(
     {
         "abi-mismatch",  # execution/native/_companion_status.py:346
         "absent",  # execution/native/_companion_status.py:269
         "collision_rate",  # execution/native/_pool_quality.py:442
+        "digest",  # declared_casting/_quarantine_local.py:504
         "field_missing",  # execution/_isolated_memwatch.py:44
         "kat-corrupt",  # execution/native/_companion_status.py:147
         "load-error",  # execution/native/_companion_status.py:291
+        "magic",  # declared_casting/_quarantine_local.py:439
         "measured",  # execution/_probe.py:461
         "oom_killed",  # execution/_isolated_run.py:520
         "pool_duplicate_rate",  # execution/native/_pool_quality.py:454
@@ -120,6 +123,7 @@ _ENGINE_LITERAL_CODES: frozenset[str] = frozenset(
         "read_error",  # execution/_isolated_memwatch.py:44
         "stopped",  # execution/_isolated_memwatch.py:44
         "thread_start_failed",  # execution/_isolated_memwatch.py:44
+        "type",  # config/_declared_casting.py:55
         "unreachable",  # secret_providers/_preflight.py:216
     }
 )

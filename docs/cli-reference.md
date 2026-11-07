@@ -87,7 +87,7 @@ $ decoy run [OPTIONS] CONFIG
 * `-v, --verbose`: Enable debug-level CLI logs on stderr.
 * `--master-key TEXT`: 64-char hex master key for keyed deterministic SYNTHETIC GENERATION only (generate_columns:). Same key + same --key-label always yield bitwise-identical generated output across runs and machines. Reads DECOY_MASTER_KEY env var when omitted; without either, generation falls back to the legacy seeded path (per-input deterministic but not portable). This flag does NOT affect masking -- masking&#x27;s keyed determinism is configured separately via &#x27;--mask-secret&#x27; (or the pipeline YAML&#x27;s &#x27;global_settings.mask_secret_ref&#x27;), never this flag or its env var. See: decoy explain keys.  [env var: DECOY_MASTER_KEY]
 * `--mask-secret TEXT`: env:NAME or file:/PATH pointing at a &gt;=32-byte mask secret for keyed masking (mask: strategies -- fpe, hash, date_shift, and others). Independent of --master-key (which is generation-only). Sets &#x27;global_settings.mask_secret_ref&#x27; for this run; an error if the YAML already sets it. Explicit flag only -- it deliberately has NO env var, because the ref it carries (e.g. &#x27;env:DECOY_MASK_SECRET&#x27;) already indirects through the environment; a second env layer would absorb the raw exported secret as this flag&#x27;s value. See: decoy explain keys.
-* `--chunked`: Stream the source through the engine chunk-by-chunk, for inputs too large to load whole. Works for mask configs whose every strategy is value-keyed (hash, fpe, redact, truncate, text_redact, date_shift, bucketize), plus faker/categorical when deterministic with an explicit pool_size / categories declared in config; output is byte-identical to a plain run. Sources are read by their declared format (csv or parquet; fixed_width is not supported with --chunked); targets are written by file suffix. See: decoy explain chunked.
+* `--chunked`: Stream the source through the engine chunk-by-chunk, for inputs too large to load whole. Works for mask configs whose every strategy is value-keyed (hash, fpe, redact, truncate, text_redact, date_shift, bucketize), plus faker/categorical when deterministic with an explicit pool_size / categories declared in config; output is byte-identical to a plain run. Sources and targets use their declared format (csv or parquet; fixed_width and CSV in a zip or tar archive are not supported with --chunked). See: decoy explain chunked.
 * `--chunk-size INTEGER RANGE`: Rows per chunk in --chunked mode.  [default: 100000; x&gt;=1]
 * `--vault PATH`: Write the token vault (encrypted source-to-masked map for vault: true columns) to this path. The vault plus the config re-identify every vaulted value: store them separately and never alongside the masked output. Needs the engine&#x27;s vault extra (cryptography). Not supported with --chunked.
 * `--key-label TEXT`: Stable namespace string for the --master-key generation key hierarchy (synthetic generation only, not masking). Required when --master-key is set. Pick something durable (e.g. &#x27;customers_q4&#x27;); changing it produces different generated output. CLI flag only -- PipelineConfig forbids unknown top-level keys, so there is no YAML equivalent.
@@ -176,7 +176,7 @@ $ decoy unmask [OPTIONS] CONFIG MASKED
 **Arguments**:
 
 * `CONFIG`: The pipeline config the mask run used. The mask secret (--mask-secret or its global_settings.mask_secret_ref) must be the one that run used.  [required]
-* `MASKED`: The masked CSV produced by `decoy run` for one table.  [required]
+* `MASKED`: The masked file produced by `decoy run` for one table (read by the target&#x27;s declared format, else by extension).  [required]
 
 **Options**:
 
@@ -284,9 +284,10 @@ Restore tokenized columns from a local vault using the pipeline config.
 
 Reverses every `strategy: tokenize` column by looking each token back up in
 the vault under the column&#x27;s namespace. The tokenized file is read in the
-format tokenize wrote it (CSV or Parquet, by extension) and the recovered
-file is written in that same format. A missing or wrong vault, or a token
-the vault does not hold under that namespace, fails closed (no output is
+format tokenize wrote it (the table&#x27;s declared target format when the file
+is that target, otherwise by extension) and the recovered file is written
+as Parquet for Parquet input, CSV otherwise. A missing or wrong vault, or a
+token the vault does not hold under that namespace, fails closed (no output is
 written). Exits 0 on success, 1 on a config/usage or fail-closed error, 3 on
 a runtime failure.
 
@@ -299,13 +300,13 @@ $ decoy detokenize [OPTIONS] CONFIG TOKENIZED
 **Arguments**:
 
 * `CONFIG`: The pipeline config the tokenize run used (carries each column&#x27;s namespace).  [required]
-* `TOKENIZED`: The tokenized file produced by `decoy tokenize` for one table (CSV or Parquet, by extension).  [required]
+* `TOKENIZED`: The tokenized file produced by `decoy tokenize` for one table (read by the target&#x27;s declared format, else by extension).  [required]
 
 **Options**:
 
 * `--vault PATH`: The local token vault `decoy tokenize` wrote. Required: detokenize fails closed without it.  [required]
 * `--table TEXT`: Which config table the file belongs to. Required when the config tokenizes more than one table.
-* `-o, --output PATH`: Where to write the recovered file (format by extension). Default: &lt;tokenized&gt;.detokenized.&lt;ext&gt; next to the input, in the same format tokenize wrote (CSV or Parquet).
+* `-o, --output PATH`: Where to write the recovered file (format by extension). Default: &lt;tokenized&gt;.detokenized.parquet for Parquet input, otherwise &lt;tokenized&gt;.detokenized.csv, next to the input.
 * `--json`: Emit a structured JSON result on stdout. Errors still go to stderr.
 * `-q, --quiet`: Suppress stdout. Errors still go to stderr; exit code carries the result.
 * `-v, --verbose`: Enable debug-level CLI logs on stderr.
@@ -324,11 +325,12 @@ Examples:
     Disambiguate when the config tokenizes more than one table.
 
 The config supplies each tokenize column's namespace; the vault supplies the
-reverse mapping. The tokenized file is read in the format tokenize wrote it (CSV
-or Parquet, chosen by its extension), and the recovered file is written in that
-same format. A missing vault, a vault that is not a decoy token vault, or a
-token that is not in the vault under the column's namespace (a wrong vault or
-wrong namespace) fails closed -- no output is written -- rather than emit a
+reverse mapping. The tokenized file is read in the format tokenize wrote it: the
+table's declared target format when the file is that target, otherwise by its
+extension (.parquet or .pq is Parquet, anything else CSV). The recovered file is
+written as Parquet for Parquet input and CSV otherwise. A missing vault, a vault
+that is not a decoy token vault, or a token that is not in the vault under the
+column's namespace (a wrong vault or wrong namespace) fails closed -- no output is written -- rather than emit a
 value it cannot vouch for. So does a file missing any tokenize column the
 config declares for the table, and an already-existing default output
 (<tokenized>.detokenized.<ext>); pass -o to choose a path deliberately.

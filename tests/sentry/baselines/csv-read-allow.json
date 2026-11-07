@@ -1,0 +1,18 @@
+{
+ "sentry_id": "csv-read-allow",
+ "created_in": "CLI-DIALECT-C",
+ "entries": {
+  "cli/demo.py::_run_single_demo": {
+   "reason": "Reads the bundled demo sample for the STORM scan step; not a declared source."
+  },
+  "cli/fit.py::fit": {
+   "reason": "A caller-named file with its own parse flags; not a declared source."
+  },
+  "cli/scan.py::_load_csv_with_sampling": {
+   "reason": "A caller-named file with its own sampling flags; not a declared source."
+  },
+  "cli/scan.py::_load_fixed_width_with_sampling": {
+   "reason": "A caller-named fixed-width file with its own layout flags; not a declared source."
+  }
+ }
+}

@@ -18,6 +18,7 @@ binding choice.
 
 from __future__ import annotations
 
+import json as _json
 from pathlib import Path
 
 import typer
@@ -120,24 +121,39 @@ multiple init runs.
 """
 
 
+def _scaffold_source(input_file: Path) -> dict[str, str]:
+    """The source descriptor the scaffold declares for `input_file`, from its suffix.
+
+    The one suffix rule for both the inference read and the YAML: `.parquet` and `.pq` are
+    parquet, `.tsv` is csv with a tab delimiter, anything else is csv with the default dialect.
+    Raises ValueError for a suffix the scaffolder does not support.
+    """
+    suffix = input_file.suffix.lower()
+    path = str(input_file)
+    if suffix in (".parquet", ".pq"):
+        return {"type": "file", "format": "parquet", "path": path}
+    if suffix == ".tsv":
+        return {"type": "file", "format": "csv", "path": path, "delimiter": "\t"}
+    if suffix == ".csv":
+        return {"type": "file", "format": "csv", "path": path}
+    raise ValueError(f"unsupported file extension {suffix!r}; expected .csv, .tsv, or .parquet")
+
+
 def _load_dataframe(input_file: Path):
     """Read the user's input file into a pandas DataFrame for STORM.
 
-    Supports the two formats the v1 launch covers: CSV and Parquet. The
-    file extension is the dispatch hint; this matches the engine's own
-    file-source loader convention (decoy_engine.io.file_source).
+    Supports the two formats the v1 launch covers: CSV (and TSV) and Parquet. The suffix
+    is the dispatch hint, through `_scaffold_source`; csv reads through the CLI's one CSV
+    read point so the inference sees the dialect the YAML will declare.
     """
-    import pandas as pd
+    descriptor = _scaffold_source(input_file)
+    if descriptor["format"] == "csv":
+        from decoy.cli._sources import read_csv_frame
 
-    suffix = input_file.suffix.lower()
-    if suffix in (".csv", ".tsv"):
-        sep = "\t" if suffix == ".tsv" else ","
-        return pd.read_csv(input_file, sep=sep, nrows=10_000)
-    if suffix in (".parquet", ".pq"):
-        return pd.read_parquet(input_file)
-    raise ValueError(
-        f"unsupported file extension {suffix!r}; expected .csv, .tsv, or .parquet"
-    )
+        return read_csv_frame(_TABLE_NAME, descriptor, Path.cwd(), dtype=None, nrows=10_000)
+    from decoy.cli._sources import read_file
+
+    return read_file(input_file, "parquet", None, table=_TABLE_NAME)
 
 
 def _yaml_quote(value: str) -> str:
@@ -239,6 +255,7 @@ def _build_scaffold_yaml(
     column_names: list[str],
     inferences: dict[str, Inference],
     file_format: str,
+    delimiter: str | None = None,
 ) -> str:
     """Compose the full scaffold YAML body from the per-column inferences.
 
@@ -259,12 +276,14 @@ def _build_scaffold_yaml(
         "# V2 PipelineConfig shape per decoy-engine `decoy_engine.config._pipeline`.\n"
     )
 
+    delimiter_line = f"    delimiter: {_json.dumps(delimiter)}\n" if delimiter else ""
     sources_block = (
         "sources:\n"
         f"  {_TABLE_NAME}:\n"
         "    type: file\n"
         f"    format: {file_format}\n"
         f"    path: {input_quoted}\n"
+        f"{delimiter_line}"
     )
     targets_block = (
         "targets:\n"
@@ -365,8 +384,8 @@ def _scaffold_from_file(
         fs.name: _infer_strategy_for_column(fs) for fs in profile.fields
     }
 
-    suffix = input_file.suffix.lower()
-    file_format = "parquet" if suffix in (".parquet", ".pq") else "csv"
+    source = _scaffold_source(input_file)
+    file_format = source["format"]
     output_ext = ".parquet" if file_format == "parquet" else ".csv"
     output_path = input_file.with_name(
         f"{input_file.stem}.masked{output_ext}"
@@ -378,6 +397,7 @@ def _scaffold_from_file(
         column_names=column_names,
         inferences=inferences,
         file_format=file_format,
+        delimiter=source.get("delimiter"),
     )
 
     try:

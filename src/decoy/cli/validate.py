@@ -42,16 +42,14 @@ fidelity check relocated to `decoy report fidelity`
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
 import typer
-import yaml as _yaml
 
 from decoy.cli._default_group import make_default_group
-from decoy.cli._yaml_errors import sanitize_yaml_error
-from decoy.cli.exit_codes import EXIT_CAPACITY, EXIT_OK, EXIT_USAGE, EXIT_WARNINGS
+from decoy.cli.exit_codes import EXIT_OK
+from decoy.cli.gate import GateFinding, gate_exit_code, run_config_gate, run_gate
 from decoy.ui.output import OutputMode, emit_json, setup_output
 from decoy.ui.theme import accent, code, error, hint, success, warn
 
@@ -108,87 +106,6 @@ See also: decoy run, decoy report fidelity.
 
 
 # ---------------------------------------------------------------------------
-# Message container (validate config)
-# ---------------------------------------------------------------------------
-
-
-@dataclass
-class _ValidationMessage:
-    severity: str  # "error" | "warning" | "info"
-    code: str
-    message: str
-    location: str | None = None
-
-    def to_dict(self) -> dict[str, Any]:
-        d: dict[str, Any] = {
-            "severity": self.severity,
-            "code": self.code,
-            "message": self.message,
-        }
-        if self.location is not None:
-            d["location"] = self.location
-        return d
-
-
-@dataclass
-class _ValidationAccumulator:
-    messages: list[_ValidationMessage] = field(default_factory=list)
-
-    def add_error(self, code: str, message: str, location: str | None = None) -> None:
-        self.messages.append(
-            _ValidationMessage(severity="error", code=code, message=message, location=location)
-        )
-
-    def add_warning(self, code: str, message: str, location: str | None = None) -> None:
-        self.messages.append(
-            _ValidationMessage(severity="warning", code=code, message=message, location=location)
-        )
-
-    @property
-    def has_errors(self) -> bool:
-        return any(m.severity == "error" for m in self.messages)
-
-    @property
-    def has_warnings(self) -> bool:
-        return any(m.severity == "warning" for m in self.messages)
-
-    def to_dicts(self) -> list[dict[str, Any]]:
-        return [m.to_dict() for m in self.messages]
-
-
-# ---------------------------------------------------------------------------
-# CLI-level advisory checks (no engine profile needed)
-# ---------------------------------------------------------------------------
-
-
-def _check_target_overwrite(raw: dict[str, Any], acc: _ValidationAccumulator) -> None:
-    """Warn when a file target's output path already exists on disk.
-
-    Running the pipeline would silently overwrite the file. Not an error
-    (the run succeeds), but a meaningful advisory for CI users who want
-    explicit confirmation before clobbering output.
-    """
-    targets = raw.get("targets") or {}
-    if not isinstance(targets, dict):
-        return
-    for table_name, target in targets.items():
-        if not isinstance(target, dict):
-            continue
-        if target.get("type") not in ("file", None):
-            continue
-        out_path_str = target.get("path")
-        if not out_path_str:
-            continue
-        out_path = Path(out_path_str)
-        if out_path.exists():
-            acc.add_warning(
-                code="target_file.would_overwrite",
-                message=(f"Output target already exists and would be overwritten: {out_path_str}"),
-                location=f"targets.{table_name}.path",
-            )
-
-
-# ---------------------------------------------------------------------------
 # `decoy validate config`
 # ---------------------------------------------------------------------------
 
@@ -238,106 +155,41 @@ def config(
     (e.g. an output file already exists and would be overwritten on run).
     """
     state = setup_output(json_, quiet, verbose)
-    config_str = str(config)
-    acc = _ValidationAccumulator()
 
-    from decoy_engine import (
-        ConfigError,
-        PipelineConfig,
-        PipelineValidationError,
-        run_config_only_checks,
-    )
-    from decoy_engine.plan import PlanCompileError
-    from pydantic import ValidationError
-
-    # -- Step 1: YAML parse ------------------------------------------------
-    try:
-        raw = _yaml.safe_load(config.read_text(encoding="utf-8"))
-    except _yaml.YAMLError as exc:
-        acc.add_error(code="yaml.parse_error", message=sanitize_yaml_error(exc))
-        _emit_result(state, acc, config_str, checks_run=None, fail_on_warning=fail_on_warning)
-        raise typer.Exit(code=EXIT_USAGE)
-
-    if raw is None:
-        # CLI QA fix (2026-06-02, F9): an empty YAML file gives raw=None.
-        acc.add_error(code="yaml.empty", message="Pipeline YAML is empty.")
-        _emit_result(state, acc, config_str, checks_run=None, fail_on_warning=fail_on_warning)
-        raise typer.Exit(code=EXIT_USAGE)
-
-    if not isinstance(raw, dict):
-        acc.add_error(
-            code="yaml.not_mapping",
-            message=(f"Pipeline YAML must be a YAML mapping (object), not {type(raw).__name__}."),
-        )
-        _emit_result(state, acc, config_str, checks_run=None, fail_on_warning=fail_on_warning)
-        raise typer.Exit(code=EXIT_USAGE)
-
-    # -- Step 2: Schema validation (multi-message from pydantic) -----------
-    try:
-        PipelineConfig.model_validate(raw)
-    except ValidationError as exc:
-        # Collect ALL pydantic errors, not just the first.
-        for e in exc.errors():
-            loc_parts = [str(p) for p in e.get("loc", ())]
-            location = ".".join(loc_parts) if loc_parts else None
-            acc.add_error(
-                code=e.get("type", "validation_error"),
-                message=e.get("msg", str(e)),
-                location=location,
-            )
-        _emit_result(state, acc, config_str, checks_run=None, fail_on_warning=fail_on_warning)
-        raise typer.Exit(code=EXIT_USAGE)
-    except (PipelineValidationError, ConfigError) as exc:
-        acc.add_error(code="pipeline.validation_error", message=str(exc))
-        _emit_result(state, acc, config_str, checks_run=None, fail_on_warning=fail_on_warning)
-        raise typer.Exit(code=EXIT_USAGE)
-
-    # -- Step 3: Profile-free plan-compile checks --------------------------
-    # Audit H5: profile-free plan-compile checks. Strict subset of what
-    # `decoy run` enforces; a config rejected here was guaranteed to fail
-    # at run; a config accepted here can still fail run's profile-dependent
-    # checks (capacity, null-bearing ints).
-    try:
-        checks_run = run_config_only_checks(raw)
-    except PlanCompileError as exc:
-        # Rewrite ner_spacy_not_installed to decoy-cli's own [ner] extra;
-        # see plan_compile_error_fields's docstring for why every
-        # PlanCompileError display site goes through it.
-        from decoy.cli.extras import plan_compile_error_fields
-
-        code, message = plan_compile_error_fields(exc)
-        acc.add_error(code=code, message=message)
-        _emit_result(state, acc, config_str, checks_run=None, fail_on_warning=fail_on_warning)
-        raise typer.Exit(code=EXIT_USAGE)
-
-    # -- Step 4: CLI-level advisory checks (no profile needed) -------------
-    _check_target_overwrite(raw, acc)
-
-    # -- Step 5: Emit result -----------------------------------------------
-    _emit_result(state, acc, config_str, checks_run=checks_run, fail_on_warning=fail_on_warning)
-
-    if fail_on_warning and acc.has_warnings:
-        raise typer.Exit(code=EXIT_WARNINGS)
+    result = run_config_gate(config)
+    _emit_result(state, result.findings, str(config), result.checks_run)
+    code = gate_exit_code(result, fail_on_warning)
+    if code != EXIT_OK:
+        raise typer.Exit(code=code)
 
 
 def _emit_result(
     state: Any,
-    acc: _ValidationAccumulator,
+    findings: list[GateFinding],
     config_str: str,
-    checks_run: tuple[str, ...] | None,
-    fail_on_warning: bool,
+    checks_run: tuple[str, ...],
 ) -> None:
-    """Render the accumulated validation result to the chosen output mode."""
+    """Render the config-layer result of `validate config` to the chosen output mode."""
+    errors = [f for f in findings if f.severity == "error"]
+    messages = [
+        {
+            "severity": f.severity,
+            "code": f.code,
+            "message": f.message,
+            **({"location": f.location} if f.location is not None else {}),
+        }
+        for f in findings
+    ]
     if state.mode is OutputMode.json:
-        if acc.has_errors:
+        if errors:
             # Backward-compat: keep top-level "error" for the first error message.
-            first_error = next(m for m in acc.messages if m.severity == "error")
+            first_error = errors[0]
             envelope: dict[str, Any] = {
                 "command": "validate",
                 "status": "error",
                 "config": config_str,
                 "error": first_error.message,
-                "messages": acc.to_dicts(),
+                "messages": messages,
             }
         else:
             status = "ok"
@@ -345,10 +197,9 @@ def _emit_result(
                 "command": "validate",
                 "status": status,
                 "config": config_str,
-                "messages": acc.to_dicts(),
+                "messages": messages,
             }
-            if checks_run is not None:
-                envelope["checks_run"] = list(checks_run)
+            envelope["checks_run"] = list(checks_run)
         emit_json(state, envelope)
         return
 
@@ -356,8 +207,8 @@ def _emit_result(
         return
 
     # Human-readable output.
-    if acc.has_errors:
-        first_error = next(m for m in acc.messages if m.severity == "error")
+    if errors:
+        first_error = errors[0]
         # Include the error code so plan-compile codes (non_poolable_provider_with_pool_backend,
         # unknown_provider, etc.) remain visible in human output -- matches old behavior
         # where PlanCompileError emitted "{exc.code}: {exc.message}".
@@ -376,12 +227,12 @@ def _emit_result(
         return
 
     # Success path: show warnings then OK.
-    for msg in acc.messages:
-        if msg.severity == "warning":
-            loc_hint = f" ({msg.location})" if msg.location else ""
+    for f in findings:
+        if f.severity == "warning":
+            loc_hint = f" ({f.location})" if f.location else ""
             # markup=False: same reason as the error print above; a warning
             # message can quote a user path or other bracketed text.
-            state.err_console.print(warn("warning:"), msg.message + loc_hint, markup=False)
+            state.err_console.print(warn("warning:"), f.message + loc_hint, markup=False)
 
     state.console.print(success("OK"), code(config_str))
 
@@ -391,257 +242,12 @@ def _emit_result(
 # ---------------------------------------------------------------------------
 
 
-@dataclass
-class _GateFinding:
-    """One finding in the aggregate gate report, tagged by its layer.
-
-    layer    in {config, compile, preflight}
-    severity in {error, warning}  (a passing check contributes no finding)
-    """
-
-    layer: str
-    severity: str
-    code: str
-    message: str
-    location: str | None = None
-    # The dotted config path the engine attached, even where the direct command has never
-    # surfaced it as `location`. Read by `decoy ci` only; no existing output renders it.
-    logical_path: str | None = None
-
-
 # Canonical layer order for the grouped human report.
 _GATE_LAYERS: tuple[tuple[str, str], ...] = (
     ("config", "Config"),
     ("compile", "Compile"),
     ("preflight", "Preflight"),
 )
-
-
-def _run_config_base(
-    config: Path, source_text: str | None = None
-) -> tuple[dict[str, Any] | None, list[_GateFinding]]:
-    """The shared config layer: YAML parse + schema validate + the profile-free
-    plan-compile checks, composed exactly as `validate config` composes them.
-
-    `run_config_only_checks` is called here EXACTLY ONCE for the whole gate
-    (F5 dedup): compile_plan re-validates a superset of these checks internally
-    on the success path, but the engine's `run_config_only_checks` entrypoint
-    itself fires only on this call.
-
-    Returns `(raw, [])` when the config is valid, or `(None, findings)` with the
-    config-layer error(s) when it fails to parse / schema-validate / pass the
-    config-only checks. A None result means compile/preflight cannot run (they
-    both need a valid config), so the caller short-circuits with EXIT_USAGE.
-    """
-    import decoy_engine
-    from decoy_engine import ConfigError, PipelineConfig, PipelineValidationError
-    from decoy_engine.plan import PlanCompileError
-    from pydantic import ValidationError
-
-    findings: list[_GateFinding] = []
-
-    try:
-        text = source_text if source_text is not None else config.read_text(encoding="utf-8")
-        raw = _yaml.safe_load(text)
-    except _yaml.YAMLError as exc:
-        findings.append(_GateFinding("config", "error", "yaml.parse_error", sanitize_yaml_error(exc)))
-        return None, findings
-
-    if raw is None:
-        findings.append(_GateFinding("config", "error", "yaml.empty", "Pipeline YAML is empty."))
-        return None, findings
-
-    if not isinstance(raw, dict):
-        findings.append(
-            _GateFinding(
-                "config",
-                "error",
-                "yaml.not_mapping",
-                f"Pipeline YAML must be a YAML mapping (object), not {type(raw).__name__}.",
-            )
-        )
-        return None, findings
-
-    try:
-        PipelineConfig.model_validate(raw)
-    except ValidationError as exc:
-        for e in exc.errors():
-            loc_parts = [str(p) for p in e.get("loc", ())]
-            location = ".".join(loc_parts) if loc_parts else None
-            findings.append(
-                _GateFinding(
-                    "config", "error", e.get("type", "validation_error"), e.get("msg", str(e)), location
-                )
-            )
-        return None, findings
-    except (PipelineValidationError, ConfigError) as exc:
-        findings.append(
-            _GateFinding(
-                "config",
-                "error",
-                "pipeline.validation_error",
-                str(exc),
-                logical_path=getattr(exc, "path", None),
-            )
-        )
-        return None, findings
-
-    # Looked up on the module (not a `from ... import` binding) so a test can
-    # spy the single call via `decoy_engine.run_config_only_checks`.
-    try:
-        decoy_engine.run_config_only_checks(raw)
-    except PlanCompileError as exc:
-        from decoy.cli.extras import plan_compile_error_fields
-
-        err_code, message = plan_compile_error_fields(exc)
-        findings.append(
-            _GateFinding("config", "error", err_code, message, logical_path=exc.path or None)
-        )
-        return None, findings
-
-    return raw, findings
-
-
-def _run_compile_layer(raw: dict[str, Any]) -> list[_GateFinding]:
-    """The compile layer: a no-profile compile and its plan-compile checks,
-    composed from the same helpers `validate compile --no-profile` uses (the
-    H2 unique-cardinality guard, the empty sentinel profile, `compile_plan`,
-    and the H1 checks-skipped attachment). No check logic is reimplemented.
-
-    Returns compile-layer findings (an error on a compile failure; warnings for
-    any plan-compile warnings). Never raises on a compile error -- the gate runs
-    all layers and aggregates rather than short-circuiting here.
-    """
-    from decoy_engine import __version__ as engine_version
-    from decoy_engine.plan import PlanCompileError, compile_plan
-
-    from decoy.cli.plan import (
-        empty_profile_for_no_profile,
-        find_first_unique_column_path,
-    )
-
-    findings: list[_GateFinding] = []
-
-    # H2 guard (reused from the `compile` command): --no-profile cannot run the
-    # pool-capacity pre-flight, so a cardinality_mode: unique column is refused.
-    unique_column_path = find_first_unique_column_path(raw)
-    if unique_column_path is not None:
-        findings.append(
-            _GateFinding(
-                "compile",
-                "error",
-                "no_profile_unique_incompatible",
-                "--no-profile is incompatible with cardinality_mode: unique "
-                f"(offending column: {unique_column_path}). The basic_uniqueness_pre_flight "
-                "check requires profile data; run `decoy validate compile CONFIG "
-                "--profile <profile.json>`, or remove the unique cardinality_mode.",
-                unique_column_path,
-            )
-        )
-        return findings
-
-    profile = empty_profile_for_no_profile(raw, engine_version)
-    try:
-        plan = compile_plan(raw, profile, decoy_engine_version=engine_version, no_profile=True)
-    except PlanCompileError as exc:
-        from decoy.cli.extras import plan_compile_error_fields
-
-        err_code, message = plan_compile_error_fields(exc)
-        findings.append(
-            _GateFinding(
-                "compile", "error", err_code, message, location=exc.path or None, logical_path=exc.path or None
-            )
-        )
-        return findings
-    except Exception as exc:  # mirrors `compile`'s own broad compile-error catch
-        findings.append(_GateFinding("compile", "error", "compile_error", str(exc)))
-        return findings
-
-    for w in plan.plan_compile.warnings:
-        findings.append(_GateFinding("compile", "warning", "compile_warning", w))
-    return findings
-
-
-def _run_preflight_layer(raw: dict[str, Any], config: Path) -> tuple[list[_GateFinding], bool]:
-    """The preflight layer: source/file readiness, target-overwrite advisory,
-    out-of-core-FK capacity, and native companion/eligibility -- the exact check
-    functions `validate preflight` runs for its steps 4-7, reused as-is (steps
-    1-3 are the shared config base, already run once).
-
-    Returns `(findings, capacity_insufficient)`: passing checks contribute no
-    finding; a `fail` maps to an error and a `warn` to a warning. The capacity
-    fan-in impossibility sets `capacity_insufficient`, which the caller uses for
-    the EXIT_CAPACITY precedence.
-    """
-    from decoy.cli.preflight import (
-        _check_capacity,
-        _check_native,
-        _check_source_files,
-        _check_target_overwrite,
-        _PreflightAccumulator,
-    )
-
-    acc = _PreflightAccumulator()
-    _check_source_files(raw, config.parent, acc)
-    _check_target_overwrite(raw, acc)
-    _check_capacity(raw, config, acc)
-    _check_native(raw, acc)
-
-    findings: list[_GateFinding] = []
-    for c in acc.checks:
-        if c.status == "pass":
-            continue
-        severity = "error" if c.status == "fail" else "warning"
-        findings.append(
-            _GateFinding("preflight", severity, c.code or c.name, c.message, c.location)
-        )
-    return findings, acc.capacity_insufficient
-
-
-@dataclass(frozen=True)
-class GateResult:
-    """The side-effect-free outcome of the pre-run gate (no rendering, no exit).
-
-    `decoy validate CONFIG` renders it; `decoy ci check` consumes the same value, so the
-    CI wrapper cannot drift from the direct command.
-    """
-
-    findings: list[_GateFinding]
-    ran_layers: frozenset[str]
-    capacity_insufficient: bool
-
-
-def run_config_gate(config: Path, source_text: str | None = None) -> GateResult:
-    """Config layer only (YAML + schema + profile-free plan-compile checks)."""
-    _, findings = _run_config_base(config, source_text)
-    return GateResult(findings, frozenset({"config"}), False)
-
-
-def run_gate(config: Path, source_text: str | None = None) -> GateResult:
-    """Config + compile + preflight, short-circuiting after a failed config layer."""
-    raw, config_findings = _run_config_base(config, source_text)
-    if raw is None:
-        return GateResult(config_findings, frozenset({"config"}), False)
-    compile_findings = _run_compile_layer(raw)
-    preflight_findings, capacity_insufficient = _run_preflight_layer(raw, config)
-    return GateResult(
-        config_findings + compile_findings + preflight_findings,
-        frozenset({"config", "compile", "preflight"}),
-        capacity_insufficient,
-    )
-
-
-def gate_exit_code(result: GateResult, fail_on_warning: bool) -> int:
-    """Exit-code precedence (highest first): capacity, any error, blocking warning, ok."""
-    if result.capacity_insufficient:
-        # A hard capacity FAIL always exits EXIT_CAPACITY, outranking a co-occurring
-        # compile failure (both appear in the report).
-        return EXIT_CAPACITY
-    if any(f.severity == "error" for f in result.findings):
-        return EXIT_USAGE
-    if fail_on_warning and any(f.severity == "warning" for f in result.findings):
-        return EXIT_WARNINGS
-    return EXIT_OK
 
 
 def _gate(
@@ -707,7 +313,7 @@ def _gate(
 
 def _emit_gate(
     state: Any,
-    findings: list[_GateFinding],
+    findings: list[GateFinding],
     config_str: str,
     fail_on_warning: bool,
     ran_layers: set[str],
@@ -780,9 +386,7 @@ def _emit_gate(
 
     state.console.print(success("OK"), code(config_str))
     if has_warning and fail_on_warning:
-        state.err_console.print(
-            warn("warning:"), "warnings present and --fail-on-warning is set."
-        )
+        state.err_console.print(warn("warning:"), "warnings present and --fail-on-warning is set.")
 
 
 validate_app.command(name="config", epilog=_CONFIG_EPILOG)(config)

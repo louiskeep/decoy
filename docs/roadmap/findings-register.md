@@ -52,3 +52,4 @@ means unverified until that item's FRAME):
 | D-row 5 to 6 | Engine pins disagree; 12.2 likely closed | D-4; notes | CLOSED; full-frame only |
 | D-row 7 | Shipped log stale (gap 2026-10-27 to 2026-10-30) | process | OPEN |
 | Slice 0 | 14.1 closed (#360); cross-column read handled by `order_work`; 11.1 + 12.3 and 12.1 rows 11, 13; 20.1 overstated | slice 0 | as stated |
+| MIRROR-1 | `ci/vendored.toml` `[[mirror]]` rows: the check reads only the copied file's header, so a stale `blob_sha256` or `commit` is never caught (found stale before engine #395) | T0021, 2026-11-07 | OPEN; sentry follow-up, not V1-blocking |

@@ -57,30 +57,30 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v7
 
-      - name: Set up Python ${{ matrix.python }}
-        uses: actions/setup-python@v6
+      - name: Lock environment
+        uses: ./.github/actions/lock-env
         with:
-          python-version: ${{ matrix.python }}
+          python: ${{ matrix.python }}
 
-      - name: Install build backend
-        run: pip install --upgrade pip build
+      - name: Install the build frontend (pinned, constrained by the lock)
+        run: uv pip install --python "$DECOY_VENV/bin/python" -c requirements-dev.lock "build==1.2.2"
 
       - name: Build wheel
-        run: python -m build --wheel
+        run: $DECOY_VENV/bin/python -m build --wheel
 
       - name: Create clean install venv
-        run: python -m venv .smoke
+        run: uv venv --python "$DECOY_PYTHON" .smoke
 
-      - name: Install engine from sibling repo (pre-publish window)
-        # The engine has no real PyPI index yet (OSS.7 lands the
-        # publish pipeline). Install from main of the sibling repo.
-        # After OSS.7 publishes, swap to `pip install decoy-engine`.
-        run: |
-          .smoke/bin/pip install --upgrade pip
-          .smoke/bin/pip install "git+https://github.com/louiskeep/decoy-engine@v0.18.0"
+      - name: Install the freshly-built decoy wheel (locked)
+        # Tag pushes and manual runs: the dev lock supplies the engine commit.
+        if: github.event_name != 'schedule'
+        run: uv pip install --python .smoke/bin/python -c requirements-dev.lock dist/*.whl
 
-      - name: Install the freshly-built decoy wheel
-        run: .smoke/bin/pip install dist/*.whl
+      - name: Install engine and wheel unconstrained (weekly drift canary)
+        # The one install that resolves today's index on purpose, so the weekly
+        # run sees transitive-dependency drift. Registered in ci/install-policy.toml.
+        if: github.event_name == 'schedule'
+        run: uv pip install --python .smoke/bin/python "git+https://github.com/louiskeep/decoy-engine@v0.19.0" dist/*.whl
 
       - name: decoy --version (smoke 1)
         run: .smoke/bin/decoy --version

@@ -34,6 +34,7 @@ import pyarrow as pa
 from decoy import _mask_secret, _mask_secret_guidance, _native_gate
 from decoy._mask_secret import is_valid_mask_secret_ref as _is_valid_mask_secret_ref
 from decoy.cli.extras import UnsupportedCloudEndpointError
+from decoy.cli.io._targets import claimed_format, format_for_path
 from decoy.cli.run import (
     _load_sources_from_config,
     _write_mask_outputs,
@@ -224,8 +225,9 @@ def _stage_source_entry(name: str, value: Any, tmp_paths: list[Path], declared: 
     `declared` is the config's own `sources[name]` entry, if any. A path
     `value` replaces the source with a local file. When the declaration
     is a file source with a `format`, that format (and `layout`, for
-    fixed_width) is the user's statement of how the bytes are laid out
-    and wins over the file suffix; a file declaration without a valid
+    fixed_width) and any CSV dialect keys (`has_header`, `column_names`,
+    `delimiter`) are the user's statement of how the bytes are laid out
+    and win over the file suffix; a file declaration without a valid
     format is left for schema validation to reject. A cloud (s3/gcs)
     declaration, or none at all, falls back to inferring the format from
     the suffix."""
@@ -241,9 +243,13 @@ def _stage_source_entry(name: str, value: Any, tmp_paths: list[Path], declared: 
                 entry["format"] = declared["format"]
             if declared.get("format") == "fixed_width" and "layout" in declared:
                 entry["layout"] = declared["layout"]
+            # Carried whatever the format: schema validation rejects a dialect key on a
+            # non-csv source instead of the override dropping it silently.
+            for key in ("has_header", "column_names", "delimiter"):
+                if key in declared:
+                    entry[key] = declared[key]
             return entry
-        fmt = "parquet" if path.suffix.lower() in (".parquet", ".pq") else "csv"
-        return {"type": "file", "format": fmt, "path": str(path)}
+        return {"type": "file", "format": format_for_path(path), "path": str(path)}
 
     table = _to_pa_table(value)
     import os
@@ -305,15 +311,23 @@ def _apply_out_override(config_dict: dict, out: Any) -> None:
 
 def _file_target_entry(existing: Any, path: Any) -> dict:
     """Build (or update) a `FileTarget`-shaped dict for `path`. `format` is
-    required by the engine's `TargetDescriptor` schema (no default), so it
-    is inferred from the path suffix -- `.parquet`/`.pq` -> parquet,
-    anything else -> csv -- unless `existing` already set one."""
+    required by the engine's `TargetDescriptor` schema (no default).
+
+    With no declared format it comes from the path (`format_for_path`). With a declared
+    format, a new path whose suffix claims a different format (`.csv`, `.parquet`, `.pq`)
+    sets that format and drops `layout`, because the result is never fixed width. A suffix
+    that claims nothing keeps the declared format and `layout`. This is the opposite of
+    `data=` paths, where the declared source format wins (`_stage_source_entry`)."""
     entry = dict(existing) if isinstance(existing, dict) else {}
     entry["path"] = str(path)
     entry.setdefault("type", "file")
     if "format" not in entry:
-        suffix = Path(str(path)).suffix.lower()
-        entry["format"] = "parquet" if suffix in (".parquet", ".pq") else "csv"
+        entry["format"] = format_for_path(Path(str(path)))
+    else:
+        claimed = claimed_format(Path(str(path)))
+        if claimed is not None and claimed != entry["format"]:
+            entry["format"] = claimed
+            entry.pop("layout", None)
     return entry
 
 
@@ -367,7 +381,11 @@ def mask(
             writes whatever `targets:` the config already declares (or
             nothing, if it declares none). A path overrides the single
             declared table's target path. A `dict[str, path]` overrides
-            per table by name.
+            per table by name. A new path whose suffix claims a format
+            (`.csv`, `.parquet`, `.pq`) sets the target's format and drops
+            its fixed-width `layout`; any other suffix keeps the declared
+            format, so a fixed-width target redirected to `m.dat` stays
+            fixed width.
         native: Mirrors the CLI's `--native`/`--no-native` (Phase 3.1).
             `None` (default): inherit the engine's native-on-when-present
             behavior. `True`: require that a compiled native kernel actually
@@ -393,6 +411,9 @@ def mask(
             configured in two places at once.
         ValueError / TypeError: an ambiguous or wrongly-shaped `data` /
             `out` argument.
+        decoy.cli.io._targets.TargetFormatError: a declared target format
+            contradicts its path suffix (for example `format: parquet` at
+            `out.csv`). Raised before any source is read or the engine runs.
         UnsupportedCloudEndpointError: a source or target (after `data` /
             `out` are applied) is s3 or gcs. Same refusal as `decoy run`,
             raised by the shared I/O helper before the engine runs; cloud

@@ -7,6 +7,7 @@ following has a public equivalent. Each is allowlisted in the sentry until it do
 
 Resolved without an engine change: `completers.py` now uses `decoy_engine.list_generate_faker_providers()`
 (identical 258 names to the old internal call).
+Resolved in engine 0.19.0: `decoy_engine.read_csv_source` (with `resolve_csv_dialect` and `CsvDialect`) is the CSV source reader the CLI uses; no private scan was ever imported.
 
 | # | CLI site | Reads today (private) | Public symbol the engine should export | Why |
 |---|----------|-----------------------|----------------------------------------|-----|

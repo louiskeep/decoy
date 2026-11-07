@@ -17,3 +17,15 @@ baseline = "tests/sentry/baselines/readme-table-omitted.json"
 [[sentry]]
 id = "atomic-writer-allow"
 baseline = "tests/sentry/baselines/atomic-writer-allow.json"
+
+[[sentry]]
+id = "gate-single-entry-allow"
+baseline = "tests/sentry/baselines/gate-single-entry-allow.json"
+
+[[sentry]]
+id = "csv-read-allow"
+baseline = "tests/sentry/baselines/csv-read-allow.json"
+
+[[sentry]]
+id = "target-writes-allow"
+baseline = "tests/sentry/baselines/target-writes-allow.json"

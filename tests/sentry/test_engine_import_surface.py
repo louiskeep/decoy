@@ -147,7 +147,13 @@ def missing_engine_refs(root: Path) -> list[str]:
 
 
 def _is_run_pipeline_callee(func: ast.expr, *, exact: bool) -> bool:
-    name = func.id if isinstance(func, ast.Name) else func.attr if isinstance(func, ast.Attribute) else None
+    name = (
+        func.id
+        if isinstance(func, ast.Name)
+        else func.attr
+        if isinstance(func, ast.Attribute)
+        else None
+    )
     if name is None:
         return False
     return name == "run_pipeline" if exact else name.endswith("run_pipeline")
@@ -186,7 +192,11 @@ class _KeyResolver:
             return keys
         if isinstance(expr, ast.IfExp):
             return self.keys_of(expr.body, scope) | self.keys_of(expr.orelse, scope)
-        if isinstance(expr, ast.Call) and isinstance(expr.func, ast.Name) and expr.func.id == "dict":
+        if (
+            isinstance(expr, ast.Call)
+            and isinstance(expr.func, ast.Name)
+            and expr.func.id == "dict"
+        ):
             keys = set()
             for arg in expr.args:
                 keys |= self.keys_of(arg, scope)
@@ -222,7 +232,9 @@ class _KeyResolver:
                         and target.value.id == name.id
                     ):
                         found = True
-                        if isinstance(target.slice, ast.Constant) and isinstance(target.slice.value, str):
+                        if isinstance(target.slice, ast.Constant) and isinstance(
+                            target.slice.value, str
+                        ):
                             keys.add(target.slice.value)
                         else:
                             self._fail(target, f"non-literal key assigned into {name.id}")
@@ -305,7 +317,9 @@ def collect_pipeline_calls(root: Path, *, star_kwargs: str) -> list[PipelineCall
                 elif star_kwargs == "resolve":
                     keywords |= resolver.keys_of(kw.value, scope)
             calls.append(
-                PipelineCall(f"{rel}:{node.lineno}", frozenset(keywords), tuple(resolver.unresolved))
+                PipelineCall(
+                    f"{rel}:{node.lineno}", frozenset(keywords), tuple(resolver.unresolved)
+                )
             )
     return calls
 
@@ -402,7 +416,11 @@ def test_sentry_does_not_excuse_a_guarded_missing_engine_name(tmp_path: Path) ->
 
 
 def test_sentry_flags_an_attribute_on_the_bare_engine_module(tmp_path: Path) -> None:
-    _write(tmp_path, "mod.py", "import decoy_engine\n\ndef f(raw):\n    return decoy_engine.no_such_fn(raw)\n")
+    _write(
+        tmp_path,
+        "mod.py",
+        "import decoy_engine\n\ndef f(raw):\n    return decoy_engine.no_such_fn(raw)\n",
+    )
     missing = missing_engine_refs(tmp_path)
     assert len(missing) == 1 and "no_such_fn" in missing[0], missing
 
@@ -420,7 +438,9 @@ def test_sentry_flags_a_run_pipeline_keyword_the_engine_lacks(tmp_path: Path) ->
     )
     problems = bad_pipeline_keywords(tmp_path, star_kwargs="resolve")
     flagged = {p.split("parameter ")[-1].strip("'") for p in problems}
-    assert flagged == {"no_such_kw_direct", "no_such_kw_subscript", "no_such_kw_from_helper"}, problems
+    assert flagged == {"no_such_kw_direct", "no_such_kw_subscript", "no_such_kw_from_helper"}, (
+        problems
+    )
 
 
 def test_sentry_fails_closed_on_an_unresolvable_star_kwargs(tmp_path: Path) -> None:
