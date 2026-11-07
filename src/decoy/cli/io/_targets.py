@@ -6,8 +6,9 @@ has no declaration and takes its format from the suffix through `format_for_path
 A declared format that contradicts the path suffix is refused before any source is read.
 
 This module holds every CLI table write, whole (`write_table`) and chunked
-(`write_chunked_output`), so one sentry can keep it that way. Part B adds the read-side
-format decisions here; the read calls stay in `cli/_sources.py`.
+(`write_chunked_output`), so one sentry can keep it that way. It also decides which format a
+CLI-written file is read back in (`input_format`, `entry_format`); the read calls themselves
+stay in `cli/_sources.py`.
 
 Source patterns: `cli/_sources.py` for the shape, and the platform's
 `api/jobs/fixed_width_output.py` for the fixed-width frame conversion.
@@ -33,6 +34,7 @@ if TYPE_CHECKING:
 SUFFIX_MISMATCH = "target_format_suffix_mismatch"
 STREAMING_UNSUPPORTED = "target_format_streaming_unsupported"
 FORMAT_UNKNOWN = "target_format_unknown"
+UNREADABLE = "target_format_unreadable"
 
 _FORMATS = ("csv", "parquet", "fixed_width")
 _SUFFIX_FORMAT = {".csv": "csv", ".parquet": "parquet", ".pq": "parquet"}
@@ -192,14 +194,73 @@ def check_target_formats(config_dict: dict, *, chunked: bool) -> None:
 
 
 def resolve_target_format(table: str, entry: Mapping[str, Any]) -> str:
-    """The declared format of one target, after the suffix contradiction check.
+    """The declared format of one target to write, after the suffix contradiction check.
 
-    The only function that reads a target's `format`.
+    The only function that reads a target's `format` for a write.
     """
     issue = _entry_issue(table, entry, chunked=False)
     if issue is not None:
         raise TargetFormatError(issue.code, issue.message)
     return str(entry["format"])
+
+
+def _legacy_format_for_path(path: Path) -> str:
+    """The format the pre-CLI-FMT writer gave a path: `.parquet` was Parquet, all else CSV.
+
+    Not `format_for_path`: the old writer put CSV bytes into a `.pq` path.
+    """
+    return "parquet" if path.suffix.lower() == ".parquet" else "csv"
+
+
+def _unreadable(fmt: object, layout: object) -> TargetFormatError | None:
+    if not isinstance(fmt, str) or fmt not in _FORMATS:
+        return TargetFormatError(UNREADABLE, "the file's format cannot be determined")
+    if fmt == "fixed_width" and (not isinstance(layout, Mapping) or not layout):
+        return TargetFormatError(UNREADABLE, "the file's format cannot be determined")
+    return None
+
+
+def input_format(
+    config_dict: Mapping[str, Any], table: str, path: Path, base_dir: Path
+) -> tuple[str, Mapping[str, Any] | None]:
+    """The format and layout to read a CLI-written file in, for `detokenize` and `unmask`.
+
+    When `path` is the table's file target (both sides fully resolved), the target's declared
+    format and layout apply, and an undeclared or unknown format is refused before any read.
+    Any other path has no declaration and takes the suffix rule.
+    """
+    targets = config_dict.get("targets")
+    entry = targets.get(table) if isinstance(targets, Mapping) else None
+    if (
+        isinstance(entry, Mapping)
+        and entry.get("type", "file") == "file"
+        and isinstance(entry.get("path"), str)
+        and path.resolve() == resolve_path(entry["path"], base_dir).resolve()
+    ):
+        layout = entry.get("layout")
+        error = _unreadable(entry.get("format"), layout)
+        if error is not None:
+            raise error
+        fmt = str(entry["format"])
+        return fmt, layout if fmt == "fixed_width" else None
+    return format_for_path(path), None
+
+
+def entry_format(entry: Mapping[str, Any]) -> tuple[str, Mapping[str, Any] | None]:
+    """The format and layout to read one evidence-manifest output entry in.
+
+    An entry without `format` comes from a manifest written before CLI-FMT and takes the
+    legacy rule. An entry whose format is unknown, or fixed_width without a layout, is refused.
+    """
+    path = Path(str(entry.get("path", "")))
+    if "format" not in entry:
+        return _legacy_format_for_path(path), None
+    layout = entry.get("layout")
+    error = _unreadable(entry["format"], layout)
+    if error is not None:
+        raise error
+    fmt = str(entry["format"])
+    return fmt, layout if fmt == "fixed_width" else None
 
 
 def _coerce_canonical_int_strings(series: pd.Series) -> pd.Series | None:

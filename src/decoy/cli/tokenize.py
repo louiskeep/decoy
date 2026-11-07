@@ -28,13 +28,15 @@ from pathlib import Path
 import typer
 
 from decoy import _mask_secret, _mask_secret_guidance
+from decoy.cli._sources import read_file
 from decoy.cli._token_vault import LocalTokenVault, TokenVaultError, iter_tokenize_columns
 from decoy.cli._yaml_errors import sanitize_yaml_error
 from decoy.cli.exit_codes import EXIT_RUNTIME, EXIT_USAGE
-from decoy.cli.io._targets import (
+from decoy.cli.io import (
     TargetFormatError,
     check_output_path,
     format_for_path,
+    input_format,
     write_table,
 )
 from decoy.ui.output import OutputMode, emit_json, setup_output
@@ -72,6 +74,8 @@ re-identification map, so keep it off shared storage and out of backups.
 See also: decoy detokenize, decoy run, decoy explain tokenize.
 """
 
+_FORMAT_NAMES = {"csv": "CSV", "parquet": "Parquet", "fixed_width": "fixed width"}
+
 _DETOKENIZE_EPILOG = """\
 Examples:
 
@@ -86,11 +90,12 @@ Examples:
     Disambiguate when the config tokenizes more than one table.
 
 The config supplies each tokenize column's namespace; the vault supplies the
-reverse mapping. The tokenized file is read in the format tokenize wrote it (CSV
-or Parquet, chosen by its extension), and the recovered file is written in that
-same format. A missing vault, a vault that is not a decoy token vault, or a
-token that is not in the vault under the column's namespace (a wrong vault or
-wrong namespace) fails closed -- no output is written -- rather than emit a
+reverse mapping. The tokenized file is read in the format tokenize wrote it: the
+table's declared target format when the file is that target, otherwise by its
+extension (.parquet or .pq is Parquet, anything else CSV). The recovered file is
+written as Parquet for Parquet input and CSV otherwise. A missing vault, a vault
+that is not a decoy token vault, or a token that is not in the vault under the
+column's namespace (a wrong vault or wrong namespace) fails closed -- no output is written -- rather than emit a
 value it cannot vouch for. So does a file missing any tokenize column the
 config declares for the table, and an already-existing default output
 (<tokenized>.detokenized.<ext>); pass -o to choose a path deliberately.
@@ -438,7 +443,7 @@ def detokenize(
         exists=True,
         dir_okay=False,
         readable=True,
-        help="The tokenized file produced by `decoy tokenize` for one table (CSV or Parquet, by extension).",
+        help="The tokenized file produced by `decoy tokenize` for one table (read by the target's declared format, else by extension).",
     ),
     vault: Path = typer.Option(
         ...,
@@ -457,7 +462,7 @@ def detokenize(
         None,
         "--output",
         "-o",
-        help="Where to write the recovered file (format by extension). Default: <tokenized>.detokenized.<ext> next to the input, in the same format tokenize wrote (CSV or Parquet).",
+        help="Where to write the recovered file (format by extension). Default: <tokenized>.detokenized.parquet for Parquet input, otherwise <tokenized>.detokenized.csv, next to the input.",
     ),
     json_: bool = typer.Option(
         False,
@@ -481,9 +486,10 @@ def detokenize(
 
     Reverses every `strategy: tokenize` column by looking each token back up in
     the vault under the column's namespace. The tokenized file is read in the
-    format tokenize wrote it (CSV or Parquet, by extension) and the recovered
-    file is written in that same format. A missing or wrong vault, or a token
-    the vault does not hold under that namespace, fails closed (no output is
+    format tokenize wrote it (the table's declared target format when the file
+    is that target, otherwise by extension) and the recovered file is written
+    as Parquet for Parquet input, CSV otherwise. A missing or wrong vault, or a
+    token the vault does not hold under that namespace, fails closed (no output is
     written). Exits 0 on success, 1 on a config/usage or fail-closed error, 3 on
     a runtime failure.
     """
@@ -583,11 +589,17 @@ def detokenize(
         )
         raise typer.Exit(code=EXIT_USAGE)
 
-    in_is_parquet = tokenized.suffix.lower() == ".parquet"
+    try:
+        in_format, in_layout = input_format(config_dict, target_table, tokenized, config.parent)
+    except TargetFormatError as exc:
+        _emit_error(f"{exc.code}: {exc}")
+        raise typer.Exit(code=EXIT_USAGE)
     out_path = (
         output
         if output is not None
-        else tokenized.with_suffix(".detokenized.parquet" if in_is_parquet else ".detokenized.csv")
+        else tokenized.with_suffix(
+            ".detokenized.parquet" if in_format == "parquet" else ".detokenized.csv"
+        )
     )
     try:
         check_output_path(out_path)
@@ -615,21 +627,21 @@ def detokenize(
 
     import pandas as pd
 
-    # Read the tokenized file in the format `decoy tokenize` wrote it. tokenize
-    # writes each target by its path extension (_write_mask_outputs branches on
-    # the same suffix), so a `.parquet` target reverses as Parquet and anything
-    # else as CSV. CSV is read all-text so a token matches the vault byte-for-byte;
-    # Parquet columns are already typed (tokens are strings), so no dtype coercion.
+    # Read the tokenized file in the format tokenize wrote it: the table's declared target
+    # format when the input is that target file, the suffix rule for any other path. CSV is
+    # read all-text so a token matches the vault byte-for-byte; Parquet columns are already
+    # typed (tokens are strings), so no dtype coercion.
     try:
-        df = pd.read_parquet(tokenized) if in_is_parquet else pd.read_csv(tokenized, dtype=str)
+        df = read_file(tokenized, in_format, in_layout, table=target_table)
     except Exception as exc:
         # Coded + value-free: a read failure here is a wrong or corrupt file, not a
         # leakable cell value. Surface the expected format only -- never the raw
         # codec error, which a CSV/Parquet decoder can echo file bytes into.
         _emit_error(
             f"detokenize_unreadable_target: could not read {tokenized} as "
-            f"{'Parquet' if in_is_parquet else 'CSV'}. detokenize reads the file in "
-            "the format tokenize wrote it (by extension: .parquet, otherwise CSV)."
+            f"{_FORMAT_NAMES[in_format]}. detokenize reads the file in the format "
+            "tokenize wrote it (the target's declared format, otherwise by extension: "
+            ".parquet or .pq, else CSV)."
         )
         raise typer.Exit(code=EXIT_USAGE) from exc
 
