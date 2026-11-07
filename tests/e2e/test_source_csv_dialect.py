@@ -9,6 +9,7 @@ source read of the report verbs honour the dialect the config declares.
 from __future__ import annotations
 
 import hashlib
+import json
 from pathlib import Path
 from typing import Any
 
@@ -177,17 +178,20 @@ _MISFITS = {
 _LATE_QUOTE = b'1,Alice,31\n2,Bob,4\n3,Carol,5\n4,zz_marker_b,"x\n5,zz_marker_a,7\n'
 
 
-@pytest.mark.parametrize("chunked", [False, True])
-@pytest.mark.parametrize("case", sorted(_MISFITS))
+_MISFIT_RUNS = [(case, chunked) for case in sorted(_MISFITS) for chunked in (False, True)]
+_MISFIT_RUNS.append(("late_quote", True))
+
+
+@pytest.mark.parametrize(("case", "chunked"), _MISFIT_RUNS)
 def test_headerless_misfit_fails_closed(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, case: str, chunked: bool
 ) -> None:
-    content, code = _MISFITS[case]
-    late_quote = chunked and case == "open_quote"
-    if late_quote:
-        # The engine's scan cannot see an unterminated quote, so a chunked read fails on the
-        # chunk step that reaches it. Put it after chunk 1 (chunk size 2) so the failure is late.
-        content = _LATE_QUOTE
+    late_quote = case == "late_quote"
+    # The engine's scan cannot see an unterminated quote, so a chunked read fails on the chunk
+    # step that reaches it: chunk 1 for `open_quote` (nothing written), after chunk 1 for
+    # `late_quote` (chunk size 2; an earlier chunk is already on disk).
+    content, code = (_LATE_QUOTE, _MISFITS["open_quote"][1]) if late_quote else _MISFITS[case]
+    scan_blind = chunked and case in ("open_quote", "late_quote")
     src = tmp_path / "secret_name_file.csv"
     src.write_bytes(content)
     cfg = _config(tmp_path, src, dialect=_HEADERLESS)
@@ -206,7 +210,7 @@ def test_headerless_misfit_fails_closed(
     assert f"error: {code}: source people " in " ".join(result.output.split()), result.output
     if not late_quote:
         assert not (tmp_path / "out.csv").exists()
-        assert reached == []
+    assert reached == ([1] if scan_blind else [])
     for leaked in ("zz_marker_a", "zz_marker_b", "Alice", "secret_name_file", str(tmp_path)):
         assert leaked not in result.output
 
@@ -239,8 +243,8 @@ def test_mask_data_override_keeps_dialect(tmp_path: Path, case: str) -> None:
         pq_path = tmp_path / "x.parquet"
         pd.DataFrame(dict(zip(_NAMES, zip(*_ROWS)))).to_parquet(pq_path, index=False)
         cfg = _config(tmp_path, pq_path, dialect={"delimiter": "|"}, fmt="parquet")
-        # The declaration itself is invalid, so config validation refuses it before the
-        # override is staged: a dialect key never reaches a non-csv read.
+        # `mask()` stages `data=` first and validates after, so the copied dialect key reaches
+        # validation, which refuses it on a non-csv source.
         with pytest.raises(ConfigValidationError) as exc:
             decoy.mask(config=str(cfg), data=str(pq_path))
         assert "delimited params (delimiter) are only valid when format='csv'" in str(exc.value)
@@ -328,3 +332,12 @@ def test_report_verbs_resolve_user_paths_against_cwd(
         args = ["report", "integrity", "out.csv", "--source", "data.csv"]
     result = runner.invoke(app, [*args, "--config", "sub/pipeline.yaml", "--json"])
     assert result.exit_code in (0, 4), result.output
+    payload = json.loads(result.stdout)
+    if verb == "fidelity":
+        # Both frames were really read: three rows each, not an empty or one-column frame.
+        assert payload["source"]["row_count"] == 3
+        assert payload["output"]["row_count"] == 3
+        assert payload["diagnostic"]["checks"][0]["missing_columns"] == []
+    else:
+        assert payload["command"] == "report integrity"
+        assert payload["report"]["schema_version"] == "post-scan-integrity/v2"

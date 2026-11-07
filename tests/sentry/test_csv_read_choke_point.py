@@ -81,14 +81,21 @@ ALLOWLIST: tuple[AllowedRead, ...] = (
 )
 
 
-_PANDAS_READERS = {"read_csv", "read_table", "read_fwf"}
+_PANDAS_ONLY = {"read_table", "read_fwf"}
 
 
 def _owns(package: str, name: str) -> bool:
-    """Whether `name` is a watched reader of `package` (pandas text readers, engine reader)."""
-    if package.split(".")[0] == "pandas":
-        return name in _PANDAS_READERS
-    return package.split(".")[0] == "decoy_engine" and name == "read_csv_source"
+    """Whether `name` from `package` is a watched reader.
+
+    `read_csv` is watched on any module (pandas, pyarrow.csv, polars, ...). `read_table` and
+    `read_fwf` only on pandas, because `pyarrow.parquet.read_table` is a Parquet read.
+    """
+    top = package.split(".")[0]
+    if name == "read_csv":
+        return True
+    if name in _PANDAS_ONLY:
+        return top == "pandas"
+    return top == "decoy_engine" and name == "read_csv_source"
 
 
 def _imports(tree: ast.AST) -> tuple[set[str], dict[str, str]]:
@@ -184,6 +191,8 @@ def test_the_choke_point_reads_through_the_engine() -> None:
         "import pandas\ndef f(p):\n    return pandas.read_csv(p)\n",
         "from pandas import read_csv\ndef f(p):\n    return read_csv(p)\n",
         "from pandas import read_csv as rc\ndef f(p):\n    return rc(p)\n",
+        "import pyarrow.csv as pacsv\ndef f(p):\n    return pacsv.read_csv(p)\n",
+        "from pyarrow.csv import read_csv\ndef f(p):\n    return read_csv(p)\n",
         "import pandas as pd\ndef f(p):\n    return pd.read_table(p)\n",
         "import pandas as pd\ndef f(p):\n    return pd.read_fwf(p)\n",
         "from pandas import read_fwf\ndef f(p):\n    return read_fwf(p)\n",
@@ -199,6 +208,11 @@ def test_walk_ignores_lookalikes() -> None:
     assert read_sites(src) == []
 
 
+def test_parquet_read_table_is_not_a_hit() -> None:
+    src = "import pyarrow.parquet as pq\ndef f(p):\n    return pq.read_table(p)\n"
+    assert read_sites(src) == []
+
+
 def test_seeded_bypass_is_red(tmp_path: Path) -> None:
     pkg = tmp_path / "cli"
     pkg.mkdir()
@@ -211,3 +225,8 @@ def test_seeded_bypass_is_red(tmp_path: Path) -> None:
         encoding="utf-8",
     )
     assert _tally(tmp_path)[("cli/sneaky2.py", "load")] == 2
+    (pkg / "sneaky3.py").write_text(
+        "import pyarrow.csv as pacsv\ndef load(p):\n    return pacsv.read_csv(p)\n",
+        encoding="utf-8",
+    )
+    assert _tally(tmp_path)[("cli/sneaky3.py", "load")] == 1
