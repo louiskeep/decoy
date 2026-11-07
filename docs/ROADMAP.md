@@ -114,7 +114,7 @@ Choke points the CLI V1 track builds on or adds:
 | Outbound clients | engine connector client limits (X4d, engine #384, #385) | construction sentry | CLI-CLOUD, F02 |
 | Private file writes | engine `_private_file` (X7b, engine #382); CLI `_private_file.py` | write-mode sentries | X7c |
 | CLI source readers | `C:src/decoy/cli/_sources.py` (`read_source`, `iter_source_chunks`) | CLI-DIALECT tests | CLI-DIALECT |
-| CLI target writers and readers | one `C:src/decoy/cli/_targets.py` | format and suffix tests | CLI-FMT A and B |
+| CLI target writers and readers | writers in `C:src/decoy/cli/io/_targets.py`, readers in `C:src/decoy/cli/_sources.py` (`read_file`) | `C:tests/sentry/io_policy/test_target_writes.py` (G-ONE-TARGET-WRITE) and the widened G-ONE-CSV-READ | CLI-FMT A, A2, B (merged #101 to #103) |
 | Local record library writes | one library writer (LIB L1b; the shared atomic writer `C:src/decoy/_atomic.py` merged in #85) | `C:tests/sentry/test_atomic_writer.py` (G-ONE-ATOMIC-WRITER) | LIB rows |
 | Scratch and quotas | the F25 scratch manager | registration sentry | F25 |
 | Publication and delivery | F22 publication descriptor, DELIV transactional sink | delivery tests | F22, CLI delivery |
@@ -156,7 +156,7 @@ package it lands in. A gate that finds a plan missing either sends it back.
 | Repo | Tip | Recent merges | Pin and registry |
 |---|---|---|---|
 | decoy-engine | `b5b1ad16` (#402) | #392 CLI-DIALECT Part E, #393 ENGINE-PAR P1, #394 CI-E1s, #395 merge gate on any `decoy-gate` runner, #396 SCAN-ML M0, #397 RESULT E1, #398 REG-RENUMBER, #399 0.19.0 release prep, #400 strategy catalog, #401 test fix, #402 ENGINE-PAR P2 | latest tag `v0.19.0` (`4a0d5b1f`); `REGISTRY_VERSION` 1.6.0 on main |
-| decoy (CLI) | `586eb18` (#99) | #85 L1b.1 atomic writer, #88 VALIDATE-ALWAYS P1, #93 CI-L1, #94 and #95 ledger re-points, #99 CLI-DIALECT Part C; #86, #87, #89 to #92, #96 to #98 roadmap text | `decoy-engine==0.19.0` (#99) |
+| decoy (CLI) | `ff82bc9` (#103) | #101 CLI-FMT Part A, #102 CLI-FMT A2, #103 CLI-FMT Part B, #85 L1b.1 atomic writer, #88 VALIDATE-ALWAYS P1, #93 CI-L1, #94 and #95 ledger re-points, #99 CLI-DIALECT Part C; #86, #87, #89 to #92, #96 to #98 roadmap text | `decoy-engine==0.19.0` (#99) |
 | decoy-platform | `fbaee2a9` | parked (see section 6) | `decoy-engine==0.18.0` (#149) |
 
 ### 5.2 Sequencing rules
@@ -185,8 +185,8 @@ package it lands in. A gate that finds a plan missing either sends it back.
 6. **SCAN-MULTI.** S1a and S1b ship in one engine release. CLI-DIALECT lands before S1c, and S1c
    before LIB L2 (L2 replaces the plan's S1d). CONFIG-EXPLICIT lands before S3-engine; S3-engine is
    released, then S3-cli.
-7. **CLI-FMT.** Part A after CLI-DIALECT; Part B is stacked on A; A never merges without B (one T3
-   on B's head, then A and B in order).
+7. **CLI-FMT.** DONE 2026-11-07: A, A2 and B merged in order (#101 to #103) after one T3 on B's head.
+   ATOMIC-OUTPUT (row 21b) builds next on that main.
 8. **Publication chain.** F25 before F22 (owner, 2026-10-30); F22 and POSTSCAN-STREAM before CLI
    delivery; SUB-STOP before SUB-RUN; SUB-RUN before SAMPLE; F22 and CLI delivery before F23 resume.
 9. **H-1** slices move only files no live branch touches, behavior-preserving, characterization
@@ -235,8 +235,10 @@ on origin unless marked local. Detail for each row is in [roadmap/row-detail.md]
 | # | Item | Repo | State | Branch, plan or handoff | After |
 |---|---|---|---|---|---|
 | 19 | CLI-DIALECT: `decoy run` honours `has_header`, `column_names` and `delimiter` (live V1 bug); owned by CONFIG-EXPLICIT, lands ahead of it | CLI | DONE. Engine CSV reader (Part E) MERGED (engine #392, `b2ee6502`); engine `v0.19.0` tagged (#399, `4a0d5b1f`); CLI side (Part C) MERGED (CLI #99, `586eb18`): every CSV read goes through the engine reader with the declared dialect, sentry G-ONE-CSV-READ. Chunked partial-target risk is row 61a | `p05-cli-dialect-build-handoff.md` | none |
-| 20 | CLI-FMT Part A: write file targets by declared `format` through one `_targets.py`; fixed width through the engine's `write_fixed_width`; format and suffix mismatch, and `--chunked` with fixed width, refused with exit 1 Owner 2026-11-06: CLI-IO folds in here: one source-reader module and one target-writer module for every format (csv, parquet, fixed width, later cloud and database), whole and chunked, each with an allowlist sentry that fails on a direct `pd.read_*`, `pq.read_table`, `.to_csv` or `.to_parquet` outside them. | CLI | handoff written, plan gate | `fix/cli-fmt-write-declared-format` (not built); `p05-cli-fmt-build-handoff.md` | CLI-DIALECT |
-| 21 | CLI-FMT Part B: `detokenize`, `unmask` and `report diff` read CLI-written files by declared format; the evidence manifest records `format` and `layout` | CLI | handoff written, plan gate | `fix/cli-fmt-b-read-declared-format` (stacked on A); `p05-cli-fmt-b-build-handoff.md` | Part A; merges with A |
+| 20 | CLI-FMT Part A: write file targets by declared `format` through one `_targets.py`; fixed width through the engine's `write_fixed_width`; format and suffix mismatch, and `--chunked` with fixed width, refused with exit 1 Owner 2026-11-06: CLI-IO folds in here: one source-reader module and one target-writer module for every format (csv, parquet, fixed width, later cloud and database), whole and chunked, each with an allowlist sentry that fails on a direct `pd.read_*`, `pq.read_table`, `.to_csv` or `.to_parquet` outside them. | CLI | DONE, merged #101 (2026-11-07) | `p05-cli-fmt-build-handoff.md` | CLI-DIALECT |
+| 20b | CLI-FMT A2: G-ONE-TARGET-WRITE sentry (every table write inside `cli/io/_targets.py`, one allowlisted `data=` spool), shared import-normalizing scanner for read and write sentries, and `validate` / `ci check` report a declared-format and suffix contradiction | CLI | DONE, merged #102 (2026-11-07) | `p05-cli-fmt-a2-build-handoff.md` | Part A |
+| 21 | CLI-FMT Part B: `detokenize`, `unmask` and `report diff` read CLI-written files by declared format; the evidence manifest records `format` and `layout` | CLI | DONE, merged #103 (2026-11-07) | `p05-cli-fmt-b-build-handoff.md` | Part A; merges with A |
+| 21b | ATOMIC-OUTPUT: each local output file is staged and published in one replace, so a failed rewrite leaves the old file whole; mode handling for new and existing files; the writer sentry checks every table write goes through the staged path. One target per transaction; multi-target all-or-nothing stays with CLI delivery (row 61) | CLI | building (2026-11-07) | `feat/atomic-output`; `p05-atomic-output-build-handoff.md` | CLI-FMT A, A2, B |
 | 22 | CONFIG-EXPLICIT: `has_header` required for CSV sources; headerless files declare `column_names` or a new `column_names_file` (exactly one); every source column listed in `columns:` (`passthrough` allowed), so an unlisted column always fails; `unconfigured_column_policy` retired or fixed to `error` | engine, CLI | Plan passed (owner answered Q1-Q4 with the recommended options, 2026-11-06); builds after CLI-DIALECT and the engine release that carries it | none yet | registry order; CLI half after the release that carries it |
 | 23 | VALIDATE-ALWAYS: `decoy run` runs every `decoy validate` check (config, compile, preflight) first and stops on an error | CLI | Part 1 MERGED (CLI #88, `4ab55d4`): the validate checks live in `C:src/decoy/cli/gate/`, a unique column is a validate warning. Part 2 (wires the gate into `decoy run`, the `run.py` lane) after CLI-DIALECT | `plan/validate-always` | none |
 | 24 | X7c: CLI private file writes (`_private_file.py`) | CLI | NOT STARTED; no branch | none | none |
