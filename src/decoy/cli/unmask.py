@@ -78,7 +78,7 @@ def unmask(
         exists=True,
         dir_okay=False,
         readable=True,
-        help="The masked CSV produced by `decoy run` for one table.",
+        help="The masked file produced by `decoy run` for one table (read by the target's declared format, else by extension).",
     ),
     table: str | None = typer.Option(
         None,

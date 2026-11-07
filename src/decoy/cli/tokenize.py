@@ -90,11 +90,12 @@ Examples:
     Disambiguate when the config tokenizes more than one table.
 
 The config supplies each tokenize column's namespace; the vault supplies the
-reverse mapping. The tokenized file is read in the format tokenize wrote it (CSV
-or Parquet, chosen by its extension), and the recovered file is written in that
-same format. A missing vault, a vault that is not a decoy token vault, or a
-token that is not in the vault under the column's namespace (a wrong vault or
-wrong namespace) fails closed -- no output is written -- rather than emit a
+reverse mapping. The tokenized file is read in the format tokenize wrote it: the
+table's declared target format when the file is that target, otherwise by its
+extension (.parquet or .pq is Parquet, anything else CSV). The recovered file is
+written as Parquet for Parquet input and CSV otherwise. A missing vault, a vault
+that is not a decoy token vault, or a token that is not in the vault under the
+column's namespace (a wrong vault or wrong namespace) fails closed -- no output is written -- rather than emit a
 value it cannot vouch for. So does a file missing any tokenize column the
 config declares for the table, and an already-existing default output
 (<tokenized>.detokenized.<ext>); pass -o to choose a path deliberately.
@@ -442,7 +443,7 @@ def detokenize(
         exists=True,
         dir_okay=False,
         readable=True,
-        help="The tokenized file produced by `decoy tokenize` for one table (CSV or Parquet, by extension).",
+        help="The tokenized file produced by `decoy tokenize` for one table (read by the target's declared format, else by extension).",
     ),
     vault: Path = typer.Option(
         ...,
@@ -461,7 +462,7 @@ def detokenize(
         None,
         "--output",
         "-o",
-        help="Where to write the recovered file (format by extension). Default: <tokenized>.detokenized.<ext> next to the input, in the same format tokenize wrote (CSV or Parquet).",
+        help="Where to write the recovered file (format by extension). Default: <tokenized>.detokenized.parquet for Parquet input, otherwise <tokenized>.detokenized.csv, next to the input.",
     ),
     json_: bool = typer.Option(
         False,
@@ -485,9 +486,10 @@ def detokenize(
 
     Reverses every `strategy: tokenize` column by looking each token back up in
     the vault under the column's namespace. The tokenized file is read in the
-    format tokenize wrote it (CSV or Parquet, by extension) and the recovered
-    file is written in that same format. A missing or wrong vault, or a token
-    the vault does not hold under that namespace, fails closed (no output is
+    format tokenize wrote it (the table's declared target format when the file
+    is that target, otherwise by extension) and the recovered file is written
+    as Parquet for Parquet input, CSV otherwise. A missing or wrong vault, or a
+    token the vault does not hold under that namespace, fails closed (no output is
     written). Exits 0 on success, 1 on a config/usage or fail-closed error, 3 on
     a runtime failure.
     """
