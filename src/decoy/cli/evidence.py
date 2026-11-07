@@ -149,6 +149,7 @@ def _format_keys(table: str, tgt: dict[str, Any]) -> dict[str, Any]:
     try:
         fmt = resolve_target_format(table, tgt)
     except TargetFormatError:
+        # Cannot fire after a run: the gate refuses these targets before any source is read.
         return {}
     keys: dict[str, Any] = {"format": fmt}
     if fmt == "fixed_width" and tgt.get("layout") is not None:
