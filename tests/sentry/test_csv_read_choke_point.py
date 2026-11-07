@@ -1,8 +1,8 @@
 """G-ONE-CSV-READ: a declared CSV source is read through `_sources.read_csv_frame` only.
 
-Walks the syntax tree of every module under `src/decoy/` for calls to `read_csv` (pandas, in
-any spelling: `pd.read_csv`, `from pandas import read_csv`, an `import ... as` alias) and
-`read_csv_source` (the engine reader). A call outside `cli/_sources.py` fails unless its
+Walks the syntax tree of every module under `src/decoy/` for calls to `read_csv`, `read_table`
+and `read_fwf` (pandas delimited and fixed-width text readers, in any spelling: `pd.read_csv`,
+`from pandas import read_csv`, an `import ... as` alias) and `read_csv_source` (the engine reader). A call outside `cli/_sources.py` fails unless its
 (file, enclosing function) is in ALLOWLIST with the exact recorded site count. The allowlisted
 readers read files the CLI wrote itself or that a caller named with their own flags, not a
 declared source. The baseline may shrink and never grow
@@ -25,7 +25,6 @@ ROOT = Path(__file__).resolve().parents[2]
 SRC = ROOT / "src" / "decoy"
 CHOKE_POINT = "cli/_sources.py"
 BASELINE = ROOT / "tests" / "sentry" / "baselines" / "csv-read-allow.json"
-_WATCHED = {"read_csv", "read_csv_source"}
 
 
 @dataclass(frozen=True)
@@ -62,6 +61,12 @@ ALLOWLIST: tuple[AllowedRead, ...] = (
         "A caller-named file with its own sampling flags; not a declared source.",
     ),
     AllowedRead(
+        "cli/scan.py",
+        "_load_fixed_width_with_sampling",
+        3,
+        "A caller-named fixed-width file with its own layout flags; not a declared source.",
+    ),
+    AllowedRead(
         "cli/tokenize.py",
         "detokenize",
         1,
@@ -76,18 +81,28 @@ ALLOWLIST: tuple[AllowedRead, ...] = (
 )
 
 
-def _imports(tree: ast.AST) -> tuple[set[str], set[str]]:
-    """Return (names bound to a watched member, names bound to a module that has one)."""
+_PANDAS_READERS = {"read_csv", "read_table", "read_fwf"}
+
+
+def _owns(package: str, name: str) -> bool:
+    """Whether `name` is a watched reader of `package` (pandas text readers, engine reader)."""
+    if package.split(".")[0] == "pandas":
+        return name in _PANDAS_READERS
+    return package.split(".")[0] == "decoy_engine" and name == "read_csv_source"
+
+
+def _imports(tree: ast.AST) -> tuple[set[str], dict[str, str]]:
+    """Return (names bound to a watched member, {local module name: full module name})."""
     members: set[str] = set()
-    modules: set[str] = set()
+    modules: dict[str, str] = {}
     for node in ast.walk(tree):
-        if isinstance(node, ast.ImportFrom):
+        if isinstance(node, ast.ImportFrom) and node.module:
             for a in node.names:
-                if a.name in _WATCHED:
+                if _owns(node.module, a.name):
                     members.add(a.asname or a.name)
         elif isinstance(node, ast.Import):
             for a in node.names:
-                modules.add(a.asname or a.name.split(".")[0])
+                modules[a.asname or a.name.split(".")[0]] = a.name
     return members, modules
 
 
@@ -108,9 +123,9 @@ def read_sites(source: str) -> list[tuple[int, str]]:
                     found.append((child.lineno, scope))
                 elif (
                     isinstance(fn, ast.Attribute)
-                    and fn.attr in _WATCHED
                     and isinstance(fn.value, ast.Name)
                     and fn.value.id in modules
+                    and _owns(modules[fn.value.id], fn.attr)
                 ):
                     found.append((child.lineno, scope))
             visit(child, inner)
@@ -169,6 +184,9 @@ def test_the_choke_point_reads_through_the_engine() -> None:
         "import pandas\ndef f(p):\n    return pandas.read_csv(p)\n",
         "from pandas import read_csv\ndef f(p):\n    return read_csv(p)\n",
         "from pandas import read_csv as rc\ndef f(p):\n    return rc(p)\n",
+        "import pandas as pd\ndef f(p):\n    return pd.read_table(p)\n",
+        "import pandas as pd\ndef f(p):\n    return pd.read_fwf(p)\n",
+        "from pandas import read_fwf\ndef f(p):\n    return read_fwf(p)\n",
         "import decoy_engine as de\ndef f(p, d):\n    return de.read_csv_source(p, d, table='t')\n",
     ],
 )
@@ -188,3 +206,8 @@ def test_seeded_bypass_is_red(tmp_path: Path) -> None:
         "import pandas as pd\ndef load(p):\n    return pd.read_csv(p)\n", encoding="utf-8"
     )
     assert _tally(tmp_path) == {("cli/sneaky.py", "load"): 1}
+    (pkg / "sneaky2.py").write_text(
+        "import pandas as pd\ndef load(p):\n    return pd.read_table(p), pd.read_fwf(p)\n",
+        encoding="utf-8",
+    )
+    assert _tally(tmp_path)[("cli/sneaky2.py", "load")] == 2

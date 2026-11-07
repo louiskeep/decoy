@@ -78,7 +78,8 @@ def read_report_source(path: Path, config_dict: dict[str, Any], config_dir: Path
             and _resolve_path(src["path"], config_dir).resolve() == target
         ):
             return read_csv_frame(name, src, config_dir, dtype=None)
-    return read_csv_frame(path.stem, {"path": str(path)}, config_dir, dtype=None)
+    # The user's own path is relative to the current folder, never to the config directory.
+    return read_csv_frame(path.stem, {"path": str(target)}, config_dir, dtype=None)
 
 
 def read_source(table_name: str, src: dict[str, Any], base_dir: Path) -> pa.Table:

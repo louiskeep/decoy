@@ -8,6 +8,7 @@ source read of the report verbs honour the dialect the config declares.
 
 from __future__ import annotations
 
+import hashlib
 from pathlib import Path
 from typing import Any
 
@@ -79,6 +80,7 @@ def _reference(tmp_path: Path) -> pd.DataFrame:
     return _out(ref)
 
 
+_DEFAULT_OUTPUT_SHA256 = "ca340c14e64a0e12770630e3b54c8dd0977c0f56e18d97473e8b5891b5b5cff8"
 _HEADERLESS = {"has_header": False, "column_names": _NAMES}
 _DIALECTS = {
     "tab": ("\t", True, {"delimiter": "\t"}),
@@ -131,9 +133,12 @@ def test_default_dialect_unchanged(tmp_path: Path) -> None:
         assert runner.invoke(app, ["run", str(cfg)]).exit_code == 0
         outs.append((d / "out.csv").read_bytes())
     assert outs[0] == outs[1]
-    # The bytes the default CSV gave on the repin commit (before the reader moved).
+    # Exact bytes the default CSV gave on the repin commit 5fcc982 (run with the reference
+    # reader before this slice changed it): this test's `_write` data and `_config`, fixed seed
+    # and the test mask secret. Produced by running those helpers on that commit and hashing
+    # `out.csv`.
+    assert hashlib.sha256(outs[0]).hexdigest() == _DEFAULT_OUTPUT_SHA256
     assert outs[0].decode().splitlines()[0] == "id,name,age"
-    assert outs[0].decode().count("\n") == 4
 
 
 def test_report_source_without_config_equals_pandas(tmp_path: Path) -> None:
@@ -169,12 +174,20 @@ _MISFITS = {
 }
 
 
+_LATE_QUOTE = b'1,Alice,31\n2,Bob,4\n3,Carol,5\n4,zz_marker_b,"x\n5,zz_marker_a,7\n'
+
+
 @pytest.mark.parametrize("chunked", [False, True])
 @pytest.mark.parametrize("case", sorted(_MISFITS))
 def test_headerless_misfit_fails_closed(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, case: str, chunked: bool
 ) -> None:
     content, code = _MISFITS[case]
+    late_quote = chunked and case == "open_quote"
+    if late_quote:
+        # The engine's scan cannot see an unterminated quote, so a chunked read fails on the
+        # chunk step that reaches it. Put it after chunk 1 (chunk size 2) so the failure is late.
+        content = _LATE_QUOTE
     src = tmp_path / "secret_name_file.csv"
     src.write_bytes(content)
     cfg = _config(tmp_path, src, dialect=_HEADERLESS)
@@ -191,14 +204,24 @@ def test_headerless_misfit_fails_closed(
     result = runner.invoke(app, args)
     assert result.exit_code == 1, result.output
     assert f"error: {code}: source people " in " ".join(result.output.split()), result.output
-    assert not (tmp_path / "out.csv").exists()
-    for leaked in ("zz_marker_a", "zz_marker_b", "secret_name_file", str(tmp_path)):
-        assert leaked not in result.output
-    if not (chunked and case == "open_quote"):
+    if not late_quote:
+        assert not (tmp_path / "out.csv").exists()
         assert reached == []
-    # An unterminated quote is the one misfit the engine's scan cannot see: in a chunked read
-    # the parser disagreement surfaces on the first chunk step, inside the engine call, and
-    # still exits 1 with the coded message and no output.
+    for leaked in ("zz_marker_a", "zz_marker_b", "Alice", "secret_name_file", str(tmp_path)):
+        assert leaked not in result.output
+
+
+@pytest.mark.xfail(
+    strict=True,
+    reason="chunked writer is not atomic; follow-up slice ATOMIC-CHUNKED",
+)
+def test_chunked_failure_after_chunk_one_writes_no_target(tmp_path: Path) -> None:
+    src = tmp_path / "in.csv"
+    src.write_bytes(_LATE_QUOTE)
+    cfg = _config(tmp_path, src, dialect=_HEADERLESS)
+    result = runner.invoke(app, ["run", str(cfg), "--chunked", "--chunk-size", "2"])
+    assert result.exit_code == 1, result.output
+    assert not (tmp_path / "out.csv").exists()
 
 
 @pytest.mark.parametrize("case", ["headerless", "parquet"])
@@ -279,3 +302,29 @@ def test_report_verbs_read_declared_dialect(tmp_path: Path, verb: str) -> None:
 
     elsewhere = _config(tmp_path, _write(tmp_path / "other.csv"), out="o2.csv")
     assert _report_payload(verb, pipe, masked, elsewhere) != expected
+
+
+@pytest.mark.parametrize("branch", ["declared", "fallback"])
+@pytest.mark.parametrize("verb", ["fidelity", "integrity"])
+def test_report_verbs_resolve_user_paths_against_cwd(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, verb: str, branch: str
+) -> None:
+    """A relative positional path is the user's cwd path, never joined onto the config dir."""
+    sub = tmp_path / "sub"
+    sub.mkdir()
+    _write(tmp_path / "data.csv")
+    pd.DataFrame(_ROWS, columns=_NAMES).assign(name=["x1", "x2", "x3"]).to_csv(
+        tmp_path / "out.csv", index=False
+    )
+    declared = "../data.csv" if branch == "declared" else "../elsewhere.csv"
+    cfg = _config(sub, tmp_path / "data.csv")
+    doc = yaml.safe_load(cfg.read_text())
+    doc["sources"]["people"]["path"] = declared
+    cfg.write_text(yaml.safe_dump(doc), encoding="utf-8")
+    monkeypatch.chdir(tmp_path)
+    if verb == "fidelity":
+        args = ["report", "fidelity", "data.csv", "out.csv"]
+    else:
+        args = ["report", "integrity", "out.csv", "--source", "data.csv"]
+    result = runner.invoke(app, [*args, "--config", "sub/pipeline.yaml", "--json"])
+    assert result.exit_code in (0, 4), result.output

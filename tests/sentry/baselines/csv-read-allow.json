@@ -14,6 +14,9 @@
   "cli/scan.py::_load_csv_with_sampling": {
    "reason": "A caller-named file with its own sampling flags; not a declared source."
   },
+  "cli/scan.py::_load_fixed_width_with_sampling": {
+   "reason": "A caller-named fixed-width file with its own layout flags; not a declared source."
+  },
   "cli/tokenize.py::detokenize": {
    "reason": "Reads the CLI-written tokenized file; CLI-FMT Part B owns its format."
   },

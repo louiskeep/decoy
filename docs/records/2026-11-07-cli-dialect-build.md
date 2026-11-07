@@ -35,7 +35,7 @@ Acceptance tests (commit 2) on the repin tree before the reader change: 38 faile
 |---|---|---|
 | AT-D1 `test_headerless_with_column_names_runs` x3 (run, tokenize, mask) | 3 failed | 3 passed |
 | AT-D2 `test_delimiters` x3 | 3 failed | 3 passed |
-| AT-D3 `test_default_dialect_unchanged`, `test_report_source_without_config_equals_pandas` | the byte pin is green by design; the report-source test needs the new function | passed |
+| AT-D3 `test_default_dialect_unchanged`, `test_report_source_without_config_equals_pandas` | the byte pin is green by design (sha256 `ca340c14e64a0e12770630e3b54c8dd0977c0f56e18d97473e8b5891b5b5cff8`, produced by running the test's `_write` data and `_config` through `decoy run` on commit 5fcc982 src and hashing `out.csv`); the report-source test needs the new function | passed |
 | AT-D4 `test_chunked_honours_dialect` x4 | 4 failed | 4 passed |
 | AT-D5 `test_headerless_misfit_fails_closed` x12 | 7 failed (the rest are already refused by the validate gate) | 12 passed |
 | AT-D6 `test_mask_data_override_keeps_dialect` x2 | 2 failed | 2 passed (see DESIGN item 1) |
@@ -43,7 +43,7 @@ Acceptance tests (commit 2) on the repin tree before the reader change: 38 faile
 | AT-D8 `test_cli_read_errors_are_coded_and_value_free` x12 | 12 failed | 12 passed |
 | AT-D9 `test_report_verbs_read_declared_dialect` x2 | (added after the red run; red by mutation D9 and D11) | 2 passed |
 | AT-D10 `test_iter_source_chunks_fails_at_call` | failed | passed |
-| AT-D11 `test_csv_read_choke_point.py` | 2 failed (reads outside `_sources.py`) | 8 passed |
+| AT-D11 `test_csv_read_choke_point.py` (also watches `read_table` and `read_fwf`, pandas and engine imports only) | 2 failed (reads outside `_sources.py`) | passed |
 | AT-D12 pin test | red on the 0.18.0 pin (above) | passed |
 | AT-D13 cert smoke | below | below |
 
@@ -56,7 +56,7 @@ Acceptance tests (commit 2) on the repin tree before the reader change: 38 faile
 | D3 `read_report_source` passes `dtype=str` | `test_read_report_source_declared_and_default`; default branch: `test_report_source_without_config_equals_pandas` |
 | D4 restore `pd.read_csv(path, dtype=str, chunksize=...)` | `test_chunked_honours_dialect[headerless]` |
 | D5 replace the engine call with `pd.read_csv(sep, header=None, names)` | `test_headerless_misfit_fails_closed[extra_field-True]` |
-| D6 copy the dialect only when `format == "csv"` | not killable: see DESIGN item 1 |
+| D6 copy the dialect only when `format == "csv"` | `test_mask_data_override_keeps_dialect[parquet]` (re-run on the final head) |
 | D7 drop the `delimiter` line from the init YAML | `test_init_tsv_declares_delimiter` |
 | D8 re-raise the coded error without `from None` | `test_cli_read_errors_are_coded_and_value_free[extra_field-whole]` |
 | D9 `read_report_source` ignores `config_dict` | `test_report_verbs_read_declared_dialect[fidelity]` |
@@ -110,8 +110,8 @@ Line counts: `_sources.py` 146 (was 91), `init.py` 647, `report.py` 2381, `api.p
 
 ## DESIGN
 
-1. AT-D6 parquet case: the handoff expects a `format: parquet` declaration with `delimiter` to pass silently on the base. It does not. `decoy.mask(config=...)` validates the config first and the engine refuses the declaration (`delimited params (delimiter) are only valid when format='csv'`) before `_stage_source_entry` runs. The copy-the-keys-whatever-the-format edit is kept, but mutation D6 has no observable effect, so the test asserts the config-time refusal instead. Its message is pydantic text without the `source_file.csv_param_on_non_csv` code.
-2. AT-D5 chunked unterminated quote: the engine reader cannot see it in its scan; in a chunked read the parser error surfaces on the first chunk step, after `run_mask_pipeline_chunked` has been called. The run still exits 1 with `error: source_file.column_count_mismatch: source people ...`, no output file, no leaked value. The "no chunk reached the engine" assertion therefore skips that one case.
+1. AT-D6 parquet case: `mask()` stages `data=` first and validates afterwards (`api.py` `_stage_source_entry`, then `PipelineConfig.model_validate`), so the key copy feeds validation. A `format: parquet` declaration with `delimiter` is refused at that validation (`delimited params (delimiter) are only valid when format='csv'`). The refusal text does not carry the `source_file.csv_param_on_non_csv` code and `ConfigValidationError` has no `code` attribute, so the test asserts the message. Mutation D6 turns the parquet case red.
+2. AT-D5 chunked unterminated quote: the engine's scan cannot see it, so a chunked read fails on the chunk step that reaches it, after `run_mask_pipeline_chunked` has been called. The test fixture now puts the quote after chunk 1 (5 rows, quote on line 4, chunk size 2). It asserts exit 1, the coded `source_file.column_count_mismatch` message and no raw value in the output. It does not assert that no file exists: an earlier chunk is already written, so a partial target remains. That older bug (the chunked writer is not atomic) is pinned by a strict xfail, `test_chunked_failure_after_chunk_one_writes_no_target`, reason "chunked writer is not atomic; follow-up slice ATOMIC-CHUNKED". Misfits the scan does see fail before the first chunk and write nothing.
 3. `_build_scaffold_yaml` keeps its `file_format` parameter and gains `delimiter=None`, because `tests/unit/test_init_inference.py` calls it with `file_format`; changing the signature to take the descriptor would edit an existing test.
 4. `read_csv_frame` returns `Any` (a frame, or an iterator with `chunk_size`); `read_source` and `iter_source_chunks` are its typed callers.
 5. `report integrity` warns on a source mismatch by resolving the declared path against cwd (`report.py:2058-2062`), while the dialect match resolves it against the config directory. They can disagree when cwd is not the config directory. Not fixed; it belongs to the `_resolve_path` follow-up.
@@ -129,3 +129,11 @@ Line counts: `_sources.py` 146 (was 91), `init.py` 647, `report.py` 2381, `api.p
 
 - macOS arm64: the Mac mini is reachable but has no `uv`, `tmux` or a CPython 3.10, so the named tests and gates were not run there. The lone-CR and CRLF behavior on macOS is unchecked.
 - The full suite on the merge head (orchestrator).
+
+## Review round 1 fixes (Dennis NO-GO at 519e0705)
+
+- BLOCKER 1: `read_report_source` passed the user's relative path through `_resolve_path` against the config directory. The fallback now passes `path.resolve()`. New `test_report_verbs_resolve_user_paths_against_cwd` (cwd `tmp`, `--config sub/pipeline.yaml`, relative positional paths, both verbs, declared and fallback branches): red on 519e0705 for fidelity-declared, fidelity-fallback and integrity-fallback (integrity-declared was already green); mutation B1 (back to `str(path)`) turns it red again. `report.py` net change still `9 10`.
+- HIGH 1: see DESIGN item 2. The CHANGELOG no longer says a chunked failure writes nothing.
+- MEDIUM 1: DESIGN item 1 and mutation D6 rewritten.
+- MEDIUM 2: AT-D3 now asserts the exact sha256 above. Mutation (reverse the row order in `read_source`) turns it red.
+- LOW 1: the sentry watches `read_table` and `read_fwf`, with seeded cases; the sentry now matches only pandas and `decoy_engine` imports, so `pq.read_table` is not a hit. `cli/scan.py::_load_fixed_width_with_sampling` (3 `read_fwf` sites, a caller-named file) joins the allowlist and baseline.
