@@ -10,8 +10,8 @@ the ones that need the owner.
 Rules consulted: `dev-rules/README.md`, `00-universal.md`, `risk-and-exceptions.md`,
 `development-loop.md`, `documentation.md`, `feature-dev.md`, `api-and-compatibility.md`.
 
-Next step: a Dennis review of v3, then the Phase 1a plan, written as a revision of the 2026-11-07 plan
-(section 0). Roadmap row 32b INIT-WIZARD tracks it.
+Next step: Dennis round 2 on v3 (round 1 fixes applied below), then the Phase 1a plan, written as a
+revision of the 2026-11-07 plan (section 0). Roadmap row 32b INIT-WIZARD tracks it.
 
 Related: `docs/cli-reference.md` (`decoy init` today), `docs/ci-contracts.md` (the CI manifest the
 wizard can scaffold), engine config models in `decoy_engine/config/`, and the engine's
@@ -25,7 +25,7 @@ The owner's standing rule for V1 is "take the recommended option", so every reco
 as written. Summary by review item:
 
 - **H1** quarantine holds unmasked rows: the prompt says so, the default path moves to
-  `quarantine/<table>.jsonl` beside the pipeline, `.gitignore` is offered, and Review lists the file
+  `quarantine/<pipeline-stem>.jsonl`, outside the output folder, `.gitignore` is offered, and Review lists the file
   under "contains unmasked data" (5.7, 5.11, 6).
 - **H2** `column_in_set` writes source values: kept only behind a per-field confirm that shows the
   values; the one exception is recorded in 4.5 and in the privacy test allow-list (5.7, 15).
@@ -41,6 +41,34 @@ as written. Summary by review item:
 - **Engine gaps** (16) and **open decisions** (19) take the review's recommendations. Section mode is
   now a separate verb, `decoy edit <section> <pipeline>` (19.1).
 - The hot-fix of today's `decoy init` is done: CLI #114 merged it on 2026-11-08 (section 21).
+
+### Round 1 fixes (2026-11-08)
+
+Dennis round 1 on v3 (NO-GO, 2 HIGH, 6 MEDIUM, 8 LOW), applied in place:
+
+- **HIGH-1** Phase 1a lists its prerequisites: SCAN-MULTI S3-engine (`starter_config`) with the
+  2026-11-07 plan's E1 `column_entry`, SCAN-MULTI S3a.1 (`cli/_scaffold_yaml.render`, G-ONE-EMITTER),
+  and the engine release that carries them (17). `config.key_column_not_join_safe` is a Phase 2 engine
+  prerequisite (16.13), not an existing backstop (0.2, 5.4.2, 5.5, 12).
+- **HIGH-2** new engine gap 16.12, `keyed_columns_for_config(config)`, shipped in the 1a release; 5.10
+  names fields from it and covers the composite parent key case.
+- **MEDIUM-1** the draft joins the `column_in_set` allow-list (4.5, 15).
+- **MEDIUM-2** quarantine defaults to `quarantine/<pipeline-stem>.jsonl`; relative paths resolve
+  against the directory `decoy run` starts in (4.3, 5.7, 6).
+- **MEDIUM-3** new engine gap 16.14, a public per-column free-text advisory check, landed before 1b
+  (5.4.1).
+- **MEDIUM-4** 1a deletes `_NAMESPACE_REQUIRED_STRATEGIES`; the draft projection reuses `cli/scan.py`
+  `_safe_field_record`, promoted to `src/decoy/_safe_profile.py` (5.4.2, 10, 12).
+- **MEDIUM-5** the "provider (combined)" leaf is gone; the tree shows the 30 visible providers (5.4.3).
+- **MEDIUM-6** `decoy edit` is registered from `cli/wizard/`; a Placement table and one `.gitignore`
+  helper (12).
+- **LOW 1-8**: engine 0.20.0 with pin and lock moves (17); `example` labelled "example, not the
+  default" (5.4.2, 6); `tokenize` moved out of the "joins keep working" heading (5.4.3); pinned Secrets
+  test outcomes and a hand-kept-list mutation (15); 1a local CSV includes TSV and other delimiters
+  (17); `decoy-init-draft/v1` with a strict loader (10); 16.8 preferred in the same engine release
+  (16); user-typed values allowed, data-derived values restricted (4.5).
+- **Owner answers on section 22** (2026-11-08): field review keys, no-terminal refusal and the
+  flagged-only default are decided (18). The findings review command home stays open (22).
 
 ## 0. Relation to the 2026-11-07 plan
 
@@ -61,15 +89,15 @@ as written. Summary by review item:
 | `Prompter` protocol: steps depend on it, not on click; terminal and answers-file implementations; scripted test prompter | 3, W1.1 `_prompts.py` | 4.2, 4.4, 12 |
 | Shared YAML mark index `src/decoy/_yaml_marks.py`, moved out of `ci/locations.py` | 4.7, W1.1 | 8, 12 |
 | Comment-preserving editor `src/decoy/cli/wizard/_yaml_edit.py` (`apply_edits(text, edits)`), with its span rule, refusals and checks before replace | 4.7, W3.1 | 8, 12 |
-| `join_safe` key rule: relationship key columns need a `join_safe` strategy (`config.key_column_not_join_safe`) | 4.6, E0, E1 | 5.5 |
+| `join_safe` key rule: relationship key columns need a `join_safe` strategy. The catalog fact `join_safe` exists (E0, #400); the engine refusal `config.key_column_not_join_safe` (E1) does not exist yet and is a Phase 2 prerequisite (16.13) | 4.6, E0, E1 | 5.5 |
 | Strategy catalog `strategy_catalog()` (part E0, merged as engine #400) | 4.6, E0 | 4.4, 5.4 |
-| Post-scan findings review is `decoy init --review-findings PIPELINE --report FILE` (owner Q1, 2026-11-07; revisit spelling before release) | 4.1, 9 Q1 | 3, 22 |
+| Post-scan findings review is `decoy init --review-findings PIPELINE --report FILE` for now (owner Q1, 2026-11-07; the final command home is open, 22) | 4.1, 9 Q1 | 3, 22 |
 | A rejected finding persists as `post_scan.dismissed` (owner Q2, 2026-11-07); the field belongs to SCAN-ML | 9 Q2, 12 | 3, 5.7 |
 | `unlisted: confirm` is allowed in an answers file (owner Q3, 2026-11-07) | 9 Q3 | 11 |
 | Answers file format `decoy-init-answers/v1`, strict loader | 4.4, 12 | 11 |
 | `--no-input` and `--fail-on-warning` flags; `--json` and `-q` imply `--no-input` | 4.1 | 3, 11, 14 |
-| One emitter for new files (`cli/_scaffold_yaml.render`, G-ONE-EMITTER), one gate path (`decoy.cli.gate`, G-ONE-GATE), atomic writes through `src/decoy/_atomic.py` | 10 | 9, 10, 12 |
-| Column entries come from the engine helper `column_entry` (E1) | 4.6 | 5.4.2 |
+| One emitter for new files: `cli/_scaffold_yaml.render` with G-ONE-EMITTER. Its single owner is SCAN-MULTI S3a.1; it is not on CLI main yet, so it is a Phase 1a prerequisite (17). One gate path (`decoy.cli.gate`, G-ONE-GATE) and atomic writes through `src/decoy/_atomic.py` are on main | 10, 13 | 9, 10, 12 |
+| Column entries come from the engine helper `column_entry` (2026-11-07 plan E1), built on SCAN-MULTI S3-engine.2 `starter_config`, their single owners. Neither is released yet, so both are Phase 1a prerequisites (17) | 4.6, 13 | 5.4.2 |
 
 ### 0.3 Where each review item is handled
 
@@ -83,7 +111,7 @@ as written. Summary by review item:
 | H6 | 0 |
 | H7 | 5.1, 17 |
 | M1 | 4.3, 12, 15 |
-| M2 | 5.4.1, 5.11, 22 |
+| M2 | 5.4.1, 5.11, 18 |
 | M3 | 5.2 item 4, 6.2 |
 | M4 | 5.2 items 2-3 |
 | M5 | 5.2 item 1, 5.9, 6.3, 16 |
@@ -105,6 +133,7 @@ as written. Summary by review item:
 | Phasing (17) | 17 |
 | Open decisions 19.1-19.7 | 19 (and 3, 4.4, 8, 10, 5.2, 5.6) |
 | Hot-fix | 21 |
+| Dennis round 1 (HIGH-1 to LOW-8) | Round 1 fixes list above |
 
 ## 1. Summary
 
@@ -183,7 +212,8 @@ New flags:
 Section names (fixed, tab-completed once completion lands): `goal`, `sources`, `scan`, `fields`,
 `relationships`, `subset`, `checks`, `quality`, `output`, `secrets`, `ci`.
 
-Whether the findings review moves to `decoy edit findings` is open for the owner (section 22).
+The findings review keeps `decoy init --review-findings` for now. It takes the finished run as
+`--report FILE`, the run's `post-scan-integrity/v2` report; its final command home is open (section 22).
 
 ## 4. Interaction model
 
@@ -219,9 +249,9 @@ implementations accept the same actions.
 Inside field review, `b` moves to the previous field, `g` jumps to a field by number or name, and `l`
 lists every field with its current choice.
 
-The 2026-11-07 plan used the `git add --patch` keys (`y n e s a d q`) for its review loop. Which key set
-the field review uses is open for the owner (section 22); this spec keeps the v2 keys the owner set on
-2026-11-08.
+The 2026-11-07 plan used the `git add --patch` keys (`y n e s a d q`) for its review loop. The owner
+decided on 2026-11-08 that the field review uses the v2 keys (Enter, `r`, `o`, `k`, `d`, `b`, `q`); the
+plan revision adopts them.
 
 ### 4.3 Moving back and forth
 
@@ -231,8 +261,7 @@ the field review uses is open for the owner (section 22); this spec keeps the v2
   (typed or chosen). When an earlier answer changes, suggested values are refreshed silently. User
   values are never changed or deleted silently.
 - Tables and fields get stable internal ids. Their names are attributes, so a rename is one edit and
-  every reference (`validators[].columns`, `targets`, relationships, subset seeds, the default
-  quarantine path) follows the id.
+  every reference (`validators[].columns`, `targets`, relationships, subset seeds) follows the id.
 - Each step has `stale(state) -> list[Change]`. It returns each answer that no longer fits and why.
   When the list is not empty the step is marked `⚠`, and the user sees the list when they reach it and
   chooses for each item: keep, change, or remove. A dependency set (`depends_on`) is kept only as an
@@ -276,10 +305,13 @@ the field review uses is open for the owner (section 22); this spec keeps the v2
   once engine gap 16.1 exists (Phase 1b).
 - Sample values, previews and scan profile values (`top_values`, `min_value`, `max_value`) never go into
   the draft, the answers file, the pipeline, `-v` logs, `--json` output or re-shown engine error text.
+- The rule restricts data-derived values only: values read from the source, the scan or a preview.
+  Values the user types (a path, a namespace, an option, a subset filter value) are allowed in the
+  pipeline, the draft and the answers file.
 - **One exception.** A `column_in_set` validator lists allowed values, which are source values. The
   wizard writes them only after a per-field confirm that shows them ("Write these 3 values into the
-  pipeline: basic, plus, pro? [y/N]"). The values then appear in the pipeline (and the answers file, if
-  saved) and nowhere else. The privacy test allow-lists exactly this: values under
+  pipeline: basic, plus, pro? [y/N]"). The values then appear in the pipeline, the draft (mode 0600) and the
+  answers file if saved, and nowhere else. The privacy test allow-lists exactly this: values under
   `validators[name=column_in_set].params.allowed_values` for fields the user confirmed (section 15).
 
 ### 4.6 Writing
@@ -421,8 +453,10 @@ A field is **flagged** when any of these hold:
 
 - the scan detected sensitive data in it, or was unsure (medium or low confidence);
 - it is an unflagged string field with a high unique share (the threshold is set in the Phase 1b plan);
-- the engine's free-text advisory would flag it (`freetext_advisory_min_avg_length`,
-  `freetext_advisory_min_distinctness`). The advisory is called in this step, not only at validation.
+- the engine's free-text advisory would flag it. Today the advisory runs only at validation. This step
+  calls a public per-column check over the scan's `FieldStats` with the same thresholds
+  (`freetext_advisory_min_avg_length`, `freetext_advisory_min_distinctness`): engine gap 16.14, which
+  lands before Phase 1b.
 
 The extra rules exist because a bulk `passthrough` on a field that detection missed is a leak, and no
 later safeguard catches a short identifier no detector matched.
@@ -443,7 +477,8 @@ Then it reviews the flagged fields one at a time. The Review screen shows the co
 unchanged without review" and asks for an explicit confirm before writing (5.11).
 
 Flagged-only mode ships in Phase 1b. Every-field mode suggests `redact` for an unflagged field while
-the bulk default here is `passthrough`; that asymmetry is open for the owner (section 22).
+the bulk default here is `passthrough`; the owner kept `passthrough` with the guard and the Review
+confirm (18, 2026-11-08).
 
 #### 5.4.2 One field
 
@@ -458,14 +493,16 @@ the bulk default here is `passthrough`; that asymmetry is open for the owner (se
 - **reject**: choose another strategy from the tree (5.4.3) or by typing its name.
 - **options**: edit the strategy's options. Options come from `strategy_catalog()`: required ones are
   asked. The catalog has no defaults or descriptions today (engine gap 16.6), so an optional option shows
-  the catalog's `example` labelled "e.g." and Enter leaves it unset. Once the gap closes, defaults are
+  the catalog's `example` labelled "example, not the default", and Enter leaves it unset. Once the gap closes, defaults are
   shown in brackets.
 - **keep as-is**: `passthrough`.
 - **drop**: remove the field from the output (a `drop_column` transform).
 - **why**: what the scan found and why this strategy was suggested.
 
-The column entry is built by the engine helper `column_entry` (section 0.2). Every strategy whose
-catalog entry says `namespace_required` gets `namespace: <field name>`, without asking. Sharing a
+The column entry is built by the engine helper `column_entry` (2026-11-07 plan E1, a Phase 1a
+prerequisite, 17). Every strategy whose catalog entry says `namespace_required` gets
+`namespace: <field name>`, without asking. Phase 1a deletes the CLI's copy of that fact,
+`_NAMESPACE_REQUIRED_STRATEGIES` in `cli/init.py`. Sharing a
 namespace across fields (so the same value masks the same way in two fields) is under "advanced" in
 options. A confirmed relationship sets one shared namespace on its key fields (5.5).
 
@@ -489,12 +526,12 @@ Replace with realistic fakes
   ├ Personal and health ids ....... SSN · MRN · NPI · member id · plan id · UUID
   ├ Financial ids ................. account number · EIN · IBAN · card number (PAN) · CUSIP
   ├ Medical codes ................. ICD-10 · NDC
-  ├ Other ......................... lorem text · provider (combined)
+  ├ Other ......................... lorem text
   └ Pick from my own list ......... categorical
 Scramble consistently (same input → same output, joins keep working)
   ├ One-way hash .................. hash
-  ├ Keep the format ............... fpe
-  └ Reversible token (vault) ...... tokenize        shown only when Tokenize is in the goal
+  └ Keep the format ............... fpe
+Reversible token, kept in a vault . tokenize        shown only when Tokenize is in the goal
 Shuffle values within the field ... shuffle
 Generalize
   ├ Numbers ....................... bucketize · top_code
@@ -517,6 +554,8 @@ The leaves are defined exactly:
 Providers that need `provider_config` the engine gives no metadata for (`random_choice`,
 `random_int_range`, `composite_custom`, `composite_provider`) are hidden until engine gap 16.6 closes.
 The sync test lists them as the named hidden set, so the tree is still checked against the registry.
+With them hidden, the tree shows the other 30 providers. `tokenize` sits outside the "joins keep
+working" group because the catalog does not mark it `join_safe`.
 
 Grouping is a CLI presentation concern and lives in the CLI, but the tree sync test (section 15) fails
 if a leaf is missing, appears twice, or is unknown to the engine, so the tree cannot fall behind the
@@ -546,8 +585,9 @@ Confirming a relationship does three things, because Fields runs first and the e
 refuse a non-injective strategy on a key:
 
 - It checks that every key column uses a `join_safe` strategy (today `hash` and `fpe`). If one does
-  not, the user picks a `join_safe` strategy for it here, or rejects the relationship. The engine's
-  `config.key_column_not_join_safe` refusal (2026-11-07 plan, E1) backs this up.
+  not, the user picks a `join_safe` strategy for it here, or rejects the relationship. The engine does
+  not refuse this today: `redact` on a key compiles. The refusal `config.key_column_not_join_safe`
+  (2026-11-07 plan, E1) is a Phase 2 engine prerequisite (16.13), and Phase 2 does not ship before it.
 - It sets the shared namespace on the parent and every child key column, replacing the per-field
   namespaces Fields wrote.
 - When it changes a field, it marks Fields `⚠` with what changed (4.3).
@@ -605,9 +645,12 @@ choices. Checks ships in Phase 1b.
 
    Triggers are suggested from the pipeline: `validation_fail` when any validator is on, `format_error`
    when `date_shift` or `bucketize` is used, `mask_error` when `code_set` with `chapter_preserve` is
-   used. The path defaults to `quarantine/<table>.jsonl` beside the pipeline, outside the masked output
-   folder. The wizard offers to add the quarantine folder to `.gitignore` ("Add quarantine/ to
-   .gitignore? [Y/n]"). The Review screen lists the file under "contains unmasked data".
+   used. A pipeline has one `quarantine:` block, so the path defaults to
+   `quarantine/<pipeline-stem>.jsonl` (for `pipeline.yaml`, `quarantine/pipeline.jsonl`), outside the
+   masked output folder. Relative paths resolve against the directory `decoy run` starts in, not the
+   pipeline file's folder, and the step says so. The wizard offers to add `quarantine/` to the
+   `.gitignore` in that same directory ("Add quarantine/ to .gitignore? [Y/n]"), through the shared
+   helper (12). The Review screen lists the file under "contains unmasked data".
 
 ### 5.8 Quality
 
@@ -650,9 +693,17 @@ This step explains the two values, because they are easy to confuse:
 | If it leaks | Nothing is exposed | Someone with the secret and the masked output can test guesses, for example hash every possible SSN and match the results |
 | Keep it the same when | You want reproducible runs | You want the same value masked the same way across runs and pipelines (joins across datasets) |
 
-Which strategies are keyed comes from the engine's public `secret_requirements_for_config`
-(`decoy_engine.secret_providers`), through the CLI's existing `_mask_secret_guidance.config_is_keyed`.
-The wizard keeps no list of its own. The step names the fields the engine reports and their strategies.
+Whether the pipeline needs a mask secret comes from the engine's public
+`secret_requirements_for_config` (`decoy_engine.secret_providers`), through the CLI's existing
+`_mask_secret_guidance.config_is_keyed`. Which fields are keyed comes from a new public engine function,
+`keyed_columns_for_config(config)`, which returns `(table, column, strategy)` entries (engine gap 16.12,
+shipped in the Phase 1a engine release). The wizard keeps no keyed list of its own.
+
+- The step names each field `keyed_columns_for_config` returns, with its strategy.
+- A pipeline can need the secret with no keyed field, for example a composite parent key in a
+  relationship. Then the prompt shows the generic sentence "This pipeline needs a mask secret." and
+  lists no fields.
+- Until 16.12 ships, the prompt is always the generic sentence. The CLI does not copy the keyed list.
 There is no seed fallback: `decoy run` refuses a keyed pipeline without a mask secret in every release
 phase, so the wizard never suggests running without one.
 
@@ -813,9 +864,9 @@ How do you want to review the 8 fields?
   Suggested  date_shift  shift each date by a keyed offset
   Preview    1984-03-12 → 1984-09-27   (preview key; real output differs)
 > o
-  min_days (e.g. -365): -30
-  max_days (e.g. 365): 30
-  date_format (e.g. %Y-%m-%d; detected %Y-%m-%d) [%Y-%m-%d]:
+  min_days (example, not the default: -365): -30
+  max_days (example, not the default: 365): 30
+  date_format (detected in the data) [%Y-%m-%d]:
   Preview    1984-03-12 → 1984-03-29   (preview key; real output differs)
   ✓ date_shift ±30 days
 
@@ -843,7 +894,7 @@ How do you want to review the 8 fields?
   cascade, most specific first (e.g. 1,3,7):
     1 zip3   2 zip5   3 state   4 h3_resolution_5   5 h3_resolution_7   6 h3_resolution_9   7 suppress
   > 1,3,7
-  k_threshold (e.g. 20000): 20000
+  k_threshold (example, not the default: 20000): 20000
   Preview    94110 → 941    05753 → VT   (sparse areas fall back to the next level)
   ✓ geo_generalize · zip3 → state → suppress
 
@@ -887,7 +938,7 @@ Send failing rows to a quarantine file instead of stopping the run? [Y/n]
   ✓ 1  validation_fail   a row fails one of the checks above
   ✓ 2  format_error      a dob value can't be parsed as a date
   >
-  Quarantine file [quarantine/customers.jsonl]:
+  Quarantine file, relative to where decoy run starts [quarantine/pipeline.jsonl]:
   Add quarantine/ to .gitignore? [Y/n]
 
 ── 6/9 Quality ───────────────────────────────────────────────────────
@@ -939,12 +990,12 @@ Variable name [DECOY_MASK_SECRET]:
     notes       redact
 
   Checks      post-scan integrity · leak_check (4 fields) · column_in_set (plan_tier, 3 values written)
-  Quarantine  validation_fail, format_error → quarantine/customers.jsonl
+  Quarantine  validation_fail, format_error → quarantine/pipeline.jsonl
   Quality     post-validation · fidelity report on run
   Secrets     seed 42 · mask secret from env:DECOY_MASK_SECRET
 
   Contains unmasked data
-    quarantine/customers.jsonl   (in .gitignore)
+    quarantine/pipeline.jsonl   (in .gitignore)
 
   Enter write · y view YAML · g go to a step · a save answers file · q save draft & quit
 > g
@@ -1014,7 +1065,7 @@ validators:
 quarantine:
   enabled: true
   # Holds the original, unmasked rows.
-  output_path: quarantine/customers.jsonl
+  output_path: quarantine/pipeline.jsonl
   triggers: [validation_fail, format_error]
 
 targets:
@@ -1181,11 +1232,19 @@ the one gate path `decoy.cli.gate`. It does not re-implement any rule.
 - `q`, Ctrl-C and errors save a draft beside the output as `.pipeline.yaml.init-draft.json` (for an
   output named `pipeline.yaml`), mode 0600, written atomically through `src/decoy/_atomic.py`. There
   is one draft per output path. `--resume` loads it and opens the step the user was on; with more than
-  one draft in the folder it lists them. The wizard offers to add the draft name to `.gitignore`.
+  one draft in the folder it lists them. The wizard offers to add the draft name to `.gitignore`
+  through the shared helper (12).
+- The draft is a versioned file, schema tag `decoy-init-draft/v1`, read by a strict loader: an unknown
+  key, a missing or wrong tag, or a bad type refuses the draft with `init.draft_invalid` (exit 1),
+  naming the file and key path, never a value. A later breaking change takes `v2`.
 - The draft holds answers (with their origin and stable ids), step status and a named allow-list
   projection of the scan, per field: type, null share, unique share, detector id and confidence bucket.
   Nothing else from the scan is copied. In particular `FieldStats` and `ColumnProfile` are never
   serialized as they are, because they carry `top_values`, `min_value` and `max_value`.
+- The projection reuses `cli/scan.py` `_safe_field_record`, which already keeps only privacy-safe
+  fields. Phase 1b promotes it to one shared module, `src/decoy/_safe_profile.py`, used by `decoy scan`
+  and the draft. The existing sentry `tests/sentry/test_profile_raw_value_isolation.py` guards it; it
+  is pointed at the new module.
 - The draft never holds sample values, scan profile values, secrets or raw data. A `column_in_set`
   value list the user confirmed is the one exception (4.5).
 - A successful write deletes the draft.
@@ -1200,9 +1259,8 @@ the one gate path `decoy.cli.gate`. It does not re-implement any rule.
 - `unlisted: confirm` is allowed in an answers file (owner Q3, 2026-11-07): it accepts every suggestion
   the file does not list, in a file the user wrote.
 - The answers file is written only when asked: `--save-answers FILE`, or `a` on the Review screen.
-- With no terminal attached and no `--answers`, the command refuses with exit code 1 rather than hang.
-  The 2026-11-07 plan instead writes the `minimal` preset off a terminal; which behavior wins is open
-  for the owner (section 22).
+- With no terminal attached and no `--answers`, the command refuses with exit code 1 rather than hang
+  (owner, 2026-11-08). The 2026-11-07 plan's write of the `minimal` preset off a terminal is dropped.
 - `--json` keeps its current meaning: no wizard, emit a JSON record of what was written. It implies
   `--no-input`.
 - `-y` skips the overwrite confirmation only. It does not accept defaults for other prompts.
@@ -1216,7 +1274,7 @@ Phase 1a plan adds one (`tests/sentry/test_module_size*`) or a census line that 
 new modules to their sizes.
 
 Modules follow the 2026-11-07 plan's names and placement (its section 11), plus the modules this spec's
-extra steps need. The Phase 1a plan's placement table fixes the final list against CODEMAP:
+extra steps need:
 
 ```text
 src/decoy/_yaml_marks.py       shared YAML mark index (moved from ci/locations.py)
@@ -1232,11 +1290,32 @@ src/decoy/cli/wizard/
   _preview.py       sample values and shapes (--no-samples); previews once engine gap 16.1 exists
   _yaml_edit.py     the comment-preserving editor (section 8)
   _findings.py      --review-findings
+  _edit.py          the `decoy edit` command, registered from here (not a flat cli/edit.py)
   _checklist.py     the end-of-run list
   steps/            one module per step
+src/decoy/_safe_profile.py     privacy-safe field record, promoted from cli/scan.py (10)
+src/decoy/_gitignore.py        the one .gitignore helper (quarantine, draft, vault)
 ```
 
-New-file YAML text comes from the one emitter `cli/_scaffold_yaml.render` (G-ONE-EMITTER).
+Placement. `cli/` is frozen, so new commands go in a named sub-package. The two CODEMAP rows the
+2026-11-07 plan adds in W1.1 ("Interactive review wizard" and "Shared YAML document structure") place
+the wizard files; the private shared primitives row places the top-level files.
+
+| New file | Directory | CODEMAP "Where things go" row | Sits beside |
+|---|---|---|---|
+| `cli/wizard/*.py`, `cli/wizard/steps/*.py` | `src/decoy/cli/wizard/` | "Interactive review wizard for `decoy init`" (new in W1.1) | `src/decoy/cli/gate/` |
+| `cli/wizard/_edit.py` | `src/decoy/cli/wizard/` | same; `src/decoy/__main__.py` registers the `edit` verb from it | `cli/wizard/_flow.py` |
+| `_yaml_marks.py` | `src/decoy/` | "Shared YAML document structure and source-mark indexing" (new in W1.1) | `_atomic.py` |
+| `_safe_profile.py` | `src/decoy/` | "Private shared filesystem or process primitives used by more than one package" | `_atomic.py` |
+| `_gitignore.py` | `src/decoy/` | same | `_atomic.py` |
+| `tests/unit/test_wizard_*.py`, `tests/e2e/test_init_wizard*.py` | `tests/unit/`, `tests/e2e/` | the W1.1 wizard row | existing init tests |
+
+The `.gitignore` helper is the one place that appends a line to a `.gitignore`: it creates the file if
+missing, adds the entry once, and never rewrites other lines. Quarantine (5.7), the draft (10) and the
+vault (5.10) call it; a sentry fails on any other `.gitignore` write under `src/decoy/`.
+
+New-file YAML text comes from the one emitter `cli/_scaffold_yaml.render` (G-ONE-EMITTER), owned by
+SCAN-MULTI S3a.1 and a Phase 1a prerequisite (17).
 
 Each step is an object with:
 
@@ -1293,8 +1372,12 @@ Only the six public codes exist (`src/decoy/cli/exit_codes.py`). No new codes.
 - **Tree sync test:** the leaves equal, exactly once each, the `offer_in_wizard=True` strategies except
   `faker`, plus every provider in the registry minus the named hidden set (5.4.3), plus `tokenize` when
   Tokenize is in the goal. Nothing in the tree is unknown to the engine.
-- **Secrets test:** for a shuffle-only pipeline, a faker-only pipeline, and one field per strategy, the
-  Secrets prompt appears exactly when `secret_requirements_for_config` reports a requirement.
+- **Secrets test:** pinned outcomes. A shuffle-only pipeline: asked. A faker-only pipeline: not asked.
+  Faker with `deterministic: true`: asked. A relationship with a composite parent key: asked, with the
+  generic sentence and no field list. One field per catalog strategy: asked exactly when
+  `secret_requirements_for_config` reports a requirement, and the named fields equal
+  `keyed_columns_for_config`. Mutation: adding a hand-kept keyed-strategy list to the CLI and reading it
+  instead of the engine must turn the test red.
 - **Relationship test:** confirming a relationship whose key uses `redact` is refused until a
   `join_safe` strategy is chosen; parent and child keys end with one namespace.
 - **Editor tests:** the 2026-11-07 plan's AT-W13, AT-W14 and AT-W21, extended to top-level blocks: a
@@ -1311,7 +1394,7 @@ Only the six public codes exist (`src/decoy/cli/exit_codes.py`). No new codes.
 
   Only `env:` and `file:` references appear for secrets. The allow-list has one entry: values under
   `validators[name=column_in_set].params.allowed_values` for a field the user confirmed (4.5), in the
-  pipeline and the answers file only. `--no-samples` output contains no real values.
+  pipeline, the draft (mode 0600) and the answers file only. User-typed values are not canaries. `--no-samples` output contains no real values.
 - **No-terminal test:** the command refuses cleanly.
 - **Golden tests:** the walkthrough in section 6, and a two-table pipeline with a relationship and a
   subset filter, validate against `PipelineConfig` and pass the config-only checks.
@@ -1344,12 +1427,22 @@ Only the six public codes exist (`src/decoy/cli/exit_codes.py`). No new codes.
 8. **A public validator list with params metadata, plus a config-time check.** `_REGISTRY` in
    `validators/_registry.py` is private, `ValidatorEntry.name` is a free string, and params are checked
    by each validator at run time, so neither `model_validate` nor the config-only checks catch a bad
-   validator name or param.
+   validator name or param. Prefer closing it in the same engine release Phase 1a repins to (0.20.0);
+   if it slips, the temporary CLI table of 5.7 stands until it lands.
 9. **Built-in detector selection.** `profile_columns` cannot select a subset of the built-in detectors.
 10. **The stale `GlobalSettings` docstring.** `config/_global_settings.py` says "pre-GA the keyed surface
     falls back to `job_seed`". No fallback exists in any release phase. A one-line engine docs fix.
 11. **`credentials_ref` has no meaning for local runs.** It is opaque to the engine and only the
     platform resolves it. The CLI does not prompt for it (5.2); the engine docs should say so.
+12. **Keyed fields.** A public `keyed_columns_for_config(config)` returning `(table, column, strategy)`
+    entries, beside `secret_requirements_for_config`. Shipped in the Phase 1a engine release (0.20.0).
+    It returns no entry for a requirement that no single field carries, such as a composite parent key.
+13. **Join-safe key refusal.** The engine refusal `config.key_column_not_join_safe` (2026-11-07 plan E1):
+    a relationship key column with a strategy the catalog does not mark `join_safe` fails at config
+    time. A Phase 2 prerequisite.
+14. **Per-column free-text advisory.** A public check that applies the free-text advisory thresholds
+    to one column's `FieldStats` from the scan, so the Fields step can flag a field before validation.
+    Lands before Phase 1b.
 
 ## 17. Phasing
 
@@ -1358,28 +1451,37 @@ with the old flow removed in the same slice (pre-GA hard delete). The Phase 1a p
 which.
 
 1. **Phase 1a** (one CLI slice plus the repin):
-   - Engine repin. The CLI pins `decoy-engine==0.19.0`, which predates `strategy_catalog()` (engine
-     #400, merged after the `v0.19.0` release #399). Phase 1a repins to the first engine release that
-     includes #400. The lock change (`requirements-dev.lock`) is a full-suite escalation trigger, so the
-     1a merge head gets the full suite diffed against the stored main baseline. The repin follows the
-     engine repin checklist. `TRANSFORM_IDS` in `cli/completers.py` is replaced by `strategy_catalog()`
-     in the same slice.
+   - Prerequisites. 1a waits for these, because the wizard reuses them and each has a single owner
+     (matching roadmap row 32b's After column):
+     - SCAN-MULTI S3-engine: the engine's `starter_config` (S3-engine.2), with the 2026-11-07 plan's E1
+       `column_entry` built on it;
+     - SCAN-MULTI S3a.1: `cli/_scaffold_yaml.render` and G-ONE-EMITTER;
+     - the engine release that carries them, with #400 (`strategy_catalog()`) and gap 16.12.
+   - Engine release and repin. The CLI pins `decoy-engine==0.19.0`, which predates `strategy_catalog()`
+     (#400 merged after the `v0.19.0` release #399). 1a cuts engine 0.20.0 and moves both the
+     `pyproject.toml` pin and the engine SHA in `requirements-dev.lock`. The lock change is a full-suite
+     escalation trigger, so the 1a merge head gets the full suite diffed against the stored main
+     baseline. The repin follows the engine repin checklist.
+   - In the same slice: `TRANSFORM_IDS` in `cli/completers.py` is replaced by `strategy_catalog()`, and
+     `_NAMESPACE_REQUIRED_STRATEGIES` in `cli/init.py` is deleted in favour of the catalog's
+     `namespace_required`.
    - `WizardState` with answer origin and stable ids, and `stale()` per step (4.3).
    - The `Prompter` with numbered menus, plus back, forward and go-to.
    - Goal limited to Mask.
-   - Sources limited to local CSV and Parquet, with the header options, and `has_header` always written.
+   - Sources limited to local files: CSV, including TSV and any other delimiter through the format and
+     delimiter options of 5.2, and Parquet. Header options included, and `has_header` always written.
    - Scan; Fields in every-field mode, with the catalog tree and options.
    - Output limited to local, then Secrets via `secret_requirements_for_config`.
    - Review with final validation.
    - The "STORM" text sentry (13) and the module-size sentry or census line (12).
 2. **Phase 1b:**
    - Fixed-width in and out, and S3/GCS without credential prompts.
-   - Flagged-only mode with the guard in 5.4.1.
+   - Flagged-only mode with the guard in 5.4.1 (needs engine gap 16.14).
    - Checks with the quarantine (H1) and `column_in_set` (H2) rules, and Quality.
-   - Drafts and `--resume` with the allow-list projection (10).
+   - Drafts and `--resume` with the allow-list projection and `_safe_profile.py` (10).
    - Previews, once engine gap 16.1 exists.
 3. **Phase 2.** Section mode (`decoy edit`) with the editor of section 8. Relationships with the key
-   rule of 5.5. Subset (filter and sample). The Generate and Subset goals, and generated tables (after
+   rule of 5.5, after engine gap 16.13. Subset (filter and sample). The Generate and Subset goals, and generated tables (after
    engine gap 16.7). `--answers` and `--save-answers`.
 4. **Phase 3.** Tab completion and arrow-key menus through `prompt_toolkit`, in its own slice with its
    own lock-change escalation (19.3). The CI manifest. The Tokenize goal with its `--vault` run option.
@@ -1415,6 +1517,13 @@ Settled 2026-11-08 (UX review):
 
 Settled 2026-11-08 (spec review, recommended options taken under the owner's standing V1 rule): the
 items in section 19 and the review items mapped in section 0.3.
+
+Settled 2026-11-08 (owner answers on v3 section 22):
+
+1. Field review keys are the v2 keys: Enter, `r`, `o`, `k`, `d`, `b`, `q` (4.2).
+2. With no terminal and no answers file, the command refuses with exit 1 (11).
+3. The flagged-only default for unflagged fields is `passthrough`, with the 5.4.1 guard and a confirm
+   on Review (5.4.1, 5.11).
 
 ## 19. Open decisions (settled in v3)
 
@@ -1471,25 +1580,21 @@ slice ("STORM detected medical record numbers", M9 and L4) was not part of #114 
 
 ## 22. Open for the owner
 
-Items the review did not settle, or where applying it would change user-visible behavior the owner set
-without the review discussing it. Each has the spec's current default.
+Items still open. Each has the spec's current default.
 
-1. **Unflagged-field default asymmetry (M2).** Every-field mode suggests `redact` for an unflagged field;
-   the flagged-only bulk default is `passthrough` (owner decision 3, 2026-11-08); CONFIG-EXPLICIT pins
-   `redact` for `decoy init FILE`. Keep the asymmetry, or make the bulk default `redact`? Current: as
-   decided, `passthrough` first, with the 5.4.1 guard and the Review confirm.
+1. **Findings review command home.** The owner kept `decoy init --review-findings` for now (2026-11-08)
+   and noted two things. A findings review needs a finished run passed to it, and `init` does not fit a
+   post-run operation, so the final home is to be decided later.
+   - How the run is named today: `--report FILE`, the run's `post-scan-integrity/v2` report written by
+     `decoy report integrity --output`, bound to the pipeline by its `config_sha256` (SCAN-ML C2a). A
+     run record (`decoy-run-result/v1`, RESULT E1) could replace it once that format reaches the CLI.
+   - With no report: the command refuses with exit 1 (`init.report_missing`) and prints the command that
+     writes one. A report for another pipeline version refuses with `init.report_stale`.
+   - Current: `decoy init --review-findings PIPELINE --report FILE`. Candidates include
+     `decoy edit findings` and a post-run verb.
 2. **Tokenize and the `vault: true` column flag (M11).** Does the Tokenize goal also offer `vault: true`
    on columns, or only the `tokenize` strategy? Current: only the strategy; `vault` is in the
    "edit the YAML" list (7).
-3. **Field review keys.** The 2026-11-07 plan's review uses `y n e s a d q` (`git add --patch`), where
-   `n` writes `redact` and `q` skips the rest. The v2 keys (Enter, `r`, `o`, `k`, `d`, `b`, `q` = save
-   and quit) were set in the owner's UX review. Current: the v2 keys; the plan revision adopts them
-   unless the owner says otherwise.
-4. **No terminal and no answers file.** This spec refuses with exit 1 (section 11); the 2026-11-07 plan
-   writes the `minimal` preset with today's default paths. Current: refuse.
-5. **Findings review spelling.** The owner decided `decoy init --review-findings` on 2026-11-07 and
-   asked to revisit it before release; with `decoy edit` now a verb, `decoy edit findings <pipeline>`
-   could take it (review 19.1). Current: `decoy init --review-findings`.
-6. **`drop_column` under CONFIG-EXPLICIT (M6).** Whether a dropped column still counts as declared
+3. **`drop_column` under CONFIG-EXPLICIT (M6).** Whether a dropped column still counts as declared
    under rule 3 depends on CONFIG-EXPLICIT E2's definition. Current: the Phase 1a plan checks E2 and
    the wizard follows it; if E2 says a dropped column is undeclared, the wizard also declares it.
