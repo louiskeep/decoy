@@ -42,13 +42,13 @@ import errno
 import os
 import re
 import stat
-import sys
 import time
 from collections.abc import Callable, Iterator
 from contextlib import AbstractContextManager
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath, PureWindowsPath
 
+from decoy import _private_file
 from decoy._private_file import (
     apply_mode,
     create_exclusive,
@@ -88,7 +88,6 @@ _DEVICE_STEMS = frozenset(
     | {f"LPT{c}" for c in "123456789\u00b9\u00b2\u00b3"}
 )
 
-_WINDOWS = sys.platform == "win32"
 _sleep = time.sleep  # a module attribute so tests can replace it
 
 # 10 attempts, 9 sleeps: 10 ms doubling, capped at 160 ms, 950 ms in total.
@@ -187,7 +186,7 @@ def _final_bits(tmp: str, existing: os.stat_result | None, private: bool, create
     if existing is None or not stat.S_ISREG(existing.st_mode):
         return created
     copied = stat.S_IMODE(existing.st_mode) & 0o777
-    if not _WINDOWS and existing.st_gid != os.stat(tmp).st_gid:
+    if not _private_file._WINDOWS and existing.st_gid != os.stat(tmp).st_gid:
         try:
             os.chown(tmp, -1, existing.st_gid)
         except OSError:
@@ -256,7 +255,7 @@ def _staged(
         except OSError as exc:
             failed, failed_errno = True, exc.errno
         else:
-            alive = not made or (mode is WriteMode.CREATE_ONCE and not _WINDOWS)
+            alive = not made or (mode is WriteMode.CREATE_ONCE and not _private_file._WINDOWS)
             if made and alive:
                 # The hard-link move leaves the temp name as a second link; drop it before the
                 # directory sync so a crash cannot leave a stray hidden entry.
@@ -332,7 +331,7 @@ def _refuse_foreign_symlink(path: Path) -> None:
     and have the replacement land there (lost data, not a leak: the bytes are 0600). This
     mirrors Linux `fs.protected_symlinks`, which macOS lacks. A link the user owns is followed.
     """
-    if _WINDOWS:
+    if _private_file._WINDOWS:
         return
     try:
         info = os.lstat(path)
@@ -347,7 +346,7 @@ def _staged_target(path: Path, private: bool) -> Iterator[Path]:
     _require_component(path.name)
     # POSIX keeps a leading "//" in abspath; collapse it so //dev/stdout is still an alias.
     alias = re.sub(r"^/+", "/", os.path.abspath(path))
-    if not _WINDOWS and _FD_ALIAS.fullmatch(alias):
+    if not _private_file._WINDOWS and _FD_ALIAS.fullmatch(alias):
         if private:
             _restrict_fd_target(alias)
         yield path  # /dev/stdout, /dev/fd/N, /proc/self/fd/N: a redirect is written through
@@ -402,7 +401,7 @@ def _require_component(name: str) -> None:
         or name in {".", ".."}
         or "\0" in name
         or any(sep in name for sep in seps)
-        or (_WINDOWS and (stem in _DEVICE_STEMS or "\\" in name or ":" in name))
+        or (_private_file._WINDOWS and (stem in _DEVICE_STEMS or "\\" in name or ":" in name))
     ):
         raise AtomicWriteError(ATOMIC_BAD_NAME)
 
@@ -423,7 +422,7 @@ def _create_once(tmp: str, target: Path) -> bool:
     """Move `tmp` to `target` only if `target` does not exist; no check-then-act window."""
     no_hard_links: int | None = None
     try:
-        if _WINDOWS:
+        if _private_file._WINDOWS:
             # os.rename fails on Windows when the target exists, which is the no-clobber move.
             _retry_on_windows(lambda: os.rename(tmp, target))
         else:
@@ -431,7 +430,7 @@ def _create_once(tmp: str, target: Path) -> bool:
     except FileExistsError:
         return False
     except OSError as exc:
-        if _WINDOWS or exc.errno not in _NO_HARD_LINKS:
+        if _private_file._WINDOWS or exc.errno not in _NO_HARD_LINKS:
             raise
         no_hard_links = exc.errno
     else:
@@ -449,7 +448,7 @@ def _retry_on_windows(move: Callable[[], None]) -> None:
             move()
             return
         except PermissionError:
-            if not _WINDOWS or attempt == _RETRY_ATTEMPTS - 1:
+            if not _private_file._WINDOWS or attempt == _RETRY_ATTEMPTS - 1:
                 raise
             _sleep(delay)
             delay = min(delay * 2, _RETRY_CAP_SECONDS)
@@ -460,7 +459,7 @@ def fsync_directory(directory: Path) -> None:
 
     Windows cannot open a directory and NTFS journals the rename, so it does nothing there.
     """
-    if _WINDOWS:
+    if _private_file._WINDOWS:
         return
     fd = os.open(directory, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))
     try:

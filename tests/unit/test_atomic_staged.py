@@ -177,27 +177,39 @@ def _write_local(path: Path) -> None:
 
 @posix_only
 @pytest.mark.parametrize("entry", [_stage_private, _write_local])
-@pytest.mark.parametrize("fault", ["raises", "does_not_stick"])
 def test_a_narrowing_failure_on_a_private_write_is_a_value_free_atomic_error(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
-    entry,
-    fault: str,  # type: ignore[no-untyped-def]
+    entry,  # type: ignore[no-untyped-def]
 ) -> None:
     target = tmp_path / "out.csv"
     target.write_bytes(b"old")
-    monkeypatch.setattr(os, "fchmod", _boom if fault == "raises" else lambda *_a: None)
-    if fault == "does_not_stick":
-        monkeypatch.setattr(os, "open", _open_wide)
+    monkeypatch.setattr(os, "fchmod", _boom)
     with pytest.raises(AtomicWriteError) as caught:
         entry(target)
     exc = caught.value
     assert exc.code == ATOMIC_WRITE_FAILED
-    assert exc.errno == (errno.EIO if fault == "raises" else errno.EPERM)
+    assert exc.errno == errno.EIO
     assert exc.__cause__ is None and exc.__context__ is None
     assert str(exc) == exc.code and str(tmp_path) not in str(exc)
     monkeypatch.undo()
     assert _names(tmp_path) == ["out.csv"] and target.read_bytes() == b"old"
+
+
+@posix_only
+@pytest.mark.parametrize("private", [False, True])
+def test_a_filesystem_that_ignores_chmod_still_publishes_the_staged_write(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, private: bool
+) -> None:
+    """CIFS without unix extensions, drvfs and FAT accept chmod and change nothing."""
+    target = tmp_path / "out.csv"
+    monkeypatch.setattr(os, "fchmod", lambda *_a: None)
+    monkeypatch.setattr(os, "chmod", lambda *_a, **_k: None)
+    monkeypatch.setattr(os, "open", _open_wide)
+    with _stager(private)(target) as tmp:
+        tmp.write_bytes(b"data")
+    assert target.read_bytes() == b"data"
+    assert _names(tmp_path) == ["out.csv"]
 
 
 @posix_only

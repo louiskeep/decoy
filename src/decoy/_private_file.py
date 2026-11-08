@@ -130,7 +130,8 @@ def create_exclusive(parent: Path, base: str, *, private: bool) -> tuple[str, in
     try:
         bits = stat.S_IMODE(os.fstat(fd).st_mode) & 0o777
         # A restrictive umask must not lock the writer out, so the bits are set, not just kept.
-        restrict_owner_only(fd, tmp)
+        # No read-back: a mount where chmod does nothing must still stage a public output.
+        apply_mode(fd, tmp, _OWNER_FILE)
     except OSError as exc:
         failed, failed_errno = True, exc.errno
     finally:

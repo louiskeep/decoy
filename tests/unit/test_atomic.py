@@ -8,7 +8,7 @@ from pathlib import Path
 
 import pytest
 
-from decoy import _atomic
+from decoy import _atomic, _private_file
 from decoy._atomic import AtomicWriteError, WriteMode, write_atomic
 
 
@@ -222,7 +222,7 @@ def test_local_target_refuses_a_bad_component(name: str) -> None:
 def test_local_target_refuses_windows_devices_on_windows(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, name: str
 ) -> None:
-    monkeypatch.setattr(_atomic, "_WINDOWS", True)
+    monkeypatch.setattr(_private_file, "_WINDOWS", True)
     with pytest.raises(AtomicWriteError) as info:
         _atomic.write_local_target(tmp_path / name, b"x", WriteMode.REPLACE)
     assert info.value.code == _atomic.ATOMIC_BAD_NAME
@@ -233,7 +233,7 @@ def test_local_target_accepts_cpython_non_devices_on_windows(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, name: str
 ) -> None:
     # Parity with CPython os.path.isreserved: COM0 and LPT0 are ordinary names on Windows.
-    monkeypatch.setattr(_atomic, "_WINDOWS", True)
+    monkeypatch.setattr(_private_file, "_WINDOWS", True)
     assert _atomic.write_local_target(tmp_path / name, b"x", WriteMode.REPLACE) is True
 
 
@@ -262,7 +262,7 @@ def test_windows_create_once_uses_rename_and_keeps_a_competitor(
     def forbidden(*_a: object, **_k: object) -> None:
         raise AssertionError("no link or replace on the Windows no-clobber path")
 
-    monkeypatch.setattr(_atomic, "_WINDOWS", True)
+    monkeypatch.setattr(_private_file, "_WINDOWS", True)
     monkeypatch.setattr(os, "rename", rename_refuses)
     monkeypatch.setattr(os, "link", forbidden)
     monkeypatch.setattr(os, "replace", forbidden)
@@ -341,7 +341,7 @@ def test_windows_retries_permission_error_with_bounded_backoff(
             raise PermissionError(errno.EACCES, "held open")
         real(a, b)
 
-    monkeypatch.setattr(_atomic, "_WINDOWS", True)
+    monkeypatch.setattr(_private_file, "_WINDOWS", True)
     monkeypatch.setattr(_atomic, "_sleep", sleeps.append)
     monkeypatch.setattr(os, "replace", flaky)
     assert write_atomic(tmp_path, "t", b"x", WriteMode.REPLACE) is True
@@ -355,7 +355,7 @@ def test_windows_gives_up_after_the_bound(tmp_path: Path, monkeypatch: pytest.Mo
     def held(*_a: object) -> None:
         raise PermissionError(errno.EACCES, "held open")
 
-    monkeypatch.setattr(_atomic, "_WINDOWS", True)
+    monkeypatch.setattr(_private_file, "_WINDOWS", True)
     monkeypatch.setattr(_atomic, "_sleep", sleeps.append)
     monkeypatch.setattr(os, "replace", held)
     with pytest.raises(AtomicWriteError):
@@ -372,7 +372,7 @@ def test_posix_does_not_retry_permission_error(
     def held(*_a: object) -> None:
         raise PermissionError(errno.EACCES, "denied")
 
-    monkeypatch.setattr(_atomic, "_WINDOWS", False)
+    monkeypatch.setattr(_private_file, "_WINDOWS", False)
     monkeypatch.setattr(_atomic, "_sleep", sleeps.append)
     monkeypatch.setattr(os, "replace", held)
     with pytest.raises(AtomicWriteError):
