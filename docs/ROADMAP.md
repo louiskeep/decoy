@@ -243,6 +243,10 @@ on origin unless marked local. Detail for each row is in [roadmap/row-detail.md]
 | 23 | VALIDATE-ALWAYS: `decoy run` runs every `decoy validate` check (config, compile, preflight) first and stops on an error | CLI | DONE 2026-11-08. Part 1 MERGED (CLI #88, `4ab55d4`): the validate checks live in `C:src/decoy/cli/gate/`. Part 2 MERGED (CLI #107, `8ac0f8d`): `decoy run` runs the gate before it reads source rows (exit 1, or 5 for capacity; `--json` adds `error_kind` and `messages`); about 0.8 s per run. Follow-ups FU-1 to FU-7 in the plan (FU-2 duckdb staging, FU-7 non-UTF-8 config exit 3) | `plan/validate-always`; `docs/records/2026-11-07-validate-always-p2-build.md` | none |
 | 24 | X7c: CLI private file writes (`_private_file.py`) | CLI | NOT STARTED; no branch | none | none |
 | 24a | VALUE-FREE-ERRORS: one config-error converter for every route; names (keys, tables, columns, file names, patterns) are shown, data values and secrets are hidden (owner Q1, 2026-11-06); exception-context ratchet | engine, CLI | Plan passed 2026-11-06 (Dennis twice, then Codex fixed it to green); V2 follow-ups FU-5 and FU-6 in the V2 corrective backlog | `E:plan/value-free-errors` | CLI-DIALECT, LAYOUT E1, row 14 |
+| 24b | QA-GATE (first-user QA, owner 2026-11-08): `decoy validate` refuses what `run` would refuse. A declared column missing from the source and a rule missing a required setting (`fpe` with no namespace) fail at the gate with exit 1, the config-error code, never exit 3 at run. Folded into CONFIG-EXPLICIT E2's declaration gate (same pre-read boundary) | engine, CLI | NOT STARTED; scope added to E2 | [QA report](records/2026-11-08-cli-qa-first-user.md) H2, H3 | row 22 E1 |
+| 24c | QA-SCAN-REDACT (owner 2026-11-08): saved scan files and `scan show` carry no raw values for PII-flagged columns (`top_values` and any other sample text); an explicit opt-in flag keeps them. Leak class, blocks V1 | engine, CLI | NOT STARTED; plan needed | QA report H5 | none |
+| 24d | QA-SHUFFLE-DET (owner 2026-11-08): `shuffle` gives byte-identical output for the same config, seed and mask secret; QA saw two runs differ. Engine bug: reproduce, root-cause, fix with a determinism test | engine | NOT STARTED; investigation | QA report M11 | none |
+| 24e | CLI-QA1 (owner 2026-11-08: bugs are V1): the validate and preflight traceback when a relationship has no resolvable namespace (and `validate compile` reporting no FK while one is declared); internal names in user text (`_scan`, `_gate`, ticket ids, the platform doc path); `explain pipeline` says version 1; `list disguises` tip names presets `init` rejects; stray `logs/` in the working directory; false "output directory does not exist" warning; fidelity "PASS grade F"; `integrity` column detail outside `--json`; reid risk unit; `explain vault` vs the plaintext tokenize store; `ci check` with no manifest; `validate compile --json` command name; run summary rows, files and tables. STORM wording goes with row 56; wizard items go to row 32b | CLI, engine | NOT STARTED; plan needed | QA report sections 2 to 4 | none |
 
 **D. Scan (SCAN-MULTI and the scan follow-ons)**
 
@@ -403,6 +407,15 @@ Source: `C:docs/plans/2026-10-22-cli-distribution-and-packaging-spec.md`.
 - Production-readiness checks.
 
 ### 5.6 Open questions for the owner (CLI V1)
+
+- First-user QA (2026-11-08, [report](records/2026-11-08-cli-qa-first-user.md)), answered by the owner
+  the same day with the recommended options: scan values redacted by default (row 24c); gate catches
+  run-time config errors with exit 1 (row 24b); `shuffle` must be deterministic (row 24d); QA bugs are
+  V1 (row 24e). The QA wizard asks (data-aware presets, multi-table, color, `--no-input`) go to
+  INIT-WIZARD (row 32b). Suggested new commands (`secret generate`, `ci init`, `subset init`,
+  `report summary`, `run --dry-run`, help panels, `relationships detect`) are V1-nice-to-have,
+  triaged after the critical path; FK detection across files is SCAN-MULTI. The uncovered-column
+  finding is CONFIG-EXPLICIT E2 (row 22, owner rule 2026-11-05).
 
 - The other open H-1 questions (Q3 answered: after CLI V1).
 - Phase 1 tracks questions still open from `PHASE1-TRACKS.md`: Q9 (fate of `feat/f25-protected-scratch`;
