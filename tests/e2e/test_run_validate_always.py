@@ -243,6 +243,39 @@ def test_missing_source_stderr_names_the_location_and_writes_nothing(
     assert not (tmp_path / "out.csv").exists()
 
 
+def test_a_long_path_in_run_error_text_is_printed_whole(tmp_path: Path) -> None:
+    """Error text is printed on one soft-wrapped line, never folded at the console width.
+
+    Off a TTY Rich's width is 80, so a hard-wrapped path longer than that gains a newline
+    inside it: a log grep for the path misses, and a whitespace-flattening assert fails
+    whenever the fold lands inside the checked name (seen on a VM whose tmp path was long).
+    Mutation: drop `soft_wrap=True` from run's error prints.
+    """
+    absent = tmp_path / ("d" * 90) / "absent.csv"
+    cfg = _cfg(tmp_path)
+    cfg["sources"]["customers"]["path"] = str(absent)
+    path = tmp_path / "pipeline.yaml"
+    path.write_text(yaml.safe_dump(cfg), encoding="utf-8")
+    result = runner.invoke(app, ["run", str(path)])
+    assert result.exit_code == EXIT_USAGE
+    assert str(absent) in result.stderr, result.stderr
+
+
+def test_a_long_path_in_an_engine_error_is_printed_whole(tmp_path: Path) -> None:
+    """The generic engine-error branch prints unfolded too, not only the pre-run check.
+
+    Mutation: drop `soft_wrap=True` from the last `else` print in run's error handler.
+    """
+    long_path = tmp_path / ("e" * 90) / "part.parquet"
+    path = tmp_path / "pipeline.yaml"
+    path.write_text(yaml.safe_dump(_cfg(tmp_path)), encoding="utf-8")
+    failure = RuntimeError(f"cannot open {long_path}")
+    with mock.patch("decoy_engine.run_pipeline", side_effect=failure):
+        result = runner.invoke(app, ["run", str(path)])
+    assert result.exit_code == EXIT_RUNTIME, result.stderr
+    assert str(long_path) in result.stderr, result.stderr
+
+
 # -- AT-3c: chunked capacity ----------------------------------------------------------------------
 
 
