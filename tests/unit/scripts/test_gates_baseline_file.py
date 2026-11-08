@@ -538,6 +538,88 @@ def test_a_missing_baseline_file_is_refused(tmp_path: Path) -> None:
     assert rc == 2 and "baseline file not found" in out, out
 
 
+# --- a flag that needs a file refuses a missing operand ---------------------------------------
+
+
+@pytest.mark.parametrize("flag", ["--baseline-file", "--write-baseline"])
+@pytest.mark.parametrize("tail", [[], ["--full"]], ids=["end-of-args", "next-token-is-a-flag"])
+def test_a_baseline_flag_without_its_file_operand_exits_2(
+    tmp_path: Path, flag: str, tail: list[str]
+) -> None:
+    clone = seeded_clone(tmp_path)
+    venv, log = recording_venv(tmp_path)
+    rc, out = run_gates(clone, venv, "--steps", "tests", flag, *tail)
+    assert rc == 2 and f"{flag} needs a file operand" in out, out
+    assert pytest_calls(log) == []
+
+
+def test_baseline_file_naming_an_empty_path_exits_2(tmp_path: Path) -> None:
+    clone = seeded_clone(tmp_path)
+    venv, _log = recording_venv(tmp_path)
+    rc, out = run_gates(clone, venv, "--steps", "tests", "--full", "--baseline-file", "")
+    assert rc == 2 and "needs a file operand" in out, out
+
+
+# --- head_sha must be a commit with main_sha's tree (accidental mismatch, not forgery) --------
+
+
+@pytest.mark.parametrize(
+    ("kind", "message", "rc"),
+    [
+        ("absent", "is not in this repository", 2),
+        ("other-tree", "does not have the tree of main_sha", 2),
+        ("same-tree", "", 0),
+    ],
+)
+def test_a_baseline_head_must_have_the_tree_of_its_main(
+    tmp_path: Path, kind: str, message: str, rc: int
+) -> None:
+    clone = seeded_clone(tmp_path)
+    main = at_main(clone)
+    if kind == "absent":
+        head = "1" * 40
+    elif kind == "other-tree":
+        (clone / "tests" / "_seeded" / "test_other.py").write_text("def test_o():\n    pass\n")
+        git(clone, "add", "-A")
+        git(clone, "commit", "-qm", "other tree")
+        head = git(clone, "rev-parse", "HEAD").strip()
+    else:
+        git(clone, "commit", "--allow-empty", "-qm", "same tree")
+        head = git(clone, "rev-parse", "HEAD").strip()
+    venv, log = recording_venv(tmp_path)
+    stored = _stored(tmp_path, main, head_sha=head)
+    got, out = _compare(clone, venv, stored, FAKE_FAIL="tests/a.py::test_one")
+    assert got == rc, out
+    if rc == 2:
+        assert message in out and head in out, out
+        assert pytest_calls(log) == []
+
+
+def test_a_baseline_with_an_unknown_main_still_reports_it_as_stale_not_as_a_bad_head(
+    tmp_path: Path,
+) -> None:
+    clone = seeded_clone(tmp_path)
+    venv, _log = recording_venv(tmp_path)
+    rc, out = _compare(clone, venv, _stored(tmp_path, NOT_A_COMMIT))
+    assert rc == 2 and "is not in this repository" in out and "head_sha" not in out, out
+
+
+def test_a_rename_of_a_test_file_into_markdown_makes_the_baseline_stale(tmp_path: Path) -> None:
+    # With rename detection `git diff --name-only` lists only the new path, so a deleted test
+    # moved to docs/*.md would read as a harmless Markdown add. No detection lists both paths.
+    clone = seeded_clone(tmp_path)
+    at_main(clone)
+    venv, log = recording_venv(tmp_path)
+    old = _origin_main(clone)
+    (clone / "docs").mkdir(exist_ok=True)
+    git(clone, "mv", "tests/_seeded/test_seed_ok.py", "docs/par-" + "renamed-probe.md")
+    git(clone, "commit", "-qm", "rename into docs")
+    at_main(clone)
+    rc, out = _compare(clone, venv, _stored(tmp_path, old), FAKE_FAIL="tests/a.py::test_one")
+    assert rc == 2 and "main changed tests/_seeded/test_seed_ok.py" in out, out
+    assert pytest_calls(log) == []
+
+
 # --- AT-5: a stored baseline is only compared while it is current ----------------------------
 
 

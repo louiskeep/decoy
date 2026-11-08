@@ -24,6 +24,7 @@ from _gates_harness import (
     DEV,
     GIT,
     at_main,
+    git,
     pytest_argvs,
     pytest_calls,
     recording_venv,
@@ -280,13 +281,12 @@ _INHERITED_JUNIT = (
     'file="tests/test_child.py" time="1.0"/>'
     "</testsuite>"
 )
-_SHA = "c" * 40
 
 
-def _promote_inputs(tmp_path: Path) -> tuple[Path, Path]:
+def _promote_inputs(tmp_path: Path) -> tuple[Path, Path, str]:
     """A clone and the output directory of a finished whole-suite run in it."""
     clone = seeded_clone(tmp_path)
-    at_main(clone)
+    sha = at_main(clone)
     venv, _log = recording_venv(tmp_path)
     _rc, out = run_gates(clone, venv, "--steps", "tests", "--full")
     logs = Path(re.search(r"(?m)^logs:\s+(\S+)$", out).group(1))  # type: ignore[union-attr]
@@ -294,13 +294,15 @@ def _promote_inputs(tmp_path: Path) -> tuple[Path, Path]:
     (clone / "tests" / "test_child.py").write_text("")
     (logs / "branch-tests.xml").write_text(_INHERITED_JUNIT)
     (logs / "branch-tests.log").write_text("1 failed, 1 passed in 0.01s\n")
-    return clone, logs
+    return clone, logs, sha
 
 
-def _reporter_write(reporter: Path, logs: Path, dest: Path, *extra: str):
+def _reporter_write(
+    reporter: Path, logs: Path, dest: Path, sha: str, *extra: str, head: str | None = None
+):
     return subprocess.run(
         [sys.executable, str(reporter), str(logs), "--whole-suite", "--write-baseline", str(dest),
-         "--repo", "decoy", "--main-sha", _SHA, "--head-sha", _SHA, *extra],
+         "--repo", "decoy", "--main-sha", sha, "--head-sha", head or sha, *extra],
         capture_output=True, text=True, timeout=120, check=False,
     )  # fmt: skip
 
@@ -308,9 +310,9 @@ def _reporter_write(reporter: Path, logs: Path, dest: Path, *extra: str):
 def test_a_reporter_copied_outside_the_repo_writes_the_same_file_as_a_gates_run(
     tmp_path: Path,
 ) -> None:
-    clone, logs = _promote_inputs(tmp_path)
+    clone, logs, sha = _promote_inputs(tmp_path)
     inside = tmp_path / "inside.json"
-    done = _reporter_write(clone / "scripts" / "dev" / "_gates_report.py", logs, inside)
+    done = _reporter_write(clone / "scripts" / "dev" / "_gates_report.py", logs, inside, sha)
     assert done.returncode == 0, done.stderr
     outside_dir = tmp_path / "promote"
     outside_dir.mkdir()
@@ -318,7 +320,7 @@ def test_a_reporter_copied_outside_the_repo_writes_the_same_file_as_a_gates_run(
         shutil.copy(sibling, outside_dir / sibling.name)
     copied = outside_dir / "_gates_report.py"
     outside = tmp_path / "outside.json"
-    done = _reporter_write(copied, logs, outside, "--test-root", str(clone))
+    done = _reporter_write(copied, logs, outside, sha, "--test-root", str(clone))
     assert done.returncode == 0, done.stderr
     assert outside.read_text() == inside.read_text()
     assert json.loads(outside.read_text())["failing"] == [
@@ -334,30 +336,64 @@ def test_a_reporter_copied_outside_the_repo_writes_the_same_file_as_a_gates_run(
     assert mod.load_baseline(outside).failing == ("tests/test_child.py::TestChild::test_inherited",)
 
 
-def test_a_reporter_without_the_test_root_cannot_find_the_inherited_file(
+def test_a_reporter_copied_outside_the_repo_without_a_test_root_writes_nothing(
     tmp_path: Path,
 ) -> None:
-    # Control for the cell above: the id differs when the root is not supplied.
-    _clone, logs = _promote_inputs(tmp_path)
+    # Control for the cell above: outside the repo the commit cannot be resolved, so the write is
+    # refused instead of keying inherited tests by the wrong root.
+    _clone, logs, sha = _promote_inputs(tmp_path)
     outside_dir = tmp_path / "promote"
     outside_dir.mkdir()
     for sibling in DEV.glob("_gates_*.py"):
         shutil.copy(sibling, outside_dir / sibling.name)
     dest = tmp_path / "no-root.json"
-    _reporter_write(outside_dir / "_gates_report.py", logs, dest)
-    assert json.loads(dest.read_text())["failing"] != [
-        "tests/test_child.py::TestChild::test_inherited"
-    ]
+    done = _reporter_write(outside_dir / "_gates_report.py", logs, dest, sha)
+    assert done.returncode == 1 and "write-baseline refused" in done.stderr, done.stderr
+    assert not dest.exists()
+
+
+def test_a_write_whose_head_has_another_tree_than_main_is_refused(tmp_path: Path) -> None:
+    clone, logs, sha = _promote_inputs(tmp_path)
+    (clone / "tests" / "_seeded" / "test_other.py").write_text("def test_o():\n    pass\n")
+    git(clone, "add", "-A")
+    git(clone, "commit", "-qm", "other tree")
+    head = git(clone, "rev-parse", "HEAD").strip()
+    dest = tmp_path / "mismatch.json"
+    reporter = clone / "scripts" / "dev" / "_gates_report.py"
+    done = _reporter_write(reporter, logs, dest, sha, head=head)
+    assert done.returncode == 1, done.stderr
+    assert "write-baseline refused" in done.stderr and "does not have the tree" in done.stderr
+    assert not dest.exists()
+
+
+def test_a_write_naming_a_commit_the_repo_lacks_is_refused(tmp_path: Path) -> None:
+    clone, logs, _sha = _promote_inputs(tmp_path)
+    dest = tmp_path / "unknown.json"
+    reporter = clone / "scripts" / "dev" / "_gates_report.py"
+    done = _reporter_write(reporter, logs, dest, "2" * 40)
+    assert done.returncode == 1 and "write-baseline refused" in done.stderr, done.stderr
+    assert not dest.exists()
+
+
+def test_safe_errors_carry_no_cause_chain(tmp_path: Path) -> None:
+    # The unreadable-JSON error would otherwise chain the parser's message, which can quote the
+    # stored text.
+    bad = tmp_path / "bad.json"
+    bad.write_text("{ not json")
+    mod = report_module()
+    with pytest.raises(mod.BaselineError) as caught:
+        mod.load_baseline(bad)
+    assert caught.value.__cause__ is None and caught.value.__suppress_context__
 
 
 @pytest.mark.parametrize("kind", ["missing", "regular-file"])
 def test_a_test_root_that_is_not_a_directory_exits_64_and_writes_nothing(
     tmp_path: Path, kind: str
 ) -> None:
-    clone, logs = _promote_inputs(tmp_path)
+    clone, logs, sha = _promote_inputs(tmp_path)
     root = tmp_path / "absent" if kind == "missing" else clone / "tests" / "_base.py"
     dest = tmp_path / "refused.json"
-    done = _reporter_write(clone / "scripts" / "dev" / "_gates_report.py", logs, dest,
+    done = _reporter_write(clone / "scripts" / "dev" / "_gates_report.py", logs, dest, sha,
                            "--test-root", str(root))  # fmt: skip
     assert done.returncode == 64, done.stderr
     assert not dest.exists()
@@ -520,12 +556,17 @@ def test_reporter_subcommands_replace_the_inline_parsing(tmp_path: Path) -> None
         capture_output=True, text=True, check=False,
     )  # fmt: skip
     assert three.stdout.strip() == "3"
-    stored = _stored_file(tmp_path, "a" * 40)
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    git(repo, "init", "-q")
+    git(repo, "commit", "--allow-empty", "-qm", "one")
+    sha = git(repo, "rev-parse", "HEAD").strip()
+    stored = _stored_file(tmp_path, sha)
     shown = subprocess.run(
-        [sys.executable, str(mod), "--check-stored", str(stored), "decoy", "1"],
+        [sys.executable, str(mod), "--check-stored", str(stored), "decoy", "1", str(repo)],
         capture_output=True, text=True, check=False,
     )  # fmt: skip
-    assert shown.returncode == 0 and shown.stdout.strip() == "a" * 40
+    assert shown.returncode == 0 and shown.stdout.strip() == sha
     workers = subprocess.run(
         [sys.executable, str(mod), "--workers"], capture_output=True, text=True, check=False
     )  # fmt: skip
