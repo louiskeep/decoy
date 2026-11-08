@@ -223,7 +223,7 @@ on origin unless marked local. Detail for each row is in [roadmap/row-detail.md]
 | 10 | SUB-STOP: every engine entry that runs a config refuses `subset:` before any read, `config.subset_run_unsupported`, registry 1.6.0 | engine | MERGED (engine #389, `adc212f3`), registry 1.6.0 | done | none |
 | 11 | Vault key floor and simpleeval floor (slice 0: 11.1, 12.3) | engine | Codex GO-WITH-FIXES; CLI consumer side met by CLI #78 | `fix/vault-key-floor` `b79e864b` | merge in R-c |
 | 12 | B-6 vault core | engine | Codex re-check GO (static trace) | `feat/b6-vault-core` `52df1da8` | row 11; merge in R-c |
-| 13 | Derived expression visibility (slice 0: 12.1 residue) | engine | Codex GO, 0 V1; merging main (#405, #406) into the branch, then Dennis | `fix/derived-visibility` | main merge, Dennis, then merge |
+| 13 | Derived expression visibility (slice 0: 12.1 residue) | engine | MERGED (engine #408, `a5eb66e2`, 2026-11-08) | none | none |
 | 14 | Value-free discovery and subset errors | engine | MERGED (engine #406, `4acac80a`, 2026-11-08) | none | none |
 | 15 | F32 E1 | engine | Codex GO, Dennis GO-WITH-FIXES on `55b28933` (2 HIGH; V1 status UNVERIFIED) | `feat/f32-e1` `55b28933` (side branches `feat/f32-e1-labels`, `feat/f32-e1-types`) | re-check, then merge |
 | 16 | STORM E1 (engine part of the STORM rename), registry 1.7.0 | engine | NOT MERGED; no `feat/storm-e1` on origin | STORM re-cut plan `P:plan/storm-rename-recut` `dfe7cc6a` | SUB-STOP |
