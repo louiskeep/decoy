@@ -19,9 +19,11 @@ binding choice.
 from __future__ import annotations
 
 import json as _json
+import re
 from pathlib import Path
 
 import typer
+import yaml
 
 from decoy import _mask_secret_guidance
 from decoy.cli._init_inference import Inference, _infer_strategy_for_column
@@ -54,44 +56,81 @@ See also: decoy validate config, decoy run, decoy scan, decoy list templates.
 """
 
 
-# Templates used by the wizard. Anything in `decoy.templates` is fair game --
-# but only flat masking templates make sense to path-edit. `generate` and
-# `graph` need different question sets, so they're routed through unchanged.
+# Templates used by the wizard. Only the flat masking templates hold one file
+# source and one file target to path-edit; `generate` has no source, so it is
+# written unchanged.
 _PATHED_PRESETS: tuple[str, ...] = ("minimal", "hipaa", "pci", "gdpr")
 
 
 def _render(preset: str, input_path: str | None, output_path: str | None) -> str:
-    """Build the YAML body for a preset, optionally rewriting input/output paths.
+    """Build the YAML body for a preset, optionally rewriting its source and target paths.
 
     For flat masking presets (minimal/hipaa/pci/gdpr), substitute the wizard's
-    chosen paths into the bundled template. For generate/graph, return the
-    template as-is -- their YAML shapes don't have a single input.path key.
+    chosen paths into the bundled template's first `sources:` and `targets:`
+    entries. Every other preset is returned as-is.
     """
     template = get_template(preset)
     if template is None:
         raise ValueError(f"unknown preset: {preset!r}")
     body = template.body
     if preset in _PATHED_PRESETS and input_path and output_path:
-        # Replace only the first input.path / output.path string; the bundled
-        # templates put each on a single line with single quotes.
-        body = _replace_yaml_path(body, "input", input_path)
-        body = _replace_yaml_path(body, "output", output_path)
+        body = _replace_yaml_path(body, "sources", input_path)
+        body = _replace_yaml_path(body, "targets", output_path)
     return body
 
 
-def _replace_yaml_path(body: str, key: str, new_path: str) -> str:
-    """Surgical edit: rewrite the first `path: '...'` under `key:`.
+# A plain-scalar value and an optional trailing comment; quoted values are replaced whole.
+_PLAIN_VALUE_WITH_COMMENT = re.compile(r"(?P<value>[^'\"#][^#]*?)(?P<comment>[ \t]+#.*)?$")
 
-    Avoids pulling in a YAML round-tripper just to update two paths; the
-    bundled templates have a known, narrow shape that this regex matches.
+
+def _entry_path_line(lines: list[str], key: str) -> int:
+    """Index of the `path:` key directly under the first entry of the top-level `key:` block.
+
+    A deeper `path:` (inside a nested mapping) and the next entry's `path:` are not it.
     """
-    import re
+    head = next((i for i, line in enumerate(lines) if line.rstrip() == f"{key}:"), None)
+    entry_indent = child_indent = None
+    for i in range(len(lines) if head is None else head + 1, len(lines)):
+        text = lines[i].rstrip("\n")
+        stripped = text.lstrip()
+        if not stripped or stripped.startswith("#"):
+            continue
+        indent = len(text) - len(stripped)
+        if indent == 0 or (entry_indent is not None and indent <= entry_indent):
+            break
+        if entry_indent is None:
+            entry_indent = indent
+            continue
+        if child_indent is None:
+            child_indent = indent
+        if indent == child_indent and stripped.startswith("path:"):
+            return i
+    raise ValueError(f"preset template has no path under {key}:")
 
-    pattern = re.compile(
-        rf"(^{key}:\s*\n(?:[^\S\n]+[^\n]*\n)*?[^\S\n]+path:\s*)'[^']*'",
-        re.MULTILINE,
-    )
-    return pattern.sub(rf"\1'{new_path}'", body, count=1)
+
+def _template_path(body: str, key: str) -> str:
+    """The path of the first entry under a template's top-level `key:` block."""
+    lines = body.splitlines(keepends=True)
+    line = lines[_entry_path_line(lines, key)]
+    return str(yaml.safe_load(line.split("path:", 1)[1]))
+
+
+def _replace_yaml_path(body: str, key: str, new_path: str) -> str:
+    """Rewrite the path of the first entry under the top-level `key:` block.
+
+    Avoids a YAML round-tripper for two paths. A trailing comment on a plain value is
+    kept. A template whose shape no longer matches raises instead of silently keeping
+    its own path.
+    """
+    lines = body.splitlines(keepends=True)
+    i = _entry_path_line(lines, key)
+    prefix, rest = lines[i].split("path:", 1)
+    ending = "\n" if rest.endswith("\n") else ""
+    rest = rest.rstrip("\n").strip()
+    match = _PLAIN_VALUE_WITH_COMMENT.match(rest)
+    comment = (match.group("comment") or "") if match else ""
+    lines[i] = f"{prefix}path: {_yaml_quote(new_path)}{comment}{ending}"
+    return "".join(lines)
 
 
 def _rule_count(body: str) -> int:
@@ -575,7 +614,7 @@ def _init(
     if state.mode is OutputMode.json:
         # Non-interactive: produce a scaffold with the chosen (or default) preset.
         chosen = preset or "minimal"
-        rendered = _render(chosen, "data/input.csv", "data/masked.csv")
+        rendered = _render(chosen, None, None)
         out.write_text(rendered, encoding="utf-8")
         emit_json(
             state,
@@ -591,7 +630,7 @@ def _init(
 
     if state.mode is OutputMode.quiet:
         chosen = preset or "minimal"
-        rendered = _render(chosen, "data/input.csv", "data/masked.csv")
+        rendered = _render(chosen, None, None)
         out.write_text(rendered, encoding="utf-8")
         return
 
@@ -615,13 +654,18 @@ def _init(
     else:
         chosen = preset
 
-    if chosen in _PATHED_PRESETS:
-        input_path = typer.prompt("Input CSV path", default="data/input.csv")
-        output_path = typer.prompt("Output CSV path", default="data/masked.csv")
-        rendered = _render(chosen, input_path, output_path)
-    else:
-        # generate / graph: their YAMLs use different keys; ship as-is.
-        rendered = _render(chosen, None, None)
+    try:
+        if chosen in _PATHED_PRESETS:
+            # Defaults are the template's own paths, so Enter writes what --quiet writes.
+            body = _render(chosen, None, None)
+            input_path = typer.prompt("Input CSV path", default=_template_path(body, "sources"))
+            output_path = typer.prompt("Output CSV path", default=_template_path(body, "targets"))
+            rendered = _render(chosen, input_path, output_path)
+        else:
+            rendered = _render(chosen, None, None)
+    except ValueError as exc:
+        state.err_console.print(error("error:"), str(exc), markup=False)
+        raise typer.Exit(code=EXIT_RUNTIME) from None
 
     out.write_text(rendered, encoding="utf-8")
 
