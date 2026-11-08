@@ -12,15 +12,16 @@ the record (`Status: record`). Its shapes in sections 4.6 and 4.7, its class tab
 parts (E2, W2, W3.1, W3.2) remain the reference for the later phases until their own revisions. Where
 this plan restates or amends one of them, this plan wins for Phase 1a.
 
-Bases: CLI `origin/main` `08124b5` (#119), engine `origin/main` `09376f24` (#404), both fetched
-2026-11-08. Engine branches read: `feat/scanml-m1` (PR #405, open), `plan/scan-multi`,
-`plan/scan-ml`; local CONFIG-EXPLICIT E1 work in `/home/cam/vscode/wt-cfgexp-e1`
+Bases: CLI `origin/main` `08124b5` (#119), engine `origin/main` `38951412` (#405), both read
+2026-11-08. Engine branches read: `plan/scan-multi`, `plan/scan-ml`; local CONFIG-EXPLICIT E1 work in `/home/cam/vscode/wt-cfgexp-e1`
 (`feat/config-explicit-e1-schema`, not pushed).
 
 Rules consulted: `dev-rules/README.md`, `00-universal.md`, `risk-and-exceptions.md`,
 `development-loop.md` (PLAN), `profiles/local-operations.md`, `feature-dev.md`,
 `api-and-compatibility.md`, `cross-cutting-concerns.md`, `reuse-first.md`, `architecture.md`,
-`testing.md` (Test depth), `workspace-and-vcs.md` (Commit messages), `documentation.md`. Also CLI
+`testing.md` (Test depth), `code-review.md`, `security.md`, `observability-and-resilience.md`,
+`config-secrets-and-supply-chain.md`, `catalogs/recurring-defects.md`, `workspace-and-vcs.md`
+(Commit messages), `documentation.md`. Also CLI
 `CODEMAP.md`, `docs/ROADMAP.md` row 32b and section 5.2, and spec v3 sections 0, 11, 12, 15, 16, 17
 and 22.
 
@@ -30,6 +31,12 @@ gate write classifier in `cli/gate/` (M1); slice order and sizes (M2, M3); reuse
 guidance module and the shared call scanner (M4, M5); an owner for the engine "STORM" note text
 (M6); a pinned keyed-columns oracle (M7); a buildable 14.3 fallback (M8); one value-shape rule (M9);
 the `init.py` size pin before growth (M10); and the LOW items (section 19).
+
+Revision 2 (2026-11-08): Dennis round 2. Corrected exit-code coverage, the golden-diff allowance,
+read and write path-role collisions, `apply_review` failure handling, prerequisite state, slice
+ordering, the V1 no-relationships boundary, gate-path output, and the deferred missing-extra case.
+The final self-review also corrected two unbuildable test clauses and centralized CLI-facing reason
+codes under the standing design rule. Section 19 records each resolution.
 
 Risk: R2. Phase 1a changes a public CLI command (`decoy init`), adds public engine API, and its
 output must stay value-free. It writes only a file the user named, through the atomic writer, after
@@ -108,11 +115,14 @@ a confirm. Approver: Cam.
 3. **Nothing is written before Review.** Ctrl-C, EOF and `q` at any step exit 1 and leave no file
    and no temp file.
 4. **One writer per kind of write.** The pipeline YAML text comes only from
-   `cli/_scaffold_yaml.render` (G-ONE-EMITTER) and is written only through
-   `src/decoy/_atomic.py`.
-5. **Value-free outside the terminal screen.** Sample values appear only in the parsed preview and
-   the field screen, on stdout, and not with `--no-samples`. No data-derived value reaches the
-   pipeline YAML, `-v` logs, `--json`, stderr or re-shown engine error text.
+   `cli/_scaffold_yaml.render` (G-ONE-EMITTER). File output is written only through
+   `src/decoy/_atomic.py`; `-o -` performs its final sink emission only after Review and the gate,
+   and never creates a temp file. Review `y` may display an in-session preview from the same
+   renderer without opening either sink.
+5. **Source-cell-value-free outside the terminal screen.** Sample cell values appear only in the
+   parsed preview and the field screen, on stdout, and not with `--no-samples`. No source cell or
+   secret value reaches the pipeline YAML, `-v` logs, `--json`, stderr or re-shown engine error
+   text. Counts, names and detector ids are allowed metadata.
 6. **The wizard never writes a config the gate's config or compile layer refuses, or one that fails
    at run time for a missing namespace.** Every column entry is built by the engine's
    `column_entry`; the folded config passes `run_gate_on_config` before the write, and one
@@ -123,10 +133,12 @@ a confirm. Approver: Cam.
 7. **Keyed-ness comes from the engine only.** The Secrets step asks for a mask secret exactly when
    `secret_requirements_for_config` reports a requirement and names exactly the fields
    `keyed_columns_for_config` returns. The CLI keeps no keyed-strategy list.
-8. **A path has one role.** The roles are the output YAML, each source file, each header file
-   (`column_names_file`) and each target. No two roles name the same file, so neither the YAML write
-   nor a later `decoy run` can overwrite a source or a header file (5.6). `-y` and the overwrite
-   confirm answer only "replace the old YAML"; they never waive a role collision.
+8. **A write path never aliases another role.** The write roles are the output YAML and each
+   target. A write role may not name the same file as any source data file, header file
+   (`column_names_file`) or other write role, and two targets may not name the same file. Read roles
+   may share a file with each other. This keeps the YAML write and a later `decoy run` from
+   overwriting an input (5.6). `-y` and the overwrite confirm answer only "replace the old YAML";
+   they never waive a write-role collision.
 9. **Every mask table keeps at least one field.** `d` on a table's last kept field is refused at
    decision time, and `apply_review` refuses an all-dropped table as the backstop (5.3, 6.1), so a
    Review write never fails on an empty table and loses the session's answers.
@@ -144,7 +156,7 @@ unless the row says otherwise.
 | # | Prerequisite | Roadmap row | State (2026-11-08) | Needed by |
 |---|---|---|---|---|
 | P1 | Strategy catalog `strategy_catalog()` (2026-11-07 plan part E0) | 32b (part E0) | MERGED (engine #400, `2335fcce`). Not in any release: `v0.19.0` (#399) predates it. The next engine release carries it, so S3a.1's repin (P8) brings it to the CLI | E1, W1a.0, W1a.3a |
-| P2 | SCAN-ML M1: `ModelRef` in `detection/types.py`, config fields, model status | 32a | OPEN as engine PR #405 (`feat/scanml-m1`), mergeable, no review decision yet. `ModelRef` is at `detection/types.py:42` on that branch | E1 (imports `ModelRef` instead of defining it) |
+| P2 | SCAN-ML M1: `ModelRef` in `detection/types.py`, config fields, model status | 32a | MERGED (engine #405, `38951412`). `ModelRef` is at `detection/types.py:42` on main | E1 (imports `ModelRef` instead of defining it) |
 | P3 | CONFIG-EXPLICIT E1: `has_header` required on CSV sources, `column_names_file` | 22 | BUILDING locally (`feat/config-explicit-e1-schema` in `/home/cam/vscode/wt-cfgexp-e1`, 6 commits, not pushed; red tests in `/home/cam/vscode/wt-acct2-e1-red`) | S3-engine; W1a.4a writes `column_names_file` |
 | P4 | CONFIG-EXPLICIT E2: every source column declared; `drop_column` columns count as declared (build handoff line 65) | 22 | NOT STARTED (waits on E1) | S3-engine.1; open decision 14.3 |
 | P5 | CONFIG-EXPLICIT C1 and C2 (CLI loader; C2 writes `init.py`) | 22 | NOT STARTED (waits on the E1 and E2 release) | S3a.1; the `init.py` lane |
@@ -245,10 +257,17 @@ Reuse inventory (existing code each slice calls instead of writing its own):
   - Mask-secret wording: `src/decoy/_mask_secret_guidance.py`.
   - Gate write verdict: `write_blocking_findings` in `cli/gate/_layers.py`.
   - Tree grouping: `_tree.py`, the one hand-written strategy list, kept in step by the tree sync test.
-  - CLI-only reason codes: `cli/wizard/_codes.py`.
+  - CLI reason codes: one registry in `src/decoy/_reason_codes.py`. Existing CI-manifest and static
+    gate-code sets and the new `init.*` set are derived views, not parallel hand-written tables.
 - **Choke points.**
   - Terminal I/O: only `_prompts.py` calls a prompt function or probes `isatty`. Guard: the
     prompt-boundary sentry. Mutation M-W4a turns it red.
+  - Wizard error output: `_prompts.py` owns one structured `WizardError` renderer used by terminal,
+    no-terminal and scripted routes. It accepts only a fixed message id, codes, table or column
+    names, counts and an exception type name. The prompt-boundary sentry rejects direct stderr
+    writes elsewhere in `cli/wizard/`; the no-exception-text sentry rejects `str`, `repr`, `.args`,
+    f-string or format use of a caught exception. Guards: AT-W8, AT-W9 and
+    `test_no_exc_text.py`. Mutations M-W8b and M-W9.
   - Data-derived values on screen: only `Prompter.show_samples` prints them, and only `_preview.py`
     calls it. Guard: AT-W8 and the prompt-boundary sentry's second rule. Mutation M-W8d.
   - YAML text: `_scaffold_yaml.render`. Guard: G-ONE-EMITTER. Mutation M-EMIT-W.
@@ -256,7 +275,9 @@ Reuse inventory (existing code each slice calls instead of writing its own):
   - Validation: `decoy.cli.gate` (G-ONE-GATE).
   - Writes: `_atomic.write_local_target` (`tests/sentry/test_atomic_writer.py`).
   - Path roles: one check in `_flow.py` used by flags and by the Sources (data file and header
-    file) and Output prompts. Mutation M-W22, M-W22b.
+    file) and Output prompts. It compares every write role against every other role and every
+    target against the other targets, while allowing read roles to share. Mutations M-W22,
+    M-W22b and M-W22d.
 - **Cutover choice (spec 17 asks the plan to pick).** Phase 1a ships behind the existing entry, with
   the old flow removed in the same slice. Slices W1a.2 to W1a.6a add wizard modules that nothing in
   `decoy init` calls yet; they are tested through the scripted `Prompter`. W1a.6b wires the wizard
@@ -400,10 +421,11 @@ needs-review and skipped marks.
 - **Review** (spec 5.11, cut): a summary of each source to its target and each field to its
   strategy, plus the secret reference. Keys: Enter write, `y` view YAML, `g` go to a step, `q` quit
   without writing. While any step is marked as needing review, Enter refuses and offers to jump to
-  the first marked step. On write: fold, gate, render, write (5.6), then the checklist of skipped
-  steps and fields and the run command (with `--mask-secret ...` when the user chose run-time
-  supply). The run command text is the guidance module's `RUN` wording; the YAML comment beside a
-  stored reference is its `YAML_COMMENT`.
+  the first marked step. `y` folds and renders through the same preparation as Enter, then displays
+  the YAML without running the gate or opening a sink. Enter folds, renders, gates and writes or
+  emits (5.6), then shows the checklist of skipped steps and fields and the run command (with
+  `--mask-secret ...` when the user chose run-time supply). The run command text is the guidance
+  module's `RUN` wording; the YAML comment beside a stored reference is its `YAML_COMMENT`.
 
 ### 5.4 Keys outside field review
 
@@ -432,10 +454,17 @@ Cases in Phase 1a, each with a navigation test (AT-W23):
 The 1b and Phase 2 cases of spec 4.3 (validators, goal toggling, flagged-set changes, relationships)
 arrive with their steps.
 
-### 5.6 The write step and path roles
+### 5.6 Review preparation, the write step and path roles
+
+Review `y` and Enter both run steps 1, 2 and 4's render operation from current state. Enter then
+runs step 3 before step 4's sink operation. A later state change invalidates the prepared result,
+so the next `y` or Enter rebuilds it.
 
 1. `apply_review(starter, decisions)` over all Fields decisions. It validates and compiles inside
-   (E1) and returns the reviewed `StarterConfig`.
+   (E1) and returns the reviewed `StarterConfig`. Any raise here, including `ReviewInputError` or
+   its validation or compile assertion, is a builder bug during Review: exit 3, write no file and
+   show no rendered YAML, and show only the fixed code plus table or column names. Never show
+   `str(exc)`.
 2. The wizard sets sources, targets and `global_settings` from its state on that result.
 3. `run_gate_on_config(raw, out_path)` once, all layers (`src/decoy/cli/gate/_layers.py:302`).
    The wizard does not call `gate_exit_code` (`_layers.py:338`): that function returns 1 for any
@@ -444,28 +473,33 @@ arrive with their steps.
    ...]`, returns the error findings whose `GateFinding.layer` (`_layers.py:49`) is `config` or
    `compile`. Non-empty: exit 3, nothing written, findings shown. Empty: the write goes on, and
    every other finding is shown after the write. `capacity_insufficient` is a preflight fact about
-   this machine: the YAML is written, the capacity finding is shown with the line "decoy run will
-   stop with exit 5 on this machine", and `decoy init` exits 0. The classifier lives in `cli/gate/`
+   this machine: the YAML is written to its file or emitted on `-o -`, the capacity finding is shown
+   with the line "decoy run will stop with exit 5 on this machine", and `decoy init` exits 0. The
+   classifier lives in `cli/gate/`
    so any later scaffolding command (`decoy edit`) reuses it.
-4. `_scaffold_yaml.render(...)` produces the text; `_atomic.write_local_target` writes it, with
-   `CREATE_ONCE` unless the user confirmed the overwrite or gave `-y`.
+4. `_scaffold_yaml.render(...)` produces the text. For a file path,
+   `_atomic.write_local_target` writes it with `CREATE_ONCE` unless the user confirmed the
+   overwrite or gave `-y`. For `-o -`, the same rendered text is emitted to stdout after the gate;
+   no file or temp file is opened.
 
 Paths in the YAML are written relative to the output YAML's directory when they sit under it, and
 absolute otherwise, because `decoy run` resolves them against the config directory
 (`cli/_sources.py:27`). With `-o -` the base is the current directory (5.1).
 
-Path roles: the output YAML; each source data file; each header file (`column_names_file`), which
-is a source role because `decoy run` reads it; and each target. No two roles may name the same file.
-Existing files are compared with `os.path.samefile` (which catches a symlink and a hard link),
-missing ones by resolved parent plus name (which catches a lexical alias). A collision found from
-flags exits 1 with `init.path_collision` before any source read; one found at a prompt is re-asked
-with the same message. `-y` and the overwrite confirm do not waive the check: they only allow
-replacing an old YAML that has no other role.
+Path roles: write roles are the output YAML when it is a file and each target. Stdout (`-o -`) has
+no file role. Read roles are each source data file
+and each header file (`column_names_file`). A write role may not name the same file as any other
+role, and two targets may not name the same file. A source data file and a header file may share a
+file because both roles only read it. Existing files are compared with `os.path.samefile` (which
+catches a symlink and a hard link), missing ones by resolved parent plus name (which catches a
+lexical alias). A collision found from flags exits 1 with `init.path_collision` before any source
+read; one found at a prompt is re-asked with the same message. `-y` and the overwrite confirm do
+not waive the check: they only allow replacing an old YAML that has no other role.
 
 ### 5.7 Output surfaces
 
 - Prompts, menus, summaries, previews: stdout, Rich. Sample values only through
-  `Prompter.show_samples`.
+  `Prompter.show_samples`. On `-o -`, the rendered YAML also goes to stdout after the gate.
 - Errors: stderr, one line each, a fixed text or code plus names; the exception class at most,
   never `str(exc)`.
 - `--json` and `-q`: only on row (c) routes, unchanged from today (AT-W15 snapshot).
@@ -477,8 +511,9 @@ replacing an old YAML that has no other role.
 
 The six public codes only. 0 written (preflight findings, capacity included, shown); 1 usage, no
 terminal, cancel, `q`, path collision; 3 source read or scan failure, a config or compile finding
-from `write_blocking_findings` (builder bug), atomic write failure. 2, 4 and 5 are not used by the
-wizard in 1a (`--fail-on-warning` is Phase 2; capacity is reported, not exited on).
+from `write_blocking_findings`, any `apply_review` raise at write time (builder bugs), atomic write
+failure. 2, 4 and 5 are not used by the wizard in 1a (`--fail-on-warning` is Phase 2; capacity is
+reported, not exited on).
 
 ## 6. Engine parts
 
@@ -495,7 +530,7 @@ pre-scan half), with these amendments:
   refused with `config.key_column_not_join_safe`. A decision set that drops every column of a mask
   table is refused with `ReviewInputError` code `pre_scan.review_empty_table`, naming the table,
   before validation; this is the backstop for the wizard's decision-time refusal, because the
-  engine refuses a mask table with no columns (`config/_tables.py:419-422`). `finding_edits` (E2, later) refuses `DROP` as not
+  engine refuses a mask table with no columns (`config/_tables.py:419-424`). `finding_edits` (E2, later) refuses `DROP` as not
   applicable to a finding.
 - `CONFIRM` and `EDIT` clear the column's REVIEW note; `SKIP` keeps it; `REJECT` writes "rejected
   (suggested X)" as before. The 1a wizard does not emit `REJECT`; `r` maps to `EDIT`.
@@ -554,14 +589,15 @@ def keyed_columns_for_config(config: Mapping[str, Any]) -> tuple[KeyedColumn, ..
 | The parsed preview fails to parse | The step shows the engine's value-free message and returns to Format |
 | A source read or scan fails | Exit 3 naming the table and the exception class only |
 | An option value of the wrong type or outside `choices` | Re-asked with `column_entry`'s value-free message (`config.entry_invalid`, names the option key) |
-| Any two path roles name the same file (output YAML, source data file, header file, target), by lexical alias, symlink or hard link | From flags: exit 1 `init.path_collision` before any read, `-y` or not. At a prompt: re-asked |
+| A write role (output YAML or target) names the same file as any other role, or two targets name the same file, by lexical alias, symlink or hard link | From flags: exit 1 `init.path_collision` before any read, `-y` or not. At a prompt: re-asked. A source data file and header file may share because both are read roles |
 | Output YAML exists and has no other role | Default-mode terminal: ask; `-y` skips the ask. Row (c) without `-y`, terminal or not: exit 1 with the `--yes` hint, no prompt |
 | `d` on a table's last kept field | Refused at the key with a fixed message; the field is asked again. `apply_review` refuses an all-dropped table (`pre_scan.review_empty_table`) as the backstop |
 | A typed mask secret reference fails the shape check | Asked again with the check's value-free message |
 | Review while a step is marked as needing review | Refuses to write and offers to jump to it |
+| `apply_review` raises `ReviewInputError` or its validation or compile assertion | Builder bug: exit 3, nothing written; fixed codes and table or column names only |
 | `write_blocking_findings` returns a config or compile error | Builder bug: exit 3, nothing written, findings shown |
-| Preflight findings (missing native companion, other preflight errors) | YAML written, findings shown, exit 0 |
-| `capacity_insufficient` | YAML written, capacity finding shown with "decoy run will stop with exit 5 on this machine", exit 0 |
+| Preflight findings (missing native companion, other preflight errors) | YAML written to its file or emitted on `-o -`, findings shown, exit 0 |
+| `capacity_insufficient` | YAML written to its file or emitted on `-o -`, capacity finding shown with "decoy run will stop with exit 5 on this machine", exit 0 |
 | `_atomic` write failure | Exit 3 with the `_atomic` code; nothing left behind |
 | The mask secret variable or file does not exist now | Warning only; the reference is still written |
 | A table with many fields | `s` skips the rest; `l` lists; `g` jumps. No bulk accept in 1a (flagged-only mode is 1b) |
@@ -586,17 +622,17 @@ AT-W14, AT-W16 to AT-W21, AT-E5, G-ONE-EDITOR) belong to later phases and are un
 | AT-E4 (amended) | E1 | the Hypothesis property over random decision sets, now including `drop`: a set that drops every column of some table raises `pre_scan.review_empty_table`; every other set validates, compiles, keeps at least one column per mask table, keeps unnamed columns' entries, has a namespace on every `namespace_required` entry, and has no column both dropped and masked. The strategy is weighted so all-dropped tables occur | M-E4, M-E1c |
 | AT-E7 (new) | E3 | the pinned oracle table of 6.2 (expected tuples written out, cases from `test_requirements_matrix.py`); parity of `keyed_columns_for_config` and `secret_requirements_for_config` over the same corpus; order is config order; generate tables skipped | M-E7: drop the `deterministic` term from one function's walk; M-E7b: drop it from the shared walk (both functions change, parity holds, the oracle fails) |
 | AT-E8 (new) | E1 | no `StarterConfig.notes` text, over the SCAN-MULTI fixture set and one field per detector, contains "STORM" (case-insensitive) | M-E8: restore one ported note line that names STORM |
-| AT-W1 (amended) | W1a.0, W1a.R | characterization: preset outputs and the one-shot `decoy init FILE --no-input` output equal pinned bytes. W1a.0's first commit pins S3a.1's bytes. A commit may change the pinned bytes only as a visible golden diff of `namespace:` lines on `faker`, `nested` and `tokenize` entries (spec 17): W1a.0 if its catalog swap changes them, W1a.R when the repin brings E1's `column_entry` into `starter_config` | M-W1: change the default preset |
+| AT-W1 (amended) | W1a.0, W1a.R | characterization: preset outputs and the one-shot `decoy init FILE --no-input` output equal pinned bytes. W1a.0's first commit pins S3a.1's bytes. A commit may change the pinned bytes only as a visible golden diff of two kinds: `namespace:` lines on `faker`, `nested` and `tokenize` entries (spec 17), and the `# REVIEW:` note lines ported from `src/decoy/cli/_init_inference.py:75-121` whose STORM-free wording AT-E8 requires. W1a.0 may change the namespace lines if its catalog swap does so; W1a.R may change those namespace lines and the REVIEW note lines when its repin brings E1's `column_entry` and note rewrite into `starter_config` | M-W1: change the default preset |
 | AT-W2 (amended) | W1a.6b | scripted terminal session over the fixture through a pty on Linux and macOS (the scripted `Prompter` on Windows): the YAML reflects each key typed (Enter, `r`, `o`, `k`, `d`, `s`), `b` and `g` keep answers, and `s` skips only the rest of the table | M-W2a: `s` skips the whole run |
 | AT-W4 (amended) | W1a.1 | the three rows of 5.2. Row (a): bare init and `--preset minimal`, stdin not a TTY and separately stdout not a TTY, exit 1, no prompt function called (spy), no file written, the hint names each entry of `ONE_SHOT_FLAGS`. Row (b): `init FILE` the same, and the `scan_sources` and reader spies never fire. Row (c): each of `--json`, `-q`, `--no-input`, with and without `FILE`, never prompts and writes today's output (AT-W1 bytes). Row (c) with an existing output and no `-y`, run once with a real terminal (pty) and once without: exit 1 with the `--yes` hint, no prompt, file unchanged. The non-terminal stream is left open so a prompt would hang | M-W4: treat "stdin is a TTY" as enough; M-W4c: let row (b) read the source before refusing; M-W4d: ask the overwrite question when `--no-input` is given in a terminal |
 | AT-W6 (amended) | W1a.3a (sentry), W1a.3b (options) | every option prompt's parser type, required flag and choices equal the catalog descriptor, and the produced entry puts each option at its declared `location`. The no-strategy-literal sentry, outside `_tree.py` in `cli/wizard/`, fails on two or more catalog strategy names in any of: a tuple, list, set or frozenset literal; the keys of a dict literal; an `in` or `not in` test against a literal container; a chain of `==` or `!=` comparisons joined by `or` or `and`; `match` cases with literal patterns. Seeded cases for each shape | M-W6: hard-code a strategy list in `_field_review.py`; M-W6b: parse every option as text; M-W6c: a dict literal keyed by strategy names in `steps/fields.py` |
 | AT-W7 | W1a.3b | 200 seeded key sequences over the fixture (edits drawn from the tree leaves with their `example_options`) produce a folded config that passes the gate in-process and has a namespace on every `namespace_required` entry; for 5 of them `decoy run` on a tiny fixture exits 0 | M-E4 |
 | AT-W8 (amended) | W1a.6b | canary corpus on every 1a route. No canary in stderr, the YAML, `--json`, `-v` logs or re-shown engine errors. In stdout, every canary was printed by `Prompter.show_samples` (the scripted prompter records those calls); with `--no-samples`, no canary at all, the email-domain canary included. Non-vacuity: the corpus is found in the raw fixture bytes | M-W8a: a REVIEW note quotes a top value; M-W8b: an error prints `repr(exc)`; M-W8d: the Scan summary prints `top_values` directly; M-W8e: the shape rule keeps the email domain |
-| AT-W9 | W1a.6a | every exit path in section 7 prints exactly one error line in default mode, none holding a canary | M-W9 |
-| AT-W10 (amended) | W1a.6a | exit-path matrix: Ctrl-C and EOF at each step, `q`, scan error, `_atomic` failure, a config finding and a compile finding (injected); asserts exit 3, no output file and no temp file after each. A preflight error and, separately, `capacity_insufficient` injected into the gate still write the YAML and exit 0, with the finding shown. Unit cells for `write_blocking_findings`: config error blocks, compile error blocks, preflight error does not, warnings never block | M-W10: write before the gate; M-W10b: skip the write on a preflight error; M-W10c: classify by severity alone (a preflight error blocks); M-W10d: use `gate_exit_code` (capacity exits 5) |
+| AT-W9 | W1a.6a | every error exit path in section 7 prints exactly one error line in default mode, none holding a canary. On the exit-3 gate path, the one error line is followed by the findings list | M-W9 |
+| AT-W10 (amended) | W1a.6a | exit-path matrix: Ctrl-C and EOF at each step and `q` exit 1; scan error, `_atomic` failure, a config finding, a compile finding and an injected `ReviewInputError` from `apply_review` exit 3. Inject the review error once on `y` and once on Enter. Every file-output row leaves no output file and no temp file. Every applicable `-o -` row emits no rendered YAML; `_atomic` failure is file-only. The `ReviewInputError` cells show only the code and table or column names. A preflight error and, separately, `capacity_insufficient` injected into the gate still write the YAML file, or emit it on `-o -`, and exit 0 with the finding shown. Unit cells for `write_blocking_findings`: config error blocks, compile error blocks, preflight error does not, warnings never block | M-W10: write or emit before the gate; M-W10b: skip the write on a preflight error; M-W10c: classify by severity alone (a preflight error blocks); M-W10d: use `gate_exit_code` (capacity exits 5) |
 | AT-W11 (amended) | W1a.3b | any permutation of the same field decision set gives the same folded config (the duplicate-key half moves to Phase 2 with the answers loader) | M-W11b: last-writer-wins in `apply_review` |
 | AT-W15 | W1a.6b | `--json` key snapshot of every row (c) route unchanged; engine export snapshot includes `keyed_columns_for_config` | M-W15 |
-| AT-W22 (amended) | W1a.6a | the collision matrix over the roles output YAML, source data file, header file and target: every pair (output YAML and source, output YAML and header file, target and source, target and header file, target and output YAML), each as a lexical alias, a symlink and a hard link, each from flags (`-o` and the S3a.1 header-file flag) and from a prompt. From flags: exit 1 `init.path_collision` before the reader spy fires, with and without `-y`. At a prompt: re-asked, and the overwrite confirm is never offered for a collision. Distinct sibling paths proceed. After every refused case the header file and the source keep their bytes and mtime | M-W22: compare raw path strings; M-W22b: leave the header file out of the role set; M-W22c: let `-y` waive a collision |
+| AT-W22 (amended) | W1a.6a | the collision matrix over the roles file output YAML, source data file, header file and each target: every write-role pair (output YAML and source, output YAML and header file, target and source, target and header file, target and output YAML, target and target), each as a lexical alias, a symlink and a hard link. Supply a role by flag where Phase 1a has that flag (`-o`, `FILE` and the S3a.1 header-file flag), and exercise target paths through their prompts. A source and header file sharing a file is allowed. Stdout (`-o -`) has no file role. A collision fully known from flags exits 1 `init.path_collision` before the reader spy fires, with and without `-y`. A collision first known at a prompt is re-asked, and the overwrite confirm is never offered. Distinct sibling paths proceed. After every refused case the header file and the source keep their bytes and mtime | M-W22: compare raw path strings; M-W22b: leave the header file out of the role set; M-W22c: let `-y` waive a collision; M-W22d: skip the target-target pair |
 | G-ONE-EMITTER | W1a.6b | SCAN-MULTI's guard extended: the wizard's write reaches `_scaffold_yaml.render`, and no module under `src/decoy/cli/wizard/` emits YAML text (`yaml.dump`, `yaml.safe_dump`, string building of `key: value` lines) | M-EMIT-W: the wizard writes `yaml.safe_dump` output |
 
 New for Phase 1a:
@@ -606,10 +642,10 @@ New for Phase 1a:
 | AT-W23 | W1a.2 (generic), W1a.3b to W1a.5a (per case) | one navigation test per case in 5.5, with a scripted prompter: the step is marked, the listed change names the cause, suggested values refreshed, user values unchanged; Review refuses while marked | M-W23a: refresh a user value; M-W23b: Review writes while a step is marked; M-W23c: rename by name instead of id (the target keeps the old name) |
 | AT-W24 | W1a.3a | tree sync: the leaves equal, exactly once each, the `offer_in_wizard=True` rows except `faker`, plus every registry provider minus the named hidden set; nothing in the tree is unknown to the engine; `tokenize` absent in 1a | M-W24a: drop a leaf; M-W24b: add a leaf the engine does not know |
 | AT-W25 | W1a.5a | Secrets pinned outcomes (spec 15): shuffle-only asked; faker-only not asked; faker with `deterministic: true` asked; a composite parent key asked with the generic sentence and no field list; one field per catalog strategy asked exactly when `secret_requirements_for_config` reports, and the named fields equal `keyed_columns_for_config`. The step never reads the variable or file value (spy on reads of the named variable and on file opens). A malformed typed reference is refused by `_validate_mask_secret_ref_shape` and asked again; every line the step prints equals a constant of `_mask_secret_guidance.py` (string literals in `steps/secrets.py` are limited to the menu keys) | M-W25: a hand-kept keyed-strategy list in the CLI read instead of the engine; M-W25b: accept a reference without the shape check; M-W25c: write the secret sentence inline in `steps/secrets.py` |
-| AT-W26 | W1a.6a | reason-code guard: every emitted `init.*` code is in `INIT_REASON_CODES`, every registered code has an emitting path, seeded cases for direct import, alias, module-qualified call and constructor alias; resolved with the shared scanner `tests/sentry/io_policy/_calls.py` | M-W26: change one emitted code to `init.unknown` |
+| AT-W26 | W1a.6a | reason-code guard: every emitted `init.*` code is in the central registry's init view, every registered init code has an emitting path, and the existing CI-manifest and static gate views equal their pre-move sets. Seeded cases cover direct import, alias, module-qualified call and constructor alias, resolved with the shared scanner `tests/sentry/io_policy/_calls.py` | M-W26: change one emitted code to `init.unknown` |
 | AT-W27 | W1a.6b | CLI side only (the engine notes are AT-E8): no "STORM" in wizard prompt text, string constants under `src/decoy/cli/wizard/`, `decoy init --help` or the epilog, and none in the generated YAML of the AT-W30 sessions (which carries the engine notes, so this also re-checks AT-E8 end to end) | M-W27: add "STORM" to one wizard prompt string |
 | AT-W28 | W1a.0 | module size: every module under `src/decoy/cli/wizard/` is at most 800 lines, and `cli/init.py` is at most its line count at the W1a.0 base (S3a.1's merged head), recorded in the sentry baseline before any 1a slice edits it. The three-row rule and the overwrite rule live in `_prompts.py`, so W1a.1 adds only calls to `init.py`; W1a.6b shrinks it | M-W28: add 20 lines to `init.py` |
-| AT-W29 | W1a.4a | Sources: comma, TSV, `|` and `;` files each get the sniffed delimiter as the default; `has_header` is written in every CSV case; a header file is written as `column_names_file` and a count mismatch is re-asked; typed names are written as `column_names`; Parquet skips format and names; the parsed preview shows three records through `show_samples`, and `n` returns to Format; `--no-samples` shows shapes by the one rule of section 3 (`Jane.Doe@mail.com` as `Aaaa.Aaa@aaaa.aaa`, `555-123-4567` as `999-999-9999`); the header file is registered as a source role as soon as it is entered | M-W29a: omit `has_header: true`; M-W29b: copy header-file names into `column_names`; M-W29c: keep punctuation and letters after `@` |
+| AT-W29 | W1a.4a | Sources: comma, TSV, pipe-delimited and semicolon-delimited files each get the sniffed delimiter as the default; `has_header` is written in every CSV case; a header file is written as `column_names_file` and a count mismatch is re-asked; typed names are written as `column_names`; Parquet skips format and names; the parsed preview shows three records through `show_samples`, and `n` returns to Format; `--no-samples` shows shapes by the one rule of section 3 (`Jane.Doe@mail.com` as `Aaaa.Aaa@aaaa.aaa`, `555-123-4567` as `999-999-9999`); the header file is registered as a source role as soon as it is entered | M-W29a: omit `has_header: true`; M-W29b: copy header-file names into `column_names`; M-W29c: keep punctuation and letters after `@` |
 | AT-W30 | W1a.6b | golden: a one-table pipe-delimited headerless source with a header file, and a two-table CSV plus Parquet pipeline, through a full scripted session; both YAMLs pass `PipelineConfig.model_validate` and `decoy validate` (config, compile, preflight), and `decoy run` on the first exits 0. Column names include `yes`, `null`, `#id` and `a: b` | M-W30: write source paths relative to the working directory instead of the YAML's directory |
 | AT-W31 | W1a.4b | Scan labels: a name-hint `mrn` match on `customer_id` is labelled "identifier (name matched the record-number list)"; confidence follows the bucket, and a `match_rate` of 0.6 with a low bucket is not shown as high | M-W31: restore the `>= 0.5` rule |
 | AT-W32 | W1a.5b | Review: the summary lists every source, target, field and secret reference; `y` shows the rendered YAML; the checklist lists every skipped step and every `SKIP` field; the printed run command carries `--mask-secret ...` exactly when run-time supply was chosen, in the guidance module's `RUN` wording | M-W32: drop skipped fields from the checklist |
@@ -621,8 +657,8 @@ Hostile cases (plan contract section 4), each covered above: a column named `yes
 block on a prompt (AT-W4 and the prompt-boundary sentry); a scan error whose text carries a cell
 value (AT-W8, AT-W9); `r` to `hash` with no namespace (AT-E4, AT-W7); a keyed strategy chosen after
 Secrets so the run would fail (AT-W23 case 5); a target or the YAML that overwrites a source or a
-header file (AT-W22); `d` on every field of a table (AT-W33, AT-E1); a capacity finding on a small
-machine (AT-W10).
+header file, or two targets that share a file (AT-W22); `d` on every field of a table (AT-W33,
+AT-E1); a capacity finding on a small machine (AT-W10).
 
 ## 9. Enumerations and class table
 
@@ -637,13 +673,16 @@ Every way `decoy init` can end in Phase 1a. Each is a row of AT-W10 or AT-W9.
 5. `q` and its confirm: exit 1, nothing written.
 6. Existing output, row (c), no `-y`: exit 1.
 7. Source read or scan failure: exit 3.
-8. A config or compile error finding on the folded config (builder bug): exit 3, nothing written.
+8. `apply_review` raises `ReviewInputError` or its validation or compile assertion during Review
+   `y` or Enter, or a config or compile error finding occurs on the folded config (builder bug):
+   exit 3, no file written and no rendered YAML shown. The
+   `apply_review` failure shows only fixed codes and table or column names.
    The verdict comes from `write_blocking_findings`, which reads `GateFinding.layer`
    (`src/decoy/cli/gate/_layers.py:49`); the wizard does not call `gate_exit_code`
    (`src/decoy/cli/gate/_layers.py:338`), which would give 1 or 5.
-10. Preflight findings or `capacity_insufficient`: the YAML is written, the findings shown, exit 0.
 9. `_atomic` write failure: exit 3, no temp file left (`src/decoy/_atomic.py:144`).
-11. Row (c) with an existing output and no `-y`, terminal or not: exit 1, no prompt.
+10. Preflight findings or `capacity_insufficient`: the YAML is written to its file or emitted on
+    `-o -`, the findings are shown, exit 0.
 
 ### 9.2 Routes
 
@@ -658,8 +697,10 @@ Every way `decoy init` can end in Phase 1a. Each is a row of AT-W10 or AT-W9.
 
 ### 9.3 FK shapes
 
-The 1a wizard declares no relationships (the Relationships step is Phase 2). A relationship can only
-reach 1a through `starter_config` if S3-engine.2 infers one, so E1 still guards each shape:
+The 1a wizard declares no relationships (the Relationships step is Phase 2), and SCAN-MULTI V1
+explicitly infers none (`T3-no-inferred-relationships`). Therefore no relationship can reach a 1a
+config and the key-column refusals below cannot occur in Phase 1a. E1 still guards each shape for
+later callers:
 
 1. Single-column parent key: `r`, `o` or `k` to a strategy the catalog does not mark `join_safe` is
    refused with `config.key_column_not_join_safe`; `d` is refused the same way.
@@ -691,35 +732,43 @@ The field kinds the Fields step must handle, each in AT-W7 or AT-W30:
 
 As listed in 5.7, each checked by AT-W8:
 
-1. stdout prompts, menus, summaries (no data values except through `show_samples`).
+1. stdout prompts, menus, summaries (no source cell values except through `show_samples`).
 2. stdout parsed preview and field samples (`show_samples` only; shapes with `--no-samples`).
 3. stderr error lines.
 4. `--json` and `-q` output on row (c) routes.
 5. `-v` logs.
-6. The written pipeline YAML, including REVIEW notes.
+6. The rendered pipeline YAML, written to a file or emitted by `-o -`, including REVIEW notes.
 7. `--help` text and epilog.
 
 ### 9.6 Class table
 
-Classes numbered as in the defect catalog.
+These are the plan's risk classes retained from the 2026-11-07 plan, not the numbering of the
+current recurring-defect catalog.
 
 | # | Class | Applies here | Structure that closes it | Sentry or property test | Mutation that turns it red |
 |---|---|---|---|---|---|
-| 1 | Value-bearing output | the surfaces in 9.5 | data-derived values only through `show_samples`, called only from `_preview.py`; one shape rule for `--no-samples`; errors are fixed text plus names, and a relayed config error goes through the VALUE-FREE-ERRORS converter (`cli/_yaml_errors.py`, row 24a); scan records arrive value-free from the engine | AT-W8; sentry `tests/sentry/wizard/test_no_exc_text.py` (the 2026-11-07 list of exception spellings, on the shared scanner `tests/sentry/io_policy/_calls.py`) | M-W8a, M-W8b, M-W8d, M-W8e |
-| 2 | Cleanup missing on an exit path | the exit paths in 9.1 | nothing is written before the single write step; one gate write classifier; `_atomic` removes its temp file on failure | AT-W10 | M-W10, M-W10c |
+| 1 | Value-bearing output | the surfaces in 9.5 | source cell values only through `show_samples`, called only from `_preview.py`; one shape rule for `--no-samples`; errors are fixed text plus names, and a relayed config error goes through the VALUE-FREE-ERRORS converter (`cli/_yaml_errors.py`, row 24a); scan records carry no source cell values from the engine | AT-W8; sentry `tests/sentry/wizard/test_no_exc_text.py` (the 2026-11-07 list of exception spellings, on the shared scanner `tests/sentry/io_policy/_calls.py`) | M-W8a, M-W8b, M-W8d, M-W8e |
+| 2 | Cleanup missing on an exit path | the exit paths in 9.1 | nothing is written or emitted before the single write step; one gate write classifier; `_atomic` removes its temp file on file-write failure; `-o -` emits only after the gate | AT-W10 | M-W10, M-W10c |
 | 3 | Stale state after navigation | back, forward, go-to, changed earlier answers, the last kept field | answer origin, stable ids, `stale()` per step, Review refuses while marked; the kept-field count is read from the current decisions at each `d` | AT-W23, AT-W33 | M-W23a to c, M-W33 |
 | 4 | Route parity and hidden prompts | the routes in 9.2 | one terminal probe and every prompt in `_prompts.py`; steps take a `Prompter` | AT-W4; sentry `tests/sentry/wizard/test_prompt_boundary.py` over `cli/init.py` and `cli/wizard/` (the 2026-11-07 call list plus `isatty`, on the shared scanner) | M-W4, M-W4a: a step calls `typer.prompt`; M-W4b: `from rich.prompt import Confirm as C` in `_flow.py`; M-W4d |
 | 5 | Referential integrity | key columns in the FK shapes of 9.3; a table emptied by drops | `apply_review` refuses a non-join-safe strategy or `DROP` on a key column, and an all-dropped table; the gate runs on the result | AT-E3, AT-E4, AT-E1 | M-E3c: allow drop on a key; M-E1c |
 | 6 | Untrusted producer | typed option values, typed column names, a header file, typed paths, a typed mask secret reference | option values parsed to the catalog `wire_type` and checked by `column_entry`; header file count checked; paths go through the path-role check; the reference through the DE-02 shape check. No answers file or report is read in 1a | AT-W6, AT-W29, AT-W22, AT-W25 | M-W6b: parse every option as text; M-W29b; M-W25b |
-| 7 | Check then use on a path (TOCTOU) | output exists, then write; a path that collides with a source or a header file | one path-role check over all four roles with `samefile` before any read, never waived by `-y`; the write uses `_atomic` with `CREATE_ONCE` unless an overwrite was confirmed. Residual window accepted for a single-operator CLI (SCAN-MULTI precedent) | AT-W22, AT-W10 | M-W22: compare raw path strings; M-W22b; M-W22c |
+| 7 | Check then use on a path (TOCTOU) | output exists, then write; a write role that collides with a read role or another write role | one path-role check over the output YAML, every target and both read-role kinds, with `samefile` before any read where flags supply the paths and again before the write, never waived by `-y`; read roles may alias each other; the write uses `_atomic` with `CREATE_ONCE` unless an overwrite was confirmed. Residual window accepted for a single-operator CLI (SCAN-MULTI precedent) | AT-W22, AT-W10 | M-W22: compare raw path strings; M-W22b; M-W22c; M-W22d |
 | 8 | Weak tests and overclaimed evidence | every acceptance test | each test names its mutation and a real oracle (`decoy run`, namespace assertion, reader spy), not only the gate | reviewer reruns the named mutations on the final head | removing a named mutation from the evidence record is a gate finding |
-| 9 | Behavior-preserving refactor drift | `--preset` output and the one-shot `init FILE` output while `init.py` changes | characterization first (AT-W1) before W1a.0, W1a.R and W1a.1 edit `init.py` or the pin; only the named namespace lines may change, as a visible golden diff | AT-W1, AT-W28 | M-W1: change the default preset; M-W28 |
+| 9 | Behavior-preserving refactor drift | `--preset` output and the one-shot `init FILE` output while `init.py` or the engine pin changes | characterization first (AT-W1) before W1a.0, W1a.R and W1a.1 edit the implementation or pin; only the named namespace lines and the AT-E8 REVIEW-note rewrites may change, as a visible golden diff | AT-W1, AT-W28 | M-W1: change the default preset; M-W28 |
 | 10 | Frozen contract drift | CLI flags, exit codes, `--json` keys, engine public API | additive flags only; `--json` keys unchanged; six exit codes; engine exports added only | AT-W15 key snapshot and the engine export snapshot | M-W15: rename one `--json` key |
 
 Hand lists drifting from the engine (the 2026-11-07 catalog work) are closed by AT-W6, AT-W24 and
 AT-W25 (mutations M-W6, M-W24a, M-W25). Path role confusion is part of class 7. Copied wording
 (mask-secret sentences, value-free error text) is closed by reuse of `_mask_secret_guidance.py` and
 `cli/_yaml_errors.py` (AT-W25, AT-W8).
+
+Recurring-defect catalog check: the reused mask-secret validator owns its whole-value validation;
+option parsers preserve exact wire types; AT-E3 checks empty exception cause and context; no new
+stored read model is added; wizard sentries use the normalized shared scanner with seeded alias
+forms; no other package's private module is imported; CI checks stay blocking; interactive and
+one-shot inputs have separate named routes; final-head mutations are required in section 8; no
+helper is allowlisted without its callers being scanned; no size or allowlist pin is raised.
 
 ## 10. Placement
 
@@ -756,15 +805,17 @@ structure" row and `_safe_profile.py` arrive with their first users (Phase 2 and
 | `cli/wizard/_checklist.py` | new | `src/decoy/cli/wizard/` | wizard | | W1a.5b | 80 |
 | `cli/wizard/steps/start.py` | new | `.../steps/` | wizard | | W1a.6a | 60 |
 | `cli/wizard/_flow.py` | new | `src/decoy/cli/wizard/` | wizard | | W1a.6a | 280 |
-| `cli/wizard/_codes.py` | new | same | wizard | | W1a.6a | 40 |
+| `src/decoy/_reason_codes.py` | new | `src/decoy/` | CODEMAP line 48, private shared primitives | `_atomic.py`, `_mask_secret.py` | W1a.0 | 120 |
+| `src/decoy/ci/contracts.py`, `src/decoy/ci/rule_codes.py` | changed (derive their existing closed views from the central registry) | `src/decoy/ci/` | existing CI integration layer | | W1a.0 | net neutral |
 | `src/decoy/cli/gate/_layers.py` | changed (`write_blocking_findings` beside `gate_exit_code`) | `src/decoy/cli/gate/` | existing G-ONE-GATE package | | W1a.6a | +25 (348 today) |
-| `src/decoy/cli/init.py` | changed | `src/decoy/cli/` | existing (`cli/` is frozen: changes only, no new modules) | | W1a.0, W1a.R, W1a.1, W1a.6b | never above its W1a.0 base size (AT-W28); shrinks in W1a.6b |
+| `src/decoy/cli/init.py` | changed | `src/decoy/cli/` | existing (`cli/` is frozen: changes only, no new modules) | | W1a.0, W1a.1, W1a.6b | never above its W1a.0 base size (AT-W28); shrinks in W1a.6b |
 | `src/decoy/cli/completers.py` | changed | same | existing | | W1a.0 | -20 |
 | `src/decoy/cli/_sources.py` | changed (a first-rows reader and `sniff_delimiter`) | same | existing G-ONE-CSV-READ choke point (moves to `cli/io/` under H-1) | | W1a.4a | +50 (183 today) |
 | `src/decoy/cli/_scaffold_yaml.py` | changed only if S3a.1's renderer lacks a block the wizard writes (`global_settings.seed`, `mask_secret_ref`, `column_names_file`, `drop_column`) | same | S3a.1's placement | | W1a.6a | +60 at most |
 | `tests/unit/wizard/test_*.py` | new | `tests/unit/wizard/` | wizard | `tests/unit/cli_fmt/` | W1a.1 to W1a.6a | 120 to 300 each |
 | `tests/e2e/wizard/test_*.py` | new | `tests/e2e/wizard/` | wizard | `tests/e2e/cli_fmt/` | W1a.1, W1a.6b | 150 to 300 each |
 | `tests/unit/gate/test_write_blocking.py` (or the existing gate unit folder) | new | existing gate tests folder | existing | | W1a.6a | 80 |
+| `tests/unit/test_reason_codes.py` | new | `tests/unit/` | CODEMAP line 48 shared-primitive test convention | `tests/unit/test_atomic.py` | W1a.0 | 100 |
 | `tests/e2e/wizard/test_init_scaffold_roundtrip.py` | moved from `tests/e2e/` | same | wizard | | W1a.1 | moved; `test_init_stdout_with_dash` gains `--no-input` |
 | `tests/sentry/wizard/test_prompt_boundary.py` | new | `tests/sentry/wizard/` | wizard (shape of `tests/sentry/io_policy/`) | `tests/sentry/io_policy/` | W1a.1 | 90 |
 | `tests/sentry/wizard/test_module_size.py` | new | same | same | | W1a.0 | 60 |
@@ -772,7 +823,7 @@ structure" row and `_safe_profile.py` arrive with their first users (Phase 2 and
 | `tests/sentry/wizard/test_no_strategy_literal.py` | new | same | same | | W1a.3a | 110 |
 | `tests/sentry/wizard/test_reason_codes.py` | new | same | same | | W1a.6a | 90 |
 | `tests/sentry/wizard/test_no_storm_text.py` | new | same | same | | W1a.6b | 50 |
-| `tests/sentry/test_sentry_manifest.py` | changed (each new sentry added to `SENTRIES`, line 23) | `tests/sentry/` | existing | | each sentry's slice | +1 each |
+| `tests/sentry/test_sentry_manifest.py` | changed (each new sentry added to `SENTRIES`, line 24) | `tests/sentry/` | existing | | each sentry's slice | +1 each |
 | `scripts/dev/sentry_registry.toml` | changed (a baseline entry per new sentry, the `init.py` size pin included) | `scripts/dev/` | existing | | each sentry's slice | +3 each |
 | `CODEMAP.md` | changed (one row) | root | n/a | | W1a.0 | +2 |
 | `docs/cli-reference.md`, `CHANGELOG.md` | changed | `docs/`, root | n/a | | W1a.1, W1a.6b | +60 |
@@ -786,8 +837,8 @@ structure" row and `_safe_profile.py` arrive with their first users (Phase 2 and
 Fan-out: `src/decoy/cli/wizard/` holds 10 modules after 1a and `steps/` holds 9, both under the cap
 of about 25. Each new module aims under 400 lines; the 800-line cap of AT-W28 is the hard limit.
 
-One registry per cross-cutting concern: CLI-only reason codes in `cli/wizard/_codes.py`
-(`INIT_REASON_CODES`); steps in the `STEPS` tuple of `cli/wizard/steps/__init__.py`; keys in the
+One registry per cross-cutting concern: CLI-facing reason codes in `src/decoy/_reason_codes.py`,
+with existing CI-manifest, static gate and new init views derived from it; steps in the `STEPS` tuple of `cli/wizard/steps/__init__.py`; keys in the
 `Key` enum of `_prompts.py`; one-shot flags in `ONE_SHOT_FLAGS`; the tree in `_tree.py`; mask-secret
 wording in `_mask_secret_guidance.py`; the gate write verdict in `cli/gate/_layers.py`; sentries in
 `SENTRIES` and `sentry_registry.toml`.
@@ -795,14 +846,16 @@ wording in `_mask_secret_guidance.py`; the gate write verdict in `cli/gate/_laye
 ## 11. Slices
 
 This plan amends spec 17's "one CLI slice" for Phase 1a into the slices below. Sizes are hand-written
-lines including tests and docs. Build order is top to bottom. W1a.3a, W1a.4a and W1a.5a may build in
-parallel once their After column is met (they share only `STEPS` tuple lines, a keep-both ledger
-line) and merge one at a time.
+lines including tests and docs. Build order is top to bottom except that W1a.R and W1a.1 may land in
+either order once their After columns are met. W1a.3a, W1a.4a and W1a.5a may build in parallel once
+their After column is met (they share only `STEPS` tuple lines, a keep-both ledger line) and merge
+one at a time.
 
 Hot-file lanes: no 1a slice writes `src/decoy/cli/run.py` or `src/decoy/cli/scan.py`, so Phase 1a
 enters neither lane (roadmap 5.2 rule 2). Phase 1a holds an `init.py` lane of its own:
-CONFIG-EXPLICIT C2 and SCAN-MULTI S3a.1 write `init.py` first, then W1a.0, W1a.R, W1a.1 and W1a.6b,
-one at a time. `cli/_sources.py` is shared with CONFIG-EXPLICIT C1 (the loader) and the H-1 move to
+CONFIG-EXPLICIT C2 and SCAN-MULTI S3a.1 write `init.py` first, then W1a.0, W1a.1 and W1a.6b, one at
+a time. W1a.R uses the lock and golden lanes, not `init.py`; W1a.R and W1a.1 may land in either
+order, one at a time. `cli/_sources.py` is shared with CONFIG-EXPLICIT C1 (the loader) and the H-1 move to
 `cli/io/`: W1a.4a enters after C1 merges, and rebases onto the H-1 location if H-1 moves the module
 first. Engine E1 and E3 each take the engine `__init__.py` export lane, one at a time; E1 also takes
 a registry minor.
@@ -812,9 +865,9 @@ a registry minor.
 | E3 | engine | ~300 | `keyed_columns_for_config`, `KeyedColumn`, shared column walk, exports, 16.10 docstring line | AT-E7 (oracle and parity), export snapshot | engine `__init__.py` | none (can build now) |
 | E1 | engine | ~700 | 6.1: `column_entry`, `ColumnSuggestion` fields, `StarterConfig.suggestions`, `SuggestionRef`, `ReviewVerdict` with `DROP`, `ReviewDecision`, `apply_review` with the empty-table refusal, `ReviewInputError`; `starter_config` builds through `column_entry`; note wording without "STORM" (E1b if over 750) | AT-E1 to AT-E4, AT-E8 | engine `__init__.py`; registry minor | S3-engine.2 (P7); SCAN-ML M1 (P2) |
 | R-1a | engine | n/a | engine release carrying E1, E3 and S3-engine (and E0 if not yet released) | engine release checks | release lane | E1, E3 |
-| W1a.0 | CLI | ~400 | AT-W1 characterization first; module-size sentry with the `init.py` pin at this base (AT-W28); CODEMAP row; `TRANSFORM_IDS` replaced by `strategy_catalog()`; `_NAMESPACE_REQUIRED_STRATEGIES` deleted (wherever S3a.1 left it) in favour of `namespace_required`, with its golden diff if the bytes change. Needs only E0, which S3a.1's repin carries | AT-W1, AT-W28, completer test | `init.py`, `completers.py` | P8 |
-| W1a.R | CLI | ~150 | repin to R-1a by the engine repin checklist; AT-W1 golden update for the `namespace:` lines E1's `column_entry` adds; nothing else | AT-W1, full suite | `init.py` (golden only), lock | W1a.0; R-1a (P11) |
-| W1a.1 | CLI | ~700 | `cli/wizard/_prompts.py` (Prompter protocol, terminal and scripted implementations, `has_terminal()`, `refuse_without_terminal`, the one-shot overwrite rule, `ONE_SHOT_FLAGS`, the `Key` enum, numbered and multi-select menus, typed-name and prefix match); `init.py` calls only: `--no-input`, the three-row rule, preset prompts behind the Prompter; move `test_init_scaffold_roundtrip.py` to `tests/e2e/wizard/`; update every existing test that runs `init` off a terminal in default mode (section 16); prompt-boundary sentry | AT-W4, AT-W1 still green, AT-W28 still green, Prompter unit tests | `init.py` | W1a.0 |
+| W1a.0 | CLI | ~600 | AT-W1 characterization first; module-size sentry with the `init.py` pin at this base (AT-W28); CODEMAP rows; central `src/decoy/_reason_codes.py`, with the existing CI-manifest and static gate sets changed to derived views and their existing tests kept green; `TRANSFORM_IDS` replaced by `strategy_catalog()`; `_NAMESPACE_REQUIRED_STRATEGIES` deleted (wherever S3a.1 left it) in favour of `namespace_required`, with its golden diff if the bytes change. Needs only E0, which S3a.1's repin carries | AT-W1, AT-W28, completer test, central-registry tests for unique descriptors, derived-view agreement and whole-token validation (code plus newline refused), existing CI reason-code tests | `init.py`, `completers.py` | P8 |
+| W1a.R | CLI | ~150 | repin to R-1a by the engine repin checklist; AT-W1 golden update only for the `namespace:` lines E1's `column_entry` adds and the `# REVIEW:` note lines AT-E8 rewrites; nothing else | AT-W1, full suite | lock, goldens | W1a.0; R-1a (P11) |
+| W1a.1 | CLI | ~700 | `cli/wizard/_prompts.py` (Prompter protocol, terminal and scripted implementations, `has_terminal()`, `refuse_without_terminal`, the one-shot overwrite rule, the structured value-free `WizardError` renderer, `ONE_SHOT_FLAGS`, the `Key` enum, numbered and multi-select menus, typed-name and prefix match); `init.py` calls only: `--no-input`, the three-row rule, preset prompts behind the Prompter; move `test_init_scaffold_roundtrip.py` to `tests/e2e/wizard/`; update every existing test that runs `init` off a terminal in default mode (section 16); prompt-boundary sentry | AT-W4, AT-W1 still green, AT-W28 still green, Prompter unit tests | `init.py` | W1a.0 |
 | W1a.2 | CLI | ~650 | `_state.py` (`WizardState`, origins, stable ids, step status), `_nav.py` (back, forward, go-to, stale marking), `steps/__init__.py` (Step protocol, `STEPS`); no-exc-text sentry | AT-W23 cases 6 and 7, state unit tests | none | W1a.1 |
 | W1a.3a | CLI | ~450 | `_tree.py` from `strategy_catalog()` and the provider registry; no-strategy-literal sentry with its seeded shapes | AT-W24, AT-W6 (sentry half) | none | W1a.2 |
 | W1a.3b | CLI | ~700 | `_field_review.py` (key-to-verdict mapping from the `Key` enum, options from `StrategyOption`, last-kept-field refusal), `steps/fields.py` | AT-W6 (options half), AT-W7, AT-W11, AT-W33, AT-W34, AT-W23 case 5 (the Fields half) | none | W1a.3a; W1a.R (`column_entry`, `apply_review`) |
@@ -822,7 +875,7 @@ a registry minor.
 | W1a.4b | CLI | ~450 | `steps/scan.py` (summary, labels, confidence from the bucket), stale cases tied to Sources | AT-W31, AT-W23 cases 1 to 3 | none | W1a.4a; W1a.R (`scan_sources`, `starter_config`) |
 | W1a.5a | CLI | ~650 | `steps/output.py`, `steps/secrets.py`, the wizard constants in `_mask_secret_guidance.py` | AT-W25, AT-W23 cases 4 and 5 | none | W1a.3b, W1a.4b; W1a.R (`keyed_columns_for_config`) |
 | W1a.5b | CLI | ~450 | `steps/review.py`, `_checklist.py` | AT-W32, AT-W23 case 7 (Review half) | none | W1a.5a |
-| W1a.6a | CLI | ~700 | `steps/start.py`, `_flow.py` (step loop, path-role check over four roles, write step), `write_blocking_findings` in `cli/gate/_layers.py` with unit tests, `_codes.py` (`INIT_REASON_CODES = {init.path_collision}`) and its guard, renderer additions if needed. Still not wired into `decoy init` | AT-W9, AT-W10, AT-W22, AT-W26 | none (`cli/gate/` has no named lane; one writer at a time) | W1a.5b |
+| W1a.6a | CLI | ~700 | `steps/start.py`, `_flow.py` (step loop, path-role check over the output YAML, every target and both read-role kinds, write step), `write_blocking_findings` in `cli/gate/_layers.py` with unit tests, the `init.path_collision` descriptor added to the central reason-code registry with its guard, renderer additions if needed. Still not wired into `decoy init` | AT-W9, AT-W10, AT-W22, AT-W26 and existing CI reason-code tests | none (`cli/gate/` has no named lane; one writer at a time) | W1a.5b |
 | W1a.6b | CLI | ~650 | `init.py` cutover (terminal routes call `_flow`; the old direct file-scaffold terminal path deleted), the e2e sessions, G-ONE-EMITTER extension, "STORM" sentry, CHANGELOG, `docs/cli-reference.md`, roadmap row 32b and the shipped log | AT-W2, AT-W8, AT-W15, AT-W27, AT-W30, G-ONE-EMITTER | `init.py` | W1a.6a |
 
 If a slice measures above about 750 lines at its first gate, the builder splits it along the module
@@ -833,8 +886,9 @@ verdict) and W1a.3b (the `d` key) and blocks neither from starting (section 14).
 
 Test depth (`testing.md`): T0 per edit; T1 impact-selected per commit and slice head
 (`scripts/dev/gates.sh --baseline-file`). Escalation to the full suite, diffed against the stored main
-baseline: E1 and E3 (engine public exports, a frozen surface; E1 also the reason registry); W1a.R
-(lock change); W1a.1 (moved tests and changed test fixtures); W1a.6b (frozen `decoy init` contract);
+baseline: E1 and E3 (engine public exports, a frozen surface; E1 also the reason registry); W1a.0
+(central reason-code registry and derived frozen views); W1a.R (lock change); W1a.1 (moved tests and
+changed test fixtures); W1a.6b (frozen `decoy init` contract);
 any slice that edits `tests/sentry/test_sentry_manifest.py` or `sentry_registry.toml` only if the
 change goes beyond adding its own entries. The other slices add unwired modules and run T1 plus the
 T2 gate set. Tests run on the Mac first or `~/bin/vm-run`, never on the devbox queue. Worker
@@ -846,19 +900,24 @@ evidence rules: the 2026-11-07 plan section 14 applies to every slice unchanged.
   against a provisional next minor on its base, and REG-RENUMBER renumbers `REGISTRY_VERSION`, every
   `since=` and the manifest fixture name to `main + 1` at merge (`scripts/dev/registry_renumber.py
   --check` in the merge gate). This plan does not name a registry version. E3 adds no identity.
-- CLI-only: `cli/wizard/_codes.py` owns `INIT_REASON_CODES`, one closed `frozenset`, and the
-  constructor every wizard path uses. Phase 1a registers only `init.path_collision`, its one emitted
-  code, because the guard (AT-W26) fails on a registered code with no emitting path. Each later phase
-  adds its codes with their emitters: 1b `init.draft_invalid`; Phase 2 `init.answers_invalid`,
-  `init.yaml_changed`, `init.yaml_edit_unsupported`, `init.yaml_symlink`; the findings review
-  `init.report_missing`, `init.report_schema`, `init.report_stale`. The nine-code set of spec 12 is
-  the end state.
-- V2-LOG: the CLI keeps closed code sets in three places today (`REASON_CODES` at
-  `src/decoy/ci/contracts.py:83`, `_CLI_GATE_CODES` at `src/decoy/ci/rule_codes.py:39`) and 1a adds
-  `INIT_REASON_CODES`. Folding them into one CLI-wide registry is logged as a V2 follow-up; 1a does
-  not start it. Likewise the wizard's own fixed error lines are folded into the VALUE-FREE-ERRORS
-  converter (`cli/_yaml_errors.py`, row 24a) in V2; in 1a they are fixed text plus names and a relayed
-  config error already goes through that converter.
+- CLI-facing: one descriptor registry in `src/decoy/_reason_codes.py` owns each code and its scope.
+  The existing CI-manifest `REASON_CODES` (`src/decoy/ci/contracts.py:83`) and static gate
+  `_CLI_GATE_CODES` (`src/decoy/ci/rule_codes.py:39`) become derived views with their current
+  contents pinned. The registry rejects duplicate descriptors and validates each code as a whole
+  token with `fullmatch`; its test refuses a valid code plus a newline. The init view and
+  constructor use the same registry. Phase 1a adds only
+  `init.path_collision`, its one emitted code, because the guard (AT-W26) fails on a registered init
+  code with no emitting path. Each later phase adds its descriptors with their emitters: 1b
+  `init.draft_invalid`; Phase 2 `init.answers_invalid`, `init.yaml_changed`,
+  `init.yaml_edit_unsupported`, `init.yaml_symlink`; the findings review `init.report_missing`,
+  `init.report_schema`, `init.report_stale`. The nine-code set of spec 12 is the end state.
+- V2-LOG: the wizard's own fixed error lines are folded into the VALUE-FREE-ERRORS converter
+  (`cli/_yaml_errors.py`, row 24a) in V2. In 1a they are fixed text plus names and a relayed config
+  error already goes through that converter.
+- V2-LOG: `write_blocking_findings` treats a config or compile finding with `extra` set as a builder
+  bug even when it represents a missing optional extra. Phase 1a cannot reach that shape because it
+  writes no `pre_scan` detectors or NER configuration. Revisit the classification when the wizard
+  writes `pre_scan` detectors.
 
 ## 13. Frozen contracts touched
 
@@ -868,6 +927,8 @@ evidence rules: the 2026-11-07 plan section 14 applies to every slice unchanged.
   In a terminal, `decoy init FILE` now runs the wizard instead of writing the unreviewed starter.
 - Exit codes: the six public codes, no new code. `gate_exit_code` is unchanged; the new
   `write_blocking_findings` is internal to the CLI.
+- Existing `decoy ci` manifest reason codes and static validation rule ids: unchanged byte for byte;
+  their closed sets become derived views of the central registry and existing snapshots pin them.
 - `--json` record of `init`: unchanged (the wizard never runs with `--json`).
 - Engine public API, additive: E1's names (2026-11-07 plan section 12 list, plus `ReviewVerdict.DROP`
   and the `pre_scan.review_empty_table` reason)
@@ -956,19 +1017,21 @@ outside that bar and outside the guarantee in 1.4 are recorded as follow-ups.
   row stays in progress until W1a.6b lands.
 - **A user drops every field and loses the session.** Decision-time refusal plus the engine backstop
   (AT-W33, AT-E1).
-- **The YAML or a target overwrites the header file.** Four-role path check, never waived by `-y`
-  (AT-W22).
+- **The YAML or a target overwrites an input, or two targets share a file.** Read/write path-role
+  check, never waived by `-y` (AT-W22).
 - **Builders re-litigate scope.** Sections 1.2, 1.3 and 1.5.
 
 ## 18. Owner questions
 
 None blocking. Every choice above takes the recommended option under the standing V1 rule.
 
-## 19. Round 1 review resolutions (Dennis on `2e09ff7`)
+## 19. Review resolutions
+
+### Round 1 (Dennis on `2e09ff7`)
 
 | Id | Resolution |
 |---|---|
-| H1 | Header file is a source role in the one path-role check, never waived by `-y`; Guarantee 8, 5.3, 5.6, section 7 and AT-W22 (every role pair, lexical alias, symlink and hard link, from flags and prompts) updated; M-W22b, M-W22c |
+| H1 | Header file is included in the one path-role check, never waived by `-y`; Guarantee 8, 5.3, 5.6, section 7 and AT-W22 were updated. Round 2 M3 later narrowed the refusal to pairs containing a write role and added target-target coverage |
 | H2 | `d` refused on a table's last kept field (5.3, AT-W33); `apply_review` raises `pre_scan.review_empty_table` as the backstop (6.1); Guarantee 9, section 7, 9.4 item 5a, AT-E1 cells, AT-E4 property |
 | M1 | One classifier `write_blocking_findings` in `cli/gate/_layers.py` by `GateFinding.layer`; capacity is written, shown and exits 0; 5.6, 5.8, 7, 9.1, AT-W10 |
 | M2 | W1a.0 needs only E0 (via S3a.1's repin); the repin and the `column_entry` golden diff move to the new W1a.R; pre-mortem and P-table made consistent |
@@ -983,7 +1046,7 @@ None blocking. Every choice above takes the recommended option under the standin
 | L1 | Section 0 and section 11 state the amendment of spec 17's "one CLI slice" |
 | L2 | Row (c) with an existing output exits 1 in a terminal too (5.2); AT-W4 pty cell, M-W4d |
 | L3 | New sentries go in `SENTRIES` and `scripts/dev/sentry_registry.toml` (placement table) |
-| L4 | One CLI-wide code registry logged as V2 (section 12) |
+| L4 | One CLI-wide code registry was initially logged as V2; the final DESIGN review superseded that disposition and moved the registry into W1a.0 |
 | L5 | VALUE-FREE-ERRORS row 24a and `cli/_yaml_errors.py` cited (reuse inventory, class 1, section 12 V2 fold) |
 | L6 | `cli/_sources.py` lane note: after CONFIG-EXPLICIT C1, rebase on H-1 (section 11) |
 | L7 | With `-o -`, paths are relative to the current directory (5.1, 5.6) |
@@ -994,3 +1057,30 @@ None blocking. Every choice above takes the recommended option under the standin
 | L12 | Reuse inventory names the public `decoy_engine.strategy_catalog` and `decoy_engine.secret_providers` exports; the private helper is marked engine-only |
 
 No LOW item was skipped.
+
+### Round 2 (Dennis, 2026-11-08)
+
+| Id | Resolution |
+|---|---|
+| M1 | AT-W10 now asserts exit 1 for Ctrl-C, EOF and `q`, and exit 3 for scan, atomic, config and compile failures; every row asserts no output or temp file |
+| M2 | AT-W1 and W1a.R allow exactly two visible golden-diff kinds: the named `namespace:` lines and the `# REVIEW:` lines AT-E8 rewrites |
+| M3 | Guarantee 8, 5.6, section 7, AT-W22 and class 7 distinguish read and write roles; read roles may alias each other, while every write-role collision and target-target collision is refused; M-W22d skips target-target checking |
+| M4 | Any `apply_review` raise at write time is a builder bug: exit 3, no write, and only fixed codes plus table or column names; AT-W10 injects `ReviewInputError`. Final self-review applies the same rule to Review `y` |
+| L1 | Exit paths are ordered 1 through 10 and the duplicate existing-output row was removed |
+| L2 | P2 records SCAN-ML M1 merged as engine #405 at `38951412`; `ModelRef` is `detection/types.py:42` on main |
+| L3 | W1a.R and W1a.1 may land in either order, one at a time; W1a.R uses the lock and golden lanes and does not edit `init.py` |
+| L4 | Section 9.3 states that SCAN-MULTI V1 infers no relationships, so key-column refusals are unreachable in 1a |
+| L5 | AT-W9 expects one error line followed by the findings list on the exit-3 gate path |
+| L6 | Section 12 logs the future missing-optional-extra classification issue and its 1a unreachability |
+
+### Final self-review
+
+| Label | Resolution |
+|---|---|
+| V1 | AT-W22 now supplies target paths through the only Phase 1a surface that has them, the Output prompts, instead of requiring nonexistent target flags; the collision coverage is unchanged |
+| V1 | AT-W9 now applies the one-error-line rule to error exits, not successful writes that show preflight findings |
+| V1 | Guarantee 4 and 5.6 now branch the write sink: file output uses `_atomic`, while `-o -` emits the one renderer's bytes to stdout only after the gate and opens no temp file |
+| V1 | Review `y` and Enter now share fold-and-render preparation; `apply_review` builder errors are covered on both paths, while only Enter gates and opens the output sink |
+| DESIGN | The proposed third hand-written reason-code set was removed. W1a.0 creates one shared descriptor registry at the CODEMAP line 48 placement; the existing CI-manifest and static gate sets and the new init set are derived views with agreement guards |
+| V2-LOG | Guarantee 5 now excludes source cell and secret values while permitting counts, names and detector ids, matching the owner-set value definition and SCAN-MULTI's integrity-count notes |
+| V2-LOG | AT-W29 spells out the pipe delimiter so its Markdown table row is not split by a literal pipe character |
