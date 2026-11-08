@@ -2,12 +2,13 @@ Status: plan
 
 # X7c: one choke point for CLI private files (roadmap row 24)
 
-Owner: Cam. Author: claudeworkerbee (Opus). Date: 2026-11-08. Scope: CLI, V1. Revision 2.1 (Dennis round 1 on
+Owner: Cam. Author: claudeworkerbee (Opus). Date: 2026-11-08. Scope: CLI, V1. Revision 2.2 (Dennis round 1 on
 revision 1 at `af5e39f`, round 2 GO on revision 2 at `d1a84ac`; dispositions in section 0).
 
 Rules consulted: `dev-rules/README.md`, `00-universal.md`, `risk-and-exceptions.md`, `development-loop.md`
 (PLAN: choke point, Placement, Design notes, Established solutions), `feature-dev.md`, `architecture.md`
-(layout), `reuse-first.md`, `security.md`, `testing.md`, `cross-cutting-concerns.md`; the plan contract
+(layout), `reuse-first.md`, `security.md`, `testing.md`, `cross-cutting-concerns.md`, `code-review.md`,
+`verification.md`, and `catalogs/recurring-defects.md`; the plan contract
 (`30_Resources/Decoy-Plan-Contract-and-Defect-Catalog.md`), `LOCAL-BUILDER-BRIEF.md`; the standing rules
 develop-correctly-registries-and-sizing and best-practice-becomes-a-sentry; the V1 bar (a second copy of a
 central mechanism, or a new module in a flat folder over 25, always blocks); the CLI CODEMAP "Where things
@@ -27,24 +28,33 @@ this plan names the seam it extends (the `_private_file` module) and builds noth
 | Finding (Dennis r1) | Disposition |
 |---|---|
 | B1 narrowing failure escapes `_atomic`'s `OSError` mapping | Fixed: the low-level functions raise plain `OSError` (errno set, `EPERM` when bits did not stick), so `_staged` and `_restrict_fd_target` map it to `AtomicWriteError` as today; only the standalone entry points wrap into `PrivateFileError` (section 4). AT-P1d adds a `narrow` step to `test_atomic_staged.py:152` for a private write. |
-| M1 live tree fails P4 (`_atomic.py:229,231,269`, `_token_vault.py:137`) | Fixed: every mode call moves into `_private_file.apply_mode` (public bits too), so P4 has no exemptions inside `src/decoy/` except a constant mode with an execute bit; the call-site moves now land before the sentry (S2 before S3). |
-| M2 baseline arithmetic; raw sinks into a private entry point's path | Fixed: rule P2 accepts a raw sink whose path argument is bound from a private entry point in the same function (`via`), and a `staged` disposition defers to G-ONE-TARGET-WRITE; census recounted (47 sites outside `_atomic.py`). |
+| M1 live tree fails P4 (`_atomic.py:229,231,269`, `_token_vault.py:137`) | Fixed: every mode call moves into `_private_file.apply_mode` (public bits too); the call-site moves now land before the sentry (S2 before S3). Codex narrowed the remaining launcher exception in the row below. |
+| M2 baseline arithmetic; raw sinks into a private entry point's path | Fixed: rule P2 accepts a raw sink whose path argument is bound from a private entry point in the same function (`via`), and a `staged` disposition defers to G-ONE-TARGET-WRITE. Codex recounted the expanded sink set in the row below. |
 | M3 DuckDB `COPY ... TO` at `_duckdb_source.py:110` missed | Fixed: census row (temp, baselined, exit WIN-FEAS); a P1 rule flags `.execute` SQL text containing `COPY` with `TO`; the SQL limit is named. |
 | M4 AT-P1c and two mutations cannot fail | Fixed: `O_NOFOLLOW` is tested on `open_private`; the staging file test asserts a collision retry with a fresh name; mutations rewritten (section 7). |
 | M5 `test_token_vault.py:217` patches `os.chmod` | Fixed: in S2's file list, retargeted to `os.fchmod`; code mapping stated (section 5.3). |
 | Minor: `_WINDOWS` patches are not about mode bits | Accepted: the retarget edit is dropped. |
 | Minor: the seam is more than one function | Accepted: the seam is the module; Windows changes land in `apply_mode`, `create_exclusive` and `open_private`. |
-| Minor: distribution swaps have no baseline row | Accepted: they stay in the atomic-writer allowlist; `os.link`, `tarfile` extraction and `os.symlink` are named limits. |
+| Minor: distribution swaps have no baseline row | Accepted for `os.link` and `os.symlink`, which stay in the atomic-writer allowlist. Codex added `tar.extractall` to the file-sink registry below. |
 | Minor: OQ1 built before it is answered | Accepted: S1 builds the owner check only if OQ1 is answered yes; otherwise it is a follow-up. |
 | Minor: `ADMISSION_SITES` ids unchecked | Accepted: the sentry checks each id against `_CLI_SURFACES` members and test function names in the module. |
 | Minor: the TOCTOU case needs a hook | Accepted: it moves to the S1 unit tests (AT-P1f). |
 | R2-1 (Dennis r2, GO) AT-P2j red: `installer.py:219` and the two `report.py` sites have no AT-P3 case | Fixed: explicit `PRIVATE_CASES` map from call site to test id, checked both ways by the sentry; trust-state case (unit level) and one case per `report.py` function added to S2. |
 | r2 minor: the class 2 mutation cannot fail | Fixed: `create_exclusive` unlinks its own file when narrowing fails; M2 targets that unlink. |
-| r2 minor: section 6.5 totals | Fixed: 18 private, 21 public (47); 46 after S2. |
+| r2 minor: section 6.5 totals | Superseded by the Codex census row below: the expanded watched sink set has 49 today and 48 after S2. |
 | r2 minor: `via` checks source order only | Accepted as a named limit (the token vault connects on the `create=False` path without `open_private`, which is correct for an existing vault). |
 | r2 minor: `COPY ... TO` match | Fixed: case-insensitive; SQL in a variable, `.sql()`, `duckdb.sql()` and `executemany` named as limits. |
 | r2 minor: `decoy.mask()` exception type | Fixed: `PrivateFileError` subclasses `OSError` (errno set, no filename), the engine's shape. |
 | r2 minor: `O_DIRECTORY` on Windows | Fixed: on Windows `open_private` narrows a new parent through `apply_mode` by path, as `_restrict` does today. |
+| DESIGN (Codex): `(file, function, sink)` collapses repeated sinks in one function, so a new matching write could reuse an old row | Fixed: registry, baseline, `PRIVATE_CASES` and admission-site identities include the call ordinal; P1 checks every live ordinal and a seed adds a second same-kind sink to an already registered function. |
+| DESIGN (Codex): P4 allowed any constant mode with an execute bit, so a new inline 0700 or 0711 chmod would bypass the choke point | Fixed: P4 has one exact, stale-checked exception for `distribution/installer.py::_write_launcher_shim::os.chmod::ordinal 1::0o755`; every other mode call outside `_private_file.py` fails. |
+| V1 (Codex): the census omitted `write_fixed_width` and `tar.extractall`, both real file-content sinks | Fixed: both are watched P1 sinks and public census rows; totals are 49 today and 48 after S2. The tar extraction is no longer named as invisible or as creating no file content. |
+| DESIGN (Codex): CODEMAP row 59 places CLI-format tests only, not the new private-file e2e folder | Fixed: S1 edits the layout map to place private-filesystem contract tests in named `tests/unit/<concern>/` and `tests/e2e/<concern>/` sub-packages; the Placement table names that map change. |
+| DESIGN (Codex): admission keys collapsed two calls in the same function | Fixed: `ADMISSION_SITES` uses `file::qualname::ordinal`, and AT-S1 seeds a second call in an already mapped function. |
+| DESIGN (Codex): `_calls.py` did not expose ancestor `try` blocks, so P3 would need a second AST walk despite the plan's one-scanner claim | Fixed: S3 extends the shared scanner with normalized call records carrying scope, binding and ancestor-path metadata (node plus child field); existing scanner functions project from that core, and P1 to P4 use it. |
+| V2-LOG (Codex): two citations and the private-error provenance were imprecise | Fixed: `Plan.generation` points to engine `plan/_types.py:311`, the cleanup assertion points to `test_atomic_staged.py:166`, and the engine comparison is limited to raising outside the handler with no filename. |
+| V2-LOG (Codex): `create_private_temp` accepted a suffix that the single moved temp-name generator could not preserve, and a Parquet failure occurred before cleanup registration | Fixed: the helper promises its central `.tmp` name only; the format stays explicit in the source entry, and S2 appends the path to `tmp_paths` before `pq.write_table`, with an injected-failure cleanup test. |
+| V2-LOG (Codex): the atomic stager, SQLite handoff and Parquet spool close the protected descriptor before a path-based writer reopens it | Logged in section 15. These are theoretical local swap races in existing handoffs, so they do not decide the V1 verdict. |
 
 ## 1. FRAME
 
@@ -58,7 +68,7 @@ forms publish 0600. The rest:
 
 1. `cli/compile_explain.py:243` writes the plan artifact with `Path.write_text`: umask default mode, not
    atomic. The plan carries the seed envelope and, with statistical generate columns, the fitted generation
-   payload (engine `plan/_types.py:283`, field `generation`), the same class of data as the fit snapshot that
+   payload (engine `plan/_types.py:311`, field `generation`), the same class of data as the fit snapshot that
    `cli/fit.py:497` already writes 0600. This is the one live gap.
 2. `cli/_token_vault.py:109,137` creates the SQLite file with `os.open(..., 0o600)` and then chmods the file
    and its new parent by path (`_restrict`). Correct on POSIX today, but a second owner-only idiom, and the
@@ -80,8 +90,8 @@ Nothing stops a fifth idiom, and the mode calls sit in five places across two mo
 - A `private` file is owner-only (0600 on POSIX) from its first byte, under any umask including 000. It is
   created through `_private_file` (exclusive, never through a symlink at the created name) and, where the
   writer has a target, published atomically by `_atomic` (old bytes or new bytes, never neither).
-- Every mode change in `src/decoy/` runs through `_private_file.apply_mode`, except a constant mode with an
-  execute bit (the 0755 launcher). The `_private_file` module is the WIN-FEAS seam: `apply_mode`,
+- Every mode change in `src/decoy/` runs through `_private_file.apply_mode`, except the exact existing 0755
+  launcher call. The `_private_file` module is the WIN-FEAS seam: `apply_mode`,
   `create_exclusive` and `open_private` are the three functions it changes.
 - Errors carry a code and an errno, never a path (the existing `_atomic.AtomicWriteError` rule).
 - The mask-secret admission sentry derives the admitting call sites from the AST; a new admission site with no
@@ -181,12 +191,14 @@ its own plan. No runtime coupling.
     directory=True)` on an `O_DIRECTORY | O_NOFOLLOW` descriptor (on Windows, which cannot open a directory,
     through `apply_mode` by path, as `_restrict` does today). Raises `PrivateFileError("private_open_failed",
     errno)` when the open fails and `PrivateFileError("private_mode_failed", errno)` when narrowing fails.
-  - `create_private_temp(prefix: str, suffix: str) -> Path`: `create_exclusive` in `tempfile.gettempdir()`
-    with `private=True`, for the `decoy.mask()` spool. Raises `PrivateFileError` with the same two codes.
+  - `create_private_temp(prefix: str) -> Path`: `create_exclusive` in `tempfile.gettempdir()` with
+    `private=True`, for the `decoy.mask()` spool. It keeps the one central `.tmp` naming rule; the caller's
+    source entry already declares `format = "parquet"`. Raises `PrivateFileError` with the same two codes.
   - `PrivateFileError(code, errno)`: a subclass of `OSError` with `errno` set and no `filename`, so
     `decoy.mask()` callers that catch `OSError` today (`api.py:447` does not map staging errors) still catch
     it; its text is the code only, no path, and it is raised outside the `except` block so no `OSError` is
-    chained. This is the engine helper's shape (`OSError(code, os.strerror(code)) from None`).
+    chained. Like engine `fileaccess/_private.py:36-42`, it saves the errno and raises outside the handler
+    with no filename; the CLI error code and text remain its own contract.
 - `_atomic.py` imports `create_exclusive`, `apply_mode` and `restrict_owner_only` and calls them where it
   creates and changes modes today (`_atomic.py:229,231,269,348`). Because they raise plain `OSError`, the
   existing handlers in `_staged` (`_atomic.py:266-270`), `_publish`'s caller and `_restrict_fd_target`
@@ -196,8 +208,10 @@ its own plan. No runtime coupling.
   `_private_file.open_private` and `_private_file.create_private_temp`. `_atomic.staged_local_target` and
   `cli/io/_targets.write_table` are public entry points.
 - Registry: `tests/sentry/io_policy/file_sinks.toml`. One row per (file, enclosing qualified function, sink
-  kind): `disposition`, `reason`, and for a private raw sink `via` (the entry point whose result it writes
-  into). Dispositions:
+  kind, one-based call ordinal in AST source order): `disposition`, `reason`, and for a private raw sink
+  `via` (the entry point whose result it writes into). The ordinal, rather than a line number, keeps the
+  identity stable across unrelated line moves and makes a second same-kind sink in the same function red.
+  Dispositions:
   - `public`: written with the umask default or the old file's bits; needs a reason.
   - `private`: the sink is an entry-point call (needs no row), or a raw sink with `via` (section rules).
   - `staged`: a raw sink writing into a stager the function receives as a parameter; G-ONE-TARGET-WRITE
@@ -207,35 +221,41 @@ its own plan. No runtime coupling.
 - Baseline: `tests/sentry/baselines/private-file-sinks.json` (shrink-only, registered in
   `scripts/dev/sentry_registry.toml`, checked by `scripts/dev/ratchet_check.py`), 5 rows, each with its exit.
 - Guard test: `tests/sentry/io_policy/test_private_files.py`, G-ONE-PRIVATE-FILE. It reuses the shared
-  scanner `tests/sentry/io_policy/_calls.py` (import resolution, qualified scopes), so no second walker.
+  scanner `tests/sentry/io_policy/_calls.py`. S3 extends that scanner's one traversal to return normalized
+  call records with the call node, resolved name, qualified scope, bindings and the ancestor path as
+  `(node, child_field)` pairs. Existing
+  `call_sites` and `call_contexts` become projections of the same records, so P1 to P4 add no second walker.
 
 ### Rules the sentry enforces (same numbering as engine `tests/sentry/test_private_files.py`)
 
-- P1: every raw sink (section 6.5 list) has a registry row; every row has a live sink (stale rows fail); the
-  disposition is one of the five values; the reason is non-empty. An `.execute(...)` call whose SQL text
-  (string constant or f-string parts) contains `COPY` and `TO`, matched case-insensitively, is a raw sink.
+- P1: every raw sink (section 6.5 list) and every one-based ordinal has a registry row; every row has that
+  exact live sink (stale or extra ordinals fail); the disposition is one of the five values; the reason is
+  non-empty. Watched sinks include engine `write_fixed_width` and `tarfile.TarFile.extractall`. An
+  `.execute(...)` call whose SQL text (string constant or f-string parts) contains `COPY` and `TO`, matched
+  case-insensitively, is a raw sink.
 - P1b: `PRIVATE_CASES` in the sentry maps every private entry-point call site and every `via` row
-  (`file::function::sink`) to an AT-P3 test id; a site with no entry, an entry with no live site, or an id
-  that is not a test in `tests/e2e/private_file/test_private_surfaces.py` or
+  (`file::function::sink::ordinal`) to an AT-P3 test id; a site with no entry, an entry with no live site, or
+  an id that is not a test in `tests/e2e/private_file/test_private_surfaces.py` or
   `tests/unit/private_file/test_private_file.py` fails.
 - P2: a raw sink with disposition `private` passes only when its `via` entry point is called earlier in the
   same function and the sink's path argument is the same local name as that call's path argument or result
   (`with staged_private_target(p) as tmp` then `tmp`; `tmp = create_private_temp(...)` then `tmp`;
   `open_private(path, ...)` then `str(path)`; `str()`, `os.fspath()` and `.as_posix()` are stripped). A
   `temp` row, or a private row that fails the binding check, must be in the baseline.
-- P3: `os.chmod`, `os.fchmod`, `os.lchmod`, `Path.chmod` inside a `try` whose handler body is only `pass`,
-  `continue` or `...` fails, anywhere in `src/decoy/`.
-- P4: a mode call outside `_private_file.py` fails unless its mode is a constant with an execute bit
-  (`distribution/installer.py:669`, 0o755). After S2 the live tree has no other.
+- P3: using the shared call record's ancestor path, `os.chmod`, `os.fchmod`, `os.lchmod`, `Path.chmod` in a
+  `Try.body` whose handler body is only `pass`, `continue` or `...` fails, anywhere in `src/decoy/`. Calls in
+  `except`, `else` and `finally` blocks are not misclassified as calls in the guarded body.
+- P4: a mode call outside `_private_file.py` fails. The only exception is the exact identity
+  `distribution/installer.py::_write_launcher_shim::os.chmod::1` with literal mode 0o755
+  (`distribution/installer.py:669`); a missing call, a changed mode or any second call fails.
 - P5: `_private_file.py` imports nothing from `decoy` (no cycle with `_atomic`).
 
 Named limits of the walk: P2's `via` check is source order in one function, not that the entry point runs on
 every path (the token vault connects without `open_private` on its `create=False` path, correct for an
 existing vault); SQL other than `COPY ... TO` (for example `ATTACH` or `EXPORT DATABASE`), SQL held in a
-variable, and `.sql()`, `duckdb.sql()` and `executemany` calls; a
-reference through a runtime-bound name, an alias by assignment, `from x import *`, and filesystem calls that
-create no regular-file content (`os.link`, `os.symlink`, `tarfile` extraction, `mkdir`), which the
-atomic-writer sentry or the installer's own tests cover.
+variable, and `.sql()`, `duckdb.sql()` and `executemany` calls; a reference through a runtime-bound name, an
+alias by assignment, `from x import *`, and filesystem calls that do not create new regular-file content
+bytes (`os.link`, `os.symlink`, `mkdir`), which the atomic-writer sentry or the installer's own tests cover.
 
 ### Symlinks
 
@@ -248,12 +268,13 @@ target symlink owned by another user.
 ### Mask-secret surfaces from the AST
 
 `tests/sentry/test_mask_secret_file_mode.py:99` hand-lists `_CLI_SURFACES`. S3 replaces the list with a
-derivation: walk `src/decoy/` with `_calls.py` for references to `decoy._mask_secret.admitted_key_provider`,
-key each by `file::qualname`, and look each key up in `ADMISSION_SITES`, a mapping from site to the surface
-ids or test functions that exercise it (`cli/run.py::run` to `run` and `run_chunked`; `cli/unmask.py::unmask`
-to `unmask`; `cli/report.py::_vault` to `report_vault`; `cli/tokenize.py::tokenize` to `tokenize`;
-`api.py::mask` to `test_api_mask_refuses_an_unsafe_file`, `test_api_mask_reads_the_checked_descriptor`).
-`_CLI_SURFACES` becomes the tuple of the CLI ids. The check fails when a derived site is missing from the
+derivation: walk `src/decoy/` with `_calls.py` for calls to `decoy._mask_secret.admitted_key_provider`,
+key each by `file::qualname::ordinal`, and look each key up in `ADMISSION_SITES`, a mapping from site to the
+surface ids or test functions that exercise it (`cli/run.py::run` to `run` and `run_chunked`;
+`cli/unmask.py::unmask` to `unmask`; `cli/report.py::_vault` to `report_vault`;
+`cli/tokenize.py::tokenize` to `tokenize`; `api.py::mask` to `test_api_mask_refuses_an_unsafe_file`,
+`test_api_mask_reads_the_checked_descriptor`).
+`_CLI_SURFACES` becomes the tuple of the CLI ids. The check fails when a derived ordinal is missing from the
 mapping, a mapping key has no live site, an id is not handled by `_argv` (each id must produce argv without
 the `assert written is not None` fallback misrouting), or a named test function does not exist in the module.
 
@@ -283,9 +304,10 @@ codes (`cli/_token_vault.py:110-113,138-145`); the message no longer carries the
 
 ### 5.4 `decoy.mask()` spool
 
-`api.py::_stage_source_entry` takes its temp from `create_private_temp(prefix=f"decoy-mask-{name}-",
-suffix=".parquet")`; `pq.write_table` at `api.py:263` writes into it (a private raw sink, `via =
-"create_private_temp"`). Cleanup through `tmp_paths` is unchanged. The `api.py` entry leaves
+`api.py::_stage_source_entry` takes its temp from `create_private_temp(prefix=f"decoy-mask-{name}-")` and
+appends it to `tmp_paths` before `pq.write_table` at `api.py:263` writes into it (a private raw sink, `via =
+"create_private_temp"`). Cleanup uses the existing `tmp_paths` finalizer, including when the Parquet write
+fails. The `api.py` entry leaves
 `tests/sentry/baselines/atomic-writer-allow.json` and the `ALLOWLIST` in `tests/sentry/test_atomic_writer.py`
 (no `mkstemp` left in `api.py`); the `target-writes-allow.json` row stays (still not a target write).
 
@@ -326,9 +348,10 @@ output bytes are pinned unchanged by AT-P3.
 
 ### 6.4 Fields
 
-- Registry row fields: `file`, `function` (qualified), `sink` (kind), `disposition`, `reason`, `via`
+- Registry row fields: `file`, `function` (qualified), `sink` (kind), `ordinal` (one-based within the same
+  file, function and sink), `disposition`, `reason`, `via`
   (private raw sinks only).
-- Baseline entry fields (`private-file-sinks.json`): key `file::function::sink`, `reason`, `exit`; top-level
+- Baseline entry fields (`private-file-sinks.json`): key `file::function::sink::ordinal`, `reason`, `exit`; top-level
   `sentry_id = "private-file-sinks"`, `created_in = "X7c-S3"`.
 - `PrivateFileError` fields: `code` (`private_open_failed`, `private_mode_failed`), `errno` (mirrors
   `AtomicWriteError`, `_atomic.py:112-121`).
@@ -337,9 +360,9 @@ output bytes are pinned unchanged by AT-P3.
 
 Regenerated by an AST walk of `src/decoy/` at `994bc7a` (calls to `open` with a write mode, `Path.open`,
 `write_text`, `write_bytes`, `os.open`, `os.fdopen`, `tempfile.*`, `sqlite3.connect`, `duckdb.connect`,
-pandas and pyarrow writers, `shutil` copies, `chmod`/`fchmod`, and the `_atomic` and `_targets` entry
-points), plus a grep for SQL `COPY ... TO`. 56 sites: 9 inside `_atomic.py` (the implementation, not listed)
-and 47 below.
+pandas, pyarrow and fixed-width writers, tar extraction, `shutil` copies, `chmod`/`fchmod`, and the `_atomic`
+and `_targets` entry points), plus a grep for SQL `COPY ... TO`. 58 sites: 9 inside `_atomic.py` (the
+implementation, not listed) and 49 below.
 
 | Site | What it writes | Disposition | Through today | After X7c |
 |---|---|---|---|---|
@@ -366,19 +389,21 @@ and 47 below.
 | `ci/engine_logging.py:29` | engine log scratch directory | temp | `TemporaryDirectory` (0700) | baseline, exit WIN-FEAS |
 | `cli/io/_targets.py:364,366,368` | table bytes into the stager's temp (public or private by caller) | staged | stager passed by caller | same (G-ONE-TARGET-WRITE checks the stager) |
 | `cli/io/_targets.py:422` | masked whole-table output (`write_targets`) | public | `write_table` | same |
+| `cli/io/_targets.py:337` | fixed-width masked output | public | engine `write_fixed_width` | same |
 | `cli/io/_targets.py:453,455,457,461` | chunked masked output | public | `staged_local_target` and writes into its temp | same |
 | `cli/init.py:537,618,634,670` | scaffolded `pipeline.yaml` | public (OQ2) | `write_text` | same |
 | `cli/schema.py:73` | `PipelineConfig` JSON schema | public | `write_text` | same |
 | `cli/demo.py:64,152,156,332,356,371` | synthetic demo data, profile and config | public | `write_text`, `open("w")` | same |
 | `_update_check.py:71` | update-check cache (time, version) | public | `write_text` | same |
-| `distribution/installer.py:665,667,669` | 0755 launcher shim | public | `mkstemp`, `fdopen`, `chmod 0o755` | same (P4 allows an execute bit) |
+| `distribution/installer.py:665,667,669` | 0755 launcher shim | public | `mkstemp`, `fdopen`, `chmod 0o755` | same (P4 exact exception) |
+| `distribution/installer.py:344` | verified runtime bundle files | public | filtered `tar.extractall` into the install staging directory | same |
 | `distribution/lock.py:51` | empty install lock file | public | `os.open(O_CREAT, 0o600)` | same |
 | `_mask_secret.py:124` | mask secret, opened read-only | read | `os.open(O_RDONLY)` | same |
 | `cli/_duckdb_source.py:81` | DuckDB source database | read | `duckdb.connect(read_only=True)` | same |
 
-Totals (47): private 18 today (10 through entry points, 8 raw), temp 3, staged 3, public 21, read 2. After S2
-(46): 13 private entry-point calls, 2 private raw sinks with `via`, 2 private baseline rows (L5a), 3 temp
-baseline rows (WIN-FEAS), 3 staged, 21 public, 2 read; `_token_vault.py:137` is gone and
+Totals (49): private 18 today (10 through entry points, 8 raw), temp 3, staged 3, public 23, read 2. After S2
+(48): 13 private entry-point calls, 2 private raw sinks with `via`, 2 private baseline rows (L5a), 3 temp
+baseline rows (WIN-FEAS), 3 staged, 23 public, 2 read; `_token_vault.py:137` is gone and
 `compile_explain.py:243`, `_token_vault.py:109` and `api.py:258` become entry-point calls. Baseline at S3: 5
 rows.
 
@@ -387,7 +412,7 @@ rows.
 | # | Class | Applies here | Structure that closes it | Sentry or property test | Mutation that turns it red |
 |---|---|---|---|---|---|
 | 1 | Value-bearing output | plan artifact, token vault, spool, restored output written wider than 0600 | private entry points publish 0600; registry disposition per sink | AT-P3 per private surface under umask 000 | M3: write the plan artifact with `write_text` again |
-| 2 | Cleanup missing on an exit path | staging temps on failure; spool temps | `_atomic._staged` removes the temp on every exit (unchanged); `create_private_temp` paths stay in `tmp_paths` cleanup | AT-P1d: injected narrowing failure leaves no temp (`test_atomic_staged.py:165` `_names == ["out.csv"]`) | M2: drop the unlink in `create_exclusive`'s narrowing failure branch |
+| 2 | Cleanup missing on an exit path | staging temps on failure; spool temps | `_atomic._staged` removes the temp on every exit (unchanged); `create_private_temp` paths stay in `tmp_paths` cleanup | AT-P1d: injected narrowing failure leaves no temp (`test_atomic_staged.py:166` `_names == ["out.csv"]`) | M2: drop the unlink in `create_exclusive`'s narrowing failure branch |
 | 3 | State and ordering | owner-only before the first byte | `create_exclusive` and `open_private` create with 0600, narrow by descriptor and return only then | AT-P1a stats the temp before the first write under umask 000 | M1: create with 0o666 and drop the narrowing in `create_exclusive` |
 | 4 | Route parity and silent fallback | public versus private writes chosen per caller | entry points classify themselves; raw sinks need a row; `via` binding checked | AT-P2a, AT-P2c | M4: delete one registry row |
 | 5 | Referential integrity | N/A: no tables, keys or relationships change; bytes pinned by AT-P3 | N/A | N/A | N/A |
@@ -425,19 +450,22 @@ code in its slice.
   function (`cli/report.py:86` `_write_out` and `cli/report.py:705` `_render`), `decoy ci ... --output` and
   the debug log, and the `decoy.mask()` spool while it exists. The installer trust state
   (`distribution/installer.py:219`) gets a unit-level case in the same S2 file set (it needs no download:
-  call the trust-state recorder with a fixture document).
-- AT-P2a to AT-P2i (S3, seeded sources parsed in the test, each red): (a) `path = settings.key_path;
+  call the trust-state recorder with a fixture document). A unit case injects a `pq.write_table` failure and
+  asserts the registered spool path is removed by the existing finalizer.
+- AT-P2a to AT-P2l (S3, seeded sources parsed in the test, each red): (a) `path = settings.key_path;
   path.write_bytes(v)` with no row; (b) `p = Path(cfg.key_dir) / name; p.write_text(v)` with no row; (c)
   `open(target, "wb")` in a row marked private whose `via` call is absent; (d) `try: os.chmod(p, 0o600)
   except OSError: pass`; (e) `os.chmod(p, 0o600)` outside `_private_file.py`; (f) `from os import chmod as c;
   c(p, mode)`; (g) a registry row whose sink is gone; (h) a baseline key added (ratchet); (i)
-  `conn.execute(f"COPY t TO '{dest}'")` with no row.
+  `conn.execute(f"COPY t TO '{dest}'")` with no row; (j) a second `Path.write_text` in a function whose first
+  ordinal already has a row; (k) `os.chmod(p, 0o700)` outside `_private_file.py`; (l) an import from `decoy`
+  in `_private_file.py`.
 - AT-P2j (S3): the live tree passes with the 5-row baseline, and `PRIVATE_CASES` (rule P1b) maps every private
   entry-point call site and every `via` row to an existing AT-P3 test (a new private site without a case
   fails, and so does a case id that names no test).
-- AT-S1 (S3): the mask-secret derivation finds five admission sites; a seeded module with a sixth call fails
-  naming `file::function`; a mapping id that is not a `_CLI_SURFACES` member handled by `_argv`, or a test name
-  absent from the module, fails.
+- AT-S1 (S3): the mask-secret derivation finds five admission sites; a seeded module with a sixth call and a
+  second call inside an already mapped function both fail naming `file::function::ordinal`; a mapping id that
+  is not a `_CLI_SURFACES` member handled by `_argv`, or a test name absent from the module, fails.
 
 ## 9. Owner questions (each answerable alone; recommended answer first)
 
@@ -459,7 +487,8 @@ code in its slice.
 - `src/decoy/_atomic.py`: the publish core `_staged`, entry points, `AtomicWriteError` shape. Reused; its
   creation and mode half moves to `_private_file.py`.
 - `tests/sentry/io_policy/_calls.py`: import resolution and qualified scopes. Reused by the new sentry and by
-  the mask-secret derivation; no new walker.
+  the mask-secret derivation; S3 adds call records and ancestor metadata to its one traversal, with the
+  existing APIs projected unchanged from that core.
 - `tests/sentry/_ratchet.py`, `scripts/dev/ratchet_check.py`, `scripts/dev/sentry_registry.toml`: the
   shrink-only baseline machinery.
 - `tests/sentry/test_sentry_manifest.py`: the new sentry is added to `SENTRIES` so the gate collects it.
@@ -473,10 +502,11 @@ code in its slice.
 |---|---|---|---|
 | `_private_file.py` (`apply_mode`, `restrict_owner_only`, `create_exclusive`, `open_private`, `create_private_temp`, `PrivateFileError`) | `src/decoy/` (10 modules today, 11 after) | `CODEMAP.md:48`, private shared filesystem primitives | ~170 lines new |
 | `_atomic.py` shrink | `src/decoy/` | `CODEMAP.md:48` | 493 to ~455 |
-| Unit tests AT-P1 | `tests/unit/private_file/test_private_file.py` (new sub-package: `tests/unit/` already has 39 flat modules) | `CODEMAP.md:48` row edited to name `tests/unit/<noun>/` for new primitives | ~260 |
+| Unit tests AT-P1 | `tests/unit/private_file/test_private_file.py` (new sub-package: `tests/unit/` already has 39 flat modules) | map change in S1: `CODEMAP.md:48` is edited to send new private-filesystem contract tests to `tests/unit/<concern>/` | ~260 |
 | AT-P1d step | `tests/unit/test_atomic_staged.py` (edited, 517 to ~545) | `CODEMAP.md:48` | +30 |
-| AT-P3 e2e | `tests/e2e/private_file/test_private_surfaces.py` (new sub-package: `tests/e2e/` has 82 flat modules) | `CODEMAP.md:59` pattern of named e2e folders | ~260 |
+| AT-P3 e2e | `tests/e2e/private_file/test_private_surfaces.py` (new sub-package: `tests/e2e/` has 81 flat Python modules) | map change in S1: a new CODEMAP row sends private-filesystem surface contracts to `tests/e2e/<concern>/`; current row 59 covers CLI-format tests only | ~260 |
 | Sentry G-ONE-PRIVATE-FILE | `tests/sentry/io_policy/test_private_files.py` (`tests/sentry/` has 26 flat modules; `io_policy/` has 3) | `CODEMAP.md:57` | ~320 |
+| Shared call scanner extension | `tests/sentry/io_policy/_calls.py` (edited) | `CODEMAP.md:57`, shared I/O policy scanner | +50 |
 | Sink registry | `tests/sentry/io_policy/file_sinks.toml` | `CODEMAP.md:57` | ~150 |
 | Baseline | `tests/sentry/baselines/private-file-sinks.json` | `CODEMAP.md:56` | ~30 |
 | Mask-secret derivation | `tests/sentry/test_mask_secret_file_mode.py` (edited, 318 to ~370) | `CODEMAP.md:56` | +50 |
@@ -503,7 +533,7 @@ Each slice is at most 10 files and 800 lines, on its own branch from CLI `main`,
 |---|---|---|---|---|
 | S1 | `_private_file.py`; move `_create_temp`/`_temp_name` and every mode call out of `_atomic.py`; OQ1 check if answered yes; AT-P1a to AT-P1f; CODEMAP row | `src/decoy/_private_file.py`, `src/decoy/_atomic.py`, `tests/unit/private_file/__init__.py`, `tests/unit/private_file/test_private_file.py`, `tests/unit/test_atomic_staged.py`, `CODEMAP.md` | ~500 | CLI X0a (on main) |
 | S2 | Move `compile_explain.py:243`, `_token_vault.py:109,137`, `api.py:258` onto the entry points; retarget the token vault test; drop the `api.py` atomic-writer entry; AT-P3 | `src/decoy/cli/compile_explain.py`, `src/decoy/cli/_token_vault.py`, `src/decoy/api.py`, `tests/unit/test_token_vault.py`, `tests/sentry/baselines/atomic-writer-allow.json`, `tests/sentry/test_atomic_writer.py`, `tests/e2e/private_file/__init__.py`, `tests/e2e/private_file/test_private_surfaces.py`, `tests/unit/private_file/test_private_file.py` (trust-state case) | ~430 | S1 |
-| S3 | G-ONE-PRIVATE-FILE sentry, registry, 5-row baseline, sentry registry row, manifest row; AST-derived mask-secret surfaces | `tests/sentry/io_policy/test_private_files.py`, `tests/sentry/io_policy/file_sinks.toml`, `tests/sentry/baselines/private-file-sinks.json`, `scripts/dev/sentry_registry.toml`, `tests/sentry/test_sentry_manifest.py`, `tests/sentry/test_mask_secret_file_mode.py` | ~580 | S2 |
+| S3 | Shared normalized call records; G-ONE-PRIVATE-FILE sentry, ordinal registry, 5-row baseline, sentry registry row, manifest row; ordinal AST-derived mask-secret surfaces | `tests/sentry/io_policy/_calls.py`, `tests/sentry/io_policy/test_private_files.py`, `tests/sentry/io_policy/file_sinks.toml`, `tests/sentry/baselines/private-file-sinks.json`, `scripts/dev/sentry_registry.toml`, `tests/sentry/test_sentry_manifest.py`, `tests/sentry/test_mask_secret_file_mode.py` | ~670 | S2 |
 
 The sentry lands last so its baseline starts at the 5 rows with named exits; S1 and S2 carry their own red-first
 tests. The full suite runs before S1 and S2 merge (escalation triggers: S1 moves a shared primitive, S2 changes
@@ -533,3 +563,5 @@ a sentry baseline and an error path); S3 runs T1 plus the sentry folder.
 - L5a: move `_commit_vault` onto `create_exclusive` when it becomes `_vault_commit.py`, removing two baseline
   rows.
 - OQ1 if deferred: the symlink-owner check.
+- V2 descriptor handoff: evaluate descriptor-taking SQLite, PyArrow and atomic-writer interfaces before
+  changing the existing close-then-reopen paths. This is a theoretical local swap race, not a V1 blocker.
