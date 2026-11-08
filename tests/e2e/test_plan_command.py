@@ -283,7 +283,8 @@ def test_with_invalid_profile_json(tmp_path: Path) -> None:
         ["validate", "compile", str(config_path), "--profile", str(profile_path)],
     )
     assert result.exit_code == 1
-    assert "Profile JSON" in result.output
+    # Rich wraps at the console width; a long temp path can split the phrase.
+    assert "Profile JSON" in " ".join(result.output.split())
 
 
 # -- --profile happy path --------------------------------------------
