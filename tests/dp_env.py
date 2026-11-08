@@ -10,6 +10,7 @@ this helper.
 
 from __future__ import annotations
 
+from decoy_engine import reasons
 from decoy_engine.quality import dp_provenance
 
 
@@ -31,8 +32,8 @@ def expected_dp_refusal_code() -> str | None:
     if current_row_is_certified():
         return None
     if dp_provenance.current_platform() != dp_provenance.CERTIFIED_PLATFORM:
-        return "dp_platform_uncertified"
-    return "dp_stack_uncertified"
+        return str(reasons.quality.DP_PLATFORM_UNCERTIFIED)
+    return str(reasons.quality.DP_STACK_UNCERTIFIED)
 
 
 def expected_dp_refusal_code_required() -> str:
