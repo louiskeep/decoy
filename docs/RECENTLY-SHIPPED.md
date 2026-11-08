@@ -22,6 +22,12 @@ git logs).
 
 ## 2026-11-08
 
+- **Engine** (`4acac80a`, engine #406): value-free discovery, subset-seed and filter errors (roadmap row 14). A subset filter literal that does not match the column type, a discovery read failure, and several FK-key and pandas-ingest errors now name the table and column only and carry no chained library error that could quote a cell. Gate: Codex GO r2, Dennis GO; full suite on the merge head 0 failing (42,028 collected), promoted as the main baseline.
+- **CLI** (`e9df7b1`, #120): init wizard Phase 1a plan (`docs/plans/2026-11-08-init-wizard-phase-1a.md`). Twelve CLI slices and engine parts E1 and E3; adds one CLI-wide reason-code registry in W1a.0. Plan gate: Dennis NO-GO r1, GO r2, then Codex fix to GO.
+- **Engine** (`38951412`, engine #405): SCAN-ML M1. Config fields for the pre-scan and post-scan detectors, model status and loading, NER on free-text columns only at `NER_MIN_RATE` 0.211, and the classifier wired in (off by default). Reason manifest 1.8.0. Gate: Dennis GO, Codex GO; full suite 0 failing (41,909 collected).
+- **CLI** (`08124b5`, #119): init wizard spec v3, applying the 2026-11-08 spec review (Phase 1a and 1b split; section mode is `decoy edit`).
+- **CLI** (`12fc2e6`, #118): `--verbose` tracebacks keep each frame header on one line under a long directory, which was the last Mac-only CLI failure. A Mac full suite on that main then ran 3108 passed, 7 skipped, 0 failed.
+- **Engine** (`09376f24`, engine #404): the `openat2` binding's type annotations pass mypy on macOS too, so the Mac engine gate is clean.
 - **CLI** (`834ab99`, #115): CLI-BASELINE. `gates.sh` can write a stored failing-id baseline on main (`--write-baseline`) and compare a branch against it (`--baseline-file`), refusing a file whose head does not share main's tree. The first CLI main baseline was written the same day (0 failing, 3054 collected), so a CLI full merge test is one suite run instead of two. Gate: Dennis GO r3, Codex GO r3; full suite on the merge head green on decoy-test-6.
 - **Engine** (`45553d7e`, engine #403): LIB L0.1. The protected directory allocator under `fileaccess`, the first piece of the L1a records module and the first user of REG-RENUMBER. Gate: Dennis GO, Codex GO; full suite green on decoy-test-6; Mac gate green.
 - **CLI** (`6694c8e`, #114): `decoy init` writes the source path into the first source entry only, keeps a trailing comment, and exits with a clear error when a preset template has no `path` under `sources:`.
