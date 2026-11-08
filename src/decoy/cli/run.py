@@ -29,7 +29,6 @@ from decoy._atomic import AtomicWriteError, WriteMode, describe, fsync_directory
 from decoy.cli._duckdb_source import DuckDBSourceError, acquire_relation, parse_flag
 from decoy.cli._sources import iter_source_chunks, parquet_schema, read_source
 from decoy.cli._sources import resolve_path as _resolve_path
-from decoy.cli._yaml_errors import sanitize_yaml_error
 from decoy.cli.exit_codes import EXIT_CAPACITY, EXIT_FINDINGS, EXIT_RUNTIME, EXIT_USAGE
 from decoy.cli.extras import (
     MissingExtraError,
@@ -38,6 +37,15 @@ from decoy.cli.extras import (
     check_cloud_endpoints_supported,
     translate_missing_extra,
     translate_ner_unavailable,
+)
+from decoy.cli.gate import (
+    CAPACITY_CODES,
+    GateFinding,
+    GateRoute,
+    PreRunCheckError,
+    cap_error_text,
+    check_before_run,
+    parse_pipeline_yaml,
 )
 from decoy.cli.io._targets import (
     TargetFormatError,
@@ -52,17 +60,8 @@ from decoy.ui.progress import spinner
 from decoy.ui.table import make_table
 from decoy.ui.theme import accent, code, error, hint, success, warn
 
-# OOM checker v1: the engine's out-of-core-FK memory gate raises `ExecutionError`
-# with exactly one of these two codes when it refuses a job for capacity, never
-# any other reason -- matched narrowly so a routing/compat/orphan-FK
-# `ExecutionError` (any other code) keeps its existing EXIT_RUNTIME
-# classification below. See docs/plans/2026-07-24-oom-checker-cli-v1.md R8.
-# `out_of_core_insufficient_memory` is now LEGACY-ENGINE compat (round-4, engine
-# side): a current engine's build-floor gate is advisory and never raises it, so
-# this code only ever arrives from an older engine still running the pre-round-4
-# hard-fail gate; kept recognized here rather than dropped so the CLI stays
-# correct against that older engine too.
-_CAPACITY_CODES = frozenset({"out_of_core_insufficient_memory", "out_of_core_fanin_exceeds_budget"})
+# The engine's capacity-refusal codes live with the gate (`CAPACITY_CODES`); see
+# docs/plans/2026-07-24-oom-checker-cli-v1.md R8 for why the match is narrow.
 
 
 class Mode(str, Enum):
@@ -181,15 +180,6 @@ class _MaskSecretUsageError(Exception):
     """--mask-secret AND YAML mask_secret_ref both set; user error (exits EXIT_USAGE)."""
 
 
-class _ConfigValidationError(Exception):
-    """The pipeline YAML failed PipelineConfig schema validation (unknown key
-    under extra="forbid", wrong-typed / missing field). A raw Pydantic
-    ValidationError caught NARROWLY at the model_validate call site and
-    re-raised as this typed error, so the run-level handler classifies it
-    EXIT_USAGE without also catching internal engine ValidationErrors raised
-    deeper in the pipeline (which are engine defects -> EXIT_RUNTIME)."""
-
-
 class _OtelSettingsUsageError(Exception):
     """A refused --otel-endpoint / DECOY_OTEL_* setting; user error (exits EXIT_USAGE)."""
 
@@ -249,23 +239,20 @@ def _start_telemetry(flag_endpoint: str | None, state):
 _is_valid_mask_secret_ref = _mask_secret.is_valid_mask_secret_ref
 
 
-def _load_raw_config(config_path: Path) -> dict | None:
-    """Single defensive YAML parse for the pre-flight helpers.
+def _load_raw_config(
+    config_path: Path,
+) -> tuple[object, list[GateFinding], Exception | None]:
+    """The run path's single YAML parse, through the gate's parser.
 
-    Audit L3 (2026-06-12): the config was read + parsed up to 4x per
-    run (_detect_mode, the spinner body, the follow-up hint, and a
-    since-removed key_label reader) -- a perf cliff on large or
-    network-mounted configs. Helpers now share one parse; the spinner
-    body still re-raises real parse errors through its own load so
-    the error path is unchanged.
+    Returns `(raw, findings, read_error)`: `findings` holds a YAML syntax error (the run
+    refuses it before any work), `read_error` an unreadable or non-UTF-8 file (kept as
+    today: it surfaces through the run-level handler as a runtime error).
     """
     try:
-        import yaml
-
-        cfg = yaml.safe_load(config_path.read_text(encoding="utf-8"))
-        return cfg if isinstance(cfg, dict) else None
-    except Exception:
-        return None
+        raw, findings = parse_pipeline_yaml(config_path)
+    except (OSError, UnicodeDecodeError) as exc:
+        return None, [], exc
+    return raw, findings, None
 
 
 def run(
@@ -509,6 +496,13 @@ def run(
     Use this to execute a masking or synthetic-generation job described in
     YAML. The engine handles its own logging per the YAML's `logging:`
     section; flags here only affect CLI-side output.
+
+    Before it reads any source rows, `run` runs the whole `decoy validate`
+    check (config, compile, preflight). A `--duckdb-source` relation is
+    staged first, so the check sees the file the run reads. An error stops
+    the run with the exit code
+    `decoy validate` gives (1, or 5 for a capacity refusal); warnings are
+    counted on stderr and never stop it. There is no flag to skip the check.
     """
     state = setup_output(json_, quiet, verbose)
     config_str = str(config)
@@ -534,7 +528,8 @@ def run(
                 state.err_console.print(error("error:"), msg)
             raise typer.Exit(code=EXIT_USAGE)
 
-    raw_cfg = _load_raw_config(config)
+    raw, saved_findings, config_read_error = _load_raw_config(config)
+    raw_cfg = raw if isinstance(raw, dict) else None
     yaml_mode = _detect_mode(raw_cfg) or mode.value
 
     resolver = _build_resolver(master_key, key_label, raw_cfg, state)
@@ -574,27 +569,14 @@ def run(
         _otel = _start_telemetry(otel_endpoint, state)
         with spinner(state, f"Running {yaml_mode}..."), contextlib.ExitStack() as _scopes:
             from decoy_engine import (
-                PipelineConfig,
-                run_pipeline,
-            )
-            from decoy_engine import (
                 __version__ as engine_version,
             )
+            from decoy_engine import run_pipeline
 
-            if raw_cfg is not None:
-                raw = raw_cfg
-            else:
-                # The defensive parse failed; re-parse here so the real
-                # YAML error surfaces through the normal error path.
-                import yaml as _yaml
-
-                try:
-                    raw = _yaml.safe_load(config.read_text(encoding="utf-8"))
-                except _yaml.YAMLError as exc:
-                    # A raw YAMLError rides str(exc) through the run-level
-                    # handler and echoes the offending source line (which may
-                    # hold a secret). Re-raise a pre-sanitized EXIT_USAGE error.
-                    raise _ConfigValidationError(sanitize_yaml_error(exc)) from None
+            if config_read_error is not None:
+                raise config_read_error
+            if saved_findings:
+                raise PreRunCheckError.from_findings(saved_findings)
 
             # DE-02 secret-disclosure ROOT guard: validate the RAW YAML
             # `mask_secret_ref` BEFORE PipelineConfig.model_validate(raw). A
@@ -680,19 +662,13 @@ def run(
                         "path": str(_parquet),
                     }
 
-            # Catch the schema ValidationError NARROWLY here (not in the
-            # run-level except) so ONLY user-config validation maps to
-            # EXIT_USAGE; a Pydantic error raised deeper in the engine (e.g.
-            # internal registry/capability models) stays an EXIT_RUNTIME defect.
-            # str(exc) is safe to surface: the mask_secret_ref ROOT guard above
-            # already rejected any secret-bearing structure before this point,
-            # and the F8 message cap bounds the rest.
-            try:
-                from pydantic import ValidationError as _PydanticValidationError
-
-                config_dict = PipelineConfig.model_validate(raw).model_dump()
-            except _PydanticValidationError as exc:
-                raise _ConfigValidationError(str(exc)) from exc
+            # The whole `decoy validate` gate (config, compile, preflight) before any source
+            # row is read. A refusal raises into the one handler below; a pass hands back the
+            # validated config, so the run validates once. The DE-02 guard above keeps a
+            # mask_secret_ref value out of every schema diagnostic.
+            config_dict = check_before_run(
+                raw, config, GateRoute.CHUNKED if chunked else GateRoute.PLAIN, state
+            )
 
             # Cloud (s3/gcs) sources/targets are refused inside the shared
             # I/O helpers below (_load_sources_from_config /
@@ -994,7 +970,7 @@ def run(
             _execution_error_types = ()
 
         capacity_code: str | None = None
-        if isinstance(exc, _execution_error_types) and exc.code in _CAPACITY_CODES:
+        if isinstance(exc, _execution_error_types) and exc.code in CAPACITY_CODES:
             capacity_code = exc.code
 
         # Phase 3.1: `NativeGateError.code` distinguishes a usage refusal
@@ -1006,7 +982,9 @@ def run(
         if isinstance(exc, _native_gate.NativeGateError):
             native_code = exc.code
 
-        if capacity_code is not None:
+        if isinstance(exc, PreRunCheckError):
+            _exit_code = exc.exit_code
+        elif capacity_code is not None:
             _exit_code = EXIT_CAPACITY
         else:
             _exit_code = (
@@ -1050,14 +1028,6 @@ def run(
                         # is something the caller can fix by changing the
                         # request, not a CLI/engine defect.
                         _native_gate.NativeGateError,
-                        # PipelineConfig.model_validate's ValidationError, caught
-                        # narrowly at its call site and re-raised as this typed
-                        # error, means the YAML is structurally wrong (unknown key
-                        # under extra="forbid", wrong-typed / missing field) -- the
-                        # user's config is bad, not a runtime crash. Narrow by
-                        # design: a Pydantic error raised deeper in the engine is
-                        # NOT reclassified and stays an EXIT_RUNTIME defect.
-                        _ConfigValidationError,
                         # DE-02: a bad/missing/weak --mask-secret ref (or YAML
                         # mask_secret_ref) resolves to MaskSecretError (and its
                         # subclasses MissingMaskSecret / WeakMaskSecret /
@@ -1074,8 +1044,7 @@ def run(
         # the truncation a single malformed row's value can land in
         # downstream log aggregators.
         error_text = describe(exc) if isinstance(exc, AtomicWriteError) else str(exc)
-        if len(error_text) > 500:
-            error_text = error_text[:500] + "..."
+        error_text = cap_error_text(error_text)
         keyed_refusal = _mask_secret_guidance.is_keyed_secret_refusal(exc)
         if isinstance(exc, _mask_secret_error_types):
             # Constant text by code; the engine message never reaches the terminal or --json.
@@ -1114,7 +1083,9 @@ def run(
                 "mode": yaml_mode,
                 "error": error_text,
             }
-            if capacity_code is not None:
+            if isinstance(exc, PreRunCheckError):
+                payload.update(exc.json_members())
+            elif capacity_code is not None:
                 payload["error_kind"] = "capacity"
                 payload["code"] = capacity_code
             elif native_code is not None:
@@ -1137,7 +1108,11 @@ def run(
             # a list/bracketed value). markup=False so Rich prints it
             # verbatim instead of parsing it as markup and silently
             # dropping an unrecognized tag.
-            if capacity_code is not None:
+            if isinstance(exc, PreRunCheckError):
+                # The summary already names the command that lists every finding.
+                label = "capacity:" if exc.error_kind == "capacity" else "error:"
+                state.err_console.print(error(label), error_text, markup=False)
+            elif capacity_code is not None:
                 state.err_console.print(error("capacity:"), error_text, markup=False)
                 state.err_console.print(
                     " ",

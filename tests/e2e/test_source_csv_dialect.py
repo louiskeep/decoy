@@ -176,22 +176,32 @@ _MISFITS = {
 
 
 _LATE_QUOTE = b'1,Alice,31\n2,Bob,4\n3,Carol,5\n4,zz_marker_b,"x\n5,zz_marker_a,7\n'
+# The pre-run gate profiles the first 10,000 rows (engine `profile_source` default), so it sees
+# an unterminated quote in the files above. One past that window reaches the chunked engine.
+_GATE_WINDOW = 10_000
+_PAST_WINDOW_QUOTE = (
+    b"".join(b"%d,Name,%d\n" % (i, i % 90) for i in range(1, _GATE_WINDOW + 2))
+    + b'99999,zz_marker_b,"x\n99998,zz_marker_a,7\n'
+)
 
 
 _MISFIT_RUNS = [(case, chunked) for case in sorted(_MISFITS) for chunked in (False, True)]
-_MISFIT_RUNS.append(("late_quote", True))
+_MISFIT_RUNS += [("late_quote", True), ("past_window_quote", True)]
 
 
 @pytest.mark.parametrize(("case", "chunked"), _MISFIT_RUNS)
 def test_headerless_misfit_fails_closed(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, case: str, chunked: bool
 ) -> None:
-    late_quote = case == "late_quote"
-    # The engine's scan cannot see an unterminated quote, so a chunked read fails on the chunk
-    # step that reaches it: chunk 1 for `open_quote` (nothing written), after chunk 1 for
-    # `late_quote` (chunk size 2; an earlier chunk is already on disk).
-    content, code = (_LATE_QUOTE, _MISFITS["open_quote"][1]) if late_quote else _MISFITS[case]
-    scan_blind = chunked and case in ("open_quote", "late_quote")
+    quote_code = _MISFITS["open_quote"][1]
+    # The gate's bounded profile refuses an unterminated quote inside its window before the
+    # engine runs. Past the window the engine's chunk scan cannot see it, so the chunked read
+    # fails on the chunk step that reaches it, after earlier chunks were staged.
+    content, code = {
+        "late_quote": (_LATE_QUOTE, quote_code),
+        "past_window_quote": (_PAST_WINDOW_QUOTE, quote_code),
+    }.get(case) or _MISFITS[case]
+    reaches_engine = case == "past_window_quote"
     src = tmp_path / "secret_name_file.csv"
     src.write_bytes(content)
     cfg = _config(tmp_path, src, dialect=_HEADERLESS)
@@ -208,18 +218,19 @@ def test_headerless_misfit_fails_closed(
     result = runner.invoke(app, args)
     assert result.exit_code == 1, result.output
     assert f"error: {code}: source people " in " ".join(result.output.split()), result.output
-    if not late_quote:
-        assert not (tmp_path / "out.csv").exists()
-    assert reached == ([1] if scan_blind else [])
+    assert not (tmp_path / "out.csv").exists()
+    assert reached == ([1] if reaches_engine else [])
     for leaked in ("zz_marker_a", "zz_marker_b", "Alice", "secret_name_file", str(tmp_path)):
         assert leaked not in result.output
 
 
 def test_chunked_failure_after_chunk_one_writes_no_target(tmp_path: Path) -> None:
+    """The bad row sits past the gate's profile window, so the engine stages earlier chunks
+    before it fails; the staged target must not be published."""
     src = tmp_path / "in.csv"
-    src.write_bytes(_LATE_QUOTE)
+    src.write_bytes(_PAST_WINDOW_QUOTE)
     cfg = _config(tmp_path, src, dialect=_HEADERLESS)
-    result = runner.invoke(app, ["run", str(cfg), "--chunked", "--chunk-size", "2"])
+    result = runner.invoke(app, ["run", str(cfg), "--chunked", "--chunk-size", "1000"])
     assert result.exit_code == 1, result.output
     assert not (tmp_path / "out.csv").exists()
 
