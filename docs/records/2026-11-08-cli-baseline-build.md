@@ -100,6 +100,14 @@ named tests, reverted, never committed. `mutate.py` is not committed.
 | 26 | C2 keep-going force dropped | `test_baseline_mode_keeps_going_after_a_failing_step` |
 | 27 | `DOC_WALK_ROOTS` ignored | `test_a_baseline_behind_a_markdown_in_a_doc_walk_root_is_refused` |
 | 28 | exact-file entry not matched | `test_a_baseline_holding_a_sentry_failure_is_stale_after_any_move` (3 cells) |
+| 29 | `--no-renames` dropped from the staleness diff | `test_a_rename_of_a_test_file_into_markdown_makes_the_baseline_stale` |
+| 30 | head tree not compared with main's tree | `test_a_baseline_head_must_have_the_tree_of_its_main[other-tree]` |
+| 31 | a flag token accepted as an operand | `test_a_baseline_flag_without_its_file_operand_exits_2[next-token-is-a-flag]` (2) |
+| 32 | `__cause__` chained on the unreadable-JSON error | `test_safe_errors_carry_no_cause_chain` |
+| 33 | writer skips the provenance check | `test_a_write_whose_head_has_another_tree_than_main_is_refused`, `..._naming_a_commit_the_repo_lacks_...`, `..._without_a_test_root_writes_nothing` |
+
+Mutation 29 is the AT-5 rename cell (Dennis r1 MEDIUM-1). The same cell is to be carried to the engine copy of
+`test_gates_baseline_file.py` when D6, D7 and D10 are carried back.
 
 The first attempt at mutation 4 put the inserted line at the wrong indent and failed on a syntax error; it
 was redone with the right indent and the table row is from the redo.
@@ -108,11 +116,11 @@ was redone with the right indent and the table row is from the redo.
 
 - T0 per edit on the touched tests (devbox venv, `pytest-one`).
 - T1 on a VM (`vm-run cli`): `tests/unit/scripts`, `tests/unit/test_dev_bootstrap_gates.py`, `tests/sentry`:
-  RESULT-T1. `ruff check src tests scripts/dev` and `ruff format --check` on the touched files: clean.
+  727 passed in 199 s on the head after the merge of `origin/main` and fix round 1 (714 before). `ruff check src tests scripts/dev` and `ruff format --check` on the touched files: clean.
 - Mac (bash 3.2.57, `GATES_TEST_BASH=/bin/bash`, own folder `~/decoy/acct2-cli-baseline`, venv `venv-cli-mac`
   with `decoy` resolved through `PYTHONPATH=src`): `tests/unit/scripts`, `test_dev_bootstrap_gates.py`,
   `test_bash32_compat.py`: 189 passed.
-- End to end on a VM (throwaway clone, `origin/main` set to the branch head, bootstrap first): 
+- End to end on a VM (throwaway clone, `origin/main` set to the branch head, bootstrap first):
   - Head `ca4793d` (a snapshot of the branch at `6c8b544`, based on current CLI main `b6e0437`), bootstrap first:
     the tree stayed clean (0 dirty paths).
   - `gates.sh --keep-going --write-baseline F tests`: exit 0, wall 735 s. Every step ran (env, ruff, sentry and tests
@@ -159,6 +167,19 @@ Other differences, all forced by the above or by bash 3.2:
 - The sentry step has no `env DECOY_GATE_VENV_STRICT=1`.
 - The reporter exits 1 only for a refused write, after printing the whole EVIDENCE block; `gates.sh` accepts
   that code only together with `--write-baseline`.
+
+## Fix round 1 (Codex r1, Dennis r1)
+
+- `--baseline-file` and `--write-baseline` exit 2 with `gates: FLAG needs a file operand` when the operand is
+  missing or the next token starts with `-` (an empty path is the same case).
+- Provenance (V1, accidental mismatch only; no signing): `head_sha` must resolve in the repository and have the
+  tree of `main_sha`. `--check-stored` takes the repo root as a fifth argument; the writer applies the same check
+  with `require_main`, so an unknown `main_sha` is refused at write and left to the staleness message at compare.
+  A reporter copied outside the repo without `--test-root` now refuses to write, because it cannot resolve the
+  commits. This replaces the old control that showed the wrong id.
+- The unreadable-JSON error and the write refusal use `raise ... from None`.
+- The duplicate `Found N errors` regex in the reporter is gone.
+- `origin/main` was merged (`cb24259`); the only conflict was the `CODEMAP.md` table, both rows kept.
 
 ## Not covered
 
