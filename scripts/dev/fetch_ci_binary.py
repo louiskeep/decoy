@@ -49,7 +49,7 @@ def _transient(err: Exception) -> bool:
     return isinstance(err, (TimeoutError, ConnectionError, http.client.IncompleteRead))
 
 
-def download(url: str, *, sleep: Callable[[float], None] = time.sleep) -> bytes:
+def download(url: str, *, sleep: Callable[[float], None] | None = None) -> bytes:
     """Read `url`, retrying a transient network failure; the last failure is raised."""
     for attempt in range(ATTEMPTS):
         try:
@@ -59,7 +59,7 @@ def download(url: str, *, sleep: Callable[[float], None] = time.sleep) -> bytes:
             if attempt == ATTEMPTS - 1 or not _transient(err):
                 raise
             print(f"fetch_ci_binary: {type(err).__name__}, retrying", file=sys.stderr)
-            sleep(BACKOFF_SECONDS[attempt])
+            (sleep or time.sleep)(BACKOFF_SECONDS[attempt])
     raise AssertionError("unreachable")
 
 
