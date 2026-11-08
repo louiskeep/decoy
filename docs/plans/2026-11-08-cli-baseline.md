@@ -1,21 +1,50 @@
 # CLI-BASELINE: a stored failing-id baseline for the CLI gates
 
-Status: plan (Revision 2)
+Status: plan (Revision 3; Dennis GO; Codex plan gate GO)
 
 Roadmap row 5b (`docs/ROADMAP.md`). Repo `louiskeep/decoy` (CLI). Measured on CLI `origin/main`
-`b7009d1` (2026-11-08; Revision 1 used `a1d67ff`). Engine source: `origin/main` `b5b1ad16`.
+`b6e0437` (2026-11-08; Revision 2 used `b7009d1`, Revision 1 used `a1d67ff`). Engine source:
+`origin/main` `b5b1ad16`.
 Author: claudeworkerbee (Opus), 2026-11-08. Build handoff:
 `10_Projects/decoy/handoffs/phase0.5/p05-cli-baseline-build-handoff.md` in the vault.
 
 Rules consulted: `00-universal.md`, `risk-and-exceptions.md`, `development-loop.md`,
 `testing.md`, `reuse-first.md`, `cross-cutting-concerns.md`, `scope-discipline.md`,
-`architecture.md` (fan-out), `verification.md`, `workspace-and-vcs.md`, `documentation.md`.
+`architecture.md` (fan-out), `verification.md`, `workspace-and-vcs.md`, `code-review.md`,
+`api-and-compatibility.md`, `documentation.md`, `catalogs/recurring-defects.md`.
 
 Risk: R2. The slice changes the merge gate itself. A wrong comparison passes a broken branch
 (false green) or blocks a good one, and the stored file is read by tooling outside this repo
 (`~/bin/decoy-vm-t3`, `~/bin/decoy-vm-t3-promote`).
 
-## 0. Revision 2 (Dennis round 1: NO-GO, 0 BLOCKER / 3 HIGH / 9 MEDIUM / 6 LOW)
+## 0. Revision 3 (Dennis round 2: GO, 0 BLOCKER / 0 HIGH / 4 MEDIUM / 9 LOW)
+
+Review: vault `10_Projects/decoy/handoffs/phase0.5/p05-cli-baseline-dennis-r2.md`. Reviewed
+artifact: CLI plan `origin/plan/cli-baseline` at `ffaa590`; current CLI main is `b6e0437` and
+the engine source remains `b5b1ad16`.
+
+| Finding | Fix in this revision |
+|---|---|
+| M-1 `DESIGN`: promote duplicates the D5 staleness rule | `merged` finds the newest first-parent commit `S` on current main whose tree equals tested head `H`, refuses if none, writes `main_sha=S`, and asserts `S`. It has no generated-path list; D5 remains the only staleness rule (section 8). |
+| M-2 `V2-LOG`: mutation 16 combines two theoretical race defects | Split into 16a and 16b. AT-18a uses the recording-venv Python shim to rewrite `F` on the first `--check-stored` reporter call, deterministically between a mutant's check and copy; AT-18b rewrites during the suite to catch a later read of the original. |
+| M-3 `V1`: `--test-root` silently falls back | A supplied root must be an existing directory or the reporter exits 64 before reading JUnit or writing a file. AT-13 has the refusal cell and mutation 25. Section 8 names `~/decoy/wt-<label>` and its lifetime. |
+| M-4 `V1`: SHA fields accept arbitrary strings | D10 validates both SHA fields with `re.fullmatch(r"[0-9a-f]{40}")`. AT-7 covers a symbolic ref, short SHA and trailing newline; mutation 24 drops the validator. Carry back to the engine. |
+| L-1 `V1`: address regex blocks legitimate hex ids | D8 uses the engine's ` at 0x[0-9a-fA-F]+>` pattern and the refusal contains `write-baseline refused`; STEP ZERO reports both that pattern and the broader hex audit. |
+| L-2 `V2-LOG`: legacy ruff overclaim | C1 promises shared-only success for `tests` and `sentry` only. Unparsed tool failures, including default-format ruff output, remain branch-only and fail closed. |
+| L-3 `V2-LOG`: missing mutations | Added mutation 26 for C2 keep-going, 27 for `DOC_WALK_ROOTS`, and 28 for D9's exact-file entry. |
+| L-4 `V2-LOG`: D9 matcher change | D9 only derives `DOC_WALK_GUARDS` from `SENTRY_PATHS`; it keeps the engine prefix matcher. AT-5 covers `tests/unit/test_cli_surface.py`. |
+| L-5 `V2-LOG`: reuse citations | Section 4d lists the exact engine cells ported and the excluded D2/D4 cells by name. |
+| L-6 `V1`: reporter export omitted from the contract | Section 4d keeps `_gates_report.load_baseline` in `__all__`; AT-13 imports it from the copied reporter. |
+| L-7 `V2-LOG`: handoff svg step proves nothing | The branch compare changes only a seeded test; the separate main-move step owns the svg check. |
+| L-8 `V2-LOG`: sentry fan-out | Section 7 records the accepted 28-entry directory and requires the next sentry family to use a named sub-package. |
+| L-9 `V2-LOG`: inherited allowlisted helper gap | Section 11 carries the engine/CLI `_ALLOWED_PY_ARGS` inline-program gap. It does not affect this verdict. |
+
+Codex plan gate (Revision 3): **GO**. No open `V1` finding and no change-created `DESIGN`
+finding remains. Acceptance behavior is defined before implementation, all 29 mutations map to
+a red cell, and the change adds no second CLI-internal central mechanism. Accepted `V2-LOG`
+items are recorded in sections 7 and 11 and do not decide the verdict.
+
+## 0a. Revision 2 (Dennis round 1: NO-GO, 0 BLOCKER / 3 HIGH / 9 MEDIUM / 6 LOW)
 
 Review: vault `10_Projects/decoy/handoffs/phase0.5/p05-cli-baseline-dennis-r1.md`. Orchestrator
 answers: Q1 xdist later as CLI-PAR; Q2 yes, this slice owns bash 3.2 for `gates.sh`; Q3 done
@@ -64,7 +93,9 @@ The script also becomes bash 3.2 safe (no `mapfile`, guarded array expansions), 
 engine's guard test, because the port rewrites the same lines (Q2, answered yes).
 
 The legacy `--baseline` route takes the engine's verdict (fail only on branch-only steps) and
-always keeps going. These are declared changes C1 and C2 (sections 3 and 4e), not side effects.
+always keeps going. For the CLI's current output, shared-only success is promised for the
+`tests` and `sentry` steps; an unparsed tool failure remains branch-only and fails closed. These
+are declared changes C1 and C2 (sections 3 and 4e), not side effects.
 
 Non-goals:
 - pytest-xdist for the CLI suite (section 9: later, as row CLI-PAR).
@@ -107,16 +138,16 @@ Remaining custom code: the port, the CLI's repo configuration, and the divergenc
 | Case | Before | After |
 |---|---|---|
 | `gates.sh --baseline tests` (legacy) without `--keep-going` | stops at the first failing step on each side | keeps going on both sides (C2; the verdict needs every step) |
-| legacy verdict | exit 1 on any failing branch step, failures shared with main included (`scripts/dev/gates.sh:147`) | exit 1 only on a branch-only step: a step main passes, a crash or kill code, an unidentified failure, or more of an identified failure than main has; shared-only failures give exit 0 (C1, AT-19) |
+| legacy verdict | exit 1 on any failing branch step, failures shared with main included (`scripts/dev/gates.sh:147`) | exit 1 only on a branch-only step: a step main passes, a crash or kill code, an unidentified or unparsed failure, or more of an identified failure than main has; shared-only `tests` and `sentry` failures give exit 0, while default-format ruff and other unparsed tool failures fail closed (C1, AT-19) |
 | `gates.sh --write-baseline F tests` on a clean checkout of `origin/main` | exit 2, unknown flag | runs the whole suite once, writes `F`, prints `gates: wrote baseline F`; exit 1 when main has known failing ids, 0 when none |
 | `--write-baseline` on a selection, a dirty tree, or a HEAD other than `origin/main` | exit 2, unknown flag | exit 2 before running, no file |
-| `--write-baseline` where a failing id carries a memory address (`0x` and 6 or more hex digits) | exit 2, unknown flag | runs, refuses to write, names the id, exit 1 (D8, AT-20) |
+| `--write-baseline` where a failing id carries a default-repr memory address (` at 0x[0-9a-fA-F]+>`) | exit 2, unknown flag | runs, refuses to write, includes `write-baseline refused` and names the id, writes nothing, exit 1 (D8, AT-20) |
 | `gates.sh --keep-going --baseline-file F tests` on a branch | exit 2, unknown flag | one suite run; exit 1 on a failing id not in `F`; known ids alone give exit 0; ids in `F` that now pass are listed |
 | `--baseline-file` on a selection | exit 2, unknown flag | exit 1: a compare needs a completed whole-suite run (AT-4) |
 | `F` behind `origin/main` by a change to anything but Markdown or a generated, unread artifact | n/a | exit 2 before running, naming the changed path |
 | `F` behind `origin/main` only by Markdown or `docs/diagrams/*.svg` that no test names, no doc walker reads, and no stored failing id is a doc-walk guard | n/a | accepted; the header says main moved only in such files (AT-5) |
-| `F` for another repo, platform, worker count or test order; wrong types; unknown fields; `format_version` not 1 | n/a | exit 2 before running, saying why |
-| `F` rewritten while the gate checks or runs | n/a | the gate copies `F` first and checks and reads only the copy (D6, AT-18) |
+| `F` for another repo, platform, worker count or test order; wrong types; unknown fields; `format_version` not 1; `main_sha` or `head_sha` not exactly 40 lowercase hex characters | n/a | exit 2 before running, saying why (D10, AT-7) |
+| `F` rewritten while the gate checks or runs | n/a | the gate copies `F` first and checks and reads only the copy (D6, AT-18a, AT-18b) |
 | branch collects fewer tests than `F` beyond the ids of test files it deleted | n/a | exit 1 |
 | branch skips more tests than `F` | n/a | exit 1 |
 | pytest's totals line disagrees with the JUnit failure count | n/a | exit 3 |
@@ -137,7 +168,9 @@ Only the gate's verdict reads the file.
   and never runs inline Python; it calls reporter subcommands (`--check-stored`,
   `--suite-collected`, `--stored-failing-under`, `--verdict`, `--import-origin`, `--workers`,
   `--write-baseline`). Engine P1 arrived at this after Codex found coerced fields (`true` as a
-  count).
+  count). The CLI adds D10 at this same model choke point: each SHA check retains the strict
+  `isinstance(value, str)` guard and then requires
+  `re.fullmatch(r"[0-9a-f]{40}", value) is not None`.
 - Repo facts live once, in the configuration block at the top of `gates.sh`: `REPO_NAME=decoy`,
   `SENTRY_PATHS`, `PYTEST_ARGS`, `NON_CODE_GLOBS`, `GENERATED_UNREAD_GLOBS`, `DOC_WALK_ROOTS`,
   the format and mypy SKIP switches. `DOC_WALK_GUARDS` is not a second list: it is set from
@@ -147,11 +180,13 @@ Only the gate's verdict reads the file.
   `docs/diagrams/*.svg` to main as github-actions[bot] about a minute after every merge that
   touches `src/`. The staleness rule treats a path matching `GENERATED_UNREAD_GLOBS` like
   Markdown: harmless unless a file under `tests/` names it or it is under `DOC_WALK_ROOTS`.
-  No test names `diagrams` or an svg today (grep on `b7009d1`). The engine has no such bot, so
+  No test names `diagrams` or an svg today (unchanged through `b6e0437`). The engine has no such bot, so
   this list is CLI-only (D5).
 - The reporter resolves a test's collected module against a test root. It is the repo root by
-  default (`parents[2]` of the reporter); `--test-root DIR` overrides it, for a reporter copied
-  outside the repo as `decoy-vm-t3-promote merged` does (D7, M6).
+  default (`parents[2]` of the reporter). A supplied `--test-root DIR` overrides it for a
+  reporter copied outside the repo as `decoy-vm-t3-promote merged` does, and must be an existing
+  directory. A missing path or non-directory exits 64 before JUnit is read or any destination
+  file is written (D7).
 - The CLI port is a port, not a mirror. Each repo keeps its own copy; differences are listed
   in section 4f and in the build record. A shared package is a V2-LOG item.
 - House style: single-purpose reporter subcommands, no flag arguments that switch behavior
@@ -186,11 +221,11 @@ Only the gate's verdict reads the file.
 | 2 | Cleanup missing on an exit path | the baseline worktree and the merge-base worktree under `$OUT` | one `cleanup` EXIT trap removes both on every exit (ported) | AT-8 deleted-ids cell leaves no worktree in `git worktree list`; AT-15 pin | 2: merge-base tree dropped from `cleanup`, AT-8 red |
 | 3 | State machine and concurrency | N/A: one process, no shared state; two runs never share `$OUT` (`mktemp -d`) | `mktemp -d` per run | AT-15 pin | n/a |
 | 4 | Route parity and silent fallback | four routes (section 4c): plain, legacy, write, compare; a compare must never fall back to legacy or to a selection | the compare refuses a selection (`WHOLE_SUITE`, `SUITE_OK`) and never adds the baseline tree | AT-1, AT-4 selection cell, AT-11 | 3: compare accepts a selection, AT-4 red |
-| 5 | Referential integrity | N/A: no tables or keys; the only reference is `main_sha` to a commit, covered by class 8 | stale refusal | AT-5 (`main_sha` not in the repo) | n/a |
-| 6 | Untrusted producer | the stored file and the JUnit come from another run (another host, an older tool, a reporter copied outside the repo); failing ids come from test parameters | `load_baseline` with exact types and `format_version`; JUnit counted and cross-checked against pytest's totals; `--test-root`; ids with memory addresses refused at write | AT-7, AT-10, AT-13, AT-20 | 10: bool as a count, AT-7 red; 13: totals check dropped, AT-10 red; 15: address check dropped, AT-20 red; 17: `--test-root` ignored, AT-13 red |
-| 7 | Check then use (TOCTOU) | the stored file is read by the stale check, the model check and the verdict | copy first, check and read only the copy (D6) | AT-18 (rewrite before the copy would have run, and during the run) | 16: check `$BASEFILE` then copy, or read it again after the copy, AT-18 red |
+| 5 | Referential integrity | N/A: no tables or keys; `main_sha` and `head_sha` are commit identifiers | exact 40-lowercase-hex validation in the one stored model, then the stale commit check | AT-7 malformed SHA cells; AT-5 (`main_sha` not in the repo) | 24: SHA validator dropped, AT-7 red |
+| 6 | Untrusted producer | the stored file and the JUnit come from another run (another host, an older tool, a reporter copied outside the repo); failing ids come from test parameters | `load_baseline` with exact types, SHA shapes and `format_version`; JUnit counted and cross-checked against pytest's totals; a supplied `--test-root` must be a directory; default-repr address ids refused at write | AT-7, AT-10, AT-13, AT-20 | 10: bool as a count, AT-7 red; 13: totals check dropped, AT-10 red; 15: address check dropped, AT-20 red; 17: `--test-root` ignored, AT-13 red; 24: SHA validator dropped, AT-7 red; 25: non-directory root accepted, AT-13 red |
+| 7 | Check then use (TOCTOU) | the stored file is read by the stale check, the model check and the verdict | copy first, check and read only the copy (D6) | AT-18a deterministically rewrites on the first `--check-stored` call; AT-18b rewrites during the suite | 16a: check original before copy, AT-18a red; 16b: read original after copy, AT-18b red |
 | 8 | Weak tests and overclaimed evidence | the slice's whole point: a compare that passes without running the suite, or with fewer tests; a guard that a renamed import slips past | shrink, skip and totals rules; `no step ran` exit 3; allow-list guard on `gates.sh` | AT-8, AT-9, AT-10, AT-15, AT-16 | 11: shrink rule dropped, AT-8 red; 12: skip rule dropped, AT-9 red; 19: inline `python -c` JSON read in `gates.sh`, AT-16 red |
-| 9 | Refactor drift | `gates.sh` is rewritten; the legacy and plain routes must change only as declared (C1, C2, D1 to D4) | characterization pins first (AT-15, AT-17); the declared legacy verdict pinned by AT-19 | AT-15, AT-17, AT-19 | 18: legacy verdict fails on shared failures, AT-19 red; 20: D1 dropped (missing explicit path exits 2), AT-15 red |
+| 9 | Refactor drift | `gates.sh` is rewritten; the legacy and plain routes must change only as declared (C1, C2, D1 to D4) | characterization pins first (AT-15, AT-17); the declared legacy verdict and keep-going behavior pinned by AT-19 | AT-15, AT-17, AT-19 | 18: legacy verdict fails on shared test failures, AT-19 red; 20: D1 dropped, AT-15 red; 26: C2 force dropped, AT-19 red |
 | 10 | Frozen contract drift | the stored file format shared with the engine and read by `decoy-vm-t3-promote`; the EVIDENCE header lines the orchestrator greps | the engine's `format_version` 1 model, ported unchanged; AT-13 pins the promote argv | AT-3, AT-13 | 4: `main_sha` renamed, AT-3 and AT-13 red |
 
 ## 4c. Enumerations
@@ -200,7 +235,8 @@ Only the gate's verdict reads the file.
 - `gates.sh` exit 0: every branch step passed (plain), no branch-only step (legacy), no new id
   and every rule held (compare).
 - exit 1: a failing step or id; a branch-only legacy step; a refused write after the run
-  (`WRITE_REFUSED`: no completed whole suite, or a failing id with a memory address); a write on
+  (`write-baseline refused`: no completed whole suite, or a failing id with a default-repr
+  memory address); a write on
   a main with known failures (still writes); a compare without a completed whole suite.
 - exit 2: usage, missing venv or `origin/main`, a refused write before running, a stale, foreign
   or malformed stored file.
@@ -208,7 +244,7 @@ Only the gate's verdict reads the file.
   verdict could not be computed.
 - Every exit runs the EXIT trap that removes `$OUT/baseline-tree` and `$OUT/merge-base-tree`.
 - `_gates_report.py` exits: 0, 1 (main, `scripts/dev/_gates_report.py:71` today), 4 (totals
-  mismatch, ported), 64 (usage, ported).
+  mismatch, ported), 64 (usage or an explicit `--test-root` that is not an existing directory).
 
 ### Routes
 
@@ -229,7 +265,8 @@ N/A: the slice touches no data tables or foreign keys; it only reads JUnit files
 ### Fields
 
 The stored file (the ported `Baseline` model, engine `scripts/dev/_gates_baseline.py:48`):
-- `format_version` (int, exactly 1), `repo` (str), `main_sha`, `head_sha` (str);
+- `format_version` (int, exactly 1), `repo` (str), `main_sha`, `head_sha` (each exactly 40
+  lowercase hex characters, checked with `re.fullmatch`);
 - `collected`, `skipped` (non-negative int, bool refused), `failing` (sorted list of str);
 - `workers` (int, 1 in the CLI), `dist` (`no`), `platform` (str, for example `linux-x86_64`);
 - `order` (`collection`), `order_seconds` (empty map), `file_seconds` (map of str to float).
@@ -251,9 +288,32 @@ The stored file (the ported `Baseline` model, engine `scripts/dev/_gates_baselin
 - Engine `tests/unit/scripts/test_gates_baseline_file.py`, `_gates_harness.py`: ported (P1 cells,
   the run-mode cells, `gates_sh_violations` with its seeded readers; not the parallel cells of
   `test_gates_parallel.py`).
-- Engine `tests/unit/scripts/test_dev_bootstrap_gates.py:153` to `:330`: the `branch_only_steps`
-  cells and the keep-going cell, ported into AT-19 (not the `TESTS_REQUIRED` cell at `:297`,
-  D2).
+- Engine `tests/unit/scripts/test_dev_bootstrap_gates.py`: port
+  `test_gates_baseline_passes_when_the_only_failure_is_shared_with_main`,
+  `test_a_branch_crash_is_branch_only_even_when_main_also_failed`,
+  `test_a_branch_timeout_is_branch_only_even_when_main_timed_out_too`,
+  `test_a_failure_with_no_identifiable_diagnostic_is_branch_only`,
+  `test_a_duplicated_identical_diagnostic_is_branch_only`,
+  `test_identical_failures_on_both_sides_are_shared`,
+  `test_a_total_that_disagrees_with_the_parsed_lines_is_branch_only`,
+  `test_a_pytest_failure_main_lacks_is_branch_only_when_main_also_fails`,
+  `test_a_repeated_pytest_failure_counts_each_time`,
+  `test_a_junit_report_whose_totals_disagree_is_branch_only`,
+  `test_a_branch_step_that_never_ran_is_branch_only`, and
+  `test_baseline_mode_keeps_going_after_a_failing_step` into AT-19. Do not port the D4-only
+  diagnostic cells `test_branch_only_steps_matches_mypy_errors_across_line_moves`,
+  `test_branch_only_steps_flags_a_failure_main_does_not_have`, or
+  `test_ruff_concise_diagnostics_are_compared_as_a_multiset`. Do not port the D2
+  `TESTS_REQUIRED` and doc-path cells
+  (`test_gates_fails_a_code_change_that_selects_no_tests`,
+  `test_gates_passes_a_docs_only_change_with_tests_not_applicable`,
+  `test_gates_fails_a_change_outside_the_old_code_globs_with_no_matching_test`,
+  `test_gates_fails_a_mixed_docs_and_code_change_with_no_tests`,
+  `test_gates_passes_a_change_made_only_of_documentation_paths`,
+  `test_gates_fails_a_code_file_renamed_into_docs_with_no_tests`, and
+  `test_gates_treats_a_workflow_change_as_code`).
+- `_gates_report.py` continues to re-export `load_baseline` in `__all__`, because promote's
+  reader check imports that name from the copied reporter. AT-13 exercises that import.
 - Engine `tests/sentry/test_bash32_compat.py`: ported unchanged.
 - CLI `scripts/dev/ratchet_check.py` and the sentry step: kept as is.
 - CLI `tests/unit/test_dev_bootstrap_gates.py`: kept, pinned, read-only (AT-15).
@@ -268,8 +328,9 @@ The stored file (the ported `Baseline` model, engine `scripts/dev/_gates_baselin
   Declared changes to existing meaning, both on the legacy route only:
   - C1: the legacy verdict fails only on branch-only steps (engine `gates.sh:457` to `:463`,
     `_gates_report.branch_only_steps`). Before, any failing branch step failed the gate. Effect:
-    a branch that shares main's known failures and adds none now passes legacy, as it would pass
-    a compare. AT-19.
+    a branch whose `tests` or `sentry` step shares main's known failures and adds none now passes
+    legacy, as it would pass a compare. Unparsed failures, including the CLI's default ruff
+    output, remain branch-only and fail closed. AT-19.
   - C2: `--baseline` implies `--keep-going` (engine `gates.sh:93`), so both sides run every step
     and the verdict compares like with like.
   Every other flag, the default selection and the plain verdict keep their meaning (AT-15).
@@ -287,11 +348,12 @@ The stored file (the ported `Baseline` model, engine `scripts/dev/_gates_baselin
 | D4 | parallel pass, `--order-from`, `GATES_WORKERS`, order map, `licenses` step, `DECOY_GATE_VENV_STRICT`, `DECOY_LICENSE_STRICT`, `ruff --output-format concise` | absent; ruff, format, mypy and sentry command lines stay the CLI's | no xdist (section 9); the CLI has no license step and reads neither variable |
 | D5 | stale rule exempts Markdown only | also `GENERATED_UNREAD_GLOBS` (`docs/diagrams/*.svg`) | the CLI's regen-diagrams bot (H1) |
 | D6 | `--check-stored` and the stale check read `$BASEFILE`, then `cp` (engine `gates.sh:242` to `:250`) | copy to `$OUT/stored-baseline.json` first; every check and the verdict read the copy | closes the check-then-use window (M4); carry back to the engine |
-| D7 | `TEST_ROOT = parents[2]` only | `--test-root DIR` overrides it | promote runs a copied reporter (M6); carry back to the engine |
-| D8 | memory-address ids refused at collection (`tests/conftest.py:101`) | refused at write by the reporter | the CLI slice may not touch `tests/conftest.py` |
-| D9 | `DOC_WALK_GUARDS` is its own list | `DOC_WALK_GUARDS` = `SENTRY_PATHS`; an entry matches an id whose file equals it or lies under it as a directory | one list (L2); the three named sentries under `tests/unit/` are covered |
+| D7 | `TEST_ROOT = parents[2]` only | `--test-root DIR` overrides it; when supplied, it must be an existing directory or the reporter exits 64 before writing | promote runs a copied reporter (M6); carry back to the engine |
+| D8 | default-repr memory-address ids refused at collection with ` at 0x[0-9a-fA-F]+>` (`tests/conftest.py:102`) | the same pattern is refused at write by the reporter; the message contains `write-baseline refused` | the CLI slice may not touch `tests/conftest.py`; plain hex parameters remain valid |
+| D9 | `DOC_WALK_GUARDS` is its own list | derive `DOC_WALK_GUARDS` from `SENTRY_PATHS`; keep the engine's unchanged prefix matcher, so entries cover both exact files and directories | one list (L2); AT-5 covers the directory entries and exact file `tests/unit/test_cli_surface.py` |
+| D10 | `main_sha` is any non-empty string and `head_sha` any string | in the one model, both fields retain a strict string-type check and then pass `re.fullmatch(r"[0-9a-f]{40}", value)` | symbolic refs otherwise pass `git cat-file` and can evade staleness; carry back to the engine |
 
-## 5. The CLI-specific inputs (measured on `b7009d1`; re-measure at STEP ZERO)
+## 5. The CLI-specific inputs (measured on `b7009d1`; source unchanged at `b6e0437`; re-measure at STEP ZERO)
 
 - Commit mix of the last 40 first-parent commits on CLI main (diff to the first parent): 14
   touch only Markdown, 10 touch only `docs/diagrams/*.svg` (all github-actions[bot]), 16 touch
@@ -324,22 +386,23 @@ harness runs `gates.sh` with `GATES_TEST_BASH` when set, else `bash` on the PATH
 | AT-2 | `--write-baseline` with HEAD not `origin/main`, or a dirty tree, exits 2 | flag unknown |
 | AT-3 | `--write-baseline` on a clean `origin/main` with one seeded failing test writes a file with exactly the fields of section 4c (`format_version` 1, `repo` `decoy`, `workers` 1, `dist` `no`, `order` `collection`, `order_seconds` `{}`, sorted `failing` of bare ids), prints `gates: wrote baseline`, exits 1 | flag unknown |
 | AT-4 | compare: a new failing id exits 1 and names it; only known ids exit 0; a known id that passes now is listed; a compare on a selection exits 1 (engine `test_baseline_file_fails_without_a_completed_whole_suite_run`) | flag unknown |
-| AT-5 | stale: a code change on main after the stored sha exits 2 before running; a Markdown change no test names is accepted with the NOTE line; an svg change under `docs/diagrams/` no test names is accepted; a Markdown file a test names is stale; an svg a test names is stale; a change under a `DOC_WALK_ROOTS` directory is stale (seeded root); a stored failing id under a `SENTRY_PATHS` entry makes any move stale; a `main_sha` not in the repo is stale | flag unknown |
+| AT-5 | stale: a code change on main after the stored sha exits 2 before running; a Markdown change no test names is accepted with the NOTE line; an svg change under `docs/diagrams/` no test names is accepted; a Markdown file a test names is stale; an svg a test names is stale; a change under a `DOC_WALK_ROOTS` directory is stale (seeded root); a stored failing id under a directory `SENTRY_PATHS` entry makes any move stale; a stored failing id exactly equal to the file entry `tests/unit/test_cli_surface.py` also makes it stale; a `main_sha` not in the repo is stale | flag unknown |
 | AT-6 | run mode: a file for another platform, `workers` 2, or `order` other than `collection` exits 2 naming both modes | flag unknown |
-| AT-7 | strict model: a missing or other `format_version`, a bool as a count, a string list as `collected`, an unknown field each exit 2 | flag unknown |
+| AT-7 | strict model: a missing or other `format_version`, a bool as a count, a string list as `collected`, an unknown field, and either SHA field set to a non-string, symbolic ref, short SHA, uppercase SHA, or 40-hex SHA plus `"\n"` each exit 2 rather than crashing | flag unknown |
 | AT-8 | shrink rule: a branch collecting 10 fewer ids than the file fails; deleting a test file with exactly those ids passes and leaves no worktree; a collection error in a kept file fails | flag unknown |
 | AT-9 | skip rule: one more skip than the file fails | flag unknown |
 | AT-10 | totals cross-check: a pytest log whose `N failed` disagrees with the JUnit exits 3; a zero-case JUnit refuses the write | no cross-check |
 | AT-11 | environment scrub: `PYTEST_ADDOPTS="-k ok"` during a write still collects every seeded test | flag unknown |
 | AT-12 | an inherited test is keyed by the collected module, not the defining file | reporter keys by file today |
-| AT-13 | promote contract: the reporter copied (with its sibling `_gates_*.py`) to a directory outside the clone and run as `_gates_report.py OUT --whole-suite --write-baseline F --repo decoy --main-sha S --head-sha H --test-root CLONE` writes the same model as a gates run, inherited id included | subcommand and flag missing |
+| AT-13 | promote contract: the reporter copied (with its sibling `_gates_*.py`) to a directory outside the clone and run as `_gates_report.py OUT --whole-suite --write-baseline F --repo decoy --main-sha S --head-sha H --test-root CLONE` writes the same model as a gates run, inherited id included, and exposes `load_baseline` through `_gates_report`; a missing path and a regular file passed as `--test-root` each exit 64 and write nothing | subcommand and flag missing |
 | AT-14 | bash 3.2: `tests/sentry/test_bash32_compat.py` (ported) is red on its seeds (`mapfile`, a bare `${a[@]}`) and green on every `scripts/dev/*.sh`; on the Mac, `GATES_TEST_BASH=/bin/bash` runs AT-1 to AT-20 and `tests/unit/test_dev_bootstrap_gates.py` green | `mapfile` at `gates.sh:71`; line 83 on `/bin/bash` |
 | AT-15 (pin) | the existing `tests/unit/test_dev_bootstrap_gates.py` cells pass unchanged on Linux, including the legacy branch-only cell, the "no complete EVIDENCE block" cells and both "no step ran" cells | |
 | AT-16 | `gates_sh_violations` (ported) finds nothing in `gates.sh` and flags each of the eight seeded readers | no guard; `gates.sh:135` runs `python -c` |
 | AT-17 (pin) | the EVIDENCE header keeps the CLI's steps and wording: `format` and `mypy` report SKIP with today's reasons; `test paths:` keeps today's text; the sentry step runs `SENTRY_PATHS` with the ratchet first | |
-| AT-18 | the compare reads the checked copy: (a) a seeded test rewrites `F` during the run (adds its own id, moves `main_sha`); (b) a wrapper rewrites `F` after `gates.sh` starts and before the tests step; in both the verdict uses the content that was copied, so the seeded failure is new and the run exits 1 | flag unknown |
-| AT-19 | legacy verdict (ported `branch_only_steps` cells): shared-only failures exit 0; a branch-only failing id exits 1; a crash code on the branch exits 1 even when main also failed; a step not run on the branch exits 1; a repeated failure counts each time; a JUnit whose totals disagree is branch-only; `--baseline` without `--keep-going` still runs every step | legacy fails on shared failures today |
-| AT-20 | a write whose failing ids include one with `0x7f3a2b1c` in its parameters refuses, names it, writes nothing, exits 1 | flag unknown |
+| AT-18a | copy-before-check: extend `recording_venv`'s Python shim so that, on its first reporter call containing `--check-stored`, it rewrites the original `F` to a valid file that includes the seeded failing id before executing that reporter call. Correct code already copied the old file, reports the seeded id NEW and exits 1; a check-then-copy mutant copies the rewrite and exits 0 | flag unknown |
+| AT-18b | no read-after-copy: a seeded test rewrites the original `F` during the suite (adds its own id and changes `main_sha`); the verdict still uses the earlier copy, reports the seeded id NEW and exits 1 | flag unknown |
+| AT-19 | legacy verdict (ported `branch_only_steps` cells): shared-only `tests` and `sentry` failures exit 0; default-format ruff and any unidentified failure remain branch-only; a branch-only failing id exits 1; a crash code on the branch exits 1 even when main also failed; a step not run on the branch exits 1; a repeated failure counts each time; a JUnit whose totals disagree is branch-only; `--baseline` without `--keep-going` still runs every step | legacy fails on shared failures today |
+| AT-20 | a write whose failing id includes `test_x[<Thing at 0x7f3a2b1c>]` refuses with `write-baseline refused`, names it, writes nothing and exits 1; `test_x[0xdeadbeef]` is accepted | flag unknown |
 
 End-to-end evidence (not a unit test): on a VM, the handoff's "End-to-end" procedure (a
 throwaway clone whose `origin/main` is the slice head, bootstrap first, then write, then compare
@@ -363,15 +426,23 @@ Each on the final head, reverted, never committed; the builder records the SHA a
 12. Skip rule dropped: AT-9 red.
 13. Totals cross-check dropped: AT-10 red.
 14. Environment scrub dropped: AT-11 red.
-15. Memory-address refusal dropped: AT-20 red.
-16. Check `$BASEFILE` before the copy, or read it again after: AT-18 red.
+15. Default-repr memory-address refusal dropped: AT-20 red.
+16a. Check `$BASEFILE` before copying it: deterministic reporter-call trigger in AT-18a red.
+16b. Read `$BASEFILE` again after the copy: suite-time rewrite in AT-18b red.
 17. `--test-root` ignored: AT-13 red.
-18. Legacy verdict fails on shared failures: AT-19 red.
+18. Legacy verdict fails on shared `tests` or `sentry` failures: AT-19 red.
 19. Inline `"$BIN/python" -c 'import json as j; ...'` in `gates.sh`: AT-16 red.
 20. D1 dropped (missing explicit path exits 2): AT-15 red.
 21. `mapfile` back in `gates.sh`: AT-14 red.
 22. Ids keyed by the defining file: AT-12 red.
 23. Write allowed from a dirty or non-main HEAD: AT-2 red.
+24. The full 40-lowercase-hex validator for either SHA field is dropped: AT-7 red.
+25. An explicit `--test-root` that is a missing path or regular file is accepted or falls back:
+    AT-13 red.
+26. The C2 force that makes legacy mode keep going is dropped: AT-19 red.
+27. `DOC_WALK_ROOTS` is ignored: AT-5 seeded-root cell red.
+28. D9's unchanged prefix matcher no longer recognizes an exact file entry: AT-5
+    `tests/unit/test_cli_surface.py` cell red.
 
 ## 7. Placement
 
@@ -395,16 +466,26 @@ one.
 `tests/unit/test_dev_bootstrap_gates.py` stays where it is (AT-15 pins it); moving it is a
 follow-up (L5).
 
+V2-LOG (L-8): `tests/sentry/` has 28 direct entries before this slice. Adding the parity sentry
+at the mapped `SENTRIES` path is accepted; the next new sentry family must use a named
+sub-package rather than add another flat family.
+
 ## 8. After the merge (orchestrator, not the builder)
 
 Already done: `~/bin/decoy-vm-t3-promote:15` maps `cli` to `REPO_NAME=decoy` (L6).
 
 1. `~/bin/decoy-vm-t3-promote`:
-   - `merged`: today it refuses unless main's tree equals H's tree. The bot commit lands about a
-     minute after a merge, so accept a main whose diff to H's tree is only in
-     `GENERATED_UNREAD_GLOBS` (`docs/diagrams/*.svg`), the same rule the gate applies; record
-     `main_sha` as the current main. Otherwise every CLI `merged` promote races the bot.
-   - `merged`: pass `--test-root <the run tree on the VM>` to the copied reporter (D7, AT-13).
+   - `merged`: resolve `H` to its commit and tree, then walk `origin/main` in first-parent order
+     from newest to oldest. Let `S` be the first commit whose tree equals H's tree; refuse before
+     writing if no such commit exists. Pass `--main-sha S` to the copied reporter, keep
+     `--head-sha H`, and make the final assertion compare the written `main_sha` with `S` rather
+     than current main. Do not put `GENERATED_UNREAD_GLOBS`, a path pattern, or any other
+     staleness relaxation in promote: on the next compare, the gate's single D5 implementation
+     judges the move from `S` to current main. This works whether the diagram bot runs before or
+     after promote without creating a second staleness rule.
+   - `merged`: pass `--test-root ~/decoy/wt-<label>` to the copied reporter (D7, AT-13). Promote
+     before another T3 run starts on that VM: `decoy-vm-t3:89` to `:95` deletes old
+     `~/decoy/wt-*` and `/tmp/decoy-out-*` trees.
    - The reader check at `:65` (`if [ "$REPO" = engine ]`): extend it to `cli`, so a promote
      never saves a file the CLI gate refuses (M7).
    - `carry`: keep, as the named exception of section 4a. A carried CLI file hides a re-break
@@ -416,6 +497,12 @@ Already done: `~/bin/decoy-vm-t3-promote:15` maps `cli` to `REPO_NAME=decoy` (L6
    after step 1's `merged` change, since the CLI `gates.sh` now refuses a stale file itself
    and accepts the bot's svg moves.
 4. From then on, CLI merges use `stored` mode.
+
+Before step 3, exercise the orchestrator change in a throwaway clone: (a) current main equals
+the tested tree, (b) a later first-parent bot commit changes only an svg, and (c) no first-parent
+tree equals H. The first two must select the expected `S`, write and assert `main_sha=S`; the
+third must refuse without replacing the saved file. In both successful orders, run the CLI
+reader and one compare after the bot move so D5, not promote, decides staleness.
 
 ## 9. pytest-xdist: not in this slice
 
@@ -445,7 +532,8 @@ the merge.
 
 Twelve ways a gate reviewer breaks it, each answered by an AT:
 1. The diagram bot commits svgs a minute after each merge and every compare goes stale:
-   `GENERATED_UNREAD_GLOBS` (AT-5 svg cells); section 8 relaxes promote's tree check.
+   `GENERATED_UNREAD_GLOBS` (AT-5 svg cells); section 8 records the equal-tree first-parent
+   commit and leaves the later move to the same D5 check.
 2. A docs-reading unit test fails on main after a docs-only main move, and the compare blames
    the branch: the "a test names it" rule (AT-5); STEP ZERO re-lists every reader.
 3. A docs fix on main hides a re-break of a sentry that is in the stored failing list:
@@ -482,8 +570,15 @@ All three Revision 1 questions are answered (section 0). None open.
   `tests/unit/scripts/` and have it use `_gates_harness.seeded_clone`, once the AT-15 pin has
   done its job.
 - D2: decide whether the CLI wants the engine's `TESTS_REQUIRED` rule on the plain route.
-- Carry back to the engine: D6 (copy first) and D7 (`--test-root`); the engine's promote route
-  has the same copied-reporter shape.
+- Carry back to the engine: D6 (copy first), D7 (`--test-root`) and D10 (full SHA shapes); the
+  engine's promote route has the same copied-reporter shape.
+- V2-LOG (L-9, inherited): `_ALLOWED_PY_ARGS` permits the sentry's `bash -c` forwarding wrapper
+  without inspecting its inline program. Carry the catalog-class-10 gap with the engine; do not
+  widen this slice for it.
+- V2-LOG (catalog class 3, inherited): the engine's `load_baseline` raises its value-free
+  `BaselineError` with an attached `__cause__` on JSON/read failures. A traceback is
+  server-admin-only under the V1 bar; carry the cleanup with the engine rather than diverge the
+  CLI port.
 - V2-LOG: one gates package shared by engine, CLI and platform, instead of three ports. Until
   then, a fix to the engine reporter must be carried to the CLI copy by hand; the build record
   lists every intended difference so the next port can diff against it.
