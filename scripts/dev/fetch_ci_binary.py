@@ -5,6 +5,10 @@ Usage: fetch_ci_binary.py NAME --dest DIR [--policy FILE]
 NAME is a [[binary_tool]] entry in ci/install-policy.toml, which holds the url, version and sha256
 and is the only place they are written. A digest mismatch deletes nothing and installs nothing:
 the script exits 1 and the CI job fails. The url may be https or, for tests, file.
+
+A timeout, a dropped connection or an HTTP 5xx is retried (ATTEMPTS tries in all, with a short
+backoff) because the release host times out now and then and one miss used to fail the whole job.
+A digest mismatch or an HTTP 4xx is never retried.
 """
 
 from __future__ import annotations
@@ -14,7 +18,10 @@ import hashlib
 import io
 import sys
 import tarfile
+import time
+import urllib.error
 import urllib.request
+from collections.abc import Callable
 from pathlib import Path
 
 if sys.version_info >= (3, 11):
@@ -23,12 +30,33 @@ else:
     import tomli as tomllib
 
 DEFAULT_POLICY = Path(__file__).resolve().parents[2] / "ci" / "install-policy.toml"
+ATTEMPTS = 3
+BACKOFF_SECONDS = (5.0, 15.0)
+
+
+def _transient(err: OSError) -> bool:
+    if isinstance(err, urllib.error.HTTPError):
+        return err.code >= 500
+    return isinstance(err, (urllib.error.URLError, TimeoutError, ConnectionError))
+
+
+def download(url: str, *, sleep: Callable[[float], None] = time.sleep) -> bytes:
+    """Read `url`, retrying a transient network failure; the last failure is raised."""
+    for attempt in range(ATTEMPTS):
+        try:
+            with urllib.request.urlopen(url, timeout=60) as response:
+                return response.read()
+        except OSError as err:
+            if attempt == ATTEMPTS - 1 or not _transient(err):
+                raise
+            print(f"fetch_ci_binary: {type(err).__name__}, retrying", file=sys.stderr)
+            sleep(BACKOFF_SECONDS[attempt])
+    raise AssertionError("unreachable")
 
 
 def fetch(entry: dict[str, str], dest: Path) -> Path:
     """Verify the archive digest, then extract only the one named member into `dest`."""
-    with urllib.request.urlopen(entry["url"], timeout=60) as response:
-        blob = response.read()
+    blob = download(entry["url"])
     digest = hashlib.sha256(blob).hexdigest()
     if digest != entry["sha256"]:
         raise ValueError(f"sha256 mismatch for {entry['name']}: got {digest}")
