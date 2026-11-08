@@ -9,7 +9,9 @@ row and looks it up rather than assuming an answer:
 - Under `.venv` (this repo's normal dev/test env, with pytest/ruff/mypy
   installed), the fingerprint is not a certified row, so a real fit must
   raise `ProvenanceError(code="dp_stack_uncertified")`. That is the arm this
-  test exercises in CI and local `pytest` runs.
+  test exercises in CI and local `pytest` runs on Linux x86-64. On any other
+  platform (macOS) the engine refuses first with `dp_platform_uncertified`;
+  `tests/dp_env.py` names the code the host earns.
 - Under `.venv-certified` (the pristine runtime-only install pinned by
   `requirements-certified.txt`), the fingerprint IS certified, so a real fit
   must complete and emit schema `dps-marginal/v3`. `scripts/cert_smoke.py`
@@ -27,6 +29,8 @@ from decoy_engine.quality import dp_provenance
 from decoy_engine.quality.dp import fit_dp_snapshot
 from decoy_engine.quality.dp_provenance import ProvenanceError
 
+from tests.dp_env import current_row_is_certified, expected_dp_refusal_code, foreign_platform
+
 
 def _fit_a_small_frame():
     df = pd.DataFrame(
@@ -42,19 +46,30 @@ def _fit_a_small_frame():
     return fit_dp_snapshot(df, column_schema, epsilon=8.0, delta=1e-5)
 
 
-def _current_row_is_certified() -> bool:
-    platform = dp_provenance.current_platform()
-    cpython = dp_provenance.current_cpython()
-    fingerprint = dp_provenance.compute_lock_fingerprint(dp_provenance.installed_distribution_set())
-    certified = dp_provenance._CERTIFIED_STACKS.get((platform, cpython))
-    return certified is not None and fingerprint in certified
-
-
 def test_dp_fit_matches_this_environments_certification_status() -> None:
-    if _current_row_is_certified():
+    if current_row_is_certified():
         artifact = _fit_a_small_frame()
         assert artifact["dp"]["schema"] == "dps-marginal/v3"
     else:
         with pytest.raises(ProvenanceError) as exc:
             _fit_a_small_frame()
-        assert exc.value.code == "dp_stack_uncertified"
+        assert exc.value.code == expected_dp_refusal_code()
+
+
+@pytest.mark.parametrize("platform", ["host", "foreign"])
+def test_the_expected_code_helper_matches_the_engine_gate(
+    platform: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The helper mirrors the engine's own gate, so an engine change in order or codes
+    fails here first instead of silently skewing every refusal test."""
+    if platform == "foreign":
+        monkeypatch.setattr(dp_provenance, "current_platform", foreign_platform)
+    expected = expected_dp_refusal_code()
+    if platform == "foreign":
+        assert expected == "dp_platform_uncertified"
+    if expected is None:
+        dp_provenance.check_fit_environment()
+        return
+    with pytest.raises(ProvenanceError) as exc:
+        dp_provenance.check_fit_environment()
+    assert exc.value.code == expected
