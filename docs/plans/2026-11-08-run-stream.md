@@ -41,23 +41,30 @@ is not installed ... Running on the Python fallback", so every cell below is the
 | 4M | Parquet | `--chunked` | 42.4 | 651 | pandas chunked stream |
 | 4M | CSV 304 MB | plain | 48.6 | 1,875 | pandas (legacy adapter) |
 | 4M | CSV | `--chunked` | 47.3 | 480 | pandas chunked stream |
-@@M16CLI@@
+| 16M | Parquet 606 MB | plain | 240.2 | 5,056 | pandas (legacy adapter) |
+| 16M | Parquet | `--chunked` | 219.2 | 1,130 | pandas chunked stream |
+| 16M | CSV 1,216 MB | plain | 278.7 | 6,809 | pandas (legacy adapter) |
+| 16M | CSV | `--chunked` | 261.5 | 484 | pandas chunked stream |
 
 Threads (Arrow's CPU pool, `OMP_NUM_THREADS`, plain Parquet run): 1M rows 11.9 s at 1 and 12.0 s at 8;
-4M rows 42.9 s at 1 and 47.6 s at 8@@M16THR@@. No speedup: the Python path masks on one core and
-Arrow's pool only decodes Parquet.
+4M rows 42.9 s at 1 and 47.6 s at 8; 16M rows 274.7 s at 1 and 253.5 s at 8, with the default run
+at 240.2 s, so the spread between single runs (about 15%) is larger than any thread effect. No
+reliable speedup: the Python path masks on one core and Arrow's pool only decodes Parquet.
 
 What this shows:
 
 - Plain `decoy run` never streams. `_sources.read_source` loads every Parquet source whole
   (`src/decoy/cli/_sources.py:127`) and CSV through pandas then `from_pandas` (`:129-130`); `run.py`
   calls `run_pipeline` with no `sink` and default resources (`src/decoy/cli/run.py:868-878`). Peak
-  memory grows with the file: about 10 times the Parquet file size, 6 times the CSV size.
-- `--chunked` is bounded (about 470 to 650 MB at every size) but is a second engine path:
+  memory grows with the file: 8 to 16 times the Parquet file size, 5 to 8 times the CSV size.
+  At 16M rows a plain CSV run peaks at 6.8 GB.
+- `--chunked` is bounded (470 to 1,130 MB at every size) but is a second engine path:
   `run_mask_pipeline_chunked` (`execution/_chunked.py:378`, the pandas oracle) fed by the CLI's own
   chunk reader (`_sources.iter_source_chunks`, `:139`) and writer (`cli/io/_targets.py:425`).
-- Throughput is the same on every path, about 85,000 rows per second for three masked string
-  columns: streaming saves memory, not time, on the Python path.
+- Throughput is about 85,000 rows per second for three masked string columns up to 4M rows on
+  every path. At 16M rows the resident runs slow to about 67,000 (Parquet) and 57,000 (CSV) rows per
+  second, and `--chunked` is 6 to 9% faster than plain. Streaming is mainly a memory fix on the
+  Python path; the time gain only shows on large inputs.
 
 ### 1.2 The engine's own streaming lane (engine, `run_pipeline` direct)
 
@@ -69,12 +76,17 @@ groups), `mask_secret_ref` set:
 | 4M | `pq.read_table`, no sink (today's CLI) | 48.1 | 1,263 | 1,470 | resident | resident (`no_sink`) |
 | 4M | `pq.read_table` + `ParquetTransactionalSink` | 48.3 | 799 | 995 | resident | streamed |
 | 4M | `LazySource` + `ParquetTransactionalSink` | 47.9 | 514 | 704 | lazy | streamed |
-@@M16ENG@@
+| 16M | `pq.read_table`, no sink (today's CLI) | 242.9 | 4,651 | 4,824 | resident | resident (`no_sink`) |
+| 16M | `pq.read_table` + `ParquetTransactionalSink` | 248.4 | 2,125 | 2,298 | resident | streamed |
+| 16M | `LazySource` + `ParquetTransactionalSink` | 191.0 | 528 | 701 | lazy | streamed |
 
 The auto-chunk lane already routes this config (`auto_chunk.mode == "chunked"`, reason "single mask
 table with only chunk-safe scalar strategies ... at or above the auto-chunk threshold (100000)"); what
 the CLI misses is a `LazySource` input and a sink. `native_admitted` is `False` on every cell (no
-companion). The engine lane alone gives the bounded memory `--chunked` gives today, on the default path.
+companion). With lazy input and a sink the RSS increment stays flat (514 MB at 4M rows, 528 MB at 16M;
+605 MB file), and the 16M run is 21 percent faster than today's resident call (191 s against 243 s),
+because nothing pays for whole-table Arrow and pandas copies. The engine lane alone gives more than
+`--chunked` gives today, on the default path.
 
 ### 1.3 Threads where they exist
 
@@ -86,7 +98,14 @@ companion). The engine lane alone gives the bounded memory `--chunked` gives tod
   `run_native_or_oracle_chunked` directly, not a product path. The native thread knee is 4 by default
   (`decoy-engine-native/src/threads.rs:47`, `DECOY_NATIVE_MASK_THREAD_KNEE`), so "all cores" means at
   most 4 kernel threads per call unless the knee is raised.
-- DuckDB out-of-core FK route: @@OOC@@
+- DuckDB out-of-core FK route: 3M rows per table, 3 tables, `scripts/fk_memory_probe.py --mode out_of_core` on the engine VM.
+  At `--mem-cap-mb 4000` DuckDB got `memory_limit` 3200MB and so 1 thread; mask 500.7 s, peak RSS
+  905 MB. At 24000 it got 19200MB and so up to 9 threads (capped at the CPU count); mask 310.4 s
+  (38% less), peak RSS 1287 MB. Spill peak about 1 GB and parity ok in both. The thread count comes
+  only from the memory limit at 2 GiB per thread (engine
+  `src/decoy_engine/execution/out_of_core/_duckdb.py:29`, `:67`), so a small memory budget also
+  takes away this route's cores. This route already uses many threads when it has the memory; the
+  plan does not change it.
 - Mac (macOS arm64): not measured. `~/decoy/acct2-cli-mac` has no venv, and building one is an install
   on the Mac, which needs the owner's go (owner question Q5). The Python path is single-threaded on
   every host, so the Mac would change the absolute numbers, not the thread finding.
@@ -98,9 +117,15 @@ companion). The engine lane alone gives the bounded memory `--chunked` gives tod
    the resources through so the companion uses them the day it ships; it cannot make the Python path
    multithreaded. This is stated in the run summary (4.5) and is owner question Q1.
 2. Streaming is a memory fix on the Python path and already exists in the engine. The CLI change is
-   to call it: a `LazySource` per Parquet source and a sink per target.
+   to call it: a `LazySource` per Parquet source and a sink per target. It is faster too once the
+   data is large: at 16M rows the engine's lazy-plus-sink cell took 191.0 s against 242.9 s resident
+   with no sink (21% less), and the CLI's `--chunked` run took 219.2 s against 240.2 s (1.2), at a
+   quarter of the memory or less. Small inputs show no difference either way.
 3. CSV has no lazy input in the engine lane (`LazySource` is Parquet only,
    `profile/_readers.py:214`), so CSV needs one engine slice (E2).
+4. The DuckDB out-of-core FK route already runs on many threads when its memory budget allows
+   (1.3). RUN-STREAM keeps its 2 GiB-per-thread rule and only adds the user's thread cap on top
+   (section 4, AT-E1c), so a large memory budget no longer means every core when the user asked for fewer.
 
 ## 2. FRAME
 
