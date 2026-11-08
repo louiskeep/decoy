@@ -261,6 +261,21 @@ def test_a_long_path_in_run_error_text_is_printed_whole(tmp_path: Path) -> None:
     assert str(absent) in result.stderr, result.stderr
 
 
+def test_a_long_path_in_an_engine_error_is_printed_whole(tmp_path: Path) -> None:
+    """The generic engine-error branch prints unfolded too, not only the pre-run check.
+
+    Mutation: drop `soft_wrap=True` from the last `else` print in run's error handler.
+    """
+    long_path = tmp_path / ("e" * 90) / "part.parquet"
+    path = tmp_path / "pipeline.yaml"
+    path.write_text(yaml.safe_dump(_cfg(tmp_path)), encoding="utf-8")
+    failure = RuntimeError(f"cannot open {long_path}")
+    with mock.patch("decoy_engine.run_pipeline", side_effect=failure):
+        result = runner.invoke(app, ["run", str(path)])
+    assert result.exit_code == EXIT_RUNTIME, result.stderr
+    assert str(long_path) in result.stderr, result.stderr
+
+
 # -- AT-3c: chunked capacity ----------------------------------------------------------------------
 
 

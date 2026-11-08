@@ -525,7 +525,9 @@ def run(
                     {"command": "run", "status": "error", "config": config_str, "error": msg},
                 )
             elif state.mode is not OutputMode.quiet:
-                state.err_console.print(error("error:"), msg)
+                # The message quotes the user's spec: print it verbatim (no markup) and
+                # unfolded, like the run error prints below.
+                state.err_console.print(error("error:"), msg, markup=False, soft_wrap=True)
             raise typer.Exit(code=EXIT_USAGE)
 
     raw, saved_findings, config_read_error = _load_raw_config(config)
@@ -1720,6 +1722,8 @@ def _dispatch_run_notifications(
                     state.err_console.print(
                         warn("warning:"),
                         f"notify {r.kind} to {r.target_host} did not deliver{detail}",
+                        markup=False,
+                        soft_wrap=True,
                     )
         return [
             {"kind": r.kind, "delivered": r.delivered, "target_host": r.target_host}
@@ -1727,7 +1731,9 @@ def _dispatch_run_notifications(
         ]
     except Exception as exc:  # notify must never take the run down (D2)
         if state.mode is not OutputMode.quiet:
-            state.err_console.print(warn("warning:"), f"notify dispatch failed: {exc}")
+            state.err_console.print(
+                warn("warning:"), f"notify dispatch failed: {exc}", markup=False, soft_wrap=True
+            )
         return []
 
 
