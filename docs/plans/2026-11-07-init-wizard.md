@@ -1,4 +1,9 @@
-Status: plan
+Status: record
+
+> Superseded for Phase 1a by `docs/plans/2026-11-08-init-wizard-phase-1a.md`, which follows spec v3
+> (`docs/plans/2026-10-30-init-wizard-spec.md`). This plan stays as the record of the reviewed
+> 2026-11-07 design. Its shapes in sections 4.6 and 4.7, its class table and its later parts (E2,
+> W2, W3.1, W3.2) remain the reference for later phases until their own revisions.
 
 # INIT-WIZARD: `decoy init` as a review wizard (CLI roadmap row 32b)
 
