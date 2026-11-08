@@ -143,3 +143,4 @@ The T8 fan-in graph (67 parents, `orphan_policy: remap`) under `--chunked`: the 
 - Dennis M1: CHANGELOG now says the `capacity.source_unreadable` check (code `capacity_source_unprofilable`) prints the error type; it does not name the table.
 - Dennis L2: the `assert result.config is not None` in `gate/_run.py` is an explicit check that survives `python -O`.
 - V2-LOG from Dennis: L1 (`--duckdb-source` with list YAML refuses with `DuckDBSourceError`, FU-2), L3 (add `report.py:2146` and `subset.py:274` to FU-1), L4 (`ci/rule_codes.py:41` literal), L5 (human capacity refusal drops the old remediation lines).
+- Codex round 1 V1s ruled by the orchestrator as plan non-goals, not blockers: `--duckdb-source` staging before the gate is §1 non-goal FU-2 (the gate must see the staged file); a non-UTF-8 config exiting 3 is unchanged from main and is FU-7. The CHANGELOG, the `run` docstring and `docs/cli-reference.md` now say so instead of "before it reads any data".

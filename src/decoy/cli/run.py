@@ -497,8 +497,10 @@ def run(
     YAML. The engine handles its own logging per the YAML's `logging:`
     section; flags here only affect CLI-side output.
 
-    Before it reads any data, `run` runs the whole `decoy validate` check
-    (config, compile, preflight). An error stops the run with the exit code
+    Before it reads any source rows, `run` runs the whole `decoy validate`
+    check (config, compile, preflight). A `--duckdb-source` relation is
+    staged first, so the check sees the file the run reads. An error stops
+    the run with the exit code
     `decoy validate` gives (1, or 5 for a capacity refusal); warnings are
     counted on stderr and never stop it. There is no flag to skip the check.
     """
