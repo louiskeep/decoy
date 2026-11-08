@@ -14,6 +14,7 @@ from dataclasses import dataclass
 from enum import Enum
 
 import typer
+from rich.cells import cell_len
 from rich.console import Console, ConsoleOptions, RenderableType, RenderResult
 from rich.traceback import Trace, Traceback
 
@@ -68,9 +69,15 @@ def print_traceback(state: OutputState) -> None:
     stderr lines. Call it from an `except` block.
     """
     traceback = Traceback()
-    widest = _widest_frame_header(traceback.trace)
-    width = max(state.err_console.width, widest + _PANEL_FRAME)
-    traceback.width = max(traceback.width, width)  # the panel's own cap (Rich default 100)
+    if state.err_console.is_terminal:
+        # A panel wider than the terminal makes it wrap every box row, borders included, so
+        # on a TTY keep Rich's in-panel layout. Only logs and pipes need greppable headers.
+        state.err_console.print(traceback, soft_wrap=False)
+        return
+    widest = _widest_frame_header(traceback.trace) + _PANEL_FRAME
+    # Keep Rich's own cap (default 100) on wide consoles; only grow it for a long header.
+    traceback.width = max(traceback.width or 0, widest)
+    width = max(state.err_console.width, widest)
     state.err_console.print(_AtWidth(traceback, width), soft_wrap=False, crop=False)
 
 
@@ -93,7 +100,10 @@ def _widest_frame_header(trace: Trace) -> int:
     widest = 0
     for stack in trace.stacks:
         for frame in stack.frames:
-            widest = max(widest, len(f"{frame.filename}:{frame.lineno} in {frame.name}"))
+            widest = max(widest, cell_len(f"{frame.filename}:{frame.lineno} in {frame.name}"))
+        syntax_error = stack.syntax_error
+        if syntax_error is not None:  # printed as ` <filename>:<line>`
+            widest = max(widest, cell_len(f" {syntax_error.filename}:{syntax_error.lineno}"))
         for group in getattr(stack, "exceptions", ()):  # exception groups (Rich 13.4+)
             widest = max(widest, _widest_frame_header(group) + _PANEL_FRAME)
     return widest
