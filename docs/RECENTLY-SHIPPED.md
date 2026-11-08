@@ -15,13 +15,17 @@ Moved here from `decoy-platform/docs/backlog/RECENTLY-SHIPPED.md` on 2026-11-05 
 ([ROADMAP.md](ROADMAP.md)). The platform copy is frozen at that date. Entries below 2026-11-05 are
 copied unchanged; paths in them are relative to the repo they name.
 
-Last updated: 2026-11-07 (entries for 2026-10-27 to 2026-10-30 are not filled in here; see the repos'
+Last updated: 2026-11-08 (entries for 2026-10-27 to 2026-10-30 are not filled in here; see the repos'
 git logs).
 
 ---
 
 ## 2026-11-08
 
+- **CLI** (`91d191b`, #112): CLI-MAC-TESTS S2. All stderr output goes through one soft-wrapped console and tracebacks print through one helper, so long paths in error text stay whole on any terminal width. A sentry pins the single console. Gate: Dennis GO r2, Codex GO r2; full suite on the merge head green on decoy-test-6.
+- **CLI** (`9ecf445`, #111): init wizard spec v2 (UX-reviewed with the owner) and its spec-review handoff, linked from roadmap row 32b.
+- **CLI** (`ec209ec`, #110): CLI-MAC-TESTS S1. The DP tests take the refusal code the host earns from the engine reason registry, and the install and upgrade tests serve the host target, so seven Mac-only failures pass on macOS with Linux results unchanged.
+- **CLI** (`92cdcac`, #109): `decoy run` prints error text unfolded with markup off, so long paths and bracketed text in errors are no longer cut or eaten.
 - **CLI** (`8ac0f8d`, #107): VALIDATE-ALWAYS Part 2. `decoy run` runs the whole `decoy validate` check (config, compile, preflight) through the shared gate before it reads any source rows; an error stops the run with validate's exit code (1, or 5 for a capacity refusal), warnings are counted on stderr, and `--json` refusals add `error_kind` and `messages`. A missing source now exits 1 instead of 3. The gate adds about 0.8 s per run. Known follow-ups: a `--duckdb-source` relation is staged before the gate (FU-2) and a non-UTF-8 config still exits 3 (FU-7). Gate: Dennis GO r1, Codex GO r2.
 
 ## 2026-11-07

@@ -210,7 +210,7 @@ on origin unless marked local. Detail for each row is in [roadmap/row-detail.md]
 | 5 | CI-L1: CLI CI (`ci.yml` installs `uv`, runs pytest; `ci/required-jobs.toml`, `ci/unlaned.toml`, sentry) | CLI | MERGED (CLI #93, `d60d1fa`); both shared-file ledgers point at main commits (CLI #94, engine #391) | done | none |
 | 5a | CI-X: the engine vendors the CLI's byte-identical shared CI shell parser (`tests/sentry/ci_scan/`) and its CI scanner parses through it; both repos check each other's copy | engine | MERGED (engine #390, `d9e18fa6`) | done | CI-E1 |
 | 5b | CLI-BASELINE: port the engine's stored failing-id baseline (`--write-baseline`, `--baseline-file`) to the CLI `gates.sh`, so a CLI full merge test is one suite run (today CLI runs use legacy mode, main rerun on the VM) | CLI | NOT STARTED | none | ENGINE-PAR |
-| 5c | CLI-MAC-TESTS: the CLI suite on macOS arm64 has 16 failures unrelated to any slice (path and platform assumptions), and the CLI `gates.sh` needs bash 4 (`mapfile`), which macOS does not ship. Fix the tests and make `gates.sh` bash 3.2 safe, or install bash 4 on the Mac (owner's call) | CLI | NOT STARTED | none | none |
+| 5c | CLI-MAC-TESTS: the CLI suite on macOS arm64 has 16 failures unrelated to any slice (path and platform assumptions), and the CLI `gates.sh` needs bash 4 (`mapfile`), which macOS does not ship. Fix the tests and make `gates.sh` bash 3.2 safe, or install bash 4 on the Mac (owner's call) | CLI | PARTLY: S1 MERGED (#110, Mac DP and install tests), S2 MERGED (#112, one unfolded stderr console); next: CLI-BASELINE (stored baseline for `gates.sh`, in gate) and the Mac full-suite run | none | none |
 | 6 | WIN-RUNNER: Windows self-hosted runner on a GCP VM; spend approved by the owner; stopped when idle (`~/bin/vm-reap`) | infra | NOT STARTED; provision when CI-L1 or LIB L1b first needs a Windows lane | LIB plan section 5 OS lanes | none |
 | 7 | FILE-SIZE: file-size ratchet sentry for engine and CLI (new, section 4.2) | engine, CLI | Folded into LAYOUT (plan passed 2026-11-06): file-size and fan-out ratchets plus import-linter layer contracts; E1 and C1 (the maps) build after the CSV reader merges | engine `plan/layout`, CLI `plan/layout` | CLI X0a ratchet (MERGED, CLI #81, #82) |
 | 8 | REG-RENUMBER: `E:scripts/dev/registry_renumber.py` renumbers an unmerged slice's registry minor to `main + 1` at merge; `--check` for the merge gate | engine | MERGED (engine #398, `d46dbc85`): `registry_renumber.py` and its `--check` mode; LIB L0.1 is its first user (registry 1.7.0) | `p05-reg-renumber-build-handoff.md` | none; first useful after SUB-STOP |
@@ -435,8 +435,8 @@ CLI: B-1 tokenize and local vault (#64); B-2 CLI-LAUNCH packaging (#66, #67); R1
 fix (#71); worker bootstrap (#70); F43 (#69); SBOM generator (#75); repins to 0.17.0 and 0.18.0 (#76,
 #79); F13 4a/4b `--mask-secret` (#78); F30 C1a OTel exporter (#80); X0a ratchet (#81, #82); L1b.1 atomic
 writer (#85); VALIDATE-ALWAYS P1 (#88); CI-L1 (#93, ledger #94, #95); CLI-DIALECT Part C and repin to
-0.19.0 (#99); init
-wizard spec (#73, post-V1).
+0.19.0 (#99); CLI-FMT (#101 to #103); ATOMIC-OUTPUT (#105); VALIDATE-ALWAYS P2 (#107); unfolded run
+errors (#109); CLI-MAC-TESTS S1 (#110), S2 (#112); init wizard spec v2 and review handoff (#111, #73).
 
 ---
 
