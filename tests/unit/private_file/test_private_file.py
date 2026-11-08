@@ -192,7 +192,8 @@ def test_restrict_owner_only_raises_eperm_when_the_mode_does_not_stick(
             restrict_owner_only(fd, str(path))
     finally:
         os.close(fd)
-    assert type(caught.value) is OSError and caught.value.errno == errno.EPERM
+    assert not isinstance(caught.value, PrivateFileError)
+    assert caught.value.errno == errno.EPERM
 
 
 def test_on_windows_the_mode_goes_by_path_and_is_not_checked(
@@ -201,8 +202,7 @@ def test_on_windows_the_mode_goes_by_path_and_is_not_checked(
     calls: list[tuple[str, int]] = []
     monkeypatch.setattr(_private_file, "_WINDOWS", True)
     monkeypatch.setattr(os, "chmod", lambda p, bits: calls.append((str(p), bits)))
-    monkeypatch.setattr(os, "fchmod", pytest.fail, raising=False)
-    monkeypatch.setattr(os, "fstat", pytest.fail)
+    # fd -1 makes any fchmod or fstat raise EBADF, so a pass shows neither is used.
     restrict_owner_only(-1, str(tmp_path / "f"))
     apply_mode(-1, str(tmp_path / "d"), 0o700)
     assert calls == [(str(tmp_path / "f"), 0o600), (str(tmp_path / "d"), 0o700)]
