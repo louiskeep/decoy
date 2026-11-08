@@ -136,3 +136,10 @@ The T8 fan-in graph (67 parents, `orphan_policy: remap`) under `--chunked`: the 
 - Full suite and hosted CI (orchestrator). Roadmap row 23 and `docs/RECENTLY-SHIPPED.md` update at merge.
 - AT-13 mutation. A second pass of the mutations on the exact final head if the record commit is not the final one.
 - Windows/macOS runs.
+
+## Gate round 1 fixes (orchestrator)
+
+- Mac and VM full runs found two red cells the impact selection skipped: `test_source_csv_dialect.py::test_headerless_misfit_fails_closed[open_quote-True]` and `[late_quote-True]`. The gate's bounded profile (engine `profile_source`, 10,000 rows) now refuses an unterminated quote before the chunked engine runs, so those cells no longer reach it. Every assertion is kept; the two cells now expect the gate to stop the run and no target. A new `past_window_quote` cell puts the quote past the profile window and still requires the chunked engine to be reached, the same code and no target. `test_chunked_failure_after_chunk_one_writes_no_target` (row 61a) uses the past-window file, so it still proves a chunked failure after staged chunks publishes nothing.
+- Dennis M1: CHANGELOG now says the `capacity.source_unreadable` check (code `capacity_source_unprofilable`) prints the error type; it does not name the table.
+- Dennis L2: the `assert result.config is not None` in `gate/_run.py` is an explicit check that survives `python -O`.
+- V2-LOG from Dennis: L1 (`--duckdb-source` with list YAML refuses with `DuckDBSourceError`, FU-2), L3 (add `report.py:2146` and `subset.py:274` to FU-1), L4 (`ci/rule_codes.py:41` literal), L5 (human capacity refusal drops the old remediation lines).

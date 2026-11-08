@@ -138,7 +138,8 @@ def check_before_run(raw: Any, config_path: Path, route: GateRoute, state: Any) 
             f"{warnings} pre-run warning(s); run `decoy validate CONFIG` to list them.",
             markup=False,
         )
-    assert result.config is not None  # a passing gate always carries its config
+    if result.config is None:  # a passing gate always carries its config; kept under -O
+        raise RuntimeError("pre-run gate passed without a parsed config")
     return result.config
 
 
