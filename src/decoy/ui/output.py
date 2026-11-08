@@ -14,8 +14,8 @@ from dataclasses import dataclass
 from enum import Enum
 
 import typer
-from rich.console import Console
-from rich.traceback import Traceback
+from rich.console import Console, ConsoleOptions, RenderableType, RenderResult
+from rich.traceback import Trace, Traceback
 
 from decoy.cli.exit_codes import EXIT_USAGE
 from decoy.ui.theme import DECOY_THEME, error, hint
@@ -53,14 +53,50 @@ def _make_console(*, stderr: bool) -> Console:
     )
 
 
+# A traceback panel's border and padding around each frame header, with some slack.
+_PANEL_FRAME = 8
+
+
 def print_traceback(state: OutputState) -> None:
     """Print the active exception's traceback to stderr, wrapped by Rich.
 
     The stderr console soft-wraps, and a soft-wrapped traceback crops each frame header
     (`<path>:<line> in <func>`) at the panel edge. This is the one place a stderr print
-    turns soft wrap off. Call it from an `except` block.
+    turns soft wrap off. Without soft wrap Rich folds a frame header that is wider than the
+    panel, which splits `file.py:N in fn` under a long directory, so the panel is made wide
+    enough for the widest header and the terminal wraps the line, as it does for the other
+    stderr lines. Call it from an `except` block.
     """
-    state.err_console.print(Traceback(), soft_wrap=False)
+    traceback = Traceback()
+    widest = _widest_frame_header(traceback.trace)
+    width = max(state.err_console.width, widest + _PANEL_FRAME)
+    traceback.width = max(traceback.width, width)  # the panel's own cap (Rich default 100)
+    state.err_console.print(_AtWidth(traceback, width), soft_wrap=False, crop=False)
+
+
+class _AtWidth:
+    """Render a renderable at a fixed width, wider than the console if need be.
+
+    `Console.print(width=...)` only narrows (it clamps to the console width).
+    """
+
+    def __init__(self, renderable: RenderableType, width: int) -> None:
+        self.renderable = renderable
+        self.width = width
+
+    def __rich_console__(self, console: Console, options: ConsoleOptions) -> RenderResult:
+        yield from console.render(self.renderable, options.update(width=self.width))
+
+
+def _widest_frame_header(trace: Trace) -> int:
+    """The longest `<path>:<line> in <func>` in `trace`, sub-exceptions of a group included."""
+    widest = 0
+    for stack in trace.stacks:
+        for frame in stack.frames:
+            widest = max(widest, len(f"{frame.filename}:{frame.lineno} in {frame.name}"))
+        for group in getattr(stack, "exceptions", ()):  # exception groups (Rich 13.4+)
+            widest = max(widest, _widest_frame_header(group) + _PANEL_FRAME)
+    return widest
 
 
 def setup_output(json_: bool, quiet: bool, verbose: bool) -> OutputState:

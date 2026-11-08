@@ -270,3 +270,33 @@ def test_compile_json_envelopes_are_unchanged(tmp_path: Path, good_config: Path,
     assert set(payload) == {"command", "config", "error", "status"}
     assert payload["command"] == "compile explain"
     assert str(cfg) in payload["config"] and str(cfg) in payload["error"]
+
+
+@pytest.mark.parametrize("pad", range(40, 200, 3))
+def test_a_verbose_traceback_keeps_every_frame_header_on_one_line(
+    pad: int,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Under any directory length the panel never folds `file.py:N in fn`.
+
+    The sweep puts the panel fold inside the header for some `pad` on every OS. Rich prints the
+    path only for a file that exists, so the frame's source is a real file. Mutation: print the
+    traceback at the console width (Rich folds the header).
+    """
+    from decoy.ui.output import print_traceback, setup_output
+
+    monkeypatch.setenv("COLUMNS", "80")
+    source = tmp_path / ("d" * pad) / "eng_frame.py"
+    source.parent.mkdir()
+    source.write_text("def go():\n    raise RuntimeError('boom')\n")
+    namespace: dict[str, object] = {}
+    exec(compile(source.read_text(), str(source), "exec"), namespace)
+    state = setup_output(json_=False, quiet=False, verbose=True)
+    try:
+        namespace["go"]()  # type: ignore[operator]
+    except RuntimeError:
+        print_traceback(state)
+    flat = capsys.readouterr().err.replace("\n", "").replace("│", "")
+    assert flat.count("eng_frame.py:2 in go") == 1
