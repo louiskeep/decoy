@@ -146,13 +146,15 @@ def _parse_baseline(raw: object) -> Baseline:
 
 
 def load_baseline(path: Path) -> Baseline:
+    readable, raw = True, None
     try:
         raw = json.loads(path.read_text())
     except (OSError, ValueError):
-        # `from None`: the parser's message can quote the stored text, so it is not chained.
-        raise BaselineError(
-            "the stored baseline is not readable JSON; rewrite the baseline"
-        ) from None
+        readable = False
+    # Raised after the except block closes: inside it the parser's message, which can quote the
+    # stored text, would ride along as __context__ even with `from None`.
+    if not readable:
+        raise BaselineError("the stored baseline is not readable JSON; rewrite the baseline")
     return _parse_baseline(raw)
 
 
@@ -190,7 +192,14 @@ def provenance_problems(stored: Baseline, root: Path, require_main: bool = False
     mismatch (a file from another checkout, a hand-edited field). This guards against that, not
     against someone forging the JSON: the V1 threat model is accidental leaks, so there is no
     signature. An unknown `main_sha` is left to the staleness check, which names it, unless
-    `require_main` (the writer) wants it resolved."""
+    `require_main` (the writer) wants it resolved.
+
+    A baseline records head_sha == main_sha by construction (a carried file moves both). A
+    different head is accepted only when it resolves and shares main's tree, as a promote of a
+    squash-merged head does."""
+    for name in ("main_sha", "head_sha"):
+        if not _is_sha(getattr(stored, name)):
+            return [f"{name} {getattr(stored, name)!r} is not a full 40-character lowercase SHA"]
     if stored.head_sha == stored.main_sha and not require_main:
         return []
     main_tree = _tree_of(root, stored.main_sha)
@@ -228,3 +237,31 @@ def check_stored(path: Path, repo: str, workers: int, root: Path) -> list[str]:
         f"run mode differs in {', '.join(diff)}: baseline {json.dumps(theirs)}, "
         f"this run {json.dumps(mine)}; rewrite the baseline in this mode"
     ]
+
+
+# A parametrize id from an object without __repr__ carries a memory address that changes every
+# run, so a stored copy would never match. The engine refuses these at collection; the CLI write
+# refuses them instead (D8). A literal hex parameter such as 0xdeadbeef is not an address.
+_ADDRESS_ID = re.compile(r" at 0x[0-9a-fA-F]+>")
+
+
+class WriteRefused(ValueError):
+    """The baseline cannot be stored; the message says why. Nothing is written."""
+
+
+def store_baseline(path: Path, baseline: Baseline, root: Path) -> None:
+    """Write `baseline` after every writer-side refusal: addressed ids, provenance, the model."""
+    if addressed := [t for t in baseline.failing if _ADDRESS_ID.search(t)]:
+        raise WriteRefused(
+            f"{len(addressed)} failing id(s) carry a memory address that changes every run: "
+            + "; ".join(addressed)
+        )
+    if problems := provenance_problems(baseline, root, require_main=True):
+        raise WriteRefused(problems[0])
+    refusal = None
+    try:
+        dump_baseline(path, baseline)
+    except BaselineError as exc:
+        refusal = str(exc)
+    if refusal is not None:  # outside the except block, so no exception context is attached
+        raise WriteRefused(refusal)

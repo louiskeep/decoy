@@ -72,13 +72,21 @@ while [ $# -gt 0 ]; do
     --keep-going) KEEP=1 ;;
     --baseline) BASELINE=1 ;;
     --full) FULL=1 ;;
-    --baseline-file|--write-baseline)
-      # A missing operand, or another flag where the file belongs, is a usage error: swallowing
-      # it would turn `--write-baseline --full` into a baseline file named --full.
-      case ${2:-} in ''|-*) echo "gates: $1 needs a file operand" >&2; exit 2 ;; esac
-      if [ "$1" = --baseline-file ]; then BASEFILE=$2; BASELINE=1; else WRITEBASE=$2; fi
+    --baseline-file|--write-baseline|--steps)
+      # A missing operand, or another flag where it belongs, is a usage error: swallowing it
+      # would turn `--write-baseline --full` into a baseline file named --full. An empty --steps
+      # list is allowed (it runs nothing and the gate then says no step ran); an empty path is not.
+      what='a file operand'; [ "$1" = --steps ] && what='a list of steps'
+      if [ $# -lt 2 ] || { [ -z "$2" ] && [ "$1" != --steps ]; }; then
+        echo "gates: $1 needs $what" >&2; exit 2
+      fi
+      case $2 in -*) echo "gates: $1 needs $what, not the flag $2" >&2; exit 2 ;; esac
+      case $1 in
+        --baseline-file) BASEFILE=$2; BASELINE=1 ;;
+        --write-baseline) WRITEBASE=$2 ;;
+        --steps) STEPS=$2 ;;
+      esac
       shift ;;
-    --steps) STEPS=${2:-}; shift ;;
     -h|--help) awk 'NR > 1 { if (!/^#/) exit; print }' "$0"; exit 0 ;;
     -*) echo "gates: unknown flag $1" >&2; exit 2 ;;
     *) PATHS+=("$1") ;;

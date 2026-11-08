@@ -27,11 +27,11 @@ from _gates_baseline import (
     MODE_KEYS,
     Baseline,
     BaselineError,
+    WriteRefused,
     check_stored,
-    dump_baseline,
     load_baseline,
-    provenance_problems,
     run_mode,
+    store_baseline,
     stored_failing_under,
 )
 
@@ -324,25 +324,10 @@ def _stored_diff(out: Path, whole: bool) -> None:
     (out / "new-failing").write_text("".join(f"{t}\n" for t in new))
 
 
-# A parametrize id from an object without __repr__ carries a memory address that changes every
-# run, so a stored copy would never match. The engine refuses these at collection; the CLI write
-# refuses them instead (D8). A literal hex parameter such as 0xdeadbeef is not an address.
-_ADDRESS_ID = re.compile(r" at 0x[0-9a-fA-F]+>")
-
-
-class WriteRefused(ValueError):
-    """The baseline cannot be stored; the message says why. Nothing is written."""
-
-
 def write_baseline(
     out: Path, dest: Path, repo: str, main_sha: str, head_sha: str, workers: int
 ) -> None:
     failing = junit_failing_ids(out, "branch")
-    if addressed := [t for t in failing if _ADDRESS_ID.search(t)]:
-        raise WriteRefused(
-            f"{len(addressed)} failing id(s) carry a memory address that changes every run: "
-            + "; ".join(addressed)
-        )
     mode = run_mode(workers, {})
     data = Baseline(
         repo=repo,
@@ -358,12 +343,7 @@ def write_baseline(
         order_seconds={},
         file_seconds=file_seconds(out, "branch"),
     )
-    if problems := provenance_problems(data, TEST_ROOT, require_main=True):
-        raise WriteRefused(problems[0])
-    try:
-        dump_baseline(dest, data)
-    except BaselineError as exc:
-        raise WriteRefused(str(exc)) from None
+    store_baseline(dest, data, TEST_ROOT)
     # stderr: stdout must still end with the EVIDENCE closing rule.
     print(
         f"gates: wrote baseline {dest} ({len(data.failing)} failing, collected {data.collected})",
