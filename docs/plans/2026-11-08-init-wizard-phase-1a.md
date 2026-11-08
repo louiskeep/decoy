@@ -164,7 +164,7 @@ unless the row says otherwise.
 | P7 | SCAN-MULTI S3-engine.1 and S3-engine.2: detector descriptors and `starter_config` | 28 | NOT STARTED (needs S1a and CONFIG-EXPLICIT E2) | E1; W1a.4b |
 | P8 | SCAN-MULTI S3a.1-cli: `cli/_scaffold_yaml.render`, the `decoy init FILE` rewrite, G-ONE-EMITTER at renderer level, and the CLI repin to the S3-engine release (which carries P1) | 29 | NOT STARTED (needs LIB L2, the S3-engine release, CONFIG-EXPLICIT C1 and C2). `src/decoy/cli/_scaffold_yaml.py` does not exist on CLI main | every CLI slice from W1a.0 on (the `init.py` lane), W1a.6a (renderer) |
 | P9 | 2026-11-07 plan part E1, amended here (6.1): `column_entry`, suggestion and decision types, `apply_review` with `drop`, `ReviewInputError` | 32b | NOT STARTED. No branch on origin and no local worktree found. The brief for this plan called this "CONFIG-EXPLICIT E1 (`apply_review`)"; the code being built now under the CONFIG-EXPLICIT E1 name is the schema slice in P3, not `apply_review` | W1a.R, W1a.3b, W1a.6a |
-| P10 | New part E3 (6.2): `keyed_columns_for_config` (spec 16.12) with its oracle and parity tests, plus the 16.10 docstring fix | 32b | NOT STARTED. Has no dependency: it can build from engine main now | W1a.5a |
+| P10 | New part E3 (6.2): `keyed_columns_for_config` (spec 16.12) with its oracle and parity tests, plus the 16.10 docstring fix | 32b | MERGED (engine #407, `33d05c90`) | W1a.5a |
 | P11 | Engine release R-1a carrying P7, P9 and P10 (and P1 if S3a.1's release has not shipped it) | 76 (cadence) | NOT CUT. Engine `pyproject.toml` is `0.19.0`, latest tag `v0.19.0` | W1a.R |
 | P12 | CLI repin to R-1a: `pyproject.toml` pin and the engine SHA in `requirements-dev.lock`, by the engine repin checklist | 76 (cadence) | CLI pins `decoy-engine==0.19.0`, lock SHA `4a0d5b1f` | W1a.R |
 
@@ -566,8 +566,10 @@ def keyed_columns_for_config(config: Mapping[str, Any]) -> tuple[KeyedColumn, ..
   relationship rule (a composite parent key is keyed with no single field). No behavior change to it.
 - Order: tables in config order, columns in config order. Generate tables are skipped, as today.
 - Pinned oracle: a literal table of (config, expected `keyed_columns_for_config` result) built from
-  the cases in `tests/secret_providers/test_requirements_matrix.py` plus one field per catalog
-  strategy. The expected tuples are written out, not computed, so a mutation in the shared column
+  the always-keyed, conditionally keyed and never-keyed strategies, the relationship shapes, and
+  malformed configs (missing table or column name, a relationship with no parent, a non-mapping
+  relationship). It lives in `tests/secret_providers/test_keyed_columns.py` (engine #407); there
+  is no `test_requirements_matrix.py`. The expected tuples are written out, not computed, so a mutation in the shared column
   walk changes both functions and still fails this table.
 - Parity test: over the same corpus, a config needs the secret exactly when
   `keyed_columns_for_config` is non-empty or a composite parent key exists.

@@ -22,6 +22,8 @@ git logs).
 
 ## 2026-11-08
 
+- **Engine** (`33d05c90`, engine #407): init wizard part E3. `keyed_columns_for_config` and `KeyedColumn` list each config column that needs the mask secret, so the wizard asks for a key only when the config needs one. `secret_requirements_for_config` shares the same walk and keeps its result. Gate: Dennis GO, Codex GO; full suite 0 failing (42,148 collected), promoted as the main baseline.
+- **CLI** (`e7bdae0`, #122): the CI step that fetches a pinned binary retries a timeout, a reset, a DNS try-again or a 5xx up to three times, and never retries a permanent failure. Gate: Codex GO r2, Dennis GO.
 - **Engine** (`4acac80a`, engine #406): value-free discovery, subset-seed and filter errors (roadmap row 14). A subset filter literal that does not match the column type, a discovery read failure, and several FK-key and pandas-ingest errors now name the table and column only and carry no chained library error that could quote a cell. Gate: Codex GO r2, Dennis GO; full suite on the merge head 0 failing (42,028 collected), promoted as the main baseline.
 - **CLI** (`e9df7b1`, #120): init wizard Phase 1a plan (`docs/plans/2026-11-08-init-wizard-phase-1a.md`). Twelve CLI slices and engine parts E1 and E3; adds one CLI-wide reason-code registry in W1a.0. Plan gate: Dennis NO-GO r1, GO r2, then Codex fix to GO.
 - **Engine** (`38951412`, engine #405): SCAN-ML M1. Config fields for the pre-scan and post-scan detectors, model status and loading, NER on free-text columns only at `NER_MIN_RATE` 0.211, and the classifier wired in (off by default). Reason manifest 1.8.0. Gate: Dennis GO, Codex GO; full suite 0 failing (41,909 collected).
