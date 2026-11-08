@@ -15,7 +15,9 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import http.client
 import io
+import socket
 import sys
 import tarfile
 import time
@@ -34,10 +36,17 @@ ATTEMPTS = 3
 BACKOFF_SECONDS = (5.0, 15.0)
 
 
-def _transient(err: OSError) -> bool:
+def _transient(err: Exception) -> bool:
+    """A failure a second try can fix: a 5xx, a timeout, a dropped connection, a temporary DNS miss,
+    or a body cut off mid-read. A 4xx, a certificate failure or a bad url fails at once."""
     if isinstance(err, urllib.error.HTTPError):
         return err.code >= 500
-    return isinstance(err, (urllib.error.URLError, TimeoutError, ConnectionError))
+    if isinstance(err, urllib.error.URLError):
+        reason = err.reason
+        return isinstance(reason, (TimeoutError, ConnectionError)) or (
+            isinstance(reason, socket.gaierror) and reason.errno == socket.EAI_AGAIN
+        )
+    return isinstance(err, (TimeoutError, ConnectionError, http.client.IncompleteRead))
 
 
 def download(url: str, *, sleep: Callable[[float], None] = time.sleep) -> bytes:
@@ -46,7 +55,7 @@ def download(url: str, *, sleep: Callable[[float], None] = time.sleep) -> bytes:
         try:
             with urllib.request.urlopen(url, timeout=60) as response:
                 return response.read()
-        except OSError as err:
+        except (OSError, http.client.HTTPException) as err:
             if attempt == ATTEMPTS - 1 or not _transient(err):
                 raise
             print(f"fetch_ci_binary: {type(err).__name__}, retrying", file=sys.stderr)
@@ -85,7 +94,7 @@ def main(argv: list[str]) -> int:
         return 2
     try:
         print(fetch(entry, args.dest))
-    except (ValueError, OSError) as err:
+    except (ValueError, OSError, http.client.HTTPException) as err:
         print(f"fetch_ci_binary: {type(err).__name__}: {err}", file=sys.stderr)
         return 1
     return 0
