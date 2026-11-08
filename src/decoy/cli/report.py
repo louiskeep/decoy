@@ -44,10 +44,13 @@ from typing import Any
 import typer
 
 from decoy import _mask_secret
+from decoy._atomic import AtomicWriteError, WriteMode, describe, write_local_target
+from decoy.cli._sources import read_file, read_report_source
 from decoy.cli._yaml_errors import sanitize_yaml_error
 from decoy.cli.evidence import _render_manifest_card, verify_manifest
 from decoy.cli.exit_codes import EXIT_FINDINGS, EXIT_RUNTIME, EXIT_USAGE
-from decoy.ui.output import OutputMode, OutputState, emit_json, setup_output
+from decoy.cli.io import entry_format
+from decoy.ui.output import OutputMode, OutputState, emit_json, print_traceback, setup_output
 from decoy.ui.theme import accent, code, error, hint, info, risk_high, success, warn
 
 # Grade -> minimum overall_score, mirroring the engine's own grade thresholds
@@ -75,6 +78,15 @@ report_app = typer.Typer(
 # Manifest loader (shared)
 # ---------------------------------------------------------------------------
 
+
+
+def _write_out(state: OutputState, path: Path, text: str) -> None:
+    """Write a report file atomically (owner-only); refuse with the rendered reason."""
+    try:
+        write_local_target(path, text.encode("utf-8"), WriteMode.REPLACE)
+    except AtomicWriteError as exc:
+        state.err_console.print(error("error:"), f"could not write {path}: {describe(exc)}")
+        raise typer.Exit(code=EXIT_USAGE)
 
 def _load_manifest(path: Path, state: OutputState, command: str) -> dict[str, Any]:
     """Load and parse a manifest file. Exit with EXIT_USAGE on any error."""
@@ -690,9 +702,9 @@ def _render(
         content = render_html(manifest)
 
     try:
-        out.write_text(content, encoding="utf-8")
-    except OSError as exc:
-        msg = f"could not write {out}: {exc}"
+        write_local_target(out, content.encode("utf-8"), WriteMode.REPLACE)
+    except AtomicWriteError as exc:
+        msg = f"could not write {out}: {describe(exc)}"
         if state.mode is OutputMode.json:
             emit_json(state, {"command": "report render", "status": "error", "error": msg})
         else:
@@ -858,8 +870,9 @@ def compare_data(
     """Compare output data files from two runs at the data level.
 
     Accepts the `output_fingerprints` dicts from two evidence manifests.
-    Each dict is keyed by table name and has a `path` field pointing to
-    the output file (CSV or Parquet).
+    Each dict is keyed by table name and has a `path` field pointing to the output file and,
+    since CLI-FMT, a `format` (and fixed-width `layout`) it was written in. Each side is read
+    by its own entry; an entry without `format` takes the legacy suffix rule.
 
     Returns a structured dict with:
       any_data_change  bool
@@ -887,12 +900,13 @@ def compare_data(
     never included in the output.
     """
     try:
-        import pandas as pd
+        import pandas  # noqa: F401  (the dependency guard; the readers import it themselves)
     except ImportError as _err:
         raise RuntimeError(
             "pandas is required for data-level diff. "
             "Install with: pip install pandas"
         ) from _err
+    from decoy_engine import DecoyError
 
     # Determine which tables appear in both sets.
     tables_a = set(output_fps_a)
@@ -940,34 +954,19 @@ def compare_data(
             # Report missing but don't continue loading
             continue
 
-        # Load data (CSV or Parquet by extension)
-        def _load(p: "_Path") -> "pd.DataFrame":
-            suffix = p.suffix.lower()
-            if suffix == ".parquet":
-                try:
-                    return pd.read_parquet(str(p))
-                except ImportError as _ie:
-                    raise RuntimeError(
-                        f"A Parquet reader (pyarrow or fastparquet) is required "
-                        f"to read '{p.name}'. "
-                        "Install with: pip install pyarrow"
-                    ) from _ie
-            return pd.read_csv(str(p), dtype=str)
-
+        # Each side is read by its own recorded format (an old entry: the legacy suffix rule).
         try:
-            df_a = _load(path_a)
-            df_b = _load(path_b)
-        except (OSError, ValueError):
-            # The file exists but could not be read (corrupt, truncated, or not
-            # the format its extension claims; a parquet reader raises
-            # ArrowInvalid/ValueError, a bad path raises OSError). Degrade this
-            # table to the same data-unavailable handling as a missing file so
-            # one broken output cannot crash the whole comparison -- the caller
-            # still reports manifest level and --require-data still hard-fails.
-            # The raw parser message is deliberately dropped: it can echo file
-            # bytes or cell values (observability leak rule). A missing parquet
-            # reader surfaces as RuntimeError, which is not caught here and
-            # propagates to the caller's dependency boundary.
+            df_a = read_file(path_a, *entry_format(fp_a), table=table)
+            df_b = read_file(path_b, *entry_format(fp_b), table=table)
+        except (OSError, ValueError, DecoyError):
+            # The file exists but could not be read (corrupt, truncated, or not the
+            # format its entry records; a parquet reader raises ArrowInvalid/ValueError,
+            # a bad path raises OSError, the engine's CSV reader a DecoyError, an entry
+            # with no usable format a TargetFormatError). Degrade this table to the same
+            # data-unavailable handling as a missing file so one broken output cannot
+            # crash the whole comparison; the caller still reports manifest level and
+            # --require-data still hard-fails. The raw parser message is dropped: it can
+            # echo file bytes or cell values (observability leak rule).
             for p_str in (path_a_str, path_b_str):
                 if p_str not in missing_files:
                     missing_files.append(p_str)
@@ -1137,11 +1136,7 @@ def _show(
             content = render_markdown(manifest)
         else:
             content = render_html(manifest)
-        try:
-            out.write_text(content, encoding="utf-8")
-        except OSError as exc:
-            state.err_console.print(error("error:"), f"could not write {out}: {exc}")
-            raise typer.Exit(code=EXIT_USAGE)
+        _write_out(state, out, content)
         fmt_label = "Markdown" if fmt in ("markdown", "md") else "HTML"
         state.console.print(success("ok"), f"{fmt_label} report written to", code(str(out)))
         return
@@ -1768,7 +1763,7 @@ def _fidelity(
         _emit_error(f"--mode must be one of report, warn, fail; got {mode!r}.")
         raise typer.Exit(code=EXIT_USAGE)
 
-    strategy_map: dict[str, str] = {}
+    config_dict: dict[str, Any] = {}
     if pipeline_config is not None:
         from decoy_engine import PipelineConfig
 
@@ -1782,7 +1777,7 @@ def _fidelity(
         except Exception as exc:
             _emit_error(f"could not parse --config {pipeline_config}: {exc}")
             raise typer.Exit(code=EXIT_USAGE)
-        strategy_map = _build_strategy_map(config_dict)
+    strategy_map = _build_strategy_map(config_dict)
 
     if policy is not None:
         try:
@@ -1804,16 +1799,16 @@ def _fidelity(
             thresholds["overall"] = {"min": _GRADE_MIN_SCORE[min_grade.upper()]}
         policy_config = {"mode": mode, "thresholds": thresholds}
 
-    import pandas as pd
     from decoy_engine.quality import apply_quality_policy, compute_quality_report
 
+    config_dir = pipeline_config.parent if pipeline_config is not None else Path.cwd()
     try:
-        src_df = pd.read_csv(source)
+        src_df = read_report_source(source, config_dict, config_dir)
     except Exception as exc:
         _emit_error(f"could not read {source}: {exc}")
         raise typer.Exit(code=EXIT_USAGE)
     try:
-        out_df = pd.read_csv(output)
+        out_df = read_report_source(output, {}, config_dir)
     except Exception as exc:
         _emit_error(f"could not read {output}: {exc}")
         raise typer.Exit(code=EXIT_USAGE)
@@ -1827,10 +1822,7 @@ def _fidelity(
     policy_result = apply_quality_policy(report, policy_config, strategy_map=strategy_map)
 
     if report_out is not None:
-        report_out.write_text(
-            _json.dumps({**report, "policy": policy_result}, indent=2),
-            encoding="utf-8",
-        )
+        _write_out(state, report_out, _json.dumps({**report, "policy": policy_result}, indent=2))
 
     verdict = policy_result["verdict"]
     status = "ok" if verdict == "pass" else verdict
@@ -2018,8 +2010,6 @@ def _integrity(
     1 EXIT_USAGE for missing files; 3 EXIT_RUNTIME for unexpected
     exceptions.
     """
-    import pandas as pd
-
     from decoy.ui.table import make_table
 
     state = setup_output(json_, quiet, verbose)
@@ -2028,9 +2018,6 @@ def _integrity(
 
     try:
         from decoy_engine.verification.postmask import run_post_mask
-
-        source_df = pd.read_csv(source)
-        masked_df = pd.read_csv(masked)
 
         config_dict: dict
         table_name: str
@@ -2045,11 +2032,7 @@ def _integrity(
                 # echo the offending source line. Re-raise a pre-sanitized message.
                 raise ValueError(sanitize_yaml_error(exc)) from None
             config_dict = PipelineConfig.model_validate(raw).model_dump()
-            # Pick the first declared table name. Mixed-mode configs
-            # can declare multiple; the CLI verb today handles a single
-            # source/masked pair, so we anchor on the first table the
-            # pipeline declared and warn if the user passed a source
-            # that points elsewhere.
+            # One source/masked pair: anchor on the first declared table.
             tables = config_dict.get("tables") or []
             table_name = tables[0]["name"] if tables else masked.stem
             declared_sources = config_dict.get("sources") or {}
@@ -2068,11 +2051,7 @@ def _integrity(
                     "as ground truth (suppress with --allow-source-mismatch).",
                 )
         else:
-            # No config: synthesize a minimal dict. The runner's
-            # residual_pii + policy_validation branches degrade
-            # gracefully when relationships + sources + tables are
-            # absent (verified against
-            # the decoy_engine.verification.postmask.runner docstring).
+            # No config: a minimal dict; the runner's branches degrade when it is bare.
             table_name = masked.stem
             config_dict = {
                 "version": 2,
@@ -2083,6 +2062,9 @@ def _integrity(
                 "relationships": [],
             }
 
+        source_df = read_report_source(source, config_dict, config.parent if config else Path.cwd())
+        masked_df = read_report_source(masked, {}, Path.cwd())
+
         report = run_post_mask(
             source_frames={table_name: source_df},
             output_frames={table_name: masked_df},
@@ -2090,7 +2072,7 @@ def _integrity(
         )
 
         if out is not None:
-            out.write_text(_json.dumps(report, indent=2))
+            _write_out(state, out, _json.dumps(report, indent=2))
 
         # Decide exit code based on the report's severity counters.
         fail_count = int(report.get("fail_count") or 0)
@@ -2180,7 +2162,7 @@ def _integrity(
                 " ", hint("hint:"), "rerun with --verbose for the full traceback.",
             )
         if state.verbose:
-            state.err_console.print_exception()
+            print_traceback(state)
         raise typer.Exit(code=EXIT_RUNTIME)
 
 

@@ -37,10 +37,11 @@ from pathlib import Path
 
 import typer
 
+from decoy._atomic import AtomicWriteError, WriteMode, describe, write_local_target
 from decoy.cli._default_group import make_default_group
 from decoy.cli.exit_codes import EXIT_RUNTIME, EXIT_USAGE
 from decoy.ui.card import render_card
-from decoy.ui.output import OutputMode, OutputState, emit_json, setup_output
+from decoy.ui.output import OutputMode, OutputState, emit_json, print_traceback, setup_output
 from decoy.ui.storm_animation import stormy_multistage
 from decoy.ui.table import make_table
 from decoy.ui.theme import accent, code, error, hint, risk_high, risk_med, success, warn
@@ -312,9 +313,9 @@ def _load_parquet_with_sampling(path: Path, rows: int | None, strategy: SampleSt
     For Parquet, 'head' and 'random' sampling work on the in-memory DataFrame
     after loading. Future optimization could use pyarrow row groups for head.
     """
-    import pandas as pd
+    from decoy.cli._sources import read_file
 
-    df = pd.read_parquet(path)
+    df = read_file(path, "parquet", None, table=path.stem)
     if rows is None or strategy is SampleStrategy.full or len(df) <= rows:
         return df
     if strategy is SampleStrategy.head:
@@ -771,12 +772,20 @@ def _scan(
             if out_path is not None:
                 # The on-disk artifact keeps the engine's richer profile.to_dict()
                 # (pre-existing); the inline/--json field output stays privacy-safe.
-                out_path.write_text(_json.dumps(profile.to_dict(), indent=2))
+                write_local_target(
+                    out_path,
+                    _json.dumps(profile.to_dict(), indent=2).encode("utf-8"),
+                    WriteMode.REPLACE,
+                )
             ms.complete()
     except Exception as exc:
         # Do NOT interpolate str(exc) -- engine parse errors can embed raw cell
         # data in their messages. Report only the exception class name.
-        msg = f"scan failed: {type(exc).__name__}"
+        msg = (
+            f"scan failed: {describe(exc)}"
+            if isinstance(exc, AtomicWriteError)
+            else f"scan failed: {type(exc).__name__}"
+        )
         if state.mode is OutputMode.json:
             emit_json(
                 state,
@@ -791,7 +800,7 @@ def _scan(
             state.err_console.print(
                 hint("(--verbose: traceback below; diagnostic output may contain row data)")
             )
-            state.err_console.print_exception()
+            print_traceback(state)
         raise typer.Exit(code=EXIT_RUNTIME)
 
     # --output - streams the scan JSON (the richer artifact) to stdout, nothing else.

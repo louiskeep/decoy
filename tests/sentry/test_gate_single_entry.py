@@ -6,10 +6,12 @@ attribute calls on module aliases, module-level functions, and one-step `f = g` 
 by bare name. Targets that only the gate may call, outside `decoy/cli/gate/`:
 
 - `run_config_only_checks`, called on anything under `decoy_engine`;
-- `compile_plan(..., no_profile=<not False>)`, called on anything under `decoy_engine`;
+- `compile_plan(..., no_profile=<not False>)` or with `**kwargs` (which can carry it), called on
+  anything under `decoy_engine`;
 - the preflight layer checks `_check_source_files`, `_check_target_overwrite`, `_check_capacity`
   and `_check_native`, whatever module defines or imports them (so a copy of one is red too);
-- `yaml.safe_load` and `PipelineConfig.model_validate` in `cli/run.py` and `cli/validate.py`.
+- any `yaml.*load*` call (`safe_load`, `load`, `full_load`, `load_all`, ...) and
+  `PipelineConfig.model_validate` in `cli/run.py` and `cli/validate.py`.
 
 An exemption is the exact `(module, outermost function, rule)` identity of a call site, recorded in
 ALLOWLIST with a reason and in the shrink-only baseline
@@ -18,9 +20,6 @@ ALLOWLIST with a reason and in the shrink-only baseline
 Named limits, invisible to a syntax walk: `getattr(mod, "name")`, a call through a name bound by
 anything but a plain `import`, `from ... import` or `a = b` assignment, `from x import *`, and a
 method call on an object built elsewhere.
-
-The `cli.run` entries exist only because P1 does not touch `run.py` (the run lane belongs to
-P2 of docs/plans/2026-11-06-validate-always.md). P2 deletes them with the code they cover.
 """
 
 from __future__ import annotations
@@ -80,26 +79,6 @@ ALLOWLIST: tuple[Allowed, ...] = (
         RULE_COMPILE,
         "`validate compile --no-profile` is the single-layer command the gate's compile layer "
         "reuses helpers from; it keeps its own compile call and its unique-column error.",
-    ),
-    Allowed(
-        "decoy.cli.run",
-        "_load_raw_config",
-        RULE_YAML,
-        "P1 does not touch run.py; P2 replaces this parse with parse_pipeline_yaml and "
-        "deletes this entry.",
-    ),
-    Allowed(
-        "decoy.cli.run",
-        "run",
-        RULE_YAML,
-        "P1 does not touch run.py; P2 deletes the re-parse in `run` and this entry.",
-    ),
-    Allowed(
-        "decoy.cli.run",
-        "run",
-        RULE_MODEL,
-        "P1 does not touch run.py; P2 reads GateResult.config instead of validating again "
-        "and deletes this entry.",
     ),
 )
 
@@ -163,14 +142,15 @@ def _rules(target: str, call: ast.Call, rel: str) -> list[str]:
         out.append(RULE_CONFIG_ONLY)
     if engine and last == "compile_plan":
         for kw in call.keywords:
-            if kw.arg == "no_profile" and not (
-                isinstance(kw.value, ast.Constant) and kw.value.value is False
+            if kw.arg is None or (
+                kw.arg == "no_profile"
+                and not (isinstance(kw.value, ast.Constant) and kw.value.value is False)
             ):
                 out.append(RULE_COMPILE)
     if last in _PREFLIGHT_CHECKS:
         out.append(RULE_PREFLIGHT)
     if rel in _YAML_MODEL_FILES:
-        if target == "yaml.safe_load":
+        if target.startswith("yaml.") and "load" in target.rsplit(".", 1)[-1]:
             out.append(RULE_YAML)
         if engine and target.endswith("PipelineConfig.model_validate"):
             out.append(RULE_MODEL)
@@ -235,7 +215,7 @@ def test_no_pre_run_check_outside_the_gate() -> None:
 
 
 def test_allowlist_has_reasons_and_unique_identities() -> None:
-    assert len({(e.module, e.function, e.rule) for e in ALLOWLIST}) == len(ALLOWLIST) == 6
+    assert len({(e.module, e.function, e.rule) for e in ALLOWLIST}) == len(ALLOWLIST) == 3
     assert all(len(e.reason.strip()) >= 15 for e in ALLOWLIST)
 
 
@@ -279,6 +259,22 @@ _SEEDS = [
         "cli/run.py",
         "from yaml import safe_load as s\ndef _load_raw_config(t):\n    return s(t)\n",
         [("decoy.cli.run", "_load_raw_config", RULE_YAML)],
+    ),
+    (
+        "cli/run.py",
+        "import yaml\ndef run(t):\n    return yaml.load(t, Loader=yaml.SafeLoader)\n",
+        [("decoy.cli.run", "run", RULE_YAML)],
+    ),
+    (
+        "cli/validate.py",
+        "from yaml import full_load as fl\ndef config(t):\n    return fl(t)\n",
+        [("decoy.cli.validate", "config", RULE_YAML)],
+    ),
+    (
+        "scratch.py",
+        "from decoy_engine.plan import compile_plan\ndef f(raw, p, kw):\n"
+        "    compile_plan(raw, p, **kw)\n",
+        [("decoy.scratch", "f", RULE_COMPILE)],
     ),
     (
         "cli/run.py",

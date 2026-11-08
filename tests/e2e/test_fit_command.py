@@ -12,8 +12,9 @@ second mode that calls the engine's `fit_dp_snapshot` (typed-carrier
 `dps-marginal/v3`) instead of the removed `apply_dp_noise`. This dev
 environment is not a certified DP proof stack (that certification is a
 separate, gated follow-up item), so every test that reaches the real
-engine call asserts the `dp_stack_uncertified` refusal rather than a
-completed release; everything upstream of that call -- mode selection,
+engine call asserts the refusal this host earns (`dp_stack_uncertified` on
+Linux x86-64, `dp_platform_uncertified` elsewhere; see `tests/dp_env.py`)
+rather than a completed release; everything upstream of that call -- mode selection,
 declaration parsing, the flag grammar, the omission check -- is exercised
 directly against the CLI's own logic.
 """
@@ -32,6 +33,7 @@ from typer.testing import CliRunner
 from decoy.__main__ import app
 from decoy.cli.exit_codes import EXIT_RUNTIME, EXIT_USAGE
 from decoy.cli.fit import _build_typed_frame, _map_flag_token
+from tests.dp_env import expected_dp_refusal_code_required, foreign_platform
 
 runner = CliRunner()
 
@@ -469,7 +471,7 @@ class TestFitDpFlagGrammar:
         # engine call and is refused there for the (unrelated) uncertified
         # proof stack.
         assert result.exit_code == EXIT_RUNTIME
-        assert "dp_stack_uncertified" in result.output
+        assert expected_dp_refusal_code_required() in result.output
 
 
 class TestFitDpOmission:
@@ -532,7 +534,7 @@ class TestFitDpOmission:
         # is refused there for the uncertified proof stack -- proof that
         # --dp-allow-omit let the fit proceed rather than usage-erroring.
         assert result.exit_code == EXIT_RUNTIME
-        assert "dp_stack_uncertified" in result.output
+        assert expected_dp_refusal_code_required() in result.output
         assert "notes" in result.output  # the itemized notice names it
         assert not out.exists()
 
@@ -631,7 +633,7 @@ class TestFitDpErrorFamilies:
         src = _dp_source_csv(tmp_path)
         result = runner.invoke(app, self._dp_args(src))
         assert result.exit_code == EXIT_RUNTIME
-        assert "dp_stack_uncertified" in result.output
+        assert expected_dp_refusal_code_required() in result.output
         assert "not a certified DP platform/stack" in result.output
 
     def test_provenance_error_json_has_code_message_and_hint(self, tmp_path: Path) -> None:
@@ -639,7 +641,7 @@ class TestFitDpErrorFamilies:
         result = runner.invoke(app, [*self._dp_args(src), "--json"])
         assert result.exit_code == EXIT_RUNTIME
         payload = json.loads(result.stdout)
-        assert payload["code"] == "dp_stack_uncertified"
+        assert payload["code"] == expected_dp_refusal_code_required()
         assert payload["message"]
         assert "not a certified DP platform/stack" in payload["hint"]
 
@@ -878,10 +880,18 @@ class TestFitDpDeclaredColumnMissing:
         assert "active" in payload["message"]
         assert not out.exists()
 
-    def test_phantom_number_column_reports_missing_before_proof_gate(self, tmp_path: Path) -> None:
+    @pytest.mark.parametrize("platform", ["host", "foreign"])
+    def test_phantom_number_column_reports_missing_before_proof_gate(
+        self, tmp_path: Path, platform: str, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from decoy_engine.quality import dp_provenance
+
         src = _dp_source_csv(tmp_path)
-        # On this uncertified host the proof-stack gate would raise
-        # dp_stack_uncertified (EXIT_RUNTIME); the name check must fire first.
+        if platform == "foreign":
+            # The platform arm of the gate, which a Linux host never reaches on its own.
+            monkeypatch.setattr(dp_provenance, "current_platform", foreign_platform)
+        # On this uncertified host the proof gate would raise a DP refusal code
+        # (EXIT_RUNTIME); the name check must fire first.
         result = runner.invoke(
             app,
             [
@@ -900,7 +910,10 @@ class TestFitDpDeclaredColumnMissing:
                 "--dp-allow-omit",
             ],
         )
+        assert (
+            "dp_stack_uncertified" not in result.output
+            and "dp_platform_uncertified" not in result.output
+        )
         assert result.exit_code == EXIT_USAGE
         assert "dp_schema_column_missing" in result.output
         assert "amt" in result.output
-        assert "dp_stack_uncertified" not in result.output

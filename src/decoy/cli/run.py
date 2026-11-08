@@ -17,6 +17,7 @@ import os
 import time
 from datetime import datetime, timezone
 from enum import Enum
+from functools import partial
 from pathlib import Path
 
 import typer
@@ -24,10 +25,10 @@ from rich.text import Text
 
 from decoy import __version__ as _cli_version
 from decoy import _mask_secret, _mask_secret_guidance, _native_gate
-from decoy._atomic import fsync_directory
+from decoy._atomic import AtomicWriteError, WriteMode, describe, fsync_directory, write_local_target
 from decoy.cli._duckdb_source import DuckDBSourceError, acquire_relation, parse_flag
-from decoy.cli._sources import iter_source_chunks, read_source
-from decoy.cli._yaml_errors import sanitize_yaml_error
+from decoy.cli._sources import iter_source_chunks, parquet_schema, read_source
+from decoy.cli._sources import resolve_path as _resolve_path
 from decoy.cli.exit_codes import EXIT_CAPACITY, EXIT_FINDINGS, EXIT_RUNTIME, EXIT_USAGE
 from decoy.cli.extras import (
     MissingExtraError,
@@ -37,23 +38,30 @@ from decoy.cli.extras import (
     translate_missing_extra,
     translate_ner_unavailable,
 )
+from decoy.cli.gate import (
+    CAPACITY_CODES,
+    GateFinding,
+    GateRoute,
+    PreRunCheckError,
+    cap_error_text,
+    check_before_run,
+    parse_pipeline_yaml,
+)
+from decoy.cli.io._targets import (
+    TargetFormatError,
+    check_target_formats,
+    resolve_target_format,
+    write_chunked_output,
+    write_targets,
+)
 from decoy.ui.card import render_card
-from decoy.ui.output import OutputMode, emit_json, setup_output
+from decoy.ui.output import OutputMode, emit_json, print_traceback, setup_output
 from decoy.ui.progress import spinner
 from decoy.ui.table import make_table
 from decoy.ui.theme import accent, code, error, hint, success, warn
 
-# OOM checker v1: the engine's out-of-core-FK memory gate raises `ExecutionError`
-# with exactly one of these two codes when it refuses a job for capacity, never
-# any other reason -- matched narrowly so a routing/compat/orphan-FK
-# `ExecutionError` (any other code) keeps its existing EXIT_RUNTIME
-# classification below. See docs/plans/2026-07-24-oom-checker-cli-v1.md R8.
-# `out_of_core_insufficient_memory` is now LEGACY-ENGINE compat (round-4, engine
-# side): a current engine's build-floor gate is advisory and never raises it, so
-# this code only ever arrives from an older engine still running the pre-round-4
-# hard-fail gate; kept recognized here rather than dropped so the CLI stays
-# correct against that older engine too.
-_CAPACITY_CODES = frozenset({"out_of_core_insufficient_memory", "out_of_core_fanin_exceeds_budget"})
+# The engine's capacity-refusal codes live with the gate (`CAPACITY_CODES`); see
+# docs/plans/2026-07-24-oom-checker-cli-v1.md R8 for why the match is narrow.
 
 
 class Mode(str, Enum):
@@ -172,15 +180,6 @@ class _MaskSecretUsageError(Exception):
     """--mask-secret AND YAML mask_secret_ref both set; user error (exits EXIT_USAGE)."""
 
 
-class _ConfigValidationError(Exception):
-    """The pipeline YAML failed PipelineConfig schema validation (unknown key
-    under extra="forbid", wrong-typed / missing field). A raw Pydantic
-    ValidationError caught NARROWLY at the model_validate call site and
-    re-raised as this typed error, so the run-level handler classifies it
-    EXIT_USAGE without also catching internal engine ValidationErrors raised
-    deeper in the pipeline (which are engine defects -> EXIT_RUNTIME)."""
-
-
 class _OtelSettingsUsageError(Exception):
     """A refused --otel-endpoint / DECOY_OTEL_* setting; user error (exits EXIT_USAGE)."""
 
@@ -221,7 +220,6 @@ def _start_telemetry(flag_endpoint: str | None, state):
                 "DECOY_OTEL_ENDPOINT is set but the otel extra is not installed, so traces "
                 "are off. Add it with:  pip install decoy-cli[otel]",
                 markup=False,
-                soft_wrap=True,
             )
         return None
     try:
@@ -240,23 +238,20 @@ def _start_telemetry(flag_endpoint: str | None, state):
 _is_valid_mask_secret_ref = _mask_secret.is_valid_mask_secret_ref
 
 
-def _load_raw_config(config_path: Path) -> dict | None:
-    """Single defensive YAML parse for the pre-flight helpers.
+def _load_raw_config(
+    config_path: Path,
+) -> tuple[object, list[GateFinding], Exception | None]:
+    """The run path's single YAML parse, through the gate's parser.
 
-    Audit L3 (2026-06-12): the config was read + parsed up to 4x per
-    run (_detect_mode, the spinner body, the follow-up hint, and a
-    since-removed key_label reader) -- a perf cliff on large or
-    network-mounted configs. Helpers now share one parse; the spinner
-    body still re-raises real parse errors through its own load so
-    the error path is unchanged.
+    Returns `(raw, findings, read_error)`: `findings` holds a YAML syntax error (the run
+    refuses it before any work), `read_error` an unreadable or non-UTF-8 file (kept as
+    today: it surfaces through the run-level handler as a runtime error).
     """
     try:
-        import yaml
-
-        cfg = yaml.safe_load(config_path.read_text(encoding="utf-8"))
-        return cfg if isinstance(cfg, dict) else None
-    except Exception:
-        return None
+        raw, findings = parse_pipeline_yaml(config_path)
+    except (OSError, UnicodeDecodeError) as exc:
+        return None, [], exc
+    return raw, findings, None
 
 
 def run(
@@ -333,8 +328,8 @@ def run(
             "text_redact, date_shift, bucketize), plus faker/categorical "
             "when deterministic with an explicit pool_size / categories "
             "declared in config; output is byte-identical to a plain run. "
-            "Sources are read by their declared format (csv or parquet; fixed_width is "
-            "not supported with --chunked); targets are written by file suffix. "
+            "Sources and targets use their declared format (csv or parquet; fixed_width "
+            "and CSV in a zip or tar archive are not supported with --chunked). "
             "See: decoy explain chunked."
         ),
     ),
@@ -500,6 +495,13 @@ def run(
     Use this to execute a masking or synthetic-generation job described in
     YAML. The engine handles its own logging per the YAML's `logging:`
     section; flags here only affect CLI-side output.
+
+    Before it reads any source rows, `run` runs the whole `decoy validate`
+    check (config, compile, preflight). A `--duckdb-source` relation is
+    staged first, so the check sees the file the run reads. An error stops
+    the run with the exit code
+    `decoy validate` gives (1, or 5 for a capacity refusal); warnings are
+    counted on stderr and never stop it. There is no flag to skip the check.
     """
     state = setup_output(json_, quiet, verbose)
     config_str = str(config)
@@ -522,10 +524,13 @@ def run(
                     {"command": "run", "status": "error", "config": config_str, "error": msg},
                 )
             elif state.mode is not OutputMode.quiet:
-                state.err_console.print(error("error:"), msg)
+                # The message quotes the user's spec: print it verbatim (no markup) and
+                # unfolded, like the run error prints below.
+                state.err_console.print(error("error:"), msg, markup=False)
             raise typer.Exit(code=EXIT_USAGE)
 
-    raw_cfg = _load_raw_config(config)
+    raw, saved_findings, config_read_error = _load_raw_config(config)
+    raw_cfg = raw if isinstance(raw, dict) else None
     yaml_mode = _detect_mode(raw_cfg) or mode.value
 
     resolver = _build_resolver(master_key, key_label, raw_cfg, state)
@@ -565,27 +570,14 @@ def run(
         _otel = _start_telemetry(otel_endpoint, state)
         with spinner(state, f"Running {yaml_mode}..."), contextlib.ExitStack() as _scopes:
             from decoy_engine import (
-                PipelineConfig,
-                run_pipeline,
-            )
-            from decoy_engine import (
                 __version__ as engine_version,
             )
+            from decoy_engine import run_pipeline
 
-            if raw_cfg is not None:
-                raw = raw_cfg
-            else:
-                # The defensive parse failed; re-parse here so the real
-                # YAML error surfaces through the normal error path.
-                import yaml as _yaml
-
-                try:
-                    raw = _yaml.safe_load(config.read_text(encoding="utf-8"))
-                except _yaml.YAMLError as exc:
-                    # A raw YAMLError rides str(exc) through the run-level
-                    # handler and echoes the offending source line (which may
-                    # hold a secret). Re-raise a pre-sanitized EXIT_USAGE error.
-                    raise _ConfigValidationError(sanitize_yaml_error(exc)) from None
+            if config_read_error is not None:
+                raise config_read_error
+            if saved_findings:
+                raise PreRunCheckError.from_findings(saved_findings)
 
             # DE-02 secret-disclosure ROOT guard: validate the RAW YAML
             # `mask_secret_ref` BEFORE PipelineConfig.model_validate(raw). A
@@ -671,19 +663,13 @@ def run(
                         "path": str(_parquet),
                     }
 
-            # Catch the schema ValidationError NARROWLY here (not in the
-            # run-level except) so ONLY user-config validation maps to
-            # EXIT_USAGE; a Pydantic error raised deeper in the engine (e.g.
-            # internal registry/capability models) stays an EXIT_RUNTIME defect.
-            # str(exc) is safe to surface: the mask_secret_ref ROOT guard above
-            # already rejected any secret-bearing structure before this point,
-            # and the F8 message cap bounds the rest.
-            try:
-                from pydantic import ValidationError as _PydanticValidationError
-
-                config_dict = PipelineConfig.model_validate(raw).model_dump()
-            except _PydanticValidationError as exc:
-                raise _ConfigValidationError(str(exc)) from exc
+            # The whole `decoy validate` gate (config, compile, preflight) before any source
+            # row is read. A refusal raises into the one handler below; a pass hands back the
+            # validated config, so the run validates once. The DE-02 guard above keeps a
+            # mask_secret_ref value out of every schema diagnostic.
+            config_dict = check_before_run(
+                raw, config, GateRoute.CHUNKED if chunked else GateRoute.PLAIN, state
+            )
 
             # Cloud (s3/gcs) sources/targets are refused inside the shared
             # I/O helpers below (_load_sources_from_config /
@@ -917,15 +903,10 @@ def run(
                 _ev_engine_warnings = result.warnings
                 _notify_row_count = sum(len(tbl) for tbl in result.outputs.values())
     except typer.Exit:
-        # CLI QA fix (2026-06-02, F7): an inner call site that raises
-        # typer.Exit (e.g. a library that vendored Typer) has already
-        # set its intended exit code. Do not swallow it into the
-        # EXIT_RUNTIME catch-all below.
+        # An inner typer.Exit already set its exit code; keep it out of the catch-all below.
         raise
     except Exception as exc:
-        # Audit H10 (2026-06-12): dispatch on exception type so scripts
-        # can tell "your config is wrong" (EXIT_USAGE, per the
-        # exit_codes.py contract) from "the run blew up" (EXIT_RUNTIME).
+        # Dispatch on type: config wrong (EXIT_USAGE) vs run blew up (EXIT_RUNTIME).
         # Imported lazily to keep the engine import off the help path.
         from decoy_engine import ConfigError, PipelineValidationError
         from decoy_engine.plan import PlanCompileError
@@ -990,7 +971,7 @@ def run(
             _execution_error_types = ()
 
         capacity_code: str | None = None
-        if isinstance(exc, _execution_error_types) and exc.code in _CAPACITY_CODES:
+        if isinstance(exc, _execution_error_types) and exc.code in CAPACITY_CODES:
             capacity_code = exc.code
 
         # Phase 3.1: `NativeGateError.code` distinguishes a usage refusal
@@ -1002,7 +983,9 @@ def run(
         if isinstance(exc, _native_gate.NativeGateError):
             native_code = exc.code
 
-        if capacity_code is not None:
+        if isinstance(exc, PreRunCheckError):
+            _exit_code = exc.exit_code
+        elif capacity_code is not None:
             _exit_code = EXIT_CAPACITY
         else:
             _exit_code = (
@@ -1015,6 +998,7 @@ def run(
                         ConfigError,
                         _ChunkedGenerateError,
                         _ChunkedFixedWidthError,
+                        TargetFormatError,
                         _ChunkedReportFlagError,
                         _ChunkedVaultError,
                         _VaultUsageError,
@@ -1045,14 +1029,6 @@ def run(
                         # is something the caller can fix by changing the
                         # request, not a CLI/engine defect.
                         _native_gate.NativeGateError,
-                        # PipelineConfig.model_validate's ValidationError, caught
-                        # narrowly at its call site and re-raised as this typed
-                        # error, means the YAML is structurally wrong (unknown key
-                        # under extra="forbid", wrong-typed / missing field) -- the
-                        # user's config is bad, not a runtime crash. Narrow by
-                        # design: a Pydantic error raised deeper in the engine is
-                        # NOT reclassified and stays an EXIT_RUNTIME defect.
-                        _ConfigValidationError,
                         # DE-02: a bad/missing/weak --mask-secret ref (or YAML
                         # mask_secret_ref) resolves to MaskSecretError (and its
                         # subclasses MissingMaskSecret / WeakMaskSecret /
@@ -1068,9 +1044,8 @@ def run(
         # quote source-row content verbatim (pandas / pyarrow); without
         # the truncation a single malformed row's value can land in
         # downstream log aggregators.
-        error_text = str(exc)
-        if len(error_text) > 500:
-            error_text = error_text[:500] + "..."
+        error_text = describe(exc) if isinstance(exc, AtomicWriteError) else str(exc)
+        error_text = cap_error_text(error_text)
         keyed_refusal = _mask_secret_guidance.is_keyed_secret_refusal(exc)
         if isinstance(exc, _mask_secret_error_types):
             # Constant text by code; the engine message never reaches the terminal or --json.
@@ -1109,7 +1084,9 @@ def run(
                 "mode": yaml_mode,
                 "error": error_text,
             }
-            if capacity_code is not None:
+            if isinstance(exc, PreRunCheckError):
+                payload.update(exc.json_members())
+            elif capacity_code is not None:
                 payload["error_kind"] = "capacity"
                 payload["code"] = capacity_code
             elif native_code is not None:
@@ -1132,7 +1109,11 @@ def run(
             # a list/bracketed value). markup=False so Rich prints it
             # verbatim instead of parsing it as markup and silently
             # dropping an unrecognized tag.
-            if capacity_code is not None:
+            if isinstance(exc, PreRunCheckError):
+                # The summary already names the command that lists every finding.
+                label = "capacity:" if exc.error_kind == "capacity" else "error:"
+                state.err_console.print(error(label), error_text, markup=False)
+            elif capacity_code is not None:
                 state.err_console.print(error("capacity:"), error_text, markup=False)
                 state.err_console.print(
                     " ",
@@ -1148,7 +1129,7 @@ def run(
                     " ", hint("hint:"), "rerun with --verbose for the full traceback."
                 )
         if state.verbose:
-            state.err_console.print_exception()
+            print_traceback(state)
         raise typer.Exit(code=_exit_code)
     finally:
         # Tear down any --duckdb-source Parquet snapshots. Runs on success
@@ -1162,10 +1143,8 @@ def run(
 
     elapsed = time.perf_counter() - started
 
-    # Write evidence manifest if --evidence-out was given. Written for BOTH
-    # plain and chunked runs: the input/output fingerprints (the drift-detection
-    # core) are always populated. Chunked runs return no ExecutionResult, so
-    # row_counts/timings/warnings are empty for them (documented in the flag help).
+    # Evidence manifest (--evidence-out), for plain and chunked runs; chunked runs have
+    # no row_counts/timings/warnings (see the flag help).
     if evidence_out is not None and _ev_config_dict is not None:
         from decoy.cli.evidence import build_manifest
 
@@ -1179,7 +1158,13 @@ def run(
             timings=_ev_timings,
             engine_warnings=_ev_engine_warnings,
         )
-        evidence_out.write_text(_json.dumps(manifest, indent=2), encoding="utf-8")
+        try:
+            write_local_target(
+                evidence_out, _json.dumps(manifest, indent=2).encode("utf-8"), WriteMode.REPLACE
+            )
+        except AtomicWriteError as exc:
+            state.err_console.print(error("error:"), describe(exc), markup=False)
+            raise typer.Exit(code=EXIT_RUNTIME)
         if state.mode is not OutputMode.json and state.mode is not OutputMode.quiet:
             from decoy.ui.theme import success as _success
 
@@ -1481,11 +1466,12 @@ def _run_chunked_mask(
     because each chunk writes one row group.
 
     Formats: CSV and parquet, on either side independently. The source
-    reader follows the declared source `format`; the writer follows the
-    target path suffix. Parquet reads stream via ParquetFile.iter_batches; CSV reads keep
+    reader and the writer follow the declared `format` of the source and the
+    target. Parquet reads stream via ParquetFile.iter_batches; CSV reads keep
     the dtype=str contract of the plain path, so a csv -> parquet run
     produces an all-string schema."""
     _require_local_io_endpoints(config_dict)
+    check_target_formats(config_dict, chunked=True)
 
     from decoy_engine import __version__ as engine_version
     from decoy_engine import run_mask_pipeline_chunked
@@ -1513,13 +1499,19 @@ def _run_chunked_mask(
             engine_version=engine_version,
             key_provider=key_provider,
         )
-        _write_chunked_output(
-            masked_iter, out_path, src_path, src_is_parquet=src_spec.get("format") == "parquet"
+        write_chunked_output(
+            masked_iter,
+            resolve_target_format(name, tgt_spec),
+            out_path,
+            empty_schema=(
+                partial(parquet_schema, src_path) if src_spec.get("format") == "parquet" else None
+            ),
         )
 
 
 def _check_chunked_tables(config_dict: dict) -> None:
-    """The engine's config-only chunked check for every mask table (it repeats it per entry)."""
+    """The config-only chunked checks: target formats, then the engine's per mask table."""
+    check_target_formats(config_dict, chunked=True)
     from decoy_engine import get_default_registry
     from decoy_engine.execution import check_chunked_compatibility
 
@@ -1527,46 +1519,6 @@ def _check_chunked_tables(config_dict: dict) -> None:
     for entry in config_dict.get("tables") or []:
         if isinstance(entry, dict) and entry.get("columns"):
             check_chunked_compatibility(config_dict, table=entry["name"], registry=registry)
-
-
-def _write_chunked_output(
-    masked_iter, out_path: Path, src_path: Path, *, src_is_parquet: bool
-) -> None:
-    """Stream masked chunks to `out_path`, format picked by its suffix."""
-    if out_path.suffix.lower() == ".parquet":
-        import pyarrow.parquet as pq
-
-        writer = None
-        try:
-            for masked in masked_iter:
-                if writer is None:
-                    writer = pq.ParquetWriter(str(out_path), masked.schema)
-                writer.write_table(masked)
-            if writer is None and src_is_parquet:
-                # Empty parquet source: emit a valid zero-row file with the
-                # source schema, matching what a plain run writes. (An empty
-                # CSV source writes nothing, same as the CSV target path.)
-                schema = pq.ParquetFile(str(src_path)).schema_arrow
-                writer = pq.ParquetWriter(str(out_path), schema)
-        finally:
-            if writer is not None:
-                writer.close()
-        return
-    first = True
-    for masked in masked_iter:
-        masked.to_pandas().to_csv(out_path, index=False, header=first, mode="w" if first else "a")
-        first = False
-
-
-def _resolve_path(raw_path: str, base_dir: Path) -> Path:
-    """Resolve a YAML path against the config's directory.
-
-    Mirrors `decoy validate compile`'s source-loading behavior: relative paths
-    in the YAML resolve relative to the YAML file's directory, not the CWD.
-    Absolute paths pass through unchanged.
-    """
-    p = Path(raw_path)
-    return p if p.is_absolute() else (base_dir / p).resolve()
 
 
 def _require_local_io_endpoints(config_dict: dict) -> None:
@@ -1603,9 +1555,11 @@ def _load_sources_from_config(config_dict: dict, base_dir: Path) -> dict:
     Checks targets as well as sources (via `_require_local_io_endpoints`):
     this is the first I/O step on every non-chunked path, so an s3/gcs
     target is refused here, before the engine runs, not after the masking
-    work is done and `_write_mask_outputs` finds nowhere to put it.
+    work is done and `_write_mask_outputs` finds nowhere to put it. A target whose declared
+    format contradicts its suffix is refused here too, before the first read.
     """
     _require_local_io_endpoints(config_dict)
+    check_target_formats(config_dict, chunked=False)
 
     import pyarrow as pa
 
@@ -1691,47 +1645,21 @@ def _commit_vault(vault_writer, vault: Path) -> None:
 def _write_mask_outputs(config_dict: dict, result, base_dir: Path) -> None:
     """Write each declared target from the V2 ExecutionResult.
 
-    CLI.3 commit 2 (2026-06-02) fix: the V2 ExecutionResult exposes
-    masked tables on `outputs` (dict[table_name -> pa.Table]), not
-    `tables`. The V2 `targets:` block is a dict keyed by table name,
-    not a list of `{table, path}` entries. Pre-fix the CLI silently
-    skipped the writer (no errors, no output file), surfaced by the
-    demo + test_output_modes smoke runs.
-
-    The pandas adapter returns masked tables in-memory; the polars
-    adapter writes them via its own target-writer. CLI.1 bridges the
-    pandas path with this helper. Format inferred from the path
-    extension (csv or parquet).
+    The engine result exposes masked tables on `outputs` (dict[table_name -> pa.Table]);
+    the `targets:` block is a dict keyed by table name. Each file is written by its
+    declared `format` through `cli/io/_targets.py`, and a format that contradicts the path
+    suffix is refused before the first table is written.
 
     Refuses s3/gcs targets rather than skipping them, for a caller that
     writes without having gone through `_load_sources_from_config`.
     """
     _require_local_io_endpoints(config_dict)
+    check_target_formats(config_dict, chunked=False)
 
-    targets = config_dict.get("targets") or {}
-    if not isinstance(targets, dict):
-        return
     outputs = getattr(result, "outputs", None)
     if not isinstance(outputs, dict):
         return
-    for table_name, entry in targets.items():
-        if not isinstance(entry, dict):
-            continue
-        raw_path = entry.get("path")
-        if not isinstance(raw_path, str):
-            continue
-        table = outputs.get(table_name)
-        if table is None:
-            continue
-        path = _resolve_path(raw_path, base_dir)
-        path.parent.mkdir(parents=True, exist_ok=True)
-        suffix = path.suffix.lower()
-        if suffix == ".parquet":
-            import pyarrow.parquet as pq
-
-            pq.write_table(table, str(path))
-        else:
-            table.to_pandas().to_csv(path, index=False)
+    write_targets(config_dict, outputs, base_dir)
 
 
 def _dispatch_run_notifications(
@@ -1789,6 +1717,7 @@ def _dispatch_run_notifications(
                     state.err_console.print(
                         warn("warning:"),
                         f"notify {r.kind} to {r.target_host} did not deliver{detail}",
+                        markup=False,
                     )
         return [
             {"kind": r.kind, "delivered": r.delivered, "target_host": r.target_host}
@@ -1796,7 +1725,9 @@ def _dispatch_run_notifications(
         ]
     except Exception as exc:  # notify must never take the run down (D2)
         if state.mode is not OutputMode.quiet:
-            state.err_console.print(warn("warning:"), f"notify dispatch failed: {exc}")
+            state.err_console.print(
+                warn("warning:"), f"notify dispatch failed: {exc}", markup=False
+            )
         return []
 
 

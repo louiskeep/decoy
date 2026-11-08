@@ -80,7 +80,7 @@ jobs:
         # The one install that resolves today's index on purpose, so the weekly
         # run sees transitive-dependency drift. Registered in ci/install-policy.toml.
         if: github.event_name == 'schedule'
-        run: uv pip install --python .smoke/bin/python "git+https://github.com/louiskeep/decoy-engine@v0.18.0" dist/*.whl
+        run: uv pip install --python .smoke/bin/python "git+https://github.com/louiskeep/decoy-engine@v0.19.0" dist/*.whl
 
       - name: decoy --version (smoke 1)
         run: .smoke/bin/decoy --version

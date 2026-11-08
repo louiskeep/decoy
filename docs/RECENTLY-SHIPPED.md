@@ -15,8 +15,79 @@ Moved here from `decoy-platform/docs/backlog/RECENTLY-SHIPPED.md` on 2026-11-05 
 ([ROADMAP.md](ROADMAP.md)). The platform copy is frozen at that date. Entries below 2026-11-05 are
 copied unchanged; paths in them are relative to the repo they name.
 
-Last updated: 2026-11-06 (entries for 2026-10-27 to 2026-10-30 are not filled in here; see the repos'
+Last updated: 2026-11-08 (entries for 2026-10-27 to 2026-10-30 are not filled in here; see the repos'
 git logs).
+
+---
+
+## 2026-11-08
+
+- **CLI** (`834ab99`, #115): CLI-BASELINE. `gates.sh` can write a stored failing-id baseline on main (`--write-baseline`) and compare a branch against it (`--baseline-file`), refusing a file whose head does not share main's tree. The first CLI main baseline was written the same day (0 failing, 3054 collected), so a CLI full merge test is one suite run instead of two. Gate: Dennis GO r3, Codex GO r3; full suite on the merge head green on decoy-test-6.
+- **Engine** (`45553d7e`, engine #403): LIB L0.1. The protected directory allocator under `fileaccess`, the first piece of the L1a records module and the first user of REG-RENUMBER. Gate: Dennis GO, Codex GO; full suite green on decoy-test-6; Mac gate green.
+- **CLI** (`6694c8e`, #114): `decoy init` writes the source path into the first source entry only, keeps a trailing comment, and exits with a clear error when a preset template has no `path` under `sources:`.
+- **CLI** (`91d191b`, #112): CLI-MAC-TESTS S2. All stderr output goes through one soft-wrapped console and tracebacks print through one helper, so long paths in error text stay whole on any terminal width. A sentry pins the single console. Gate: Dennis GO r2, Codex GO r2; full suite on the merge head green on decoy-test-6.
+- **CLI** (`9ecf445`, #111): init wizard spec v2 (UX-reviewed with the owner) and its spec-review handoff, linked from roadmap row 32b.
+- **CLI** (`ec209ec`, #110): CLI-MAC-TESTS S1. The DP tests take the refusal code the host earns from the engine reason registry, and the install and upgrade tests serve the host target, so seven Mac-only failures pass on macOS with Linux results unchanged.
+- **CLI** (`92cdcac`, #109): `decoy run` prints error text unfolded with markup off, so long paths and bracketed text in errors are no longer cut or eaten.
+- **CLI** (`8ac0f8d`, #107): VALIDATE-ALWAYS Part 2. `decoy run` runs the whole `decoy validate` check (config, compile, preflight) through the shared gate before it reads any source rows; an error stops the run with validate's exit code (1, or 5 for a capacity refusal), warnings are counted on stderr, and `--json` refusals add `error_kind` and `messages`. A missing source now exits 1 instead of 3. The gate adds about 0.8 s per run. Known follow-ups: a `--duckdb-source` relation is staged before the gate (FU-2) and a non-UTF-8 config still exits 3 (FU-7). Gate: Dennis GO r1, Codex GO r2.
+
+## 2026-11-07
+
+- **CLI** (`4cd24dd`, #105): ATOMIC-OUTPUT. Every CLI table write (CSV, Parquet, compressed CSV, chunked output) is staged in a temp file beside the output and replaces it in one rename, so a failed or interrupted run keeps the old file or writes none. An existing output keeps its mode bits. `unmask` and `detokenize` write owner-only (0600) on Linux and macOS, including a stdout redirected to a file. Closes row 61a (chunked partial target). Gate: Dennis GO r2, Codex GO r3.
+- **CLI** (`ff82bc9`, #101 to #103): CLI-FMT. Every file target is written in its declared format
+  (csv, parquet, fixed width) through one writer module, `cli/io/_targets.py`; before this, Parquet and
+  fixed-width targets could come out as CSV. A format that contradicts the suffix, or a compression
+  suffix on a Parquet or fixed-width target, exits 1 before any write; a fixed-width value that does
+  not fit exits 3 with no file. A2 adds the G-ONE-TARGET-WRITE sentry and a shared scanner for the
+  read and write sentries, and `validate` / `ci check` report the contradiction. Part B reads
+  CLI-written files back by declared format (detokenize, unmask, `report diff`), records format and
+  layout in the evidence manifest, and makes unmask fail closed when its input has none of the
+  configured columns. One T3 on the stack top (2612 passed, 0 branch-only failures), then merged in
+  order. Dennis GO and Codex GO on each part (A and B at round 2, A2 at round 2).
+- **Engine** (`b5b1ad16`, #402): ENGINE-PAR P2. The gate's test step runs under pytest-xdist
+  (`GATES_WORKERS`, default auto) with tests marked `serial` in a second plain pass; stored-baseline
+  writes and compares stay serial. A collection guard refuses test ids that carry a memory address,
+  which made every worker collect different ids (one test on main fixed). Mac full suite went from
+  24 to about 13 minutes. Dennis GO, Codex GO; the id guard closed at the 3-round cap by owner call.
+- **CLI** (`586eb18`, #99): CLI-DIALECT Part C. Every CSV read (run plain and chunked, tokenize,
+  demo, init, the `data=` override, both report verbs) goes through the engine 0.19.0 reader with
+  the source's declared `has_header`, `column_names` and `delimiter`; before this `decoy run`
+  ignored them. Repins `decoy-engine==0.19.0`. Sentry G-ONE-CSV-READ keeps reads on one reader. A
+  chunked run failing after chunk one can still leave a partial target (strict xfail, row 61a).
+- **Engine** (`4a0d5b1f`, #399): R-c, engine `v0.19.0` release prep and tag.
+- **Engine** (`2335fcce`, #400): init-wizard slice E0. `decoy_engine.strategy_catalog()` returns one
+  `StrategyInfo` row per scalar strategy with its options, for the CLI wizard.
+- **Engine** (`d46dbc85`, #398): REG-RENUMBER. `scripts/dev/registry_renumber.py` moves a branch's
+  reason-registry version to the next free number after a merge race; `--check` for the merge gate.
+  Version policy lives in one module, with a sentry against copies.
+- **Engine** (`4c6ca215`, #397): RESULT E1. The frozen `decoy-run-result/v1` document, one record per
+  `decoy run`; `derive_outcome` is the one place that maps failure category, delivery state and
+  blocking check to run status and exit code.
+- **Engine** (`ab7a36fc`, #396): SCAN-ML M0. The `ner` extra declares click (spaCy needs it), the
+  model wheel is pinned by version and sha256 (`NER_MODEL_WHEELS`), and a `ner-gate` CI job runs the
+  NER tests with the extra installed.
+- **Engine** (`dd31ea91`, #401): a flaky secret-provider test checks the refused mode only in the
+  error text.
+- **CLI** (#95 to #98): ledger re-point at engine main, and roadmap text (SCAN-ML-MD, REL-IMAGE).
+- **Engine** (`79f229d0`, #393): ENGINE-PAR P1. `scripts/dev/gates.sh` can store main's failing test
+  ids once (`--write-baseline`) and compare each candidate against that file (`--baseline-file`), so
+  a full merge test is one suite run instead of two. One strict reader (`load_baseline`) refuses a
+  stale or shrunken baseline. Port of platform #156; P2 adds parallel workers.
+- **Engine** (`cf68a280`, #394): CI-E1s. Eight locked packages move to the lowest release that clears
+  their advisories (anyio, certifi, cryptography 50.0.0, pyasn1, setuptools, soupsieve, urllib3
+  2.8.0, werkzeug); `pyproject.toml` ranges are unchanged. The DP certified-stack table gains one
+  3.10.20 row. The audit step can no longer be hidden or narrowed. CHANGELOG notes the urllib3 2.8
+  proxy TLS change for S3 and GCS users behind an HTTPS proxy.
+- **Engine** (`b2ee6502`, #392): CLI-DIALECT Part E. The engine reads CSV with the declared
+  `has_header`, `column_names` and `delimiter` on every route (whole file, chunked, strict
+  file-access policy). Defaults live in `CSV_DIALECT_DEFAULTS`; parser failures under a strict
+  policy are value-free coded refusals. Pydantic error locations naming config keys moved to
+  VALUE-FREE-ERRORS (row 24a, owner 2026-11-06). The CLI side follows the `0.19.0` release.
+- **Engine** (`b4c6915d`, #395): the merge gate runs on any self-hosted runner labelled
+  `decoy-gate` (the Mac and the Linux runner on decoy-test-1). Plan, V2 and V1+ branches skip the
+  gate queue; `main` never does. The owner-approved docs-only skip is not built, because sentries
+  read `docs/` and `*.md` and path filters stop at 3,000 files; a sentry pins that no path filter
+  exists. Record: `E:docs/records/2026-11-07-ci-gate-any-runner.md`.
 
 ---
 
@@ -29,6 +100,24 @@ git logs).
   directory fsync use it, and the G-ONE-ATOMIC-WRITER sentry blocks new inline copies (allowlist 5).
   Dennis GO, Codex GO, full suite 0 branch-only. Follow-up: the Windows behavior needs a run on the
   Windows lane (WIN-RUNNER).
+
+- **Engine** (`2986fd5a`, #388): CI-E1. Engine CI installs from the lock with `uv sync --frozen`;
+  stale bench kwargs fixed, sphinx `-W` cross-refs, a truthful `pip-audit`, and two sentries that
+  refuse unlocked installs and hidden CI failures. Audit-guard gaps followed in CI-E1s (#394).
+- **Engine** (`adc212f3`, #389): SUB-STOP. A pipeline with a `subset:` the run path does not apply is
+  refused before any read (`config.subset_run_unsupported`, registry 1.6.0) instead of masking the
+  full sources. Record: `E:docs/records/2026-11-06-sub-stop-build.md`.
+- **Engine** (`d9e18fa6`, #390) and **CLI** (`d60d1fa`, #93): CI-X and CI-L1. Both CI lock-install
+  sentries parse shell through one shared core (`tests/sentry/ci_scan`), so both repos refuse the
+  same install forms. CLI CI installs through the lock, which fixed the red CLI main (the smoke job
+  now clears `output.csv` before its `git init`). Both shared-file ledgers then point at main
+  commits (engine #391 `3c01f877`, CLI #94 `be5ba11`).
+- **CLI** (`4ab55d4`, #88): VALIDATE-ALWAYS part 1. The validate checks live in `src/decoy/cli/gate/`,
+  `decoy validate` uses them, a unique column is a validate warning (owner Q1), and a sentry keeps
+  every pre-run check behind the gate. Part 2 wires the gate into `decoy run`.
+- **Docs**: engine #387 points the engine docs at the roadmap in this repo; CLI #86, #87 and #89 to
+  #92 are roadmap text (atomic writer shipped, V1 row status, V2 and V3 candidates, RUN-STREAM rows,
+  SCAN-ML and INIT-WIZARD rows).
 
 ---
 

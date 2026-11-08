@@ -4,6 +4,10 @@ Status: current
 
 Part of the roadmap: [ROADMAP.md](../ROADMAP.md). Path shorthand (`E:`, `C:`, `P:`, vault) is defined there.
 
+The live list of every branch in every repo, with a category and a suggested action for each, is
+`~/obsidian-vault/10_Projects/decoy/BRANCH-LIST.md` in the vault (kept current from branch-watch).
+This register keeps only the dispositions the roadmap owns.
+
 Every open row names its branch. A remote branch neither merged nor named here has no owner on record
 and is a cleanup candidate (`~/bin/branch-analysis`).
 

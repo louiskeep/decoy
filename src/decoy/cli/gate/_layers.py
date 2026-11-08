@@ -20,7 +20,11 @@ import yaml as _yaml
 from decoy.cli._yaml_errors import sanitize_yaml_error
 from decoy.cli.exit_codes import EXIT_CAPACITY, EXIT_OK, EXIT_USAGE, EXIT_WARNINGS
 
-_CAPACITY_CHECK = "capacity.out_of_core_fk"
+# Prefix of the capacity finding on the CHUNKED route, where it is advisory.
+_CHUNKED_CAPACITY_NOTE = (
+    "ADVISORY (--chunked never takes the out-of-core FK route this check prices, so the "
+    "job is not refused) -- "
+)
 
 
 class GateRoute(Enum):
@@ -111,7 +115,8 @@ def _run_config_base(
     raw: Any, config_path: Path
 ) -> tuple[dict[str, Any] | None, tuple[str, ...], list[GateFinding]]:
     """The config layer: the empty and non-mapping refusals, schema validation, the
-    profile-free plan-compile checks and the target-overwrite advisory.
+    profile-free plan-compile checks, the target-overwrite advisory and the target format
+    contradictions (`target_format_issues`, the same rule `decoy run` refuses on).
 
     `run_config_only_checks` is called here EXACTLY ONCE for the whole gate (F5 dedup).
     Returns `(config, checks_run, findings)`; `config` is None when the layer failed, so the
@@ -182,11 +187,18 @@ def _run_config_base(
         )
         return None, (), [finding]
 
+    from decoy.cli.io import target_format_issues
     from decoy.cli.preflight import _check_target_overwrite, _PreflightAccumulator
 
     advisory = _PreflightAccumulator()
     _check_target_overwrite(raw, advisory)
-    return validated, tuple(checks_run), _findings_from_checks(advisory, "config")
+    findings = _findings_from_checks(advisory, "config")
+    # The route is unknown here, so only the route-free contradictions (chunked=False).
+    findings.extend(
+        GateFinding("config", "error", i.code, i.message, location=f"targets.{i.table}.format")
+        for i in target_format_issues(raw, chunked=False)
+    )
+    return validated, tuple(checks_run), findings
 
 
 def _run_compile_layer(raw: dict[str, Any]) -> list[GateFinding]:
@@ -266,6 +278,7 @@ def _run_preflight_layer(
     which never takes the route that check prices: there it is a warning.
     """
     from decoy.cli.preflight import (
+        CAPACITY_CHECK,
         _check_capacity,
         _check_native,
         _check_source_files,
@@ -279,8 +292,9 @@ def _run_preflight_layer(
 
     if route is GateRoute.CHUNKED:
         for c in acc.checks:
-            if c.name == _CAPACITY_CHECK and c.status == "fail":
+            if c.name == CAPACITY_CHECK and c.status == "fail":
                 c.status = "warn"
+                c.message = _CHUNKED_CAPACITY_NOTE + c.message.removeprefix("INSUFFICIENT -- ")
         acc.capacity_insufficient = False
     return _findings_from_checks(acc, "preflight"), acc.capacity_insufficient
 

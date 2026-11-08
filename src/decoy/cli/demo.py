@@ -24,8 +24,9 @@ import typer
 
 from decoy.cli._sources import read_source
 from decoy.cli.exit_codes import EXIT_RUNTIME, EXIT_USAGE
+from decoy.cli.io._targets import check_target_formats, write_targets
 from decoy.ui.card import render_card
-from decoy.ui.output import OutputMode, OutputState, emit_json, setup_output
+from decoy.ui.output import OutputMode, OutputState, emit_json, print_traceback, setup_output
 from decoy.ui.theme import accent, error, hint, success
 
 _DEMO_EPILOG = """\
@@ -254,11 +255,6 @@ def _run_v2_mask(pipeline_yaml: Path) -> None:
     _write_mask_outputs(config_dict, result, pipeline_yaml.parent)
 
 
-def _resolve_path(raw_path: str, base_dir: Path) -> Path:
-    p = Path(raw_path)
-    return p if p.is_absolute() else (base_dir / p).resolve()
-
-
 def _load_sources_from_config(config_dict: dict, base_dir: Path) -> dict:
     import pyarrow as pa
 
@@ -274,32 +270,14 @@ def _load_sources_from_config(config_dict: dict, base_dir: Path) -> dict:
 
 
 def _write_mask_outputs(config_dict: dict, result, base_dir: Path) -> None:
-    """Write each declared target. The engine `ExecutionResult` carries
-    masked tables on `outputs` (dict[table_name -> pa.Table]); not
-    `tables`."""
-    targets = config_dict.get("targets") or {}
-    if not isinstance(targets, dict):
-        return
+    """Write each declared target by its declared format, through the shared writer.
+    The engine `ExecutionResult` carries masked tables on `outputs`
+    (dict[table_name -> pa.Table]); not `tables`."""
+    check_target_formats(config_dict, chunked=False)
     outputs = getattr(result, "outputs", None)
     if not isinstance(outputs, dict):
         return
-    for table_name, entry in targets.items():
-        if not isinstance(entry, dict):
-            continue
-        raw_path = entry.get("path")
-        if not isinstance(raw_path, str):
-            continue
-        table = outputs.get(table_name)
-        if table is None:
-            continue
-        path = _resolve_path(raw_path, base_dir)
-        path.parent.mkdir(parents=True, exist_ok=True)
-        if path.suffix.lower() == ".parquet":
-            import pyarrow.parquet as pq
-
-            pq.write_table(table, str(path))
-        else:
-            table.to_pandas().to_csv(path, index=False)
+    write_targets(config_dict, outputs, base_dir)
 
 
 # ---------------------------------------------------------------------------
@@ -552,7 +530,7 @@ def _demo(
             state.err_console.print(error("error:"), error_text)
             state.err_console.print(" ", hint("hint:"), "rerun with --verbose for the full traceback.")
         if state.verbose:
-            state.err_console.print_exception()
+            print_traceback(state)
         raise typer.Exit(code=_exit_code)
 
     if exit_code != 0:

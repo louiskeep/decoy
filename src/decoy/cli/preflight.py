@@ -111,6 +111,9 @@ See also: decoy validate, decoy run, decoy report verify, decoy explain exit-cod
 # Check accumulator (reused from validate)
 # ---------------------------------------------------------------------------
 
+# The capacity check's name; `decoy.cli.gate` keys its chunked-route rule on it.
+CAPACITY_CHECK = "capacity.out_of_core_fk"
+
 
 @dataclass
 class _CheckResult:
@@ -409,7 +412,7 @@ def _check_capacity(raw: dict[str, Any], config_path: Path, acc: _PreflightAccum
 
     if not hasattr(_engine_execution, "estimate_job_capacity"):
         acc.add_pass(
-            name="capacity.out_of_core_fk",
+            name=CAPACITY_CHECK,
             message="not checked -- capacity check needs a newer engine.",
         )
         return
@@ -423,7 +426,7 @@ def _check_capacity(raw: dict[str, Any], config_path: Path, acc: _PreflightAccum
         isinstance(s, dict) and (s.get("type") or "file") != "file" for s in sources.values()
     ):
         acc.add_pass(
-            name="capacity.out_of_core_fk",
+            name=CAPACITY_CHECK,
             message="not checked -- capacity is estimated only for file sources in local preflight.",
         )
         return
@@ -433,7 +436,7 @@ def _check_capacity(raw: dict[str, Any], config_path: Path, acc: _PreflightAccum
     # docstring for why this guard exists (a real regression it fixes).
     if _file_sources_missing_on_disk(raw, config_path.parent):
         acc.add_pass(
-            name="capacity.out_of_core_fk",
+            name=CAPACITY_CHECK,
             message="not checked -- one or more declared source files are missing or "
             "unreadable; see the source-file findings above.",
         )
@@ -466,7 +469,7 @@ def _check_capacity(raw: dict[str, Any], config_path: Path, acc: _PreflightAccum
             # cleanly instead of crashing preflight on a raw traceback.
             acc.capacity_insufficient = True
             acc.add_fail(
-                name="capacity.out_of_core_fk",
+                name=CAPACITY_CHECK,
                 message=f"INSUFFICIENT -- {exc.message}",
                 code=exc.code,
             )
@@ -495,7 +498,7 @@ def _check_capacity(raw: dict[str, Any], config_path: Path, acc: _PreflightAccum
         # EXCEEDS it, so a hardcoded "exceeds" here would misreport a warn-band
         # floor that still sits under its cap as over it.
         acc.add_warn(
-            name="capacity.out_of_core_fk",
+            name=CAPACITY_CHECK,
             message=(
                 f"ADVISORY -- {estimate.message} Recommends {needed} (budget {available}); "
                 "the job is not refused, this is a recommendation."
@@ -503,7 +506,7 @@ def _check_capacity(raw: dict[str, Any], config_path: Path, acc: _PreflightAccum
         )
     elif estimate.verdict is CapacityVerdict.FIT:
         acc.add_pass(
-            name="capacity.out_of_core_fk",
+            name=CAPACITY_CHECK,
             message=(
                 "OK -- OOC-FK estimated resident floor is within budget (does not "
                 f"include ingestion peak). Needs {needed}, budget {available}."
@@ -512,7 +515,7 @@ def _check_capacity(raw: dict[str, Any], config_path: Path, acc: _PreflightAccum
     elif estimate.verdict is CapacityVerdict.INSUFFICIENT:
         acc.capacity_insufficient = True
         acc.add_fail(
-            name="capacity.out_of_core_fk",
+            name=CAPACITY_CHECK,
             message=(
                 f"INSUFFICIENT -- needs {needed}, budget {available}; use a larger "
                 "tier or reduce the job. This estimate is conservative: a real run "
@@ -527,17 +530,13 @@ def _check_capacity(raw: dict[str, Any], config_path: Path, acc: _PreflightAccum
         # can act on it, exactly as it does on the confirmed FIT+warned path.
         if estimate.warned:
             acc.add_warn(
-                name="capacity.out_of_core_fk",
+                name=CAPACITY_CHECK,
                 message=f"ADVISORY (route unconfirmed) -- {estimate.message}",
             )
         else:
-            acc.add_pass(
-                name="capacity.out_of_core_fk", message=f"not checked -- {estimate.message}"
-            )
+            acc.add_pass(name=CAPACITY_CHECK, message=f"not checked -- {estimate.message}")
     else:  # NOT_APPLICABLE
-        acc.add_pass(
-            name="capacity.out_of_core_fk", message=f"not applicable -- {estimate.message}"
-        )
+        acc.add_pass(name=CAPACITY_CHECK, message=f"not applicable -- {estimate.message}")
 
 
 # ---------------------------------------------------------------------------
@@ -785,7 +784,7 @@ def _emit_preflight_result(
     fail_on_warning: bool,
 ) -> None:
     """Render the accumulated preflight result."""
-    capacity_checks = [c for c in acc.checks if c.name == "capacity.out_of_core_fk"]
+    capacity_checks = [c for c in acc.checks if c.name == CAPACITY_CHECK]
     native_checks = [c for c in acc.checks if c.name in ("native.companion", "native.eligibility")]
 
     if state.mode is OutputMode.json:
@@ -827,7 +826,7 @@ def _emit_preflight_result(
 
     # Human-readable: print warnings then failures, then overall result.
     for chk in acc.checks:
-        if chk.name in ("capacity.out_of_core_fk", "native.companion", "native.eligibility"):
+        if chk.name in (CAPACITY_CHECK, "native.companion", "native.eligibility"):
             continue  # rendered separately below, at every status (not just warn/fail)
         # markup=False on every message print in this function: a check
         # message is not authored markup. It can carry an install hint like

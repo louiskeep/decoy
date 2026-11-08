@@ -67,7 +67,12 @@ def _write_bad_config(tmp_path: Path) -> Path:
         "version": 2,
         "global_settings": {"seed": 1, "mask_secret_ref": TEST_MASK_SECRET_REF},
         "sources": {"t": {"type": "file", "format": "csv", "path": "./missing.csv"}},
-        "tables": [{"name": "t", "columns": [{"name": "x", "strategy": "faker", "provider": "no_such_provider"}]}],
+        "tables": [
+            {
+                "name": "t",
+                "columns": [{"name": "x", "strategy": "faker", "provider": "no_such_provider"}],
+            }
+        ],
         "targets": {"t": {"type": "file", "format": "csv", "path": str(tmp_path / "out.csv")}},
     }
     p = tmp_path / "bad.yaml"
@@ -100,6 +105,45 @@ def test_run_bad_notify_spec_exits_usage_before_running(tmp_path: Path):
     result = runner.invoke(app, ["run", str(cfg), "--notify", "sms:+15551234567"])
     assert result.exit_code == EXIT_USAGE
     assert not out_path.exists(), "a bad --notify spec must be caught before the run executes"
+
+
+# Off a TTY Rich folds at 80 columns and parses `[...]` as markup, so each notify print of
+# user or remote text is verbatim and unfolded. Mutation: drop `markup=False` from the print
+# each cell names (markup), or `soft_wrap=stderr` from `_make_console` (fold).
+_LONG = "x" * 120
+
+
+def test_a_long_bad_notify_spec_is_printed_whole_and_verbatim(tmp_path: Path):
+    """The NotifySpecError print quotes the spec."""
+    cfg = _write_mask_config(tmp_path)
+    spec = _LONG + "[bold]tail[/bold]"
+    result = runner.invoke(app, ["run", str(cfg), "--notify", spec])
+    assert result.exit_code == EXIT_USAGE
+    assert repr(spec) in result.stderr, result.stderr
+
+
+def test_a_long_undelivered_detail_is_printed_whole_and_verbatim(tmp_path: Path):
+    """The did-not-deliver warning carries the channel's detail."""
+    cfg = _write_mask_config(tmp_path)
+    detail = f"endpoint {_LONG} answered [503]"
+    with mock.patch("decoy.notify.send_webhook", return_value=(False, detail)):
+        result = runner.invoke(
+            app, ["run", str(cfg), "--notify", "webhook:https://hooks.example.com/x"]
+        )
+    assert result.exit_code == 0, result.output
+    assert detail in result.stderr, result.stderr
+
+
+def test_a_long_dispatch_failure_is_printed_whole_and_verbatim(tmp_path: Path):
+    """The dispatch-failed warning carries the exception text."""
+    cfg = _write_mask_config(tmp_path)
+    text = f"transport {_LONG} closed [eof]"
+    with mock.patch("decoy.notify.dispatch", side_effect=RuntimeError(text)):
+        result = runner.invoke(
+            app, ["run", str(cfg), "--notify", "webhook:https://hooks.example.com/x"]
+        )
+    assert result.exit_code == 0, result.output
+    assert f"notify dispatch failed: {text}" in result.stderr, result.stderr
 
 
 # ---------------------------------------------------------------------------

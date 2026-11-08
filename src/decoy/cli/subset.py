@@ -38,7 +38,7 @@ import yaml as _yaml
 
 from decoy.cli._yaml_errors import sanitize_yaml_error
 from decoy.cli.exit_codes import EXIT_RUNTIME, EXIT_USAGE
-from decoy.ui.output import OutputMode, emit_json, setup_output
+from decoy.ui.output import OutputMode, emit_json, print_traceback, setup_output
 from decoy.ui.table import make_table
 from decoy.ui.theme import accent, code, error, hint, success, warn
 
@@ -275,7 +275,7 @@ def subset(
             error_text = error_text[:500] + "..."
         _fail_runtime(state, config_str, code_=type(exc).__name__, message=error_text)
         if state.verbose:
-            state.err_console.print_exception()
+            print_traceback(state)
         raise typer.Exit(code=EXIT_RUNTIME)
 
 

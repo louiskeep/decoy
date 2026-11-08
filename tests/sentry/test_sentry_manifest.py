@@ -23,6 +23,9 @@ GATES = ROOT / "scripts" / "dev" / "gates.sh"
 
 SENTRIES = (
     "tests/sentry/test_atomic_writer.py",
+    "tests/sentry/test_bash32_compat.py",
+    "tests/sentry/io_policy/test_target_writes.py",
+    "tests/sentry/test_csv_read_choke_point.py",
     "tests/sentry/test_baseline_registry.py",
     "tests/sentry/test_ci_lock_installs.py",
     "tests/sentry/test_ci_output_isolation.py",
@@ -35,6 +38,7 @@ SENTRIES = (
     "tests/sentry/test_mask_secret_file_mode.py",
     "tests/sentry/test_mask_secret_ref_shape.py",
     "tests/sentry/test_notify_redaction.py",
+    "tests/sentry/test_one_stderr_console.py",
     "tests/sentry/test_otel_closed.py",
     "tests/sentry/test_profile_raw_value_isolation.py",
     "tests/sentry/test_ratchet_check.py",

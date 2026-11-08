@@ -19,8 +19,17 @@ import typer
 import yaml as _yaml
 
 from decoy import _mask_secret, _mask_secret_guidance
+from decoy._atomic import AtomicWriteError, describe
+from decoy.cli._sources import read_file
 from decoy.cli._yaml_errors import sanitize_yaml_error
 from decoy.cli.exit_codes import EXIT_RUNTIME, EXIT_USAGE
+from decoy.cli.io import (
+    TargetFormatError,
+    check_output_path,
+    format_for_path,
+    input_format,
+    write_private_table,
+)
 from decoy.ui.output import OutputMode, emit_json, setup_output
 from decoy.ui.theme import code, error, hint, success, warn
 
@@ -70,7 +79,7 @@ def unmask(
         exists=True,
         dir_okay=False,
         readable=True,
-        help="The masked CSV produced by `decoy run` for one table.",
+        help="The masked file produced by `decoy run` for one table (read by the target's declared format, else by extension).",
     ),
     table: str | None = typer.Option(
         None,
@@ -149,15 +158,20 @@ def unmask(
         _emit_error(sanitize_yaml_error(exc))
         raise typer.Exit(code=EXIT_USAGE)
     if not isinstance(raw, dict):
-        _emit_error(
-            f"Pipeline YAML must be a YAML mapping (object), not {type(raw).__name__}."
-        )
+        _emit_error(f"Pipeline YAML must be a YAML mapping (object), not {type(raw).__name__}.")
         raise typer.Exit(code=EXIT_USAGE)
     try:
         _mask_secret.apply_mask_secret(raw, mask_secret)
     except _mask_secret.MaskSecretFlagError as exc:
         _emit_error(str(exc))
         raise typer.Exit(code=EXIT_USAGE)
+
+    if output is not None:
+        try:
+            check_output_path(output)
+        except TargetFormatError as exc:
+            _emit_error(f"{exc.code}: {exc}")
+            raise typer.Exit(code=EXIT_USAGE)
 
     mask_tables = [
         t.get("name")
@@ -182,7 +196,6 @@ def unmask(
         )
         raise typer.Exit(code=EXIT_USAGE)
 
-    import pandas as pd
     import pyarrow as pa
     from decoy_engine import VaultError, unmask_pipeline
     from decoy_engine.errors import ConfigError
@@ -190,11 +203,33 @@ def unmask(
     from decoy_engine.keyprovider import MaskSecretError
     from decoy_engine.plan import PlanCompileError
 
+    # The declared format of the table's target when `masked` is that file, else the suffix rule.
     try:
-        df = pd.read_csv(masked, dtype=str)
+        in_format, in_layout = input_format(raw, target_table, masked, config.parent)
+    except TargetFormatError as exc:
+        _emit_error(f"{exc.code}: {exc}")
+        raise typer.Exit(code=EXIT_USAGE)
+
+    try:
+        df = read_file(masked, in_format, in_layout, table=target_table)
     except Exception as exc:
         # The type only: a parse error can quote a cell, and the path is not ours to print.
         _emit_error(f"could not read the masked file: {type(exc).__name__}")
+        raise typer.Exit(code=EXIT_USAGE)
+
+    declared = [
+        c.get("name")
+        for t in raw.get("tables") or []
+        if isinstance(t, dict) and t.get("name") == target_table
+        for c in t.get("columns") or []
+        if isinstance(c, dict)
+    ]
+    if declared and not any(name in df.columns for name in declared):
+        _emit_error(
+            "unmask_columns_missing: the input holds none of the configured columns for "
+            "this table; check that the file and --table match the run and that the file "
+            "is in the format the target declares."
+        )
         raise typer.Exit(code=EXIT_USAGE)
 
     try:
@@ -218,9 +253,7 @@ def unmask(
         _emit_error(f"{err_code}: {message}")
         raise typer.Exit(code=EXIT_USAGE)
     except (ExecutionError, ConfigError) as exc:
-        _emit_error(
-            f"{getattr(exc, 'code', type(exc).__name__)}: {getattr(exc, 'message', exc)}"
-        )
+        _emit_error(f"{getattr(exc, 'code', type(exc).__name__)}: {getattr(exc, 'message', exc)}")
         raise typer.Exit(code=EXIT_USAGE)
     except VaultError as exc:
         # A bad or mismatched vault is an input problem, not a CLI crash.
@@ -235,8 +268,7 @@ def unmask(
             )
         else:
             _emit_error(
-                f"{getattr(exc, 'code', type(exc).__name__)}: "
-                f"{getattr(exc, 'message', exc)}"
+                f"{getattr(exc, 'code', type(exc).__name__)}: {getattr(exc, 'message', exc)}"
             )
         raise typer.Exit(code=EXIT_USAGE)
     except Exception as exc:  # runtime failure, not a usage problem
@@ -245,7 +277,11 @@ def unmask(
         raise typer.Exit(code=EXIT_RUNTIME)
 
     out_path = output if output is not None else masked.with_suffix(".unmasked.csv")
-    result.outputs[target_table].to_pandas().to_csv(out_path, index=False)
+    try:
+        write_private_table(result.outputs[target_table], format_for_path(out_path), out_path)
+    except AtomicWriteError as exc:
+        _emit_error(f"could not write the output: {describe(exc)}")
+        raise typer.Exit(code=EXIT_RUNTIME)
 
     entries = [
         {
@@ -318,9 +354,7 @@ def unmask(
     # Absent configured tables are their own clause so real columns and
     # missing tables are never conflated in one count.
     if table_missing:
-        summary = summary[:-1] + (
-            f", {len(table_missing)} configured table(s) not in this input."
-        )
+        summary = summary[:-1] + (f", {len(table_missing)} configured table(s) not in this input.")
     state.console.print(success("OK"), code(str(out_path)))
     state.console.print(summary)
     for e in entries:

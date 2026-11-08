@@ -1,31 +1,114 @@
-"""Read a declared `sources:` entry into Arrow, dispatching on its `format`.
+"""Read every data file the CLI reads, dispatching on a declared `format`.
 
 `FileSource.format` is required by the engine's config schema and every
 entry point (run, demo, the `mask()` API) validates before reading, so the
 declared format is the only thing consulted here. A file's suffix says
 nothing about how it should be parsed: a Parquet file named `.pq` and a CSV
 named `.dat` both read correctly.
+
+The engine owns the CSV dialect (`has_header`, `column_names`, `delimiter`) and
+the headerless width scan. This module owns path resolution and the format
+dispatch. It is the one place the CLI reads a data file (the sentry in
+tests/sentry/test_csv_read_choke_point.py keeps it that way), and `read_csv_frame` is the one
+place a CSV is read. `read_file` reads a file whose format is already decided: a CLI-written
+target read back, or the Parquet input of `decoy init` and `decoy scan`. The format decision
+for CLI-written files lives with their writer, in `cli/io/_targets.py`.
 """
 
 from __future__ import annotations
 
-from collections.abc import Iterator
+from collections.abc import Iterator, Mapping
 from pathlib import Path
 from typing import Any
 
 import pyarrow as pa
 
 
-def _resolve_path(raw_path: str, base_dir: Path) -> Path:
+def resolve_path(raw_path: str, base_dir: Path) -> Path:
+    """Resolve a YAML path against the config's directory; absolute paths pass through.
+
+    The one YAML path resolver: `run`, `demo` and the target writers share it.
+    """
     p = Path(raw_path)
     return p if p.is_absolute() else (base_dir / p).resolve()
 
 
-def _unknown_format(table_name: str, fmt: object) -> ValueError:
+def _unknown_format(table_name: str, fmt: object, kind: str = "source") -> ValueError:
     return ValueError(
-        f"source {table_name!r}: unsupported format {fmt!r} "
+        f"{kind} {table_name!r}: unsupported format {fmt!r} "
         "(expected one of csv, parquet, fixed_width)"
     )
+
+
+def read_csv_frame(
+    table_name: str,
+    src: dict[str, Any],
+    base_dir: Path,
+    *,
+    dtype: type[str] | None,
+    nrows: int | None = None,
+    chunk_size: int | None = None,
+) -> Any:
+    """Read a declared CSV source through the engine reader, the one CSV read point.
+
+    The source's `has_header`, `column_names` and `delimiter` apply; omitted keys take the
+    engine defaults. `dtype` is a parameter because the callers differ: `decoy run` reads
+    every cell as text (`dtype=str`), while `decoy init` and the report verbs keep pandas
+    dtypes (`dtype=None`) so their inference and scores do not change. With `chunk_size` the
+    engine scans a headerless file at this call and the result is an iterator of frames
+    (a `pandas.DataFrame` without it; the return type is `Any` for that reason).
+    """
+    from decoy_engine import read_csv_source, resolve_csv_dialect
+
+    return read_csv_source(
+        resolve_path(src["path"], base_dir),
+        resolve_csv_dialect(src),
+        table=table_name,
+        dtype=dtype,
+        nrows=nrows,
+        chunksize=chunk_size,
+    )
+
+
+def read_report_source(path: Path, config_dict: dict[str, Any], config_dir: Path) -> Any:
+    """Read the `--source` file of a report verb, with its declared dialect when it has one.
+
+    The declared dialect applies only when a `format: csv` source in `config_dict` resolves
+    to this very file; any other file, or no config, reads with the default dialect. Pandas
+    dtypes are kept, so the scores are the ones the verbs gave before.
+    """
+    target = path.resolve()
+    for name, src in (config_dict.get("sources") or {}).items():
+        if (
+            isinstance(src, dict)
+            and src.get("format") == "csv"
+            and src.get("path")
+            and resolve_path(src["path"], config_dir).resolve() == target
+        ):
+            return read_csv_frame(name, src, config_dir, dtype=None)
+    # The user's own path is relative to the current folder, never to the config directory.
+    return read_csv_frame(path.stem, {"path": str(target)}, config_dir, dtype=None)
+
+
+def read_file(path: Path, fmt: str, layout: Mapping[str, Any] | None, *, table: str) -> Any:
+    """Read one whole file whose format is already decided; returns a `pandas.DataFrame`.
+
+    csv is read all-text through `read_csv_frame` (tokens and masked values match byte for
+    byte), parquet keeps its native types, fixed_width is typed per `layout`. Any other
+    format raises before the file is opened.
+    """
+    if fmt == "csv":
+        # Absolute, so `resolve_path` does not join a relative path onto its own folder.
+        return read_csv_frame(table, {"path": str(path.resolve())}, path.parent, dtype=str)
+    if fmt == "parquet":
+        import pandas as pd
+
+        return pd.read_parquet(path)
+    if fmt == "fixed_width" and layout is not None:
+        from decoy_engine import read_fixed_width
+
+        return read_fixed_width(path, dict(layout))
+    raise _unknown_format(table, fmt, kind="file")
 
 
 def read_source(table_name: str, src: dict[str, Any], base_dir: Path) -> pa.Table:
@@ -37,15 +120,14 @@ def read_source(table_name: str, src: dict[str, Any], base_dir: Path) -> pa.Tabl
     way the platform reads it.
     """
     fmt = src.get("format")
-    path = _resolve_path(src["path"], base_dir)
+    path = resolve_path(src["path"], base_dir)
     if fmt == "parquet":
         import pyarrow.parquet as pq
 
         return pq.read_table(str(path))
     if fmt == "csv":
-        import pandas as pd
-
-        return pa.Table.from_pandas(pd.read_csv(path, dtype=str), preserve_index=False)
+        frame = read_csv_frame(table_name, src, base_dir, dtype=str)
+        return pa.Table.from_pandas(frame, preserve_index=False)
     if fmt == "fixed_width":
         from decoy_engine import read_fixed_width
 
@@ -57,7 +139,10 @@ def read_source(table_name: str, src: dict[str, Any], base_dir: Path) -> pa.Tabl
 def iter_source_chunks(
     table_name: str, src: dict[str, Any], base_dir: Path, chunk_size: int
 ) -> Iterator[pa.Table]:
-    """Yield `pa.Table`s of at most `chunk_size` rows from a csv or parquet source.
+    """Return an iterator of `pa.Table`s of at most `chunk_size` rows from a csv or parquet source.
+
+    This is a plain function, not a generator: the engine scans a headerless csv file when
+    this is called, so a misfit file raises here, before the first chunk exists.
 
     Parquet batches can come back SHORTER than chunk_size at row-group
     boundaries; that is fine and must stay fine, because chunked output is
@@ -69,23 +154,30 @@ def iter_source_chunks(
     backstop for any caller that skips that check.
     """
     fmt = src.get("format")
-    path = _resolve_path(src["path"], base_dir)
+    path = resolve_path(src["path"], base_dir)
     if fmt == "parquet":
-        import pyarrow.parquet as pq
-
-        parquet_file = pq.ParquetFile(str(path))
-        for batch in parquet_file.iter_batches(batch_size=chunk_size):
-            yield pa.Table.from_batches([batch])
-        return
+        return _parquet_chunks(path, chunk_size)
     if fmt == "csv":
-        import pandas as pd
-
-        for df in pd.read_csv(path, dtype=str, chunksize=chunk_size):
-            yield pa.Table.from_pandas(df, preserve_index=False)
-        return
+        frames = read_csv_frame(table_name, src, base_dir, dtype=str, chunk_size=chunk_size)
+        return (pa.Table.from_pandas(df, preserve_index=False) for df in frames)
     if fmt == "fixed_width":
         raise ValueError(
             f"source {table_name!r}: format 'fixed_width' cannot be read in "
             "chunks; run without --chunked"
         )
     raise _unknown_format(table_name, fmt)
+
+
+def parquet_schema(path: Path) -> pa.Schema:
+    """The Arrow schema of a Parquet file, without reading its rows."""
+    import pyarrow.parquet as pq
+
+    return pq.ParquetFile(str(path)).schema_arrow
+
+
+def _parquet_chunks(path: Path, chunk_size: int) -> Iterator[pa.Table]:
+    import pyarrow.parquet as pq
+
+    parquet_file = pq.ParquetFile(str(path))
+    for batch in parquet_file.iter_batches(batch_size=chunk_size):
+        yield pa.Table.from_batches([batch])

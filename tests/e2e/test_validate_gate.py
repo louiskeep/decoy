@@ -30,6 +30,7 @@ import json as _json
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
+from unittest import mock
 
 import pandas as pd
 import pyarrow as pa
@@ -538,9 +539,14 @@ def test_corrupt_source_leaves_no_reader_text(tmp_path: Path, flags: tuple[str, 
         "format": "parquet",
         "path": str(tmp_path / "bad.parquet"),
     }
-    (tmp_path / "bad.parquet").write_bytes(f"NOT_PARQUET_{MARKER}".encode())
+    (tmp_path / "bad.parquet").write_bytes(b"NOT_PARQUET")
     cfg.write_text(yaml.dump(data), encoding="utf-8")
-    result = _gate(cfg, *flags)
+    # A real pyarrow error never echoes file bytes, so the marker has to come from the reader
+    # itself: the engine wraps this text into its message, and the CLI must not print it.
+    with mock.patch(
+        "decoy_engine.profile.profile_source", side_effect=ValueError(f"reader says {MARKER}")
+    ):
+        result = _gate(cfg, *flags)
     assert result.exit_code == EXIT_USAGE, result.output
     assert MARKER not in result.output
     if flags:
