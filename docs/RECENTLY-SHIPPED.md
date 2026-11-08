@@ -20,6 +20,10 @@ git logs).
 
 ---
 
+## 2026-11-08
+
+- **CLI** (`8ac0f8d`, #107): VALIDATE-ALWAYS Part 2. `decoy run` runs the whole `decoy validate` check (config, compile, preflight) through the shared gate before it reads any source rows; an error stops the run with validate's exit code (1, or 5 for a capacity refusal), warnings are counted on stderr, and `--json` refusals add `error_kind` and `messages`. A missing source now exits 1 instead of 3. The gate adds about 0.8 s per run. Known follow-ups: a `--duckdb-source` relation is staged before the gate (FU-2) and a non-UTF-8 config still exits 3 (FU-7). Gate: Dennis GO r1, Codex GO r2.
+
 ## 2026-11-07
 
 - **CLI** (`4cd24dd`, #105): ATOMIC-OUTPUT. Every CLI table write (CSV, Parquet, compressed CSV, chunked output) is staged in a temp file beside the output and replaces it in one rename, so a failed or interrupted run keeps the old file or writes none. An existing output keeps its mode bits. `unmask` and `detokenize` write owner-only (0600) on Linux and macOS, including a stdout redirected to a file. Closes row 61a (chunked partial target). Gate: Dennis GO r2, Codex GO r3.
