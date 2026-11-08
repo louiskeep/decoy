@@ -228,7 +228,7 @@ on origin unless marked local. Detail for each row is in [roadmap/row-detail.md]
 | 15 | F32 E1 | engine | Codex GO, Dennis GO-WITH-FIXES on `55b28933` (2 HIGH; V1 status UNVERIFIED) | `feat/f32-e1` `55b28933` (side branches `feat/f32-e1-labels`, `feat/f32-e1-types`) | re-check, then merge |
 | 16 | STORM E1 (engine part of the STORM rename), registry 1.7.0 | engine | NOT MERGED; no `feat/storm-e1` on origin | STORM re-cut plan `P:plan/storm-rename-recut` `dfe7cc6a` | SUB-STOP |
 | 17 | WF-R engine and CLI part: tombstone the engine `WORKFLOW_*` reason codes (`E:src/decoy_engine/reasons/platform/_part1.py:72-74`, never deleted) and fix the CLI pointer (`C:src/decoy/cli/explain.py:170`) | engine, CLI | NOT STARTED | none | registry order |
-| 18 | Engine release R-c and CLI repin: vault key floor, B-6 core, SUB-STOP, STORM E1, whatever else has merged, and the F34 release if owner Q4 says so | engine, CLI | NOT STARTED | none | rows 10 to 12, 16 |
+| 18 | Engine release R-c and CLI repin: vault key floor, B-6 core, SUB-STOP, STORM E1, whatever else has merged, and the F34 release (owner Q4, 2026-11-08: R-c is the F34 release) | engine, CLI | NOT STARTED | none | rows 10 to 12, 16 |
 
 **C. Live CLI bugs and explicit config**
 
@@ -307,7 +307,7 @@ on `P:plan/h1-wave-b` `944fb295` (Codex GO). Only files no live branch touches.
 | 52 | H-1 E2 and E4 | engine | handoff not written | none | E0r |
 | 53 | H-1 C3 | CLI | handoff not written | none | STORM CLI half; CLI branches `claude/storm-split-cli`, `claude/vibrant-feynman-1khw1v` settled |
 | 54 | H-1 E7: split files as their blockers merge | engine | not planned in detail | none | per file |
-| 55 | H-1 E8: `execution/` root restructure (93 modules) | engine | waits on H-1 Q3 (owner) | none | an engine release and the repins |
+| 55 | H-1 E8: `execution/` root restructure (93 modules) | engine | DEFERRED until after CLI V1 (owner H-1 Q3, 2026-11-08) | none | an engine release and the repins |
 | 56 | STORM rename, CLI half: re-cut so CLI C0 vendors `storm_slice_measure.py`, `storm_inventory.py`, `slices-cli.json` and drops the platform S2c dependency; CLI V1 ships the new names | CLI | NOT STARTED; re-cut plan needed (owner OQ-2 = B1) | from `P:plan/storm-rename-recut` `dfe7cc6a` | R-c repin |
 
 **G. Phase 1 engine and CLI: trustworthy local run**
@@ -327,7 +327,7 @@ on `P:plan/h1-wave-b` `944fb295` (Codex GO). Only files no live branch touches.
 | 64b | CLI-DB-SRC: PostgreSQL as a pipeline source (`type: postgres` with a value-free connection reference, a table list and the CONFIG-EXPLICIT column rules) through the engine `postgres_snapshot` primitive; needs a Postgres CI lane (CI-P2 markers, unparked for the engine and CLI) | engine, CLI | NOT STARTED; owner 2026-11-06: CLI V1 | CONFIG-EXPLICIT, CLI-IO | CLI delivery |
 | 65 | F31: shared safe-output and redaction (remaining build slices) | engine, CLI | plan rev 9 GO; E0a, E0c MERGED (engine #368, #377) | `E:plan/f31-safe-output` `2340a45b` | none |
 | 66 | F29 remainder: CLI consumers (C1, which carries RESULT) and the F31 hook | engine, CLI | C0 MERGED (engine #367) | `E:plan/f29-errors-progress-remainder` | F31 for the hook |
-| 67 | F34 E3 and the F34 release | engine | E0, E1, E2 MERGED (engine #365, #370, #371) | `P:plan/f34-residual-canary-span` `785af293` | registry order; owner Q4 |
+| 67 | F34 E3 and the F34 release | engine | E0, E1, E2 MERGED (engine #365, #370, #371) | `P:plan/f34-residual-canary-span` `785af293` | registry order; ships in R-c (owner Q4, 2026-11-08) |
 | 68 | F36: cross-column invariants (finish), entry slices, slice 4 registry | engine | plan rev 8 GO | `E:plan/f36-cross-column-invariants` `9ed7b47f` | F06 (merged) |
 | 69 | F35: quality contracts, E1a onward (registry) | engine | plan rev 4 GO | `P:plan/f35-quality-contracts` `7a3471af` | registry order |
 | 70 | F32 remainder: engine E1b to E3, CLI C0, C1, C1b | engine, CLI | plan Codex r5 GO, Dennis r4 GO-WITH-FIXES | `P:plan/f32-support-bundles` `39c2772c` | F32 E1 (row 15); F31 |
@@ -350,7 +350,7 @@ on `P:plan/h1-wave-b` `944fb295` (Codex GO). Only files no live branch touches.
 | 82 | F07: bounded path-observation discovery, nested-path relations, JSONB coverage | engine | NOT STARTED | none | STORM rename |
 | 83 | F13 external adapters (HashiCorp Vault, AWS and GCP Secret Manager, Azure Key Vault) | engine, CLI | NOT STARTED | none | F13 preflight (merged) |
 | 84 | F24 engine half: full-lifecycle estimate including the ingestion peak; advisory only | engine | NOT STARTED | none | estimator (engine #328) |
-| 85 | F23 resume, CLI half: `decoy run --resume RUN_DIR`, table-level (UX map Q12 open; recommendation table-level) and the engine checkpoint store | engine, CLI | NOT STARTED | none | F22, CLI delivery |
+| 85 | F23 resume, CLI half: `decoy run --resume RUN_DIR`, table-level: tables that finished are kept, the failed table runs again from its start (owner UX map Q12, 2026-11-08) and the engine checkpoint store | engine, CLI | NOT STARTED | none | F22, CLI delivery |
 
 **I. Phase 3 engine and CLI: connected safe-copy**
 
@@ -366,7 +366,7 @@ on `P:plan/h1-wave-b` `944fb295` (Codex GO). Only files no live branch touches.
 |---|---|---|---|---|---|
 | 89 | WIN-FEAS: Windows for the CLI and engine (private file ACLs instead of 0600, atomic replace with open files, file-access path handling, installer and signing); a blocker goes back to the owner | engine, CLI | NOT STARTED | none | before CLI-REL; LIB L1b gives the first evidence |
 | 90 | REL-PKG: packaging. Signed per-platform bundles with a managed runtime, signer choice (minisign or cosign) and key custody, SHA-256 manifest, verify before extract, install script, offline archive; native companion wheels (engine #353 workflow, never run); NOTICE, SBOM, `--version` (G2) | engine, CLI | B-2 MERGED (CLI #66, #67; engine #353); owner tasks open (signing key, `native-release` Environment, `native-v*` tag rule, qemu SHA pin) | packaging spec above | F44 CLI half (row 88); WIN-FEAS for Windows |
-| 90a | REL-IMAGE: official container image for pipelines (owner 2026-11-07: ship the download plus an official image; a GitHub Action, Helm chart and Terraform wait until after V1). Built on each release from the same signed Linux bundle (x86_64 and aarch64), signed and version-pinned by digest; a slim default tag plus a `-ner` tag with the NER model included; runs as a non-root user; recipes for GitHub Actions, GitLab CI and a Kubernetes job in the public docs. Open: registry and pull access for a licensed product (private registry with customer tokens, or a public image that needs a license), see 5.6 | CLI | NOT STARTED; needs a plan | none | REL-PKG (row 90); SCAN-ML model install (row 32a) for the `-ner` tag |
+| 90a | REL-IMAGE: official container image for pipelines (owner 2026-11-07: ship the download plus an official image; a GitHub Action, Helm chart and Terraform wait until after V1). Built on each release from the same signed Linux bundle (x86_64 and aarch64), signed and version-pinned by digest; a slim default tag plus a `-ner` tag with the NER model included; runs as a non-root user; recipes for GitHub Actions, GitLab CI and a Kubernetes job in the public docs. Registry and pull access (owner 2026-11-08): a public image that refuses to run without a valid license | CLI | NOT STARTED; needs a plan | none | REL-PKG (row 90); SCAN-ML model install (row 32a) for the `-ner` tag |
 | 91 | REL-WEB: website download page on decoy-web, update-check endpoint with its privacy contract (no data, no identifiers, no telemetry), `/proof` synced (B-3) | web | NOT STARTED | decoy-web | REL-PKG |
 | 92 | REL-DOCS: public CLI docs (Fumadocs at decoy.dev/docs, decoy-web PR #18) with the P0 pages from the CLI doc audit, install and upgrade docs, release notes, security contact; D-5 launch-gate flip | web, CLI | docs held draft | decoy-web PR #18 | the commands they document |
 | 93 | REL-GATE: R1 gates. D-4 launch engine freeze, R1-c signing key and license values (owner and counsel), versioning freeze (exit codes including 6, result schema, YAML schema, reason registry), canonical release smoke with recorded runs, a filled release-readiness instance, claims and license checkpoint | engine, CLI, web | NOT STARTED | [roadmap/release-gates.md](roadmap/release-gates.md) | every row above |
@@ -404,13 +404,10 @@ Source: `C:docs/plans/2026-10-22-cli-distribution-and-packaging-spec.md`.
 
 ### 5.6 Open questions for the owner (CLI V1)
 
-- Owner Q4: is R-c the F34 release?
-- REL-IMAGE (row 90a): where the image is published and how customers pull it (private registry with
-  customer tokens, or a public image that refuses to run without a license).
-- UX map Q6 (CLI cloud I/O) and Q12 (resume level).
-- H-1 Q3 (engine `execution/` restructure timing) and the other open H-1 questions.
-- Phase 1 tracks questions still open from `PHASE1-TRACKS.md`: Q5 (order of F35 E1a and F32 E1b; the
-  2026-11-03 chain put F35 first), Q9 (fate of `feat/f25-protected-scratch`), Q11 (F36-P timing).
+- The other open H-1 questions (Q3 answered: after CLI V1).
+- Phase 1 tracks questions still open from `PHASE1-TRACKS.md`: Q9 (fate of `feat/f25-protected-scratch`;
+  recommendation: keep it as the F25 build base) and Q11 (F36-P timing; recommendation: with the
+  platform, after CLI V1). Q5 answered 2026-11-08: F35 E1a before F32 E1b.
 - Still open from earlier: the SBOM lock-mode refusal that prints lock package names; the engine
   `vault_key_mismatch` message still says "the config's seed does not decrypt this vault"
   (`vault.py:520-524`).
