@@ -4,6 +4,9 @@ Status: DRAFT v2 for discussion, not committed scope. Created 2026-10-30; revise
 review with the owner (section 18 records what was settled). Promotion into real scope is a planner
 decision. Items marked **OPEN** are undecided.
 
+Next step: the spec review in `docs/handoffs/2026-11-08-init-wizard-spec-review-handoff.md`, then a Phase 1
+implementation plan. Roadmap row 32b INIT-WIZARD tracks it.
+
 Related: `docs/cli-reference.md` (`decoy init` today), `docs/ci-contracts.md` (the CI manifest the
 wizard can scaffold), engine config models in `decoy_engine/config/`, and the engine's
 `strategy_catalog()` (#400), which lists every strategy and its options for the wizard.
