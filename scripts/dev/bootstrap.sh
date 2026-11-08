@@ -40,7 +40,7 @@ command -v uv >/dev/null || die "uv not on PATH" "install uv, https://docs.astra
 ERRORS=()
 err() { ERRORS+=("$1|$2"); }
 report() {
-  for e in "${ERRORS[@]}"; do
+  for e in ${ERRORS[@]+"${ERRORS[@]}"}; do
     echo "BOOTSTRAP FAIL: ${e%%|*}" >&2
     echo "  fix: ${e#*|}" >&2
   done

@@ -80,7 +80,7 @@ def test_gates_baseline_still_fails_on_a_branch_only_failure(tmp_path: Path) -> 
     proc = run(argv, clone)
     out = proc.stdout + proc.stderr
     assert proc.returncode == 1, out
-    assert "BRANCH-ONLY FAILING STEPS\n  tests" in out, out
+    assert "BRANCH-ONLY FAILING STEPS --\n  tests" in out, out
 
 
 def test_baseline_mode_keeps_going_after_a_failing_step(tmp_path: Path) -> None:

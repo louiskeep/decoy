@@ -736,11 +736,12 @@ def test_a_bigger_suite_than_the_baseline_is_not_a_shrink(tmp_path: Path) -> Non
 # --- AT-18a and AT-18b: the file that is checked is the file that is read --------------------
 
 
-def _rewritten(tmp_path: Path, main_sha: str, failing: list[str]) -> Path:
-    """A valid stored file that already lists the id the run will fail with."""
+def _rewritten(tmp_path: Path, stored: Path, main_sha: str, failing: list[str]) -> Path:
+    """A valid stored file, beside the real one, that already lists the id the run will fail with."""
     other = tmp_path / "rewrite-src.json"
-    base = json.loads(_stored(tmp_path, main_sha).read_text())
-    other.write_text(json.dumps(base | {"failing": failing, "main_sha": main_sha}))
+    other.write_text(
+        json.dumps(json.loads(stored.read_text()) | {"failing": failing, "main_sha": main_sha})
+    )
     return other
 
 
@@ -751,7 +752,7 @@ def test_the_stored_file_is_copied_before_it_is_checked(tmp_path: Path) -> None:
     venv, _log = recording_venv(tmp_path)
     stored = _stored(tmp_path, _origin_main(clone))
     new_id = "tests/a.py::test_seeded_new"
-    src = _rewritten(tmp_path, _origin_main(clone), ["tests/a.py::test_one", new_id])
+    src = _rewritten(tmp_path, stored, _origin_main(clone), ["tests/a.py::test_one", new_id])
     rc, out = _compare(
         clone, venv, stored,
         FAKE_FAIL=f"tests/a.py::test_one {new_id}",
@@ -768,7 +769,7 @@ def test_the_stored_file_is_not_read_again_after_the_copy(tmp_path: Path) -> Non
     venv, _log = recording_venv(tmp_path)
     stored = _stored(tmp_path, _origin_main(clone))
     new_id = "tests/a.py::test_seeded_new"
-    src = _rewritten(tmp_path, NOT_A_COMMIT, ["tests/a.py::test_one", new_id])
+    src = _rewritten(tmp_path, stored, NOT_A_COMMIT, ["tests/a.py::test_one", new_id])
     rc, out = _compare(
         clone, venv, stored,
         FAKE_FAIL=f"tests/a.py::test_one {new_id}",
