@@ -69,6 +69,13 @@ Use this to execute a masking or synthetic-generation job described in
 YAML. The engine handles its own logging per the YAML&#x27;s `logging:`
 section; flags here only affect CLI-side output.
 
+Before it reads any source rows, `run` runs the whole `decoy validate`
+check (config, compile, preflight). A `--duckdb-source` relation is
+staged first, so the check sees the file the run reads. An error stops
+the run with the exit code
+`decoy validate` gives (1, or 5 for a capacity refusal); warnings are
+counted on stderr and never stop it. There is no flag to skip the check.
+
 **Usage**:
 
 ```console
@@ -335,8 +342,9 @@ value it cannot vouch for. So does a file missing any tokenize column the
 config declares for the table, and an already-existing default output
 (<tokenized>.detokenized.<ext>); pass -o to choose a path deliberately.
 
-The recovered file is cleartext PII. Decoy does not chmod run outputs (this one
-is written at your default umask, unlike the 0600 vault): protect it yourself.
+The recovered file is cleartext PII. On Linux and macOS it is written
+owner-only (0600), like the vault; on Windows it inherits its folder's permissions. Protect
+any copy you make.
 
 See also: decoy tokenize, decoy explain tokenize.
 

@@ -28,6 +28,7 @@ from pathlib import Path
 import typer
 
 from decoy import _mask_secret, _mask_secret_guidance
+from decoy._atomic import AtomicWriteError, describe
 from decoy.cli._sources import read_file
 from decoy.cli._token_vault import LocalTokenVault, TokenVaultError, iter_tokenize_columns
 from decoy.cli._yaml_errors import sanitize_yaml_error
@@ -37,7 +38,7 @@ from decoy.cli.io import (
     check_output_path,
     format_for_path,
     input_format,
-    write_table,
+    write_private_table,
 )
 from decoy.ui.output import OutputMode, emit_json, setup_output
 from decoy.ui.progress import spinner
@@ -100,8 +101,9 @@ value it cannot vouch for. So does a file missing any tokenize column the
 config declares for the table, and an already-existing default output
 (<tokenized>.detokenized.<ext>); pass -o to choose a path deliberately.
 
-The recovered file is cleartext PII. Decoy does not chmod run outputs (this one
-is written at your default umask, unlike the 0600 vault): protect it yourself.
+The recovered file is cleartext PII. On Linux and macOS it is written
+owner-only (0600), like the vault; on Windows it inherits its folder's permissions. Protect
+any copy you make.
 
 See also: decoy tokenize, decoy explain tokenize.
 """
@@ -369,6 +371,9 @@ def tokenize(
     except (PlanCompileError, ExecutionError, ConfigError, TargetFormatError) as exc:
         _emit_error(f"{getattr(exc, 'code', type(exc).__name__)}: {getattr(exc, 'message', exc)}")
         raise typer.Exit(code=EXIT_USAGE)
+    except AtomicWriteError as exc:
+        _emit_error(f"could not write the output: {describe(exc)}")
+        raise typer.Exit(code=EXIT_RUNTIME)
     except typer.Exit:
         raise
     except Exception as exc:  # unexpected runtime failure, not a usage problem
@@ -379,7 +384,8 @@ def tokenize(
             _emit_error(
                 f"tokenize failed with an unexpected {type(exc).__name__} while writing "
                 "the output; the vault was committed first, so it holds this run's "
-                "mappings. Discard any partial output files and re-run."
+                "mappings. Earlier tables' outputs may already be written; a failed table's "
+                "output is unchanged. Re-run."
             )
         else:
             _emit_error(
@@ -426,7 +432,12 @@ def tokenize(
     for t, c, ns in tok_cols:
         state.console.print(" ", warn("note:"), f"{t}.{c}: namespace {ns}")
     state.console.print(
-        " ", hint("hint:"), "reverse with: decoy detokenize", code(config.name), "<output> --vault", code(str(vault))
+        " ",
+        hint("hint:"),
+        "reverse with: decoy detokenize",
+        code(config.name),
+        "<output> --vault",
+        code(str(vault)),
     )
 
 
@@ -715,7 +726,10 @@ def detokenize(
         # Output format follows the output path's extension: the default matches
         # the input (Parquet in -> Parquet out), and an explicit -o picks by its
         # own suffix.
-        write_table(df, format_for_path(out_path), out_path)
+        write_private_table(df, format_for_path(out_path), out_path)
+    except AtomicWriteError as exc:
+        _emit_error(f"could not write the output: {describe(exc)}")
+        raise typer.Exit(code=EXIT_RUNTIME) from exc
     except Exception as exc:
         # Value-free: a write failure is a path/permission problem, not a cell value.
         _emit_error(f"could not write {out_path}.")

@@ -20,8 +20,23 @@ git logs).
 
 ---
 
+## 2026-11-08
+
+- **CLI** (`8ac0f8d`, #107): VALIDATE-ALWAYS Part 2. `decoy run` runs the whole `decoy validate` check (config, compile, preflight) through the shared gate before it reads any source rows; an error stops the run with validate's exit code (1, or 5 for a capacity refusal), warnings are counted on stderr, and `--json` refusals add `error_kind` and `messages`. A missing source now exits 1 instead of 3. The gate adds about 0.8 s per run. Known follow-ups: a `--duckdb-source` relation is staged before the gate (FU-2) and a non-UTF-8 config still exits 3 (FU-7). Gate: Dennis GO r1, Codex GO r2.
+
 ## 2026-11-07
 
+- **CLI** (`4cd24dd`, #105): ATOMIC-OUTPUT. Every CLI table write (CSV, Parquet, compressed CSV, chunked output) is staged in a temp file beside the output and replaces it in one rename, so a failed or interrupted run keeps the old file or writes none. An existing output keeps its mode bits. `unmask` and `detokenize` write owner-only (0600) on Linux and macOS, including a stdout redirected to a file. Closes row 61a (chunked partial target). Gate: Dennis GO r2, Codex GO r3.
+- **CLI** (`ff82bc9`, #101 to #103): CLI-FMT. Every file target is written in its declared format
+  (csv, parquet, fixed width) through one writer module, `cli/io/_targets.py`; before this, Parquet and
+  fixed-width targets could come out as CSV. A format that contradicts the suffix, or a compression
+  suffix on a Parquet or fixed-width target, exits 1 before any write; a fixed-width value that does
+  not fit exits 3 with no file. A2 adds the G-ONE-TARGET-WRITE sentry and a shared scanner for the
+  read and write sentries, and `validate` / `ci check` report the contradiction. Part B reads
+  CLI-written files back by declared format (detokenize, unmask, `report diff`), records format and
+  layout in the evidence manifest, and makes unmask fail closed when its input has none of the
+  configured columns. One T3 on the stack top (2612 passed, 0 branch-only failures), then merged in
+  order. Dennis GO and Codex GO on each part (A and B at round 2, A2 at round 2).
 - **Engine** (`b5b1ad16`, #402): ENGINE-PAR P2. The gate's test step runs under pytest-xdist
   (`GATES_WORKERS`, default auto) with tests marked `serial` in a second plain pass; stored-baseline
   writes and compares stay serial. A collection guard refuses test ids that carry a memory address,

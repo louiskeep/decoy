@@ -327,8 +327,9 @@ class TestExitCodeDispatch:
         result = runner.invoke(app, ["run", str(config_path)])
         assert result.exit_code == 1, result.output
 
-    def test_runtime_error_still_exits_runtime(self, tmp_path):
-        # Source file missing -> not a config error -> EXIT_RUNTIME(3).
+    def test_missing_source_is_refused_by_the_gate(self, tmp_path):
+        # VALIDATE-ALWAYS Q2: a missing source is a gate finding (EXIT_USAGE 1), not a
+        # runtime error (3). The runtime-3 class is pinned by test_run_validate_always (AT-14).
         cfg = {
             "version": 2,
             "global_settings": {"seed": 1},
@@ -341,7 +342,7 @@ class TestExitCodeDispatch:
         config_path = tmp_path / "missing-src.yaml"
         config_path.write_text(yaml.safe_dump(cfg), encoding="utf-8")
         result = runner.invoke(app, ["run", str(config_path)])
-        assert result.exit_code == 3, result.output
+        assert result.exit_code == 1, result.output
 
 
 class TestMixedConfigSuccess:

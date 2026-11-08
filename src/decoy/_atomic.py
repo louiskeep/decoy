@@ -1,34 +1,36 @@
-"""The one atomic private file writer for the CLI.
+"""The one atomic file writer for the CLI.
 
-The sequence is the standard durable replace: write a 0600 temp file on the same
-volume, fsync it, move it onto the target, fsync the directory. Sources:
-SQLite's rollback-journal commit and the ext4 documentation on rename and fsync
-(data fsync, rename, directory fsync); `os.replace` as the successor to the
-deprecated `atomicwrites` package (https://github.com/untitaker/python-atomicwrites);
-the engine's `fileaccess.write_private` recipe, which this mirrors without the
-engine's file-access policy so it runs on Windows. Local plan:
-`plan/local-record-library:docs/plans/2026-11-05-local-record-library.md` section 4.9 (a branch
-not yet on main).
+The sequence is the standard durable replace: write a temp file on the same volume, fsync it,
+move it onto the target, fsync the directory. Sources: SQLite's rollback-journal commit and the
+ext4 documentation on rename and fsync; `os.replace` as the successor to the deprecated
+`atomicwrites` package (https://github.com/untitaker/python-atomicwrites), whose
+`atomic_write` context manager is the shape of `staged_local_target`; the engine's
+`fileaccess.write_private` recipe, mirrored without its file-access policy so it runs on Windows.
+Local plan: `plan/local-record-library:docs/plans/2026-11-05-local-record-library.md` section 4.9.
 
-Rules this module owns (see tests/sentry/test_atomic_writer.py, which fails when
-`os.replace`, `os.rename`, `os.link` or `tempfile.mkstemp` appear elsewhere in
-`src/decoy/` outside its allowlist):
+Rules this module owns (tests/sentry/test_atomic_writer.py fails when `os.replace`,
+`os.rename`, `os.link` or `tempfile.mkstemp` appear elsewhere in `src/decoy/` outside its
+allowlist):
 
-* After any failure the target holds the old bytes or the new bytes, never
-  neither, and no temp file is left behind.
-* An error carries a fixed code and an errno, never a path (an `OSError` text
-  names the path), and its cause is not chained.
+* After any failure the target holds the old bytes or the new bytes, never neither, and no
+  temp file is left behind (a SIGKILL can still leave a hidden `.<name>.decoy-*.tmp`).
+* An error carries a fixed code and an errno, never a path (an `OSError` text names the path),
+  and its cause is not chained. `describe` renders it for the CLI.
 * `write_atomic` (library-controlled names, such as record ids) checks the name against an
-  allowlist portable on Windows and POSIX before any file is made. `write_local_target`
-  (a path the user chose and the caller already resolved and contained) accepts any single
-  path component except `.`, `..`, an empty name, a separator, NUL or a Windows device name.
-  Both run the same private write, move and fsync core.
+  allowlist portable on Windows and POSIX. `write_local_target` and the staged forms
+  (a path the user chose and the caller already resolved) accept any single path component
+  except `.`, `..`, an empty name, a separator, NUL or a Windows device name.
+* `staged_local_target` and `staged_private_target` are the streaming forms for a writer that
+  needs a path (pandas, pyarrow). They follow a symlink and write a FIFO, device or fd alias
+  through. The first keeps the old file's mode bits; the second publishes 0600 (POSIX only: on
+  Windows the file inherits its folder's permissions).
+* Every write (`write_atomic`, `write_local_target`, both staged forms) runs through one core,
+  `_staged`: create the temp, publish, clean up, sync.
 * `CREATE_ONCE` never replaces a file. Where the mount offers no atomic no-clobber
   move, it fails with `atomic_noclobber_unsupported` instead of checking then replacing.
 
-Not covered: the vault commit in `cli/run.py`, which needs a hard-link backup
-and rollback, and the install-directory swaps in `distribution/`. Both are
-allowlisted with reasons.
+Not covered: the vault commit in `cli/run.py`, which needs a hard-link backup and rollback,
+and the install-directory swaps in `distribution/`. Both are allowlisted with reasons.
 """
 
 from __future__ import annotations
@@ -38,10 +40,13 @@ import enum
 import errno
 import os
 import re
+import secrets
+import stat
 import sys
-import tempfile
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
+from contextlib import AbstractContextManager
+from dataclasses import dataclass
 from pathlib import Path, PurePosixPath, PureWindowsPath
 
 __all__ = [
@@ -51,7 +56,10 @@ __all__ = [
     "ATOMIC_WRITE_FAILED",
     "AtomicWriteError",
     "WriteMode",
+    "describe",
     "fsync_directory",
+    "staged_local_target",
+    "staged_private_target",
     "write_atomic",
     "write_local_target",
 ]
@@ -130,7 +138,7 @@ def write_atomic(
     match as success. Raises `AtomicWriteError`.
     """
     _require_name(name)
-    return _write(directory, name, data, mode, tmp_dir)
+    return _put_at(directory / name, data, mode, tmp_dir)
 
 
 def write_local_target(path: Path, data: bytes, mode: WriteMode) -> bool:
@@ -139,44 +147,261 @@ def write_local_target(path: Path, data: bytes, mode: WriteMode) -> bool:
     For `--output` style paths where `write_atomic`'s portable-name allowlist would reject
     names that always worked (spaces, a leading `_` or `.`, non-ASCII). The caller owns
     containment; this checks only that the last component is one safe path component.
-    Same semantics, return value and errors as `write_atomic`.
+    `REPLACE` follows a symlink like `staged_private_target`; `CREATE_ONCE` treats an
+    existing symlink as existing. Same return value and errors as `write_atomic`.
     """
     _require_component(path.name)
-    return _write(path.parent, path.name, data, mode, None)
+    if mode is WriteMode.REPLACE:
+        return _put(staged_private_target(path), data)
+    return _put_at(path, data, mode, None)
 
 
-def _write(directory: Path, name: str, data: bytes, mode: WriteMode, tmp_dir: Path | None) -> bool:
-    """The one write, move and fsync recipe both public entry points share."""
-    target = directory / name
-    tmp: str | None = None
+def describe(exc: AtomicWriteError) -> str:
+    """The one renderer for a CLI message: the code, plus the OS reason when there is one."""
+    if exc.errno:
+        return f"{exc.code} ({os.strerror(exc.errno)})"
+    return exc.code
+
+
+_SPECIAL_KINDS = (stat.S_ISFIFO, stat.S_ISCHR, stat.S_ISBLK, stat.S_ISSOCK)
+_OWNER_RW = 0o600
+# The fd aliases, matched on the user-given path before any symlink is resolved. Not all of
+# /dev or /proc: /dev/shm is a real tmpfs and must be staged.
+_FD_ALIAS = re.compile(r"/dev/(?:stdin|stdout|stderr|fd/[0-9]+)|/proc/self/fd/[0-9]+")
+_FALLBACK_NAME_MAX = 255
+
+
+def _temp_name(base: str, parent: Path) -> str:
+    """`.<base>.decoy-<hex>.tmp`, with `base` cut by whole characters to fit the filesystem."""
+    try:
+        limit = os.pathconf(parent, "PC_NAME_MAX")
+    except (AttributeError, ValueError, OSError):
+        limit = _FALLBACK_NAME_MAX
+    suffix = f".decoy-{secrets.token_hex(8)}.tmp"
+    while len(os.fsencode(f".{base}{suffix}")) > limit and base:
+        base = base[:-1]
+    return f".{base}{suffix}"
+
+
+def _create_temp(parent: Path, base: str, private: bool) -> tuple[str, int]:
+    """Create the staging file exclusively. Returns its path and the mode bits it was given."""
+    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0)
+    while True:
+        tmp = str(parent / _temp_name(base, parent))
+        try:
+            fd = os.open(tmp, flags, 0o600 if private else 0o666)
+        except FileExistsError:
+            continue
+        try:
+            bits = stat.S_IMODE(os.fstat(fd).st_mode) & 0o777
+        finally:
+            os.close(fd)
+        return tmp, bits
+
+
+def _final_bits(tmp: str, existing: os.stat_result | None, private: bool, created: int) -> int:
+    """Mode for the published file: 0600 if private, else the old file's bits, else a new file's.
+
+    A different group on the old file is copied with chown when allowed; when it is not, the
+    old bits are cut to what a new file would have, so the replacement never grants more.
+    """
+    if private:
+        return _OWNER_RW
+    if existing is None or not stat.S_ISREG(existing.st_mode):
+        return created
+    copied = stat.S_IMODE(existing.st_mode) & 0o777
+    if not _WINDOWS and existing.st_gid != os.stat(tmp).st_gid:
+        try:
+            os.chown(tmp, -1, existing.st_gid)
+        except OSError:
+            return copied & created
+    return copied
+
+
+def _publish(tmp: str, real: Path, bits: int, mode: WriteMode) -> bool:
+    """Apply the final mode, fsync the data, and move the temp into place.
+
+    Returns False only for `CREATE_ONCE` when the target already exists.
+    """
+    fd = os.open(tmp, os.O_RDWR)  # Windows FlushFileBuffers needs write access
+    try:
+        if _WINDOWS:
+            os.chmod(tmp, bits)
+        else:
+            os.fchmod(fd, bits)
+        os.fsync(fd)
+    finally:
+        os.close(fd)
+    if mode is WriteMode.CREATE_ONCE:
+        return _create_once(tmp, real)
+    _retry_on_windows(lambda: os.replace(tmp, real))
+    return True
+
+
+@dataclass
+class _Outcome:
+    created: bool = True
+
+
+@contextlib.contextmanager
+def _staged(
+    real: Path,
+    *,
+    private: bool,
+    mode: WriteMode = WriteMode.REPLACE,
+    tmp_dir: Path | None = None,
+    existing: os.stat_result | None = None,
+    outcome: _Outcome | None = None,
+) -> Iterator[Path]:
+    """The one create, publish, clean-up and sync core behind every atomic write.
+
+    Yields a temp path (owner-only while it is written). A clean exit publishes it onto `real`;
+    any exception removes it and propagates unchanged. Setup and commit failures raise
+    `AtomicWriteError` with no exception context.
+    """
+    tmp = ""
+    created = 0
+    failed = False
     failed_errno: int | None = None
     try:
-        fd, tmp = tempfile.mkstemp(dir=tmp_dir or directory, prefix=".", suffix=".tmp")
-        _write_and_sync(fd, data)
-        created = _move_into_place(tmp, target, mode)
-        if created and mode is WriteMode.CREATE_ONCE and not _WINDOWS:
-            # The hard-link move leaves the temp name as a second link; drop it before the
-            # directory sync so a crash cannot leave a stray hidden entry.
-            try:
-                os.unlink(tmp)
-            except OSError:
-                pass  # left for the cleanup below to retry
-            else:
-                tmp = None  # gone, so the cleanup cannot unlink a name another process reused
-        if created:
-            _sync_directories(directory, tmp_dir)
-        return created
+        tmp, created = _create_temp(tmp_dir or real.parent, real.name, private)
+        # Owner-only while written, and a restrictive umask must not lock the writer out.
+        os.chmod(tmp, _OWNER_RW)
     except OSError as exc:
-        failed_errno = exc.errno
-    finally:
-        # Runs on every exit, including KeyboardInterrupt. After a successful replace the
-        # temp name is gone; after a successful link it may still name the second hard link.
-        if tmp is not None:
+        failed, failed_errno = True, exc.errno
+    if failed:
+        if tmp:
             with contextlib.suppress(OSError):
                 os.unlink(tmp)
-    # Raised outside the except block so the OSError (its text names the path) is not
-    # kept as `__context__`.
-    raise AtomicWriteError(ATOMIC_WRITE_FAILED, failed_errno)
+        raise AtomicWriteError(ATOMIC_WRITE_FAILED, failed_errno)
+    alive = True  # the temp name still exists and must be removed on the way out
+    made = False
+    try:
+        yield Path(tmp)
+        try:
+            made = _publish(tmp, real, _final_bits(tmp, existing, private, created), mode)
+        except OSError as exc:
+            failed, failed_errno = True, exc.errno
+        else:
+            alive = not made or (mode is WriteMode.CREATE_ONCE and not _WINDOWS)
+            if made and alive:
+                # The hard-link move leaves the temp name as a second link; drop it before the
+                # directory sync so a crash cannot leave a stray hidden entry.
+                try:
+                    os.unlink(tmp)
+                except OSError:
+                    pass  # left for the cleanup below to retry
+                else:
+                    alive = (
+                        False  # gone, so the cleanup cannot unlink a name another process reused
+                    )
+    finally:
+        if alive:
+            with contextlib.suppress(OSError):
+                os.unlink(tmp)
+    # Raised outside the except block so the OSError (its text names the path) is not kept as
+    # `__context__`.
+    if failed:
+        raise AtomicWriteError(ATOMIC_WRITE_FAILED, failed_errno)
+    if made:
+        _sync_directories(real.parent, tmp_dir)
+    if outcome is not None:
+        outcome.created = made
+
+
+def _put(stage: AbstractContextManager[Path], data: bytes, outcome: _Outcome | None = None) -> bool:
+    """Write `data` into the temp that `stage` yields, mapping an OS failure to the atomic code."""
+    failed = False
+    failed_errno: int | None = None
+    try:
+        with stage as tmp:
+            tmp.write_bytes(data)
+    except OSError as exc:
+        failed, failed_errno = True, exc.errno
+    if failed:
+        raise AtomicWriteError(ATOMIC_WRITE_FAILED, failed_errno)
+    return outcome.created if outcome is not None else True
+
+
+def _put_at(real: Path, data: bytes, mode: WriteMode, tmp_dir: Path | None) -> bool:
+    outcome = _Outcome()
+    stage = _staged(real, private=True, mode=mode, tmp_dir=tmp_dir, outcome=outcome)
+    return _put(stage, data, outcome)
+
+
+_STD_FDS = {"/dev/stdin": 0, "/dev/stdout": 1, "/dev/stderr": 2}
+
+
+def _restrict_fd_target(alias: str) -> None:
+    """Make a regular file behind an fd alias owner-only before private bytes reach it.
+
+    `decoy unmask -o /dev/stdout > out.csv` writes through the shell's file, which the shell
+    created with the umask default. A pipe or terminal keeps nothing, so only a regular file
+    is narrowed. If the fd is closed, or the file cannot be made 0600, the write is refused.
+    """
+    fd = _STD_FDS[alias] if alias in _STD_FDS else int(alias.rsplit("/", 1)[1])
+    failed_errno: int | None = None
+    narrowed = True
+    try:
+        info = os.fstat(fd)
+        if stat.S_ISREG(info.st_mode) and stat.S_IMODE(info.st_mode) & 0o077:
+            os.fchmod(fd, _OWNER_RW)
+            narrowed = not stat.S_IMODE(os.fstat(fd).st_mode) & 0o077
+    except OSError as exc:
+        narrowed, failed_errno = False, exc.errno
+    if not narrowed:
+        raise AtomicWriteError(ATOMIC_WRITE_FAILED, failed_errno)
+
+
+@contextlib.contextmanager
+def _staged_target(path: Path, private: bool) -> Iterator[Path]:
+    _require_component(path.name)
+    # POSIX keeps a leading "//" in abspath; collapse it so //dev/stdout is still an alias.
+    alias = re.sub(r"^/+", "/", os.path.abspath(path))
+    if not _WINDOWS and _FD_ALIAS.fullmatch(alias):
+        if private:
+            _restrict_fd_target(alias)
+        yield path  # /dev/stdout, /dev/fd/N, /proc/self/fd/N: a redirect is written through
+        return
+    existing: os.stat_result | None = None
+    failed_errno: int | None = None
+    failed = False
+    try:
+        existing = os.stat(path)
+    except FileNotFoundError:
+        pass
+    except OSError as exc:
+        failed, failed_errno = True, exc.errno
+    if failed:
+        raise AtomicWriteError(ATOMIC_WRITE_FAILED, failed_errno)
+    if existing is not None and any(kind(existing.st_mode) for kind in _SPECIAL_KINDS):
+        yield path  # classified before realpath: /dev/stdout resolves to an unopenable name
+        return
+    with _staged(Path(os.path.realpath(path)), private=private, existing=existing) as tmp:
+        yield tmp
+
+
+def staged_local_target(path: Path) -> AbstractContextManager[Path]:
+    """Yield a temp path beside `path`; publish it onto `path` only if the block exits cleanly.
+
+    The shape of `atomicwrites.atomic_write`. An exception from the block removes the temp and
+    propagates unchanged, so `path` keeps its old bytes or stays missing. A symlink is followed
+    and its destination replaced. A FIFO, device or socket, and an fd alias (/dev/stdout,
+    /dev/fd/N, /proc/self/fd/N), is yielded as is, with no staging. The published file keeps an
+    existing output's mode bits; a new one gets the umask default.
+    """
+    return _staged_target(path, False)
+
+
+def staged_private_target(path: Path) -> AbstractContextManager[Path]:
+    """`staged_local_target` for restored or sensitive data: the published file is 0600.
+
+    An fd alias redirected to a regular file has that file narrowed to 0600 before the block
+    runs, or the write is refused.
+
+    On Windows the mode bits do not apply: the file inherits its folder's permissions.
+    """
+    return _staged_target(path, True)
 
 
 def _require_component(name: str) -> None:
@@ -202,20 +427,6 @@ def _require_name(name: str) -> None:
     )
     if not ok:
         raise AtomicWriteError(ATOMIC_BAD_NAME)
-
-
-def _write_and_sync(fd: int, data: bytes) -> None:
-    with os.fdopen(fd, "wb") as handle:
-        handle.write(data)
-        handle.flush()
-        os.fsync(handle.fileno())
-
-
-def _move_into_place(tmp: str, target: Path, mode: WriteMode) -> bool:
-    if mode is WriteMode.REPLACE:
-        _retry_on_windows(lambda: os.replace(tmp, target))
-        return True
-    return _create_once(tmp, target)
 
 
 def _create_once(tmp: str, target: Path) -> bool:

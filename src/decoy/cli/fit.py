@@ -34,6 +34,7 @@ from typing import Any
 
 import typer
 
+from decoy._atomic import AtomicWriteError, WriteMode, describe, write_local_target
 from decoy.cli.exit_codes import EXIT_RUNTIME, EXIT_USAGE
 from decoy.ui.output import OutputMode, emit_json, setup_output
 from decoy.ui.theme import code, error, hint, success, warn
@@ -492,7 +493,13 @@ def fit(
     # Only reached on success: no artifact is created or overwritten when the
     # fit above raised.
     out_path = output if output is not None else source.with_suffix(".snapshot.json")
-    out_path.write_text(json.dumps(snapshot, indent=1), encoding="utf-8")
+    try:
+        write_local_target(
+            out_path, json.dumps(snapshot, indent=1).encode("utf-8"), WriteMode.REPLACE
+        )
+    except AtomicWriteError as exc:
+        _emit_error(f"could not write the snapshot: {describe(exc)}", err_code=exc.code)
+        raise typer.Exit(code=EXIT_RUNTIME)
 
     if state.mode is OutputMode.json:
         payload: dict[str, Any] = {

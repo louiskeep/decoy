@@ -532,11 +532,15 @@ def test_upgrade_force_recovers_retained_bundle_without_current(tmp_path, monkey
     monkeypatch.setenv("DECOY_HOME", str(home))
     monkeypatch.setenv("DECOY_BIN_DIR", str(tmp_path / "bin"))
     serve = tmp_path / "serve"
-    url = _serve_bundle(serve, "0.1.0", key)
-    doc, sig = _doc_for_latest(serve, "0.1.0", url, key)
+    # `decoy upgrade` asks for this host's own target, so the bundle is served for it.
+    host_target = targets.detect_target()
+    if host_target is None:
+        pytest.skip("no supported bundle target for this host")
+    url = _serve_bundle(serve, "0.1.0", key, target=host_target)
+    doc, sig = _doc_for_latest(serve, "0.1.0", url, key, target=host_target)
     installer.install_version(
         version_doc_bytes=doc, version_doc_sig_b64=sig, expected_public_pem=pub,
-        target="linux-x86_64", home=home, download=_file_download,
+        target=host_target, home=home, download=_file_download,
         run_self_check=False, post_swap_validate=lambda cur: True,
     )
     (home / "current").unlink()  # interruption between staging and activation
@@ -584,14 +588,18 @@ def _serve_bundle(
     key: Ed25519PrivateKey,
     *,
     declared: str | None = None,
-    declared_target: str = "linux-x86_64",
+    target: str = "linux-x86_64",
+    declared_target: str | None = None,
 ) -> str:
     """Build a signed bundle for ``version`` at serve_dir/<version>/ and return its file://
-    URL. ``declared`` overrides the version the bundle DECLARES and ``declared_target`` the
+    URL. ``target`` is the platform the bundle is built and served for (default Linux; a test
+    that drives a path detecting the host target passes ``targets.detect_target()``).
+    ``declared`` overrides the version the bundle DECLARES and ``declared_target`` the
     target it DECLARES (to simulate a resolution mismatch where the bytes served at one
     version/target path actually belong to another)."""
     dv = declared or version
-    stage = serve_dir / f"_stage-{version}" / f"decoy-{version}-linux-x86_64"
+    declared_target = declared_target or target
+    stage = serve_dir / f"_stage-{version}" / f"decoy-{version}-{target}"
     stage.mkdir(parents=True)
     _make_tree(stage)
     (stage / "BUNDLE_INFO.json").write_text(
@@ -603,7 +611,7 @@ def _serve_bundle(
     (stage / manifest_mod.MANIFEST_SIG_NAME).write_text(_sign_b64(key, mb))
     vdir = serve_dir / version
     vdir.mkdir(parents=True, exist_ok=True)
-    tarball = vdir / f"decoy-{version}-linux-x86_64.tar.gz"
+    tarball = vdir / f"decoy-{version}-{target}.tar.gz"
     _deterministic_targz(stage, tarball)
     (tarball.with_name(tarball.name + ".sha256")).write_text(
         f"{manifest_mod.sha256_file(tarball)}  {tarball.name}\n"
@@ -616,10 +624,13 @@ def _file_download(url: str) -> bytes:
     return Path(url[len("file://"):]).read_bytes()
 
 
-def _doc_for_latest(serve_dir: Path, latest: str, latest_url: str, key: Ed25519PrivateKey):
+def _doc_for_latest(
+    serve_dir: Path, latest: str, latest_url: str, key: Ed25519PrivateKey,
+    target: str = "linux-x86_64",
+):
     doc = vd.build_document(serial=1, 
         latest=latest, min_supported="0.1.0",
-        artifacts={"linux-x86_64": {
+        artifacts={target: {
             "url": latest_url,
             "sha256": manifest_mod.sha256_bytes(_file_download(latest_url)),
             "sig": latest_url + ".sig",
@@ -761,11 +772,15 @@ def test_install_sh_refuses_wrong_version_without_installing_anything(tmp_path, 
     Driven over the offline (DECOY_LOCAL_BUNDLE) path so it needs no network/proxy."""
     import subprocess as sp
 
+    host_target = targets.detect_target()
+    if host_target is None:
+        pytest.skip("no supported bundle target for this host")
+
     key, pub = keypair
     work = tmp_path / "w"
     work.mkdir()
     # A signed bundle DECLARING 0.2.0, but we will request --version 0.1.0.
-    stage = work / "decoy-0.1.0-linux-x86_64"
+    stage = work / f"decoy-0.1.0-{host_target}"
     stage.mkdir()
     _make_tree(stage)
     # The interpreter must be executable for install.sh's `[ -x ]` guard + self-check.
@@ -773,13 +788,13 @@ def test_install_sh_refuses_wrong_version_without_installing_anything(tmp_path, 
     # Canonical (compact) JSON: install.sh reads BUNDLE_INFO with a grep that expects the
     # compact "key":"value" form the build writes.
     (stage / "BUNDLE_INFO.json").write_bytes(
-        signing.canonical_bytes({"schema_version": "cli-bundle-info/v1", "version": "0.2.0", "target": "linux-x86_64"})
+        signing.canonical_bytes({"schema_version": "cli-bundle-info/v1", "version": "0.2.0", "target": host_target})
     )
-    man = manifest_mod.compute_manifest(stage, version="0.2.0", target="linux-x86_64")
+    man = manifest_mod.compute_manifest(stage, version="0.2.0", target=host_target)
     mb = signing.canonical_bytes(man)
     (stage / manifest_mod.MANIFEST_NAME).write_bytes(mb)
     (stage / manifest_mod.MANIFEST_SIG_NAME).write_text(_sign_b64(key, mb))
-    tarball = work / "decoy-0.1.0-linux-x86_64.tar.gz"
+    tarball = work / f"decoy-0.1.0-{host_target}.tar.gz"
     _deterministic_targz(stage, tarball)
     tarball.with_name(tarball.name + ".sha256").write_text(
         f"{manifest_mod.sha256_file(tarball)}  {tarball.name}\n"
