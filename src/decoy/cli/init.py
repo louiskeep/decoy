@@ -79,35 +79,58 @@ def _render(preset: str, input_path: str | None, output_path: str | None) -> str
     return body
 
 
-def _path_pattern(key: str) -> re.Pattern[str]:
-    # The first indented `path:` line under the top-level `key:`; the indented-line
-    # run stops at the next column-0 line, so it never reaches another block.
-    return re.compile(
-        rf"(^{key}:[^\S\n]*\n(?:[^\S\n]+[^\n]*\n)*?[^\S\n]+path:[^\S\n]*)([^\n]*)",
-        re.MULTILINE,
-    )
+# A plain-scalar value and an optional trailing comment; quoted values are replaced whole.
+_PLAIN_VALUE_WITH_COMMENT = re.compile(r"(?P<value>[^'\"#][^#]*?)(?P<comment>[ \t]+#.*)?$")
+
+
+def _entry_path_line(lines: list[str], key: str) -> int:
+    """Index of the `path:` key directly under the first entry of the top-level `key:` block.
+
+    A deeper `path:` (inside a nested mapping) and the next entry's `path:` are not it.
+    """
+    head = next((i for i, line in enumerate(lines) if line.rstrip() == f"{key}:"), None)
+    entry_indent = child_indent = None
+    for i in range(len(lines) if head is None else head + 1, len(lines)):
+        text = lines[i].rstrip("\n")
+        stripped = text.lstrip()
+        if not stripped or stripped.startswith("#"):
+            continue
+        indent = len(text) - len(stripped)
+        if indent == 0 or (entry_indent is not None and indent <= entry_indent):
+            break
+        if entry_indent is None:
+            entry_indent = indent
+            continue
+        if child_indent is None:
+            child_indent = indent
+        if indent == child_indent and stripped.startswith("path:"):
+            return i
+    raise ValueError(f"preset template has no path under {key}:")
 
 
 def _template_path(body: str, key: str) -> str:
-    """The first path under a template's top-level `key:` block, as written."""
-    match = _path_pattern(key).search(body)
-    if match is None:
-        raise ValueError(f"preset template has no path under {key}:")
-    return str(yaml.safe_load(match.group(2)))
+    """The path of the first entry under a template's top-level `key:` block."""
+    lines = body.splitlines(keepends=True)
+    line = lines[_entry_path_line(lines, key)]
+    return str(yaml.safe_load(line.split("path:", 1)[1]))
 
 
 def _replace_yaml_path(body: str, key: str, new_path: str) -> str:
-    """Rewrite the first `path:` under the top-level `key:` block.
+    """Rewrite the path of the first entry under the top-level `key:` block.
 
-    Avoids a YAML round-tripper for two paths. A template whose shape no longer
-    matches raises instead of silently keeping its own path.
+    Avoids a YAML round-tripper for two paths. A trailing comment on a plain value is
+    kept. A template whose shape no longer matches raises instead of silently keeping
+    its own path.
     """
-    replaced, count = _path_pattern(key).subn(
-        lambda m: m.group(1) + _yaml_quote(new_path), body, count=1
-    )
-    if count != 1:
-        raise ValueError(f"preset template has no path under {key}:")
-    return replaced
+    lines = body.splitlines(keepends=True)
+    i = _entry_path_line(lines, key)
+    prefix, rest = lines[i].split("path:", 1)
+    ending = "\n" if rest.endswith("\n") else ""
+    rest = rest.rstrip("\n").strip()
+    match = _PLAIN_VALUE_WITH_COMMENT.match(rest)
+    comment = (match.group("comment") or "") if match else ""
+    lines[i] = f"{prefix}path: {_yaml_quote(new_path)}{comment}{ending}"
+    return "".join(lines)
 
 
 def _rule_count(body: str) -> int:
@@ -631,14 +654,18 @@ def _init(
     else:
         chosen = preset
 
-    if chosen in _PATHED_PRESETS:
-        # Defaults are the template's own paths, so Enter writes what --quiet writes.
-        body = _render(chosen, None, None)
-        input_path = typer.prompt("Input CSV path", default=_template_path(body, "sources"))
-        output_path = typer.prompt("Output CSV path", default=_template_path(body, "targets"))
-        rendered = _render(chosen, input_path, output_path)
-    else:
-        rendered = _render(chosen, None, None)
+    try:
+        if chosen in _PATHED_PRESETS:
+            # Defaults are the template's own paths, so Enter writes what --quiet writes.
+            body = _render(chosen, None, None)
+            input_path = typer.prompt("Input CSV path", default=_template_path(body, "sources"))
+            output_path = typer.prompt("Output CSV path", default=_template_path(body, "targets"))
+            rendered = _render(chosen, input_path, output_path)
+        else:
+            rendered = _render(chosen, None, None)
+    except ValueError as exc:
+        state.err_console.print(error("error:"), str(exc), markup=False)
+        raise typer.Exit(code=EXIT_RUNTIME) from None
 
     out.write_text(rendered, encoding="utf-8")
 
