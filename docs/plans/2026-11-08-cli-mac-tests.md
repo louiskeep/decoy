@@ -1,7 +1,6 @@
 # CLI-MAC-TESTS: the CLI suite passes on macOS arm64
 
-Status: plan, Revision 2 (2026-11-08; Dennis round 1 NO-GO folded in; not gated yet: Dennis
-round 2, then Codex)
+Status: plan, Revision 3 (2026-11-08; Dennis round 2 GO folded in; Codex plan gate GO)
 
 Roadmap row 5c (`docs/ROADMAP.md`). Repo `louiskeep/decoy` (CLI). Base: CLI `origin/main`
 `b7009d1` (2026-11-08). Author: claudeworkerbee (Opus), 2026-11-08. Build handoff:
@@ -10,13 +9,35 @@ row 5b CLI-BASELINE (`docs/plans/2026-11-08-cli-baseline.md` on `plan/cli-baseli
 2), which owns the bash 3.2 half of this row (orchestrator answer to its Q2).
 
 Rules consulted: `00-universal.md`, `risk-and-exceptions.md`, `development-loop.md`,
-`testing.md`, `reuse-first.md`, `cross-cutting-concerns.md`, `scope-discipline.md`,
-`verification.md`, `workspace-and-vcs.md`, `documentation.md`.
+`testing.md`, `reuse-first.md`, `cross-cutting-concerns.md`, `architecture.md`,
+`api-and-compatibility.md`, `security.md`, `scope-discipline.md`, `verification.md`,
+`workspace-and-vcs.md`, `code-review.md`, `documentation.md`.
 
-Risk: R1 for slice S1 (test files and one test helper; no product code). R2 for slice S2 (one
+Risk: R1 for slice S1 (test files, one test helper and its CODEMAP placement row; no product code). R2 for slice S2 (one
 line in the CLI's stderr console, which changes how every error line is laid out off a TTY).
 
-## 0. Revision 2 (Dennis round 1, `p05-cli-mac-tests-dennis-r1.md` in the vault)
+## 0. Revision history
+
+### Revision 3 (Dennis round 2, `p05-cli-mac-tests-dennis-r2.md` in the vault)
+
+Checked again on CLI `origin/main` `b6e0437`, CLI
+`origin/fix/mask-secret-missing-source` `b9279b4`, and engine pin `4a0d5b1f`.
+
+| Finding | Change |
+|---|---|
+| H-1 removed `plan` command | AT-6, class-table row 4 and the route inventory now use `validate compile` on a non-mapping YAML under the long directory. Typer-owned missing-argument and missing-file panels are outside S2 and recorded as V2-LOG (sections 4b, 4c, 5, 11). |
+| M-A wrong JSON field names | AT-6 names each exact top-level envelope, the nested run-message envelope, the refusal-code location, and every field in which the tested path must occur. The JSON cells are contract guards that are green on the base (section 5). |
+| M-B overclaimed output coverage | The guarantee, behavior table, invariant 4, class table and output-surface inventory are limited to text printed through `OutputState.err_console`; Typer panel folding is V2-LOG (sections 2 to 4c, 11). |
+| M-C mutation 2 evidence | AT-3 checks the combined neither-DP-code assertion first. Mutation 2 records that assertion red in both cells and records each component: the old stack-only check stays green in `foreign`, while the platform-code check is red (sections 4b, 5; handoff mutation 2). |
+| L-1 sentry package count | Recorded as V2-LOG: this slice reaches 25 direct Python modules and the next sentry opens a named sub-package (section 11). |
+| L-2 unpinned terminal width | If S2 carries T0097's kept long-path test, it adds `monkeypatch.setenv("COLUMNS", "80")`; AT-6 already pins 80 (sections 6, 7, 11). |
+| L-3 sentry alias gap | The sentry docstring names both known limits: a `Panel`/`Table` stored in a variable and an aliased `err = state.err_console; err.print(...)` call (sections 4, 11). |
+
+The T0097 branch advanced after Dennis's reviewed `82421c2`. Revision 3 uses `b9279b4`: S2
+removes its nine redundant `soft_wrap=True` kwargs if present, but preserves `markup=False`,
+the notify fixes and both long-path tests.
+
+### Revision 2 (Dennis round 1, `p05-cli-mac-tests-dennis-r1.md` in the vault)
 
 Checked again on CLI `origin/main` `b6e0437` (one roadmap commit after `b7009d1`, no file this
 plan touches), engine pin `4a0d5b1f`, rich 15.0.0.
@@ -87,11 +108,12 @@ this run both show 8. `test_gates_fails_when_no_step_ran[]` passes: with no step
 expands `PYTEST_ARGS` never runs.
 
 Id 8 is the same class as agent-task T0097 (`tests/e2e/test_mask_secret_single_read.py`,
-`[missing_source]`, red on a VM whose tmp path put the fold inside `absent.csv`). The T0097 fix
-(branch `fix/mask-secret-missing-source`, `82421c2`, in the double gate) soft-wraps five of
-`decoy run`'s error prints. Codex found two more on that head that still fold (`run.py:528`,
-the `NotifySpecError` message, and `:1730`, `notify dispatch failed: {exc}`). S2 closes the class
-for every print of every command.
+`[missing_source]`, red on a VM whose tmp path put the fold inside `absent.csv`). The current
+T0097 branch (`fix/mask-secret-missing-source`, `b9279b4`) soft-wraps nine `decoy run` error or
+warning prints. S2 moves that rule to the one stderr-console constructor and removes only those
+redundant kwargs. It closes the class for application text printed through
+`OutputState.err_console`; Typer's independently constructed usage-error panels are outside that
+choke point and remain V2-LOG.
 
 ## 3. Behavior
 
@@ -102,7 +124,7 @@ for every print of every command.
 | upgrade and install.sh tests on macOS | serve a Linux bundle to a host that asks for `macos-arm64`; fail | serve and declare the host target; pass |
 | same tests on Linux x86-64 | `linux-x86_64` | unchanged (the host target is `linux-x86_64`) |
 | same tests on an unsupported host (Intel Mac, Windows) | fail | skip with a reason |
-| `decoy <cmd>` error text longer than 80 columns, stderr not a TTY (CI log, redirect, CliRunner) | folded at column 80, a newline inside paths | one line per print; the terminal or viewer wraps it |
+| application error text printed through `OutputState.err_console`, longer than 80 columns with stderr not a TTY (CI log, redirect, CliRunner) | folded at column 80, a newline inside paths | one line per print; the terminal or viewer wraps it |
 | same, stderr is a TTY | folded at the terminal width by Rich | one line per print; the terminal soft-wraps it, so a copied path has no newline. Rich's hanging indent on a wrapped hint line is lost |
 | `--verbose` traceback (`print_exception`, `run.py:1131`, `scan.py:803`) | panel at terminal width; the final exception line folds | panel unchanged; the final line no longer folds |
 | `Progress` bars (`ui/progress.py:45`, `:78`, `:153`) | columns cropped to width | byte-identical (measured on rich 15.0.0) |
@@ -112,9 +134,12 @@ for every print of every command.
 
 ## 4. Design notes
 
-- S1 changes tests only. The helpers follow existing patterns: `tests/keyed_secret.py` is the
+- S1 changes tests and the placement map only. The helpers follow existing patterns:
+  `tests/keyed_secret.py` is the
   shared-constant helper beside which `tests/dp_env.py` goes, and the host-target skip copies
-  `tests/unit/test_distribution.py:1254`.
+  `tests/unit/test_distribution.py:1254`. Because the current CODEMAP does not place shared
+  cross-suite test helpers, S1 first adds that one “Where things go” row; it does not improvise a
+  new unlisted location.
 - `tests/dp_env.py` contract:
   - `current_row_is_certified() -> bool`: the one copy of today's `_current_row_is_certified`
     (`test_dp_provenance_certification.py:44-49`, moved, not duplicated). It reads the private
@@ -152,9 +177,10 @@ for every print of every command.
   today's layout (summary tables and cards). `_make_console`'s docstring says the stderr console
   is for lines: no `Panel` or `Table` goes to it.
 - S2 removes the per-call `soft_wrap=True` arguments the console makes redundant, so one place
-  owns the rule: `src/decoy/cli/run.py:223` on main, and, when T0097's `82421c2` is on main,
-  its five sites `run.py:1116`, `:1119`, `:1128`, `:1130`, `:1169` and the comment at `:1110`.
-  `run.py:528` and `:1730` on that head carry no argument and are covered by the console.
+  owns the rule: `src/decoy/cli/run.py:223` on main, and, when T0097's current `b9279b4` is on
+  main, its nine sites `run.py:223`, `:530`, `:1118`, `:1121`, `:1130`, `:1132`, `:1171`,
+  `:1726`, `:1735` and the wrap-specific comment at `:1112-1114`. S2 preserves each
+  `markup=False`, the notify changes and both T0097 long-path tests.
 - Choke point for S2: `_make_console` is the only constructor of a Rich console in `src/` (one
   `Console(` today, `output.py:39`). Guard AT-7: an `ast` scan of `src/` that resolves import
   aliases and fails on (a) any construction of `rich.console.Console` outside
@@ -163,8 +189,9 @@ for every print of every command.
   (b) `rich.print(..., file=...)` or an aliased `from rich import print`; (c) `soft_wrap=False`
   passed to any `*.err_console.print(...)`; (d) a direct `Panel(` or `Table(` argument to
   `*.err_console.print(...)`. Each shape has one seeded case in the sentry's self-test. Known
-  limit, stated in the sentry docstring: a `Panel` held in a variable and printed later is not
-  seen.
+  limits, stated in the sentry docstring: a `Panel` or `Table` held in a variable and printed
+  later is not seen; nor is an aliased receiver such as
+  `err = state.err_console; err.print(Panel(...))`.
 
 ## 4a. Invariants
 
@@ -174,8 +201,8 @@ for every print of every command.
   on macOS arm64.
 - No test in `tests/unit/test_distribution.py` other than ids 6 and 7 changes result on the Mac
   (H1).
-- Error text the CLI prints to stderr reaches the reader unbroken: no newline is inserted inside
-  a word.
+- Application error text printed through `OutputState.err_console` reaches the reader unbroken:
+  no newline is inserted inside a word.
 
 ## 4b. Class table
 
@@ -184,11 +211,11 @@ for every print of every command.
 | 1 | Value-bearing output | N/A: S1 changes tests; S2 changes layout, not content | n/a | AT-6 checks content is unchanged apart from line breaks | n/a |
 | 2 | Cleanup missing on an exit path | N/A: no new resources; the distribution fixtures already use `tmp_path` | n/a | n/a | n/a |
 | 3 | State machine and concurrency | N/A: no state or concurrency touched | n/a | n/a | n/a |
-| 4 | Route parity and silent fallback | stderr prints come from many commands; one that builds its own console would fold again | one stderr console (`_make_console`) | AT-6 (run, validate compile, plan), AT-7 sentry | soft wrap dropped in `_make_console`: AT-6 red; a second console in any AT-7 spelling, `soft_wrap=False` on an `err_console.print`, or a `Panel(` printed to it: AT-7 red |
+| 4 | Route parity and silent fallback | application stderr prints come from many commands; one that builds its own console would fold again | one `OutputState.err_console` (`_make_console`) | AT-6 (`run`; two `validate compile` failures), AT-7 sentry | soft wrap dropped in `_make_console`: AT-6 red; a second console in any AT-7 spelling, `soft_wrap=False` on an `err_console.print`, or a direct `Panel(` printed to it: AT-7 red |
 | 5 | Referential integrity | N/A: no tables or keys | n/a | n/a | n/a |
 | 6 | Untrusted producer | N/A: no new inputs | n/a | n/a | n/a |
 | 7 | Check then use (TOCTOU) | N/A: no check-then-use | n/a | n/a | n/a |
-| 8 | Weak tests and overclaimed evidence | the `:906` negative check passes vacuously on macOS; a Mac run that imports another checkout claims results for the wrong code | assert both codes absent, on the host and with the platform forced foreign; acceptance runs print `decoy.__file__` | AT-3, AT-10 | disable the `dp_schema_column_missing` branch in `fit.py`: both AT-3 cells red on Linux; the old stack-only line stays green in the `foreign` cell (recorded) |
+| 8 | Weak tests and overclaimed evidence | the `:906` negative check passes vacuously on macOS; a Mac run that imports another checkout claims results for the wrong code | assert both codes absent first, on the host and with the platform forced foreign; acceptance runs print `decoy.__file__` | AT-3, AT-10 | disable the `dp_schema_column_missing` branch in `fit.py`: the first, combined neither-code assert is red in both cells; in `foreign`, its stack component stays green and its platform component is red (recorded per assert) |
 | 9 | Refactor drift | the DP helper restates the engine's gate order; a test fixture restates the host target | the drift test against `check_fit_environment` (AT-2); fixtures take `detect_target()` | AT-2, AT-4, AT-5 | helper returns the stack code on every host: AT-2 `foreign` cell red on Linux and both cells red on macOS; fixture back to `linux-x86_64`: AT-4 and AT-5 red on macOS |
 | 10 | Frozen contract drift | the `--json` error envelope and exit codes of the touched commands | S2 changes only line layout of human output; JSON goes to stdout unchanged | AT-6 JSON cells (named fields), AT-9 Linux id parity | n/a (no contract changes) |
 
@@ -206,8 +233,9 @@ No exit code changes. The exits the touched tests check:
 
 - S1: the DP fit through `decoy fit` and a direct `fit_dp_snapshot` call; `decoy upgrade
   --force`; `packaging_tools/install/install.sh` offline path (`DECOY_LOCAL_BUNDLE`).
-- S2: every command's stderr through `setup_output()` (`src/decoy/ui/output.py:48`); AT-6
-  samples `run`, `validate compile` and `plan`.
+- S2: application stderr through `OutputState.err_console`, constructed by `setup_output()`
+  (`src/decoy/ui/output.py:48`); AT-6 samples `run` and two `validate compile` failures. Typer
+  usage-error panels use Typer's own console and are outside S2.
 
 ### FK shapes
 
@@ -221,7 +249,7 @@ N/A for data. The touched values: the DP refusal codes `dp_platform_uncertified`
 
 ### Output surfaces
 
-- stderr of every command (S2: line layout only).
+- Application stderr printed through `OutputState.err_console` (S2: line layout only).
 - `--json` stdout envelopes: unchanged.
 - Test files and `tests/dp_env.py` (S1).
 
@@ -246,35 +274,40 @@ N/A for data. The touched values: the DP refusal codes `dp_platform_uncertified`
 |---|---|---|
 | AT-1 | the 5 DP ids pass on the Mac and still pass on Linux | id 1 to 5 red on the Mac |
 | AT-2 | new `tests/e2e/test_dp_provenance_certification.py::test_the_expected_code_helper_matches_the_engine_gate`, cells `host` and `foreign` (`current_platform` monkeypatched to a non-certified triple): `check_fit_environment()` raises exactly `expected_dp_refusal_code()`, or nothing when it returns `None`; the `foreign` cell's code is `dp_platform_uncertified` on every host | helper missing |
-| AT-3 | the `:906` cell, parametrized `host` / `foreign`, asserts exit `EXIT_USAGE`, `dp_schema_column_missing` and `amt` in the output, and neither DP code | checks one code; the `foreign` cell does not exist |
+| AT-3 | the `:906` cell, parametrized `host` / `foreign`, first asserts neither DP code is in the output, then asserts exit `EXIT_USAGE`, `dp_schema_column_missing` and `amt` | checks one code; the `foreign` cell does not exist |
 | AT-4 | `test_upgrade_force_recovers_retained_bundle_without_current` passes on the Mac and Linux; every other `test_distribution.py` id keeps its result on the Mac (base and head ids compared in the same Mac folder) | red on the Mac |
 | AT-5 | `test_install_sh_refuses_wrong_version_without_installing_anything` passes on the Mac and Linux and still asserts `declares version` | red on the Mac |
-| AT-6 | new cells in `tests/e2e/test_output_modes.py`, `monkeypatch.setenv("COLUMNS", "80")`: a missing source, a bad `--profile`, and a missing pipeline file, each under a 90-character directory, through `run`, `validate compile` and `plan`; the raw stderr contains the whole path on one line. The `--json` cells parse stdout and assert the exact key set, `code`, and the whole path inside `message`. The base run's fold (a newline inside the path) is the recorded red | folded on the base |
+| AT-6 | new cells in `tests/e2e/test_output_modes.py`, all with `monkeypatch.setenv("COLUMNS", "80")` and paths below a 90-character directory: (1) `run` with a missing source, (2) `validate compile` with a bad `--profile`, and (3) `validate compile` on an existing YAML file whose top level is not a mapping. Each human-mode cell asserts the complete tested path occurs contiguously in raw stderr. JSON contract cells are green on the base by design and parse stdout: compile is exactly `{command, config, error, status}`, with `command == "compile explain"`; the non-mapping config path is in `config` and `error`, while the bad profile path is in `error`. Run is exactly `{command, status, config, mode, error, error_kind, messages}`, with `command == "run"` and `error_kind == "validation"`; `messages[0]` is exactly `{layer, severity, code, message, location}`, its `code` is `source.customers.exists`, and the missing-source path is in both top-level `error` and `messages[0].message`. The human cells' base fold (a newline inside the path) is the recorded red | human stderr is folded on the base; JSON cells are base-green contract guards |
 | AT-7 | new sentry `tests/sentry/test_one_stderr_console.py`: shapes (a) to (d) of section 4 on `src/`, alias-resolved, each with one seeded case | sentry missing |
-| AT-8 | `test_with_invalid_profile_json` passes on the Mac unchanged; T0097's `test_run_validate_always.py::test_a_long_path_in_run_error_text_is_printed_whole` passes unchanged on S2's head | red on the Mac |
+| AT-8 | `test_with_invalid_profile_json` passes on the Mac unchanged; T0097's `test_run_validate_always.py::test_a_long_path_in_run_error_text_is_printed_whole` passes on S2's head with only the deterministic `COLUMNS=80` setup added | red on the Mac |
 | AT-9 | Linux parity: the full suite on one VM at the base and at each slice head; the only id changes are the new tests | n/a |
 | AT-10 (acceptance) | Mac full suite: 0 failures, with CLI-BASELINE merged, `decoy.__file__` printed and inside the checkout under test; Linux unchanged (AT-9) | 16 failures |
 
 ## 6. Placement
 
-| File | Directory | Change | Slice |
-|---|---|---|---|
-| `dp_env.py` | `tests/` | new helper, beside `keyed_secret.py` | S1 |
-| `test_dp_provenance_certification.py` | `tests/e2e/` | use the helper; AT-2 cell | S1 |
-| `test_fit_command.py` | `tests/e2e/` | lines 472, 535, 634, 642, 906 | S1 |
-| `test_distribution.py` | `tests/unit/` | `_serve_bundle` (`:581`) and `_doc_for_latest` (`:619`) gain a `target` keyword defaulting to `linux-x86_64`; ids 6 and 7 pass `detect_target()` and skip on an unsupported host | S1 |
-| `output.py` | `src/decoy/ui/` | `_make_console`: stderr soft-wraps | S2 |
-| `run.py` | `src/decoy/cli/` | drop the per-call `soft_wrap=True` at `:223` and, with T0097 on main, its five sites and comment | S2 |
-| `test_output_modes.py` | `tests/e2e/` | AT-6 cells (no new module in the 82-entry folder) | S2 |
-| `test_run_validate_always.py` | `tests/e2e/` | only if S2 builds before T0097 merges: add T0097's `test_a_long_path_in_run_error_text_is_printed_whole` unchanged | S2 |
-| `test_one_stderr_console.py` | `tests/sentry/` | AT-7; one `SENTRIES` line in `test_sentry_manifest.py` | S2 |
+| File | Directory | Change | CODEMAP “Where things go” placement / existing neighbor | Slice |
+|---|---|---|---|---|
+| `CODEMAP.md` | repo root | add the missing row for shared cross-suite test helpers | layout map itself / existing “Repository policy sentries” row | S1 |
+| `dp_env.py` | `tests/` | new helper | new shared-cross-suite-test-helper row / `keyed_secret.py` | S1 |
+| `test_dp_provenance_certification.py` | `tests/e2e/` | use the helper; AT-2 cell | existing file; no placement change | S1 |
+| `test_fit_command.py` | `tests/e2e/` | lines 472, 535, 634, 642, 906 | existing file; no placement change | S1 |
+| `test_distribution.py` | `tests/unit/` | `_serve_bundle` (`:581`) and `_doc_for_latest` (`:619`) gain a `target` keyword defaulting to `linux-x86_64`; ids 6 and 7 pass `detect_target()` and skip on an unsupported host | existing file; no placement change | S1 |
+| `output.py` | `src/decoy/ui/` | `_make_console`: stderr soft-wraps | existing file; no placement change | S2 |
+| `run.py` | `src/decoy/cli/` | remove the per-call `soft_wrap=True` sites named in section 4 | existing file; no placement change | S2 |
+| `test_output_modes.py` | `tests/e2e/` | AT-6 cells (no new module in the 82-entry folder) | existing file; no placement change | S2 |
+| `test_run_validate_always.py` | `tests/e2e/` | keep T0097's two long-path tests; if S2 carries the missing-source test before T0097 merges, add it with `monkeypatch.setenv("COLUMNS", "80")`; if T0097 merges first, add that width pin to the kept test | existing file; no placement change | S2 |
+| `test_one_stderr_console.py` | `tests/sentry/` | AT-7; one `SENTRIES` line in `test_sentry_manifest.py` | “Repository policy sentries and their scanners” row / `test_atomic_writer.py` | S2 |
 
 ## 7. Slices
 
-- S1 (R1, tests only, about 80 lines): ids 1 to 7, AT-1 to AT-5. Lands on its own.
-- S2 (R2, about 90 lines): id 8, AT-6 to AT-8. Q1 is decided (one console). If T0097's branch
-  merges first, S2 removes its five per-call arguments and keeps its test unchanged. If S2 builds
-  first, S2 carries T0097's test cell and the orchestrator drops T0097's `run.py` change.
+- S1 (R1, tests plus one CODEMAP row, about 80 lines): ids 1 to 7, AT-1 to AT-5. Lands on
+  its own.
+- S2 (R2, about 90 lines): id 8, AT-6 to AT-8. Q1 is decided (one console). If current T0097
+  `b9279b4` merges first, S2 removes its nine per-call wrapping kwargs, preserves every
+  `markup=False` and both long-path tests, and pins `COLUMNS=80` in the kept missing-source test.
+  If S2 builds first, it carries that test with the width pin; later conflict resolution drops
+  only T0097's redundant `soft_wrap=True` kwargs and wrap-specific comment, not its markup,
+  notify or test changes.
 
 AT-10 is checked once all of CLI-BASELINE, S1 and S2 are on main.
 
@@ -299,7 +332,8 @@ AT-10 is checked once all of CLI-BASELINE, S1 and S2 are on main.
 
 - Q1, decided: one stderr console, soft-wrapped in `_make_console`, guarded by the AT-7 sentry.
   S2 takes over the per-site `soft_wrap=True` from `fix/mask-secret-missing-source` if that
-  merges first and keeps its test.
+  merges first, preserves both current branch tests, and pins `COLUMNS=80` in the kept
+  missing-source test.
 - Q2, decided: the orchestrator's Mac runs already set `PYTHONPATH=<checkout>/src`; no script
   change. The build still prints `decoy.__file__` before every Mac run.
 
@@ -307,6 +341,9 @@ AT-10 is checked once all of CLI-BASELINE, S1 and S2 are on main.
 
 - A Mac lane in hosted CI (the `decoyci` self-hosted runner exists) so a Linux-only assumption
   fails at PR time instead of on the next Mac run.
+- V2-LOG: Typer's usage-error panels (including `exists=True` and `BadParameter` failures) use
+  Typer's own Rich console, not `OutputState.err_console`, and can still fold a long path at the
+  terminal width. They are outside S2's stated guarantee.
 
 ## 10. What this plan did not verify
 
@@ -318,10 +355,21 @@ AT-10 is checked once all of CLI-BASELINE, S1 and S2 are on main.
 
 ## 11. LOW findings (V2-LOG)
 
-- L1: `src/decoy/cli/explain.py:402-403` says the fit "refuses with dp_stack_uncertified" on an
+- V2-LOG L1 (Dennis R1): `src/decoy/cli/explain.py:402-403` says the fit "refuses with dp_stack_uncertified" on an
   uncertified host; on macOS it is `dp_platform_uncertified`. A copy fix outside this slice.
-- L2: the host-target skip will exist three times in `test_distribution.py` (`:1254` plus ids 6
+- V2-LOG L2 (Dennis R1): the host-target skip will exist three times in `test_distribution.py` (`:1254` plus ids 6
   and 7). A module fixture `host_target` would be one place. Optional; the builder may take it
   if it stays inside the file.
-- L3: no AT covers stderr on a TTY. A cell with `force_terminal=True` through `_make_console` is
+- V2-LOG L3 (Dennis R1): no AT covers stderr on a TTY. A cell with `force_terminal=True` through `_make_console` is
   cheap. Optional.
+- V2-LOG L4 (Dennis R2 L-1): adding `test_one_stderr_console.py` brings `tests/sentry/` to 25
+  direct Python modules. CODEMAP permits this placement; the next policy sentry opens a named
+  sub-package.
+- V2-LOG L5 (Dennis R2 L-2): T0097's kept missing-source test did not pin terminal width at its
+  reviewed head. S2 adds `COLUMNS=80` if it carries or edits that test; AT-6 already pins it.
+- V2-LOG L6 (Dennis R2 L-3): AT-7 shapes (c) and (d) match a direct
+  `*.err_console.print(...)` receiver. An alias such as
+  `err = state.err_console; err.print(Panel(...))` escapes, as does a panel stored in a variable;
+  both limits go in the sentry docstring.
+- V2-LOG L7 (Dennis R2 M-B): Typer's own usage-error Rich panels do not pass through
+  `OutputState.err_console` and may fold paths. Section 9 records the bounded follow-up.
