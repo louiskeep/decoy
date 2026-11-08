@@ -469,6 +469,10 @@ code in its slice.
 
 ## 9. Owner questions (each answerable alone; recommended answer first)
 
+Answered 2026-11-08: the owner took every recommended answer (OQ1 to OQ4 yes). S1 builds the OQ1
+symlink-owner check; scaffolded configs are public; masked outputs keep their mode bits; the plan
+artifact is private.
+
 - OQ1. Should a user-chosen target that is a symlink owned by another user be refused? Recommended: yes, as
   `atomic_write_failed` with `EPERM`. It mirrors Linux `fs.protected_symlinks`, which macOS lacks; it closes
   the case where another local user redirects a write onto one of the victim's own files (data loss, not a
