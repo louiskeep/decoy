@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+import http.client
 import importlib.util
 import io
+import socket
+import ssl
 import urllib.error
 from pathlib import Path
 
@@ -15,6 +18,8 @@ assert _spec and _spec.loader
 fcb = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(fcb)
 
+CUT = b"<cut off mid-read>"
+
 
 class _Response(io.BytesIO):
     def __enter__(self):
@@ -22,6 +27,11 @@ class _Response(io.BytesIO):
 
     def __exit__(self, *exc: object) -> None:
         self.close()
+
+    def read(self, *args: object) -> bytes:  # type: ignore[override]
+        if self.getvalue() == CUT:
+            raise http.client.IncompleteRead(b"partial", 100)
+        return super().read()
 
 
 def _patch(monkeypatch: pytest.MonkeyPatch, outcomes: list[object]) -> list[str]:
@@ -46,13 +56,28 @@ def _http(code: int) -> urllib.error.HTTPError:
     "first",
     [
         TimeoutError("read timed out"),
-        urllib.error.URLError("reset"),
-        _http(504),
         ConnectionResetError(),
+        urllib.error.URLError(TimeoutError("timed out")),
+        urllib.error.URLError(ConnectionResetError()),
+        urllib.error.URLError(socket.gaierror(socket.EAI_AGAIN, "try again")),
+        _http(500),
+        _http(503),
+        _http(504),
+        CUT,
     ],
-    ids=["timeout", "urlerror", "http504", "reset"],
+    ids=[
+        "timeout",
+        "reset",
+        "url-timeout",
+        "url-reset",
+        "dns-again",
+        "http500",
+        "http503",
+        "http504",
+        "cut-mid-read",
+    ],
 )
-def test_a_transient_failure_is_retried(monkeypatch: pytest.MonkeyPatch, first: OSError) -> None:
+def test_a_transient_failure_is_retried(monkeypatch: pytest.MonkeyPatch, first: object) -> None:
     calls = _patch(monkeypatch, [first, b"ok"])
     waits: list[float] = []
     assert fcb.download("https://x", sleep=waits.append) == b"ok"
@@ -67,9 +92,42 @@ def test_the_last_failure_is_raised_after_every_attempt(monkeypatch: pytest.Monk
     assert len(calls) == fcb.ATTEMPTS and len(waits) == fcb.ATTEMPTS - 1
 
 
-@pytest.mark.parametrize("code", [403, 404])
-def test_a_client_error_is_not_retried(monkeypatch: pytest.MonkeyPatch, code: int) -> None:
-    calls = _patch(monkeypatch, [_http(code)])
-    with pytest.raises(urllib.error.HTTPError):
-        fcb.download("https://x", sleep=lambda _s: pytest.fail("no wait on a client error"))
+@pytest.mark.parametrize(
+    "err",
+    [
+        _http(403),
+        _http(404),
+        _http(429),
+        _http(499),
+        urllib.error.URLError(ssl.SSLCertVerificationError("bad cert")),
+        urllib.error.URLError(socket.gaierror(socket.EAI_NONAME, "no such host")),
+        urllib.error.URLError(FileNotFoundError("missing")),
+        urllib.error.URLError("unknown url type"),
+    ],
+    ids=[
+        "http403",
+        "http404",
+        "http429",
+        "http499",
+        "cert",
+        "dns-noname",
+        "file-missing",
+        "scheme",
+    ],
+)
+def test_a_permanent_failure_is_not_retried(monkeypatch: pytest.MonkeyPatch, err: OSError) -> None:
+    calls = _patch(monkeypatch, [err])
+    with pytest.raises(type(err)):
+        fcb.download("https://x", sleep=lambda _s: pytest.fail("no wait on a permanent failure"))
     assert len(calls) == 1
+
+
+def test_main_reports_a_cut_off_body_as_a_clean_failure(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    _patch(monkeypatch, [CUT] * fcb.ATTEMPTS)
+    monkeypatch.setattr(fcb.time, "sleep", lambda _s: None)
+    policy = tmp_path / "policy.toml"
+    policy.write_text('[[binary_tool]]\nname = "tool"\nurl = "https://x"\nsha256 = "0"\n')
+    assert fcb.main(["tool", "--dest", str(tmp_path / "bin"), "--policy", str(policy)]) == 1
+    assert "IncompleteRead" in capsys.readouterr().err
