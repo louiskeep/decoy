@@ -2,7 +2,7 @@ Status: plan
 
 # RUN-STREAM: one fast run path for `decoy run` (roadmap row 63a)
 
-Owner: Cam. Author: claudeworkerbee (Opus). Date: 2026-11-08. Scope: engine and CLI, V1. Revision 1 (Dennis round 1 on `3818b9e`: NO-GO, 2 BLOCKER and 3 HIGH, all fixed in the text; section 0).
+Owner: Cam. Author: claudeworkerbee (Opus). Date: 2026-11-08. Scope: engine and CLI, V1. Revision 2 (Dennis round 1 on `3818b9e`: NO-GO; round 2 on `337672a`: GO-WITH-FIXES, 3 HIGH; all fixed in the text, section 0).
 
 Rules consulted: `dev-rules/README.md`, `00-universal.md`, `risk-and-exceptions.md`, `development-loop.md`
 (PLAN: choke point, Placement, Design notes, Established solutions), `feature-dev.md`, `architecture.md`
@@ -19,7 +19,20 @@ route; `--chunked` becomes a strict switch on the same code path; Decoy settings
 threads, set in the setup step, with per-run flag and config overrides; defaults use the machine; the
 run summary says which route ran and why. Step 1 of the row is a measurement; section 1 holds it.
 
-## 0. Review dispositions (revision 1)
+## 0. Review dispositions
+
+Revision 2 (Dennis round 2 on `337672a`: GO-WITH-FIXES, 3 HIGH, 3 MEDIUM, 2 LOW):
+
+| Finding | Disposition | Where |
+|---|---|---|
+| V1-1: `TargetSink` had no `spill_parent`, so a streamed table that holds back past one row group raises `HOLD_BACK_SPILL_UNAVAILABLE` (`_chunked_output_sink.py:466-475`) where the resident run works | `TargetSink.spill_parent` returns the target's parent directory, as the engine's Parquet sink does (`_transactional_sink.py:323-327`); AT-C1i | 5.2, 8 |
+| V1-2: the lane takes no FK config (`_planner.py:16-18`; `_pipeline_chunk_route.py:84` captures no lazy facts with edges); `gate_fk_child_edges` lives only in the pandas oracle (`_chunked.py:305`); the out-of-core force ignores the FK dtype hazard (`_pipeline_routing_fk_dtype.py:48-75`), so a chain could fail after parents were written | Under `stream` only, E1a extends B7's independence rule: a job whose every FK child edge passes `gate_fk_child_edges` is split per table onto the lane, each table masked on its own, which is what base `--chunked` does (`run.py:1449`). Other FK configs go to out-of-core only when it is compatible and has no dtype hazard, decided before any read; otherwise refused before any read. `auto` routing is unchanged | 5.3, 6.3, 8 (AT-E1a, AT-C2a), 14 |
+| V1-3: `detect_usable_cpus` would be a second copy of the platform's `effective_cores` (`decoy-platform:api/cgroup_cpu.py:231`) | E1b ports `api/cgroup_cpu.py` into the engine (citing it and its sources, automaxprocs and HotSpot); slice P1 makes the platform's `api/cgroup_cpu.py` call the engine's function; `_duckdb.py:84` uses it too | 4, 12, 14, 16 |
+| MEDIUM: G4a untrue for the quarantine file; the engine never calls `abort()` after `commit()`; the eight `execution_mode` comparisons; streamed generation | G4a states the quarantine exception (as today); `TargetSink.committed_table_path` added for the aliasing guard; the CLI calls `abort()` on any exception from `run_pipeline` or after it; E1a lists the eight sites and translates `stream` at one point; generation stays resident with `TargetSink` (no `bounded_write_batches`), in AT-C1g | 2, 5.2, 5.3, 6.2, 8 |
+| LOW: section 9 says "during `commit`"; `detect_usable_cpus` placement | "during `publish`"; placement: `execution/pipeline/_host.py`, because `execution/out_of_core/` is frozen at 44 and the package root has 60 entries; the row names it a host probe, not spine | 9, 12 |
+| Threshold "0" | `stream` bypasses the threshold check; it does not pass 0, which `require_positive_int` refuses (`physical/_snapshot.py:118`) | 5.3 |
+
+Revision 1:
 
 | Finding (Dennis r1) | Disposition | Where |
 |---|---|---|
@@ -169,8 +182,10 @@ and an out-of-core budget of 25 percent of RAM (`out_of_core/_budget.py:137`), w
   engine's own out-of-core default (passes `None`; 25 percent of host RAM today, Q3). In V1 the memory
   value bounds the out-of-core route (its budget and so its DuckDB threads); the auto-chunk lane is
   bounded by chunk size, not by this value.
-- G4a. Nothing is published before the native evidence check and the vault commit: the sink only
+- G4a. No target is published before the native evidence check and the vault commit: the sink only
   stages during the run, and the CLI publishes after `post_run_verify` and `_commit_vault`, as today.
+  One exception, unchanged from today: a quarantine sidecar the sequential route writes is published
+  by the engine after `commit()` (`_sequential.py:625-633`); admins only, as today.
 - G5. The run summary prints the route, its reason code, input and output modes and the resources
   used, from `ExecutionResult.quality_metrics`, never from a CLI guess.
 - G6. Output bytes are unchanged: a streamed run writes the same CSV bytes and the same Parquet values
@@ -196,6 +211,7 @@ and an out-of-core budget of 25 percent of RAM (`out_of_core/_budget.py:137`), w
 | Lazy source changes between footer read and batch read | engine `facts_match` refusal (`_chunked_input.py`), exit 3, nothing published (sink aborts) |
 | A run fails after the sink took some tables | sink `abort()` removes every staged temp; old targets untouched (G6, class 2) |
 | `post_run_verify` or the vault commit fails after the run | the CLI calls `abort()`; no target changed (G4a) |
+| An exception after the engine called `commit()` (the engine never aborts after it, `_sequential.py:648-656`, `out_of_core/_runner.py:302-313`) | the CLI calls `abort()` on any exception from `run_pipeline` or after it; staged files removed |
 | `--chunked` on a config no streaming route takes | engine `runtime.streaming_unavailable` before the first row; exit 1 (usage) with the blocking fact |
 | Settings file unreadable or invalid | exit 1 naming the file and key; never a silent default |
 | `--max-memory` below the engine floor | exit 1 (`resources.memory_below_floor`) |
@@ -245,14 +261,14 @@ and an out-of-core budget of 25 percent of RAM (`out_of_core/_budget.py:137`), w
   most `memory_limit / 2 GiB` (`_duckdb.py:29`) because that keeps per-thread buffers inside the
   budget. There is no new resources object. The CLI resolves flag, env, settings file and `auto` in one
   function (`src/decoy/_resources.py`), used by `run`, `setup` and `doctor`; detection is the engine's
-  (`detect_effective_memory_bytes`, `_budget.py:339`; a new `detect_usable_cpus`), so the CLI grows no
+  (`detect_effective_memory_bytes`, `_budget.py:339`; `detect_usable_cpus`, ported from the platform), so the CLI grows no
   cgroup reader and no default policy of its own.
 - The route summary is an engine record. `quality_metrics` already carries `execution` and
   `auto_chunk` blocks; E3 adds one frozen `route` view so the CLI renders fields, not dict paths.
 
 ## 5. Behavior
 
-### 5.1 Sources (CLI part C1)
+### 5.1 Sources (CLI part C1a)
 
 - Local `format: parquet` file source of a mask table: `LazySource(path)` (`decoy_engine.profile`).
 - DuckDB sources: the CLI already snapshots each to a temp Parquet file before validation
@@ -262,7 +278,7 @@ and an out-of-core budget of 25 percent of RAM (`out_of_core/_budget.py:137`), w
 - `fixed_width`, archive CSV: resident, unchanged.
 - Generate-only tables: no source, unchanged.
 
-### 5.2 Targets (CLI part C1)
+### 5.2 Targets (CLI parts C1a and C1b)
 
 `cli/io/_sink.py`: `TargetSink` implements the protocol's `write`, `write_batches`, `commit`, `abort`
 (`execution/_transactional_sink.py:66-99`) and adds `publish()` and `rows_written() -> dict[str, int]`.
@@ -280,24 +296,46 @@ and an out-of-core budget of 25 percent of RAM (`out_of_core/_budget.py:137`), w
   on a failure of the native check, the vault commit or `publish` itself.
 - Row counts for `--evidence-out` and the notify line (`run.py:901`, `:904`) come from
   `rows_written()`, which covers both shapes; `result.outputs` is empty on streamed runs.
+- `spill_parent` (property) returns the target's parent directory, as the engine's own Parquet sink
+  does (`execution/_transactional_sink.py:323-327`), so a streamed table whose column types settle
+  only after one row group can spill its hold-back there (`_chunked_output_sink.py:466-475`).
+- `committed_table_path(table)` returns the target path, as the engine's sink does (`:329`), so the
+  quarantine aliasing guard keeps working.
+- The CLI calls `abort()` on any exception raised by `run_pipeline` or after it, because the engine
+  does not call `abort()` once it has called `commit()`.
 - Formats it cannot stream (`fixed_width`, archive CSV) are written whole at `write` time into
   staging; under `--chunked` they are refused up front by the existing
   `check_target_formats(chunked=True)` (`_targets.py:163`).
 
 ### 5.3 The strict switch (engine part E1a, CLI part C2)
 
-`run_pipeline(execution_mode="stream")`:
+`run_pipeline(execution_mode="stream")`. E1a translates `"stream"` at one point, `run_pipeline`'s
+entry, into the existing knobs, and lists the eight sites that compare `execution_mode` today
+(`_pipeline.py:285`, `_pipeline_context.py:281`, `:511`, `_transforms_admission.py:84`, `:344`,
+`:380`, `physical/_snapshot.py:126`, `_pipeline_routing.py:297-324`) with a test that each sees the
+translated value. `auto` routing is unchanged.
 
-- The auto-chunk lane's row threshold does not apply: a chunk-safe table of any size takes the lane,
-  as base `--chunked` does for any size today.
+- The auto-chunk lane's row threshold check is bypassed (not set to 0, which
+  `require_positive_int` refuses, `physical/_snapshot.py:118`): a chunk-safe table of any size takes
+  the lane, as base `--chunked` does today.
 - A mask table the lane takes must have `input.mode == "lazy"` and `output.mode == "streamed"`.
-- A config with FK edges that the lane does not take is forced to the out-of-core route (the same
-  force as `execution_mode="out_of_core"`, `_pipeline_routing.py:302`), whatever its row count. The
-  lane's own FK gate (`gate_fk_child_edges`, used by `run_mask_pipeline_chunked`, `_chunked.py:299-307`)
-  still admits the child-edge shapes base `--chunked` admits.
+- FK configs. The lane takes no job with FK edges today (`_planner.py:16-18`), and base `--chunked`
+  masks each table on its own through `run_mask_pipeline_chunked`, whose `gate_fk_child_edges`
+  (`_chunked.py:305`) admits only child edges that self-mask by a value-keyed strategy under the
+  shared namespace. Under `stream`, E1a extends B7's independence rule (`_pipeline_multi_table.py`:
+  "two tables are independent when no FK edge touches the job") to "or every FK child edge passes
+  `gate_fk_child_edges`", which is the same reason those tables need no cross-table read, and lets
+  lazy facts be captured for such a job (`_pipeline_chunk_route.py:84`). Each table then runs on the
+  lane alone, as base `--chunked` runs it. Pattern: the per-unit split B7 already uses (Apache
+  Gluten, Spark RAPIDS), with the oracle's own admission rule.
+- An FK config with an edge that gate rejects goes to the out-of-core route only when
+  `decide_execution_route`'s out-of-core compatibility holds and `fk_ooc_dtype_hazard` is clear
+  (`_pipeline_routing_fk_dtype.py:48-75`), both decided from facts before any source row is read.
+  Base `--chunked` refuses these configs, so this only adds configs that run.
 - Anything else raises `ExecutionError(code=reasons.runtime.STREAMING_UNAVAILABLE)` before the first
   source row is read, with the blocking fact from the existing reasons (`auto_chunk.input.reason`,
-  `auto_chunk.output.reason`, `decide_chunk_route`'s reason, `out_of_core_reject_code`).
+  `auto_chunk.output.reason`, `decide_chunk_route`'s reason, `gate_fk_child_edges`'s code,
+  `out_of_core_reject_code`, the dtype hazard).
 
 The CLI maps the refusal to exit 1 and prints the fact. `--chunk-size` maps to `chunk_size_rows`.
 Parity rule for C2: the gate runs base `--chunked` and the new path over the CLI's chunked fixture set
@@ -370,16 +408,20 @@ Every route `run_pipeline` can take, and what this plan changes on it:
   `out_of_core_budget_bytes`, DuckDB threads capped by `out_of_core_threads` (AT-E1c).
 - mixed generate and mask (`execution/_pipeline_mixed_route.py:120`): unchanged; lazy keys read by
   `_read_key_column`; streamed or not per `outputs_streamed` (`:247`), so either shape (AT-C1g).
-- multi-table dispatch (`execution/_pipeline_multi_table.py:290`): per-table streaming as today, now with a sink.
+- streamed generation (`generation/_streamed.py:94`): runs only when the sink sets
+  `bounded_write_batches`; `TargetSink` does not, so generation stays resident and its tables reach
+  the targets through `publish` (AT-C1g).
+- multi-table dispatch (`execution/_pipeline_multi_table.py:290`): per-table streaming as today, now
+  with a sink; under `stream` it also splits FK jobs whose child edges all pass the oracle gate (5.3).
 - CLI `--chunked` pandas path: deleted (C2).
 
 ### 6.3 FK shapes
 
-The plan changes no FK logic. Each shape runs through the CLI with lazy sources and the sink, and must
-match the resident run (AT-C1c). Under `--chunked`, an FK config runs on the auto-chunk lane when its
-child edges pass the lane's existing FK gate, as base `--chunked` does, and otherwise is forced to the
-out-of-core route at any row count (5.3); it is refused only when both reject it, with the route's
-reason (AT-E1a).
+The plan changes no FK masking logic. Each shape runs through the CLI with lazy sources and the sink,
+and must match the resident run (AT-C1c). Under `--chunked`, an FK config whose child edges all pass
+`gate_fk_child_edges` is split per table onto the lane, as base `--chunked` runs it; one with a
+rejected edge runs on the out-of-core route only when that route is compatible and has no dtype
+hazard; otherwise it is refused before any read (5.3, AT-E1a).
 
 - one parent and one child;
 - a three-level chain (the `fk_memory_probe.py` chain);
@@ -425,20 +467,21 @@ No surface prints a cell value or a path outside the config's own paths.
 
 | ID | Part | Test | Mutation |
 |---|---|---|---|
-| AT-E1a | E1a | `execution_mode="stream"`: a chunk-safe single table with `LazySource` and sink streams, including a 10-row table (no row threshold); an FK config the lane gate rejects runs on the out-of-core route below `out_of_core_threshold_rows`; each non-streaming case (resident source, no sink, a `when`-gated column without footer null counts, generate table, an FK shape both routes reject) raises `runtime.streaming_unavailable` before any batch read (spy on `iter_batches`), with the blocking reason code | M-E1a, M-E1a2; M-E1a3: keep the 100,000-row threshold under `stream` |
+| AT-E1a | E1a | `execution_mode="stream"`: a chunk-safe single table with `LazySource` and sink streams, including a 10-row table (no row threshold); a parent and child whose child edge passes `gate_fk_child_edges` run as two lane units with output equal to base `--chunked`; an edge the gate rejects runs on the out-of-core route when compatible and hazard-free; each non-streaming case (resident source, no sink, a `when`-gated column without footer null counts, generate table, an FK chain with the dtype hazard, an edge both reject) raises `runtime.streaming_unavailable` before any batch read (spy on `iter_batches`, nothing written), with the blocking reason code; each of the eight `execution_mode` sites sees the translated value; `auto` routes are unchanged on the routing golden set | M-E1a, M-E1a2; M-E1a3: keep the 100,000-row threshold under `stream`; M-E1a4: split FK jobs under `auto` too |
 | AT-E1b | E1b | `native_threads=6` reaches the native call (clamped to the knee, clamp recorded) and the auto-chunk lane; `out_of_core_budget_bytes` unchanged in behaviour | M-E1b: drop the clamp record |
 | AT-E1c | E1b | OOC: DuckDB `threads` equals `min(out_of_core_threads, memory_limit // 2 GiB, cpu count)` and at least 1; `None` keeps today's value | M-E1c: drop the memory clamp |
-| AT-E1d | E1b | `detect_usable_cpus()` honours `sched_getaffinity` and a cgroup v2 `cpu.max` fixture (`200000 100000` gives 2), and v1 quota files; fails closed with a coded error on an unreadable present limit file | M-E1d2: ignore the quota |
+| AT-E1d | E1b | `detect_usable_cpus()` passes the platform's `api/cgroup_cpu.py` test fixtures, ported: affinity, cgroup v2 `cpu.max` (`200000 100000` gives 2), v1 quota files, the ancestor walk, a fake `/proc` and cgroup tree; fails closed with a coded error on an unreadable present limit file; `_duckdb.py`'s thread count uses it | M-E1d2: ignore the quota; M-E1d3: leaf only, no ancestor walk |
 | AT-E2a | E2 | lazy CSV: the auto-chunk lane reads a CSV source in batches through the one CSV reader (`tests/sentry/test_csv_read_choke_point.py` stays green), all-text dtype, values equal to the resident CSV run on the CSV fixture corpus (quotes, embedded newlines, BOM, CRLF, `has_header: false` with `column_names`); a file changed between the facts pass and the batch pass is refused | M-E2a: read with `pyarrow.csv` defaults (types inferred); M-E2b: skip the size and mtime check |
 | AT-E3a | E3 | `route_summary` on each route's `quality_metrics` gives the expected record; unknown keys are ignored, missing blocks give `route="unknown"` and never raise | M-E3a: read `auto_chunk.mode` for the route |
-| AT-C1a | C1 | Plain run, Parquet, CSV and DuckDB sources, Parquet, CSV and `.csv.gz` targets, an empty source: output equal (CSV bytes, decompressed `.csv.gz` bytes, Parquet values and schema) to the base CLI's plain run on the fixture set | M-C1a |
-| AT-C1b | C1 | VM, 16M-row Parquet source (605 MB): plain `decoy run` peak RSS under 1 GB and route "auto-chunk lane (lazy input, streamed output)" | removing the bound |
-| AT-C1c | C1 | the four FK shapes of 6.3 through the CLI equal the resident run, below and above `out_of_core_threshold_rows` (the latter set low in the test) | M-C1c |
-| AT-C1d | C1 | sink failure matrix of class row 2, plus a source that is also a target of the same run (old bytes read, new bytes published) | M-C1d |
-| AT-C1e | C1 | sink state machine | M-C1e |
-| AT-C1f | C1 | source replaced between routing and read | M-C1f |
-| AT-C1g | C1 | one run per route shape (auto-chunk streamed, full frame, sequential, out-of-core, mixed streamed and unstreamed, multi-table): every target written, bytes equal to base, `--evidence-out` row counts equal to the table lengths | M-C1g: drop the `result.outputs` writes in `publish` (full frame writes nothing); M-C1g2: count rows from `result.outputs` |
-| AT-C1h | C1 | `_commit_vault` patched to raise, and `--native` with no compiled-kernel evidence: in both, every target is byte-equal to before and no staged temp remains; the native message is still printed | M-C1h |
+| AT-C1a | C1a | Plain run, Parquet, CSV and DuckDB sources, Parquet, CSV and `.csv.gz` targets, an empty source: output equal (CSV bytes, decompressed `.csv.gz` bytes, Parquet values and schema) to the base CLI's plain run on the fixture set | M-C1a |
+| AT-C1b | C1a | VM, 16M-row Parquet source (605 MB): plain `decoy run` peak RSS under 1 GB and route "auto-chunk lane (lazy input, streamed output)" | removing the bound |
+| AT-C1c | C1a | the four FK shapes of 6.3 through the CLI equal the resident run, below and above `out_of_core_threshold_rows` (the latter set low in the test) | M-C1c |
+| AT-C1d | C1a | sink failure matrix of class row 2, plus a source that is also a target of the same run (old bytes read, new bytes published) | M-C1d |
+| AT-C1e | C1a | sink state machine | M-C1e |
+| AT-C1f | C1a | source replaced between routing and read | M-C1f |
+| AT-C1g | C1b | one run per route shape (auto-chunk streamed, full frame, sequential, out-of-core, mixed streamed and unstreamed, multi-table, generate-only): every target written, bytes equal to base, `--evidence-out` row counts equal to the table lengths | M-C1g: drop the `result.outputs` writes in `publish` (full frame writes nothing); M-C1g2: count rows from `result.outputs` |
+| AT-C1h | C1b | `_commit_vault` patched to raise, `--native` with no compiled-kernel evidence, and an exception raised by the engine after its `commit()`: in all three, every target is byte-equal to before and no staged temp remains; the native message is still printed | M-C1h; M-C1h2: no `abort()` after an engine exception |
+| AT-C1i | C1a | a Parquet source of 1.2M rows whose first column is null for its first 1,100,000 rows: plain `decoy run` streams, the hold-back spills beside the target and is removed, output equal to the resident run | M-C1i: drop `spill_parent` (raises `HOLD_BACK_SPILL_UNAVAILABLE`) |
 | AT-C2a | C2 | `--chunked` on base `--chunked`'s fixture set and the 6.3 FK shapes: every config base runs also runs, with the same output bytes (empty list of newly refused configs); configs base refuses (generate table, vault, report flags, fixed_width target) exit 1 with the engine reason or the existing CLI refusal text; CSV sources stream (needs E2 in the pinned release) | M-C2a: map the refusal to exit 3; M-C2a2: refuse below 100,000 rows |
 | AT-C2b | C2 | run summary card and `--json` `route` object per route, including "native companion not installed" | M-C2b: print the CLI's old label |
 | AT-C2c | C2 | `_run_chunked_mask`, `iter_source_chunks` and the CLI import of `run_mask_pipeline_chunked` are gone; a sentry fails on a second `run_pipeline` call site in `cli/run.py` (the `tokenize` command, `cli/tokenize.py:347`, and the library `api.py:529` are separate callers and unchanged) | M-C2c: re-add a `run_mask_pipeline_chunked` import |
@@ -457,8 +500,9 @@ No surface prints a cell value or a path outside the config's own paths.
 - `--threads 0`, `--threads 100000`, `--max-memory 1KiB`: refused (class row 6).
 - `DECOY_HOME` pointing at a symlinked or world-writable directory: the settings file is read with
   `tomllib` only, never executed; a world-writable file is warned in `doctor`.
-- A cgroup v1 host with unlimited quota: `detect_usable_cpus` returns affinity.
-- Ctrl-C during `commit` with three targets: targets published before the signal stay new, later ones
+- A cgroup v1 host with unlimited quota: `detect_usable_cpus` returns affinity (the ported platform
+  test fixtures cover v1, v2, nested limits and an unreadable limit file).
+- Ctrl-C during `publish` with three targets: targets published before the signal stay new, later ones
   stay old; the summary says which (the sink publishes in config order and records progress). This is
   the same per-file atomicity `write_chunked_output` gives today, stated, not hidden.
 
@@ -490,6 +534,9 @@ No surface prints a cell value or a path outside the config's own paths.
 | Transactional output | `TransactionalSink` protocol | `execution/_transactional_sink.py:66-99` |
 | Staged atomic write, per-format writer | `staged_local_target`, `write_chunked_output` core | `src/decoy/cli/io/_targets.py:425-467` |
 | Memory ceiling and default | `detect_effective_memory_bytes`, `_MIN_BUDGET_BYTES`, `_HOST_RAM_FRACTION` | `execution/out_of_core/_budget.py:339`, `:137-142` |
+| Usable CPUs | the platform's `effective_cores` and `cpu_quota_cores`, ported (moved, not copied: P1 points the platform at the engine) | `decoy-platform:api/cgroup_cpu.py:203`, `:231` |
+| FK admission for per-table masking | `gate_fk_child_edges` | `execution/_chunked.py:305` |
+| Per-table split | B7 multi-table dispatch | `execution/_pipeline_multi_table.py:290` |
 | Thread and budget inputs | `native_threads`, `out_of_core_budget_bytes` keywords | `execution/_pipeline.py:139`, `:145` |
 | OOC sizing | `resolve_ooc_memory_limit`, `_threads_for_memory_limit` | `_budget.py:398`, `out_of_core/_duckdb.py:67` |
 | CSV dialect and reader | `resolve_csv_dialect`, `read_csv_source`, `CsvFileSource` | `profile/_csv_reader.py`, `profile/_readers_csv.py:34` |
@@ -507,7 +554,8 @@ Engine (CODEMAP "Where Things Go", `CODEMAP.md:204-237` at `7a61be3c`):
 
 | New code | Goes in | Map row | Nearest neighbour |
 |---|---|---|---|
-| `route_summary`, `detect_usable_cpus` (`_route_summary.py`, `_cpus.py`) | `src/decoy_engine/execution/pipeline/` (target sub-package; this creates it) | "Pipeline spine and routes" (`CODEMAP.md:218`, fan-out freeze at 104) | `_pipeline_finalize.py` |
+| `route_summary` (`_route_summary.py`) | `src/decoy_engine/execution/pipeline/` (target sub-package; this creates it) | "Pipeline spine and routes" (`CODEMAP.md:218`, fan-out freeze at 104) | `_pipeline_finalize.py` |
+| `detect_usable_cpus` (`_host.py`, about 250 lines ported) | `src/decoy_engine/execution/pipeline/` | same row; a host probe the routes read. Not `out_of_core/` (fan-out freeze at 44, `CODEMAP.md:221`) and not the package root (60 entries, over 25) | `out_of_core/_budget.py` (the memory probe) |
 | `out_of_core_threads` | the existing `run_pipeline` signature and `out_of_core/_duckdb.py` `connect_duckdb` (a few lines; `_budget.py`, 609 lines, is not touched) | "Out-of-core FK" (`:221`) | `_threads_for_memory_limit` |
 | lazy CSV input (`_lazy_csv.py`) | `src/decoy_engine/profile/` beside `_readers_csv.py` | `profile` package row | `CsvFileSource` |
 | tests | `tests/unit/execution/run_stream/` (new sub-package; `tests/unit/execution/` is over 25) | "Unit tests" (`:237`) | `tests/unit/execution/derived_visibility/` |
@@ -520,7 +568,7 @@ CLI (`CODEMAP.md:42-59`):
 | lazy source building (`_lazy.py`) | `src/decoy/cli/io/` | same row | `_sources.py` (moves here under H-1) |
 | `_resources.py` | top-level `src/decoy/` | "Private shared ... primitives used by more than one package" (run, setup, doctor) | `_native_gate.py` |
 | setup section `_resources.py` | `src/decoy/cli/setup/` (SCAN-ML C1) | C1's row | `_models.py` |
-| tests | `tests/unit/run_stream/`, `tests/e2e/run_stream/` (new folders, like `cli_fmt/`) | map change row added in C1 | `tests/e2e/cli_fmt/` |
+| tests | `tests/unit/run_stream/`, `tests/e2e/run_stream/` (new folders, like `cli_fmt/`) | map change row added in C1a | `tests/e2e/cli_fmt/` |
 
 `run.py` (1,736 lines) only shrinks: the `--chunked` fork and `_run_chunked_mask` go (about 70 lines),
 the source loop moves to `cli/io/_lazy.py`.
@@ -532,7 +580,10 @@ the source loop moves to `cli/io/_lazy.py`.
   CLI pins the engine release that has it.
 - `ExecutionResult.quality_metrics`: adds `route` and `resources` blocks; existing keys unchanged.
 - `TransactionalSink` protocol: unchanged. `TargetSink` adds `publish` and `rows_written` as CLI-side
-  methods; the engine never calls them.
+  methods (the engine never calls them) and implements the two optional members the engine's own sink
+  has, `spill_parent` and `committed_table_path`.
+- Platform: `api/cgroup_cpu.effective_cores` keeps its signature and errors (P1); its body calls the
+  engine's `detect_usable_cpus`.
 - Reason registry: one identity `runtime.streaming_unavailable`, one `resources.cpu_detection_failed`;
   version through REG-RENUMBER at merge.
 - CLI: `--chunked` keeps its name and refusal exit code; `--chunk-size` kept; new flags additive;
@@ -547,23 +598,26 @@ Bound: at most 10 files and 800 lines per slice.
 
 | Slice | Repo | Contents | Lines | Gate |
 |---|---|---|---|---|
-| E1a | engine | `execution_mode="stream"`: refusal, no row threshold, FK force to out-of-core; reason identity; AT-E1a; CHANGELOG | 400 | Dennis, then Codex |
-| E1b | engine | `detect_usable_cpus`, `out_of_core_threads`, the native clamp record; reason identity; AT-E1b to AT-E1d | 350 | Codex |
+| E1a | engine | `execution_mode="stream"` at one translation point and the eight sites; refusal; no row threshold; FK split per table under the oracle gate and the guarded out-of-core force; reason identity; AT-E1a; CHANGELOG | 650 | Dennis, then Codex |
+| E1b | engine | `detect_usable_cpus` ported from the platform with its fixtures, `out_of_core_threads`, `_duckdb.py` on the new probe, the native clamp record; reason identity; AT-E1b to AT-E1d | 700 | Codex |
 | E2 | engine | lazy CSV input in the auto-chunk lane: wraps `read_csv_source(chunksize=)`; routing facts (row count, per-column null counts) from one counting pass through the same reader, with file size and `mtime_ns` taken before it and checked before and after the batch pass; AT-E2a | 450 | Codex |
 | E3 | engine | `route_summary` and the `route`/`resources` blocks; AT-E3a | 250 | Codex |
 | R | engine | release: the next engine release after E1a to E3 merge (cadence of row 76: one release per merged group, not R-d) | - | orchestrator |
-| C1 | CLI | `cli/io/_lazy.py`, `cli/io/_sink.py` (seal, publish, row counts), `run.py` call site and publish order; AT-C1a to AT-C1h | 780 | Dennis, then Codex |
+| C1a | CLI | `cli/io/_lazy.py`, `cli/io/_sink.py` (stage, seal, `spill_parent`, `committed_table_path`, state machine), `run.py` call site; AT-C1a to AT-C1f, AT-C1i | 600 | Dennis, then Codex |
+| C1b | CLI | publish after the native check and the vault, `abort()` on any exception, `rows_written` for evidence and notify, `result.outputs` through the sink; AT-C1g, AT-C1h | 400 | Codex |
 | C2 | CLI | `--chunked` to `execution_mode="stream"`, delete `_run_chunked_mask` and `iter_source_chunks`, summary card and `--json`; AT-C2a to AT-C2c | 500 | Codex |
 | C3 | CLI | `_resources.py`, flags, env, settings file, setup section, doctor rows; AT-C3a, AT-C3b | 600 | Codex |
+| P1 | platform | `api/cgroup_cpu.py` calls the engine's `detect_usable_cpus` (the module keeps its name and `CpuLimitUnreadable` mapping; its tests stay); lands with the platform's repin to release R | 150 | Codex |
 
-Order: E1a and E1b, then E2 and E3 in any order; R; C1 needs R (or a dev pin to the engine commit for
-the branch, never merged); C2 needs C1 and E2 in the pinned release, because base `--chunked` streams
-CSV today (AT-C2a); C3 needs E1b in a release and SCAN-ML C1 (or creates the section list, 5.4). C1
-can start on Parquet before E2: plain CSV runs stay resident until the pin moves.
+Order: E1a and E1b, then E2 and E3 in any order; R; C1a needs R (or a dev pin to the engine commit for
+the branch, never merged); C1b needs C1a; C2 needs C1b and E2 in the pinned release, because base `--chunked` streams
+CSV today (AT-C2a); C3 needs E1b in a release and SCAN-ML C1 (or creates the section list, 5.4); P1 needs R in
+the platform's pin. C1a can start on Parquet before E2: plain CSV runs stay resident until the pin
+moves.
 
 Which engine release: E1a to E3 go into the first engine release cut after they merge. They do not
 wait for R-d (row 76), which the cadence already splits into several releases. The CLI repin row
-moves the pin and C1 to C3 land after it.
+moves the pin and C1a to C3 land after it.
 
 ## 15. Pre-mortem
 
@@ -580,14 +634,15 @@ moves the pin and C1 to C3 land after it.
   printed.
 - CSV streaming diverges from the resident CSV read on a dialect edge. Guard: AT-E2a uses the CSV
   framing corpus F06 already has.
-- SUB-RUN (row 57) edits the same call site. Guard: C1 lands first or SUB-RUN rebases onto it; one
+- SUB-RUN (row 57) edits the same call site. Guard: C1a lands first or SUB-RUN rebases onto it; one
   `run_pipeline` call site sentry (AT-C2c) keeps both on one path.
 
 ## 16. Follow-ups (recorded, not in V1)
 
 - Delete `run_mask_pipeline_chunked` from the engine once the platform stops naming it (Q6).
-- Platform `api/cgroup_cpu.effective_cores` becomes a second CPU detector; move the platform to
-  `detect_usable_cpus` (V2-LOG).
+- `_fpe.py:353` uses `os.cpu_count()`; move it to `detect_usable_cpus` (V2-LOG).
+- `TargetSink` keeps no `publication_evidence`, so an engine failure record says cleanup "unknown"
+  (V2-LOG).
 - Stream `fixed_width` and archive CSV targets.
 - Cloud sources as lazy sources.
 - RESULT schema fields for route and resources if RESULT v1 is closed.
