@@ -525,7 +525,9 @@ def run(
                     {"command": "run", "status": "error", "config": config_str, "error": msg},
                 )
             elif state.mode is not OutputMode.quiet:
-                state.err_console.print(error("error:"), msg)
+                # The message quotes the user's spec: print it verbatim (no markup) and
+                # unfolded, like the run error prints below.
+                state.err_console.print(error("error:"), msg, markup=False, soft_wrap=True)
             raise typer.Exit(code=EXIT_USAGE)
 
     raw, saved_findings, config_read_error = _load_raw_config(config)
@@ -1107,13 +1109,17 @@ def run(
             # companion's own ABI string, or any future message that quotes
             # a list/bracketed value). markup=False so Rich prints it
             # verbatim instead of parsing it as markup and silently
-            # dropping an unrecognized tag.
+            # dropping an unrecognized tag. soft_wrap=True because the text
+            # often quotes a file path: off a TTY Rich folds at 80 columns and
+            # would put a newline inside the path.
             if isinstance(exc, PreRunCheckError):
                 # The summary already names the command that lists every finding.
                 label = "capacity:" if exc.error_kind == "capacity" else "error:"
-                state.err_console.print(error(label), error_text, markup=False)
+                state.err_console.print(error(label), error_text, markup=False, soft_wrap=True)
             elif capacity_code is not None:
-                state.err_console.print(error("capacity:"), error_text, markup=False)
+                state.err_console.print(
+                    error("capacity:"), error_text, markup=False, soft_wrap=True
+                )
                 state.err_console.print(
                     " ",
                     hint("hint:"),
@@ -1121,9 +1127,9 @@ def run(
                     "tier or reduce the job.",
                 )
             elif keyed_refusal:
-                state.err_console.print(error("error:"), error_text, markup=False)
+                state.err_console.print(error("error:"), error_text, markup=False, soft_wrap=True)
             else:
-                state.err_console.print(error("error:"), error_text, markup=False)
+                state.err_console.print(error("error:"), error_text, markup=False, soft_wrap=True)
                 state.err_console.print(
                     " ", hint("hint:"), "rerun with --verbose for the full traceback."
                 )
@@ -1162,7 +1168,7 @@ def run(
                 evidence_out, _json.dumps(manifest, indent=2).encode("utf-8"), WriteMode.REPLACE
             )
         except AtomicWriteError as exc:
-            state.err_console.print(error("error:"), describe(exc), markup=False)
+            state.err_console.print(error("error:"), describe(exc), markup=False, soft_wrap=True)
             raise typer.Exit(code=EXIT_RUNTIME)
         if state.mode is not OutputMode.json and state.mode is not OutputMode.quiet:
             from decoy.ui.theme import success as _success
@@ -1716,6 +1722,8 @@ def _dispatch_run_notifications(
                     state.err_console.print(
                         warn("warning:"),
                         f"notify {r.kind} to {r.target_host} did not deliver{detail}",
+                        markup=False,
+                        soft_wrap=True,
                     )
         return [
             {"kind": r.kind, "delivered": r.delivered, "target_host": r.target_host}
@@ -1723,7 +1731,9 @@ def _dispatch_run_notifications(
         ]
     except Exception as exc:  # notify must never take the run down (D2)
         if state.mode is not OutputMode.quiet:
-            state.err_console.print(warn("warning:"), f"notify dispatch failed: {exc}")
+            state.err_console.print(
+                warn("warning:"), f"notify dispatch failed: {exc}", markup=False, soft_wrap=True
+            )
         return []
 
 
