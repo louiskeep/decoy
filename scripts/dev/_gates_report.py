@@ -30,6 +30,7 @@ from _gates_baseline import (
     check_stored,
     dump_baseline,
     load_baseline,
+    provenance_problems,
     run_mode,
     stored_failing_under,
 )
@@ -43,8 +44,6 @@ __all__ = [
     "run_mode",
     "stored_failing_under",
 ]
-
-_FOUND = re.compile(r"^Found (\d+) errors?", re.MULTILINE)
 
 
 def _steps(out: Path, label: str) -> list[tuple[str, int, str]]:
@@ -77,7 +76,7 @@ def _counts(out: Path, label: str, name: str) -> str:
     if not roots:
         # ruff and mypy both end with a "Found N error(s)" line when they fail.
         log = out / f"{label}-{name}.log"
-        found = _FOUND.findall(log.read_text(errors="replace")) if log.exists() else []
+        found = _TOTAL.findall(log.read_text(errors="replace")) if log.exists() else []
         return f"errors={found[-1]}" if found else ""
     suites = _suites_of(roots)
     total = {
@@ -339,8 +338,7 @@ def write_baseline(
     out: Path, dest: Path, repo: str, main_sha: str, head_sha: str, workers: int
 ) -> None:
     failing = junit_failing_ids(out, "branch")
-    addressed = [t for t in failing if _ADDRESS_ID.search(t)]
-    if addressed:
+    if addressed := [t for t in failing if _ADDRESS_ID.search(t)]:
         raise WriteRefused(
             f"{len(addressed)} failing id(s) carry a memory address that changes every run: "
             + "; ".join(addressed)
@@ -360,10 +358,12 @@ def write_baseline(
         order_seconds={},
         file_seconds=file_seconds(out, "branch"),
     )
+    if problems := provenance_problems(data, TEST_ROOT, require_main=True):
+        raise WriteRefused(problems[0])
     try:
         dump_baseline(dest, data)
     except BaselineError as exc:
-        raise WriteRefused(str(exc)) from exc
+        raise WriteRefused(str(exc)) from None
     # stderr: stdout must still end with the EVIDENCE closing rule.
     print(
         f"gates: wrote baseline {dest} ({len(data.failing)} failing, collected {data.collected})",
@@ -411,9 +411,9 @@ def _subcommand(argv: list[str]) -> int | None:
         print("\n".join(branch_only_steps(Path(argv[2]))))
         return 0
     if argv[1:2] == ["--check-stored"]:
-        # --check-stored FILE REPO WORKERS: exit 2 and say why when the file may not be compared.
+        # --check-stored FILE REPO WORKERS ROOT: exit 2 and say why when the file may not be compared.
         # On success it prints the stored main_sha, so gates.sh parses no JSON itself.
-        reasons = check_stored(Path(argv[2]), argv[3], int(argv[4]))
+        reasons = check_stored(Path(argv[2]), argv[3], int(argv[4]), Path(argv[5]))
         for reason in reasons:
             print(f"gates: {reason}", file=sys.stderr)
         if not reasons:

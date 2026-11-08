@@ -13,6 +13,7 @@ import json
 import math
 import platform
 import re
+import subprocess
 import sys
 from dataclasses import asdict, dataclass
 from pathlib import Path
@@ -147,10 +148,11 @@ def _parse_baseline(raw: object) -> Baseline:
 def load_baseline(path: Path) -> Baseline:
     try:
         raw = json.loads(path.read_text())
-    except (OSError, ValueError) as exc:
+    except (OSError, ValueError):
+        # `from None`: the parser's message can quote the stored text, so it is not chained.
         raise BaselineError(
             "the stored baseline is not readable JSON; rewrite the baseline"
-        ) from exc
+        ) from None
     return _parse_baseline(raw)
 
 
@@ -167,7 +169,42 @@ def stored_failing_under(path: Path, prefixes: list[str]) -> bool:
     return any(t.startswith(p) for t in load_baseline(path).failing for p in prefixes)
 
 
-def check_stored(path: Path, repo: str, workers: int) -> list[str]:
+def _tree_of(root: Path, sha: str) -> str | None:
+    """The tree id of commit `sha` in the repository at `root`, None when it does not resolve."""
+    if not _FULL_SHA.fullmatch(sha):  # also keeps a leading "-" from reaching git as an option
+        return None
+    done = subprocess.run(
+        ["git", "-C", str(root), "rev-parse", "--verify", "-q", f"{sha}^{{tree}}"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    return done.stdout.strip() if done.returncode == 0 and done.stdout.strip() else None
+
+
+def provenance_problems(stored: Baseline, root: Path, require_main: bool = False) -> list[str]:
+    """Why `head_sha` is not the commit this baseline was produced from (empty when it is).
+
+    A producer writes a baseline only for a head whose tree equals main's tree, so a stored
+    `head_sha` that is missing from the repository or has another tree is an accidental
+    mismatch (a file from another checkout, a hand-edited field). This guards against that, not
+    against someone forging the JSON: the V1 threat model is accidental leaks, so there is no
+    signature. An unknown `main_sha` is left to the staleness check, which names it, unless
+    `require_main` (the writer) wants it resolved."""
+    if stored.head_sha == stored.main_sha and not require_main:
+        return []
+    main_tree = _tree_of(root, stored.main_sha)
+    if main_tree is None:
+        return [f"main_sha {stored.main_sha} is not in this repository"] if require_main else []
+    head_tree = _tree_of(root, stored.head_sha)
+    if head_tree is None:
+        return [f"head_sha {stored.head_sha} is not in this repository"]
+    if head_tree != main_tree:
+        return [f"head_sha {stored.head_sha} does not have the tree of main_sha {stored.main_sha}"]
+    return []
+
+
+def check_stored(path: Path, repo: str, workers: int, root: Path) -> list[str]:
     """Reasons this run may not be compared with the stored baseline (empty when it may).
 
     The CLI suite always runs serial in collection order, so a stored file in any other order,
@@ -178,6 +215,8 @@ def check_stored(path: Path, repo: str, workers: int) -> list[str]:
         return [str(exc)]
     if stored.repo != repo:
         return [f"the stored baseline is for repo {stored.repo!r}, this run is {repo!r}"]
+    if problems := provenance_problems(stored, root):
+        return [f"{problems[0]}; rewrite the baseline"]
     theirs = stored.mode()
     mine = run_mode(workers, {})
     diff = [k for k in MODE_KEYS if theirs[k] != mine[k]]

@@ -72,8 +72,12 @@ while [ $# -gt 0 ]; do
     --keep-going) KEEP=1 ;;
     --baseline) BASELINE=1 ;;
     --full) FULL=1 ;;
-    --baseline-file) BASEFILE=${2:-}; BASELINE=1; shift ;;
-    --write-baseline) WRITEBASE=${2:-}; shift ;;
+    --baseline-file|--write-baseline)
+      # A missing operand, or another flag where the file belongs, is a usage error: swallowing
+      # it would turn `--write-baseline --full` into a baseline file named --full.
+      case ${2:-} in ''|-*) echo "gates: $1 needs a file operand" >&2; exit 2 ;; esac
+      if [ "$1" = --baseline-file ]; then BASEFILE=$2; BASELINE=1; else WRITEBASE=$2; fi
+      shift ;;
     --steps) STEPS=${2:-}; shift ;;
     -h|--help) awk 'NR > 1 { if (!/^#/) exit; print }' "$0"; exit 0 ;;
     -*) echo "gates: unknown flag $1" >&2; exit 2 ;;
@@ -194,7 +198,7 @@ if [ -n "$BASEFILE" ]; then
   # Copy first, then check and read only the copy: the file the gate checks is the file it uses,
   # even when something rewrites the original while the suite runs.
   cp "$BASEFILE" "$STORED" || { echo "gates: could not copy the baseline file: $BASEFILE" >&2; exit 2; }
-  stored_sha=$("$BIN/python" "$ROOT/scripts/dev/_gates_report.py" --check-stored "$STORED" "$REPO_NAME" "$WORKERS") || exit 2
+  stored_sha=$("$BIN/python" "$ROOT/scripts/dev/_gates_report.py" --check-stored "$STORED" "$REPO_NAME" "$WORKERS" "$ROOT") || exit 2
   [ -n "$MAIN_SHA" ] || { echo "gates: --baseline-file needs origin/main; run: git fetch origin main" >&2; exit 2; }
   if [ "$MAIN_SHA" != "$stored_sha" ]; then
     if reason=$(baseline_is_stale "$stored_sha"); then
