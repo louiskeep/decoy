@@ -6,6 +6,7 @@ ext4 documentation on rename and fsync; `os.replace` as the successor to the dep
 `atomicwrites` package (https://github.com/untitaker/python-atomicwrites), whose
 `atomic_write` context manager is the shape of `staged_local_target`; the engine's
 `fileaccess.write_private` recipe, mirrored without its file-access policy so it runs on Windows.
+Creation and every mode change live in `_private_file`, the one module Windows ACLs will change.
 Local plan: `plan/local-record-library:docs/plans/2026-11-05-local-record-library.md` section 4.9.
 
 Rules this module owns (tests/sentry/test_atomic_writer.py fails when `os.replace`,
@@ -40,7 +41,6 @@ import enum
 import errno
 import os
 import re
-import secrets
 import stat
 import sys
 import time
@@ -48,6 +48,12 @@ from collections.abc import Callable, Iterator
 from contextlib import AbstractContextManager
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath, PureWindowsPath
+
+from decoy._private_file import (
+    apply_mode,
+    create_exclusive,
+    restrict_owner_only,
+)
 
 __all__ = [
     "ATOMIC_BAD_NAME",
@@ -168,35 +174,6 @@ _OWNER_RW = 0o600
 # The fd aliases, matched on the user-given path before any symlink is resolved. Not all of
 # /dev or /proc: /dev/shm is a real tmpfs and must be staged.
 _FD_ALIAS = re.compile(r"/dev/(?:stdin|stdout|stderr|fd/[0-9]+)|/proc/self/fd/[0-9]+")
-_FALLBACK_NAME_MAX = 255
-
-
-def _temp_name(base: str, parent: Path) -> str:
-    """`.<base>.decoy-<hex>.tmp`, with `base` cut by whole characters to fit the filesystem."""
-    try:
-        limit = os.pathconf(parent, "PC_NAME_MAX")
-    except (AttributeError, ValueError, OSError):
-        limit = _FALLBACK_NAME_MAX
-    suffix = f".decoy-{secrets.token_hex(8)}.tmp"
-    while len(os.fsencode(f".{base}{suffix}")) > limit and base:
-        base = base[:-1]
-    return f".{base}{suffix}"
-
-
-def _create_temp(parent: Path, base: str, private: bool) -> tuple[str, int]:
-    """Create the staging file exclusively. Returns its path and the mode bits it was given."""
-    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0)
-    while True:
-        tmp = str(parent / _temp_name(base, parent))
-        try:
-            fd = os.open(tmp, flags, 0o600 if private else 0o666)
-        except FileExistsError:
-            continue
-        try:
-            bits = stat.S_IMODE(os.fstat(fd).st_mode) & 0o777
-        finally:
-            os.close(fd)
-        return tmp, bits
 
 
 def _final_bits(tmp: str, existing: os.stat_result | None, private: bool, created: int) -> int:
@@ -225,10 +202,7 @@ def _publish(tmp: str, real: Path, bits: int, mode: WriteMode) -> bool:
     """
     fd = os.open(tmp, os.O_RDWR)  # Windows FlushFileBuffers needs write access
     try:
-        if _WINDOWS:
-            os.chmod(tmp, bits)
-        else:
-            os.fchmod(fd, bits)
+        apply_mode(fd, tmp, bits)
         os.fsync(fd)
     finally:
         os.close(fd)
@@ -264,9 +238,8 @@ def _staged(
     failed = False
     failed_errno: int | None = None
     try:
-        tmp, created = _create_temp(tmp_dir or real.parent, real.name, private)
-        # Owner-only while written, and a restrictive umask must not lock the writer out.
-        os.chmod(tmp, _OWNER_RW)
+        # Owner-only while written: create_exclusive narrows the temp before returning it.
+        tmp, created = create_exclusive(tmp_dir or real.parent, real.name, private=private)
     except OSError as exc:
         failed, failed_errno = True, exc.errno
     if failed:
@@ -345,12 +318,28 @@ def _restrict_fd_target(alias: str) -> None:
     try:
         info = os.fstat(fd)
         if stat.S_ISREG(info.st_mode) and stat.S_IMODE(info.st_mode) & 0o077:
-            os.fchmod(fd, _OWNER_RW)
-            narrowed = not stat.S_IMODE(os.fstat(fd).st_mode) & 0o077
+            restrict_owner_only(fd, alias)
     except OSError as exc:
         narrowed, failed_errno = False, exc.errno
     if not narrowed:
         raise AtomicWriteError(ATOMIC_WRITE_FAILED, failed_errno)
+
+
+def _refuse_foreign_symlink(path: Path) -> None:
+    """Refuse a final-component symlink that another user owns.
+
+    The write follows a symlink, so a local user could point one at a file of the victim's own
+    and have the replacement land there (lost data, not a leak: the bytes are 0600). This
+    mirrors Linux `fs.protected_symlinks`, which macOS lacks. A link the user owns is followed.
+    """
+    if _WINDOWS:
+        return
+    try:
+        info = os.lstat(path)
+    except OSError:
+        return  # missing or unreadable: the stat that follows reports it
+    if stat.S_ISLNK(info.st_mode) and info.st_uid != os.geteuid():
+        raise AtomicWriteError(ATOMIC_WRITE_FAILED, errno.EPERM)
 
 
 @contextlib.contextmanager
@@ -363,6 +352,7 @@ def _staged_target(path: Path, private: bool) -> Iterator[Path]:
             _restrict_fd_target(alias)
         yield path  # /dev/stdout, /dev/fd/N, /proc/self/fd/N: a redirect is written through
         return
+    _refuse_foreign_symlink(path)
     existing: os.stat_result | None = None
     failed_errno: int | None = None
     failed = False
