@@ -11,7 +11,12 @@ syntax tree of every module under `src/decoy/` and fails on:
     `rich.console.Console(...)`, `import rich.console as rc; rc.Console(...)`;
 (b) `rich.print(..., file=...)` or `from rich import print as p; p(..., file=...)`;
 (c) `soft_wrap=False` passed to any `*.err_console.print(...)`;
-(d) a direct `Panel(...)` or `Table(...)` argument to `*.err_console.print(...)`.
+(d) a direct `Panel(...)` or `Table(...)` argument to `*.err_console.print(...)`;
+(e) `*.err_console.print_exception(...)`: use `ui.output.print_traceback`, which prints the
+    traceback unwrapped. Shape (c) exempts that one helper by exact (file, function).
+
+Import resolution comes from the shared scope-aware scanner in
+`tests/sentry/io_policy/_calls.py`, so a nested import cannot shadow a module-level alias.
 
 Named limits of a syntax walk: a `Panel` or `Table` held in a variable and printed later is
 not seen, nor is an aliased receiver such as `err = state.err_console; err.print(Panel(...))`.
@@ -24,76 +29,73 @@ import ast
 from pathlib import Path
 
 import pytest
+from tests.sentry.io_policy._calls import call_contexts
 
+CONSOLE_FQN = "rich.console.Console"
+PRINT_FQN = "rich.print"
+RENDERABLES = ("rich.panel.Panel", "rich.table.Table")
 ROOT = Path(__file__).resolve().parents[2]
 SRC = ROOT / "src" / "decoy"
 CHOKE_POINT = "ui/output.py"
-CONSOLE_FQN = "rich.console.Console"
-PRINT_FQN = "rich.print"
-RENDERABLES = {"rich.panel.Panel", "rich.table.Table", "Panel", "Table"}
+# The one stderr print allowed to turn soft wrap off: a soft-wrapped traceback crops each frame
+# header at the panel edge, so the traceback helper prints with Rich's own wrapping.
+TRACEBACK_HELPER = ("ui/output.py", "print_traceback")
+ERR_METHODS = frozenset({"print", "print_exception"})
 
 
-def _imports(tree: ast.AST) -> dict[str, str]:
-    """Map each local name an import binds to its dotted origin."""
-    names: dict[str, str] = {}
-    for node in ast.walk(tree):
-        if isinstance(node, ast.Import):
-            for a in node.names:
-                names[a.asname or a.name.split(".")[0]] = (
-                    a.name if a.asname else a.name.split(".")[0]
-                )
-        elif isinstance(node, ast.ImportFrom) and node.module and node.level == 0:
-            for a in node.names:
-                names[a.asname or a.name] = f"{node.module}.{a.name}"
-    return names
-
-
-def _dotted(node: ast.expr, names: dict[str, str]) -> str | None:
-    """Resolve a Name/Attribute chain to its fully-qualified dotted name, if it is one."""
-    parts: list[str] = []
-    while isinstance(node, ast.Attribute):
-        parts.append(node.attr)
-        node = node.value
-    if not isinstance(node, ast.Name):
-        return None
-    root = names.get(node.id, node.id)
-    return ".".join([root, *reversed(parts)])
-
-
-def _is_err_print(call: ast.Call) -> bool:
-    f = call.func
-    return (
-        isinstance(f, ast.Attribute)
-        and f.attr == "print"
-        and isinstance(f.value, ast.Attribute)
-        and f.value.attr == "err_console"
+def _sites(source: str, *names: str) -> list[tuple[ast.Call, str]]:
+    """Calls of any watched dotted name, resolved through the shared scope-aware scanner."""
+    found = call_contexts(
+        source,
+        qualified_match=lambda module, member: f"{module}.{member}" in names,
+        with_calls=frozenset(),
     )
+    return [(call, scope) for call, scope, _ in found]
+
+
+def _err_calls(source: str) -> list[tuple[ast.Call, str, str]]:
+    """(call, scope, method) for each `<anything>.err_console.print` or `.print_exception`."""
+    found = call_contexts(
+        source,
+        qualified_match=lambda module, member: False,
+        method_names=ERR_METHODS,
+        with_calls=frozenset(),
+    )
+    return [
+        (call, scope, call.func.attr)
+        for call, scope, _ in found
+        if isinstance(call.func, ast.Attribute)
+        and call.func.attr in ERR_METHODS
+        and isinstance(call.func.value, ast.Attribute)
+        and call.func.value.attr == "err_console"
+    ]
 
 
 def violations(source: str, rel: str) -> list[str]:
-    tree = ast.parse(source)
-    names = _imports(tree)
     out: list[str] = []
-    for node in ast.walk(tree):
-        if not isinstance(node, ast.Call):
+    if rel != CHOKE_POINT:
+        for call, _scope in _sites(source, CONSOLE_FQN):
+            out.append(f"{rel}:{call.lineno}: (a) Console constructed outside {CHOKE_POINT}")
+    for call, _scope in _sites(source, PRINT_FQN):
+        if any(k.arg == "file" for k in call.keywords):
+            out.append(f"{rel}:{call.lineno}: (b) rich.print with file=")
+    renderables = {(c.lineno, c.col_offset) for c, _ in _sites(source, *RENDERABLES)}
+    for call, scope, method in _err_calls(source):
+        where = f"{rel}:{call.lineno}"
+        if method == "print_exception":
+            out.append(f"{where}: (e) err_console.print_exception, use print_traceback")
             continue
-        target = _dotted(node.func, names)
-        where = f"{rel}:{node.lineno}"
-        if target == CONSOLE_FQN and rel != CHOKE_POINT:
-            out.append(f"{where}: (a) Console constructed outside {CHOKE_POINT}")
-        if target == PRINT_FQN and any(k.arg == "file" for k in node.keywords):
-            out.append(f"{where}: (b) rich.print with file=")
-        if _is_err_print(node):
-            for k in node.keywords:
-                if (
-                    k.arg == "soft_wrap"
-                    and isinstance(k.value, ast.Constant)
-                    and k.value.value is False
-                ):
-                    out.append(f"{where}: (c) soft_wrap=False on err_console.print")
-            for arg in node.args:
-                if isinstance(arg, ast.Call) and _dotted(arg.func, names) in RENDERABLES:
-                    out.append(f"{where}: (d) Panel/Table printed to err_console")
+        for k in call.keywords:
+            if (
+                k.arg == "soft_wrap"
+                and isinstance(k.value, ast.Constant)
+                and k.value.value is False
+                and (rel, scope) != TRACEBACK_HELPER
+            ):
+                out.append(f"{where}: (c) soft_wrap=False on err_console.print")
+        for arg in call.args:
+            if isinstance(arg, ast.Call) and (arg.lineno, arg.col_offset) in renderables:
+                out.append(f"{where}: (d) Panel/Table printed to err_console")
     return out
 
 
@@ -108,14 +110,7 @@ def test_src_has_one_soft_wrapped_stderr_console() -> None:
 def test_the_choke_point_still_constructs_a_console() -> None:
     """Guards the scan itself: ui/output.py must show one construction, not zero."""
     text = (SRC / CHOKE_POINT).read_text(encoding="utf-8")
-    tree = ast.parse(text)
-    names = _imports(tree)
-    built = [
-        n
-        for n in ast.walk(tree)
-        if isinstance(n, ast.Call) and _dotted(n.func, names) == CONSOLE_FQN
-    ]
-    assert len(built) == 1
+    assert len(_sites(text, CONSOLE_FQN)) == 1
 
 
 SEEDED = {
@@ -126,6 +121,12 @@ SEEDED = {
     "b_rich_print": "import rich\nrich.print('x', file=None)\n",
     "b_aliased_print": "from rich import print as p\np('x', file=None)\n",
     "c_soft_wrap_false": "def f(state):\n    state.err_console.print('x', soft_wrap=False)\n",
+    "a_shadowed_alias": (
+        "from rich.console import Console as C\n"
+        "def other():\n    import collections as C\n    return C\n"
+        "c = C()\n"
+    ),
+    "e_print_exception": "def f(state):\n    state.err_console.print_exception()\n",
     "d_panel": (
         "from rich.panel import Panel\ndef f(state):\n    state.err_console.print(Panel('x'))\n"
     ),
@@ -140,6 +141,19 @@ def test_each_shape_is_caught(case: str) -> None:
     got = violations(SEEDED[case], "cli/seeded.py")
     assert len(got) == 1, got
     assert f"({case[0]})" in got[0]
+
+
+def test_the_traceback_helper_is_the_only_soft_wrap_exemption() -> None:
+    helper = "def print_traceback(state):\n    state.err_console.print(tb, soft_wrap=False)\n"
+    assert violations(helper, "ui/output.py") == []
+    assert len(violations(helper, "cli/other.py")) == 1
+    other = helper.replace("print_traceback", "other")
+    assert len(violations(other, "ui/output.py")) == 1
+
+
+def test_a_local_import_does_not_hide_the_module_level_alias() -> None:
+    got = violations(SEEDED["a_shadowed_alias"], "cli/seeded.py")
+    assert len(got) == 1 and "(a)" in got[0]
 
 
 def test_the_choke_point_itself_is_allowed() -> None:

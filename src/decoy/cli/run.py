@@ -55,7 +55,7 @@ from decoy.cli.io._targets import (
     write_targets,
 )
 from decoy.ui.card import render_card
-from decoy.ui.output import OutputMode, emit_json, setup_output
+from decoy.ui.output import OutputMode, emit_json, print_traceback, setup_output
 from decoy.ui.progress import spinner
 from decoy.ui.table import make_table
 from decoy.ui.theme import accent, code, error, hint, success, warn
@@ -1129,7 +1129,7 @@ def run(
                     " ", hint("hint:"), "rerun with --verbose for the full traceback."
                 )
         if state.verbose:
-            state.err_console.print_exception()
+            print_traceback(state)
         raise typer.Exit(code=_exit_code)
     finally:
         # Tear down any --duckdb-source Parquet snapshots. Runs on success

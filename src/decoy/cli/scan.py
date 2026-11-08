@@ -41,7 +41,7 @@ from decoy._atomic import AtomicWriteError, WriteMode, describe, write_local_tar
 from decoy.cli._default_group import make_default_group
 from decoy.cli.exit_codes import EXIT_RUNTIME, EXIT_USAGE
 from decoy.ui.card import render_card
-from decoy.ui.output import OutputMode, OutputState, emit_json, setup_output
+from decoy.ui.output import OutputMode, OutputState, emit_json, print_traceback, setup_output
 from decoy.ui.storm_animation import stormy_multistage
 from decoy.ui.table import make_table
 from decoy.ui.theme import accent, code, error, hint, risk_high, risk_med, success, warn
@@ -800,7 +800,7 @@ def _scan(
             state.err_console.print(
                 hint("(--verbose: traceback below; diagnostic output may contain row data)")
             )
-            state.err_console.print_exception()
+            print_traceback(state)
         raise typer.Exit(code=EXIT_RUNTIME)
 
     # --output - streams the scan JSON (the richer artifact) to stdout, nothing else.

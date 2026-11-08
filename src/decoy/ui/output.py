@@ -15,6 +15,7 @@ from enum import Enum
 
 import typer
 from rich.console import Console
+from rich.traceback import Traceback
 
 from decoy.cli.exit_codes import EXIT_USAGE
 from decoy.ui.theme import DECOY_THEME, error, hint
@@ -50,6 +51,16 @@ def _make_console(*, stderr: bool) -> Console:
         no_color=no_color,
         highlight=False,
     )
+
+
+def print_traceback(state: OutputState) -> None:
+    """Print the active exception's traceback to stderr, wrapped by Rich.
+
+    The stderr console soft-wraps, and a soft-wrapped traceback crops each frame header
+    (`<path>:<line> in <func>`) at the panel edge. This is the one place a stderr print
+    turns soft wrap off. Call it from an `except` block.
+    """
+    state.err_console.print(Traceback(), soft_wrap=False)
 
 
 def setup_output(json_: bool, quiet: bool, verbose: bool) -> OutputState:
