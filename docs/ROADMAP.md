@@ -278,7 +278,7 @@ retention classes under one project root `.decoy/`; `decoy run` writes records b
 
 | # | Item | Repo | State | Branch, plan or handoff | After |
 |---|---|---|---|---|---|
-| 33 | L1a-engine: records module (~520 lines) | engine | L0.1 protected directory allocator MERGED (engine #403, `45553d7e`); rest of L1a next; plan passed 2026-11-06 | `plan/local-record-library` | plan GO |
+| 33 | L1a-engine: records module (~520 lines) | engine | L0.1 protected directory allocator MERGED (engine #403, `45553d7e`); L0.2 issued scratch root for run row dirs MERGED (engine #411, `942dae2d`); rest of L1a next; plan passed 2026-11-06 | `plan/local-record-library` | plan GO |
 | 34 | L1b-cli: store, atomic writes, refs, scratch (~700 lines); Linux, macOS and Windows lanes | CLI | L1b.1 shared atomic writer MERGED (#85, `c16a5fa`); L1b.2 and L1b.3 waiting | same | L1a release and repin; WIN-RUNNER |
 | 35 | L1c-cli: index, fsck, degraded mode (~560 lines); three OS lanes | CLI | Plan passed 2026-11-06; waits on the CSV reader, REG-RENUMBER and the L1a engine release | same | L1b |
 | 36 | L2-cli: scan snapshots on the library (~380 lines; replaces SCAN-MULTI S1d) | CLI | Plan passed 2026-11-06; waits on the CSV reader, REG-RENUMBER and the L1a engine release | same | L1c; SCAN-MULTI S1c |
