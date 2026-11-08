@@ -598,10 +598,42 @@ def test_a_baseline_head_must_have_the_tree_of_its_main(
 def test_a_baseline_with_an_unknown_main_still_reports_it_as_stale_not_as_a_bad_head(
     tmp_path: Path,
 ) -> None:
+    # head_sha resolves and differs from the unknown main_sha, so the provenance branch that
+    # leaves an unknown main to the staleness check is the one reached.
     clone = seeded_clone(tmp_path)
     venv, _log = recording_venv(tmp_path)
-    rc, out = _compare(clone, venv, _stored(tmp_path, NOT_A_COMMIT))
-    assert rc == 2 and "is not in this repository" in out and "head_sha" not in out, out
+    stored = _stored(tmp_path, NOT_A_COMMIT, head_sha=_origin_main(clone))
+    rc, out = _compare(clone, venv, stored)
+    assert rc == 2 and "is stale against origin/main" in out, out
+    assert f"stored main_sha {NOT_A_COMMIT} is not in this repository" in out, out
+    assert "head_sha" not in out, out
+
+
+def test_a_carry_shaped_baseline_is_accepted(tmp_path: Path) -> None:
+    # A carried file moves main_sha and head_sha together to the new main, and the new main has
+    # another tree than the run that produced the failing ids.
+    clone = seeded_clone(tmp_path)
+    at_main(clone)
+    (clone / "tests" / "_seeded" / "test_moved.py").write_text("def test_m():\n    pass\n")
+    git(clone, "add", "-A")
+    git(clone, "commit", "-qm", "main moves")
+    new_main = at_main(clone)
+    venv, _log = recording_venv(tmp_path)
+    stored = _stored(tmp_path, new_main, head_sha=new_main)
+    rc, out = _compare(clone, venv, stored, FAKE_FAIL="tests/a.py::test_one")
+    assert rc == 0, out
+
+
+@pytest.mark.parametrize("flag", ["--steps"])
+@pytest.mark.parametrize("tail", [[], ["--full"]], ids=["end-of-args", "next-token-is-a-flag"])
+def test_steps_without_its_operand_exits_2(tmp_path: Path, flag: str, tail: list[str]) -> None:
+    clone = seeded_clone(tmp_path)
+    venv, log = recording_venv(tmp_path)
+    rc, out = (
+        run_gates(clone, venv, flag, *tail) if tail else run_gates(clone, venv, "--full", flag)
+    )
+    assert rc == 2 and f"{flag} needs a list of steps" in out, out
+    assert pytest_calls(log) == []
 
 
 def test_a_rename_of_a_test_file_into_markdown_makes_the_baseline_stale(tmp_path: Path) -> None:

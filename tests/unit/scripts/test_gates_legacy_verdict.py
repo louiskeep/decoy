@@ -302,7 +302,7 @@ def _reporter_write(
 ):
     return subprocess.run(
         [sys.executable, str(reporter), str(logs), "--whole-suite", "--write-baseline", str(dest),
-         "--repo", "decoy", "--main-sha", sha, "--head-sha", head or sha, *extra],
+         "--repo", "decoy", "--main-sha", sha, f"--head-sha={head or sha}", *extra],
         capture_output=True, text=True, timeout=120, check=False,
     )  # fmt: skip
 
@@ -349,6 +349,7 @@ def test_a_reporter_copied_outside_the_repo_without_a_test_root_writes_nothing(
     dest = tmp_path / "no-root.json"
     done = _reporter_write(outside_dir / "_gates_report.py", logs, dest, sha)
     assert done.returncode == 1 and "write-baseline refused" in done.stderr, done.stderr
+    assert "is not in this repository" in done.stderr, done.stderr
     assert not dest.exists()
 
 
@@ -375,15 +376,44 @@ def test_a_write_naming_a_commit_the_repo_lacks_is_refused(tmp_path: Path) -> No
     assert not dest.exists()
 
 
-def test_safe_errors_carry_no_cause_chain(tmp_path: Path) -> None:
-    # The unreadable-JSON error would otherwise chain the parser's message, which can quote the
-    # stored text.
+@pytest.mark.parametrize("head", ["abc1234", "A" * 40, "-" + "a" * 39])
+def test_a_write_with_a_malformed_sha_is_refused_before_any_lookup(
+    tmp_path: Path, head: str
+) -> None:
+    clone, logs, sha = _promote_inputs(tmp_path)
+    dest = tmp_path / "shape.json"
+    reporter = clone / "scripts" / "dev" / "_gates_report.py"
+    done = _reporter_write(reporter, logs, dest, sha, head=head)
+    assert done.returncode == 1 and "is not a full 40-character lowercase SHA" in done.stderr
+    assert not dest.exists()
+
+
+def test_the_unreadable_json_error_carries_no_exception_context(tmp_path: Path) -> None:
+    # The parser's message can quote the stored text, so neither __cause__ nor __context__ may
+    # hold it; `from None` alone leaves __context__ set.
     bad = tmp_path / "bad.json"
     bad.write_text("{ not json")
     mod = report_module()
     with pytest.raises(mod.BaselineError) as caught:
         mod.load_baseline(bad)
-    assert caught.value.__cause__ is None and caught.value.__suppress_context__
+    assert caught.value.__cause__ is None and caught.value.__context__ is None
+
+
+def test_a_refused_write_carries_no_exception_context(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    git(repo, "init", "-q")
+    git(repo, "commit", "--allow-empty", "-qm", "one")
+    sha = git(repo, "rev-parse", "HEAD").strip()
+    mod = report_module()
+    bad = mod.Baseline(
+        repo="decoy", main_sha=sha, head_sha=sha, collected=1, skipped=0, failing=(),
+        workers=0, dist="no", platform="x", order="collection", order_seconds={}, file_seconds={},
+    )  # fmt: skip
+    with pytest.raises(mod.WriteRefused) as caught:
+        mod.store_baseline(tmp_path / "out.json", bad, repo)
+    assert caught.value.__cause__ is None and caught.value.__context__ is None
+    assert not (tmp_path / "out.json").exists()
 
 
 @pytest.mark.parametrize("kind", ["missing", "regular-file"])
