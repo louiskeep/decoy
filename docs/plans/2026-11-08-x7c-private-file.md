@@ -2,8 +2,8 @@ Status: plan
 
 # X7c: one choke point for CLI private files (roadmap row 24)
 
-Owner: Cam. Author: claudeworkerbee (Opus). Date: 2026-11-08. Scope: CLI, V1. Revision 2 (Dennis round 1 on
-revision 1 at `af5e39f`; dispositions in section 0).
+Owner: Cam. Author: claudeworkerbee (Opus). Date: 2026-11-08. Scope: CLI, V1. Revision 2.1 (Dennis round 1 on
+revision 1 at `af5e39f`, round 2 GO on revision 2 at `d1a84ac`; dispositions in section 0).
 
 Rules consulted: `dev-rules/README.md`, `00-universal.md`, `risk-and-exceptions.md`, `development-loop.md`
 (PLAN: choke point, Placement, Design notes, Established solutions), `feature-dev.md`, `architecture.md`
@@ -38,6 +38,13 @@ this plan names the seam it extends (the `_private_file` module) and builds noth
 | Minor: OQ1 built before it is answered | Accepted: S1 builds the owner check only if OQ1 is answered yes; otherwise it is a follow-up. |
 | Minor: `ADMISSION_SITES` ids unchecked | Accepted: the sentry checks each id against `_CLI_SURFACES` members and test function names in the module. |
 | Minor: the TOCTOU case needs a hook | Accepted: it moves to the S1 unit tests (AT-P1f). |
+| R2-1 (Dennis r2, GO) AT-P2j red: `installer.py:219` and the two `report.py` sites have no AT-P3 case | Fixed: explicit `PRIVATE_CASES` map from call site to test id, checked both ways by the sentry; trust-state case (unit level) and one case per `report.py` function added to S2. |
+| r2 minor: the class 2 mutation cannot fail | Fixed: `create_exclusive` unlinks its own file when narrowing fails; M2 targets that unlink. |
+| r2 minor: section 6.5 totals | Fixed: 18 private, 21 public (47); 46 after S2. |
+| r2 minor: `via` checks source order only | Accepted as a named limit (the token vault connects on the `create=False` path without `open_private`, which is correct for an existing vault). |
+| r2 minor: `COPY ... TO` match | Fixed: case-insensitive; SQL in a variable, `.sql()`, `duckdb.sql()` and `executemany` named as limits. |
+| r2 minor: `decoy.mask()` exception type | Fixed: `PrivateFileError` subclasses `OSError` (errno set, no filename), the engine's shape. |
+| r2 minor: `O_DIRECTORY` on Windows | Fixed: on Windows `open_private` narrows a new parent through `apply_mode` by path, as `_restrict` does today. |
 
 ## 1. FRAME
 
@@ -165,16 +172,21 @@ its own plan. No runtime coupling.
     `_atomic._create_temp` and `_temp_name` (`_atomic.py:174-199`) with the same flags (`O_WRONLY | O_CREAT
     | O_EXCL | O_NOFOLLOW`), mode 0600 when private else 0666, the same `.decoy-<hex>.tmp` name and the same
     retry on `FileExistsError`. It records the created bits, then narrows the temp to 0600 while it is written
-    (today's `_atomic.py:269`, which applies to public temps too), by descriptor. Raises plain `OSError`.
+    (today's `_atomic.py:269`, which applies to public temps too), by descriptor. If narrowing fails it closes
+    and unlinks the file it created before raising, because `_staged` has no temp name yet at that point.
+    Raises plain `OSError`.
   - `open_private(path: Path, *, new_parent: bool) -> None`: create-or-open for a writer that opens the path
     itself (SQLite). `O_RDWR | O_CREAT | O_NOFOLLOW`, mode 0600, then `restrict_owner_only` on that descriptor
     (repairs a file an earlier build left 0644), and for a parent this call created, `restrict_owner_only(...,
-    directory=True)` on an `O_DIRECTORY | O_NOFOLLOW` descriptor. Raises `PrivateFileError("private_open_failed",
+    directory=True)` on an `O_DIRECTORY | O_NOFOLLOW` descriptor (on Windows, which cannot open a directory,
+    through `apply_mode` by path, as `_restrict` does today). Raises `PrivateFileError("private_open_failed",
     errno)` when the open fails and `PrivateFileError("private_mode_failed", errno)` when narrowing fails.
   - `create_private_temp(prefix: str, suffix: str) -> Path`: `create_exclusive` in `tempfile.gettempdir()`
     with `private=True`, for the `decoy.mask()` spool. Raises `PrivateFileError` with the same two codes.
-  - `PrivateFileError(code, errno)`: same shape as `AtomicWriteError` (`_atomic.py:112-121`): code text only,
-    no path, raised outside the `except` block so no `OSError` is chained.
+  - `PrivateFileError(code, errno)`: a subclass of `OSError` with `errno` set and no `filename`, so
+    `decoy.mask()` callers that catch `OSError` today (`api.py:447` does not map staging errors) still catch
+    it; its text is the code only, no path, and it is raised outside the `except` block so no `OSError` is
+    chained. This is the engine helper's shape (`OSError(code, os.strerror(code)) from None`).
 - `_atomic.py` imports `create_exclusive`, `apply_mode` and `restrict_owner_only` and calls them where it
   creates and changes modes today (`_atomic.py:229,231,269,348`). Because they raise plain `OSError`, the
   existing handlers in `_staged` (`_atomic.py:266-270`), `_publish`'s caller and `_restrict_fd_target`
@@ -201,7 +213,11 @@ its own plan. No runtime coupling.
 
 - P1: every raw sink (section 6.5 list) has a registry row; every row has a live sink (stale rows fail); the
   disposition is one of the five values; the reason is non-empty. An `.execute(...)` call whose SQL text
-  (string constant or f-string parts) contains `COPY` and `TO` is a raw sink.
+  (string constant or f-string parts) contains `COPY` and `TO`, matched case-insensitively, is a raw sink.
+- P1b: `PRIVATE_CASES` in the sentry maps every private entry-point call site and every `via` row
+  (`file::function::sink`) to an AT-P3 test id; a site with no entry, an entry with no live site, or an id
+  that is not a test in `tests/e2e/private_file/test_private_surfaces.py` or
+  `tests/unit/private_file/test_private_file.py` fails.
 - P2: a raw sink with disposition `private` passes only when its `via` entry point is called earlier in the
   same function and the sink's path argument is the same local name as that call's path argument or result
   (`with staged_private_target(p) as tmp` then `tmp`; `tmp = create_private_temp(...)` then `tmp`;
@@ -213,7 +229,10 @@ its own plan. No runtime coupling.
   (`distribution/installer.py:669`, 0o755). After S2 the live tree has no other.
 - P5: `_private_file.py` imports nothing from `decoy` (no cycle with `_atomic`).
 
-Named limits of the walk: SQL other than `COPY ... TO` (for example `ATTACH` or `EXPORT DATABASE`), a
+Named limits of the walk: P2's `via` check is source order in one function, not that the entry point runs on
+every path (the token vault connects without `open_private` on its `create=False` path, correct for an
+existing vault); SQL other than `COPY ... TO` (for example `ATTACH` or `EXPORT DATABASE`), SQL held in a
+variable, and `.sql()`, `duckdb.sql()` and `executemany` calls; a
 reference through a runtime-bound name, an alias by assignment, `from x import *`, and filesystem calls that
 create no regular-file content (`os.link`, `os.symlink`, `tarfile` extraction, `mkdir`), which the
 atomic-writer sentry or the installer's own tests cover.
@@ -357,17 +376,18 @@ and 47 below.
 | `_mask_secret.py:124` | mask secret, opened read-only | read | `os.open(O_RDONLY)` | same |
 | `cli/_duckdb_source.py:81` | DuckDB source database | read | `duckdb.connect(read_only=True)` | same |
 
-Totals (47): private 16 today (10 through entry points, 6 raw), temp 3, staged 3, public 23, read 2. After S2:
-13 private entry-point calls, 2 private raw sinks with `via`, 2 private baseline rows (L5a), 3 temp baseline
-rows (WIN-FEAS), 3 staged, 23 public, 2 read; `_token_vault.py:137` is gone and `compile_explain.py:243`,
-`_token_vault.py:109` and `api.py:258` become entry-point calls. Baseline at S3: 5 rows.
+Totals (47): private 18 today (10 through entry points, 8 raw), temp 3, staged 3, public 21, read 2. After S2
+(46): 13 private entry-point calls, 2 private raw sinks with `via`, 2 private baseline rows (L5a), 3 temp
+baseline rows (WIN-FEAS), 3 staged, 21 public, 2 read; `_token_vault.py:137` is gone and
+`compile_explain.py:243`, `_token_vault.py:109` and `api.py:258` become entry-point calls. Baseline at S3: 5
+rows.
 
 ## 7. Class table
 
 | # | Class | Applies here | Structure that closes it | Sentry or property test | Mutation that turns it red |
 |---|---|---|---|---|---|
 | 1 | Value-bearing output | plan artifact, token vault, spool, restored output written wider than 0600 | private entry points publish 0600; registry disposition per sink | AT-P3 per private surface under umask 000 | M3: write the plan artifact with `write_text` again |
-| 2 | Cleanup missing on an exit path | staging temps on failure; spool temps | `_atomic._staged` removes the temp on every exit (unchanged); `create_private_temp` paths stay in `tmp_paths` cleanup | AT-P1d: injected narrowing failure leaves no temp | M2: drop the unlink in `_staged`'s setup failure branch |
+| 2 | Cleanup missing on an exit path | staging temps on failure; spool temps | `_atomic._staged` removes the temp on every exit (unchanged); `create_private_temp` paths stay in `tmp_paths` cleanup | AT-P1d: injected narrowing failure leaves no temp (`test_atomic_staged.py:165` `_names == ["out.csv"]`) | M2: drop the unlink in `create_exclusive`'s narrowing failure branch |
 | 3 | State and ordering | owner-only before the first byte | `create_exclusive` and `open_private` create with 0600, narrow by descriptor and return only then | AT-P1a stats the temp before the first write under umask 000 | M1: create with 0o666 and drop the narrowing in `create_exclusive` |
 | 4 | Route parity and silent fallback | public versus private writes chosen per caller | entry points classify themselves; raw sinks need a row; `via` binding checked | AT-P2a, AT-P2c | M4: delete one registry row |
 | 5 | Referential integrity | N/A: no tables, keys or relationships change; bytes pinned by AT-P3 | N/A | N/A | N/A |
@@ -401,16 +421,20 @@ code in its slice.
 - AT-P3 (S2, e2e, umask 000 in a subprocess): each private surface is 0600 after the command: `decoy validate
   compile --output` (and its bytes equal the golden), `decoy tokenize --vault` (the database and its
   `-journal` during a held write transaction), `decoy unmask --output`, `decoy detokenize`, `decoy run
-  --vault` and `--evidence-out`, `decoy fit`, `decoy scan --output`, `decoy report ... --output`, `decoy ci
-  ... --output` and the debug log, and the `decoy.mask()` spool while it exists.
+  --vault` and `--evidence-out`, `decoy fit`, `decoy scan --output`, one `decoy report` case per writing
+  function (`cli/report.py:86` `_write_out` and `cli/report.py:705` `_render`), `decoy ci ... --output` and
+  the debug log, and the `decoy.mask()` spool while it exists. The installer trust state
+  (`distribution/installer.py:219`) gets a unit-level case in the same S2 file set (it needs no download:
+  call the trust-state recorder with a fixture document).
 - AT-P2a to AT-P2i (S3, seeded sources parsed in the test, each red): (a) `path = settings.key_path;
   path.write_bytes(v)` with no row; (b) `p = Path(cfg.key_dir) / name; p.write_text(v)` with no row; (c)
   `open(target, "wb")` in a row marked private whose `via` call is absent; (d) `try: os.chmod(p, 0o600)
   except OSError: pass`; (e) `os.chmod(p, 0o600)` outside `_private_file.py`; (f) `from os import chmod as c;
   c(p, mode)`; (g) a registry row whose sink is gone; (h) a baseline key added (ratchet); (i)
   `conn.execute(f"COPY t TO '{dest}'")` with no row.
-- AT-P2j (S3): the live tree passes with the 5-row baseline, and the AT-P3 case list covers every private
-  entry-point call site and every `via` row (a new private site without a case fails).
+- AT-P2j (S3): the live tree passes with the 5-row baseline, and `PRIVATE_CASES` (rule P1b) maps every private
+  entry-point call site and every `via` row to an existing AT-P3 test (a new private site without a case
+  fails, and so does a case id that names no test).
 - AT-S1 (S3): the mask-secret derivation finds five admission sites; a seeded module with a sixth call fails
   naming `file::function`; a mapping id that is not a `_CLI_SURFACES` member handled by `_argv`, or a test name
   absent from the module, fails.
@@ -465,7 +489,8 @@ code in its slice.
   path.
 - `decoy validate compile --output` file bytes: unchanged; mode becomes 0600 and the write becomes atomic; a
   write failure becomes a coded `EXIT_RUNTIME` error instead of a traceback (additive, pre-GA).
-- `decoy.mask()` return value and cleanup: unchanged.
+- `decoy.mask()` return value and cleanup: unchanged; a spool failure is still an `OSError` (now the
+  `PrivateFileError` subclass, with no filename).
 - Sentry baselines: one new id (`private-file-sinks`); `atomic-writer-allow.json` loses the `api.py` entry
   (shrink).
 
@@ -477,7 +502,7 @@ Each slice is at most 10 files and 800 lines, on its own branch from CLI `main`,
 | Slice | Content | Files | Lines | Depends on |
 |---|---|---|---|---|
 | S1 | `_private_file.py`; move `_create_temp`/`_temp_name` and every mode call out of `_atomic.py`; OQ1 check if answered yes; AT-P1a to AT-P1f; CODEMAP row | `src/decoy/_private_file.py`, `src/decoy/_atomic.py`, `tests/unit/private_file/__init__.py`, `tests/unit/private_file/test_private_file.py`, `tests/unit/test_atomic_staged.py`, `CODEMAP.md` | ~500 | CLI X0a (on main) |
-| S2 | Move `compile_explain.py:243`, `_token_vault.py:109,137`, `api.py:258` onto the entry points; retarget the token vault test; drop the `api.py` atomic-writer entry; AT-P3 | `src/decoy/cli/compile_explain.py`, `src/decoy/cli/_token_vault.py`, `src/decoy/api.py`, `tests/unit/test_token_vault.py`, `tests/sentry/baselines/atomic-writer-allow.json`, `tests/sentry/test_atomic_writer.py`, `tests/e2e/private_file/__init__.py`, `tests/e2e/private_file/test_private_surfaces.py` | ~380 | S1 |
+| S2 | Move `compile_explain.py:243`, `_token_vault.py:109,137`, `api.py:258` onto the entry points; retarget the token vault test; drop the `api.py` atomic-writer entry; AT-P3 | `src/decoy/cli/compile_explain.py`, `src/decoy/cli/_token_vault.py`, `src/decoy/api.py`, `tests/unit/test_token_vault.py`, `tests/sentry/baselines/atomic-writer-allow.json`, `tests/sentry/test_atomic_writer.py`, `tests/e2e/private_file/__init__.py`, `tests/e2e/private_file/test_private_surfaces.py`, `tests/unit/private_file/test_private_file.py` (trust-state case) | ~430 | S1 |
 | S3 | G-ONE-PRIVATE-FILE sentry, registry, 5-row baseline, sentry registry row, manifest row; AST-derived mask-secret surfaces | `tests/sentry/io_policy/test_private_files.py`, `tests/sentry/io_policy/file_sinks.toml`, `tests/sentry/baselines/private-file-sinks.json`, `scripts/dev/sentry_registry.toml`, `tests/sentry/test_sentry_manifest.py`, `tests/sentry/test_mask_secret_file_mode.py` | ~580 | S2 |
 
 The sentry lands last so its baseline starts at the 5 rows with named exits; S1 and S2 carry their own red-first
