@@ -26,7 +26,7 @@ from decoy.cli._sources import read_source
 from decoy.cli.exit_codes import EXIT_RUNTIME, EXIT_USAGE
 from decoy.cli.io._targets import check_target_formats, write_targets
 from decoy.ui.card import render_card
-from decoy.ui.output import OutputMode, OutputState, emit_json, setup_output
+from decoy.ui.output import OutputMode, OutputState, emit_json, print_traceback, setup_output
 from decoy.ui.theme import accent, error, hint, success
 
 _DEMO_EPILOG = """\
@@ -530,7 +530,7 @@ def _demo(
             state.err_console.print(error("error:"), error_text)
             state.err_console.print(" ", hint("hint:"), "rerun with --verbose for the full traceback.")
         if state.verbose:
-            state.err_console.print_exception()
+            print_traceback(state)
         raise typer.Exit(code=_exit_code)
 
     if exit_code != 0:
