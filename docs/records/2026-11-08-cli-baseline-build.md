@@ -66,8 +66,11 @@ edge of C1.
 
 ## Mutations
 
-Each applied to head `6c8b544` (code identical to the final head; only docs follow), run against the
-named tests, reverted, never committed. `mutate.py` is not committed.
+Round 2 rerun: every mutation below was applied to a scratch clone of head `f07162d` (the log line of each
+run reads `@ f07162d`), run against the named tests, and reset in the scratch clone. The worktree was never
+mutated and nothing was committed from a mutation. All 37 rows (counting 16a and 16b) went red; the rerun
+used the updated code (`store_baseline`, the `--steps` operand check, the provenance shape check). The script
+`mutate2.py` is not committed.
 
 | # | Mutation | Red test |
 |---|---|---|
@@ -102,9 +105,12 @@ named tests, reverted, never committed. `mutate.py` is not committed.
 | 28 | exact-file entry not matched | `test_a_baseline_holding_a_sentry_failure_is_stale_after_any_move` (3 cells) |
 | 29 | `--no-renames` dropped from the staleness diff | `test_a_rename_of_a_test_file_into_markdown_makes_the_baseline_stale` |
 | 30 | head tree not compared with main's tree | `test_a_baseline_head_must_have_the_tree_of_its_main[other-tree]` |
-| 31 | a flag token accepted as an operand | `test_a_baseline_flag_without_its_file_operand_exits_2[next-token-is-a-flag]` (2) |
-| 32 | `__cause__` chained on the unreadable-JSON error | `test_safe_errors_carry_no_cause_chain` |
-| 33 | writer skips the provenance check | `test_a_write_whose_head_has_another_tree_than_main_is_refused`, `..._naming_a_commit_the_repo_lacks_...`, `..._without_a_test_root_writes_nothing` |
+| 31 | a flag token accepted as an operand (all three flags) | `test_a_baseline_flag_without_its_file_operand_exits_2[next-token-is-a-flag]` (2), `test_steps_without_its_operand_exits_2[next-token-is-a-flag]` |
+| 32 | `raise` inside the `except` of `load_baseline` (sets `__context__`) | `test_the_unreadable_json_error_carries_no_exception_context` |
+| 33 | writer skips the provenance check | `test_a_write_whose_head_has_another_tree_than_main_is_refused`, `..._naming_a_commit_the_repo_lacks_...`, `..._without_a_test_root_writes_nothing`, the malformed-SHA cells |
+| 34 | an unknown `main_sha` always refused at compare | `test_a_baseline_with_an_unknown_main_still_reports_it_as_stale_not_as_a_bad_head` |
+| 35 | SHA shape check dropped in `provenance_problems` | `test_a_write_with_a_malformed_sha_is_refused_before_any_lookup` (3) |
+| 36 | write refusal raised inside the `except` of `store_baseline` | `test_a_refused_write_carries_no_exception_context` |
 
 Mutation 29 is the AT-5 rename cell (Dennis r1 MEDIUM-1). The same cell is to be carried to the engine copy of
 `test_gates_baseline_file.py` when D6, D7 and D10 are carried back.
@@ -116,7 +122,7 @@ was redone with the right indent and the table row is from the redo.
 
 - T0 per edit on the touched tests (devbox venv, `pytest-one`).
 - T1 on a VM (`vm-run cli`): `tests/unit/scripts`, `tests/unit/test_dev_bootstrap_gates.py`, `tests/sentry`:
-  727 passed in 199 s on the head after the merge of `origin/main` and fix round 1 (714 before). `ruff check src tests scripts/dev` and `ruff format --check` on the touched files: clean.
+  734 passed in 208 s on the head after the merge of `origin/main` and fix rounds 1 and 2 (727 after round 1, 714 before). `ruff check src tests scripts/dev` and `ruff format --check` on the touched files: clean.
 - Mac (bash 3.2.57, `GATES_TEST_BASH=/bin/bash`, own folder `~/decoy/acct2-cli-baseline`, venv `venv-cli-mac`
   with `decoy` resolved through `PYTHONPATH=src`): `tests/unit/scripts`, `test_dev_bootstrap_gates.py`,
   `test_bash32_compat.py`: 189 passed.
@@ -181,6 +187,24 @@ Other differences, all forced by the above or by bash 3.2:
 - The duplicate `Found N errors` regex in the reporter is gone.
 - `origin/main` was merged (`cb24259`); the only conflict was the `CODEMAP.md` table, both rows kept.
 
+## Fix round 2 (Dennis r2)
+
+- Head provenance, as the promote flows need it. A stored file records `head_sha == main_sha` by construction,
+  and a carry moves both. The reader accepts `head_sha == main_sha` (when `main_sha` is unknown the staleness
+  check names it) and otherwise requires `head_sha` to resolve and share `main_sha`'s tree. The writer takes
+  `--head-sha` only when it resolves and has `main_sha`'s tree, and writes the value it was given. New cells: a
+  carry-shaped file (`head_sha == main_sha ==` a new main whose tree changed) is accepted; head with another
+  tree and an unresolvable head are refused (round 1 cells).
+- Both SHA arguments are shape-checked (40 lowercase hex) before any lookup, with their own message.
+- No exception context: `load_baseline` and `store_baseline` raise after the `except` block has closed, so
+  `__cause__` and `__context__` are both `None` (cells for the unreadable-JSON error and for a `WriteRefused`).
+- `--steps` goes through the same operand check as the file flags (a missing operand or a flag token exits 2;
+  an empty list stays legal, `test_dev_bootstrap_gates.py` pins `--steps ""`).
+- The unknown-main cell now carries a resolvable `head_sha != main_sha`, so it reaches the branch it names;
+  mutation 34 (always refuse an unknown main) turns it red.
+- The refusal and write code moved to `_gates_baseline.py` (`store_baseline`, `WriteRefused`, the address
+  pattern), so `_gates_report.py` is 480 lines and `_gates_baseline.py` 267.
+
 ## Not covered
 
 - `decoy-vm-t3` and `decoy-vm-t3-promote` are not changed here (plan section 8, orchestrator).
@@ -188,4 +212,8 @@ Other differences, all forced by the above or by bash 3.2:
   runs the full CLI suite once on the final head in legacy mode.
 - `scripts/dev/*.py` are linted by hand (follow-up L3: add `scripts` to the gate's ruff paths).
 - The `carry` promote kind stays the accepted exception of plan section 4a.
+- `~/bin/decoy-vm-t3-promote` (orchestrator, not changed here) must, for `merged`, push the squash commit S to
+  the VM and pass `--main-sha S --head-sha S` (S has the tree of the tested head), plus `--test-root`; for
+  `carry`, rewrite `head_sha` together with `main_sha`, because the reader requires a head that is either equal
+  to `main_sha` or shares its tree. A carry that moves only `main_sha` is refused by the gate.
 - The engine does not have D6, D7 or D10; carry them back.
