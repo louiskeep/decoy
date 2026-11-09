@@ -418,7 +418,7 @@ ancestors. Files there are not recognized by `owning_run` (F6).
 - `side_file_default(kind, input_path)`: the one table of default side-file names (`unmasked`,
   `detokenized`, `snapshot`) moved verbatim from `unmask.py:279`, `tokenize.py:608-613` and `fit.py:495`.
   Still beside the input.
-- `owning_run(path, ref) -> RunFolder | None`: `path` (with `latest` followed) under
+- `owning_run(path, root, name) -> RunFolder | None`: `path` (with `latest` followed) under
   `<root>/out/<name>/<run-id>/` for the config's pipeline. `_targets.py:203-217` compares a file with the
   declared target through `owning_run` as well as the old `resolve_path(entry["path"], base_dir)` form, so a
   file at either place keeps the declared format and fixed-width layout.
@@ -835,7 +835,7 @@ CLI unit tests in `tests/unit/project_layout/`, e2e in `tests/e2e/project_layout
   `ci check` and `run`, exit 1 `layout.output_path_escapes`, before a source-read spy fires; `a/../b.csv`
   accepted; a symlink ancestor cannot leave the physical project output or typed `--out-dir`; explicit
   `--chunked` with enabled quarantine refuses before the source-read spy; `place_target` refuses directly.
-- **AT-5** Run id uses `re.fullmatch(r"\d{8}T\d{12}Z-[0-9a-f]{8,32}", value)`; a forced prefix clash gives
+- **AT-5** Run id uses `re.fullmatch(r"[0-9]{8}T[0-9]{12}Z-[0-9a-f]{8}(?:[0-9a-f]{4}){0,6}", value)`; a forced prefix clash gives
   two folders; two starts in one second sort by their six fractional digits; the evidence `run_id` equals
   the invocation id in the folder name; `mint_invocation_id` is called once per command (spy).
 - **AT-6** `latest`: moves on exit 0 only; exit 2, 3 and 4 after writes and an interrupt leave it; an older
