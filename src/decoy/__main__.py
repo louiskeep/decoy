@@ -94,7 +94,10 @@ def _record_contexts(cmd: Any) -> Any:
     is shared down the context chain, so one list collects the root and every sub-command.
     """
     wrapped = copy.copy(cmd)
-    original = cmd.make_context
+    # Bound to the copy, not to `cmd`: the context Click builds must point at the copy so
+    # its `resolve_command` (below) runs for nested groups too. Binding to the original
+    # would make Click invoke the original group and skip every deeper recording.
+    original = type(cmd).make_context.__get__(wrapped)
 
     def make_context(info_name: Any, args: Any, parent: Any = None, **extra: Any) -> Any:
         sub = original(info_name, args, parent=parent, **extra)
@@ -103,7 +106,7 @@ def _record_contexts(cmd: Any) -> Any:
 
     wrapped.make_context = make_context
     if isinstance(cmd, TyperGroup):
-        inner = cmd.resolve_command
+        inner = type(cmd).resolve_command.__get__(wrapped)
 
         def resolve_command(ctx: Any, args: list[str]) -> Any:
             name, found, rest = inner(ctx, args)

@@ -192,3 +192,88 @@ def test_console_script_crash_is_guarded_in_a_subprocess() -> None:
 
 def test_conftest_enables_decoy_debug() -> None:
     assert _DEBUG_AT_COLLECTION == "1"
+
+
+# Real-app cells. A command's own `setup_output` call is the injected crash: it runs after
+# Click parsed the command's options, so the guard sees what the real parse produced. The
+# nested cells (`scan` default, `validate` default, `report show`) sit under a sub-group, so
+# the guard must record the innermost context, not just the root's.
+_REAL_CELLS = {
+    "direct-run": ("decoy.cli.run", ["run", "{cfg}"]),
+    "scan-default": ("decoy.cli.scan", ["scan", "{src}"]),
+    "validate-default": ("decoy.cli.validate", ["validate", "{cfg}"]),
+    "report-show": ("decoy.cli.report", ["report", "show", "{ev}"]),
+}
+
+
+def _real_argv(template: list[str], tmp_path) -> list[str]:
+    paths = {"cfg": tmp_path / "p.yaml", "src": tmp_path / "s.csv", "ev": tmp_path / "e.json"}
+    for p in paths.values():
+        p.write_text("a: 1\n")
+    return [
+        "--no-update-check",
+        *(t.format(**{k: str(v) for k, v in paths.items()}) for t in template),
+    ]
+
+
+def _crash_in(monkeypatch: pytest.MonkeyPatch, module: str) -> None:
+    import importlib
+
+    def boom(*_a, **_k):
+        raise RuntimeError(CANARY)
+
+    monkeypatch.setattr(importlib.import_module(module), "setup_output", boom)
+
+
+@pytest.mark.parametrize("cell", sorted(_REAL_CELLS))
+def test_real_app_verbose_shows_traceback(cell: str, monkeypatch, tmp_path) -> None:
+    module, template = _REAL_CELLS[cell]
+    _crash_in(monkeypatch, module)
+    result = runner.invoke(app, [*_real_argv(template, tmp_path), "--verbose"])
+    assert result.exit_code == 1
+    assert "Traceback" in result.output
+    assert "may contain row data" in result.output
+
+
+# `--verbose` text that is an option VALUE (not the flag) at each depth. `validate` has no
+# value-taking option, and a group consumes a bare `--` before dispatching to its default
+# command, so that cell has no honest "text, not flag" spelling and is left out.
+_VERBOSE_AS_VALUE = {
+    "direct-run": ["--otel-endpoint", "--verbose"],
+    "scan-default": ["--output", "--verbose"],
+    "report-show": ["--format", "--verbose"],
+}
+
+
+@pytest.mark.parametrize("cell", sorted(_VERBOSE_AS_VALUE))
+def test_real_app_verbose_text_as_option_value_is_not_the_flag(
+    cell: str, monkeypatch, tmp_path
+) -> None:
+    module, template = _REAL_CELLS[cell]
+    _crash_in(monkeypatch, module)
+    result = runner.invoke(app, [*_real_argv(template, tmp_path), *_VERBOSE_AS_VALUE[cell]])
+    assert result.exit_code == 1
+    assert "Traceback" not in result.output
+    assert CANARY not in result.output
+    assert "internal error (RuntimeError)" in result.output
+
+
+@pytest.mark.parametrize("cell", sorted(_REAL_CELLS))
+def test_real_app_crash_without_flag_is_one_line(cell: str, monkeypatch, tmp_path) -> None:
+    module, template = _REAL_CELLS[cell]
+    _crash_in(monkeypatch, module)
+    result = runner.invoke(app, _real_argv(template, tmp_path))
+    assert result.exit_code == 1
+    assert "Traceback" not in result.output
+    assert "internal error (RuntimeError)" in result.output
+
+
+def test_real_app_verbose_state_does_not_leak_between_invocations(monkeypatch, tmp_path) -> None:
+    _crash_in(monkeypatch, "decoy.cli.report")
+    argv = _real_argv(["report", "show", "{ev}"], tmp_path)
+    loud = runner.invoke(app, [*argv, "--verbose"])
+    quiet = runner.invoke(app, argv)
+    loud_again = runner.invoke(app, [*argv, "-v"])
+    assert "Traceback" in loud.output
+    assert "Traceback" not in quiet.output
+    assert "Traceback" in loud_again.output
