@@ -214,7 +214,7 @@ def test_chmod_failure_aborts_before_any_schema_write(
     def boom(*_a: object, **_k: object) -> None:
         raise PermissionError("denied")
 
-    monkeypatch.setattr(os, "chmod", boom)
+    monkeypatch.setattr(os, "fchmod", boom)
     with pytest.raises(TokenVaultError) as exc:
         LocalTokenVault(vp, create=True)
     assert exc.value.code == "vault_permission_error"

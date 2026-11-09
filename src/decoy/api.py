@@ -252,16 +252,14 @@ def _stage_source_entry(name: str, value: Any, tmp_paths: list[Path], declared: 
         return {"type": "file", "format": format_for_path(path), "path": str(path)}
 
     table = _to_pa_table(value)
-    import os
-    import tempfile
+    from decoy._private_file import create_private_temp
 
-    fd, tmp_name = tempfile.mkstemp(prefix=f"decoy-mask-{name}-", suffix=".parquet")
-    os.close(fd)
-    tmp_path = Path(tmp_name)
+    tmp_path = create_private_temp(prefix=f"decoy-mask-{name}-")
+    # Registered before the write so the caller's finalizer removes it if the write fails.
+    tmp_paths.append(tmp_path)
     import pyarrow.parquet as pq
 
     pq.write_table(table, str(tmp_path))
-    tmp_paths.append(tmp_path)
     return {"type": "file", "format": "parquet", "path": str(tmp_path)}
 
 
