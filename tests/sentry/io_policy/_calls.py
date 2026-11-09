@@ -68,6 +68,23 @@ def qualified(target: ast.expr | ast.Call, bound: Bindings) -> str | None:
     return ".".join([bound[node.id], *reversed(parts)])
 
 
+def leaf(target: ast.expr | ast.Call, bound: Bindings) -> str | None:
+    """The member name a reference stands for: the last part of its resolved import name.
+
+    The one place a sentry asks "what is this call". A reference that starts at a bound import
+    (`from io import open as io_open`, `from pyarrow.parquet import write_table as wt`) is named
+    by what it resolves to (`open`, `write_table`), never by its local spelling. Only a reference
+    that resolves to nothing (a method on a local or `self`) falls back to its syntactic last name.
+    """
+    resolved = qualified(target, bound)
+    if resolved is not None:
+        return resolved.rpartition(".")[2]
+    node: ast.expr = target.func if isinstance(target, ast.Call) else target
+    if isinstance(node, ast.Name):
+        return node.id
+    return node.attr if isinstance(node, ast.Attribute) else None
+
+
 @dataclass(frozen=True)
 class Site:
     """One normalized record from the single traversal: a `Name`/`Attribute` load or a `Call`.
@@ -114,13 +131,11 @@ def _children(node: ast.AST) -> Iterator[tuple[str, ast.AST]]:
                     yield field, item
 
 
-def _opens(item: ast.withitem, with_calls: frozenset[str]) -> str | None:
+def _opens(item: ast.withitem, with_calls: frozenset[str], bound: Bindings) -> str | None:
     ctx, var = item.context_expr, item.optional_vars
     if not (isinstance(ctx, ast.Call) and isinstance(var, ast.Name)):
         return None
-    callee = ctx.func
-    name = callee.id if isinstance(callee, ast.Name) else getattr(callee, "attr", None)
-    return var.id if name in with_calls else None
+    return var.id if leaf(ctx, bound) in with_calls else None
 
 
 def sites(tree: ast.AST, *, with_calls: frozenset[str] = frozenset()) -> list[Site]:
@@ -144,7 +159,9 @@ def sites(tree: ast.AST, *, with_calls: frozenset[str] = frozenset()) -> list[Si
                 continue
             inner_names = names
             if isinstance(child, (ast.With, ast.AsyncWith)):
-                inner_names = names | {n for n in (_opens(i, with_calls) for i in child.items) if n}
+                inner_names = names | {
+                    n for n in (_opens(i, with_calls, bound) for i in child.items) if n
+                }
             is_ref = isinstance(child, (ast.Name, ast.Attribute)) and isinstance(
                 child.ctx, ast.Load
             )
@@ -259,3 +276,11 @@ def tally(
         for _line, scope in finder(path.read_text(encoding="utf-8")):
             counts[(rel, scope)] = counts.get((rel, scope), 0) + 1
     return counts
+
+
+def is_staged_name(arg: ast.expr | None, names: frozenset[str]) -> bool:
+    """True when a path argument is (`str()` of) a name bound by an enclosing stager `with`."""
+    if isinstance(arg, ast.Call) and isinstance(arg.func, ast.Name) and arg.func.id == "str":
+        if len(arg.args) == 1 and not arg.keywords:
+            arg = arg.args[0]
+    return isinstance(arg, ast.Name) and arg.id in names

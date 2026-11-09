@@ -44,8 +44,16 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import pytest
-from tests.sentry.io_policy._calls import PATH_SLOT, Site, path_arg, sites
-from tests.sentry.io_policy.test_target_writes import STAGED_WRITERS
+from tests.sentry.io_policy._calls import (
+    PATH_SLOT,
+    Site,
+    is_staged_name,
+    leaf,
+    path_arg,
+    qualified,
+    sites,
+)
+from tests.sentry.io_policy.test_target_writes import STAGE_CALLS, STAGED_WRITERS
 
 if sys.version_info >= (3, 11):
     import tomllib
@@ -217,19 +225,16 @@ def classify(site: Site) -> str | None:
         return None
     func = call.func
     resolved = site.name
-    if isinstance(func, ast.Name):
-        leaf: str | None = func.id
-    else:
-        leaf = func.attr if isinstance(func, ast.Attribute) else None
+    name = leaf(call, site.bound)  # the resolved member, so an import alias cannot hide a sink
     if resolved and resolved in _MODE_CALLS | _RESOLVED:
         return resolved
     if resolved and (resolved.startswith(_RESOLVED_PREFIX) or resolved in _COPY):
         return resolved
-    if leaf in PRIVATE_ENTRY or leaf in _LEAF:
-        return leaf
-    if leaf == "open":
+    if name in PRIVATE_ENTRY or name in _LEAF:
+        return name
+    if name == "open":
         return "open" if _write_mode(call, builtin=isinstance(func, ast.Name)) else None
-    if leaf == "execute" and _COPY_TO.search(_sql_text(call)):
+    if name == "execute" and _COPY_TO.search(_sql_text(call)):
         return "execute.copy_to"
     return None
 
@@ -239,7 +244,7 @@ def collect(files: Mapping[str, str]) -> list[Sink]:
     out: list[Sink] = []
     for rel in sorted(files):
         seen: dict[tuple[str, str], int] = {}
-        for site in sites(ast.parse(files[rel])):
+        for site in sites(ast.parse(files[rel]), with_calls=STAGE_CALLS):
             kind = classify(site)
             if kind is None:
                 continue
@@ -347,6 +352,12 @@ def _live(all_sinks: list[Sink]) -> dict[str, Sink]:
     return {s.key: s for s in watched(all_sinks) if not is_entry(s)}
 
 
+def _writes_stage_temp(sink: Sink) -> bool:
+    """A staged sink writes the name an enclosing `with <stager>(...) as tmp` bound."""
+    path = sink_path_name(sink)
+    return path is not None and is_staged_name(ast.Name(id=path), sink.site.with_names)
+
+
 def rule_p1(all_sinks: list[Sink], rows: list[Row]) -> list[str]:
     out: list[str] = []
     live = _live(all_sinks)
@@ -368,6 +379,9 @@ def rule_p1(all_sinks: list[Sink], rows: list[Row]) -> list[str]:
             r.file != STAGED_FILE or r.function not in STAGED_WRITERS
         ):
             out.append(f"P1: staged row outside the checked stager writers: {r.key}")
+        sink = live.get(r.key)
+        if r.disposition == "staged" and sink is not None and not _writes_stage_temp(sink):
+            out.append(f"P1: staged sink does not write the stager's temp path: {r.key}")
     return out
 
 
@@ -437,6 +451,11 @@ def _swallows(handler: ast.ExceptHandler) -> bool:
 _TRY = (ast.Try, getattr(ast, "TryStar", ast.Try))
 
 
+def _is_suppress(ctx: ast.Call, bound: Mapping[str, str]) -> bool:
+    resolved = qualified(ctx, dict(bound))
+    return resolved == "contextlib.suppress" if resolved else leaf(ctx, dict(bound)) == "suppress"
+
+
 def swallowed(s: Sink) -> bool:
     """True when the call sits in a `try` body whose handler only passes, or under suppress()."""
     for node, field in s.site.guards():
@@ -447,12 +466,8 @@ def swallowed(s: Sink) -> bool:
         if isinstance(node, (ast.With, ast.AsyncWith)) and field == "body":
             for item in node.items:
                 ctx = item.context_expr
-                if isinstance(ctx, ast.Call):
-                    f = ctx.func
-                    if (
-                        f.id if isinstance(f, ast.Name) else getattr(f, "attr", None)
-                    ) == "suppress":
-                        return True
+                if isinstance(ctx, ast.Call) and _is_suppress(ctx, s.site.bound):
+                    return True
     return False
 
 

@@ -28,7 +28,13 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import pytest
-from tests.sentry.io_policy._calls import call_contexts, call_sites, path_arg, tally
+from tests.sentry.io_policy._calls import (
+    call_contexts,
+    call_sites,
+    is_staged_name,
+    path_arg,
+    tally,
+)
 
 ROOT = Path(__file__).resolve().parents[3]
 SRC = ROOT / "src" / "decoy"
@@ -217,13 +223,6 @@ def test_seeded_bypass_is_red(tmp_path: Path) -> None:
     assert _tally(tmp_path) == {(f"cli/{name}", "save"): 1 for name in seeds}
 
 
-def _is_staged_name(arg: ast.expr | None, names: frozenset[str]) -> bool:
-    if isinstance(arg, ast.Call) and isinstance(arg.func, ast.Name) and arg.func.id == "str":
-        if len(arg.args) == 1 and not arg.keywords:
-            arg = arg.args[0]
-    return isinstance(arg, ast.Name) and arg.id in names
-
-
 def unstaged_writes(source: str) -> list[tuple[int, str]]:
     """(line, scope) for each write in a staged writer whose path is not its staged temp."""
     bad = []
@@ -236,7 +235,7 @@ def unstaged_writes(source: str) -> list[tuple[int, str]]:
         member = func.attr if isinstance(func, ast.Attribute) else getattr(func, "id", "")
         if member == "write_fixed_width":
             continue
-        if not _is_staged_name(path_arg(call, member), names):
+        if not is_staged_name(path_arg(call, member), names):
             bad.append((call.lineno, scope))
     return bad
 
