@@ -2,10 +2,6 @@
  "sentry_id": "atomic-writer-allow",
  "created_in": "L1b.1",
  "entries": {
-  "api.py": {
-   "sites": 1,
-   "reason": "Spools a DataFrame to a throwaway parquet temp file for the engine to read; never replaced onto a target, so the atomic-write rules do not apply."
-  },
   "cli/run.py": {
    "sites": 4,
    "reason": "_commit_vault keeps a hard-link backup and restores or removes the vault when the directory fsync fails (tests/e2e/test_vault_commit_order.py); a transaction, not a plain atomic write. L5a moves it to _vault_commit.py and renames this entry."

@@ -283,3 +283,44 @@ def test_create_private_temp_failures_map_to_the_two_codes(
         create_private_temp("decoy-mask-t-")
     assert caught2.value.code == PRIVATE_MODE_FAILED
     assert sorted(p.name for p in tmp_path.iterdir()) == []  # the half-made temp is removed
+
+
+@posix_only
+def test_installer_trust_state_is_owner_only_under_umask_zero(tmp_path: Path) -> None:
+    """The recorder publishes through `write_atomic`, which is private whatever the umask."""
+    code = (
+        "import os, sys; os.umask(0)\n"
+        "from pathlib import Path\n"
+        "from decoy.distribution import installer\n"
+        "from decoy.distribution import version_document as vd\n"
+        "doc = vd.build_document(latest='0.1.0', min_supported='0.1.0', artifacts={}, serial=1)\n"
+        "installer.check_document_freshness(doc, Path(sys.argv[1]))\n"
+    )
+    _run(code, str(tmp_path))
+    assert _mode(tmp_path / "trust_state.json") == 0o600
+
+
+def test_a_failed_spool_write_removes_the_registered_temp(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import pandas as pd
+    import pyarrow.parquet as pq
+
+    import decoy
+
+    monkeypatch.setattr(_private_file.tempfile, "gettempdir", lambda: str(tmp_path))
+
+    def boom(*_a: object, **_k: object) -> None:
+        raise OSError(errno.EIO, "disk says no")
+
+    monkeypatch.setattr(pq, "write_table", boom)
+    cfg = {
+        "version": 2,
+        "global_settings": {"seed": 1},
+        "sources": {"t": {"type": "file", "format": "csv", "path": "unused.csv"}},
+        "tables": [{"name": "t", "columns": [{"name": "a", "strategy": "passthrough"}]}],
+        "targets": {"t": {"type": "file", "format": "csv", "path": str(tmp_path / "o.csv")}},
+    }
+    with pytest.raises(OSError):
+        decoy.mask(pd.DataFrame({"a": [1]}), cfg)
+    assert sorted(p.name for p in tmp_path.iterdir()) == []

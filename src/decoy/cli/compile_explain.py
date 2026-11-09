@@ -39,8 +39,9 @@ from pathlib import Path
 import typer
 import yaml
 
+from decoy._atomic import AtomicWriteError, WriteMode, describe, write_local_target
 from decoy.cli._yaml_errors import sanitize_yaml_error
-from decoy.cli.exit_codes import EXIT_USAGE
+from decoy.cli.exit_codes import EXIT_RUNTIME, EXIT_USAGE
 from decoy.ui.output import OutputMode, emit_json, setup_output
 from decoy.ui.table import make_table
 from decoy.ui.theme import accent, code, error, hint, success, warn
@@ -240,7 +241,15 @@ def compile(
 
     # --output: also write the frozen plan artifact (absorbs the old `plan` command).
     if out is not None:
-        out.write_text(render_plan_artifact(plan, out_format), encoding="utf-8")
+        try:
+            write_local_target(
+                out,
+                render_plan_artifact(plan, out_format).encode("utf-8"),
+                WriteMode.REPLACE,
+            )
+        except AtomicWriteError as exc:
+            _simple_error(state, config, f"could not write the plan artifact: {describe(exc)}")
+            raise typer.Exit(code=EXIT_RUNTIME)
 
     # Extract per-column info from the config (strategies come from the user's
     # explicit declarations; compile_plan verifies them but does not change them).

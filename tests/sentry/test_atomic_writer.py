@@ -12,8 +12,8 @@ so a new copy inside an allowlisted file is also red.
 Named limits, all invisible to a syntax walk: a call through a runtime-bound name
 (`getattr(os, "replace")`), alias by assignment (`mv = os.replace; mv(a, b)`), a starred
 argument list on `.replace(*args)`, and `from os import *`.
-Size 5 is today's baseline (L1b.1, after `cli/ci.py` and `ci/debug.py` moved onto
-`_atomic.write_atomic`). Entries leave this list when their file moves onto the writer;
+Size 4 is today's baseline. L1b.1 left 5 entries, after `cli/ci.py` and `ci/debug.py` moved
+onto `_atomic.write_atomic`; X7c S2 then moved `api.py` onto `_private_file`. Entries leave this list when their file moves onto the writer;
 none may be added without a reviewed change (shrink-only ratchet,
 tests/sentry/baselines/atomic-writer-allow.json, which also records each entry's site count).
 """
@@ -56,12 +56,6 @@ ALLOWLIST: tuple[AllowedInline, ...] = (
         "_commit_vault keeps a hard-link backup and restores or removes the vault when the "
         "directory fsync fails (tests/e2e/test_vault_commit_order.py); a transaction, not a "
         "plain atomic write. L5a moves it to _vault_commit.py and renames this entry.",
-    ),
-    AllowedInline(
-        "api.py",
-        1,
-        "Spools a DataFrame to a throwaway parquet temp file for the engine to read; "
-        "never replaced onto a target, so the atomic-write rules do not apply.",
     ),
     AllowedInline(
         "distribution/installer.py",
@@ -178,9 +172,9 @@ def test_no_inline_atomic_write_outside_the_choke_point() -> None:
     assert findings(scan(SRC)) == []
 
 
-def test_allowlist_baseline_is_five_with_reasons() -> None:
-    assert len(ALLOWLIST) == 5
-    assert len({e.file for e in ALLOWLIST}) == 5
+def test_allowlist_baseline_is_four_with_reasons() -> None:
+    assert len(ALLOWLIST) == 4
+    assert len({e.file for e in ALLOWLIST}) == 4
     assert all(len(e.reason.strip()) >= 15 and e.sites > 0 for e in ALLOWLIST)
 
 
