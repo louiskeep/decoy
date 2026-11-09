@@ -272,8 +272,8 @@ declare relationships; value-based FK discovery is parked for V2). Columns with 
 
 | # | Item | Repo | State | Branch, plan or handoff | After |
 |---|---|---|---|---|---|
-| 25 | SCAN-MULTI S1a-engine: `scan_sources` and `scan-set/v1` (~470 lines) | engine | Plan passed 2026-11-06 (owner Q7-Q8 recommended); engine parts wait on the next engine release cadence; CLI parts after the release and repin | `plan/scan-multi` | plan GO |
-| 26 | SCAN-MULTI S1b-engine: declared-relationship integrity facts (~480 lines) | engine | Plan passed 2026-11-06 (owner Q7-Q8 recommended); engine parts wait on the next engine release cadence; CLI parts after the release and repin | `plan/scan-multi` | S1a types; same release as S1a |
+| 25 | SCAN-MULTI S1a-engine: `scan_sources` and `scan-set/v1` (~470 lines) | engine | MERGED (engine #414, `046887e9`, 2026-11-09); ships in the next engine release with S1b | `plan/scan-multi` | plan GO |
+| 26 | SCAN-MULTI S1b-engine: declared-relationship integrity facts (~480 lines) | engine | MERGED (engine #422, `368abe0e`, 2026-11-09); ships in the next engine release with S1a | `plan/scan-multi` | S1a types; same release as S1a |
 | 27 | SCAN-MULTI S1c-cli: `decoy scan` over many tables (~690 lines) | CLI | Plan passed 2026-11-06 (owner Q7-Q8 recommended); engine parts wait on the next engine release cadence; CLI parts after the release and repin | `plan/scan-multi` | S1a and S1b release and repin; CLI-DIALECT; CONFIG-EXPLICIT for `--column-names-file` |
 | 28 | SCAN-MULTI S3-engine: `starter_config` and `scan_baseline` (~560 lines) | engine | Plan passed 2026-11-06 (owner Q7-Q8 recommended); engine parts wait on the next engine release cadence; CLI parts after the release and repin | `plan/scan-multi` | S1a; CONFIG-EXPLICIT |
 | 29 | SCAN-MULTI S3-cli: `--emit-config` and `--compare` (~720 lines including moved code) | CLI | Plan passed 2026-11-06 (owner Q7-Q8 recommended); engine parts wait on the next engine release cadence; CLI parts after the release and repin | `plan/scan-multi` | LIB L2 (in place of S1d); S3-engine release and repin; CLI-DIALECT |
@@ -334,7 +334,7 @@ on `P:plan/h1-wave-b` `944fb295` (Codex GO). Only files no live branch touches.
 | # | Item | Repo | State | Branch, plan or handoff | After |
 |---|---|---|---|---|---|
 | 57 | SUB-RUN: subset inside a pipeline run (`run_subset` inside `run_pipeline`); decide on the Parquet-only rule for relationship tables | engine, CLI | NOT STARTED | none | SUB-STOP; CLI half after its release |
-| 58 | F25: protected scratch, quotas, orphan recovery | engine | plan in gate (Codex r7 GO; Dennis r5 GO-WITH-FIXES with 1 blocker) | `E:plan/f25-4c-consumer-capabilities` `53950b27`; `E:feat/f25-protected-scratch` `4c901d38` | none |
+| 58 | F25: protected scratch, quotas, orphan recovery | engine | building; S1a-0 (owner bits on stage creators under any umask) MERGED (engine #416, `809c2218`, 2026-11-09); plan Codex r7 GO | `E:plan/f25-4c-consumer-capabilities` `53950b27`; `E:feat/f25-protected-scratch` `4c901d38` | none |
 | 59 | F22: atomic and idempotent publication | engine | plan revision (Codex r9 NO-GO, 1 blocker); revision must drop the Linux-and-macOS-only rule (WIN-FEAS) | `E:plan/f22-publication-replan` `db230090` | F25 |
 | 60 | POSTSCAN-STREAM: post-scan integrity streams chunk by chunk on every route, with output PK and FK checks when keys are declared | engine | NOT STARTED | none | before CLI delivery makes post-scan blocking |
 | 61 | CLI delivery (DELIV engine and CLI half): stage then deliver, strict and best-effort, local single-root rule, chunked path (G4) through the same sink; blocks CLI V1 (Q22) | engine, CLI | NOT STARTED | none | F22, POSTSCAN-STREAM; CLI half after R-d |
