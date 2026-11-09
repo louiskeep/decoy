@@ -1,0 +1,25 @@
+# QA first-user pair: patients (parent) and visits (child) tied by patient_id.
+version: 2
+global_settings:
+  seed: 7
+sources:
+  patients: {type: file, path: patients.csv, format: csv}
+  visits: {type: file, path: visits.csv, format: csv}
+targets:
+  patients: {type: file, path: out/patients.csv, format: csv}
+  visits: {type: file, path: out/visits.csv, format: csv}
+tables:
+  - name: patients
+    columns:
+      - {name: patient_id, strategy: hash}
+      - {name: full_name, strategy: redact}
+      - {name: ssn, strategy: redact}
+  - name: visits
+    columns:
+      - {name: patient_id, strategy: hash}
+      - {name: diagnosis, strategy: redact}
+relationships:
+  - parent: {table: patients, columns: [patient_id]}
+    children:
+      - {table: visits, columns: [patient_id]}
+    orphan_policy: fail
