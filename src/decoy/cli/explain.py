@@ -43,12 +43,12 @@ _TOPICS: dict[str, _Topic] = {
             "  generate   Build a synthetic dataset from scratch.\n"
             "             Pick when you don't have real data and need realistic-looking rows for testing.\n\n"
             "Mode is inferred per-table from the YAML: a table with `columns:` is a\n"
-            "mask table, one with `generate_columns:` is a generate table (FC-1,\n"
-            "2026-06-02; the old top-level `mode:` key was removed). The --mode flag is\n"
+            "mask table, one with `generate_columns:` is a generate table (the old\n"
+            "top-level `mode:` key was removed). The --mode flag is\n"
             "now only a label for progress/JSON output; it does not override what the\n"
             "tables declare.\n\n"
-            "V1 had two additional modes (graph + convert) that were removed under storm-reframe-C\n"
-            "and S22-CL-V1GRAPHRUNNER (2026-05-30). YAML with `mode: graph` or `mode: convert`\n"
+            "V1 had two additional modes (graph + convert) that were removed.\n"
+            "YAML with `mode: graph` or `mode: convert`\n"
             "is rejected by the V2 PipelineConfig validator with a typed error."
         ),
         see_also=("decoy run --help", "decoy explain pipeline"),
@@ -90,7 +90,7 @@ _TOPICS: dict[str, _Topic] = {
             "Pick a Disguise by hand via `decoy show template hipaa` (gets the pipeline shape\n"
             "you'd start from) or by browsing the engine source under decoy_engine.disguises.\n\n"
             "The V1 FORECAST recommender (which scored Disguises against a STORM scan and drafted\n"
-            "a pipeline) was retired under storm-reframe-C (2026-05-30); pick the Disguise by\n"
+            "a pipeline) was retired; pick the Disguise by\n"
             "hand from the templates set for now."
         ),
         see_also=("decoy show template hipaa", "decoy explain transforms"),
@@ -119,7 +119,7 @@ _TOPICS: dict[str, _Topic] = {
         summary="The shape of a decoy pipeline YAML.",
         body=(
             "V2 PipelineConfig shape (current; `decoy validate` accepts these):\n\n"
-            "  version            1 (integer, not '1.0').\n"
+            "  version            2 (integer, not '2.0').\n"
             "  global_settings    seed, default_locale.\n"
             "  sources            dict[name -> {type, format, path}].\n"
             "  tables             list of {name, columns: [{name, strategy, ...}]}\n"
@@ -133,12 +133,11 @@ _TOPICS: dict[str, _Topic] = {
             "  Pass it as `--key-label` on `decoy run` instead. See `decoy\n"
             "  explain keys`.\n\n"
             "Mode is inferred per-table from `columns` (mask) vs `generate_columns`\n"
-            "(generate); a single pipeline can mix both kinds (FC-1, 2026-06-02).\n\n"
+            "(generate); a single pipeline can mix both kinds.\n\n"
             "Pick a template to start from: `decoy show template minimal`.\n\n"
-            "Legacy V1 shape (REJECTED by `decoy validate` since storm-reframe-C,\n"
-            "2026-05-30): `version: '1.0'`, `input:`, `output:`, `masking_rules:`.\n"
-            "Old YAML on disk must be re-authored to the V2 shape above; the\n"
-            "graph builder in decoy-platform's web UI emits V2 directly.\n\n"
+            "Legacy V1 shape (REJECTED by `decoy validate`): `version: '1.0'`,\n"
+            "`input:`, `output:`, `masking_rules:`. Old YAML on disk must be\n"
+            "re-authored to the V2 shape above.\n\n"
             "Validate any pipeline before running it: `decoy validate config pipeline.yaml`."
         ),
         see_also=("decoy validate config --help", "decoy list templates"),
@@ -165,9 +164,7 @@ _TOPICS: dict[str, _Topic] = {
             "For portable keyed MASKING, set `global_settings.mask_secret_ref` instead --\n"
             "see `decoy explain keys`.\n"
             "Treat STORM scan JSON, reference files, and real input/output files as\n"
-            "sensitive artifacts.\n\n"
-            "Full guide in the docs hub:\n"
-            "  decoy-platform/docs/guides/cli-yaml-workflows.md"
+            "sensitive artifacts."
         ),
         see_also=("decoy explain pipeline", "decoy list templates", "decoy validate config --help"),
     ),
@@ -256,9 +253,16 @@ _TOPICS: dict[str, _Topic] = {
             "from the masked output and treat it as sensitive -- together they\n"
             "re-identify every vaulted value. Needs the engine's vault extra\n"
             "(cryptography). FPE columns are reversible on their own and do not use\n"
-            "the vault."
+            "the vault.\n\n"
+            "This is not the token vault that `decoy tokenize` writes; that one is a\n"
+            "plaintext SQLite file (see `decoy explain tokenize`)."
         ),
-        see_also=("decoy run --help", "decoy unmask --help", "decoy explain keys"),
+        see_also=(
+            "decoy run --help",
+            "decoy unmask --help",
+            "decoy explain keys",
+            "decoy explain tokenize",
+        ),
     ),
     "tokenize": _Topic(
         name="tokenize",
@@ -292,7 +296,10 @@ _TOPICS: dict[str, _Topic] = {
             "the column's namespace fails closed -- detokenize writes nothing rather than\n"
             "emit a value it cannot vouch for. The vault is the one place the\n"
             "value-to-token mapping lives: store it separately from the output and\n"
-            "treat it as sensitive."
+            "treat it as sensitive.\n\n"
+            "The token vault is a plaintext SQLite file created 0600; it is not the\n"
+            "encrypted `run --vault` file. Anyone who can read it can reverse every\n"
+            "token in it, so file permissions are its only protection."
         ),
         see_also=("decoy tokenize --help", "decoy detokenize --help", "decoy explain vault"),
     ),

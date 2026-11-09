@@ -455,7 +455,7 @@ Examples:
     Skip the wizard; scaffold from the HIPAA template.
 
   decoy init customers.csv --output pipeline.yaml
-    Column-aware scaffolding (OSS.4c, 2026-06-02). Runs STORM against
+    Column-aware scaffolding. Runs STORM against
     the file, picks a starter strategy per column from the inference
     table, writes the YAML with `# REVIEW:` comments above every
     inferred entry. The user must read + edit before running.

@@ -67,7 +67,7 @@ tables:
       # HIPAA Safe Harbor cascade (45 CFR 164.514(b)(2)(i)(B)): zip5 ->
       # zip3 (skipping HHS-restricted prefixes where population < 20000)
       # -> state -> suppress. k_threshold: 20000 matches the Safe Harbor
-      # population floor. SP-11 replaced the prior truncate(3) strategy.
+      # population floor.
       - name: street
         strategy: faker
         provider: address_street
