@@ -59,7 +59,7 @@ First row of the layout map the LAYOUT slice completes (one line per kind of mod
 | Build and gate evidence records | `docs/records/` | `2026-11-06-ci-l1-build.md` |
 | CLI format contract tests (new ones go in these named folders, not the flat `tests/e2e/` and `tests/unit/`) | `tests/e2e/cli_fmt/`, `tests/unit/cli_fmt/` | `test_target_format_dispatch.py`, `test_targets_format.py` |
 | Private-file contract tests (new ones go in these named folders, not the flat `tests/e2e/` and `tests/unit/`) | `tests/unit/private_file/`, `tests/e2e/private_file/` | `test_private_file.py` |
-| First-user QA item tests, grouped by behavior (new ones go here, not the flat `tests/e2e/`; `cli_fmt/` is the adjacent pattern) | `tests/e2e/first_user/` | `test_items_text.py` |
+| First-user QA item tests, grouped by behavior (new ones go here, not the flat `tests/e2e/`; `cli_fmt/` is the adjacent pattern) | `tests/e2e/first_user/` | `test_items_text.py`, `test_items_reports.py` |
 
 ## Where Do I Find...
 
