@@ -178,8 +178,8 @@ def test_a_climb_into_another_run_is_not_the_target(
     assert input_format(config, "t", sibling, root, pipeline=ref) == ("csv", None)
 
 
-def test_placed_path_stays_inside_the_run() -> None:
-    run = RunFolder(Path("/p/out/orders") / RUN_ID, RUN_ID)
+def test_placed_path_stays_inside_the_run(project: tuple[Path, tuple[Path, str], Path]) -> None:
+    run = _run_folder(project[2])
     assert placed_path(run, "m.dat") == run.path / "m.dat"
     assert placed_path(run, "sub/../m.dat") == run.path / "m.dat"
     for raw in (
@@ -270,3 +270,64 @@ def test_a_symlink_ancestor_leaving_the_run_is_not_the_target(
     target = _touch(outside / "value.dat")
     config = _config("link/value.dat")
     assert input_format(config, "t", target, root, pipeline=ref) == ("csv", None)
+
+
+@pytest.mark.parametrize("raw", [f"..\\{RUN_ID}\\m.dat", "sub\\..\\m.dat", "a\\b.dat"])
+def test_placed_path_refuses_any_backslash(raw: str) -> None:
+    # A declared path uses "/" only, so it means the same thing on every OS.
+    run = RunFolder(Path("/p/out/orders") / RUN_ID, RUN_ID)
+    assert placed_path(run, raw) is None
+
+
+def _outcome(call):  # type: ignore[no-untyped-def]
+    """The call's result, or the exception it raised, so a failure shows as an assertion."""
+    try:
+        return call()
+    except Exception as exc:
+        return exc
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="symlinks")
+def test_a_symlink_loop_fails_closed(project: tuple[Path, tuple[Path, str], Path]) -> None:
+    _, ref, run = project
+    os.symlink("loop", run / "loop")
+    assert _outcome(lambda: placed_path(_run_folder(run), "loop/x.dat")) is None
+    assert _outcome(lambda: owning_run(run / "loop" / "x.dat", *ref)) is None
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="symlinks")
+def test_containment_is_by_identity_not_spelling(
+    project: tuple[Path, tuple[Path, str], Path], tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Simulate a case-insensitive filesystem: resolve spells the run folder another way.
+
+    On such a filesystem `resolve` keeps the spelling it was given, so the candidate and the
+    run folder can name the same directory with different text. A second symlink to the run
+    folder gives the same effect: the spellings differ and the identity is one.
+    """
+    _, _, run = project
+    alias = tmp_path / "alias"
+    os.symlink(run, alias)
+    real_resolve = Path.resolve
+
+    def respelled(self: Path, strict: bool = False) -> Path:
+        real = real_resolve(self, strict)
+        if real.name == "m.dat":
+            return alias / real.name
+        return real
+
+    monkeypatch.setattr(Path, "resolve", respelled)
+    result = _outcome(lambda: placed_path(_run_folder(run), "m.dat"))
+    assert result == alias / "m.dat"
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="symlinks")
+def test_same_path_by_identity(tmp_path: Path) -> None:
+    from decoy.cli.io._layout import same_path
+
+    real = _touch(tmp_path / "real" / "f.dat")
+    os.symlink(tmp_path / "real", tmp_path / "alias")
+    assert same_path(real, tmp_path / "alias" / "f.dat")
+    assert not same_path(real, tmp_path / "real" / "g.dat")
+    assert same_path(tmp_path / "none" / "x", tmp_path / "none" / "x")
+    assert not same_path(tmp_path / "none" / "x", tmp_path / "none" / "y")

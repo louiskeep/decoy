@@ -31,7 +31,7 @@ import pyarrow as pa
 from decoy._atomic import staged_local_target, staged_private_target
 from decoy.cli._sources import resolve_path
 from decoy.cli.io._compression import csv_compression, is_archive_csv, split_compression
-from decoy.cli.io._layout import owning_run, placed_path
+from decoy.cli.io._layout import owning_run, placed_path, same_path
 
 if TYPE_CHECKING:
     import pandas as pd
@@ -204,13 +204,13 @@ def _is_declared_target(
     path: Path, raw: str, base_dir: Path, pipeline: tuple[Path, str] | None
 ) -> bool:
     """True when `path` is the target declared as `raw`, at the old place or in a run folder."""
-    if path.resolve() == resolve_path(raw, base_dir).resolve():
+    if same_path(path, resolve_path(raw, base_dir)):
         return True
     if pipeline is None:
         return False
     run = owning_run(path, *pipeline)
     placed = placed_path(run, raw) if run is not None else None
-    return placed is not None and path.resolve() == placed
+    return placed is not None and same_path(path, placed)
 
 
 def input_format(
