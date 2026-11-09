@@ -5,11 +5,9 @@
 #
 #   decoy validate config pipeline.yaml && decoy run pipeline.yaml
 #
-# V2 PipelineConfig shape per decoy-engine `decoy_engine.config._pipeline`.
+# Run `decoy explain pipeline` for the V2 pipeline shape.
 # Provider names come from the engine's default registry (see
 # `decoy_engine.providers.get_default_registry`).
-# CLI.3 (2026-06-02) rewrite: replaces V1 `version: '1.0'` + V1
-# `masking_rules:` shape.
 
 version: 2
 

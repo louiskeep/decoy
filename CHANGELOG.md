@@ -30,6 +30,10 @@ version numbers follow the [versioning policy](docs/release/versioning.md).
 
 - **CycloneDX SBOM generator (R1-c).** `scripts/release/sbom.sh` writes a reproducible CycloneDX 1.6 SBOM of the certified runtime pins (`requirements-certified.txt`) with the tool environment pinned, hash-enforced and wheel-only from `scripts/release/sbom-tool-requirements.txt`, run isolated (`python -I`, `uv --no-config`, no ambient `UV_*` settings, CPython 3.12 only); no timestamp or serial; well-formed public pins only, one per package, with the generated components checked against the pins. Not signed or published. Docs: `docs/release/sbom.md`.
 
+### Fixed
+
+- **User text a first-time user reads (CLI-QA1 C2a).** A usage error or `--help` after a positional on `decoy scan` and `decoy validate` reads `decoy scan [OPTIONS] SOURCE` (and `decoy validate [OPTIONS] CONFIG`), no longer naming the hidden default command. `decoy explain pipeline` gives `version 2`, the version the engine accepts. The `decoy list disguises` tip no longer offers `decoy init --preset <id>` for disguise ids `init` rejects; it names `decoy list templates` and `decoy explain disguises`. `decoy explain tokenize` says the token vault is a plaintext SQLite file created 0600, and `decoy explain vault` says it is a different store. Internal ticket ids, a platform docs path and a private engine module path are gone from the explain topics, the `init` help and scaffold header, and the minimal, generate and hipaa templates.
+
 ### Security
 
 - **Installer / update-system hardening (B-2 r7).** The signed version document now
