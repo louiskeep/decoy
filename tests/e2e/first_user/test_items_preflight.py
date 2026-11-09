@@ -45,6 +45,8 @@ def test_preflight_reports_the_uncompilable_plan_as_a_capacity_fail(tmp_path: Pa
     checks = {c["name"]: c for c in json.loads(result.stdout)["checks"]}
     assert checks[_CHECK]["status"] == "fail"
     assert checks[_CHECK]["code"] == "namespace_missing"
+    assert checks[_CHECK]["location"].startswith("relationships[")
+    assert "how namespaces are resolved" in checks[_CHECK]["message"]
 
 
 def test_preflight_fail_names_no_data_value(tmp_path: Path) -> None:

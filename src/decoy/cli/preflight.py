@@ -387,23 +387,16 @@ def _check_capacity(raw: dict[str, Any], config_path: Path, acc: _PreflightAccum
     `estimate_job_capacity` degrades to "not checked" rather than an
     ImportError -- the CLI's engine floor is >=0.6.0 either way.
 
-    R3 (Codex P1-2): an UNEXPECTED exception from `estimate_job_capacity`
-    (a genuine engine defect -- a compile bug, ...) is NOT caught here.
-    `estimate_job_capacity` itself only raises for a real defect (its own R3
-    contract) or returns a typed verdict, including `UNKNOWN` for EXPECTED
-    indeterminacy (an undetectable memory ceiling, an unpriceable CSV row
-    count) -- so an exception reaching this call site is never "capacity
-    merely unknown", and folding it into a WARN here would make `decoy
-    preflight` report a false pass on a real defect. Only the THREE guarded
+    R3 (Codex P1-2): `estimate_job_capacity` returns a typed verdict
+    (`UNKNOWN` for expected indeterminacy) or raises. A plan the engine
+    rejects (`PlanCompileError`) becomes a `capacity.plan_uncompilable` FAIL;
+    any other exception is a real defect and propagates, since folding it
+    into a WARN would report a false pass. Only the THREE guarded
     early-returns below (capability-detect, non-file sources, a source
-    already known missing/unreadable from disk) degrade this section
-    without running the estimator at all; once it runs, its exceptions
-    propagate and its `UNKNOWN` verdict renders as "not checked". The third
-    guard exists because a missing source is ALSO one of `estimate_job_
-    capacity`'s own documented propagating cases ("an unreadable source") --
-    without it, a job Step 4 (`_check_source_files`) already flagged as
-    missing would reach the estimator a second time and crash the whole
-    command before any finding (including Step 4's own) is ever printed.
+    already known missing/unreadable from disk) skip the estimator. The third
+    exists because a missing source is also one of the estimator's documented
+    propagating cases: without it, a source Step 4 (`_check_source_files`)
+    already flagged would crash the command before any finding is printed.
 
     Scope + posture: this section reads FILE-source metadata (parquet footer /
     a bounded local sample) to size the job. To keep preflight local and
@@ -487,11 +480,8 @@ def _check_capacity(raw: dict[str, Any], config_path: Path, acc: _PreflightAccum
         )
         return
     except PlanCompileError as exc:
-        # The estimator compiles the plan, so a plan the engine rejects (an unresolvable
-        # relationship namespace, a missing orphan-FK policy, ...) lands here. A distinct
-        # check name keeps the CHUNKED route's downgrade of CAPACITY_CHECK from turning it
-        # into a warning. Only the structured code and config path are shown; the engine's
-        # message text is not relayed.
+        # Own check name so CHUNKED's CAPACITY_CHECK downgrade cannot make it a warning.
+        # Only the structured code and path are shown, never the engine's message text.
         from decoy_engine.relationships import NamespaceConfigError
 
         hint = (
