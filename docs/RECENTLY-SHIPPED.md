@@ -22,6 +22,7 @@ git logs).
 
 ## 2026-11-09
 
+- **Engine** (`44d6afe2`, engine #415): QA-SCAN-REDACT engine part S1 (roadmap row 24c). Scan documents no longer carry raw cell values (top values and sample text) for sensitive columns unless the caller opts in. The CLI half comes with the next engine repin. Gate: Dennis GO, Codex GO; T1 green; PR CI gate passed.
 - **Engine** (`1bf9e7f8`, engine #418): QA-SHUFFLE-DET (roadmap row 24d). `shuffle` without `deterministic: true` drew from an unseeded generator, so two runs with the same config, seed and secret differed. It now draws from the mask key with the job seed and the table and column names bound in, and repeats across processes. Output changes once (pre-GA, owner OK); one new determinism golden. Gate: Dennis GO, Codex GO; full suite clean apart from one unformatted test file, fixed before merge; PR CI gate passed.
 - **CLI** (`0fafd0a`, #132): X7c part S1 (roadmap row 24). Private output files are created and chmodded through one helper, `_private_file`, so every CLI write gets owner-only permissions the same way; staging temps no longer read the mode back. Parts S2 (move the remaining call sites) and S3 (sentry) are next. Gate: Dennis GO, Codex GO; full suite on the main merge 0 failing against the `b1a6350f` baseline (3,159 collected, +25).
 
