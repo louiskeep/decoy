@@ -19,6 +19,7 @@ from __future__ import annotations
 import itertools
 import math
 import numbers
+import os
 import re
 from collections.abc import Callable, Iterable, Mapping
 from contextlib import AbstractContextManager
@@ -199,13 +200,64 @@ def _unreadable(fmt: object, layout: object) -> TargetFormatError | None:
     return None
 
 
+_RUN_ID = re.compile(r"[0-9]{8}T[0-9]{12}Z-[0-9a-f]{8,32}")
+
+
+@dataclass(frozen=True)
+class PipelineRef:
+    """The project root and pipeline name whose run folders `owning_run` looks in."""
+
+    root: Path
+    name: str
+
+
+@dataclass(frozen=True)
+class RunFolder:
+    """A run folder `<root>/out/<name>/<run-id>/`, fully resolved."""
+
+    path: Path
+    run_id: str
+
+
+def owning_run(path: Path, ref: PipelineRef) -> RunFolder | None:
+    """The run folder of `ref`'s pipeline that holds `path`, else None.
+
+    `path` is resolved first, so a `latest` link is followed and a link that leaves the run
+    folder is judged by where it lands. The run folder itself holds no file and gives None.
+    """
+    base = (ref.root / "out" / ref.name).resolve()
+    try:
+        parts = path.resolve().relative_to(base).parts
+    except ValueError:
+        return None
+    if len(parts) < 2 or _RUN_ID.fullmatch(parts[0]) is None:
+        return None
+    return RunFolder(base / parts[0], parts[0])
+
+
+def _is_declared_target(path: Path, raw: str, base_dir: Path, ref: PipelineRef | None) -> bool:
+    """True when `path` is the target declared as `raw`, at the old place or in a run folder."""
+    if path.resolve() == resolve_path(raw, base_dir).resolve():
+        return True
+    if ref is None or Path(raw).is_absolute():
+        return False
+    run = owning_run(path, ref)
+    return run is not None and path.resolve() == Path(os.path.normpath(run.path / raw))
+
+
 def input_format(
-    config_dict: Mapping[str, Any], table: str, path: Path, base_dir: Path
+    config_dict: Mapping[str, Any],
+    table: str,
+    path: Path,
+    base_dir: Path,
+    ref: PipelineRef | None = None,
 ) -> tuple[str, Mapping[str, Any] | None]:
     """The format and layout to read a CLI-written file in, for `detokenize` and `unmask`.
 
     When `path` is the table's file target (both sides fully resolved), the target's declared
     format and layout apply, and an undeclared or unknown format is refused before any read.
+    The target is the file at the old place (declared path against `base_dir`) or, when `ref`
+    is given, the same declared path inside a run folder of `ref`'s pipeline.
     Any other path has no declaration and takes the suffix rule.
     """
     targets = config_dict.get("targets")
@@ -214,7 +266,7 @@ def input_format(
         isinstance(entry, Mapping)
         and entry.get("type", "file") == "file"
         and isinstance(entry.get("path"), str)
-        and path.resolve() == resolve_path(entry["path"], base_dir).resolve()
+        and _is_declared_target(path, entry["path"], base_dir, ref)
     ):
         layout = entry.get("layout")
         error = _unreadable(entry.get("format"), layout)
