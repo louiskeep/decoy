@@ -230,14 +230,19 @@ def old_engine(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Path:
 
 
 @pytest.mark.parametrize(
-    ("command", "extra", "constant"),
+    ("command", "extra", "constant", "noun"),
     [
-        ("run", [], "OLD_ENGINE_RUN"),
-        ("tokenize", ["--vault", "tokens.db"], "OLD_ENGINE_TOKENIZE"),
+        ("run", [], "OLD_ENGINE_RUN", "UNKEYED output"),
+        ("tokenize", ["--vault", "tokens.db"], "OLD_ENGINE_TOKENIZE", "UNKEYED (forgeable) tokens"),
     ],
 )
 def test_old_engine_refusal_is_the_registry_text_without_a_ticket_id(
-    old_engine: Path, command: str, extra: list[str], constant: str, monkeypatch: pytest.MonkeyPatch
+    old_engine: Path,
+    command: str,
+    extra: list[str],
+    constant: str,
+    noun: str,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     from decoy import _mask_secret_guidance
 
@@ -245,8 +250,10 @@ def test_old_engine_refusal_is_the_registry_text_without_a_ticket_id(
     result = runner.invoke(app, [command, str(old_engine), *extra])
 
     text = getattr(_mask_secret_guidance, constant)
+    assert noun in text  # each surface names its own noun; no shared-text substitution
     assert result.exit_code == EXIT_USAGE, result.output
     assert _flat(text) in _flat(result.output)
+    assert _flat(noun) in _flat(result.output)
     assert "DE-0" not in result.output
 
 

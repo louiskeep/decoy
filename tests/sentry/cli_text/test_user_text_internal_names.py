@@ -16,7 +16,6 @@ Comments and docstrings keep their ids: no user reads them.
 from __future__ import annotations
 
 import ast
-import re
 from pathlib import Path
 
 import pytest
@@ -32,8 +31,8 @@ SRC = Path(__file__).resolve().parents[3] / "src" / "decoy"
 runner = CliRunner()
 
 
-def _hits(text: str) -> list[str]:
-    return [p.pattern for p in BANNED_USER_TEXT if p.search(text)]
+def _hits(text: str, exempt: frozenset[str] = frozenset()) -> list[str]:
+    return [p.pattern for p in BANNED_USER_TEXT if p.pattern not in exempt and p.search(text)]
 
 
 def _walk(cmd: typer.core.TyperCommand, path: tuple[str, ...] = ()):
@@ -44,8 +43,8 @@ def _walk(cmd: typer.core.TyperCommand, path: tuple[str, ...] = ()):
             yield from _walk(sub, (*path, name))
 
 
-def _tree_texts() -> list[tuple[str, str]]:
-    root = typer.main.get_command(app)
+def _tree_texts(root: typer.core.TyperCommand | None = None) -> list[tuple[str, str]]:
+    root = root or typer.main.get_command(app)
     out: list[tuple[str, str]] = []
     for path, cmd in _walk(root):
         label = "decoy " + " ".join(path)
@@ -67,6 +66,9 @@ def _rendered_help_texts() -> list[tuple[str, str]]:
         if getattr(cmd, "hidden", False):
             continue
         result = runner.invoke(app, [*path, "--help"], terminal_width=200)
+        label = "decoy " + " ".join(path)
+        assert result.exit_code == 0, f"{label} --help exited {result.exit_code}"
+        assert "Usage:" in result.output, f"{label} --help printed no usage line"
         out.append((f"decoy {' '.join(path)} --help", result.output))
     return out
 
@@ -75,6 +77,8 @@ def _usage_texts(tmp_path: Path) -> list[tuple[str, str]]:
     out = []
     for group, name in (("scan", "nofile.csv"), ("validate", "nofile.yaml")):
         result = runner.invoke(app, [group, str(tmp_path / name)])
+        assert "Usage:" in result.output, f"decoy {group} printed no usage line"
+        assert f"decoy {group}" in result.output, f"usage does not carry `decoy {group}`"
         out.append((f"usage of decoy {group}", result.output))
     return out
 
@@ -88,8 +92,8 @@ def _explain_texts() -> list[tuple[str, str]]:
     return out
 
 
-def _string_constants(path: Path) -> list[tuple[int, str]]:
-    tree = ast.parse(path.read_text(encoding="utf-8"))
+def _string_constants(source: str) -> list[tuple[int, str]]:
+    tree = ast.parse(source)
     docstrings: set[int] = set()
     for node in ast.walk(tree):
         if isinstance(node, (ast.Module, ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef)):
@@ -110,17 +114,27 @@ def _string_constants(path: Path) -> list[tuple[int, str]]:
     ]
 
 
-def _allowed(rel: str, text: str) -> bool:
-    return any(rel == path and fragment in text for (path, fragment) in ALLOWLIST)
+def _constant_hits(
+    rel: str, text: str, allowlist: dict[tuple[str, str, str], str] = ALLOWLIST
+) -> list[str]:
+    """Banned patterns a constant trips. An entry exempts one pattern, for the exact string only."""
+    exempt = frozenset(pat for (path, exact, pat) in allowlist if path == rel and exact == text)
+    return _hits(text, exempt)
+
+
+def _source_offenders(rel: str, source: str) -> list[str]:
+    return [
+        f"{rel}:{lineno}: {hits}"
+        for lineno, text in _string_constants(source)
+        if (hits := _constant_hits(rel, text))
+    ]
 
 
 def _constant_offenders() -> list[str]:
     offenders = []
     for path in sorted(SRC.rglob("*.py")):
         rel = path.relative_to(SRC).as_posix()
-        for lineno, text in _string_constants(path):
-            if _hits(text) and not _allowed(rel, text):
-                offenders.append(f"{rel}:{lineno}: {_hits(text)}")
+        offenders.extend(_source_offenders(rel, path.read_text(encoding="utf-8")))
     return offenders
 
 
@@ -167,6 +181,14 @@ def test_allowlist_entries_carry_a_reason() -> None:
     assert all(reason.strip() for reason in ALLOWLIST.values())
 
 
+def test_allowlist_entries_are_exact_and_name_a_real_banned_pattern() -> None:
+    patterns = {p.pattern for p in BANNED_USER_TEXT}
+    for (rel, exact, pattern), _reason in ALLOWLIST.items():
+        assert (SRC / rel).is_file(), rel
+        assert pattern in patterns, pattern
+        assert any(text == exact for _, text in _string_constants((SRC / rel).read_text("utf-8")))
+
+
 def test_bite_a_ticket_id_in_a_help_string_is_caught(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setitem(
         explain_mod._TOPICS,
@@ -174,4 +196,47 @@ def test_bite_a_ticket_id_in_a_help_string_is_caught(monkeypatch: pytest.MonkeyP
         explain_mod._Topic(name="modes", summary="Modes (FC-1)", body="x"),
     )
     assert _offenders(_explain_texts())
-    assert re.search(r"FC-\d", "(FC-1)")
+
+
+def test_bite_a_banned_string_constant_is_caught() -> None:
+    source = 'MSG = "see FC-1 for details"\n\ndef f():\n    """DE-02 in a docstring is fine."""\n'
+    offenders = _source_offenders("cli/synthetic.py", source)
+    assert len(offenders) == 1
+    assert offenders[0].startswith("cli/synthetic.py:1:")
+
+
+def test_bite_a_banned_token_in_click_command_help_is_caught() -> None:
+    synthetic = typer.Typer()
+
+    @synthetic.command(help="Runs the thing (DE-02).")
+    def one(flag: bool = typer.Option(False, help="Toggles FC-1 mode")) -> None: ...
+
+    @synthetic.command()
+    def two() -> None: ...
+
+    offenders = _offenders(_tree_texts(typer.main.get_command(synthetic)))
+    assert any("DE-" in o for o in offenders)
+    assert any("FC-" in o for o in offenders)
+
+
+def test_allowlist_exempts_only_the_exact_string() -> None:
+    assert _constant_hits("cli/scan.py", "_scan") == []
+    assert _constant_hits("cli/validate.py", "_gate") == []
+    # The exemption is per file: the same exact text elsewhere still fails.
+    assert _constant_hits("cli/other.py", "_scan")
+    assert _constant_hits("cli/validate.py", "_scan")
+
+
+def test_bite_near_miss_of_an_allowlisted_string_still_fails() -> None:
+    leak = "the post_scan step failed (DE-02, FC-1)"
+    assert "_scan" in leak
+    assert _constant_hits("cli/scan.py", leak)
+    assert _constant_hits("cli/scan.py", "run _scan now")
+    source = f"_LEAK = {leak!r}\n"
+    assert _source_offenders("cli/scan.py", source)
+
+
+def test_bite_exempt_string_with_a_second_banned_pattern_fails_on_that_pattern() -> None:
+    synthetic = {("cli/synthetic.py", "_scan (FC-1)", r"(?<!\w)_scan\b"): "test"}
+    hits = _constant_hits("cli/synthetic.py", "_scan (FC-1)", synthetic)
+    assert hits == [r"FC-\d"]

@@ -11,7 +11,9 @@ Two lists, each with its scope:
   `tests/sentry/cli_text/test_user_text_internal_names.py`). Comments and docstrings keep their
   ids because no user reads them.
 
-An allowlist entry names the file, the exact string constant and the reason it is not user text.
+An allowlist entry is keyed by (file, the exact full string constant, the one banned pattern it
+is exempt from) and carries the reason it is not user text. A string that merely contains the
+exempt text, or that also trips a different pattern, still fails.
 """
 
 from __future__ import annotations
@@ -65,6 +67,9 @@ DEAD_STRINGS = (
     "validate distribution",
 )
 
+_SCAN_PATTERN = r"(?<!\w)_scan\b"
+_GATE_PATTERN = r"(?<!\w)_gate\b"
+
 BANNED_USER_TEXT = tuple(
     re.compile(p)
     for p in (
@@ -77,18 +82,19 @@ BANNED_USER_TEXT = tuple(
         r"storm-reframe",
         r"decoy-platform/",
         r"decoy_engine\.\w+\._",
-        r"(?<!\w)_scan\b",
-        r"(?<!\w)_gate\b",
+        _SCAN_PATTERN,
+        _GATE_PATTERN,
     )
 )
 
-# (path under src/decoy, substring of the constant) -> reason it is not user text.
-ALLOWLIST: dict[tuple[str, str], str] = {
-    ("cli/scan.py", "_scan"): (
+# (path under src/decoy, exact full string constant, pattern source it is exempt from) -> reason
+# it is not user text. Matching is `text == exact`, and only that one pattern is skipped.
+ALLOWLIST: dict[tuple[str, str, str], str] = {
+    ("cli/scan.py", "_scan", _SCAN_PATTERN): (
         "registration name of the hidden default command; the usage path is rewritten to "
         "`decoy scan` by the default-group context, so no user reads the name"
     ),
-    ("cli/validate.py", "_gate"): (
+    ("cli/validate.py", "_gate", _GATE_PATTERN): (
         "registration name of the hidden default command; the usage path is rewritten to "
         "`decoy validate` by the default-group context, so no user reads the name"
     ),
