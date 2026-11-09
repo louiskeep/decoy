@@ -806,7 +806,7 @@ def _emit_preflight_result(
         if status == "ok" and fail_on_warning and acc.has_warnings:
             status = "warn"
         payload: dict[str, Any] = {
-            "command": "preflight",
+            "command": "validate preflight",
             "status": status,
             "config": config_str,
             "checks": acc.to_dicts(),

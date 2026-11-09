@@ -260,7 +260,7 @@ def compile(
 
     if state.mode is OutputMode.json:
         payload: dict = {
-            "command": "compile explain",
+            "command": "validate compile",
             "status": "ok",
             "config": str(config),
             "engine_version": plan.engine_version,
@@ -310,7 +310,7 @@ def _simple_error(state, config: Path, msg: str) -> None:
         emit_json(
             state,
             {
-                "command": "compile explain",
+                "command": "validate compile",
                 "status": "error",
                 "config": str(config),
                 "error": msg,
@@ -345,7 +345,7 @@ def _compile_error(state, config: Path, exc: Exception) -> None:
 
     if state.mode is OutputMode.json:
         payload: dict = {
-            "command": "compile explain",
+            "command": "validate compile",
             "status": "error",
             "error": msg,
         }

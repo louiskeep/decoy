@@ -180,7 +180,7 @@ def test_preflight_json_valid_config(tmp_path: Path):
     result = runner.invoke(app, ["validate", "preflight", "--json", str(p)])
     assert result.exit_code == 0
     data = _json.loads(result.stdout)
-    assert data["command"] == "preflight"
+    assert data["command"] == "validate preflight"
     assert data["status"] == "ok"
     assert "checks" in data
 
