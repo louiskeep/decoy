@@ -16,10 +16,17 @@ fall back to the default command, keeping ALL args (the first token is the
 positional for the default command). `list_commands` hides the default from
 help, the generated reference, and shell completion while `get_command` can
 still resolve it for dispatch.
+
+Usage and "Try ... --help" lines come from the context's `command_path`. A
+scoped context subclass makes the hidden default report its group's path, so
+the user reads `decoy scan [OPTIONS] SOURCE`, never the hidden name. Returning
+an empty name from `resolve_command` is not enough: Typer still inserts a
+separator and renders a double space.
 """
 
 from __future__ import annotations
 
+import typer
 from typer.core import TyperGroup
 
 
@@ -32,6 +39,13 @@ def make_default_group(default_cmd_name: str) -> type[TyperGroup]:
     subcommands resolve as normal.
     """
 
+    class _DefaultCommandContext(typer.Context):
+        @property
+        def command_path(self) -> str:
+            if self.info_name == default_cmd_name and self.parent is not None:
+                return self.parent.command_path
+            return super().command_path
+
     class _DefaultCommandGroup(TyperGroup):
         def resolve_command(self, ctx, args):  # type: ignore[override]
             if args:
@@ -39,6 +53,7 @@ def make_default_group(default_cmd_name: str) -> type[TyperGroup]:
                 if token not in self.commands and not token.startswith("-"):
                     cmd = self.get_command(ctx, default_cmd_name)
                     if cmd is not None:
+                        cmd.context_class = _DefaultCommandContext
                         # Keep every arg: `token` is the positional for the default cmd.
                         return default_cmd_name, cmd, args
             return super().resolve_command(ctx, args)

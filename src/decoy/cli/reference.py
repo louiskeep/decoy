@@ -88,10 +88,14 @@ def _disguises_list(json_: bool, quiet: bool, verbose: bool) -> None:
         table.add_row(e["id"], e["name"], str(e["rules"]))
     state.console.print(table)
     state.console.print()
+    # `init --preset` takes template names, not disguise ids; the two sets differ.
     state.console.print(
         hint("Tip:"),
-        "scaffold a pipeline from one with",
-        code("decoy init --preset <id>") + ".",
+        code("decoy init --preset"),
+        "takes a name from",
+        code("decoy list templates") + ";",
+        code("decoy explain disguises"),
+        "shows how a disguise id is used.",
     )
 
 

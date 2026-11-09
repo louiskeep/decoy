@@ -493,7 +493,9 @@ def test_unreadable_entries_are_value_free(tmp_path: Path) -> None:
 # ---------------------------------------------------------------------------
 
 # Recorded on the base tree (A2 head 16e82b1), with the temp folder replaced by <TMP>.
-_INIT_YAML_SHA256 = "bd50b329e465ee4209a490ee97982d05aecc2fa7d65fd3a9105048c123271c0c"
+# The init digest was re-recorded when the scaffold header stopped naming a
+# private engine module; that header line is the only line that changed.
+_INIT_YAML_SHA256 = "8c0c4567132e801bb91d967e059af6d72d46083f47a6890f9912a86a25af5d4e"
 _SCAN_JSON_SHA256 = "81b904aa55af6552451bd44d1cbec86b3cf9f860f0d4aaa2f56df720f090a476"
 
 
