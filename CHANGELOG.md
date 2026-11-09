@@ -10,6 +10,8 @@ version numbers follow the [versioning policy](docs/release/versioning.md).
 
 ### Changed
 
+- **`decoy run` says how many tables, rows and files it wrote.** The summary card gains `Tables`, `Rows` and `Files`, and the `--json` payload gains `tables`, a list of `{name, rows, path}` records. `path` is the file actually published, never one inferred from the config, and a `--chunked` run reports `rows: null` (card: `Rows n/a (chunked)`) because it streams without counting. A chunked table whose stream yields nothing publishes no file, so it is `path: null` and is not counted in `Files`.
+
 - **`--json` output of `decoy validate compile` and `decoy validate preflight` reports the command you typed (breaking, pre-1.0).** The `command` field said `compile explain` and `preflight`, the names from before both moved under `validate`; it now says `validate compile` and `validate preflight`, with no alias. A new sentry reads the command tree and fails when any envelope `command` value is not a command the CLI has.
 - **User text no longer names tickets, private modules or hidden commands.** The old-engine mask-secret refusal on `decoy run`, `decoy tokenize` and `decoy.mask()` no longer cites an internal ticket id; each surface prints one fixed text from the mask-secret guidance registry and says to upgrade `decoy-engine` to 0.4.0 or later. A new sentry (`tests/sentry/cli_text/test_user_text_internal_names.py`) fails when command help, usage lines, `explain` topics, string constants or bundled templates carry a ticket id, a private engine module path or `_scan`/`_gate`.
 
