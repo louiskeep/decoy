@@ -23,18 +23,20 @@ from pathlib import Path
 
 import pytest
 from tests.command_tree import visible_paths
+from tests.sentry.io_policy._calls import sites
 
 from decoy.cli.reference import _LIST_KINDS, _SHOW_KINDS
 
 CLI_DIR = Path(__file__).resolve().parents[3] / "src" / "decoy" / "cli"
 
-# (defining file, function) -> (parameter name, positional index, expected call sites in
-# src/decoy/cli). Calls are matched by bare function name in every file, so an import from
-# another module is still checked; the pinned count turns a missed caller red.
-FORWARDERS: dict[tuple[str, str], tuple[str, int, int]] = {
-    ("report.py", "_load_manifest"): ("command", 2, 5),
-    ("scan.py", "_emit_load_error"): ("command_name", 3, 4),
-    ("reference.py", "_reject_kind"): ("verb", 99, 2),
+# Qualified target -> (parameter name, positional index, expected call sites in src/decoy/cli).
+# Calls are resolved with the shared import resolver (`tests/sentry/io_policy/_calls.py`), so an
+# aliased import, a module-alias attribute call and a bare same-file call all count. The pinned
+# count turns a missed caller red.
+FORWARDERS: dict[str, tuple[str, int, int]] = {
+    "decoy.cli.report._load_manifest": ("command", 2, 5),
+    "decoy.cli.scan._emit_load_error": ("command_name", 3, 4),
+    "decoy.cli.reference._reject_kind": ("verb", 99, 2),
 }
 
 KIND_REGISTRIES = {"list": set(_LIST_KINDS), "show": set(_SHOW_KINDS)}
@@ -61,6 +63,15 @@ def _is_command_key(node: ast.AST | None) -> bool:
 def _call_name(call: ast.Call) -> str | None:
     fn = call.func
     return fn.id if isinstance(fn, ast.Name) else fn.attr if isinstance(fn, ast.Attribute) else None
+
+
+def _module(rel: str) -> str:
+    return "decoy.cli." + rel.removesuffix(".py").replace("/", ".")
+
+
+def _forwarder_param(rel: str, func: str) -> str | None:
+    entry = FORWARDERS.get(f"{_module(rel)}.{func}")
+    return entry[0] if entry else None
 
 
 def _sites(tree: ast.AST) -> list[tuple[int, ast.expr]]:
@@ -102,25 +113,29 @@ def scan_source(
             continue
         encl = [sp for sp in spans if sp[0] <= line <= sp[1]]
         func = min(encl, key=lambda sp: sp[1] - sp[0])[2] if encl else None
-        param = FORWARDERS.get((rel, func), (None,))[0] if func else None
+        param = _forwarder_param(rel, func) if func else None
         if param and isinstance(value, ast.Name) and value.id == param:
             continue
         problems.append(f"{rel}:{line}: envelope command is not a string literal")
-    by_name = {fn: (param, idx) for (_f, fn), (param, idx, _n) in FORWARDERS.items()}
     counts: dict[str, int] = {}
-    for call in (n for n in ast.walk(tree) if isinstance(n, ast.Call)):
-        name = _call_name(call)
-        if name not in by_name:
+    for site in sites(tree):
+        call = site.node
+        if not isinstance(call, ast.Call):
             continue
-        counts[name] = counts.get(name, 0) + 1
-        param, idx = by_name[name]
+        target = site.name
+        if target is None and isinstance(call.func, ast.Name):  # a bare same-file call
+            target = f"{_module(rel)}.{call.func.id}"
+        if target not in FORWARDERS:
+            continue
+        counts[target] = counts.get(target, 0) + 1
+        param, idx, _n = FORWARDERS[target]
         arg = next((k.value for k in call.keywords if k.arg == param), None)
         if arg is None and len(call.args) > idx:
             arg = call.args[idx]
         if isinstance(arg, ast.Constant) and isinstance(arg.value, str):
             values.append((rel, call.lineno, arg.value))
         else:
-            problems.append(f"{rel}:{call.lineno}: forwarder {name} gets a non-literal")
+            problems.append(f"{rel}:{call.lineno}: forwarder {target} gets a non-literal")
     return values, problems, counts
 
 
@@ -149,7 +164,7 @@ def test_envelope_command_values_are_typeable() -> None:
 
 def test_forwarder_call_sites_are_pinned() -> None:
     _, _, counts = collect()
-    expected = {fn: n for (_f, fn), (_p, _i, n) in FORWARDERS.items()}
+    expected = {target: n for target, (_p, _i, n) in FORWARDERS.items()}
     assert counts == expected, "a forwarder gained or lost a call site: update FORWARDERS"
 
 
@@ -186,7 +201,16 @@ SEEDS = {
     "setdefault": 'x.setdefault("command", "bogus cmd")',
     "subscript": 'x["command"] = "bogus cmd"',
     "annotated subscript": 'x["command"]: str = "bogus cmd"',
-    "cross-file forwarder call": "_emit_load_error(s, p, e, 'bogus cmd')",
+    "from-import forwarder call": (
+        "from decoy.cli.scan import _emit_load_error\n_emit_load_error(s, p, e, 'bogus cmd')"
+    ),
+    "aliased import": ("from decoy.cli.report import _load_manifest as lm\nlm(p, s, 'bogus cmd')"),
+    "module-alias attribute call": (
+        "import decoy.cli.report as r\nr._load_manifest(p, s, 'bogus cmd')"
+    ),
+    "from-import module attribute call": (
+        "from decoy.cli import report\nreport._load_manifest(p, s, command='bogus cmd')"
+    ),
 }
 
 
@@ -199,8 +223,18 @@ def test_each_shape_is_collected_and_rejected(shape: str) -> None:
 
 @pytest.mark.parametrize(
     "source",
-    ['x = {"command": name}', 'x["command"] = name', "_emit_load_error(s, p, e, name)"],
+    [
+        'x = {"command": name}',
+        'x["command"] = name',
+        "from decoy.cli.scan import _emit_load_error as e2\ne2(s, p, e, name)",
+    ],
 )
 def test_non_literal_is_a_problem(source: str) -> None:
     _, problems, _ = scan_source(source, "other.py")
     assert len(problems) == 1
+
+
+def test_bare_same_file_forwarder_call_is_collected() -> None:
+    values, _, counts = scan_source("_load_manifest(p, s, 'bogus cmd')", "report.py")
+    assert [v for _, _, v in values] == ["bogus cmd"]
+    assert counts == {"decoy.cli.report._load_manifest": 1}
