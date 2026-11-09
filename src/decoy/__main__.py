@@ -5,7 +5,12 @@ The Typer app is exported as `app` so the project script in pyproject.toml
 through `if __name__ == "__main__":`.
 """
 
+import errno
+import os
+from typing import Any
+
 import typer
+from typer.core import TyperGroup
 
 from decoy import __version__
 from decoy.cli.ci import ci_app
@@ -36,6 +41,8 @@ from decoy.cli.unmask import unmask as unmask_command
 from decoy.cli.upgrade import UPGRADE_EPILOG
 from decoy.cli.upgrade import upgrade as upgrade_command
 from decoy.cli.validate import validate_app
+from decoy.ui.output import print_traceback, setup_output
+from decoy.ui.theme import error, hint
 
 # Quick-start hints embedded in the root help. Picked up by Typer's
 # default formatter; the `decoy info` command renders the same idea
@@ -67,11 +74,60 @@ Try one of:
 Run `decoy --install-completion` to enable shell tab completion.
 """
 
+# Typer's usage-error base (bad flag, unknown command, BadParameter), taken from a public
+# export so the guard never imports Typer's bundled Click package.
+_USAGE_ERROR = typer.BadParameter.__base__
+
+# Exceptions Click and Typer already turn into a clean exit. The guard must not touch them.
+_PASS_THROUGH = (typer.Exit, typer.Abort, _USAGE_ERROR, EOFError)
+
+
+class _GuardedGroup(TyperGroup):
+    """Root group that keeps a Python traceback from reaching the user.
+
+    An unexpected `Exception` from any command prints `error: internal error (<ClassName>)`
+    and exits 1. `--verbose` adds the traceback; `DECOY_DEBUG=1` re-raises untouched (the
+    test suite sets it). `KeyboardInterrupt` and `SystemExit` are not `Exception`s and go to
+    Click as before. A closed pipe (EPIPE) also goes to Click; every other `OSError` is a crash.
+    """
+
+    def invoke(self, ctx: Any) -> Any:
+        # CliRunner does not set sys.argv, so read the flag from the parsed context.
+        args = [*ctx._protected_args, *ctx.args]
+        verbose = "--verbose" in args or "-v" in args
+        debug = os.environ.get("DECOY_DEBUG") == "1"
+        try:
+            return super().invoke(ctx)
+        except _PASS_THROUGH:
+            raise
+        except Exception as exc:
+            if isinstance(exc, OSError) and exc.errno == errno.EPIPE:
+                raise
+            if debug:
+                raise
+            name = type(exc).__name__
+            state = setup_output(json_=False, quiet=False, verbose=verbose)
+            state.err_console.print(error("error:"), f"internal error ({name})")
+            state.err_console.print(
+                " ", hint("hint:"), "rerun with --verbose for the full traceback."
+            )
+            if verbose:
+                state.err_console.print(
+                    hint("(--verbose: traceback below; diagnostic output may contain row data)")
+                )
+                print_traceback(state)
+        # Raised outside the `except` block so the safe exit carries neither the original
+        # exception as __cause__ nor as __context__.
+        raise typer.Exit(1)
+
+
 app = typer.Typer(
     name="decoy",
+    cls=_GuardedGroup,
     help=_ROOT_HELP,
     no_args_is_help=True,
     add_completion=True,
+    pretty_exceptions_enable=False,
 )
 
 
@@ -135,7 +191,9 @@ def _root(
     # rollback precede any network), and an unresolved placeholder key means this build
     # cannot act on a notice, so the startup probe never runs ahead of either.
     _update_check.maybe_print_notice(
-        suppress=no_update_check or ctx.invoked_subcommand in _NO_NOTICE_COMMANDS or _key_unresolved()
+        suppress=no_update_check
+        or ctx.invoked_subcommand in _NO_NOTICE_COMMANDS
+        or _key_unresolved()
     )
 
 
