@@ -5,8 +5,8 @@
 surfaces nobody regenerates: the root-help block (`_ROOT_HELP` in
 `src/decoy/__main__.py`) and the README "Common commands" table.
 
-Both are read against the LIVE Typer app (`decoy.__main__.app`), via
-`app.registered_commands` / `app.registered_groups`, so this test cannot go
+Both are read against the LIVE Typer app (`decoy.__main__.app`), via the shared
+`tests.command_tree` walker, so this test cannot go
 stale: adding, removing, or re-parenting a command and forgetting to update
 the help/README fails here.
 
@@ -23,6 +23,7 @@ import re
 from pathlib import Path
 
 import pytest
+from tests.command_tree import registry
 
 from decoy.__main__ import _ROOT_HELP, app
 
@@ -81,22 +82,7 @@ _README_TABLE_OMITTED = frozenset(
 # ---------------------------------------------------------------------------
 
 
-def _registry() -> tuple[set[str], dict[str, set[str]]]:
-    """Return (top-level leaf command names, {group name: {subcommand names}}).
-
-    Read straight off the Typer app so it tracks the real command tree.
-    """
-    leaf_top = {c.name for c in app.registered_commands if c.name}
-    groups: dict[str, set[str]] = {}
-    for g in app.registered_groups:
-        if not g.name:
-            continue
-        ti = g.typer_instance
-        groups[g.name] = {c.name for c in ti.registered_commands if c.name}
-    return leaf_top, groups
-
-
-LEAF_TOP, GROUPS = _registry()
+LEAF_TOP, GROUPS = registry()
 TOP_LEVEL = LEAF_TOP | set(GROUPS)
 # Full paths that resolve to a runnable command, plus bare group names.
 LEAF_PATHS = LEAF_TOP | {f"{g} {sub}" for g, subs in GROUPS.items() for sub in subs}

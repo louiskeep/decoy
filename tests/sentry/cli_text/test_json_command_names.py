@@ -4,8 +4,9 @@ A literal copied from an old mount point (``"compile explain"`` after the comman
 ``validate``) stays wrong with no test noticing. This reads the Click tree at test time and
 checks, by AST over ``src/decoy/cli/**``, every string that becomes an envelope ``command``:
 
-* dict literals with the key ``"command"``;
-* subscript assignments ``envelope["command"] = "..."``;
+* dict literals with the key ``"command"``, ``dict(command=...)``, ``x.update(command=...)`` and
+  ``x.setdefault("command", ...)``;
+* subscript assignments ``envelope["command"] = "..."`` (annotated or not);
 * the call-site literals of the named forwarders in ``FORWARDERS`` (a helper that takes the
   command name as an argument and puts it in the envelope).
 
@@ -21,37 +22,22 @@ import ast
 from pathlib import Path
 
 import pytest
-import typer.main
+from tests.command_tree import visible_paths
 
-from decoy.__main__ import app
 from decoy.cli.reference import _LIST_KINDS, _SHOW_KINDS
 
 CLI_DIR = Path(__file__).resolve().parents[3] / "src" / "decoy" / "cli"
 
-# (file relative to CLI_DIR, function, parameter name, parameter index) of helpers that put an
-# argument into the envelope `command`. Each call site must pass a literal; the helper's own
-# `{"command": <param>}` is then not a violation.
-FORWARDERS: dict[tuple[str, str], tuple[str, int]] = {
-    ("report.py", "_load_manifest"): ("command", 2),
-    ("scan.py", "_emit_load_error"): ("command_name", 3),
-    ("reference.py", "_reject_kind"): ("verb", 99),
+# (defining file, function) -> (parameter name, positional index, expected call sites in
+# src/decoy/cli). Calls are matched by bare function name in every file, so an import from
+# another module is still checked; the pinned count turns a missed caller red.
+FORWARDERS: dict[tuple[str, str], tuple[str, int, int]] = {
+    ("report.py", "_load_manifest"): ("command", 2, 5),
+    ("scan.py", "_emit_load_error"): ("command_name", 3, 4),
+    ("reference.py", "_reject_kind"): ("verb", 99, 2),
 }
 
 KIND_REGISTRIES = {"list": set(_LIST_KINDS), "show": set(_SHOW_KINDS)}
-
-
-def _visible_paths() -> set[tuple[str, ...]]:
-    paths: set[tuple[str, ...]] = set()
-
-    def walk(cmd: object, prefix: tuple[str, ...]) -> None:
-        for name, sub in getattr(cmd, "commands", {}).items():
-            if getattr(sub, "hidden", False):
-                continue
-            paths.add((*prefix, name))
-            walk(sub, (*prefix, name))
-
-    walk(typer.main.get_command(app), ())
-    return paths
 
 
 def is_valid(value: str, paths: set[tuple[str, ...]]) -> bool:
@@ -63,7 +49,7 @@ def is_valid(value: str, paths: set[tuple[str, ...]]) -> bool:
             rest = tokens[cut:]
             if not rest:
                 return True
-            registry = KIND_REGISTRIES.get(tokens[cut - 1]) if cut == 1 else None
+            registry = KIND_REGISTRIES.get(tokens[0]) if cut == 1 else None
             return registry is not None and len(rest) == 1 and rest[0] in registry
     return False
 
@@ -72,92 +58,103 @@ def _is_command_key(node: ast.AST | None) -> bool:
     return isinstance(node, ast.Constant) and node.value == "command"
 
 
-class _Collector(ast.NodeVisitor):
-    def __init__(self, rel: str) -> None:
-        self.rel = rel
-        self.sites: list[tuple[int, ast.expr]] = []  # (line, value) envelope values
-        self.calls: list[ast.Call] = []
-
-    def visit_Dict(self, node: ast.Dict) -> None:
-        for key, value in zip(node.keys, node.values):
-            if _is_command_key(key):
-                self.sites.append((node.lineno, value))
-        self.generic_visit(node)
-
-    def visit_Assign(self, node: ast.Assign) -> None:
-        for target in node.targets:
-            if isinstance(target, ast.Subscript) and _is_command_key(target.slice):
-                self.sites.append((node.lineno, node.value))
-        self.generic_visit(node)
-
-    def visit_Call(self, node: ast.Call) -> None:
-        self.calls.append(node)
-        self.generic_visit(node)
-
-
-def _forwarder_for(rel: str, func: str) -> str | None:
-    for (frel, ffunc), (param, _idx) in FORWARDERS.items():
-        if frel == rel and ffunc == func:
-            return param
-    return None
-
-
 def _call_name(call: ast.Call) -> str | None:
     fn = call.func
     return fn.id if isinstance(fn, ast.Name) else fn.attr if isinstance(fn, ast.Attribute) else None
 
 
-def collect() -> tuple[list[tuple[str, int, str]], list[str]]:
-    """Return ((file, line, literal) values to validate, problems that are not value errors)."""
+def _sites(tree: ast.AST) -> list[tuple[int, ast.expr]]:
+    """Every expression that becomes an envelope ``command``, with its line."""
+    sites: list[tuple[int, ast.expr]] = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Dict):
+            sites += [
+                (node.lineno, v) for k, v in zip(node.keys, node.values) if _is_command_key(k)
+            ]
+        elif isinstance(node, (ast.Assign, ast.AnnAssign)) and node.value is not None:
+            targets = node.targets if isinstance(node, ast.Assign) else [node.target]
+            if any(isinstance(t, ast.Subscript) and _is_command_key(t.slice) for t in targets):
+                sites.append((node.lineno, node.value))
+        elif isinstance(node, ast.Call):
+            name = _call_name(node)
+            if name in {"dict", "update"}:
+                sites += [(node.lineno, k.value) for k in node.keywords if k.arg == "command"]
+            elif name == "setdefault" and len(node.args) == 2 and _is_command_key(node.args[0]):
+                sites.append((node.lineno, node.args[1]))
+    return sites
+
+
+def scan_source(
+    source: str, rel: str
+) -> tuple[list[tuple[str, int, str]], list[str], dict[str, int]]:
+    """One file: (literal values to validate, non-value problems, forwarder call counts)."""
+    tree = ast.parse(source)
     values: list[tuple[str, int, str]] = []
     problems: list[str] = []
-    forwarder_funcs = {ffunc: (frel, p) for (frel, ffunc), p in FORWARDERS.items()}
+    spans = [
+        (n.lineno, n.end_lineno or n.lineno, n.name)
+        for n in ast.walk(tree)
+        if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))
+    ]
+    for line, value in _sites(tree):
+        if isinstance(value, ast.Constant) and isinstance(value.value, str):
+            values.append((rel, line, value.value))
+            continue
+        encl = [sp for sp in spans if sp[0] <= line <= sp[1]]
+        func = min(encl, key=lambda sp: sp[1] - sp[0])[2] if encl else None
+        param = FORWARDERS.get((rel, func), (None,))[0] if func else None
+        if param and isinstance(value, ast.Name) and value.id == param:
+            continue
+        problems.append(f"{rel}:{line}: envelope command is not a string literal")
+    by_name = {fn: (param, idx) for (_f, fn), (param, idx, _n) in FORWARDERS.items()}
+    counts: dict[str, int] = {}
+    for call in (n for n in ast.walk(tree) if isinstance(n, ast.Call)):
+        name = _call_name(call)
+        if name not in by_name:
+            continue
+        counts[name] = counts.get(name, 0) + 1
+        param, idx = by_name[name]
+        arg = next((k.value for k in call.keywords if k.arg == param), None)
+        if arg is None and len(call.args) > idx:
+            arg = call.args[idx]
+        if isinstance(arg, ast.Constant) and isinstance(arg.value, str):
+            values.append((rel, call.lineno, arg.value))
+        else:
+            problems.append(f"{rel}:{call.lineno}: forwarder {name} gets a non-literal")
+    return values, problems, counts
+
+
+def collect() -> tuple[list[tuple[str, int, str]], list[str], dict[str, int]]:
+    values: list[tuple[str, int, str]] = []
+    problems: list[str] = []
+    counts: dict[str, int] = {}
     for path in sorted(CLI_DIR.rglob("*.py")):
-        rel = path.relative_to(CLI_DIR).as_posix()
-        tree = ast.parse(path.read_text(encoding="utf-8"))
-        col = _Collector(rel)
-        col.visit(tree)
-        # Enclosing function per site, found by line span.
-        spans = [
-            (n.lineno, n.end_lineno or n.lineno, n.name)
-            for n in ast.walk(tree)
-            if isinstance(n, ast.FunctionDef)
-        ]
-        for line, value in col.sites:
-            if isinstance(value, ast.Constant) and isinstance(value.value, str):
-                values.append((rel, line, value.value))
-                continue
-            encl = [s for s in spans if s[0] <= line <= s[1]]
-            inner = min(encl, key=lambda s: s[1] - s[0]) if encl else None
-            param = _forwarder_for(rel, inner[2]) if inner else None
-            if param and isinstance(value, ast.Name) and value.id == param:
-                continue
-            problems.append(f"{rel}:{line}: envelope command is not a string literal")
-        # Call sites of forwarders defined in this file.
-        for call in col.calls:
-            name = _call_name(call)
-            if name not in forwarder_funcs or forwarder_funcs[name][0] != rel:
-                continue
-            param, idx = FORWARDERS[(rel, name)]
-            arg = next((k.value for k in call.keywords if k.arg == param), None)
-            if arg is None and len(call.args) > idx:
-                arg = call.args[idx]
-            if isinstance(arg, ast.Constant) and isinstance(arg.value, str):
-                values.append((rel, call.lineno, arg.value))
-            else:
-                problems.append(f"{rel}:{call.lineno}: forwarder {name} gets a non-literal")
-    return values, problems
+        v, p, c = scan_source(
+            path.read_text(encoding="utf-8"), path.relative_to(CLI_DIR).as_posix()
+        )
+        values += v
+        problems += p
+        for name, n in c.items():
+            counts[name] = counts.get(name, 0) + n
+    return values, problems, counts
 
 
 def test_envelope_command_values_are_typeable() -> None:
-    paths = _visible_paths()
-    values, problems = collect()
+    paths = visible_paths()
+    values, problems, _ = collect()
     bad = [f"{r}:{n}: {v!r}" for r, n, v in values if not is_valid(v, paths)]
-    assert problems == [] and bad == []
+    assert bad == [], f"envelope command is not a visible command path: {bad}"
+    assert problems == [], f"envelope command the sentry cannot check: {problems}"
+
+
+def test_forwarder_call_sites_are_pinned() -> None:
+    _, _, counts = collect()
+    expected = {fn: n for (_f, fn), (_p, _i, n) in FORWARDERS.items()}
+    assert counts == expected, "a forwarder gained or lost a call site: update FORWARDERS"
 
 
 def test_collector_sees_the_known_sites() -> None:
-    values, _ = collect()
+    values, _, _ = collect()
     seen = {v for _, _, v in values}
     assert {"validate", "report fidelity", "report render", "init", "run"} <= seen
 
@@ -179,4 +176,31 @@ def test_collector_sees_the_known_sites() -> None:
     ],
 )
 def test_validator_bites(value: str, ok: bool) -> None:
-    assert is_valid(value, _visible_paths()) is ok
+    assert is_valid(value, visible_paths()) is ok
+
+
+SEEDS = {
+    "dict literal": 'x = {"command": "bogus cmd"}',
+    "dict()": 'x = dict(command="bogus cmd")',
+    "update()": 'x.update(command="bogus cmd")',
+    "setdefault": 'x.setdefault("command", "bogus cmd")',
+    "subscript": 'x["command"] = "bogus cmd"',
+    "annotated subscript": 'x["command"]: str = "bogus cmd"',
+    "cross-file forwarder call": "_emit_load_error(s, p, e, 'bogus cmd')",
+}
+
+
+@pytest.mark.parametrize("shape", sorted(SEEDS))
+def test_each_shape_is_collected_and_rejected(shape: str) -> None:
+    values, _, _ = scan_source(SEEDS[shape], "other.py")
+    assert [v for _, _, v in values] == ["bogus cmd"]
+    assert not is_valid("bogus cmd", visible_paths())
+
+
+@pytest.mark.parametrize(
+    "source",
+    ['x = {"command": name}', 'x["command"] = name', "_emit_load_error(s, p, e, name)"],
+)
+def test_non_literal_is_a_problem(source: str) -> None:
+    _, problems, _ = scan_source(source, "other.py")
+    assert len(problems) == 1
