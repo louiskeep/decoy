@@ -44,6 +44,10 @@ def _stage(path: Path, data: bytes = b"new", *, private: bool = False) -> None:
         tmp.write_bytes(data)
 
 
+def _stage_private(path: Path) -> None:
+    _stage(path, private=True)
+
+
 def test_clean_exit_publishes_and_leaves_no_temp(tmp_path: Path) -> None:
     target = tmp_path / "out.csv"
     _stage(target)
@@ -167,6 +171,76 @@ def test_a_fault_at_each_step_is_a_value_free_atomic_error(
     assert target.read_bytes() == (b"new" if step == "dirsync" else b"old")
 
 
+def _write_local(path: Path) -> None:
+    write_local_target(path, b"new", WriteMode.REPLACE)
+
+
+@posix_only
+@pytest.mark.parametrize("entry", [_stage_private, _write_local])
+def test_a_narrowing_failure_on_a_private_write_is_a_value_free_atomic_error(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    entry,  # type: ignore[no-untyped-def]
+) -> None:
+    target = tmp_path / "out.csv"
+    target.write_bytes(b"old")
+    monkeypatch.setattr(os, "fchmod", _boom)
+    with pytest.raises(AtomicWriteError) as caught:
+        entry(target)
+    exc = caught.value
+    assert exc.code == ATOMIC_WRITE_FAILED
+    assert exc.errno == errno.EIO
+    assert exc.__cause__ is None and exc.__context__ is None
+    assert str(exc) == exc.code and str(tmp_path) not in str(exc)
+    monkeypatch.undo()
+    assert _names(tmp_path) == ["out.csv"] and target.read_bytes() == b"old"
+
+
+@posix_only
+@pytest.mark.parametrize("private", [False, True])
+def test_a_filesystem_that_ignores_chmod_still_publishes_the_staged_write(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, private: bool
+) -> None:
+    """CIFS without unix extensions, drvfs and FAT accept chmod and change nothing."""
+    target = tmp_path / "out.csv"
+    monkeypatch.setattr(os, "fchmod", lambda *_a: None)
+    monkeypatch.setattr(os, "chmod", lambda *_a, **_k: None)
+    monkeypatch.setattr(os, "open", _open_wide)
+    with _stager(private)(target) as tmp:
+        tmp.write_bytes(b"data")
+    assert target.read_bytes() == b"data"
+    assert _names(tmp_path) == ["out.csv"]
+
+
+@posix_only
+@pytest.mark.parametrize("fault", ["raises", "does_not_stick"])
+def test_a_narrowing_failure_on_an_fd_alias_refuses_the_write(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, fault: str
+) -> None:
+    redirected = tmp_path / "out.csv"
+    redirected.write_bytes(b"")
+    redirected.chmod(0o644)
+    fd = os.open(redirected, os.O_WRONLY)
+    try:
+        monkeypatch.setattr(os, "fchmod", _boom if fault == "raises" else lambda *_a: None)
+        with pytest.raises(AtomicWriteError) as caught:
+            with staged_private_target(Path(f"/dev/fd/{fd}")):
+                pytest.fail("the block must not run")
+        assert caught.value.code == ATOMIC_WRITE_FAILED
+        assert caught.value.errno == (errno.EIO if fault == "raises" else errno.EPERM)
+        assert caught.value.__context__ is None
+    finally:
+        os.close(fd)
+
+
+_REAL_OPEN = os.open
+
+
+def _open_wide(path, flags, mode=0o777, *a, **k):  # type: ignore[no-untyped-def]
+    """Create staging files 0644 so a no-op fchmod leaves group and other bits on them."""
+    return _REAL_OPEN(path, flags, 0o644 if flags & os.O_EXCL else mode, *a, **k)
+
+
 def test_describe_without_an_errno_is_the_bare_code() -> None:
     assert describe(AtomicWriteError(ATOMIC_WRITE_FAILED)) == ATOMIC_WRITE_FAILED
 
@@ -185,6 +259,37 @@ def test_stat_failure_other_than_missing_is_an_atomic_error(
     with pytest.raises(AtomicWriteError) as caught:
         _stage(tmp_path / "out.csv")
     assert caught.value.errno == errno.EACCES and caught.value.__context__ is None
+
+
+# -- a symlink owned by another user ------------------------------------------------------
+
+
+@posix_only
+@pytest.mark.parametrize("private", [True, False])
+def test_a_target_symlink_owned_by_another_user_is_refused(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, private: bool
+) -> None:
+    dest = tmp_path / "dest.csv"
+    dest.write_bytes(b"theirs")
+    link = tmp_path / "out.csv"
+    link.symlink_to(dest)
+    monkeypatch.setattr(os, "geteuid", lambda: os.lstat(link).st_uid + 1)
+    with pytest.raises(AtomicWriteError) as caught:
+        _stage(link, private=private)
+    assert caught.value.code == ATOMIC_WRITE_FAILED and caught.value.errno == errno.EPERM
+    assert caught.value.__context__ is None and str(tmp_path) not in str(caught.value)
+    monkeypatch.undo()
+    assert dest.read_bytes() == b"theirs" and _names(tmp_path) == ["dest.csv", "out.csv"]
+
+
+@posix_only
+def test_a_target_symlink_the_user_owns_is_still_followed(tmp_path: Path) -> None:
+    dest = tmp_path / "dest.csv"
+    dest.write_bytes(b"old")
+    link = tmp_path / "out.csv"
+    link.symlink_to(dest)
+    _stage(link, private=True)
+    assert link.is_symlink() and dest.read_bytes() == b"new"
 
 
 # -- permissions -------------------------------------------------------------------------

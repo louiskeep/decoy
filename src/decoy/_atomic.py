@@ -6,6 +6,7 @@ ext4 documentation on rename and fsync; `os.replace` as the successor to the dep
 `atomicwrites` package (https://github.com/untitaker/python-atomicwrites), whose
 `atomic_write` context manager is the shape of `staged_local_target`; the engine's
 `fileaccess.write_private` recipe, mirrored without its file-access policy so it runs on Windows.
+Creation and every mode change live in `_private_file`, the one module Windows ACLs will change.
 Local plan: `plan/local-record-library:docs/plans/2026-11-05-local-record-library.md` section 4.9.
 
 Rules this module owns (tests/sentry/test_atomic_writer.py fails when `os.replace`,
@@ -40,14 +41,19 @@ import enum
 import errno
 import os
 import re
-import secrets
 import stat
-import sys
 import time
 from collections.abc import Callable, Iterator
 from contextlib import AbstractContextManager
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath, PureWindowsPath
+
+from decoy import _private_file
+from decoy._private_file import (
+    apply_mode,
+    create_exclusive,
+    restrict_owner_only,
+)
 
 __all__ = [
     "ATOMIC_BAD_NAME",
@@ -82,7 +88,6 @@ _DEVICE_STEMS = frozenset(
     | {f"LPT{c}" for c in "123456789\u00b9\u00b2\u00b3"}
 )
 
-_WINDOWS = sys.platform == "win32"
 _sleep = time.sleep  # a module attribute so tests can replace it
 
 # 10 attempts, 9 sleeps: 10 ms doubling, capped at 160 ms, 950 ms in total.
@@ -168,35 +173,6 @@ _OWNER_RW = 0o600
 # The fd aliases, matched on the user-given path before any symlink is resolved. Not all of
 # /dev or /proc: /dev/shm is a real tmpfs and must be staged.
 _FD_ALIAS = re.compile(r"/dev/(?:stdin|stdout|stderr|fd/[0-9]+)|/proc/self/fd/[0-9]+")
-_FALLBACK_NAME_MAX = 255
-
-
-def _temp_name(base: str, parent: Path) -> str:
-    """`.<base>.decoy-<hex>.tmp`, with `base` cut by whole characters to fit the filesystem."""
-    try:
-        limit = os.pathconf(parent, "PC_NAME_MAX")
-    except (AttributeError, ValueError, OSError):
-        limit = _FALLBACK_NAME_MAX
-    suffix = f".decoy-{secrets.token_hex(8)}.tmp"
-    while len(os.fsencode(f".{base}{suffix}")) > limit and base:
-        base = base[:-1]
-    return f".{base}{suffix}"
-
-
-def _create_temp(parent: Path, base: str, private: bool) -> tuple[str, int]:
-    """Create the staging file exclusively. Returns its path and the mode bits it was given."""
-    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0)
-    while True:
-        tmp = str(parent / _temp_name(base, parent))
-        try:
-            fd = os.open(tmp, flags, 0o600 if private else 0o666)
-        except FileExistsError:
-            continue
-        try:
-            bits = stat.S_IMODE(os.fstat(fd).st_mode) & 0o777
-        finally:
-            os.close(fd)
-        return tmp, bits
 
 
 def _final_bits(tmp: str, existing: os.stat_result | None, private: bool, created: int) -> int:
@@ -210,7 +186,7 @@ def _final_bits(tmp: str, existing: os.stat_result | None, private: bool, create
     if existing is None or not stat.S_ISREG(existing.st_mode):
         return created
     copied = stat.S_IMODE(existing.st_mode) & 0o777
-    if not _WINDOWS and existing.st_gid != os.stat(tmp).st_gid:
+    if not _private_file._WINDOWS and existing.st_gid != os.stat(tmp).st_gid:
         try:
             os.chown(tmp, -1, existing.st_gid)
         except OSError:
@@ -225,10 +201,7 @@ def _publish(tmp: str, real: Path, bits: int, mode: WriteMode) -> bool:
     """
     fd = os.open(tmp, os.O_RDWR)  # Windows FlushFileBuffers needs write access
     try:
-        if _WINDOWS:
-            os.chmod(tmp, bits)
-        else:
-            os.fchmod(fd, bits)
+        apply_mode(fd, tmp, bits)
         os.fsync(fd)
     finally:
         os.close(fd)
@@ -264,9 +237,8 @@ def _staged(
     failed = False
     failed_errno: int | None = None
     try:
-        tmp, created = _create_temp(tmp_dir or real.parent, real.name, private)
-        # Owner-only while written, and a restrictive umask must not lock the writer out.
-        os.chmod(tmp, _OWNER_RW)
+        # Owner-only while written: create_exclusive narrows the temp before returning it.
+        tmp, created = create_exclusive(tmp_dir or real.parent, real.name, private=private)
     except OSError as exc:
         failed, failed_errno = True, exc.errno
     if failed:
@@ -283,7 +255,7 @@ def _staged(
         except OSError as exc:
             failed, failed_errno = True, exc.errno
         else:
-            alive = not made or (mode is WriteMode.CREATE_ONCE and not _WINDOWS)
+            alive = not made or (mode is WriteMode.CREATE_ONCE and not _private_file._WINDOWS)
             if made and alive:
                 # The hard-link move leaves the temp name as a second link; drop it before the
                 # directory sync so a crash cannot leave a stray hidden entry.
@@ -345,12 +317,28 @@ def _restrict_fd_target(alias: str) -> None:
     try:
         info = os.fstat(fd)
         if stat.S_ISREG(info.st_mode) and stat.S_IMODE(info.st_mode) & 0o077:
-            os.fchmod(fd, _OWNER_RW)
-            narrowed = not stat.S_IMODE(os.fstat(fd).st_mode) & 0o077
+            restrict_owner_only(fd, alias)
     except OSError as exc:
         narrowed, failed_errno = False, exc.errno
     if not narrowed:
         raise AtomicWriteError(ATOMIC_WRITE_FAILED, failed_errno)
+
+
+def _refuse_foreign_symlink(path: Path) -> None:
+    """Refuse a final-component symlink that another user owns.
+
+    The write follows a symlink, so a local user could point one at a file of the victim's own
+    and have the replacement land there (lost data, not a leak: the bytes are 0600). This
+    mirrors Linux `fs.protected_symlinks`, which macOS lacks. A link the user owns is followed.
+    """
+    if _private_file._WINDOWS:
+        return
+    try:
+        info = os.lstat(path)
+    except OSError:
+        return  # missing or unreadable: the stat that follows reports it
+    if stat.S_ISLNK(info.st_mode) and info.st_uid != os.geteuid():
+        raise AtomicWriteError(ATOMIC_WRITE_FAILED, errno.EPERM)
 
 
 @contextlib.contextmanager
@@ -358,11 +346,12 @@ def _staged_target(path: Path, private: bool) -> Iterator[Path]:
     _require_component(path.name)
     # POSIX keeps a leading "//" in abspath; collapse it so //dev/stdout is still an alias.
     alias = re.sub(r"^/+", "/", os.path.abspath(path))
-    if not _WINDOWS and _FD_ALIAS.fullmatch(alias):
+    if not _private_file._WINDOWS and _FD_ALIAS.fullmatch(alias):
         if private:
             _restrict_fd_target(alias)
         yield path  # /dev/stdout, /dev/fd/N, /proc/self/fd/N: a redirect is written through
         return
+    _refuse_foreign_symlink(path)
     existing: os.stat_result | None = None
     failed_errno: int | None = None
     failed = False
@@ -412,7 +401,7 @@ def _require_component(name: str) -> None:
         or name in {".", ".."}
         or "\0" in name
         or any(sep in name for sep in seps)
-        or (_WINDOWS and (stem in _DEVICE_STEMS or "\\" in name or ":" in name))
+        or (_private_file._WINDOWS and (stem in _DEVICE_STEMS or "\\" in name or ":" in name))
     ):
         raise AtomicWriteError(ATOMIC_BAD_NAME)
 
@@ -433,7 +422,7 @@ def _create_once(tmp: str, target: Path) -> bool:
     """Move `tmp` to `target` only if `target` does not exist; no check-then-act window."""
     no_hard_links: int | None = None
     try:
-        if _WINDOWS:
+        if _private_file._WINDOWS:
             # os.rename fails on Windows when the target exists, which is the no-clobber move.
             _retry_on_windows(lambda: os.rename(tmp, target))
         else:
@@ -441,7 +430,7 @@ def _create_once(tmp: str, target: Path) -> bool:
     except FileExistsError:
         return False
     except OSError as exc:
-        if _WINDOWS or exc.errno not in _NO_HARD_LINKS:
+        if _private_file._WINDOWS or exc.errno not in _NO_HARD_LINKS:
             raise
         no_hard_links = exc.errno
     else:
@@ -459,7 +448,7 @@ def _retry_on_windows(move: Callable[[], None]) -> None:
             move()
             return
         except PermissionError:
-            if not _WINDOWS or attempt == _RETRY_ATTEMPTS - 1:
+            if not _private_file._WINDOWS or attempt == _RETRY_ATTEMPTS - 1:
                 raise
             _sleep(delay)
             delay = min(delay * 2, _RETRY_CAP_SECONDS)
@@ -470,7 +459,7 @@ def fsync_directory(directory: Path) -> None:
 
     Windows cannot open a directory and NTFS journals the rename, so it does nothing there.
     """
-    if _WINDOWS:
+    if _private_file._WINDOWS:
         return
     fd = os.open(directory, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))
     try:
