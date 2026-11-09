@@ -693,13 +693,7 @@ def run(
                 try:
                     import decoy_engine.keyprovider  # noqa: F401
                 except ImportError as exc:
-                    raise _MaskSecretUsageError(
-                        "a mask secret is configured (mask_secret_ref / "
-                        "--mask-secret) but the installed decoy-engine is too "
-                        "old to honor it -- it has no DE-02 keyprovider, so it "
-                        "would silently emit UNKEYED output. Upgrade to "
-                        "decoy-engine>=0.4.0 (with DE-02). See: decoy explain keys."
-                    ) from exc
+                    raise _MaskSecretUsageError(_mask_secret_guidance.OLD_ENGINE_RUN) from exc
 
             _ev_config_dict = config_dict
             _ev_engine_version = engine_version

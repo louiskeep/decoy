@@ -321,11 +321,7 @@ def tokenize(
         # clean coded usage error instead of the catch-all.
         from decoy_engine.keyprovider import MaskSecretError
     except ImportError as exc:
-        _emit_error(
-            "a mask secret is configured but the installed decoy-engine is too old "
-            "to honor it (no DE-02 keyprovider); it would silently emit UNKEYED "
-            "(forgeable) tokens. Upgrade decoy-engine."
-        )
+        _emit_error(_mask_secret_guidance.OLD_ENGINE_TOKENIZE)
         raise typer.Exit(code=EXIT_USAGE) from exc
 
     from decoy.cli.run import _load_sources_from_config, _write_mask_outputs

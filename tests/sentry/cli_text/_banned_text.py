@@ -1,0 +1,121 @@
+"""The one registry of banned user text.
+
+Two lists, each with its scope:
+
+* `DEAD_STRINGS`: invocation strings of deleted commands. Scope: every line of every
+  `src/decoy/**/*.py` file, comments and docstrings included (checked by
+  `tests/unit/test_no_dead_command_strings.py`).
+* `BANNED_USER_TEXT`: internal names a user must never read (ticket ids, private module
+  paths, hidden command names). Scope: text a user can see, namely command help, usage lines,
+  `explain` topics, string constants outside docstrings, and bundled templates (checked by
+  `tests/sentry/cli_text/test_user_text_internal_names.py`). Comments and docstrings keep their
+  ids because no user reads them.
+
+An allowlist entry is keyed by (file, the exact full string constant, the one banned pattern it
+is exempt from, the AST context it sits in) and carries the expected site count and the reason it
+is not user text. A string that merely contains the
+exempt text, or that also trips a different pattern, still fails.
+"""
+
+from __future__ import annotations
+
+import re
+
+DEAD_STRINGS = (
+    "storm scan",
+    "storm test",
+    # S2: top-level commands removed / re-parented. The space is load-bearing:
+    # it keeps `decoy validate preflight` and `decoy validate compile` (the
+    # live forms) from matching `decoy preflight` / `decoy compile`.
+    "decoy compile",
+    "decoy plan",
+    "decoy preflight",
+    # S3a: `profile` + `storm analyze` merged into `decoy scan`; the saved-scan
+    # subcommands moved from `storm` to `scan`. `storm integrity` stays live and
+    # is NOT listed here.
+    "decoy profile",
+    "decoy storm analyze",
+    "storm fields",
+    "storm show",
+    "storm diff",
+    # S3b: the `strategies`/`providers`/`checksums`/`validators` sub-apps and the
+    # `templates` sub-app folded into `decoy list KIND` / `decoy show KIND`. The
+    # removed top-level invocation strings are dead. `decoy templates` catches
+    # both `templates list` and `templates show`; it does NOT match the live
+    # `decoy list templates` / `decoy show template` forms (no "decoy templates"
+    # substring in either).
+    "decoy strategies",
+    "decoy providers",
+    "decoy checksums",
+    "decoy validators",
+    "decoy templates",
+    # S4a: the project/catalog/jobs persistence subsystem was deleted and the
+    # CLI is now stateless. The trailing space keeps `decoy report ...` (the
+    # live post-run surface) from matching; none of these three has a
+    # surviving `decoy ...` form.
+    "decoy project",
+    "decoy catalog",
+    "decoy jobs",
+    # S4b: the `evidence`, `vault`, and `storm` groups and `validate
+    # distribution` folded into `decoy report` (verify+show / vault / integrity
+    # / fidelity). The live forms are `decoy report ...`, which none of these
+    # substrings match. `storm integrity` and `validate distribution` (the
+    # exact nested paths) are dead; `decoy evidence` / `decoy vault` catch
+    # every invocation of those removed groups.
+    "decoy evidence",
+    "decoy vault",
+    "storm integrity",
+    "validate distribution",
+)
+
+_SCAN_PATTERN = r"(?<!\w)_scan\b"
+_GATE_PATTERN = r"(?<!\w)_gate\b"
+
+BANNED_USER_TEXT = tuple(
+    re.compile(p)
+    for p in (
+        r"OSS\.\d",
+        r"FC-\d",
+        r"CLI\.\d",
+        r"DE-\d",
+        r"SP-\d",
+        r"\bS\d+-[A-Z]",
+        r"storm-reframe",
+        r"decoy-platform/",
+        r"decoy_engine\.\w+\._",
+        _SCAN_PATTERN,
+        _GATE_PATTERN,
+    )
+)
+
+# Where an exempt literal sits in the AST. Anything else with the same text is user text.
+CTX_GROUP_ARG = "make_default_group-arg"  # first positional argument of make_default_group(...)
+CTX_NAME_KWARG = "name-kwarg"  # value of a `name=` keyword argument in a call
+
+_HIDDEN_DEFAULT_REASON = (
+    "registration name of the hidden default command; the usage path is rewritten to "
+    "`decoy {group}` by the default-group context, so no user reads the name"
+)
+
+# (path under src/decoy, exact full string constant, pattern source it is exempt from, AST
+# context) -> (number of sites expected, reason it is not user text). Matching is
+# `text == exact` in that context, only that one pattern is skipped, and the number of exempted
+# sites must equal the expected count, so a new literal of the same text fails the sentry.
+ALLOWLIST: dict[tuple[str, str, str, str], tuple[int, str]] = {
+    ("cli/scan.py", "_scan", _SCAN_PATTERN, CTX_GROUP_ARG): (
+        1,
+        _HIDDEN_DEFAULT_REASON.format(group="scan"),
+    ),
+    ("cli/scan.py", "_scan", _SCAN_PATTERN, CTX_NAME_KWARG): (
+        1,
+        _HIDDEN_DEFAULT_REASON.format(group="scan"),
+    ),
+    ("cli/validate.py", "_gate", _GATE_PATTERN, CTX_GROUP_ARG): (
+        1,
+        _HIDDEN_DEFAULT_REASON.format(group="validate"),
+    ),
+    ("cli/validate.py", "_gate", _GATE_PATTERN, CTX_NAME_KWARG): (
+        1,
+        _HIDDEN_DEFAULT_REASON.format(group="validate"),
+    ),
+}

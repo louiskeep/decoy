@@ -24,6 +24,7 @@ import pandas as pd
 import yaml
 from typer.testing import CliRunner
 
+from decoy import _mask_secret_guidance
 from decoy.__main__ import app
 from decoy.cli.exit_codes import EXIT_USAGE
 
@@ -541,9 +542,7 @@ class TestMaskSecretWrongTypeYaml:
             f"the secret nested inside non-dict global_settings leaked into "
             f"output: {result.output!r}"
         )
-        assert not (tmp_path / "out.csv").exists(), (
-            "no output must be written on a refused run"
-        )
+        assert not (tmp_path / "out.csv").exists(), "no output must be written on a refused run"
 
 
 class TestMaskSecretYamlWorkflow:
@@ -576,7 +575,12 @@ class TestMaskSecretYamlWorkflow:
         other_cfg = _mask_pipeline(tmp_path / "other", mask_secret_ref="env:DECOY_MASK_SECRET")
         flag_args = ["run", str(flag_cfg), "--mask-secret", "env:DECOY_MASK_SECRET"]
         assert runner.invoke(app, flag_args, env={"DECOY_MASK_SECRET": _SECRET_A}).exit_code == 0
-        assert runner.invoke(app, ["run", str(other_cfg)], env={"DECOY_MASK_SECRET": _SECRET_B}).exit_code == 0
+        assert (
+            runner.invoke(
+                app, ["run", str(other_cfg)], env={"DECOY_MASK_SECRET": _SECRET_B}
+            ).exit_code
+            == 0
+        )
         assert keyed_out == (tmp_path / "flag" / "out.csv").read_bytes()
         assert keyed_out != (tmp_path / "other" / "out.csv").read_bytes()
 
@@ -591,7 +595,9 @@ class TestMaskSecretYamlWorkflow:
         cfg_with_env = _mask_pipeline(tmp_path / "with_env")
         cfg_no_env = _mask_pipeline(tmp_path / "no_env")
 
-        r_env = runner.invoke(app, ["run", str(cfg_with_env), "--json"], env={"DECOY_MASK_SECRET": _SECRET_A})
+        r_env = runner.invoke(
+            app, ["run", str(cfg_with_env), "--json"], env={"DECOY_MASK_SECRET": _SECRET_A}
+        )
         r_noenv = runner.invoke(app, ["run", str(cfg_no_env), "--json"], env={})
         assert r_env.exit_code == r_noenv.exit_code == EXIT_USAGE, (r_env.output, r_noenv.output)
         assert json.loads(r_env.stdout)["error"] == json.loads(r_noenv.stdout)["error"]
@@ -671,20 +677,21 @@ class TestPreDE02EngineGuard:
         crash. The guard emits its distinctive message and exits EXIT_USAGE;
         an engine crash under the block would emit nothing and exit RUNTIME.
         Asserting the message text is what makes this test FAIL if the probe is
-        removed (a crash produces empty output, so 'keyprovider' is absent)."""
+        removed (a crash produces empty output, so the registry text is absent)."""
         assert result.exit_code == EXIT_USAGE, (
             f"expected the guard's EXIT_USAGE ({EXIT_USAGE}); got {result.exit_code}. "
             f"output={result.output!r}"
         )
-        assert "keyprovider" in result.output and "UNKEYED" in result.output, (
-            "expected the fail-closed guard's message (mentions the missing "
-            f"keyprovider + UNKEYED output); got: {result.output!r}"
-        )
-        # Lock the remediation floor to DE-02's release marker so the guard's
-        # advice cannot silently drift below the pyproject floor.
-        assert "decoy-engine>=0.4.0" in result.output, (
-            "guard should point operators at the DE-02 floor (decoy-engine>=0.4.0); "
+        flat = " ".join(result.output.split())
+        assert " ".join(_mask_secret_guidance.OLD_ENGINE_RUN.split()) in flat, (
+            "expected the fail-closed guard's registry text (old engine, UNKEYED output); "
             f"got: {result.output!r}"
+        )
+        assert "UNKEYED output" in flat
+        # Lock the remediation floor so the guard's advice cannot silently drift below the
+        # pyproject floor.
+        assert "Upgrade decoy-engine to 0.4.0 or later" in flat, (
+            f"guard should point operators at the engine floor (0.4.0); got: {result.output!r}"
         )
         # Refused BEFORE masking -> no output artifact leaked.
         assert not out_csv.exists(), "the run must be refused before writing any (unkeyed) output"
