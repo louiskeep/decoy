@@ -14,7 +14,8 @@ reported wherever it is named, called or passed as a value (`pool.submit(pq.writ
 `functools.partial(...)`). Scopes are qualified names (`Class.method`, `outer.inner`), and an
 import binds only inside the module, function or class that makes it (and what it contains).
 
-Named limits: a call through a runtime-bound name (`getattr(pd, "read_csv")`), an alias by
+Named limits: a relative import (`from . import x`) binds nothing here; ruff TID252
+(`ban-relative-imports = "all"`) keeps the repo free of them. A call through a runtime-bound name (`getattr(pd, "read_csv")`), an alias by
 assignment (`w = pq.write_table; w(t, p)`), `from x import *`, `exec`, and a local name or
 parameter that shadows an import.
 """
@@ -215,6 +216,35 @@ def call_contexts(
         and isinstance(s.node.func, (ast.Name, ast.Attribute))
         and _hit(s.node.func, s.bound, qualified_match, method_names, False)
     ]
+
+
+# Where a watched write call takes its path: (positional index, keyword), keyed by the call's
+# last name or resolved dotted name. `None` means the path is the receiver (`p.write_text(...)`).
+PATH_SLOT: dict[str, tuple[int, str] | None] = {
+    "os.open": (0, "path"),
+    "sqlite3.connect": (0, "database"),
+    "duckdb.connect": (0, "database"),
+    "open": (0, "file"),
+    "write_table": (1, "where"),
+    "to_csv": (0, "path_or_buf"),
+    "to_parquet": (0, "path"),
+    "ParquetWriter": (0, "where"),
+    "write_fixed_width": (2, "path"),
+    "write_text": None,
+    "write_bytes": None,
+}
+
+
+def path_arg(call: ast.Call, member: str) -> ast.expr | None:
+    """The expression a call passes as its path, or None for a receiver path or no such arg."""
+    slot = PATH_SLOT.get(member)
+    if slot is None:
+        return None
+    index, keyword = slot
+    for kw in call.keywords:
+        if kw.arg == keyword:
+            return kw.value
+    return call.args[index] if len(call.args) > index else None
 
 
 def tally(

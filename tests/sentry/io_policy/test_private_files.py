@@ -21,13 +21,15 @@ than the engine's: it covers `fchmod` too, because the CLI has one module that a
 - P5: `_private_file.py` imports nothing from `decoy`.
 
 A `public` row is a review item: its reason says why the bytes may be world-readable, and a wrong
-`public` is not caught here. The `staged` disposition defers to G-ONE-TARGET-WRITE, which checks
-every caller passes a real stager.
+`public` is not caught here. A `staged` row is accepted only in `cli/io/_targets.py` and only in a
+function G-ONE-TARGET-WRITE checks (`STAGED_WRITERS`, imported from it): there, every path written
+must be the temp a stager yields, and every caller must pass a real stager.
 
 Named limits: P2's `via` check is source order in one function, not that the entry point runs on
 every path. SQL other than `COPY ... TO`, SQL held in a variable, and `.sql()`, `duckdb.sql()` and
 `executemany` calls are not seen. A reference through a runtime-bound name, an alias by
-assignment, `from x import *`, and calls that create no regular-file content (`os.link`,
+assignment, `from x import *`, a relative import (`bindings` in `_calls.py` skips it; ruff TID252
+bans relative imports repo-wide), and calls that create no regular-file content (`os.link`,
 `os.symlink`, `mkdir`, `shutil.rmtree`) are not seen either.
 """
 
@@ -42,7 +44,8 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import pytest
-from tests.sentry.io_policy._calls import Site, sites
+from tests.sentry.io_policy._calls import PATH_SLOT, Site, path_arg, sites
+from tests.sentry.io_policy.test_target_writes import STAGED_WRITERS
 
 if sys.version_info >= (3, 11):
     import tomllib
@@ -52,10 +55,11 @@ else:
 ROOT = Path(__file__).resolve().parents[3]
 SRC = ROOT / "src" / "decoy"
 HERE = Path(__file__).resolve().parent
-ROWS_FILE = HERE / f"file_sinks{'.toml'}"
+ROWS_FILE = HERE / "file_sinks.toml"
 BASELINE_FILE = ROOT / "tests" / "sentry" / "baselines" / "private-file-sinks.json"
 CHOKE_POINT = "_private_file.py"
 IMPLEMENTATION = frozenset({"_atomic.py", CHOKE_POINT})
+STAGED_FILE = "cli/io/_targets.py"
 DISPOSITIONS = frozenset({"public", "private", "staged", "read", "temp"})
 
 PRIVATE_ENTRY = frozenset(
@@ -83,14 +87,6 @@ _COPY = ("shutil.copy", "shutil.copy2", "shutil.copyfile", "shutil.copytree", "s
 _MODE_CALLS = frozenset({"os.chmod", "os.fchmod", "os.lchmod", "chmod", "lchmod"})
 _MODE_LITERAL = re.compile(r"^[rwxabt+]+(:[a-z]+)?$")
 _COPY_TO = re.compile(r"\bCOPY\b.*\bTO\b", re.IGNORECASE | re.DOTALL)
-# (positional index, keyword) of the path argument, or None when the path is the receiver.
-_PATH_SLOT: dict[str, tuple[int, str] | None] = {
-    "os.open": (0, "path"), "sqlite3.connect": (0, "database"), "duckdb.connect": (0, "database"),
-    "open": (0, "file"), "write_table": (1, "where"), "to_csv": (0, "path_or_buf"),
-    "to_parquet": (0, "path"), "ParquetWriter": (0, "where"), "write_fixed_width": (2, "path"),
-    "write_text": None, "write_bytes": None,
-}  # fmt: skip
-
 # The one mode call allowed outside the choke point: the launcher shim's 0755 (a script others
 # run, so not private). The site is matched exactly and checked for staleness.
 LAUNCHER_SHIM = "distribution/installer.py::_write_launcher_shim::os.chmod::1"
@@ -297,21 +293,12 @@ def _name(expr: ast.expr | None) -> str | None:
     return ".".join([expr.id, *reversed(parts)])
 
 
-def _arg(call: ast.Call, slot: tuple[int, str]) -> ast.expr | None:
-    index, keyword = slot
-    for k in call.keywords:
-        if k.arg == keyword:
-            return k.value
-    return call.args[index] if len(call.args) > index else None
-
-
 def sink_path_name(s: Sink) -> str | None:
     """The local name a raw sink writes to, or None when the walk cannot name it."""
-    slot = _PATH_SLOT.get(s.kind)
     func = s.call.func
-    if slot is None:
+    if PATH_SLOT.get(s.kind, ...) is None:
         return _name(func.value) if isinstance(func, ast.Attribute) else None
-    return _name(_arg(s.call, slot))
+    return _name(path_arg(s.call, s.kind))
 
 
 def entry_names(entry: Sink) -> set[str]:
@@ -377,6 +364,10 @@ def rule_p1(all_sinks: list[Sink], rows: list[Row]) -> list[str]:
             out.append(f"P1: empty reason: {r.key}")
         if r.ordinal < 1:
             out.append(f"P1: ordinal is one-based: {r.key}")
+        if r.disposition == "staged" and (
+            r.file != STAGED_FILE or r.function not in STAGED_WRITERS
+        ):
+            out.append(f"P1: staged row outside the checked stager writers: {r.key}")
     return out
 
 
@@ -742,6 +733,20 @@ def test_a_disposition_outside_the_five_and_an_empty_reason_fail() -> None:
         rows=[_row("f", "write_text", disposition="secret", reason="")],
     )
     assert _has(findings, "P1", "bad disposition") and _has(findings, "P1", "empty reason")
+
+
+def test_a_staged_row_for_a_new_module_is_refused() -> None:
+    src = "def f(p):\n    p.write_text('a')\n"
+    findings = seeded(src, rows=[_row("f", "write_text", disposition="staged")])
+    assert _has(findings, "P1", "staged row outside", f"{NEW}::f::write_text::1")
+
+
+def test_a_staged_row_in_an_unchecked_function_of_the_writer_module_is_refused() -> None:
+    row = Row(
+        STAGED_FILE, "write_targets", "write_table", 1, "staged", "seeded row for the sentry's test"
+    )
+    rows = [r for r in ROWS if r.key != row.key] + [row]
+    assert _has(run(live_files(), rows=rows), "P1", "staged row outside", row.key)
 
 
 def test_a_temp_row_without_an_exit_is_refused() -> None:

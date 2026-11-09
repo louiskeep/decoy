@@ -106,6 +106,7 @@ class Source:
     sentry_id: str
     where: str  # file the sentry reads
     keys: InCode
+    data_file: str = ""  # a committed data file the sentry reads besides its baseline
 
 
 _SURFACE = "tests/unit/test_surface_docs_consistency.py"
@@ -167,6 +168,7 @@ SOURCES: tuple[Source, ...] = (
             key=lambda e: e[0],
             reason=lambda e: e[1],
         ),
+        data_file="tests/sentry/io_policy/file_sinks.toml",
     ),
     Source(
         "gate-single-entry-allow",
