@@ -113,6 +113,9 @@ See also: decoy validate, decoy run, decoy report verify, decoy explain exit-cod
 
 # The capacity check's name; `decoy.cli.gate` keys its chunked-route rule on it.
 CAPACITY_CHECK = "capacity.out_of_core_fk"
+# A plan the engine cannot compile, found while pricing capacity. Not CAPACITY_CHECK, so the
+# chunked-route downgrade leaves it a FAIL.
+PLAN_UNCOMPILABLE_CHECK = "capacity.plan_uncompilable"
 
 
 @dataclass
@@ -443,6 +446,7 @@ def _check_capacity(raw: dict[str, Any], config_path: Path, acc: _PreflightAccum
         return
 
     from decoy_engine import CapacityVerdict, ExecutionError, PipelineConfig
+    from decoy_engine.plan import PlanCompileError
 
     # The ONE narrow catch here (R3): a source that is present but corrupt /
     # not-the-declared-format passes the on-disk guard above (which only tests
@@ -479,6 +483,21 @@ def _check_capacity(raw: dict[str, Any], config_path: Path, acc: _PreflightAccum
         acc.add_fail(
             name="capacity.source_unreadable",
             message=f"Cannot estimate capacity -- source not parsed ({type(exc.__cause__).__name__})",
+            code=exc.code,
+        )
+        return
+    except PlanCompileError as exc:
+        # The estimator compiles the plan, so a plan the engine rejects (an unresolvable
+        # relationship namespace, ...) lands here. A distinct check name keeps the CHUNKED
+        # route's downgrade of CAPACITY_CHECK from turning it into a warning. The message
+        # is the engine's own compile text: it names config paths, never row values.
+        acc.add_fail(
+            name=PLAN_UNCOMPILABLE_CHECK,
+            message=(
+                f"Cannot estimate capacity -- the plan does not compile ({exc.code}). "
+                "Run `decoy explain pipeline` for how namespaces are resolved."
+            ),
+            location=exc.path,
             code=exc.code,
         )
         return
