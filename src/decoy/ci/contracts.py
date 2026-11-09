@@ -45,6 +45,7 @@ from decoy.cli.exit_codes import (
 __all__ = [
     "CI_MANIFEST_VERSION",
     "CI_REPORT_VERSION",
+    "MANIFEST_UNREADABLE_HINT",
     "NOTE_TEXTS",
     "REASON_CODES",
     "SAFE_MESSAGES",
@@ -79,6 +80,13 @@ NOTE_TEXTS: dict[str, str] = {
         "validation plus the staged scan ran (no source or preflight reads)."
     ),
 }
+
+# Stderr only, beside the unchanged refusal report. `{path}` is the manifest
+# path as the user typed it (or the default name), never resolved.
+MANIFEST_UNREADABLE_HINT = (
+    "error: could not read the CI manifest {path}. Create it there or pass its path; "
+    "see `decoy ci --help`."
+)
 
 REASON_CODES: frozenset[str] = frozenset(
     {

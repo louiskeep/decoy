@@ -30,6 +30,10 @@ version numbers follow the [versioning policy](docs/release/versioning.md).
 
 - **CycloneDX SBOM generator (R1-c).** `scripts/release/sbom.sh` writes a reproducible CycloneDX 1.6 SBOM of the certified runtime pins (`requirements-certified.txt`) with the tool environment pinned, hash-enforced and wheel-only from `scripts/release/sbom-tool-requirements.txt`, run isolated (`python -I`, `uv --no-config`, no ambient `UV_*` settings, CPython 3.12 only); no timestamp or serial; well-formed public pins only, one per package, with the generated components checked against the pins. Not signed or published. Docs: `docs/release/sbom.md`.
 
+### Fixed
+
+- **Report and scan output a first-time user misread (CLI-QA1 C4).** `decoy report fidelity` in its default report mode no longer prints PASS: it prints `REPORT ONLY (no threshold violations)` or `REPORT ONLY: N threshold violation(s) not enforced (use --mode fail)`, including violations from strategy defaults with no flags set; warn and fail modes, the JSON `verdict` and every exit code are unchanged. `decoy report integrity` human output lists each residual-PII finding (table, column, detector, severity, configured strategy and the engine's fixed message, no cell values) under the bucket summary. `decoy scan` prints the reid risk as `N / 100 (k=K)` (`k=n/a` when k is unknown) and `decoy scan diff` prints its delta in points. `decoy ci check` with an unreadable or missing manifest prints one stderr line naming the path as given and `decoy ci --help`; stdout stays the same `decoy-ci-report/v1` document and `--quiet` prints nothing.
+
 ### Security
 
 - **Installer / update-system hardening (B-2 r7).** The signed version document now

@@ -1852,8 +1852,20 @@ def _render_fidelity_report(
     overall = report.get("overall_score")
     overall_str = f"{overall:.3f}" if isinstance(overall, (int, float)) else "n/a"
     verdict = policy_result.get("verdict", "pass")
+    violations = policy_result.get("violations", [])
 
-    if verdict == "pass":
+    # The engine's report-mode verdict is always "pass", even with violations
+    # (strategy defaults apply with no flags), so a green PASS beside grade F
+    # read as approval. Report mode names what it recorded instead.
+    if policy_result.get("mode") == "report":
+        if violations:
+            verdict_text = info(
+                f"REPORT ONLY: {len(violations)} threshold violation(s) not enforced "
+                "(use --mode fail)"
+            )
+        else:
+            verdict_text = info("REPORT ONLY (no threshold violations)")
+    elif verdict == "pass":
         verdict_text = success(verdict.upper())
     elif verdict == "warn":
         verdict_text = warn(verdict.upper())
@@ -1891,7 +1903,6 @@ def _render_fidelity_report(
             )
         state.console.print(table)
 
-    violations = policy_result.get("violations", [])
     if violations:
         table = make_table("Check", "Column", "Expected", "Actual", title="Policy violations")
         for v in violations:
@@ -1904,6 +1915,38 @@ def _render_fidelity_report(
         state.console.print(table)
     elif verdict == "pass":
         state.console.print(success("OK"), "no policy violations.")
+
+
+def _render_residual_pii(state: Any, findings: list[Any]) -> None:
+    """One row per residual-PII finding: where, which detector, how bad.
+
+    Only the engine's fixed fields are shown. Its `message` names the detector,
+    the strategy and a rate, never a cell value.
+    """
+    from decoy.ui.table import make_table
+
+    rows = [f for f in findings if isinstance(f, dict)]
+    if not rows:
+        return
+    table = make_table(
+        "Table",
+        "Column",
+        "Detector",
+        "Severity",
+        "Strategy",
+        "Message",
+        title="Residual PII findings",
+    )
+    for f in rows:
+        table.add_row(
+            str(f.get("table", "?")),
+            str(f.get("column", "?")),
+            str(f.get("detector_id", "?")),
+            str(f.get("severity", "?")),
+            str(f.get("configured_strategy") or "-"),
+            str(f.get("message", "")),
+        )
+    state.console.print(table)
 
 
 # ---------------------------------------------------------------------------
@@ -2091,8 +2134,8 @@ def _integrity(
                 },
             )
         elif state.mode is not OutputMode.quiet:
-            # Render a 3-row summary table; the per-finding detail
-            # lives in the JSON payload (--json or --output).
+            # A 3-row summary, then the residual-PII rows. FK and policy findings
+            # are other record types and stay in the JSON payload only.
             table = make_table("Bucket", "Findings", "Severities", title="Storm integrity")
             for bucket in ("residual_pii", "fk_preservation", "policy_validation"):
                 findings = report.get(bucket) or []
@@ -2106,6 +2149,7 @@ def _integrity(
                 sev_text = ", ".join(f"{k}:{v}" for k, v in sorted(sevs.items()))
                 table.add_row(bucket, str(len(findings)), sev_text)
             state.console.print(table)
+            _render_residual_pii(state, report.get("residual_pii") or [])
             counters = (
                 f"pass={report.get('pass_count', 0)}  "
                 f"warning={report.get('warning_count', 0)}  "
