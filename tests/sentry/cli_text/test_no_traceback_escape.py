@@ -43,7 +43,10 @@ def _guarded(exc: BaseException) -> typer.Typer:
         """Root."""
 
     @guarded.command()
-    def boom(verbose: bool = typer.Option(False, "--verbose", "-v")) -> None:
+    def boom(
+        values: list[str] = typer.Argument(None),
+        verbose: bool = typer.Option(False, "--verbose", "-v"),
+    ) -> None:
         raise exc
 
     @guarded.command()
@@ -72,6 +75,21 @@ def test_verbose_shows_traceback_and_row_data_note() -> None:
     assert result.exit_code == 1
     assert "Traceback" in result.output
     assert "may contain row data" in result.output
+
+
+@pytest.mark.parametrize("args", [("--", "--verbose"), ("--", "-v")])
+def test_verbose_text_after_double_dash_is_not_the_flag(args: tuple[str, ...]) -> None:
+    # After `--` the token is a positional value; it must not turn on traceback output.
+    result = _run(RuntimeError(CANARY), *args)
+    assert result.exit_code == 1
+    assert "Traceback" not in result.output
+    assert CANARY not in result.output
+    assert "internal error" in result.output
+
+
+def test_short_verbose_flag_still_shows_traceback() -> None:
+    result = _run(RuntimeError(CANARY), "-v")
+    assert "Traceback" in result.output
 
 
 def test_decoy_debug_reraises(monkeypatch: pytest.MonkeyPatch) -> None:

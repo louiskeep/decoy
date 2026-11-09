@@ -5,6 +5,7 @@ The Typer app is exported as `app` so the project script in pyproject.toml
 through `if __name__ == "__main__":`.
 """
 
+import copy
 import errno
 import os
 from typing import Any
@@ -82,6 +83,42 @@ _USAGE_ERROR = typer.BadParameter.__base__
 _PASS_THROUGH = (typer.Exit, typer.Abort, _USAGE_ERROR, EOFError)
 
 
+_SEEN_CTXS = "decoy.guard.contexts"
+
+
+def _record_contexts(cmd: Any) -> Any:
+    """Return a shallow copy of `cmd` that records every context Click builds for it.
+
+    The crash guard reads `--verbose` from what Click parsed, never from raw tokens: after
+    `--` the same text is a positional value, and an option value can equal `-v`. `ctx.meta`
+    is shared down the context chain, so one list collects the root and every sub-command.
+    """
+    wrapped = copy.copy(cmd)
+    original = cmd.make_context
+
+    def make_context(info_name: Any, args: Any, parent: Any = None, **extra: Any) -> Any:
+        sub = original(info_name, args, parent=parent, **extra)
+        sub.meta.setdefault(_SEEN_CTXS, []).append(sub)
+        return sub
+
+    wrapped.make_context = make_context
+    if isinstance(cmd, TyperGroup):
+        inner = cmd.resolve_command
+
+        def resolve_command(ctx: Any, args: list[str]) -> Any:
+            name, found, rest = inner(ctx, args)
+            return name, _record_contexts(found) if found is not None else found, rest
+
+        wrapped.resolve_command = resolve_command
+    return wrapped
+
+
+def _parsed_verbose(ctx: Any) -> bool:
+    # A crash before parsing finished leaves no parsed value, which counts as not verbose.
+    seen = ctx.meta.get(_SEEN_CTXS, [])
+    return any(bool(c.params.get("verbose")) for c in seen)
+
+
 class _GuardedGroup(TyperGroup):
     """Root group that keeps a Python traceback from reaching the user.
 
@@ -91,10 +128,11 @@ class _GuardedGroup(TyperGroup):
     Click as before. A closed pipe (EPIPE) also goes to Click; every other `OSError` is a crash.
     """
 
+    def resolve_command(self, ctx: Any, args: list[str]) -> Any:
+        name, cmd, rest = super().resolve_command(ctx, args)
+        return name, _record_contexts(cmd) if cmd is not None else cmd, rest
+
     def invoke(self, ctx: Any) -> Any:
-        # CliRunner does not set sys.argv, so read the flag from the parsed context.
-        args = [*ctx._protected_args, *ctx.args]
-        verbose = "--verbose" in args or "-v" in args
         debug = os.environ.get("DECOY_DEBUG") == "1"
         try:
             return super().invoke(ctx)
@@ -106,6 +144,7 @@ class _GuardedGroup(TyperGroup):
             if debug:
                 raise
             name = type(exc).__name__
+            verbose = _parsed_verbose(ctx)
             state = setup_output(json_=False, quiet=False, verbose=verbose)
             state.err_console.print(error("error:"), f"internal error ({name})")
             state.err_console.print(
