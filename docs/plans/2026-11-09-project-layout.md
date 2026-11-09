@@ -964,6 +964,8 @@ the rule check (AT-19); MP19 `pipelines/` runs skip the claim (AT-7 both-orders 
 
 ## 10. Owner questions (recommended option taken)
 
+Owner answers (Cam, 2026-11-09): "go with recommended". Every question below takes its recommended option.
+
 1. **Escape.** Refuse (recommended: a relative path that leaves the run folder is the loose file the owner
    named; an absolute path delivers elsewhere) or warn.
 2. **`name:` that differs from its `pipelines/` folder.** Refuse (recommended: one name for the folder, the
