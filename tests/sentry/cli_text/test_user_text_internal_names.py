@@ -21,7 +21,12 @@ from pathlib import Path
 import pytest
 import typer
 import typer.core
-from tests.sentry.cli_text._banned_text import ALLOWLIST, BANNED_USER_TEXT
+from tests.sentry.cli_text._banned_text import (
+    ALLOWLIST,
+    BANNED_USER_TEXT,
+    CTX_GROUP_ARG,
+    CTX_NAME_KWARG,
+)
 from typer.testing import CliRunner
 
 from decoy.__main__ import app
@@ -92,7 +97,24 @@ def _explain_texts() -> list[tuple[str, str]]:
     return out
 
 
-def _string_constants(source: str) -> list[tuple[int, str]]:
+def _contexts(tree: ast.AST) -> dict[int, str]:
+    """Map id(Constant node) -> the allowlistable AST context it sits in."""
+    ctx: dict[int, str] = {}
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        func = node.func
+        fname = func.id if isinstance(func, ast.Name) else getattr(func, "attr", "")
+        if fname == "make_default_group" and node.args and isinstance(node.args[0], ast.Constant):
+            ctx[id(node.args[0])] = CTX_GROUP_ARG
+        for kw in node.keywords:
+            if kw.arg == "name" and isinstance(kw.value, ast.Constant):
+                ctx[id(kw.value)] = CTX_NAME_KWARG
+    return ctx
+
+
+def _string_constants(source: str) -> list[tuple[int, str, str]]:
+    """(lineno, text, context) for every string constant outside docstrings."""
     tree = ast.parse(source)
     docstrings: set[int] = set()
     for node in ast.walk(tree):
@@ -105,8 +127,9 @@ def _string_constants(source: str) -> list[tuple[int, str]]:
                 and isinstance(body[0].value.value, str)
             ):
                 docstrings.add(id(body[0].value))
+    ctx = _contexts(tree)
     return [
-        (node.lineno, node.value)
+        (node.lineno, node.value, ctx.get(id(node), ""))
         for node in ast.walk(tree)
         if isinstance(node, ast.Constant)
         and isinstance(node.value, str)
@@ -114,20 +137,46 @@ def _string_constants(source: str) -> list[tuple[int, str]]:
     ]
 
 
+Allowlist = dict[tuple[str, str, str, str], tuple[int, str]]
+
+
 def _constant_hits(
-    rel: str, text: str, allowlist: dict[tuple[str, str, str], str] = ALLOWLIST
+    rel: str, text: str, context: str, allowlist: Allowlist = ALLOWLIST
 ) -> list[str]:
-    """Banned patterns a constant trips. An entry exempts one pattern, for the exact string only."""
-    exempt = frozenset(pat for (path, exact, pat) in allowlist if path == rel and exact == text)
+    """Banned patterns a constant trips. An entry exempts one pattern for one exact string in one
+    AST context of one file."""
+    exempt = frozenset(
+        pat
+        for (path, exact, pat, ctx) in allowlist
+        if path == rel and exact == text and ctx == context
+    )
     return _hits(text, exempt)
 
 
-def _source_offenders(rel: str, source: str) -> list[str]:
-    return [
+def _exempted_sites(rel: str, source: str, allowlist: Allowlist = ALLOWLIST) -> dict[tuple, int]:
+    """Count, per allowlist key, the constants in `source` that the key exempts."""
+    counts: dict[tuple, int] = {}
+    for _, text, context in _string_constants(source):
+        for key in allowlist:
+            path, exact, _pat, ctx = key
+            if path == rel and exact == text and ctx == context:
+                counts[key] = counts.get(key, 0) + 1
+    return counts
+
+
+def _source_offenders(rel: str, source: str, allowlist: Allowlist = ALLOWLIST) -> list[str]:
+    out = [
         f"{rel}:{lineno}: {hits}"
-        for lineno, text in _string_constants(source)
-        if (hits := _constant_hits(rel, text))
+        for lineno, text, context in _string_constants(source)
+        if (hits := _constant_hits(rel, text, context, allowlist))
     ]
+    counts = _exempted_sites(rel, source, allowlist)
+    for key, (expected, _reason) in allowlist.items():
+        if key[0] == rel and counts.get(key, 0) != expected:
+            out.append(
+                f"{rel}: allowlist {key[1:]} matched {counts.get(key, 0)} sites, expected {expected}"
+            )
+    return out
 
 
 def _constant_offenders() -> list[str]:
@@ -178,15 +227,19 @@ def test_bundled_templates_name_no_internal_id() -> None:
 
 
 def test_allowlist_entries_carry_a_reason() -> None:
-    assert all(reason.strip() for reason in ALLOWLIST.values())
+    assert all(reason.strip() and count >= 1 for count, reason in ALLOWLIST.values())
 
 
-def test_allowlist_entries_are_exact_and_name_a_real_banned_pattern() -> None:
+def test_allowlist_entries_match_real_sites_in_the_expected_number() -> None:
     patterns = {p.pattern for p in BANNED_USER_TEXT}
-    for (rel, exact, pattern), _reason in ALLOWLIST.items():
-        assert (SRC / rel).is_file(), rel
+    for (_rel, _exact, pattern, _ctx), _val in ALLOWLIST.items():
         assert pattern in patterns, pattern
-        assert any(text == exact for _, text in _string_constants((SRC / rel).read_text("utf-8")))
+    for rel in {key[0] for key in ALLOWLIST}:
+        source = (SRC / rel).read_text(encoding="utf-8")
+        counts = _exempted_sites(rel, source)
+        for key, (expected, _reason) in ALLOWLIST.items():
+            if key[0] == rel:
+                assert counts.get(key, 0) == expected, key
 
 
 def test_bite_a_ticket_id_in_a_help_string_is_caught(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -219,24 +272,49 @@ def test_bite_a_banned_token_in_click_command_help_is_caught() -> None:
     assert any("FC-" in o for o in offenders)
 
 
-def test_allowlist_exempts_only_the_exact_string() -> None:
-    assert _constant_hits("cli/scan.py", "_scan") == []
-    assert _constant_hits("cli/validate.py", "_gate") == []
-    # The exemption is per file: the same exact text elsewhere still fails.
-    assert _constant_hits("cli/other.py", "_scan")
-    assert _constant_hits("cli/validate.py", "_scan")
+def test_allowlist_exempts_only_the_exact_string_in_its_context() -> None:
+    assert _constant_hits("cli/scan.py", "_scan", CTX_GROUP_ARG) == []
+    assert _constant_hits("cli/scan.py", "_scan", CTX_NAME_KWARG) == []
+    assert _constant_hits("cli/validate.py", "_gate", CTX_NAME_KWARG) == []
+    # Per file, and per context: the same text elsewhere still fails.
+    assert _constant_hits("cli/other.py", "_scan", CTX_NAME_KWARG)
+    assert _constant_hits("cli/validate.py", "_scan", CTX_NAME_KWARG)
+    assert _constant_hits("cli/scan.py", "_scan", "")
 
 
 def test_bite_near_miss_of_an_allowlisted_string_still_fails() -> None:
     leak = "the post_scan step failed (DE-02, FC-1)"
-    assert "_scan" in leak
-    assert _constant_hits("cli/scan.py", leak)
-    assert _constant_hits("cli/scan.py", "run _scan now")
-    source = f"_LEAK = {leak!r}\n"
-    assert _source_offenders("cli/scan.py", source)
+    assert _constant_hits("cli/scan.py", leak, "")
+    assert _constant_hits("cli/scan.py", "run _scan now", CTX_NAME_KWARG)
+    assert _source_offenders("cli/scan.py", f"_LEAK = {leak!r}\n")
+
+
+_REAL_SITES = (
+    'x = typer.Typer(cls=make_default_group("_scan"))\n'
+    'y = app.command(name="_scan", hidden=True)(f)\n'
+)
+
+
+def test_bite_a_second_bare_literal_of_the_allowlisted_text_is_reported() -> None:
+    assert _source_offenders("cli/scan.py", _REAL_SITES) == []
+    probe = 'REGISTER = "_scan"\nUSER_ERROR = "_scan"\n'
+    offenders = _source_offenders("cli/scan.py", probe)
+    assert any(o.startswith("cli/scan.py:1:") for o in offenders)
+    assert any(o.startswith("cli/scan.py:2:") for o in offenders)
+    # A bare extra literal next to the two real sites is reported on its own line.
+    extra = _source_offenders("cli/scan.py", _REAL_SITES + 'USER_ERROR = "_scan"\n')
+    assert len(extra) == 1 and extra[0].startswith("cli/scan.py:3:")
+
+
+def test_bite_a_duplicate_name_kwarg_changes_the_site_count() -> None:
+    dup = _REAL_SITES + 'z = app.command(name="_scan")(g)\n'
+    offenders = _source_offenders("cli/scan.py", dup)
+    assert any("matched 2 sites, expected 1" in o for o in offenders)
+    # The same entry also fails when a real site disappears.
+    assert any("matched 0 sites" in o for o in _source_offenders("cli/scan.py", "x = 1\n"))
 
 
 def test_bite_exempt_string_with_a_second_banned_pattern_fails_on_that_pattern() -> None:
-    synthetic = {("cli/synthetic.py", "_scan (FC-1)", r"(?<!\w)_scan\b"): "test"}
-    hits = _constant_hits("cli/synthetic.py", "_scan (FC-1)", synthetic)
+    synthetic = {("cli/synthetic.py", "_scan (FC-1)", r"(?<!\w)_scan\b", CTX_NAME_KWARG): (1, "t")}
+    hits = _constant_hits("cli/synthetic.py", "_scan (FC-1)", CTX_NAME_KWARG, synthetic)
     assert hits == [r"FC-\d"]

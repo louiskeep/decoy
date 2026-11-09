@@ -12,7 +12,8 @@ Two lists, each with its scope:
   ids because no user reads them.
 
 An allowlist entry is keyed by (file, the exact full string constant, the one banned pattern it
-is exempt from) and carries the reason it is not user text. A string that merely contains the
+is exempt from, the AST context it sits in) and carries the expected site count and the reason it
+is not user text. A string that merely contains the
 exempt text, or that also trips a different pattern, still fails.
 """
 
@@ -87,15 +88,34 @@ BANNED_USER_TEXT = tuple(
     )
 )
 
-# (path under src/decoy, exact full string constant, pattern source it is exempt from) -> reason
-# it is not user text. Matching is `text == exact`, and only that one pattern is skipped.
-ALLOWLIST: dict[tuple[str, str, str], str] = {
-    ("cli/scan.py", "_scan", _SCAN_PATTERN): (
-        "registration name of the hidden default command; the usage path is rewritten to "
-        "`decoy scan` by the default-group context, so no user reads the name"
+# Where an exempt literal sits in the AST. Anything else with the same text is user text.
+CTX_GROUP_ARG = "make_default_group-arg"  # first positional argument of make_default_group(...)
+CTX_NAME_KWARG = "name-kwarg"  # value of a `name=` keyword argument in a call
+
+_HIDDEN_DEFAULT_REASON = (
+    "registration name of the hidden default command; the usage path is rewritten to "
+    "`decoy {group}` by the default-group context, so no user reads the name"
+)
+
+# (path under src/decoy, exact full string constant, pattern source it is exempt from, AST
+# context) -> (number of sites expected, reason it is not user text). Matching is
+# `text == exact` in that context, only that one pattern is skipped, and the number of exempted
+# sites must equal the expected count, so a new literal of the same text fails the sentry.
+ALLOWLIST: dict[tuple[str, str, str, str], tuple[int, str]] = {
+    ("cli/scan.py", "_scan", _SCAN_PATTERN, CTX_GROUP_ARG): (
+        1,
+        _HIDDEN_DEFAULT_REASON.format(group="scan"),
     ),
-    ("cli/validate.py", "_gate", _GATE_PATTERN): (
-        "registration name of the hidden default command; the usage path is rewritten to "
-        "`decoy validate` by the default-group context, so no user reads the name"
+    ("cli/scan.py", "_scan", _SCAN_PATTERN, CTX_NAME_KWARG): (
+        1,
+        _HIDDEN_DEFAULT_REASON.format(group="scan"),
+    ),
+    ("cli/validate.py", "_gate", _GATE_PATTERN, CTX_GROUP_ARG): (
+        1,
+        _HIDDEN_DEFAULT_REASON.format(group="validate"),
+    ),
+    ("cli/validate.py", "_gate", _GATE_PATTERN, CTX_NAME_KWARG): (
+        1,
+        _HIDDEN_DEFAULT_REASON.format(group="validate"),
     ),
 }
