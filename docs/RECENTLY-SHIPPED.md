@@ -15,10 +15,14 @@ Moved here from `decoy-platform/docs/backlog/RECENTLY-SHIPPED.md` on 2026-11-05 
 ([ROADMAP.md](ROADMAP.md)). The platform copy is frozen at that date. Entries below 2026-11-05 are
 copied unchanged; paths in them are relative to the repo they name.
 
-Last updated: 2026-11-08 (entries for 2026-10-27 to 2026-10-30 are not filled in here; see the repos'
+Last updated: 2026-11-09 (entries for 2026-10-27 to 2026-10-30 are not filled in here; see the repos'
 git logs).
 
 ---
+
+## 2026-11-09
+
+- **CLI** (`0fafd0a`, #132): X7c part S1 (roadmap row 24). Private output files are created and chmodded through one helper, `_private_file`, so every CLI write gets owner-only permissions the same way; staging temps no longer read the mode back. Parts S2 (move the remaining call sites) and S3 (sentry) are next. Gate: Dennis GO, Codex GO; full suite on the main merge 0 failing against the `b1a6350f` baseline (3,159 collected, +25).
 
 ## 2026-11-08
 
