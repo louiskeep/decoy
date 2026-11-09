@@ -74,9 +74,9 @@ def _forwarder_param(rel: str, func: str) -> str | None:
     return entry[0] if entry else None
 
 
-def _sites(tree: ast.AST) -> list[tuple[int, ast.expr]]:
+def _sites(tree: ast.AST) -> list[tuple[int, ast.AST]]:
     """Every expression that becomes an envelope ``command``, with its line."""
-    sites: list[tuple[int, ast.expr]] = []
+    sites: list[tuple[int, ast.AST]] = []
     for node in ast.walk(tree):
         if isinstance(node, ast.Dict):
             sites += [
@@ -86,6 +86,10 @@ def _sites(tree: ast.AST) -> list[tuple[int, ast.expr]]:
             targets = node.targets if isinstance(node, ast.Assign) else [node.target]
             if any(isinstance(t, ast.Subscript) and _is_command_key(t.slice) for t in targets):
                 sites.append((node.lineno, node.value))
+        elif isinstance(node, ast.AugAssign):
+            # ``x["command"] += "..."`` builds the name at run time, so it can never be checked.
+            if isinstance(node.target, ast.Subscript) and _is_command_key(node.target.slice):
+                sites.append((node.lineno, node))
         elif isinstance(node, ast.Call):
             name = _call_name(node)
             if name in {"dict", "update"}:
@@ -226,6 +230,7 @@ def test_each_shape_is_collected_and_rejected(shape: str) -> None:
     [
         'x = {"command": name}',
         'x["command"] = name',
+        'x["command"] += " bogus"',
         "from decoy.cli.scan import _emit_load_error as e2\ne2(s, p, e, name)",
     ],
 )
