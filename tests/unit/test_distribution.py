@@ -19,6 +19,7 @@ the end-to-end smoke, packaging_tools/smoke_install.py):
 from __future__ import annotations
 
 import base64
+import errno
 import gzip
 import io
 import json
@@ -1623,3 +1624,42 @@ def test_launcher_shim_replaced_atomically_and_correct_shim_left_alone(tmp_path,
     inode = shim.stat().st_ino
     installer._write_launcher_shim(home)  # already correct: untouched
     assert shim.stat().st_ino == inode
+
+
+# ------------------------------------------- P1a: link swap failure through _atomic
+def _deny_replace(monkeypatch):
+    def deny(*_a, **_k):
+        raise OSError(errno.EACCES, "x", "/secret/path")
+
+    monkeypatch.setattr("decoy._atomic.os.replace", deny)
+
+
+def test_point_current_failure_is_a_pathless_oserror(tmp_path, monkeypatch):
+    home = tmp_path / "home"
+    (home / "versions" / "0.1.0").mkdir(parents=True)
+    _deny_replace(monkeypatch)
+    with pytest.raises(PermissionError) as caught:
+        layout.atomic_point_current_at("0.1.0", home)
+    assert caught.value.errno == errno.EACCES
+    assert "secret" not in str(caught.value)
+    assert caught.value.__context__ is None
+
+
+def test_first_install_link_failure_rolls_back_the_placed_runtime(tmp_path, monkeypatch):
+    from decoy.distribution import first_install
+
+    home = tmp_path / "home"
+    bundle = tmp_path / "bundle"
+    bundle.mkdir()
+    monkeypatch.setenv("DECOY_HOME", str(home))
+    real_replace = os.replace
+
+    def deny_link_only(src, dst, *a, **k):
+        if Path(dst).name == "current":
+            raise OSError(errno.EACCES, "x", "/secret/path")
+        return real_replace(src, dst, *a, **k)
+
+    monkeypatch.setattr("decoy._atomic.os.replace", deny_link_only)
+    assert first_install.main([str(bundle), "0.2.0"]) == first_install.EXIT_FAILED
+    assert not layout.version_dir("0.2.0", home).exists()
+    assert not layout.current_link(home).is_symlink()
