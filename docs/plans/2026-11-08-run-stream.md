@@ -618,6 +618,8 @@ No surface prints a cell value or a path outside the config's own paths.
 
 ## 10. Owner questions (each answerable alone; recommended answer first)
 
+Owner answers (Cam, 2026-11-09): "go with recommended". Every question below takes its recommended option.
+
 - Q1. The native companion is the speed lever and is not in the CLI install. Recommend: ship it under
   REL-PKG before V1 and treat RUN-STREAM's resources as the switch it uses; until then the run summary
   says "native companion not installed". Alternative: build it into the CLI wheel now.
