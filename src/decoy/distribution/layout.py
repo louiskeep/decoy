@@ -20,8 +20,11 @@ into a throwaway dir).
 
 from __future__ import annotations
 
+import errno
 import os
 from pathlib import Path
+
+from decoy import _atomic
 
 LAUNCHER_NAME = "decoy"
 
@@ -122,7 +125,8 @@ def slots_for_version(version: str, home: Path | None = None) -> list[str]:
         return []
     live = read_current_slot(home)
     found = [
-        d for d in versions.iterdir()
+        d
+        for d in versions.iterdir()
         if d.is_dir() and not d.name.startswith(".") and slot_version(d.name) == version
     ]
     found.sort(key=lambda d: (d.name != live, -d.stat().st_mtime_ns, d.name))
@@ -141,17 +145,18 @@ def atomic_point_current_at(slot: str, home: Path | None = None) -> None:
 
     ``slot`` is the version-dir name to make live -- normally ``<version>``, or a
     ``<version>+<build>`` repair slot (see ``slot_version``). A symlink cannot be
-    retargeted in place, so write a temp link beside it and ``os.replace`` it over
-    ``current``: replace is atomic on POSIX, so a concurrent reader sees either the old or
-    the new target, never a missing link. This is the ONLY operation that makes a staged
-    runtime live, which is why staging a fresh dir plus this flip needs no move-aside,
-    backup, or restore. The target is stored RELATIVE (``versions/<slot>``) so the whole
-    ``~/.decoy`` tree can be moved without breaking the link."""
+    retargeted in place, so ``_atomic.replace_symlink`` swaps a temp link over ``current``:
+    a concurrent reader sees either the old or the new target, never a missing link. This is
+    the ONLY operation that makes a staged runtime live, which is why staging a fresh dir
+    plus this flip needs no move-aside, backup, or restore. The target is stored RELATIVE (``versions/<slot>``)
+    so the whole ``~/.decoy`` tree can be moved without breaking the link."""
     home = home or decoy_home()
     link = current_link(home)
     rel_target = os.path.join("versions", slot)
-    tmp = home / f".current.{os.getpid()}.tmp"
-    if tmp.is_symlink() or tmp.exists():
-        tmp.unlink()
-    os.symlink(rel_target, tmp)
-    os.replace(tmp, link)
+    try:
+        _atomic.replace_symlink(link, rel_target)
+    except _atomic.AtomicWriteError as exc:
+        # Callers (first install, the installer) already roll back on OSError.
+        raise OSError(
+            exc.errno or errno.EIO, "could not point current at the new runtime"
+        ) from None
