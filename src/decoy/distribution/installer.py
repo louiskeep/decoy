@@ -174,9 +174,7 @@ def _read_trust_state(home: Path) -> dict:
     except FileNotFoundError:
         return {}
     except OSError as exc:
-        raise InstallError(
-            f"cannot read {path}: {exc} -- refusing (trust state unreadable)"
-        ) from exc
+        raise InstallError(f"cannot read {path}: {exc} -- refusing (trust state unreadable)") from exc
     try:
         data = json.loads(raw)
     except ValueError as exc:
@@ -192,10 +190,7 @@ def _trust_state_text(latest: object, serial: int) -> str:
     whitespace-tolerant pattern, so the two sides do not depend on matching formatting."""
     import json
 
-    return (
-        json.dumps({"latest": latest, "serial": serial}, sort_keys=True, separators=(",", ":"))
-        + "\n"
-    )
+    return json.dumps({"latest": latest, "serial": serial}, sort_keys=True, separators=(",", ":")) + "\n"
 
 
 def check_document_freshness(
@@ -328,10 +323,7 @@ def _extract_bundle(tar_bytes: bytes, dest: Path) -> Path:
             rel = PurePosixPath(m.name).as_posix()
             # A member must not be written THROUGH a symlink extracted earlier.
             parent = PurePosixPath(rel).parent.as_posix()
-            if (
-                parent != "."
-                and _resolve_in_archive(parent, symlinks) != PurePosixPath(parent).as_posix()
-            ):
+            if parent != "." and _resolve_in_archive(parent, symlinks) != PurePosixPath(parent).as_posix():
                 raise InstallError(f"bundle archive member writes through a symlink: {m.name!r}")
             if m.issym():
                 if _symlink_target_escapes(rel, m.linkname):
@@ -351,9 +343,7 @@ def _extract_bundle(tar_bytes: bytes, dest: Path) -> Path:
         try:
             tar.extractall(dest, filter="data")
         except TypeError as exc:
-            raise InstallError(
-                "tarfile rejected the 'data' extraction filter; refusing to extract unfiltered"
-            ) from exc
+            raise InstallError("tarfile rejected the 'data' extraction filter; refusing to extract unfiltered") from exc
     return dest / next(iter(tops))
 
 
@@ -404,9 +394,7 @@ def activate_local_version(
             raise InstallError(f"version {version} is not installed locally")
         dest = layout.versions_dir(home) / slot
         if expected_public_pem is not None:
-            problems = verify_extracted.verify_extracted(
-                dest, expected_public_pem=expected_public_pem
-            )
+            problems = verify_extracted.verify_extracted(dest, expected_public_pem=expected_public_pem)
             if problems:
                 raise InstallError(
                     "refusing to activate: local runtime failed verification: "
@@ -476,12 +464,8 @@ def install_version(
             raise InstallError("unsupported platform; no bundle target for this host")
 
         # 1) version document signature (pinned key)
-        if not vd.verify_document(
-            version_doc_bytes, version_doc_sig_b64, expected_public_pem=expected_public_pem
-        ):
-            raise InstallError(
-                "version-document signature invalid -- refusing (possible tampering)"
-            )
+        if not vd.verify_document(version_doc_bytes, version_doc_sig_b64, expected_public_pem=expected_public_pem):
+            raise InstallError("version-document signature invalid -- refusing (possible tampering)")
         try:
             doc = vd.parse_document(version_doc_bytes)
         except ValueError as exc:
@@ -535,9 +519,7 @@ def install_version(
         if expected_sha is not None:
             got_sha = manifest_mod.sha256_bytes(tar_bytes)
             if got_sha != expected_sha:
-                raise InstallError(
-                    f"bundle checksum mismatch (expected {expected_sha} got {got_sha})"
-                )
+                raise InstallError(f"bundle checksum mismatch (expected {expected_sha} got {got_sha})")
         from decoy.distribution import signing
 
         if not signing.verify_detached(tar_bytes, sig_b64, expected_public_pem=expected_public_pem):
@@ -552,13 +534,9 @@ def install_version(
             shutil.rmtree(incoming)
         try:
             bundle_root = _extract_bundle(tar_bytes, incoming)
-            problems = verify_extracted.verify_extracted(
-                bundle_root, expected_public_pem=expected_public_pem
-            )
+            problems = verify_extracted.verify_extracted(bundle_root, expected_public_pem=expected_public_pem)
             if problems:
-                raise InstallError(
-                    "bundle manifest verification failed: " + "; ".join(problems[:5])
-                )
+                raise InstallError("bundle manifest verification failed: " + "; ".join(problems[:5]))
 
             python_bin = bundle_root / "python" / "bin" / "python3"
             if not python_bin.exists():
@@ -645,9 +623,7 @@ def install_version(
                     if same_version_repair
                     else f"The new runtime {version} remains on disk but is not active"
                 )
-                raise InstallError(
-                    f"post-upgrade validation failed; rolled back to {previous!r}. {kept}."
-                )
+                raise InstallError(f"post-upgrade validation failed; rolled back to {previous!r}. {kept}.")
 
         # Replacement is live: reclaim any older slot still holding this version (a same-version
         # repair's prior dir). A different version's slot is left as the rollback target.
@@ -728,9 +704,7 @@ def prune_old_versions(home: Path | None = None, *, keep: int = 2) -> list[str]:
             kept_versions.add(live_version)
         # One slot per retained version: the live slot for the live version, the newest
         # slot for each retained rollback version.
-        keep_slots = {live_slot} | {
-            layout.resolve_slot(v, home) for v in kept_versions - {live_version}
-        }
+        keep_slots = {live_slot} | {layout.resolve_slot(v, home) for v in kept_versions - {live_version}}
         removed = []
         for name in slots:
             if name not in keep_slots:

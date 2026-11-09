@@ -65,7 +65,6 @@ def not_applicable(check_id: str, kind: str) -> CheckOutcome:
 # Validation (full / config) over the existing pre-run gate
 # ---------------------------------------------------------------------------
 
-
 def validation_outcome(
     loaded: LoadedManifest,
     ref: PipelineRef,

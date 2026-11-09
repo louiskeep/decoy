@@ -37,8 +37,7 @@ def verify_extracted(bundle_root: Path, *, expected_public_pem: str | None = Non
         if not sig_path.is_file():
             problems.append(f"missing {manifest_mod.MANIFEST_SIG_NAME}")
         elif not signing.verify_detached(
-            man_bytes,
-            sig_path.read_text(encoding="utf-8").strip(),
+            man_bytes, sig_path.read_text(encoding="utf-8").strip(),
             expected_public_pem=expected_public_pem,
         ):
             problems.append("manifest signature invalid")
@@ -58,10 +57,7 @@ def verify_extracted(bundle_root: Path, *, expected_public_pem: str | None = Non
 def main(argv: list[str] | None = None) -> int:
     argv = list(sys.argv[1:] if argv is None else argv)
     if not argv:
-        print(
-            "usage: python -m decoy.distribution.verify_extracted <bundle-root> [pubkey.pem]",
-            file=sys.stderr,
-        )
+        print("usage: python -m decoy.distribution.verify_extracted <bundle-root> [pubkey.pem]", file=sys.stderr)
         return 2
     bundle_root = Path(argv[0])
     pub = Path(argv[1]).read_text(encoding="utf-8") if len(argv) > 1 else None
