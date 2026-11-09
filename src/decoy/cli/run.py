@@ -51,6 +51,7 @@ from decoy.cli.io._targets import (
     TargetFormatError,
     check_target_formats,
     resolve_target_format,
+    table_records,
     write_chunked_output,
     write_targets,
 )
@@ -549,6 +550,8 @@ def run(
     # which only fills for --evidence-out). None for --chunked runs (no
     # ExecutionResult to count).
     _notify_row_count: int | None = None
+    # Per-table {name, rows, path} for the summary; rows is None on a chunked run.
+    _table_records: list[dict] = []
     # Native route classification (Phase 3.1), set on a successful run for
     # the run-summary line and JSON record.
     _native_route: _native_gate.RouteClassification | None = None
@@ -833,7 +836,10 @@ def run(
                 vault_writer = vault_writer_for_config(config_dict, **_key_kwargs)
 
             if chunked:
-                _run_chunked_mask(config_dict, config.parent, chunk_size, key_provider)
+                _chunk_paths = _run_chunked_mask(
+                    config_dict, config.parent, chunk_size, key_provider
+                )
+                _table_records = table_records(dict.fromkeys(_chunk_paths), _chunk_paths)
                 _native_route = _native_gate.classify_route(
                     chunked=True,
                     any_generate=any_generate,
@@ -883,7 +889,10 @@ def run(
                 # vault was lost can never be reversed.
                 if vault_writer is not None:
                     _commit_vault(vault_writer, vault)
-                _write_mask_outputs(config_dict, result, config.parent)
+                _written = _write_mask_outputs(config_dict, result, config.parent)
+                _table_records = table_records(
+                    {name: len(tbl) for name, tbl in result.outputs.items()}, _written
+                )
                 # S5: capture the quality metrics so the tail can render the
                 # requested report sections and apply the enforce -> EXIT_FINDINGS
                 # mapping. The mask has already succeeded and its outputs are
@@ -1192,6 +1201,7 @@ def run(
             "config": config_str,
             "mode": yaml_mode,
             "elapsed_s": round(elapsed, 3),
+            "tables": _table_records,
         }
         if notify_channels:
             payload["notify"] = notify_results
@@ -1226,6 +1236,9 @@ def run(
         ("Pipeline", config.name),
         ("Mode", yaml_mode),
         ("Elapsed", f"{elapsed:.2f}s"),
+        ("Tables", str(len(_table_records))),
+        ("Rows", "n/a (chunked)" if chunked else str(sum(r["rows"] for r in _table_records))),
+        ("Files", str(sum(1 for r in _table_records if r["path"] is not None))),
     ]
     if _native_route is not None:
         facts.append(("Route", _native_route.label))
@@ -1445,7 +1458,7 @@ def _run_chunked_mask(
     base_dir: Path,
     chunk_size: int,
     key_provider=None,
-) -> None:
+) -> dict[str, Path | None]:
     """WS4 chunked mask path: stream each mask table's source through
     `decoy_engine.run_mask_pipeline_chunked`, writing output per chunk, on
     the engine's one execution adapter (pandas; the chunked path has no
@@ -1463,7 +1476,10 @@ def _run_chunked_mask(
     reader and the writer follow the declared `format` of the source and the
     target. Parquet reads stream via ParquetFile.iter_batches; CSV reads keep
     the dtype=str contract of the plain path, so a csv -> parquet run
-    produces an all-string schema."""
+    produces an all-string schema.
+
+    Returns table name to the path actually published, or None for a table whose empty CSV
+    source published nothing."""
     _require_local_io_endpoints(config_dict)
     check_target_formats(config_dict, chunked=True)
 
@@ -1472,6 +1488,7 @@ def _run_chunked_mask(
 
     sources = config_dict.get("sources") or {}
     targets = config_dict.get("targets") or {}
+    published: dict[str, Path | None] = {}
     for table_entry in config_dict.get("tables") or []:
         if not isinstance(table_entry, dict) or not table_entry.get("columns"):
             continue
@@ -1493,7 +1510,7 @@ def _run_chunked_mask(
             engine_version=engine_version,
             key_provider=key_provider,
         )
-        write_chunked_output(
+        published[name] = write_chunked_output(
             masked_iter,
             resolve_target_format(name, tgt_spec),
             out_path,
@@ -1501,6 +1518,7 @@ def _run_chunked_mask(
                 partial(parquet_schema, src_path) if src_spec.get("format") == "parquet" else None
             ),
         )
+    return published
 
 
 def _check_chunked_tables(config_dict: dict) -> None:
@@ -1636,7 +1654,7 @@ def _commit_vault(vault_writer, vault: Path) -> None:
         raise _VaultWriteError(VAULT_WRITE_FAILED)
 
 
-def _write_mask_outputs(config_dict: dict, result, base_dir: Path) -> None:
+def _write_mask_outputs(config_dict: dict, result, base_dir: Path) -> dict[str, Path]:
     """Write each declared target from the V2 ExecutionResult.
 
     The engine result exposes masked tables on `outputs` (dict[table_name -> pa.Table]);
@@ -1652,8 +1670,8 @@ def _write_mask_outputs(config_dict: dict, result, base_dir: Path) -> None:
 
     outputs = getattr(result, "outputs", None)
     if not isinstance(outputs, dict):
-        return
-    write_targets(config_dict, outputs, base_dir)
+        return {}
+    return write_targets(config_dict, outputs, base_dir)
 
 
 def _dispatch_run_notifications(
