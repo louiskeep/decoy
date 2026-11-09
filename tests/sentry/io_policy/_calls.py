@@ -1,7 +1,10 @@
 """One normalized call scanner for the I/O policy sentries (stdlib `ast` only).
 
-Shared by G-ONE-CSV-READ (`tests/sentry/test_csv_read_choke_point.py`) and G-ONE-TARGET-WRITE
-(`test_target_writes.py`), so import normalization lives in one place.
+Shared by G-ONE-CSV-READ (`tests/sentry/test_csv_read_choke_point.py`), G-ONE-TARGET-WRITE
+(`test_target_writes.py`), G-ONE-PRIVATE-FILE (`test_private_files.py`) and the mask-secret
+admission derivation, so import normalization lives in one place. `sites` is the single
+traversal: it returns normalized records (node, resolved name, qualified scope, bindings and the
+ancestor path as `(node, child_field)` pairs). `call_sites` and `call_contexts` are projections.
 
 A reference is resolved to a dotted name only when it starts at a bound import: `pq.write_table`,
 `pyarrow.parquet.write_table` after `import pyarrow.parquet`, and `parquet.write_table` after
@@ -11,7 +14,8 @@ reported wherever it is named, called or passed as a value (`pool.submit(pq.writ
 `functools.partial(...)`). Scopes are qualified names (`Class.method`, `outer.inner`), and an
 import binds only inside the module, function or class that makes it (and what it contains).
 
-Named limits: a call through a runtime-bound name (`getattr(pd, "read_csv")`), an alias by
+Named limits: a relative import (`from . import x`) binds nothing here; ruff TID252
+(`ban-relative-imports = "all"`) keeps the repo free of them. A call through a runtime-bound name (`getattr(pd, "read_csv")`), an alias by
 assignment (`w = pq.write_table; w(t, p)`), `from x import *`, `exec`, and a local name or
 parameter that shadows an import.
 """
@@ -19,7 +23,8 @@ parameter that shadows an import.
 from __future__ import annotations
 
 import ast
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
+from dataclasses import dataclass
 from pathlib import Path
 
 Bindings = dict[str, str]
@@ -63,6 +68,112 @@ def qualified(target: ast.expr | ast.Call, bound: Bindings) -> str | None:
     return ".".join([bound[node.id], *reversed(parts)])
 
 
+def leaf(target: ast.expr | ast.Call, bound: Bindings) -> str | None:
+    """The member name a reference stands for: the last part of its resolved import name.
+
+    The one place a sentry asks "what is this call". A reference that starts at a bound import
+    (`from io import open as io_open`, `from pyarrow.parquet import write_table as wt`) is named
+    by what it resolves to (`open`, `write_table`), never by its local spelling. Only a reference
+    that resolves to nothing (a method on a local or `self`) falls back to its syntactic last name.
+    """
+    resolved = qualified(target, bound)
+    if resolved is not None:
+        return resolved.rpartition(".")[2]
+    node: ast.expr = target.func if isinstance(target, ast.Call) else target
+    if isinstance(node, ast.Name):
+        return node.id
+    return node.attr if isinstance(node, ast.Attribute) else None
+
+
+@dataclass(frozen=True)
+class Site:
+    """One normalized record from the single traversal: a `Name`/`Attribute` load or a `Call`.
+
+    `scope` is the qualified enclosing function ('<module>' at top level) and `inner` its
+    innermost name. `ancestors` is the path from the module down to this node's parent as
+    `(node, child_field)` pairs, so a rule can ask "is this call in the `body` of a `Try`" without
+    a second walk; it crosses scope boundaries, so use `guards` to stay inside the function.
+    `with_names` are the names bound by enclosing `with <call> as name` statements.
+    """
+
+    node: ast.Name | ast.Attribute | ast.Call
+    scope: str
+    inner: str
+    bound: Bindings
+    chain_part: bool
+    with_names: frozenset[str]
+    ancestors: tuple[tuple[ast.AST, str], ...]
+
+    @property
+    def name(self) -> str | None:
+        """Dotted name of the reference (or of a call's callee) from a bound import, else None."""
+        return qualified(self.node, self.bound)
+
+    @property
+    def lineno(self) -> int:
+        return self.node.lineno
+
+    def guards(self) -> tuple[tuple[ast.AST, str], ...]:
+        """The ancestors inside the innermost enclosing function, class or lambda."""
+        cut = max(
+            (i for i, (n, _f) in enumerate(self.ancestors) if isinstance(n, _SCOPES)), default=-1
+        )
+        return self.ancestors[cut + 1 :]
+
+
+def _children(node: ast.AST) -> Iterator[tuple[str, ast.AST]]:
+    for field, value in ast.iter_fields(node):
+        if isinstance(value, ast.AST):
+            yield field, value
+        elif isinstance(value, list):
+            for item in value:
+                if isinstance(item, ast.AST):
+                    yield field, item
+
+
+def _opens(item: ast.withitem, with_calls: frozenset[str], bound: Bindings) -> str | None:
+    ctx, var = item.context_expr, item.optional_vars
+    if not (isinstance(ctx, ast.Call) and isinstance(var, ast.Name)):
+        return None
+    return var.id if leaf(ctx, bound) in with_calls else None
+
+
+def sites(tree: ast.AST, *, with_calls: frozenset[str] = frozenset()) -> list[Site]:
+    """The one traversal: every reference load and every call, in source order, with context."""
+    found: list[Site] = []
+
+    def visit(
+        node: ast.AST,
+        scope: str,
+        inner: str,
+        bound: Bindings,
+        names: frozenset[str],
+        path: tuple[tuple[ast.AST, str], ...],
+    ) -> None:
+        for field, child in _children(node):
+            step = (*path, (node, field))
+            if isinstance(child, _SCOPES):
+                name = getattr(child, "name", "<lambda>")
+                qual = name if scope == "<module>" else f"{scope}.{name}"
+                visit(child, qual, name, {**bound, **bindings(child)}, frozenset(), step)
+                continue
+            inner_names = names
+            if isinstance(child, (ast.With, ast.AsyncWith)):
+                inner_names = names | {
+                    n for n in (_opens(i, with_calls, bound) for i in child.items) if n
+                }
+            is_ref = isinstance(child, (ast.Name, ast.Attribute)) and isinstance(
+                child.ctx, ast.Load
+            )
+            if is_ref or isinstance(child, ast.Call):
+                chain = isinstance(node, ast.Attribute) and child is node.value
+                found.append(Site(child, scope, inner, bound, chain, names, step))  # type: ignore[arg-type]
+            visit(child, scope, inner, bound, inner_names, step)
+
+    visit(tree, "<module>", "<module>", bindings(tree), frozenset(), ())
+    return found
+
+
 def call_sites(
     source: str,
     *,
@@ -72,28 +183,17 @@ def call_sites(
 ) -> list[tuple[int, str]]:
     """Return (line, qualified enclosing function or '<module>') for each matching reference.
 
-    A reference matches when `qualified_match(module, name)` accepts its dotted name, or when
-    its attribute name is in `method_names` on any receiver. `qualified_scopes=False` reports the
-    innermost function name only (the read sentry's baseline keys are recorded that way).
+    A projection of `sites`. A reference matches when `qualified_match(module, name)` accepts its
+    dotted name, or when its attribute name is in `method_names` on any receiver.
+    `qualified_scopes=False` reports the innermost function name only (the read sentry's baseline
+    keys are recorded that way).
     """
-    tree = ast.parse(source)
-    found: list[tuple[int, str]] = []
-
-    def visit(node: ast.AST, scope: str, bound: Bindings, inner_of_chain: bool) -> None:
-        for child in ast.iter_child_nodes(node):
-            if isinstance(child, _SCOPES):
-                name = getattr(child, "name", "<lambda>")
-                inner = name if scope == "<module>" or not qualified_scopes else f"{scope}.{name}"
-                visit(child, inner, {**bound, **bindings(child)}, False)
-                continue
-            chain_part = isinstance(node, ast.Attribute) and child is node.value
-            if isinstance(child, (ast.Name, ast.Attribute)) and isinstance(child.ctx, ast.Load):
-                if _hit(child, bound, qualified_match, method_names, chain_part):
-                    found.append((child.lineno, scope))
-            visit(child, scope, bound, chain_part)
-
-    visit(tree, "<module>", bindings(tree), False)
-    return found
+    return [
+        (s.lineno, s.scope if qualified_scopes else s.inner)
+        for s in sites(ast.parse(source))
+        if isinstance(s.node, (ast.Name, ast.Attribute))
+        and _hit(s.node, s.bound, qualified_match, method_names, s.chain_part)
+    ]
 
 
 def _hit(
@@ -123,37 +223,45 @@ def call_contexts(
 ) -> list[tuple[ast.Call, str, frozenset[str]]]:
     """Return (call, qualified scope, names bound by enclosing `with <one of with_calls>(...) as name`).
 
-    Matches a call's callee with the same resolution as `call_sites`. A `with` binds its name
-    for its own body only, and nested `with` statements add to the set.
+    A projection of `sites`. Matches a call's callee with the same resolution as `call_sites`. A
+    `with` binds its name for its own body only, and nested `with` statements add to the set.
     """
-    tree = ast.parse(source)
-    found: list[tuple[ast.Call, str, frozenset[str]]] = []
+    return [
+        (s.node, s.scope, s.with_names)
+        for s in sites(ast.parse(source), with_calls=with_calls)
+        if isinstance(s.node, ast.Call)
+        and isinstance(s.node.func, (ast.Name, ast.Attribute))
+        and _hit(s.node.func, s.bound, qualified_match, method_names, False)
+    ]
 
-    def opens(item: ast.withitem) -> str | None:
-        ctx, var = item.context_expr, item.optional_vars
-        if not (isinstance(ctx, ast.Call) and isinstance(var, ast.Name)):
-            return None
-        callee = ctx.func
-        name = callee.id if isinstance(callee, ast.Name) else getattr(callee, "attr", None)
-        return var.id if name in with_calls else None
 
-    def visit(node: ast.AST, scope: str, bound: Bindings, names: frozenset[str]) -> None:
-        for child in ast.iter_child_nodes(node):
-            if isinstance(child, _SCOPES):
-                name = getattr(child, "name", "<lambda>")
-                inner = name if scope == "<module>" else f"{scope}.{name}"
-                visit(child, inner, {**bound, **bindings(child)}, frozenset())
-                continue
-            inner_names = names
-            if isinstance(child, (ast.With, ast.AsyncWith)):
-                inner_names = names | {n for n in map(opens, child.items) if n}
-            if isinstance(child, ast.Call) and isinstance(child.func, (ast.Name, ast.Attribute)):
-                if _hit(child.func, bound, qualified_match, method_names, False):
-                    found.append((child, scope, names))
-            visit(child, scope, bound, inner_names)
+# Where a watched write call takes its path: (positional index, keyword), keyed by the call's
+# last name or resolved dotted name. `None` means the path is the receiver (`p.write_text(...)`).
+PATH_SLOT: dict[str, tuple[int, str] | None] = {
+    "os.open": (0, "path"),
+    "sqlite3.connect": (0, "database"),
+    "duckdb.connect": (0, "database"),
+    "open": (0, "file"),
+    "write_table": (1, "where"),
+    "to_csv": (0, "path_or_buf"),
+    "to_parquet": (0, "path"),
+    "ParquetWriter": (0, "where"),
+    "write_fixed_width": (2, "path"),
+    "write_text": None,
+    "write_bytes": None,
+}
 
-    visit(tree, "<module>", bindings(tree), frozenset())
-    return found
+
+def path_arg(call: ast.Call, member: str) -> ast.expr | None:
+    """The expression a call passes as its path, or None for a receiver path or no such arg."""
+    slot = PATH_SLOT.get(member)
+    if slot is None:
+        return None
+    index, keyword = slot
+    for kw in call.keywords:
+        if kw.arg == keyword:
+            return kw.value
+    return call.args[index] if len(call.args) > index else None
 
 
 def tally(
@@ -168,3 +276,11 @@ def tally(
         for _line, scope in finder(path.read_text(encoding="utf-8")):
             counts[(rel, scope)] = counts.get((rel, scope), 0) + 1
     return counts
+
+
+def is_staged_name(arg: ast.expr | None, names: frozenset[str]) -> bool:
+    """True when a path argument is (`str()` of) a name bound by an enclosing stager `with`."""
+    if isinstance(arg, ast.Call) and isinstance(arg.func, ast.Name) and arg.func.id == "str":
+        if len(arg.args) == 1 and not arg.keywords:
+            arg = arg.args[0]
+    return isinstance(arg, ast.Name) and arg.id in names

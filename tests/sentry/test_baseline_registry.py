@@ -92,6 +92,7 @@ def unregistered_readers(
 def _covered() -> tuple[set[tuple[str, str]], set[str]]:
     consts = {(s.keys.name, s.keys.constant) for s in bs.SOURCES} | set(bs.NOT_A_LIST_CONSTS)
     files = {Path(p).name for p in registry().values()}
+    files |= {Path(s.data_file).name for s in bs.SOURCES if s.data_file}
     return consts, files
 
 
@@ -161,4 +162,15 @@ def test_seeded_unregistered_readers_are_caught() -> None:
     seeded_file = {"test_new.py": 'P = ROOT / "tests" / "fixtures" / "fresh-list.json"\n'}
     assert unregistered_readers(seeded_file, {"fresh-list.json"}, consts, files) == [
         "test_new.py: data file fresh-list.json"
+    ]
+
+
+def test_a_registered_data_file_passes_and_an_unregistered_one_is_caught() -> None:
+    consts, files = _covered()
+    assert "file_sinks.toml" in files
+    registered = {"test_new.py": 'P = HERE / "file_sinks.toml"\n'}
+    assert unregistered_readers(registered, {"file_sinks.toml"}, consts, files) == []
+    unregistered = {"test_new.py": 'P = HERE / "other_sinks.toml"\n'}
+    assert unregistered_readers(unregistered, {"other_sinks.toml"}, consts, files) == [
+        "test_new.py: data file other_sinks.toml"
     ]
