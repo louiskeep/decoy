@@ -44,9 +44,9 @@ SIGNATURE_ALG = "ed25519"
 def canonical_bytes(payload: dict[str, Any]) -> bytes:
     """The single definition of 'what gets signed'. Signer and verifier MUST agree on
     these exact bytes, so this is the one place the encoding lives."""
-    return json.dumps(
-        payload, sort_keys=True, ensure_ascii=False, separators=(",", ":")
-    ).encode("utf-8")
+    return json.dumps(payload, sort_keys=True, ensure_ascii=False, separators=(",", ":")).encode(
+        "utf-8"
+    )
 
 
 def _raw_public_bytes_from_pem(public_pem: str) -> bytes:

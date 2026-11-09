@@ -13,10 +13,13 @@ import typing
 from pathlib import Path
 
 import pytest
+import yaml
 from typer.testing import CliRunner
 
 from decoy.__main__ import app
+from decoy.cli.exit_codes import EXIT_USAGE
 from decoy.cli.explain import topic_names
+from tests.keyed_secret import TEST_MASK_SECRET, TEST_MASK_SECRET_ENV, with_mask_secret
 
 runner = CliRunner()
 
@@ -182,3 +185,80 @@ def test_vault_topic_points_at_the_tokenize_store() -> None:
     body = _flat(_topic("vault")["body"])
 
     assert "decoy tokenize" in body
+
+
+# --- Item 3: the old-engine mask-secret refusal, one text per surface -------------
+
+
+@pytest.fixture
+def old_engine(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Path:
+    """An engine with no keyprovider module, as the three surfaces' own probes see it.
+
+    Only imports made from the CLI `run`, `tokenize` and `decoy.api` modules fail; the engine's
+    own modules still import `keyprovider`, so the run reaches the surface probe.
+    """
+    import builtins
+
+    real_import = builtins.__import__
+    probing = {"decoy.cli.run", "decoy.cli.tokenize", "decoy.api"}
+
+    def fake_import(name, globals=None, *args, **kwargs):
+        if name == "decoy_engine.keyprovider" and (globals or {}).get("__name__") in probing:
+            raise ImportError(name)
+        return real_import(name, globals, *args, **kwargs)
+
+    monkeypatch.setenv(TEST_MASK_SECRET_ENV, TEST_MASK_SECRET)
+    monkeypatch.setattr(builtins, "__import__", fake_import)
+    (tmp_path / "people.csv").write_text("id\n1\n2\n")
+    cfg = {
+        "version": 2,
+        "global_settings": {"seed": 42},
+        "sources": {
+            "people": {"type": "file", "format": "csv", "path": str(tmp_path / "people.csv")}
+        },
+        "tables": [
+            {
+                "name": "people",
+                "columns": [{"name": "id", "strategy": "tokenize", "namespace": "pid"}],
+            }
+        ],
+        "targets": {"people": {"type": "file", "format": "csv", "path": str(tmp_path / "out.csv")}},
+    }
+    config = tmp_path / "pipeline.yaml"
+    config.write_text(yaml.safe_dump(with_mask_secret(cfg)), encoding="utf-8")
+    return config
+
+
+@pytest.mark.parametrize(
+    ("command", "extra", "constant"),
+    [
+        ("run", [], "OLD_ENGINE_RUN"),
+        ("tokenize", ["--vault", "tokens.db"], "OLD_ENGINE_TOKENIZE"),
+    ],
+)
+def test_old_engine_refusal_is_the_registry_text_without_a_ticket_id(
+    old_engine: Path, command: str, extra: list[str], constant: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from decoy import _mask_secret_guidance
+
+    monkeypatch.chdir(old_engine.parent)
+    result = runner.invoke(app, [command, str(old_engine), *extra])
+
+    text = getattr(_mask_secret_guidance, constant)
+    assert result.exit_code == EXIT_USAGE, result.output
+    assert _flat(text) in _flat(result.output)
+    assert "DE-0" not in result.output
+
+
+def test_old_engine_refusal_for_mask_is_the_registry_text(old_engine: Path, tmp_path: Path) -> None:
+    import pandas as pd
+
+    import decoy
+    from decoy import _mask_secret_guidance
+    from decoy.api import MaskSecretConfigError
+
+    with pytest.raises(MaskSecretConfigError) as caught:
+        decoy.mask(pd.DataFrame({"id": [1, 2]}), str(old_engine), out=str(tmp_path / "o.csv"))
+
+    assert str(caught.value) == _mask_secret_guidance.OLD_ENGINE_API
+    assert "DE-0" not in str(caught.value)

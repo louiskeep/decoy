@@ -28,9 +28,7 @@ def _disabled(state: OutputState) -> bool:
 
 
 @contextmanager
-def spinner(
-    state: OutputState, message: str, *, style: str = "dots"
-) -> Iterator[None]:
+def spinner(state: OutputState, message: str, *, style: str = "dots") -> Iterator[None]:
     """Indeterminate spinner. Use for ops < ~10s with no progress signal.
 
     `style` is any Rich spinner name -- run `python -m rich.spinner` to see
@@ -157,9 +155,7 @@ def multistage(state: OutputState, stages: list[str]) -> Iterator[_MultistageHan
         transient=True,
     )
     with progress:
-        task_ids = [
-            progress.add_task(f"[ ] {label}", total=None) for label in stages
-        ]
+        task_ids = [progress.add_task(f"[ ] {label}", total=None) for label in stages]
         handle = _MultistageHandle(progress, task_ids, stages)
         handle.start()
         yield handle

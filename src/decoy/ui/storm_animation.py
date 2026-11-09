@@ -87,9 +87,7 @@ _RAIN_FRAMES_RAW: list[list[str]] = [
 
 
 # Cached as one string per frame -- joined once at module load.
-CLOUD_FRAMES: list[str] = [
-    "\n".join(_CLOUD_LINES + rain) for rain in _RAIN_FRAMES_RAW
-]
+CLOUD_FRAMES: list[str] = ["\n".join(_CLOUD_LINES + rain) for rain in _RAIN_FRAMES_RAW]
 
 # Per-stage running marker -- cycles independently to give the active
 # stage a small pulse beneath the bigger cloud animation.
@@ -157,9 +155,7 @@ def _disabled(state: OutputState) -> bool:
 
 
 @contextmanager
-def stormy_multistage(
-    state: OutputState, stages: list[str]
-) -> Iterator[_StormyHandle]:
+def stormy_multistage(state: OutputState, stages: list[str]) -> Iterator[_StormyHandle]:
     """Multi-stage indicator with a big cycling storm cloud + per-stage glyph.
 
     Drop-in replacement for `multistage()` for the `scan`

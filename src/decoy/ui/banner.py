@@ -56,6 +56,4 @@ def render_banner(state: OutputState) -> None:
     body.add_row(quickstart)
 
     title = Text.assemble(("decoy ", "accent"), (f"v{__version__}", "code"))
-    state.console.print(
-        Panel(body, title=title, title_align="left", border_style="accent")
-    )
+    state.console.print(Panel(body, title=title, title_align="left", border_style="accent"))

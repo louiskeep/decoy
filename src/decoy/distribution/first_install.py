@@ -57,7 +57,10 @@ def main(argv: list[str] | None = None) -> int:
     try:
         with lock.exclusive(home):
             if _existing_runtime(home):
-                print("an existing Decoy runtime is installed; refusing to overwrite it", file=sys.stderr)
+                print(
+                    "an existing Decoy runtime is installed; refusing to overwrite it",
+                    file=sys.stderr,
+                )
                 return EXIT_REFUSED
             if doc_path is not None:
                 try:
@@ -72,7 +75,10 @@ def main(argv: list[str] | None = None) -> int:
                 layout.atomic_point_current_at(version, home)
             except OSError as exc:
                 shutil.rmtree(dest, ignore_errors=True)
-                print(f"could not place or activate {version}: {exc} -- nothing installed", file=sys.stderr)
+                print(
+                    f"could not place or activate {version}: {exc} -- nothing installed",
+                    file=sys.stderr,
+                )
                 return EXIT_FAILED
             installer._write_launcher_shim(home)
     except lock.InstallBusyError as exc:
