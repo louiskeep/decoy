@@ -10,7 +10,7 @@ from __future__ import annotations
 import os
 import re
 from dataclasses import dataclass
-from pathlib import Path
+from pathlib import Path, PurePosixPath, PureWindowsPath
 
 # <UTC start YYYYMMDDTHHMMSSffffffZ>-<8 hex of the invocation id>, plus 4 more hex digits per
 # clash, up to all 32.
@@ -47,15 +47,21 @@ def owning_run(path: Path, root: Path, name: str) -> RunFolder | None:
 
 
 def placed_path(run: RunFolder, raw: str) -> Path | None:
-    """`raw` placed inside `run`, normalized, or None when it is absolute or leaves the run.
+    """`raw` placed inside `run` and resolved, or None when it does not stay inside.
 
-    The path may not climb above the run folder at any step, even to come back in: `..`
-    followed by the run's own name is a path into the pipeline folder, not a placed one.
+    Refused: an anchor or drive in either path style (`/x`, `\\x`, `C:x`, `//host/share/x`), a
+    trailing separator (a directory, not a file), a `..` that climbs above the run at any
+    step (even to come back in), and a result that resolves outside the run through an
+    existing symlink. The result is resolved, so it compares with a resolved input path.
     """
-    if Path(raw).is_absolute():
+    if not raw or raw.endswith(("/", "\\")):
         return None
+    for style in (PurePosixPath, PureWindowsPath):
+        pure = style(raw)
+        if pure.anchor or pure.drive:
+            return None
     depth = 0
-    for part in Path(raw).parts:
+    for part in PurePosixPath(raw).parts:
         if part == "..":
             depth -= 1
             if depth < 0:
@@ -64,4 +70,9 @@ def placed_path(run: RunFolder, raw: str) -> Path | None:
             depth += 1
     if depth == 0:
         return None
-    return Path(os.path.normpath(run.path / raw))
+    resolved = Path(os.path.normpath(run.path / raw)).resolve()
+    try:
+        inside = resolved.relative_to(run.path.resolve()).parts
+    except ValueError:
+        return None
+    return resolved if inside else None

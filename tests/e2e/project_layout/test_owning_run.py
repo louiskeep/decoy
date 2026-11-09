@@ -214,3 +214,59 @@ def test_run_id_accepts_8_to_32_hex_in_steps_of_four(hexpart: str) -> None:
 )
 def test_run_id_rejects_malformed(value: str) -> None:
     assert not is_run_id(value)
+
+
+def _run_folder(run: Path) -> RunFolder:
+    return RunFolder(run.resolve(), RUN_ID)
+
+
+@pytest.mark.parametrize("raw", ["\\x", "C:x", "C:\\x", "//server/share/x", "c:/x", "/x"])
+def test_placed_path_refuses_anchors_and_drives(raw: str) -> None:
+    run = RunFolder(Path("/p/out/orders") / RUN_ID, RUN_ID)
+    assert placed_path(run, raw) is None
+
+
+@pytest.mark.parametrize("raw", ["sub/", "sub\\", "a/b/"])
+def test_placed_path_refuses_directory_like_targets(raw: str) -> None:
+    run = RunFolder(Path("/p/out/orders") / RUN_ID, RUN_ID)
+    assert placed_path(run, raw) is None
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="symlinks")
+def test_placed_path_refuses_a_symlink_ancestor_leaving_the_run(
+    project: tuple[Path, tuple[Path, str], Path], tmp_path: Path
+) -> None:
+    _, _, run = project
+    (tmp_path / "outside").mkdir()
+    os.symlink(tmp_path / "outside", run / "link")
+    assert placed_path(_run_folder(run), "link/value.csv") is None
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="symlinks")
+def test_a_symlink_ancestor_inside_the_run_keeps_the_declared_layout(
+    project: tuple[Path, tuple[Path, str], Path],
+) -> None:
+    root, ref, run = project
+    (run / "real").mkdir()
+    os.symlink("real", run / "link")
+    target = _touch(run / "real" / "m.dat")
+    placed = placed_path(_run_folder(run), "link/m.dat")
+    assert placed == target.resolve()
+    config = _config("link/m.dat")
+    assert input_format(config, "t", target, root, pipeline=ref) == ("fixed_width", LAYOUT)
+    assert input_format(config, "t", run / "link" / "m.dat", root, pipeline=ref) == (
+        "fixed_width",
+        LAYOUT,
+    )
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="symlinks")
+def test_a_symlink_ancestor_leaving_the_run_is_not_the_target(
+    project: tuple[Path, tuple[Path, str], Path], tmp_path: Path
+) -> None:
+    root, ref, run = project
+    outside = tmp_path / "outside"
+    os.symlink(outside, run / "link")
+    target = _touch(outside / "value.dat")
+    config = _config("link/value.dat")
+    assert input_format(config, "t", target, root, pipeline=ref) == ("csv", None)
