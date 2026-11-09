@@ -105,6 +105,42 @@ def test_compile_output_is_private_and_its_bytes_are_the_rendered_plan(tmp_path:
     assert plan_path.read_bytes() == render_plan_artifact(plan, "yaml").encode("utf-8")
 
 
+@pytest.mark.parametrize("as_json", [False, True])
+def test_compile_output_write_failure_exits_3_with_the_code(tmp_path: Path, as_json: bool) -> None:
+    cfg = _config(tmp_path, _HASH)
+    plan_path = tmp_path / "plan.yaml"
+    code = (
+        "import os, sys\n"
+        "real = os.replace\n"
+        "def fail(src, dst, *a, **k):\n"
+        "    if os.path.basename(os.fspath(dst)) == 'plan.yaml':\n"
+        "        raise OSError(5, 'disk says no')\n"
+        "    return real(src, dst, *a, **k)\n"
+        "os.replace = fail\n" + _BOOT
+    )
+    argv = ["validate", "compile", str(cfg), "--no-profile", "--output", str(plan_path)]
+    if as_json:
+        argv.append("--json")
+    proc = subprocess.run(
+        [sys.executable, "-c", code, *argv],
+        cwd=tmp_path,
+        capture_output=True,
+        text=True,
+        env=_env(),
+        timeout=300,
+        check=False,
+    )
+    assert proc.returncode == 3, proc.stderr + proc.stdout
+    assert "Traceback" not in proc.stderr + proc.stdout
+    assert not plan_path.exists()
+    if as_json:
+        envelope = json.loads(proc.stdout)
+        assert envelope["status"] == "error"
+        assert "atomic_write_failed" in envelope["error"]
+    else:
+        assert "atomic_write_failed" in proc.stderr
+
+
 def test_tokenize_vault_and_its_journal_are_private(tmp_path: Path) -> None:
     cfg = _config(tmp_path, _TOKEN)
     vault = tmp_path / "sub" / "tokens.db"

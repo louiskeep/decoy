@@ -12,8 +12,8 @@ so a new copy inside an allowlisted file is also red.
 Named limits, all invisible to a syntax walk: a call through a runtime-bound name
 (`getattr(os, "replace")`), alias by assignment (`mv = os.replace; mv(a, b)`), a starred
 argument list on `.replace(*args)`, and `from os import *`.
-Size 4 is today's baseline (L1b.1 left 5; X7c S2 moved `api.py` onto `_private_file`, after `cli/ci.py` and `ci/debug.py` moved onto
-`_atomic.write_atomic`). Entries leave this list when their file moves onto the writer;
+Size 4 is today's baseline. L1b.1 left 5 entries, after `cli/ci.py` and `ci/debug.py` moved
+onto `_atomic.write_atomic`; X7c S2 then moved `api.py` onto `_private_file`. Entries leave this list when their file moves onto the writer;
 none may be added without a reviewed change (shrink-only ratchet,
 tests/sentry/baselines/atomic-writer-allow.json, which also records each entry's site count).
 """
