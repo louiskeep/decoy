@@ -31,6 +31,7 @@ import pyarrow as pa
 from decoy._atomic import staged_local_target, staged_private_target
 from decoy.cli._sources import resolve_path
 from decoy.cli.io._compression import csv_compression, is_archive_csv, split_compression
+from decoy.cli.io._layout import owning_run, placed_path, same_path
 
 if TYPE_CHECKING:
     import pandas as pd
@@ -199,13 +200,33 @@ def _unreadable(fmt: object, layout: object) -> TargetFormatError | None:
     return None
 
 
+def _is_declared_target(
+    path: Path, raw: str, base_dir: Path, pipeline: tuple[Path, str] | None
+) -> bool:
+    """True when `path` is the target declared as `raw`, at the old place or in a run folder."""
+    if same_path(path, resolve_path(raw, base_dir)):
+        return True
+    if pipeline is None:
+        return False
+    run = owning_run(path, *pipeline)
+    placed = placed_path(run, raw) if run is not None else None
+    return placed is not None and same_path(path, placed)
+
+
 def input_format(
-    config_dict: Mapping[str, Any], table: str, path: Path, base_dir: Path
+    config_dict: Mapping[str, Any],
+    table: str,
+    path: Path,
+    base_dir: Path,
+    pipeline: tuple[Path, str] | None = None,
 ) -> tuple[str, Mapping[str, Any] | None]:
     """The format and layout to read a CLI-written file in, for `detokenize` and `unmask`.
 
     When `path` is the table's file target (both sides fully resolved), the target's declared
     format and layout apply, and an undeclared or unknown format is refused before any read.
+    The target is the file at the old place (declared path against `base_dir`) or, when
+    `pipeline` (project root, pipeline name) is given, the same declared path inside a run
+    folder of that pipeline.
     Any other path has no declaration and takes the suffix rule.
     """
     targets = config_dict.get("targets")
@@ -214,7 +235,7 @@ def input_format(
         isinstance(entry, Mapping)
         and entry.get("type", "file") == "file"
         and isinstance(entry.get("path"), str)
-        and path.resolve() == resolve_path(entry["path"], base_dir).resolve()
+        and _is_declared_target(path, entry["path"], base_dir, pipeline)
     ):
         layout = entry.get("layout")
         error = _unreadable(entry.get("format"), layout)
