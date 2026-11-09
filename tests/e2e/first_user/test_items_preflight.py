@@ -12,7 +12,7 @@ import shutil
 from pathlib import Path
 
 import pytest
-from typer.testing import CliRunner
+from typer.testing import CliRunner, Result
 
 from decoy.__main__ import app
 from decoy.cli.exit_codes import EXIT_OK, EXIT_USAGE
@@ -31,14 +31,16 @@ def _stage(tmp_path: Path, name: str) -> Path:
     return tmp_path / name
 
 
-def _no_traceback(text: str) -> None:
-    assert "Traceback" not in text
+def _no_traceback(result: Result) -> None:
+    # CliRunner captures exceptions instead of printing them, so check the captured one.
+    assert result.exception is None or isinstance(result.exception, SystemExit)
+    assert "Traceback" not in result.output
 
 
 def test_preflight_reports_the_uncompilable_plan_as_a_capacity_fail(tmp_path: Path) -> None:
     config = _stage(tmp_path, "pipeline_no_namespace.yaml")
     result = runner.invoke(app, ["validate", "preflight", str(config), "--json"])
-    _no_traceback(result.output)
+    _no_traceback(result)
     assert result.exit_code == EXIT_USAGE
     checks = {c["name"]: c for c in json.loads(result.stdout)["checks"]}
     assert checks[_CHECK]["status"] == "fail"
@@ -48,7 +50,7 @@ def test_preflight_reports_the_uncompilable_plan_as_a_capacity_fail(tmp_path: Pa
 def test_preflight_fail_names_no_data_value(tmp_path: Path) -> None:
     config = _stage(tmp_path, "pipeline_no_namespace.yaml")
     result = runner.invoke(app, ["validate", "preflight", str(config)])
-    _no_traceback(result.output)
+    _no_traceback(result)
     assert "Ada Example" not in result.output
     assert "000-00-0001" not in result.output
 
@@ -56,7 +58,7 @@ def test_preflight_fail_names_no_data_value(tmp_path: Path) -> None:
 def test_aggregate_validate_emits_one_preflight_namespace_error(tmp_path: Path) -> None:
     config = _stage(tmp_path, "pipeline_no_namespace.yaml")
     result = runner.invoke(app, ["validate", str(config), "--json"])
-    _no_traceback(result.output)
+    _no_traceback(result)
     assert result.exit_code == EXIT_USAGE
     messages = json.loads(result.stdout)["messages"]
     hits = [m for m in messages if m["code"] == "namespace_missing"]
@@ -77,7 +79,28 @@ def test_the_fail_stays_an_error_on_every_route(tmp_path: Path, route: GateRoute
 def test_a_namespaced_pipeline_still_passes_preflight(tmp_path: Path) -> None:
     config = _stage(tmp_path, "pipeline_namespaced.yaml")
     result = runner.invoke(app, ["validate", "preflight", str(config), "--json"])
-    _no_traceback(result.output)
+    _no_traceback(result)
     assert result.exit_code == EXIT_OK
     names = {c["name"]: c["status"] for c in json.loads(result.stdout)["checks"]}
     assert names.get(_CHECK) is None
+
+
+def test_non_namespace_compile_error_gets_the_generic_hint(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from decoy_engine import execution as engine_execution
+    from decoy_engine.plan import PlanCompileError
+
+    def _raise(*_args: object, **_kwargs: object) -> None:
+        raise PlanCompileError("orphan_fk_policy_missing", "tables.visits", "SECRET-MSG-7c1d")
+
+    monkeypatch.setattr(engine_execution, "estimate_job_capacity", _raise)
+    config = _stage(tmp_path, "pipeline_namespaced.yaml")
+    result = runner.invoke(app, ["validate", "preflight", str(config), "--json"])
+    _no_traceback(result)
+    assert result.exit_code == EXIT_USAGE
+    row = {c["name"]: c for c in json.loads(result.stdout)["checks"]}[_CHECK]
+    assert row["code"] == "orphan_fk_policy_missing"
+    assert "decoy validate compile" in row["message"]
+    assert "namespaces" not in row["message"]
+    assert "SECRET-MSG-7c1d" not in result.output

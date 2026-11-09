@@ -488,15 +488,20 @@ def _check_capacity(raw: dict[str, Any], config_path: Path, acc: _PreflightAccum
         return
     except PlanCompileError as exc:
         # The estimator compiles the plan, so a plan the engine rejects (an unresolvable
-        # relationship namespace, ...) lands here. A distinct check name keeps the CHUNKED
-        # route's downgrade of CAPACITY_CHECK from turning it into a warning. The message
-        # is the engine's own compile text: it names config paths, never row values.
+        # relationship namespace, a missing orphan-FK policy, ...) lands here. A distinct
+        # check name keeps the CHUNKED route's downgrade of CAPACITY_CHECK from turning it
+        # into a warning. Only the structured code and config path are shown; the engine's
+        # message text is not relayed.
+        from decoy_engine.relationships import NamespaceConfigError
+
+        hint = (
+            "Run `decoy explain pipeline` for how namespaces are resolved."
+            if isinstance(exc, NamespaceConfigError)
+            else "Run `decoy validate compile` for the compile error."
+        )
         acc.add_fail(
             name=PLAN_UNCOMPILABLE_CHECK,
-            message=(
-                f"Cannot estimate capacity -- the plan does not compile ({exc.code}). "
-                "Run `decoy explain pipeline` for how namespaces are resolved."
-            ),
+            message=f"Cannot estimate capacity -- the plan does not compile ({exc.code}). {hint}",
             location=exc.path,
             code=exc.code,
         )
