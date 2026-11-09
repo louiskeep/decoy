@@ -446,6 +446,7 @@ def test_replace_symlink_refuses_a_regular_file_in_the_way(tmp_path: Path) -> No
     with pytest.raises(AtomicWriteError) as caught:
         _atomic.replace_symlink(tmp_path / "latest", "run-3")
     assert caught.value.code == _atomic.ATOMIC_WRITE_FAILED
+    assert caught.value.__context__ is None
     assert (tmp_path / "latest").read_bytes() == b"mine"
     assert _names(tmp_path) == ["latest"]
 
@@ -462,6 +463,7 @@ def test_replace_symlink_failure_removes_its_temp_and_keeps_the_old_link(
     assert caught.value.code == _atomic.ATOMIC_WRITE_FAILED
     assert caught.value.errno == errno.EIO
     assert "secret" not in str(caught.value) and caught.value.__cause__ is None
+    assert caught.value.__context__ is None
     assert os.readlink(link) == "run-1"
     assert _names(tmp_path) == ["latest"]
 
@@ -471,6 +473,21 @@ def test_replace_symlink_symlink_failure_leaves_nothing(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setattr(_atomic.os, "symlink", _boom)
-    with pytest.raises(AtomicWriteError):
+    with pytest.raises(AtomicWriteError) as caught:
         _atomic.replace_symlink(tmp_path / "latest", "run-1")
+    assert caught.value.__context__ is None
     assert _names(tmp_path) == []
+
+
+@_posix_only
+def test_replace_symlink_lstat_failure_keeps_no_path_context(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def deny(*_a: object, **_k: object) -> None:
+        raise OSError(errno.EACCES, "x", "/secret/path")
+
+    monkeypatch.setattr(_atomic.os, "lstat", deny)
+    with pytest.raises(AtomicWriteError) as caught:
+        _atomic.replace_symlink(tmp_path / "latest", "run-1")
+    assert caught.value.errno == errno.EACCES
+    assert caught.value.__context__ is None

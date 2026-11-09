@@ -148,15 +148,18 @@ def atomic_point_current_at(slot: str, home: Path | None = None) -> None:
     retargeted in place, so ``_atomic.replace_symlink`` swaps a temp link over ``current``:
     a concurrent reader sees either the old or the new target, never a missing link. This is
     the ONLY operation that makes a staged runtime live, which is why staging a fresh dir
-    plus this flip needs no move-aside, backup, or restore. The target is stored RELATIVE (``versions/<slot>``)
-    so the whole ``~/.decoy`` tree can be moved without breaking the link."""
+    plus this flip needs no move-aside, backup, or restore. The target is stored RELATIVE
+    (``versions/<slot>``) so the whole ``~/.decoy`` tree can be moved without breaking the link."""
     home = home or decoy_home()
     link = current_link(home)
     rel_target = os.path.join("versions", slot)
+    failed_errno: int | None = None
+    failed = False
     try:
         _atomic.replace_symlink(link, rel_target)
     except _atomic.AtomicWriteError as exc:
-        # Callers (first install, the installer) already roll back on OSError.
-        raise OSError(
-            exc.errno or errno.EIO, "could not point current at the new runtime"
-        ) from None
+        failed, failed_errno = True, exc.errno
+    # Callers (first install, the installer) already roll back on OSError. Raised outside the
+    # except block so nothing path-bearing is kept as `__context__`.
+    if failed:
+        raise OSError(failed_errno or errno.EIO, "could not point current at the new runtime")

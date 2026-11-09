@@ -468,21 +468,29 @@ def replace_symlink(link: Path, target: str) -> None:
     file or folder in the way is refused so a pointer swap cannot clobber user data. Raises
     `AtomicWriteError` (no path, no cause) and leaves no temp link behind.
     """
+    failed = False
+    failed_errno: int | None = None
     try:
         if not stat.S_ISLNK(os.lstat(link).st_mode):
-            raise AtomicWriteError(ATOMIC_WRITE_FAILED)
+            failed = True
     except FileNotFoundError:
         pass
     except OSError as exc:
-        raise AtomicWriteError(ATOMIC_WRITE_FAILED, exc.errno) from None
+        failed, failed_errno = True, exc.errno
+    # Raised outside the except blocks so an OSError (its text names the path) is not kept as
+    # `__context__`.
+    if failed:
+        raise AtomicWriteError(ATOMIC_WRITE_FAILED, failed_errno)
     tmp = link.with_name(f".{link.name}.decoy-{secrets.token_hex(6)}.tmp")
     try:
         os.symlink(target, tmp)
         _retry_on_windows(lambda: os.replace(tmp, link))
     except OSError as exc:
+        failed, failed_errno = True, exc.errno
         with contextlib.suppress(OSError):
             os.unlink(tmp)
-        raise AtomicWriteError(ATOMIC_WRITE_FAILED, exc.errno) from None
+    if failed:
+        raise AtomicWriteError(ATOMIC_WRITE_FAILED, failed_errno)
 
 
 def fsync_directory(directory: Path) -> None:
