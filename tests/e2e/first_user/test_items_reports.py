@@ -139,6 +139,25 @@ def test_integrity_human_output_names_each_residual_pii_column(
     for f in findings:
         expected = [f["table"], f["column"], f["detector_id"], f["severity"]]
         assert expected in leading_cells, f"no row for {expected}:\n{human.stdout}"
+    header = human.stdout
+    assert "Strategy" in header
+    assert "Message" in header
+
+
+def test_integrity_human_output_survives_markup_like_column_names(tmp_path: Path) -> None:
+    src = tmp_path / "src.csv"
+    masked = tmp_path / "masked.csv"
+    rows = {"a[/x]": [f"user{i}@example.com" for i in range(30)]}
+    pd.DataFrame(rows).to_csv(src, index=False)
+    pd.DataFrame(rows).to_csv(masked, index=False)
+    args = ["report", "integrity", str(masked), "--source", str(src)]
+
+    machine = runner.invoke(app, [*args, "--json"])
+    human = runner.invoke(app, args, env={"COLUMNS": "10000"})
+
+    assert machine.exit_code == EXIT_FINDINGS, machine.output
+    assert human.exit_code == machine.exit_code, human.output
+    assert "a[/x]" in human.stdout
 
 
 # --- Item 10: reid risk carries its scale and k ------------------------------
@@ -214,6 +233,15 @@ def test_missing_manifest_names_the_path_as_given(tmp_path: Path) -> None:
     assert proc.returncode == EXIT_USAGE
     assert "ci/missing.yaml" in proc.stderr
     assert str(tmp_path) not in proc.stdout + proc.stderr
+
+
+def test_missing_manifest_echoes_a_non_normalized_path_exactly(tmp_path: Path) -> None:
+    repo = make_repo(tmp_path / "repo")
+
+    proc = run_decoy(["ci", "check", "./ci//missing.yaml"], repo)
+
+    assert proc.returncode == EXIT_USAGE
+    assert "./ci//missing.yaml" in proc.stderr
 
 
 def test_missing_manifest_quiet_prints_nothing_on_stderr(tmp_path: Path) -> None:

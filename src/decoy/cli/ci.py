@@ -108,8 +108,8 @@ def _safe_target(raw: str, root: Path) -> Path:
 
 @ci_app.command(name="check", epilog=CHECK_EPILOG)
 def check(
-    manifest: Path = typer.Argument(
-        Path(DEFAULT_MANIFEST),
+    manifest: str = typer.Argument(
+        DEFAULT_MANIFEST,
         help="Path to the decoy-ci/v1 manifest (YAML or JSON). No manifest search is done.",
     ),
     format_: ReportFormat = typer.Option(
@@ -152,7 +152,7 @@ def check(
     loaded = None
     manifest_unreadable = False
     try:
-        loaded = load_manifest(manifest)
+        loaded = load_manifest(Path(manifest))
     except ManifestError as err:
         report = manifest_refusal(err)
         manifest_unreadable = err.reason_code == "ci.manifest_unreadable"
