@@ -159,6 +159,16 @@ SOURCES: tuple[Source, ...] = (
         ),
     ),
     Source(
+        "private-file-sinks",
+        "tests/sentry/io_policy/test_private_files.py",
+        InCode(
+            "tests/sentry/io_policy/test_private_files.py",
+            "BASELINE_ROWS",
+            key=lambda e: e[0],
+            reason=lambda e: e[1],
+        ),
+    ),
+    Source(
         "gate-single-entry-allow",
         "tests/sentry/test_gate_single_entry.py",
         InCode(
