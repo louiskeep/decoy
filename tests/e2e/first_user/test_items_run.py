@@ -152,12 +152,49 @@ def test_chunked_writer_returns_none_when_it_publishes_nothing(tmp_path: Path) -
     assert not out.exists()
 
 
-def test_a_writer_that_fails_before_publish_reports_no_path(tmp_path: Path) -> None:
-    # A path must come from a finished publish, never from config alone.
+def test_a_target_with_no_output_table_is_not_reported(tmp_path: Path) -> None:
     import pyarrow as pa
 
-    out = tmp_path / "out.csv"
-    config = {"targets": {"t": {"type": "file", "path": str(out), "format": "csv"}}}
-    with mock.patch.object(_targets, "write_table", side_effect=OSError):
-        with pytest.raises(OSError):
-            _targets.write_targets(config, {"t": pa.table({"a": [1]})}, tmp_path)
+    out = tmp_path / "ghost.csv"
+    config = {"targets": {"ghost": {"type": "file", "path": str(out), "format": "csv"}}}
+
+    written = _targets.write_targets(config, {"other": pa.table({"a": [1]})}, tmp_path)
+
+    assert written == {}
+    assert not out.exists()
+
+
+def test_a_path_is_recorded_only_after_its_write_returns(tmp_path: Path) -> None:
+    # The second write fails. Only the first table may be recorded, and only because its write
+    # returned. A path recorded before its write, or from config alone, would show up here.
+    import pyarrow as pa
+
+    first, second = tmp_path / "a.csv", tmp_path / "b.csv"
+    config = {
+        "targets": {
+            "a": {"type": "file", "path": str(first), "format": "csv"},
+            "b": {"type": "file", "path": str(second), "format": "csv"},
+        }
+    }
+    real_write = _targets.write_table
+    calls: list[str] = []
+
+    def write_then_fail(table, fmt, path, layout=None):
+        calls.append(path.name)
+        if len(calls) == 2:
+            raise OSError
+        real_write(table, fmt, path, layout)
+
+    outputs = {"a": pa.table({"x": [1]}), "b": pa.table({"x": [2]})}
+    with mock.patch.object(_targets, "write_table", write_then_fail):
+        with pytest.raises(OSError) as raised:
+            _targets.write_targets(config, outputs, tmp_path)
+
+    # write_targets raised, so read what it had recorded from its own frame.
+    tb = raised.value.__traceback__
+    while tb is not None and tb.tb_frame.f_code.co_name != "write_targets":
+        tb = tb.tb_next
+    assert tb is not None
+    assert tb.tb_frame.f_locals["published"] == {"a": first}
+    assert first.is_file()
+    assert not second.exists()
