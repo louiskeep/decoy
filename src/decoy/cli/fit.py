@@ -42,6 +42,15 @@ from decoy.cli.exit_codes import EXIT_RUNTIME, EXIT_USAGE
 from decoy.ui.output import OutputMode, emit_json, setup_output
 from decoy.ui.theme import code, error, hint, success, warn
 
+_DP_REFUSED_LINE = (
+    "DP fit is not available on this install: it runs only on a certified platform and package set."
+)
+_DP_REFUSED_HINT = (
+    "run decoy fit without --epsilon for an exact snapshot (add --include-values to "
+    "sample sensitive columns as categories; the file then holds real data). A DP "
+    "release needs a certified install; see decoy explain differential-privacy."
+)
+
 _FIT_EPILOG = """\
 Examples:
 
@@ -57,7 +66,8 @@ Examples:
 
   decoy fit customers.csv --epsilon 1.0 --delta 1e-6 \\
       --dp-number amount:0:500 --dp-text state --dp-flag is_active
-    Differentially private release (dps-marginal/v3): every declared
+    Differentially private release (dps-marginal/v3), certified installs
+    only (see decoy explain differential-privacy): every declared
     column is released under one (epsilon, delta) budget through OpenDP.
     Every column MUST be declared with a carrier (--dp-number for a
     numeric column plus its data-independent domain, --dp-text for a
@@ -231,7 +241,8 @@ def fit(
             "at least one carrier declaration (--dp-number/--dp-flag/--dp-text). "
             "This is the ONLY DP-mode selector -- every DP-only option is a usage "
             "error without it, so a forgotten --epsilon never silently falls back "
-            "to the exact release."
+            "to the exact release. Runs only on a certified DP install; see "
+            "decoy explain differential-privacy."
         ),
     ),
     delta: float = typer.Option(
@@ -304,7 +315,7 @@ def fit(
 
     With --epsilon: fits a `dps-marginal/v3` artifact instead, releasing
     ONLY the columns declared via --dp-number/--dp-flag/--dp-text under one
-    (epsilon, delta) budget. Exits 0 on success, 1 on bad input, 3 if the
+    (epsilon, delta) budget. DP runs only on a certified install. Exits 0 on success, 1 on bad input, 3 if the
     engine's DP fit refuses at run time (an uncertified proof stack, or an
     internal schedule invariant).
     """
@@ -333,6 +344,17 @@ def fit(
             state.err_console.print(error("error:"), f"{prefix}{message}")
             if hint_text is not None:
                 state.err_console.print(" ", hint("hint:"), hint_text)
+
+    def _emit_dp_refused(refusal: Any) -> None:
+        # The engine text carries the platform and a package fingerprint: JSON
+        # and --verbose keep it, the default human line stays plain.
+        if state.mode is OutputMode.json:
+            _emit_error(refusal.message, err_code=refusal.code, hint_text=_DP_REFUSED_HINT)
+        elif state.mode is not OutputMode.quiet:
+            state.err_console.print(error("error:"), _DP_REFUSED_LINE)
+            state.err_console.print(" ", hint("hint:"), _DP_REFUSED_HINT)
+            if verbose:
+                state.err_console.print(" ", f"{refusal.code}: {refusal.message}")
 
     joint_pairs: list[tuple[str, str]] = []
     for spec in joint:
@@ -415,48 +437,42 @@ def fit(
     import pandas as pd
     from decoy_engine import distribution_snapshot_document
 
-    try:
-        if epsilon is None:
-            df = pd.read_csv(source, parse_dates=list(parse_dates) or False)
-        else:
-            # DP mode ingests every cell as its literal CSV lexeme: dtype=str
-            # disables column-wide dtype inference (so one row cannot change how
-            # another is boxed), and keep_default_na=False disables pandas' NA
-            # grammar (so "NA"/"null"/"" stay the exact lexemes the engine's
-            # per-cell text/number codecs see). Both are required for D6 boxing
-            # invariance and stability-1. _build_typed_frame below converts only
-            # flags; number and text columns reach the engine as raw strings.
-            df = pd.read_csv(source, dtype=str, keep_default_na=False)
-    except Exception:
+    def _unreadable() -> None:
         # No str(exc): a pandas parse error can quote a source cell.
         _emit_error(f"could not read {source} as a CSV.")
         raise typer.Exit(code=EXIT_USAGE)
 
-    missing = [c for c in parse_dates if c not in df.columns]
-    if missing:
-        _emit_error(f"--parse-dates column(s) not in the CSV: {', '.join(missing)}.")
-        raise typer.Exit(code=EXIT_USAGE)
+    # DP mode ingests every cell as its literal CSV lexeme: dtype=str disables
+    # column-wide dtype inference (so one row cannot change how another is
+    # boxed), and keep_default_na=False disables pandas' NA grammar (so
+    # "NA"/"null"/"" stay the exact lexemes the engine's per-cell text/number
+    # codecs see). Both are required for D6 boxing invariance and stability-1.
+    # _build_typed_frame below converts only flags; number and text columns
+    # reach the engine as raw strings.
+    dp_read_kwargs: dict[str, Any] = {"dtype": str, "keep_default_na": False}
+    omitted_columns: list[str] = []
+    dp_header: list[str] = []
+    dp_kwargs: dict[str, Any] = {}
 
-    if epsilon is None:
-        # No profile_row_cap: it profiles head rows only, and a sensitive column can start late.
-        snapshot = distribution_snapshot_document(
-            df,
-            source_label=source.name,
-            include_values=include_values,
-            joint_columns=joint_pairs or None,
-        )
-        omitted_columns: list[str] = []
-    else:
+    if epsilon is not None:
         from decoy_engine.quality.carriers import CarrierError
-        from decoy_engine.quality.dp import DpError, fit_dp_snapshot
+        from decoy_engine.quality.dp import DpError, check_dp_fit_request, fit_dp_snapshot
         from decoy_engine.quality.dp_budget import DpBudgetError
         from decoy_engine.quality.dp_provenance import ProvenanceError
 
-        # D3: only declared columns are ever released; an undeclared source
-        # column is a usage error by default (the foot-gun of silently
+        # Header only: the name checks and the engine's request check below
+        # decide from column names and options, so no data row is read when the
+        # request is invalid or this install cannot run a DP fit.
+        try:
+            dp_header = list(pd.read_csv(source, nrows=0, **dp_read_kwargs).columns)
+        except Exception:
+            _unreadable()
+
+        # D3: only declared columns are ever released; an undeclared
+        # source column is a usage error by default (the foot-gun of silently
         # dropping a column the operator expected to see), unless the
         # operator explicitly opts in with --dp-allow-omit.
-        omitted_columns = sorted(set(df.columns) - set(column_schema))
+        omitted_columns = sorted(set(dp_header) - set(column_schema))
         if omitted_columns and not dp_allow_omit:
             _emit_error(
                 f"source column(s) not declared for the DP release: {', '.join(omitted_columns)}.",
@@ -476,12 +492,12 @@ def fit(
                 state.err_console.print(warn("notice:"), omission_notice)
 
         # A declared column absent from the CSV is a usage error, surfaced by
-        # name before the typed-frame and engine steps. Otherwise a phantom
-        # --dp-flag column crashes _build_typed_frame with a raw KeyError
-        # (breaking the --json error contract), and a phantom --dp-number/text
-        # column gets misattributed to an uncertified host. Names only, so this
-        # stays data-independent (D6).
-        missing_declared = sorted(set(column_schema) - set(df.columns))
+        # name before the engine steps. Otherwise a phantom --dp-flag column
+        # crashes _build_typed_frame with a raw KeyError (breaking the --json
+        # error contract), and a phantom --dp-number/text column gets
+        # misattributed to an uncertified host. Names only, so this stays
+        # data-independent (D6).
+        missing_declared = sorted(set(column_schema) - set(dp_header))
         if missing_declared:
             _emit_error(
                 f"declared DP column(s) not in the CSV: {', '.join(missing_declared)}.",
@@ -490,22 +506,64 @@ def fit(
             )
             raise typer.Exit(code=EXIT_USAGE)
 
-        typed_df = _build_typed_frame(df, column_schema)
-
-        dp_kwargs: dict[str, Any] = {}
         if numeric_bins is not None:
             dp_kwargs["numeric_bins"] = numeric_bins
 
+        # The engine's own request check: typed request errors first, then the
+        # certified-install gate, all before any data row is read.
+        try:
+            check_dp_fit_request(column_schema, epsilon=epsilon, delta=delta, **dp_kwargs)
+        except ProvenanceError as exc:
+            _emit_dp_refused(exc)
+            raise typer.Exit(code=EXIT_RUNTIME)
+        except DpBudgetError as exc:
+            exit_code = EXIT_RUNTIME if exc.code == "dp_schedule_mismatch" else EXIT_USAGE
+            _emit_error(exc.message, err_code=exc.code)
+            raise typer.Exit(code=exit_code)
+        except (DpError, CarrierError) as exc:
+            _emit_error(exc.message, err_code=exc.code)
+            raise typer.Exit(code=EXIT_USAGE)
+
+    # The one body read: exact mode keeps pandas' inference and the requested
+    # datetime columns; DP mode reads the literal lexemes.
+    body_kwargs: dict[str, Any] = (
+        {"parse_dates": list(parse_dates) or False} if epsilon is None else dp_read_kwargs
+    )
+    try:
+        df = pd.read_csv(source, **body_kwargs)
+    except Exception:
+        _unreadable()
+
+    missing = [c for c in parse_dates if c not in df.columns]
+    if missing:
+        _emit_error(f"--parse-dates column(s) not in the CSV: {', '.join(missing)}.")
+        raise typer.Exit(code=EXIT_USAGE)
+
+    if epsilon is None:
+        # No profile_row_cap: it profiles head rows only, and a sensitive column can start late.
+        snapshot = distribution_snapshot_document(
+            df,
+            source_label=source.name,
+            include_values=include_values,
+            joint_columns=joint_pairs or None,
+        )
+    else:
+        # The name checks ran on the header. A file replaced between the two
+        # reads would reach the typed frame with names nobody checked.
+        if list(df.columns) != dp_header:
+            _emit_error(
+                "the CSV changed while it was being read; run the command again.",
+                err_code="dp_source_changed",
+            )
+            raise typer.Exit(code=EXIT_USAGE)
+
+        typed_df = _build_typed_frame(df, column_schema)
         try:
             snapshot = fit_dp_snapshot(
                 typed_df, column_schema, epsilon=epsilon, delta=delta, **dp_kwargs
             )
         except ProvenanceError as exc:
-            _emit_error(
-                exc.message,
-                err_code=exc.code,
-                hint_text="this host is not a certified DP platform/stack.",
-            )
+            _emit_dp_refused(exc)
             raise typer.Exit(code=EXIT_RUNTIME)
         except DpBudgetError as exc:
             exit_code = EXIT_RUNTIME if exc.code == "dp_schedule_mismatch" else EXIT_USAGE

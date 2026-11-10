@@ -44,9 +44,17 @@ Linux on x86-64, CPython 3.10.20, and an exact set of package versions. On any
 other setup it refuses:
 
 ```text
-error: dp_stack_uncertified: no certified proof-stack row for (cpython '3.10.20.final', fingerprint '8c79...') ... The installed distribution set does not match a tested lock, so the fit refuses.
-  hint: this host is not a certified DP platform/stack.
+error: DP fit is not available on this install: it runs only on a certified platform and package set.
+  hint: run decoy fit without --epsilon for an exact snapshot (add --include-values to sample sensitive columns as categories; the file then holds real data). A DP release needs a certified install; see decoy explain differential-privacy.
 ```
+
+The refusal comes before any data row is read: `fit` reads only the CSV header,
+checks the column names and the request, and then asks the engine whether this
+install is certified. A bad `--epsilon`, `--delta` or `--numeric-bins`, or a
+column name that is missing or undeclared, still gets its own error first. The
+engine's code and message (`dp_stack_uncertified` or `dp_platform_uncertified`,
+with the platform and a package fingerprint) print under `--verbose`, and
+`--json` carries them as `code` and `message`.
 
 That is exit code 3. A normal `pip install decoy-cli` produces this error,
 because its package set differs from the tested one.
