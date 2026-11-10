@@ -15,6 +15,7 @@ call through a runtime-bound name, an alias by assignment, `from x import *`.
 
 from __future__ import annotations
 
+import ast
 from pathlib import Path
 
 import pytest
@@ -37,6 +38,32 @@ WATCHED = frozenset(
         "capture_physical_plan_inputs",
     }
 )
+
+
+# Entries that open the config's declared source files themselves. Their config argument must
+# come from `resolved_source_config(...)`, or a relative source reads from the working directory.
+SOURCE_READERS = frozenset({"run_pipeline", "profile_source"})
+
+
+def _source_readers(package: str, name: str) -> bool:
+    return package.split(".")[0] == "decoy_engine" and name in SOURCE_READERS
+
+
+def raw_config_calls(source: str) -> list[tuple[int, str]]:
+    """Return (line, scope) for each source-reading entry whose config is not resolved."""
+    bad = []
+    for call, scope, _names in call_contexts(
+        source, qualified_match=_source_readers, with_calls=frozenset()
+    ):
+        first = call.args[0] if call.args else None
+        ok = (
+            isinstance(first, ast.Call)
+            and isinstance(first.func, ast.Name)
+            and first.func.id == "resolved_source_config"
+        )
+        if not ok:
+            bad.append((call.lineno, scope))
+    return bad
 
 
 def _watched(package: str, name: str) -> bool:
@@ -122,3 +149,23 @@ def test_a_call_with_base_dir_passes() -> None:
 def test_an_unwatched_package_is_ignored() -> None:
     src = "from other import compile_plan\ndef f(raw):\n    return compile_plan(raw)\n"
     assert entry_calls(src) == []
+
+
+def test_source_readers_get_a_resolved_config() -> None:
+    bad = []
+    for path in sorted(SRC.rglob("*.py")):
+        rel = path.relative_to(SRC).as_posix()
+        bad += [(rel, ln, sc) for ln, sc in raw_config_calls(path.read_text(encoding="utf-8"))]
+    assert not bad, f"raw config handed to an engine source reader: {bad}"
+
+
+def test_a_raw_config_to_a_source_reader_is_seen() -> None:
+    raw = (
+        "from decoy_engine.profile import profile_source\ndef f(c):\n    return profile_source(c)\n"
+    )
+    ok = (
+        "from decoy_engine.profile import profile_source\n"
+        "def f(c, d):\n    return profile_source(resolved_source_config(c, d))\n"
+    )
+    assert len(raw_config_calls(raw)) == 1
+    assert raw_config_calls(ok) == []

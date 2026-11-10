@@ -22,7 +22,7 @@ from pathlib import Path
 
 import typer
 
-from decoy.cli._sources import csv_file_source, read_source
+from decoy.cli._sources import csv_file_source, read_source, resolved_source_config
 from decoy.cli.exit_codes import EXIT_RUNTIME, EXIT_USAGE
 from decoy.cli.io._targets import check_target_formats, write_targets
 from decoy.ui.card import render_card
@@ -224,7 +224,7 @@ def _run_v2_mask(pipeline_yaml: Path) -> None:
 
     job_seed = (config_dict.get("global_settings") or {}).get("seed")
     profile = profile_source(
-        config_dict,
+        resolved_source_config(config_dict, pipeline_yaml.parent),
         seed=job_seed if isinstance(job_seed, int) else None,
     )
     plan = compile_plan(
