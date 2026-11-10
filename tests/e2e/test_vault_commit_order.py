@@ -133,10 +133,10 @@ def test_run_writes_the_vault_durably_before_any_output(
     """Temp write, data fsync, rename, directory fsync, and only then the outputs."""
     from decoy_engine.vault import VaultWriter
 
-    from decoy.cli import run as run_mod
+    from decoy.cli.run import _execute as run_execute
 
     events: list[str] = []
-    real_outputs, real_write = run_mod._write_mask_outputs, VaultWriter.write
+    real_outputs, real_write = run_execute._write_mask_outputs, VaultWriter.write
     real_replace, real_fsync = os.replace, os.fsync
     vault = tmp_path / "vault.bin"
 
@@ -157,7 +157,7 @@ def test_run_writes_the_vault_durably_before_any_output(
         events.append("fsync_dir" if stat.S_ISDIR(os.fstat(fd).st_mode) else "fsync_file")
         real_fsync(fd)
 
-    monkeypatch.setattr(run_mod, "_write_mask_outputs", _outputs)
+    monkeypatch.setattr(run_execute, "_write_mask_outputs", _outputs)
     monkeypatch.setattr(VaultWriter, "write", _write)
     monkeypatch.setattr(os, "replace", _replace)
     monkeypatch.setattr(os, "fsync", _fsync)

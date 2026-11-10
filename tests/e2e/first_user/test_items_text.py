@@ -201,7 +201,12 @@ def old_engine(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Path:
     import builtins
 
     real_import = builtins.__import__
-    probing = {"decoy.cli.run", "decoy.cli.tokenize", "decoy.api"}
+    probing = {
+        "decoy.cli.run._prepare",
+        "decoy.cli.run._errors",
+        "decoy.cli.tokenize",
+        "decoy.api",
+    }
 
     def fake_import(name, globals=None, *args, **kwargs):
         if name == "decoy_engine.keyprovider" and (globals or {}).get("__name__") in probing:

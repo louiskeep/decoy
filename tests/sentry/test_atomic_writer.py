@@ -52,7 +52,7 @@ class AllowedInline:
 
 ALLOWLIST: tuple[AllowedInline, ...] = (
     AllowedInline(
-        "cli/run.py",
+        "cli/run/_vault.py",
         4,
         "_commit_vault keeps a hard-link backup and restores or removes the vault when the "
         "directory fsync fails (tests/e2e/test_vault_commit_order.py); a transaction, not a "
@@ -202,11 +202,11 @@ def test_seeded_inline_copy_is_red(tmp_path: Path) -> None:
 
 def test_seeded_copy_in_an_allowlisted_file_is_red() -> None:
     real = {k: v for k, v in scan(SRC).items() if k in {e.file for e in ALLOWLIST}}
-    seeded = {**real, "cli/run.py": [*real["cli/run.py"], (999, "os.replace")]}
-    lines = ", ".join(str(n) for n, _ in seeded["cli/run.py"])
-    recorded = next(e.sites for e in ALLOWLIST if e.file == "cli/run.py")
+    seeded = {**real, "cli/run/_vault.py": [*real["cli/run/_vault.py"], (999, "os.replace")]}
+    lines = ", ".join(str(n) for n, _ in seeded["cli/run/_vault.py"])
+    recorded = next(e.sites for e in ALLOWLIST if e.file == "cli/run/_vault.py")
     assert findings(seeded) == [
-        f"cli/run.py: {recorded + 1} site(s), allowlist records {recorded} ({lines})"
+        f"cli/run/_vault.py: {recorded + 1} site(s), allowlist records {recorded} ({lines})"
     ]
 
 

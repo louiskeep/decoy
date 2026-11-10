@@ -11,7 +11,7 @@ by bare name. Targets that only the gate may call, outside `decoy/cli/gate/`:
 - the preflight layer checks `_check_source_files`, `_check_target_overwrite`, `_check_capacity`
   and `_check_native`, whatever module defines or imports them (so a copy of one is red too);
 - any `yaml.*load*` call (`safe_load`, `load`, `full_load`, `load_all`, ...) and
-  `PipelineConfig.model_validate` in `cli/run.py` and `cli/validate.py`.
+  `PipelineConfig.model_validate` in `cli/run/` and `cli/validate.py`.
 
 An exemption is the exact `(module, outermost function, rule)` identity of a call site, recorded in
 ALLOWLIST with a reason and in the shrink-only baseline
@@ -149,7 +149,7 @@ def _rules(target: str, call: ast.Call, rel: str) -> list[str]:
                 out.append(RULE_COMPILE)
     if last in _PREFLIGHT_CHECKS:
         out.append(RULE_PREFLIGHT)
-    if rel in _YAML_MODEL_FILES:
+    if rel in _YAML_MODEL_FILES or rel.startswith("cli/run/"):
         if target.startswith("yaml.") and "load" in target.rsplit(".", 1)[-1]:
             out.append(RULE_YAML)
         if engine and target.endswith("PipelineConfig.model_validate"):
@@ -280,6 +280,17 @@ _SEEDS = [
         "cli/run.py",
         "import yaml\ndef run(t):\n    return yaml.safe_load(t)\n",
         [("decoy.cli.run", "run", RULE_YAML)],
+    ),
+    (
+        "cli/run/_prepare.py",
+        "import yaml\ndef prepare(t):\n    return yaml.safe_load(t)\n",
+        [("decoy.cli.run._prepare", "prepare", RULE_YAML)],
+    ),
+    (
+        "cli/run/_prepare.py",
+        "from decoy_engine import PipelineConfig\ndef prepare(raw):\n"
+        "    return PipelineConfig.model_validate(raw)\n",
+        [("decoy.cli.run._prepare", "prepare", RULE_MODEL)],
     ),
     (
         "cli/validate.py",
