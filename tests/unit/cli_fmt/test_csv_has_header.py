@@ -96,9 +96,14 @@ def test_init_scaffold_yaml_states_has_header(tmp_path: Path, delimiter: str | N
 
 
 def _engine_has_column_names_file() -> bool:
-    from decoy_engine.config._sources import FileSource
+    from decoy_engine.config import FileSource
 
     return "column_names_file" in FileSource.model_fields
+
+
+def test_dialect_keys_include_every_engine_csv_setting() -> None:
+    # Pinned literally so dropping a key from the registry fails here, not silently.
+    assert set(CSV_DIALECT_KEYS) == {"has_header", "column_names", "column_names_file", "delimiter"}
 
 
 @pytest.mark.parametrize("key", CSV_DIALECT_KEYS)
