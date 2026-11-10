@@ -214,8 +214,8 @@ disposition = "public"
 reason = "Chunked masked output keeps the old file's mode bits (OQ3)."
 
 [[row]]
-file = "cli/run.py"
-function = "run"
+file = "cli/run/_prepare.py"
+function = "prepare"
 sink = "tempfile.mkdtemp"
 ordinal = 1
 disposition = "temp"
@@ -223,7 +223,7 @@ reason = "DuckDB spill directory; mkdtemp makes it 0700 on POSIX."
 exit = "WIN-FEAS"
 
 [[row]]
-file = "cli/run.py"
+file = "cli/run/_vault.py"
 function = "_commit_vault"
 sink = "tempfile.mkstemp"
 ordinal = 1
@@ -232,7 +232,7 @@ reason = "Vault staging file; mkstemp makes it 0600 and the engine writer reopen
 exit = "L5a (_vault_commit.py)"
 
 [[row]]
-file = "cli/run.py"
+file = "cli/run/_vault.py"
 function = "_commit_vault"
 sink = "os.open"
 ordinal = 1

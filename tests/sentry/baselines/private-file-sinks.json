@@ -10,17 +10,22 @@
    "reason": "COPY writes the unmasked source table into the 0700 spill directory run.py makes; the file takes the umask mode inside it.",
    "exit": "WIN-FEAS"
   },
-  "cli/run.py::run::tempfile.mkdtemp::1": {
+  "cli/run/_prepare.py::prepare::tempfile.mkdtemp::1": {
    "reason": "DuckDB spill directory; mkdtemp makes it 0700 on POSIX.",
    "exit": "WIN-FEAS"
   },
-  "cli/run.py::_commit_vault::tempfile.mkstemp::1": {
+  "cli/run/_vault.py::_commit_vault::tempfile.mkstemp::1": {
    "reason": "Vault staging file; mkstemp makes it 0600 and the engine writer reopens it by path.",
    "exit": "L5a (_vault_commit.py)"
   },
-  "cli/run.py::_commit_vault::os.open::1": {
+  "cli/run/_vault.py::_commit_vault::os.open::1": {
    "reason": "Reopens the vault staging file to fsync it.",
    "exit": "L5a (_vault_commit.py)"
   }
+ },
+ "moved_from": {
+  "cli/run/_prepare.py::prepare::tempfile.mkdtemp::1": "cli/run.py::run::tempfile.mkdtemp::1",
+  "cli/run/_vault.py::_commit_vault::tempfile.mkstemp::1": "cli/run.py::_commit_vault::tempfile.mkstemp::1",
+  "cli/run/_vault.py::_commit_vault::os.open::1": "cli/run.py::_commit_vault::os.open::1"
  }
 }

@@ -56,7 +56,7 @@ __all__ = [
 class MaskSecretConfigError(ValueError):
     """A mask_secret / mask_secret_ref value was missing, malformed, or
     conflicting. Public-library equivalent of the CLI's
-    `decoy.cli.run._MaskSecretUsageError` (`--mask-secret`) usage-error
+    `decoy.cli.run._prepare._MaskSecretUsageError` (`--mask-secret`) usage-error
     contract -- same checks, same fail-closed guarantees, library-shaped
     exception type."""
 

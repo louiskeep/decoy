@@ -106,7 +106,7 @@ def _argv(surface: str, root: Path, ref: str, written: tuple[Path, Path] | None)
 # `file::function::ordinal` and derived from the AST below) to the surface ids that exercise it
 # through the CLI, or the test functions in this module that exercise it through `decoy.mask()`.
 ADMISSION_SITES: dict[str, tuple[str, ...]] = {
-    "cli/run.py::run::1": ("run", "run_chunked"),
+    "cli/run/_prepare.py::prepare::1": ("run", "run_chunked"),
     "cli/tokenize.py::tokenize::1": ("tokenize",),
     "cli/unmask.py::unmask::1": ("unmask",),
     "cli/report.py::_vault::1": ("report_vault",),
