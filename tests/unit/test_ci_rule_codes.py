@@ -399,7 +399,8 @@ def test_importing_the_ci_modules_does_not_import_the_engine() -> None:
     import sys
 
     probe = (
-        "import sys; import decoy.ci.rule_codes, decoy.ci.adapters, decoy.cli.ci; "
+        "import sys; import decoy.ci.rule_codes, decoy.ci.adapters, decoy.cli.ci, "
+        "decoy.__main__; "
         "print('decoy_engine' in sys.modules)"
     )
     out = subprocess.run(

@@ -56,8 +56,8 @@ PROJECT_MARKER_INVALID = Descriptor(
 )
 PROJECT_MARKER_UNTRUSTED = Descriptor(
     "layout.project_marker_untrusted",
-    "The project marker {path} belongs to another user. Pass --project to name your project, "
-    "or remove the file.",
+    "The project marker {path} belongs to another user, so it is not trusted. Remove the file, "
+    "or make your user its owner.",
 )
 PROJECT_NOT_FOUND = Descriptor(
     "layout.project_not_found",
