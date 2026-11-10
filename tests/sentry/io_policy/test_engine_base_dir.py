@@ -99,7 +99,7 @@ def test_the_walk_sees_the_known_call_sites() -> None:
     files = {f for f, _ln, _sc, _ok in _walk(SRC)}
     assert {
         "api.py",
-        "cli/run.py",
+        "cli/run/_execute.py",
         "cli/tokenize.py",
         "cli/demo.py",
         "cli/compile_explain.py",
