@@ -723,10 +723,7 @@ def run(
             # FK graph, and sequencing (generate first, then mask with
             # generate outputs merged into sources). The old split between
             # `generate_tables` and `PandasExecutionAdapter.run` is removed.
-            tables_list = config_dict.get("tables") or []
-            any_generate = any(
-                isinstance(t, dict) and t.get("generate_columns") for t in tables_list
-            )
+            any_generate = _has_kind(config_dict, "generate_columns")
 
             # Chunked mask streaming is mask-only. Reject loudly when the
             # config has any generate-kind table so the operator gets a clear
@@ -1370,7 +1367,13 @@ def _has_kind(raw_cfg: dict | None, field: str) -> bool:
     """Whether any table of the raw config declares `field` (`columns` is a mask table,
     `generate_columns` a generate table)."""
     tables = raw_cfg.get("tables") if isinstance(raw_cfg, dict) else None
-    return isinstance(tables, list) and any(isinstance(t, dict) and t.get(field) for t in tables)
+    if not isinstance(tables, list):
+        return False
+    # A mask table is declared by the `columns` key even when the list is empty; a generate
+    # table needs at least one `generate_columns` entry.
+    if field == "columns":
+        return any(isinstance(t, dict) and field in t for t in tables)
+    return any(isinstance(t, dict) and t.get(field) for t in tables)
 
 
 _FIDELITY_NEEDS_MASK = (
@@ -1404,12 +1407,14 @@ def _refuse_fidelity_without_mask(state, config_str: str, raw_cfg: dict) -> None
 def _seed_warnings(raw_cfg: dict | None, *, key_in_effect: bool) -> list[dict]:
     """The `seed_ignored_with_master_key` warning: a key is set, the YAML sets a seed and the
     config has a generate table, where the key and `--key-label` decide the output instead."""
+    from decoy_engine.reasons.warning import SEED_IGNORED_WITH_MASTER_KEY
+
     if not (key_in_effect and _has_kind(raw_cfg, "generate_columns")):
         return []
     settings = raw_cfg.get("global_settings") if isinstance(raw_cfg, dict) else None
     if not isinstance(settings, dict) or settings.get("seed") is None:
         return []
-    return [{"code": "seed_ignored_with_master_key"}]
+    return [{"code": SEED_IGNORED_WITH_MASTER_KEY}]
 
 
 def _next_hint_for_run(raw_cfg: dict | None, mode: "Mode") -> str | None:

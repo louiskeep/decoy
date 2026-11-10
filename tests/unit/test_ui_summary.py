@@ -90,3 +90,23 @@ def test_report_drift_lines_one_per_column() -> None:
         "column b: 50.0% empty in the source, 5.0% in the output (limit 10 points)",
         "no_comparable_columns",
     ]
+
+
+def test_huge_dict_detail_stays_short_in_human_line_and_whole_in_json() -> None:
+    big = {f"row{i}": i for i in range(10_000)}
+    w = QualityWarning(code="pool_fallback", provider="p", column="c", detail={"by_row": big})
+    (rec,) = warning_records([w])
+    assert rec["message"] == "pool_fallback (column c): by_row=<10000 entries>"
+    assert len(rec["message"]) < 200
+    assert len(rec["detail"]["by_row"]) == 10_000
+
+
+def test_has_kind_counts_a_mask_table_with_empty_columns() -> None:
+    from decoy.cli.run import _has_kind
+
+    assert _has_kind({"tables": [{"name": "t", "columns": []}]}, "columns")
+    assert not _has_kind(
+        {"tables": [{"name": "t", "generate_columns": [{"name": "a"}]}]}, "columns"
+    )
+    assert not _has_kind({"tables": [{"name": "t", "generate_columns": []}]}, "generate_columns")
+    assert not _has_kind(None, "columns")

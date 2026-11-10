@@ -82,6 +82,17 @@ def test_validate_commands(elsewhere: tuple[Path, Path], argv: list[str]) -> Non
     assert res.exit_code == 0, (argv, res.output)
 
 
+def test_ci_check(elsewhere: tuple[Path, Path]) -> None:
+    from tests.ci_support import ci_manifest
+
+    a, _b = elsewhere
+    _config(a, _MASK)
+    manifest = a / ".decoy-ci.yaml"
+    manifest.write_text(ci_manifest(), encoding="utf-8")
+    res = runner.invoke(app, ["ci", "check", str(manifest)])
+    assert res.exit_code == 0, res.output
+
+
 def test_demo_runs_from_any_folder(elsewhere: tuple[Path, Path]) -> None:
     res = runner.invoke(app, ["demo"])
     assert res.exit_code == 0, res.output

@@ -183,7 +183,11 @@ def _fk_config(tmp_path: Path) -> Path:
         "version": 2,
         "global_settings": {"seed": 7},
         "sources": {
-            "parent": {"type": "file", "path": str(tmp_path / "parent.parquet"), "format": "parquet"},
+            "parent": {
+                "type": "file",
+                "path": str(tmp_path / "parent.parquet"),
+                "format": "parquet",
+            },
             "child": {"type": "file", "path": str(tmp_path / "child.parquet"), "format": "parquet"},
         },
         "targets": {

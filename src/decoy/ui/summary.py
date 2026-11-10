@@ -52,12 +52,20 @@ def _fidelity_message(table: object, detail: Mapping[str, Any]) -> str:
     return text
 
 
+def _fact(value: object) -> str:
+    """A detail value for the human line. A dict or list prints its size, not its contents,
+    because some warnings carry per-row maps; `--json` keeps the full detail."""
+    if isinstance(value, (dict, list, tuple, set, frozenset)):
+        return f"<{len(value)} entries>"
+    return str(value)
+
+
 def _generic_message(code_: str, table: object, column: object, detail: Mapping[str, Any]) -> str:
     where = ", ".join(
         f"{label} {value}" for label, value in (("table", table), ("column", column)) if value
     )
     head = f"{code_} ({where})" if where else code_
-    facts = ", ".join(f"{k}={v}" for k, v in detail.items() if k not in ("table", "column"))
+    facts = ", ".join(f"{k}={_fact(v)}" for k, v in detail.items() if k not in ("table", "column"))
     return f"{head}: {facts}" if facts else head
 
 
@@ -70,12 +78,17 @@ def warning_record(
     message: str | None = None,
 ) -> dict[str, Any]:
     """One warning as the card and `--json` carry it: code, table, column, message, detail."""
+    from decoy_engine.reasons.warning import (
+        GENERATION_FIDELITY_BELOW_THRESHOLD,
+        SEED_IGNORED_WITH_MASTER_KEY,
+    )
+
     detail = dict(detail or {})
     table = table if table is not None else detail.get("table")
     if message is None:
-        if code_ == "generation_fidelity_below_threshold":
+        if code_ == GENERATION_FIDELITY_BELOW_THRESHOLD:
             message = _fidelity_message(table, detail)
-        elif code_ == "seed_ignored_with_master_key":
+        elif code_ == SEED_IGNORED_WITH_MASTER_KEY:
             message = SEED_IGNORED_MESSAGE
         else:
             message = _generic_message(code_, table, column, detail)
