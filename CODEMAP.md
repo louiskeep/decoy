@@ -45,7 +45,7 @@ First row of the layout map the LAYOUT slice completes (one line per kind of mod
 
 | Kind of module | Where | Examples |
 |---|---|---|
-| Private shared filesystem or process primitives used by more than one package | top-level `src/decoy/`, file named `_<noun>.py`, tests in `tests/unit/test_<noun>.py`, its sentry in `tests/sentry/` | `_atomic.py`, `_private_file.py` (owner-only creation and every mode change), `_mask_secret.py`, `_native_gate.py` |
+| Private shared filesystem or process primitives used by more than one package | top-level `src/decoy/`, file named `_<noun>.py`, tests in `tests/unit/test_<noun>.py` (`test_atomic_publish.py` for the batch publisher), its sentry in `tests/sentry/` | `_atomic.py`, `_private_file.py` (owner-only creation and every mode change), `_mask_secret.py`, `_native_gate.py` |
 | Pre-run check gate shared by `validate`, `ci check` and `run` | `src/decoy/cli/gate/`, file named `_<noun>.py`, tests in `tests/unit/test_gate_*.py` and `tests/e2e/test_run_validate_always.py` | `_layers.py` (layers and entries); `cli/io/` is the sibling sub-package |
 | CLI source readers and target writers (owner rule 2026-11-06: new ones go here from now on; `cli/` is frozen) | `src/decoy/cli/io/`, file named `_<noun>.py` | target writer `cli/io/_targets.py` (CLI-FMT), saved-scan reader `cli/io/_scan_set.py`; today's exception `cli/_sources.py` moves here under H-1 |
 | `decoy scan` internals (argument resolution, engine call, card and `--json`) | `src/decoy/cli/scanning/`, file named `_<noun>.py`; `scan.py` keeps only the options | `_multi.py` |
@@ -65,6 +65,7 @@ First row of the layout map the LAYOUT slice completes (one line per kind of mod
 | Private-file contract tests (new ones go in these named folders, not the flat `tests/e2e/` and `tests/unit/`) | `tests/unit/private_file/`, `tests/e2e/private_file/` | `test_private_file.py` |
 | First-user QA item tests, grouped by behavior (new ones go here, not the flat `tests/e2e/`; `cli_fmt/` is the adjacent pattern) | `tests/e2e/first_user/` | `test_items_text.py`, `test_items_reports.py`, `test_items_preflight.py` |
 | Run and report summary renderers (run card extras, warning lines, `report fidelity` text) | `src/decoy/ui/summary.py` | `card.py`, `table.py` |
+| Generation CLI helpers (the exact fit shared by `fit` and `init`, the `run --rows` preview, the CSV generate scaffold; `cli/` is frozen) | `src/decoy/cli/gen/`, file named `_<noun>.py`; commands import the package facade, never its `_` modules | `_fit.py`, `_preview.py`, `_scaffold.py` |
 | Shared first-user QA fixture (patients and visits CSVs plus two pipelines; copy it to `tmp_path`, never edit in place) | `tests/fixtures/qa_first_user/` | `patients.csv`, `pipeline_no_namespace.yaml` |
 
 ## Where Do I Find...

@@ -289,7 +289,7 @@ def test_an_excluded_row_cannot_change_the_result(tmp_path: Path) -> None:
 def test_an_oversized_file_is_never_fully_materialized(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    from decoy.cli import fit as fit_module
+    from decoy.cli.gen import _fit as fit_module
 
     monkeypatch.setattr(fit_module, "_COUNT_CHUNK", 400)
     seen: list[int] = []

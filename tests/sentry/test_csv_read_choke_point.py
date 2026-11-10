@@ -56,9 +56,9 @@ ALLOWLIST: tuple[AllowedRead, ...] = (
         "Reads the bundled demo sample for the STORM scan step; not a declared source.",
     ),
     AllowedRead(
-        "cli/fit.py",
-        "fit",
-        3,
+        "cli/gen/_fit.py",
+        "read_fit_csv",
+        1,
         "A caller-named file with its own parse flags; not a declared source.",
     ),
     AllowedRead(
