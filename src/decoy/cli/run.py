@@ -39,11 +39,11 @@ from decoy.cli.extras import (
     translate_ner_unavailable,
 )
 from decoy.cli.gate import (
-    CAPACITY_CODES,
     GateFinding,
     GateRoute,
     PreRunCheckError,
     cap_error_text,
+    capacity_codes,
     check_before_run,
     parse_pipeline_yaml,
 )
@@ -61,7 +61,7 @@ from decoy.ui.progress import spinner
 from decoy.ui.table import make_table
 from decoy.ui.theme import accent, code, error, hint, success, warn
 
-# The engine's capacity-refusal codes live with the gate (`CAPACITY_CODES`); see
+# The engine's capacity-refusal codes come from its registry (`capacity_codes()`); see
 # docs/plans/2026-07-24-oom-checker-cli-v1.md R8 for why the match is narrow.
 
 # The engine's code for a `unique` generate column or pair that the data cannot satisfy.
@@ -974,12 +974,12 @@ def run(
             _execution_error_types = ()
 
         capacity_code: str | None = None
-        if isinstance(exc, _execution_error_types) and exc.code in CAPACITY_CODES:
+        if isinstance(exc, _execution_error_types) and exc.code in capacity_codes():
             capacity_code = exc.code
         # A generate run whose output cannot fit the memory
         # budget raises `GenerationBudgetExceeded`, a plain DecoyError carrying its code. It
         # is a memory refusal like the two above, so it exits 5 and labels the JSON the same.
-        elif isinstance(exc, DecoyError) and getattr(exc, "code", None) in CAPACITY_CODES:
+        elif isinstance(exc, DecoyError) and getattr(exc, "code", None) in capacity_codes():
             capacity_code = exc.code
 
         # Phase 3.1: `NativeGateError.code` distinguishes a usage refusal

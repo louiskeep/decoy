@@ -24,18 +24,15 @@ from decoy.cli.gate._layers import (
 # source-row content verbatim, so the cap bounds what reaches a log aggregator.
 ERROR_TEXT_CAP = 500
 
-# The engine's capacity-refusal codes: the out-of-core-FK memory gate raises
-# `ExecutionError` with one of the first two, and the preflight capacity check carries the same
-# code on its finding. `out_of_core_insufficient_memory` is legacy-engine compat (a current
-# engine's build-floor gate is advisory and never raises it). `generation_budget_exceeded` is the
-# generate route's memory refusal.
-CAPACITY_CODES = frozenset(
-    {
-        "out_of_core_insufficient_memory",
-        "out_of_core_fanin_exceeds_budget",
-        "generation_budget_exceeded",
-    }
-)
+
+def capacity_codes() -> frozenset[str]:
+    """The engine's capacity-refusal codes, from its one public registry.
+
+    Imported on call so the engine stays off the `--help` path.
+    """
+    from decoy_engine.errors import CAPACITY_REASON_CODES
+
+    return CAPACITY_REASON_CODES
 
 
 def cap_error_text(text: str) -> str:
@@ -83,7 +80,7 @@ class PreRunCheckError(Exception):
         first = errors[0]
         if exit_code == EXIT_CAPACITY:
             error_kind = "capacity"
-            capacity = next((f for f in errors if f.code in CAPACITY_CODES), None)
+            capacity = next((f for f in errors if f.code in capacity_codes()), None)
             if capacity is not None:
                 code, first = capacity.code, capacity
         else:

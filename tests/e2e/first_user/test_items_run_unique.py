@@ -140,8 +140,8 @@ def test_injected_uniqueness_code_exits_1(tmp_path: Path) -> None:
 def test_generation_budget_exceeded_exits_5_and_labels_capacity(tmp_path: Path) -> None:
     cfg = _write(tmp_path, _two_distinct_parent_keys()[:1])
     err = _engine_error(
-        "GenerationBudgetExceeded",
-        "decoy_engine.generation._budget_ledger",
+        "GenerationError",
+        "decoy_engine",
         "generation_budget_exceeded",
         "stage 'x' needs 9 bytes but only 1 of 2 remain.",
     )
