@@ -28,6 +28,9 @@ from decoy.ui.theme import code, error, hint, success
 _STDOUT = "-"
 _NAME_OK = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
 _SHOWN_FINDINGS = 3
+# The header comments carry the CSV name and the config path, so a line break in either would
+# end the comment and put the rest into the YAML. Any C0 control or DEL is refused up front.
+_CONTROL = re.compile(r"[\x00-\x1f\x7f]")
 
 
 class ScaffoldInvalid(Exception):
@@ -163,6 +166,13 @@ def scaffold_generate(state: OutputState, csv: Path, out: Path, *, yes: bool) ->
             "config cannot go to stdout.",
             "choose a file with -o, for example -o pipeline.yaml.",
         )
+    for label, path in (("the CSV path", csv), ("the output path", out)):
+        if _CONTROL.search(str(path)):
+            _fail(
+                state,
+                f"{label} contains a control character, such as a line break.",
+                "rename the file or choose another path.",
+            )
     if not csv.is_file():
         _fail(state, f"{csv} does not exist.")
     layout = layout_for(csv, out)
@@ -180,6 +190,8 @@ def scaffold_generate(state: OutputState, csv: Path, out: Path, *, yes: bool) ->
 
     made = _new_folders(layout.config.parent)
     problem = ""
+    atomic_code = ""
+    kept: tuple[str, ...] = ()
     invalid: ScaffoldInvalid | None = None
     try:
         layout.config.parent.mkdir(parents=True, exist_ok=True)
@@ -202,10 +214,13 @@ def scaffold_generate(state: OutputState, csv: Path, out: Path, *, yes: bool) ->
     except ScaffoldInvalid as exc:
         invalid = exc
     except _atomic.AtomicWriteError as exc:
-        problem = _atomic.describe(exc)
+        problem, atomic_code, kept = _atomic.describe(exc), exc.code, exc.kept
     except OSError:
         problem = "write failed"
-    if invalid is not None or problem:
+    # A sync failure means both files are in place, and an incomplete rollback means the old
+    # data sits in a backup: neither may remove anything.
+    keep_all = atomic_code in {_atomic.ATOMIC_SYNC_FAILED, _atomic.ATOMIC_ROLLBACK_INCOMPLETE}
+    if (invalid is not None or problem) and not keep_all:
         for folder in reversed(made):
             try:
                 folder.rmdir()
@@ -219,8 +234,20 @@ def scaffold_generate(state: OutputState, csv: Path, out: Path, *, yes: bool) ->
             "the generated config does not validate: "
             + "; ".join(shown)
             + (f" (and {more} more)" if more else ""),
-            "a sensitive column keeps no values in the snapshot, so it cannot be sampled; "
-            "see decoy fit --help for --include-values.",
+            "replace the column with a generator type (decoy explain types) or remove it.",
+        )
+    if atomic_code == _atomic.ATOMIC_SYNC_FAILED:
+        _fail(
+            state,
+            f"the scaffold files were written, but the disk did not confirm them ({problem}).",
+            f"check {layout.config} and {layout.snapshot} before you use them.",
+        )
+    if atomic_code == _atomic.ATOMIC_ROLLBACK_INCOMPLETE:
+        _fail(
+            state,
+            "could not write the scaffold and could not put every old file back. "
+            f"The old file is kept at {', '.join(kept)} in {layout.config.parent}.",
+            "rename that file back over the one it replaced.",
         )
     if problem:
         _fail(state, f"could not write the scaffold: {problem}. Nothing was changed.")

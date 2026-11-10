@@ -298,4 +298,71 @@ def test_a_sensitive_categorical_column_fails_validation_and_writes_nothing(tmp_
     text = _flat(res.output)
     assert "does not validate" in text and "email" in text
     assert "ann@example.com" not in res.output
+    hint_text = text.split("hint:", 1)[1]  # the gate's own finding may name the flag
+    assert "generator type" in hint_text and "--include-values" not in hint_text
+    assert _listing(tmp_path) == before
+
+
+def test_a_sync_failure_is_reported_as_written_and_removes_nothing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _people(tmp_path)
+
+    def no_sync(_directory: Path) -> None:
+        raise OSError(errno.EIO, "sync fault")
+
+    monkeypatch.setattr(_atomic, "fsync_directory", no_sync)
+
+    res = _scaffold(tmp_path, out="new/p.yaml")
+
+    assert res.exit_code == EXIT_USAGE, res.output
+    text = _flat(res.output)
+    assert "were written" in text and "Nothing was changed" not in text
+    assert (tmp_path / "new" / "p.yaml").is_file()
+    assert (tmp_path / "new" / "people.snapshot.json").is_file()
+
+
+@posix
+def test_an_incomplete_rollback_names_the_kept_old_file(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _people(tmp_path)
+    snap, cfg = tmp_path / "people.snapshot.json", tmp_path / "p.yaml"
+    snap.write_bytes(b"old snapshot")
+    cfg.write_bytes(b"old config")
+    _fail_second_replace(monkeypatch)
+    real_replace = os.replace
+
+    def replace(src: str, dst: str) -> None:
+        if str(src).endswith(".bak"):
+            raise OSError(errno.EIO, "cannot restore")
+        real_replace(src, dst)
+
+    monkeypatch.setattr(_atomic.os, "replace", replace)
+
+    res = _scaffold(tmp_path, "--yes")
+
+    assert res.exit_code == EXIT_USAGE, res.output
+    text = _flat(res.output)
+    kept = [p.name for p in tmp_path.iterdir() if p.name.endswith(".bak")]
+    assert "Nothing was changed" not in text
+    assert len(kept) == 1 and f"The old file is kept at {kept[0]}" in text
+
+
+@pytest.mark.parametrize("where", ["csv", "out"])
+def test_a_control_character_in_a_path_is_refused_before_any_write(
+    tmp_path: Path, where: str
+) -> None:
+    people = _people(tmp_path)
+    csv_path = tmp_path / "evil\nname.csv"
+    csv_path.write_bytes(people.read_bytes())
+    out = tmp_path / ("p\n.yaml" if where == "out" else "p.yaml")
+    src = csv_path if where == "csv" else people
+    before = _listing(tmp_path)
+
+    res = runner.invoke(app, ["init", str(src), "--preset", "generate", "-o", str(out)])
+
+    assert res.exit_code == EXIT_USAGE, res.output
+    assert "control character" in _flat(res.output)
+    assert "evil" not in res.output
     assert _listing(tmp_path) == before

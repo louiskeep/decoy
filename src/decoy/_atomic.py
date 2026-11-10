@@ -37,6 +37,10 @@ allowlist):
   config that names it). It stages and fsyncs every file first, keeps a hard-link backup of
   each file it replaces, and restores or removes every file if any replace fails. A
   non-blocking `flock` on the folder keeps a second publisher out until the first is done.
+  The lock is POSIX only (Windows has no `fcntl`, so no lock there). A rollback covers every
+  exception, an interrupt included; a rollback step that fails keeps its backup and raises
+  `ATOMIC_ROLLBACK_INCOMPLETE` with the backup names. A SIGKILL between two replaces cannot
+  be rolled back and can leave a half pair plus a hidden `.<name>.decoy-*.bak`.
 
 Not covered: the vault commit in `cli/run/_vault.py`, which needs a hard-link backup and rollback,
 and the install-directory moves in `distribution/`. Both are allowlisted with reasons.
@@ -74,6 +78,7 @@ __all__ = [
     "ATOMIC_BATCH_BUSY",
     "ATOMIC_BATCH_INVALID",
     "ATOMIC_NOCLOBBER_UNSUPPORTED",
+    "ATOMIC_ROLLBACK_INCOMPLETE",
     "ATOMIC_SYNC_FAILED",
     "ATOMIC_TARGET_EXISTS",
     "ATOMIC_WRITE_FAILED",
@@ -101,6 +106,9 @@ ATOMIC_NOCLOBBER_UNSUPPORTED = "atomic_noclobber_unsupported"
 ATOMIC_BATCH_BUSY = "atomic_batch_busy"
 ATOMIC_TARGET_EXISTS = "atomic_target_exists"
 ATOMIC_BATCH_INVALID = "atomic_batch_invalid"
+# `publish_local_targets` failed and could not restore every old file; the error's `kept`
+# holds the hidden backup names, each one the old bytes of a file that was not put back.
+ATOMIC_ROLLBACK_INCOMPLETE = "atomic_rollback_incomplete"
 
 # One allowlist for every OS, so a name that is safe here is safe on Windows too. Windows
 # also treats a device stem (CON, NUL, ...) as the device with or without an extension.
@@ -143,12 +151,14 @@ class AtomicWriteError(Exception):
     """A failed atomic write. `code` is one of the ATOMIC_* constants; `errno` may be None.
 
     The text is the code alone. It never holds the directory, the name or the OS message.
+    `kept` names (file names, no folder) the backups a failed rollback left on disk.
     """
 
-    def __init__(self, code: str, os_errno: int | None = None) -> None:
+    def __init__(self, code: str, os_errno: int | None = None, kept: tuple[str, ...] = ()) -> None:
         super().__init__(code)
         self.code = code
         self.errno = os_errno
+        self.kept = kept
 
 
 def write_atomic(
@@ -573,29 +583,38 @@ def _unlink_quietly(path: str | Path) -> None:
 
 @contextlib.contextmanager
 def _folder_lock(directory: Path) -> Iterator[None]:
-    """Hold a non-blocking exclusive lock on the folder itself, so no loose lock file exists."""
+    """Hold a non-blocking exclusive lock on the folder itself, so no loose lock file exists.
+
+    POSIX only: without `fcntl` (Windows) there is no lock and two publishers can interleave.
+    """
     if fcntl is None:
         yield
         return
+    failed = False
     failed_errno: int | None = None
     fd = -1
     try:
         fd = os.open(directory, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))
         fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
     except OSError as exc:
-        failed_errno = exc.errno or errno.EAGAIN
+        failed, failed_errno = True, exc.errno
         if fd >= 0:
             os.close(fd)
-    if failed_errno is not None:
-        raise AtomicWriteError(ATOMIC_BATCH_BUSY, failed_errno)
+    if failed:
+        busy = failed_errno in (errno.EWOULDBLOCK, errno.EAGAIN)
+        raise AtomicWriteError(ATOMIC_BATCH_BUSY if busy else ATOMIC_WRITE_FAILED, failed_errno)
     try:
         yield
     finally:
         os.close(fd)  # closing releases the lock
 
 
-def _rollback(done: list[tuple[Path, str | None]]) -> None:
-    """Undo published targets, newest first: put the old file back, or remove a new one."""
+def _rollback(done: list[tuple[Path, str | None]]) -> list[str]:
+    """Undo published targets, newest first: put the old file back, or remove a new one.
+
+    Returns the backups it could not restore; the caller keeps those on disk.
+    """
+    stuck: list[str] = []
     for real, backup in reversed(done):
         try:
             if backup is None:
@@ -603,7 +622,9 @@ def _rollback(done: list[tuple[Path, str | None]]) -> None:
             else:
                 os.replace(backup, real)
         except OSError:
-            pass  # best effort; the caller still raises the original failure
+            if backup is not None:
+                stuck.append(backup)
+    return stuck
 
 
 def publish_local_targets(
@@ -614,7 +635,9 @@ def publish_local_targets(
     All targets sit in one folder, which this holds locked until it is done. Every file is
     staged and fsynced before the first replace. A file that already exists keeps a hard-link
     backup (the old inode, so its bytes and mode return exactly). If a replace fails, the
-    published files are restored or removed and `AtomicWriteError` is raised. A `CREATE_ONCE`
+    published files are restored or removed and `AtomicWriteError` is raised; so are they on
+    any other exception, `KeyboardInterrupt` included, which then propagates. A restore that
+    fails keeps its backup and raises `ATOMIC_ROLLBACK_INCOMPLETE` instead. A `CREATE_ONCE`
     target that exists once the lock is held is refused before anything changes. Lock, backup
     or staging failures also refuse before the first replace. `check`, when given, receives the
     staged temp paths (in target order) once everything is staged and before the first replace;
@@ -633,6 +656,7 @@ def publish_local_targets(
     staged: list[tuple[str, int]] = []
     backups: list[str | None] = []
     done: list[tuple[Path, str | None]] = []
+    stuck: list[str] = []
     failed = False
     failed_errno: int | None = None
     try:
@@ -655,18 +679,24 @@ def publish_local_targets(
                     if not _publish(tmp, real, bits, target.mode):
                         raise AtomicWriteError(ATOMIC_TARGET_EXISTS)
                     done.append((real, backups[len(done)]))
-            except AtomicWriteError:
-                _rollback(done)
-                raise
-            except OSError as exc:
-                failed, failed_errno = True, exc.errno
-                _rollback(done)
+            except BaseException as exc:
+                stuck = _rollback(done)
+                if stuck:
+                    pass  # reported below, after the backups are left in place
+                elif isinstance(exc, OSError):
+                    failed, failed_errno = True, exc.errno
+                else:
+                    raise
     finally:
         for tmp, _created in staged:
             _unlink_quietly(tmp)
         for backup in backups:
-            if backup is not None:
+            if backup is not None and backup not in stuck:
                 _unlink_quietly(backup)
+    if stuck:
+        raise AtomicWriteError(
+            ATOMIC_ROLLBACK_INCOMPLETE, kept=tuple(Path(name).name for name in stuck)
+        )
     if failed:
         raise AtomicWriteError(ATOMIC_WRITE_FAILED, failed_errno)
     _sync_directories(directory, None)

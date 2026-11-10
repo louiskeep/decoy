@@ -228,3 +228,80 @@ def test_check_sees_the_staged_files_and_a_refusal_changes_nothing(tmp_path: Pat
     assert seen == [b"new-a", b"new-b"]
     assert (tmp_path / "a.json").read_bytes() == b"old-a"
     assert _names(tmp_path) == ["a.json"]
+
+
+@posix
+def test_an_interrupt_on_the_second_replace_restores_both_files(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    first, second = tmp_path / "a.json", tmp_path / "b.yaml"
+    first.write_bytes(b"old-a")
+    second.write_bytes(b"old-b")
+    first.chmod(0o600)
+    second.chmod(0o640)
+    real = _atomic._publish
+    calls = {"n": 0}
+
+    def interrupted(*args: object, **kwargs: object) -> bool:
+        calls["n"] += 1
+        if calls["n"] == 2:
+            raise KeyboardInterrupt
+        return real(*args, **kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(_atomic, "_publish", interrupted)
+
+    with pytest.raises(KeyboardInterrupt):
+        publish_local_targets(
+            [LocalTarget(first, b"new-a", private=True), LocalTarget(second, b"new-b")]
+        )
+
+    assert (first.read_bytes(), first.stat().st_mode & 0o777) == (b"old-a", 0o600)
+    assert (second.read_bytes(), second.stat().st_mode & 0o777) == (b"old-b", 0o640)
+    assert _names(tmp_path) == ["a.json", "b.yaml"]
+    publish_local_targets([LocalTarget(first, b"again")])  # the lock was released
+
+
+@posix
+def test_a_failed_rollback_keeps_the_backup_and_says_so(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    first, second = tmp_path / "a.json", tmp_path / "b.yaml"
+    first.write_bytes(b"old-a")
+    second.write_bytes(b"old-b")
+    _fail_on_call(monkeypatch, 2)
+    real_replace = os.replace
+
+    def replace(src: str, dst: str) -> None:
+        # The publish replaces use temp names; the rollback moves a `.bak` back.
+        if str(src).endswith(".bak"):
+            raise OSError(errno.EIO, "cannot restore /secret/path")
+        real_replace(src, dst)
+
+    monkeypatch.setattr(_atomic.os, "replace", replace)
+
+    with pytest.raises(AtomicWriteError) as caught:
+        publish_local_targets([LocalTarget(first, b"new-a"), LocalTarget(second, b"new-b")])
+
+    err = caught.value
+    assert err.code == _atomic.ATOMIC_ROLLBACK_INCOMPLETE
+    assert "/secret" not in str(err)
+    backups = [n for n in _names(tmp_path) if n.endswith(".bak")]
+    assert len(backups) == 1 and err.kept == tuple(backups)
+    assert (tmp_path / backups[0]).read_bytes() == b"old-a"  # the old bytes survive
+
+
+@posix
+def test_a_lock_failure_that_is_not_contention_is_a_write_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def refuse(_fd: int, _op: int) -> None:
+        raise OSError(errno.ENOLCK, "no locks")
+
+    monkeypatch.setattr(_atomic.fcntl, "flock", refuse)
+
+    with pytest.raises(AtomicWriteError) as caught:
+        publish_local_targets([LocalTarget(tmp_path / "a.json", b"a")])
+
+    assert caught.value.code == _atomic.ATOMIC_WRITE_FAILED
+    assert caught.value.errno == errno.ENOLCK
+    assert _names(tmp_path) == []
