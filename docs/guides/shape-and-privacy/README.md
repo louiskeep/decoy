@@ -7,13 +7,12 @@ the `decoy` CLI. "Shape" means things like how many customers are in each
 state, or how order amounts are spread out.
 
 Every command and output on these pages was run against decoy-cli 0.1.0 and
-decoy-engine 0.19.0 on a 500-row sample file. 0.19.0 is the engine version the
-CLI pins today.
+decoy-engine 0.19.0 on a 500-row sample file. The CLI now pins engine 0.20.0.
 
-Several faults found in testing are fixed on engine main but are not in 0.19.0.
-These pages mark them "fixed after engine 0.19.0" with the engine PR number.
-You get those fixes when the CLI moves to the next engine release. A few of
-them also need a CLI change, and the page says so.
+Several faults found in testing were fixed after engine 0.19.0. These pages mark
+them "fixed after engine 0.19.0" with the engine PR number. Engine 0.20.0
+includes those fixes, so most 0.19.0 workarounds on these pages are no longer
+needed. A few fixes also need a CLI change, and the page says so.
 
 ## Pick the page for your task
 
