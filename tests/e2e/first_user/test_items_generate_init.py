@@ -367,18 +367,53 @@ def test_a_control_character_in_a_path_is_refused_before_any_write(
     assert _listing(tmp_path) == before
 
 
-def test_a_categorical_column_stops_the_scaffold_with_the_opt_in_message(
-    tmp_path: Path,
+def test_a_categorical_column_publishes_with_a_notice_and_run_then_refuses(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     pd.DataFrame(
         {"age": list(range(60)), "city": ["Austin", "Boston", "Denver", "Eugene"] * 15}
     ).to_csv(tmp_path / "people.csv", index=False)
-    before = _listing(tmp_path)
+    monkeypatch.chdir(tmp_path)
+
+    res = runner.invoke(app, ["init", "people.csv", "--preset", "generate", "-o", "p.yaml"])
+
+    assert res.exit_code == 0, res.output
+    text = _flat(res.output)
+    assert '"city"' in text and "allow_real_categories: true" in text and "p.yaml" in text
+    cfg_text = (tmp_path / "p.yaml").read_text(encoding="utf-8")
+    snap_text = (tmp_path / "people.snapshot.json").read_text(encoding="utf-8")
+    assert "# NOTICE:" in cfg_text and '"city"' in cfg_text.split("tables:")[0]
+    cols = {c["name"]: c for c in yaml.safe_load(cfg_text)["tables"][0]["generate_columns"]}
+    assert "allow_real_categories" not in cols["city"]
+    assert snap_text  # the snapshot is written too
+    for value in ("Austin", "Boston", "Denver", "Eugene"):
+        assert value not in res.output and value not in cfg_text.split("tables:")[0]
+
+    run = runner.invoke(app, ["run", "p.yaml"])
+
+    assert run.exit_code == EXIT_USAGE, run.output
+    assert "allow_real_categories" in run.output and "city" in run.output
+
+
+def test_a_categorical_column_notice_is_in_the_json_envelope(tmp_path: Path) -> None:
+    pd.DataFrame(
+        {"age": list(range(60)), "city": ["Austin", "Boston", "Denver", "Eugene"] * 15}
+    ).to_csv(tmp_path / "people.csv", index=False)
 
     res = _scaffold(tmp_path, "--json")
 
-    assert res.exit_code == EXIT_USAGE, res.output
-    text = _flat(res.output)
-    assert "city" in text and "allow_real_categories: true" in text and "by hand" in text
-    assert "Austin" not in res.output
-    assert _listing(tmp_path) == before
+    assert res.exit_code == 0, res.output
+    payload = json.loads(res.stdout)
+    assert payload["opt_in_columns"] == ["city"] and "allow_real_categories" in payload["notice"]
+
+
+def test_a_column_name_with_a_line_break_cannot_leave_the_header_comment(tmp_path: Path) -> None:
+    pd.DataFrame(
+        {"age": list(range(60)), "a\nb: 1": ["Austin", "Boston", "Denver", "Eugene"] * 15}
+    ).to_csv(tmp_path / "people.csv", index=False)
+
+    res = _scaffold(tmp_path)
+
+    assert res.exit_code == 0, res.output
+    head = (tmp_path / "p.yaml").read_text(encoding="utf-8").split("\nversion:")[0]
+    assert all(line.startswith("#") or not line for line in head.splitlines())

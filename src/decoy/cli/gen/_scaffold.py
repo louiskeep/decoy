@@ -28,10 +28,11 @@ from decoy.ui.theme import code, error, hint, success
 _STDOUT = "-"
 _NAME_OK = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
 _SHOWN_FINDINGS = 3
+# The gate's code for a categorical column whose snapshot holds real values and that has no
+# `allow_real_categories: true` yet. It is the one finding the scaffold publishes through.
+OPT_IN_CODE = "statistical_real_categories_not_allowed"
 # The header comments carry the CSV name and the config path, so a line break in either would
 # end the comment and put the rest into the YAML. Any C0 control or DEL is refused up front.
-_REAL_CATEGORIES = "allow_real_categories"
-_COLUMN_IN_MESSAGE = re.compile(r"column '([^']+)'")
 _CONTROL = re.compile(r"[\x00-\x1f\x7f]")
 
 
@@ -41,6 +42,29 @@ class ScaffoldInvalid(Exception):
     def __init__(self, messages: list[str]) -> None:
         super().__init__("scaffold failed validation")
         self.messages = messages
+
+
+class _OptIn(Exception):
+    """The only findings are the real-categories opt-in; `columns` are the columns it names."""
+
+    def __init__(self, columns: list[str]) -> None:
+        super().__init__("real-categories opt-in needed")
+        self.columns = columns
+
+
+def _quoted(columns: list[str]) -> str:
+    """Column names for a comment or message: JSON-quoted, so a line break cannot get through."""
+    return ", ".join(json.dumps(c) for c in columns)
+
+
+def notice_for(columns: list[str], config: Path) -> str:
+    """The text for the CLI output and the YAML header. Names only, never values."""
+    return (
+        f"column(s) {_quoted(columns)} hold category values from the CSV. {config} is written, "
+        "but `decoy run` refuses it until you add `allow_real_categories: true` to those "
+        "columns (the output may then repeat CSV values) or change their type "
+        "(decoy explain types)."
+    )
 
 
 @dataclass(frozen=True)
@@ -71,7 +95,9 @@ def layout_for(csv: Path, out: Path) -> Layout:
     )
 
 
-def build_config(layout: Layout, snapshot: dict[str, Any], rows: int) -> str:
+def build_config(
+    layout: Layout, snapshot: dict[str, Any], rows: int, opt_in: list[str] | None = None
+) -> str:
     """The YAML text: one statistical column per fitted column, in file order."""
     columns = []
     for name in snapshot["columns"]:
@@ -93,13 +119,18 @@ def build_config(layout: Layout, snapshot: dict[str, Any], rows: int) -> str:
         "# Decoy generate scaffold.\n"
         f"# Fitted from {layout.source_name} by `decoy init`; the shape comes from the "
         "snapshot beside this file.\n"
-        f"# Next: decoy run {layout.config}  (add --rows 5 to preview first)\n\n"
+        + (f"# NOTICE: {notice_for(opt_in, layout.config)}\n" if opt_in else "")
+        + f"# Next: decoy run {layout.config}  (add --rows 5 to preview first)\n\n"
     )
     return header + yaml.safe_dump(body, sort_keys=False)
 
 
-def _validate_pair(config_text: str, staged_snapshot: Path) -> None:
+def _validate_pair(config_text: str, staged_snapshot: Path) -> list[str]:
     """Run the pre-run gate on the candidate config against the staged snapshot.
+
+    Returns the columns that only need the real-categories opt-in (the gate's structured
+    finding: code `OPT_IN_CODE`, column from its config path). Any other error raises
+    `ScaffoldInvalid`.
 
     The staged file is the sibling layout: it sits beside the destination, owner-only, and
     holds the exact bytes about to be published. The copy of the config the gate reads names
@@ -112,10 +143,22 @@ def _validate_pair(config_text: str, staged_snapshot: Path) -> None:
         column["snapshot_file"] = str(staged_snapshot)
     result = run_gate_on_config(raw, staged_snapshot.parent / "pipeline.yaml", GateRoute.PLAIN)
     problems = [f for f in result.findings if f.severity == "error"]
-    if problems:
+    prefix = f"tables.{raw['tables'][0]['name']}.generate_columns."
+    opt_in = [
+        f.logical_path.removeprefix(prefix)
+        for f in problems
+        if f.code == OPT_IN_CODE and (f.logical_path or "").startswith(prefix)
+    ]
+    others = [
+        f
+        for f in problems
+        if f.code != OPT_IN_CODE or not (f.logical_path or "").startswith(prefix)
+    ]
+    if others:
         raise ScaffoldInvalid(
-            [f.message + (f" (at {f.location})" if f.location else "") for f in problems]
+            [f.message + (f" (at {f.location})" if f.location else "") for f in others]
         )
+    return opt_in
 
 
 def _fail(state: OutputState, text: str, hint_text: str | None = None) -> NoReturn:
@@ -184,31 +227,31 @@ def scaffold_generate(state: OutputState, csv: Path, out: Path, *, yes: bool) ->
     if failure is not None:  # raised outside the except block: no exception context
         _fail(state, getattr(failure, "message", None) or str(failure))
     snapshot_bytes = json.dumps(fitted.snapshot, indent=1).encode("utf-8")
-    config_text = build_config(layout, fitted.snapshot, fitted.rows_total)
 
     made = _new_folders(layout.config.parent)
     problem = ""
     atomic_code = ""
     kept: tuple[str, ...] = ()
     invalid: ScaffoldInvalid | None = None
+    opt_in: list[str] = []
     try:
         layout.config.parent.mkdir(parents=True, exist_ok=True)
-        _atomic.publish_local_targets(
-            [
-                LocalTarget(
-                    layout.snapshot,
-                    snapshot_bytes,
-                    WriteMode.REPLACE if layout.snapshot.exists() else WriteMode.CREATE_ONCE,
-                    private=True,
-                ),
-                LocalTarget(
-                    layout.config,
-                    config_text.encode("utf-8"),
-                    WriteMode.REPLACE if layout.config.exists() else WriteMode.CREATE_ONCE,
-                ),
-            ],
-            check=lambda staged: _validate_pair(config_text, staged[0]),
-        )
+        try:
+            _publish_pair(
+                layout,
+                snapshot_bytes,
+                build_config(layout, fitted.snapshot, fitted.rows_total),
+                opt_in,
+            )
+        except _OptIn as first:
+            # Nothing was changed. Publish again with the notice in the YAML header.
+            opt_in = first.columns
+            _publish_pair(
+                layout,
+                snapshot_bytes,
+                build_config(layout, fitted.snapshot, fitted.rows_total, opt_in),
+                opt_in,
+            )
     except ScaffoldInvalid as exc:
         invalid = exc
     except _atomic.AtomicWriteError as exc:
@@ -225,20 +268,6 @@ def scaffold_generate(state: OutputState, csv: Path, out: Path, *, yes: bool) ->
             except OSError:
                 break
     if invalid is not None:
-        # A column the snapshot withheld values for also names the flag; it is not an opt-in.
-        opt_in = [m for m in invalid.messages if _REAL_CATEGORIES in m and "withheld" not in m]
-        if opt_in:
-            names = [g.group(1) for m in opt_in if (g := _COLUMN_IN_MESSAGE.search(m))]
-            _fail(
-                state,
-                "the CSV has categorical column(s) "
-                + (", ".join(names) or "that need an opt-in")
-                + ": the scaffold does not copy real category values into generated output, "
-                "so it wrote nothing.",
-                f"to opt in, add `{_REAL_CATEGORIES}: true` to that column by hand; "
-                "otherwise replace the column with a generator type (decoy explain types) "
-                "or remove it.",
-            )
         shown = invalid.messages[:_SHOWN_FINDINGS]
         more = len(invalid.messages) - len(shown)
         _fail(
@@ -264,10 +293,44 @@ def scaffold_generate(state: OutputState, csv: Path, out: Path, *, yes: bool) ->
     if problem:
         _fail(state, f"could not write the scaffold: {problem}. Nothing was changed.")
 
-    _report(state, csv, layout, fitted.rows_total, len(fitted.snapshot["columns"]))
+    _report(state, csv, layout, fitted.rows_total, len(fitted.snapshot["columns"]), opt_in)
 
 
-def _report(state: OutputState, csv: Path, layout: Layout, rows: int, columns: int) -> None:
+def _publish_pair(
+    layout: Layout, snapshot_bytes: bytes, config_text: str, declared: list[str]
+) -> None:
+    """Publish the snapshot and config as one unit after the gate passes on the staged pair.
+
+    Raises `_OptIn` (nothing changed) when the gate's opt-in columns differ from `declared`,
+    the ones `config_text` already names in its header.
+    """
+
+    def check(staged: list[Path]) -> None:
+        columns = _validate_pair(config_text, staged[0])
+        if columns != declared:
+            raise _OptIn(columns)
+
+    _atomic.publish_local_targets(
+        [
+            LocalTarget(
+                layout.snapshot,
+                snapshot_bytes,
+                WriteMode.REPLACE if layout.snapshot.exists() else WriteMode.CREATE_ONCE,
+                private=True,
+            ),
+            LocalTarget(
+                layout.config,
+                config_text.encode("utf-8"),
+                WriteMode.REPLACE if layout.config.exists() else WriteMode.CREATE_ONCE,
+            ),
+        ],
+        check=check,
+    )
+
+
+def _report(
+    state: OutputState, csv: Path, layout: Layout, rows: int, columns: int, opt_in: list[str]
+) -> None:
     if state.mode is OutputMode.json:
         emit_json(
             state,
@@ -280,6 +343,11 @@ def _report(state: OutputState, csv: Path, layout: Layout, rows: int, columns: i
                 "mode": "generate-scaffold",
                 "row_count": rows,
                 "column_count": columns,
+                **(
+                    {"opt_in_columns": opt_in, "notice": notice_for(opt_in, layout.config)}
+                    if opt_in
+                    else {}
+                ),
             },
         )
     elif state.mode is not OutputMode.quiet:
@@ -293,3 +361,5 @@ def _report(state: OutputState, csv: Path, layout: Layout, rows: int, columns: i
             "to preview, then",
             code(f"decoy run {layout.config}"),
         )
+    if opt_in and state.mode is not OutputMode.json:
+        state.err_console.print(hint("notice:"), notice_for(opt_in, layout.config), markup=False)
