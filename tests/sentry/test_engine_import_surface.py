@@ -378,7 +378,7 @@ def test_engine_surface_scan_sees_the_whole_cli() -> None:
     assert (_ENGINE, "run_pipeline") in refs
     assert (_ENGINE, "profile_columns") in refs
     calls = [c.where for c in collect_pipeline_calls(_SRC, star_kwargs="resolve")]
-    assert any(w.startswith("cli/run.py:") for w in calls), calls
+    assert any(w.startswith("cli/run/_execute.py:") for w in calls), calls
     assert any(w.startswith("api.py:") for w in calls), calls
 
 

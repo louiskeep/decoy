@@ -51,6 +51,7 @@ First row of the layout map the LAYOUT slice completes (one line per kind of mod
 | Project layout services: project root finder and `.decoy/` setup, pipeline names and claims, run folders, `out/`, the Windows path budget, the `layout.*` descriptors. Everything outside `cli/io/` imports them from the public `decoy.cli.io` package | `src/decoy/cli/io/`: `_project.py` (the only reader of `decoy.yaml`), `_layout.py`, `_layout_errors.py` (the only home of a `layout.*` code) | `find_project`, `create_run_folder`, `LayoutError` |
 | Project layout contract tests (new ones go in these named folders, not the flat `tests/unit/` and `tests/e2e/`) | `tests/unit/project_layout/`, `tests/e2e/project_layout/` | `test_project_root.py`, `test_layout.py`, `test_owning_run.py` |
 | `decoy scan` internals (argument resolution, engine call, card and `--json`) | `src/decoy/cli/scanning/`, file named `_<noun>.py`; `scan.py` keeps only the options | `_multi.py` |
+| `decoy run` internals (phases, error arm, summary, evidence, notifications, vault commit) | `src/decoy/cli/run/`, file named `_<noun>.py`; `__init__.py` keeps only the options, `_RUN_EPILOG` and the re-exports | `_prepare.py`, `_execute.py`, `_errors.py`, `_render.py`, `_evidence.py`, `_notify.py`, `_vault.py`, `_flow.py` (the order of the phases), `_context.py` (`RunContext`, the state they share) |
 | Composite CI actions (`action.yml`) | `.github/actions/<name>/` | `setup-uv`, `lock-env` |
 | CI install, vendor and lane policy (`*.toml`) | `ci/` | `ci/install-policy.toml` (the install registry), `ci/vendored.toml`, `ci/ci-tools.in`, `ci/ci-tools.lock` |
 | Developer environment scripts | `scripts/dev/` | `lock.sh`, `bootstrap.sh`, `lock_version.sh`, `fetch_ci_binary.py` |
@@ -59,6 +60,7 @@ First row of the layout map the LAYOUT slice completes (one line per kind of mod
 | Repository policy sentries and their scanners (CI scan helpers shared with the engine in the `ci_scan/` sub-package) | `tests/sentry/` | `_ratchet.py`, `_ci_lock_scan.py`, `test_ci_lock_installs.py`; shared CI scan helpers in `tests/sentry/ci_scan/` |
 | I/O policy sentries (reads and writes) and their shared call scanner | `tests/sentry/io_policy/` | `_calls.py`, `test_target_writes.py`, `test_pipeline_argument.py` (one project root finder), `test_layout_errors.py` (one `layout.*` registry) |
 | User-facing CLI text and crash-handling sentries (new ones go here, not the flat `tests/sentry/`; `io_policy/` is the adjacent pattern) | `tests/sentry/cli_text/` | `test_no_traceback_escape.py` |
+| Layout fitness functions (how a package is cut into modules) | `tests/sentry/layout/` | `test_run_package_shape.py` (`cli/run/`: thin `__init__`, 600-line cap, import order, no private imports) |
 | Task-oriented user guides (one folder per topic, with a `README.md` index) | `docs/guides/<topic>/` | `docs/guides/shape-and-privacy/` |
 | Build and gate evidence records | `docs/records/` | `2026-11-06-ci-l1-build.md` |
 | CLI format contract tests (new ones go in these named folders, not the flat `tests/e2e/` and `tests/unit/`) | `tests/e2e/cli_fmt/`, `tests/unit/cli_fmt/` | `test_target_format_dispatch.py`, `test_targets_format.py` |
@@ -75,7 +77,7 @@ First row of the layout map the LAYOUT slice completes (one line per kind of mod
 | CLI role guide | [AGENTS.md](AGENTS.md) (summary) |
 | User guide: data shape, fit and generate, fidelity reports, differential privacy | [docs/guides/shape-and-privacy/README.md](docs/guides/shape-and-privacy/README.md) |
 | Command registration | `src/decoy/__main__.py` |
-| Run command | `src/decoy/cli/run.py` |
+| Run command | `src/decoy/cli/run/` (options in `__init__.py`, phases in `_prepare.py`, `_execute.py`, `_errors.py`, `_render.py`) |
 | Tokenize / detokenize | `src/decoy/cli/tokenize.py` (store: `_token_vault.py`) |
 | Validate command | `src/decoy/cli/validate.py` (gate: `src/decoy/cli/gate/`) |
 | CI checks / SARIF / pre-commit | `src/decoy/ci/`, `src/decoy/cli/ci.py`, `docs/ci-contracts.md`, `.pre-commit-hooks.yaml`, `integrations/` |

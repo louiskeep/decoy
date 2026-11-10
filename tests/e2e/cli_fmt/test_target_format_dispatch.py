@@ -102,7 +102,7 @@ def _target(fmt: str, path: Path, layout: dict | None = None) -> dict[str, Any]:
 
 def _refuse_reads(monkeypatch: pytest.MonkeyPatch) -> None:
     """Make any source read fail, so an exit 1 proves the refusal came first."""
-    import decoy.cli.run as run_module
+    import decoy.cli.run._execute as run_module
 
     def boom(*_a: object, **_k: object) -> None:
         raise AssertionError("a source was read before the target refusal")
