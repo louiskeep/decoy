@@ -6,6 +6,13 @@ Status: current
 
 ## Errors
 
+### `DP fit is not available on this install` (exit 3)
+
+The default text for `dp_stack_uncertified` and `dp_platform_uncertified`. The
+engine code, platform and fingerprint print under `--verbose` and in `--json`.
+No data row was read. To get a snapshot without DP, run `decoy fit` without
+`--epsilon`.
+
 ### `dp_stack_uncertified` (exit 3)
 
 The DP fit ran on a setup that was not tested. Build the certified environment
@@ -17,6 +24,16 @@ extra package added to the certified environment.
 
 The machine is not Linux x86-64 with glibc. Run the fit in a Linux x86-64
 container or VM.
+
+### `dp_source_changed`
+
+The CSV changed between the header read and the data read, so the column names
+no longer match the ones that were checked. Run the command again.
+
+### A CSV that `fit` cannot read
+
+`could not read <file> as a CSV.` The text never repeats the parser's message,
+because that message can quote a cell. Check the file's encoding and quoting.
 
 ### `dp_columns_omitted`
 

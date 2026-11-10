@@ -37,6 +37,24 @@ from tests.dp_env import expected_dp_refusal_code_required, foreign_platform
 
 runner = CliRunner()
 
+_REFUSAL_LINE = (
+    "error: DP fit is not available on this install: it runs only on a certified platform "
+    "and package set."
+)
+
+
+def _flat(text: str) -> str:
+    """Collapse Rich's soft wrapping so a phrase can be asserted whole."""
+    return " ".join(text.split())
+
+
+def _pass_gate(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Let a test that stubs only `fit_dp_snapshot` clear the early request check.
+
+    The CLI now asks the engine's `check_dp_fit_request` before it reads a data row, and this
+    host is uncertified, so the real check would refuse before the stubbed fit is reached."""
+    monkeypatch.setattr("decoy_engine.quality.check_dp_fit_request", lambda *a, **k: None)
+
 
 def _dp_source_csv(tmp_path: Path) -> Path:
     """A source CSV with one column of each carrier kind, plus one
@@ -400,6 +418,8 @@ class TestFitDpFlagGrammar:
 
             raise DpError(code="capture_stop", message="captured for the test")
 
+        _pass_gate(monkeypatch)
+
         monkeypatch.setattr("decoy_engine.quality.dp.fit_dp_snapshot", _capture)
 
         def _run(rows: str) -> dict[str, Any]:
@@ -471,7 +491,7 @@ class TestFitDpFlagGrammar:
         # engine call and is refused there for the (unrelated) uncertified
         # proof stack.
         assert result.exit_code == EXIT_RUNTIME
-        assert expected_dp_refusal_code_required() in result.output
+        assert _REFUSAL_LINE in _flat(result.output)
 
 
 class TestFitDpOmission:
@@ -534,7 +554,7 @@ class TestFitDpOmission:
         # is refused there for the uncertified proof stack -- proof that
         # --dp-allow-omit let the fit proceed rather than usage-erroring.
         assert result.exit_code == EXIT_RUNTIME
-        assert expected_dp_refusal_code_required() in result.output
+        assert _REFUSAL_LINE in _flat(result.output)
         assert "notes" in result.output  # the itemized notice names it
         assert not out.exists()
 
@@ -633,8 +653,8 @@ class TestFitDpErrorFamilies:
         src = _dp_source_csv(tmp_path)
         result = runner.invoke(app, self._dp_args(src))
         assert result.exit_code == EXIT_RUNTIME
-        assert expected_dp_refusal_code_required() in result.output
-        assert "not a certified DP platform/stack" in result.output
+        assert _REFUSAL_LINE in _flat(result.output)
+        assert "certified install" in _flat(result.output)
 
     def test_provenance_error_json_has_code_message_and_hint(self, tmp_path: Path) -> None:
         src = _dp_source_csv(tmp_path)
@@ -643,13 +663,15 @@ class TestFitDpErrorFamilies:
         payload = json.loads(result.stdout)
         assert payload["code"] == expected_dp_refusal_code_required()
         assert payload["message"]
-        assert "not a certified DP platform/stack" in payload["hint"]
+        assert "certified install" in payload["hint"]
 
     def test_carrier_error_surfaces_code_and_message(self, tmp_path: Path, monkeypatch) -> None:
         def _raise(*args, **kwargs):
             from decoy_engine.quality.carriers import CarrierError
 
             raise CarrierError(code="dp_carrier_bounds_order", message="synthetic carrier failure")
+
+        _pass_gate(monkeypatch)
 
         monkeypatch.setattr("decoy_engine.quality.dp.fit_dp_snapshot", _raise)
         src = _dp_source_csv(tmp_path)
@@ -664,6 +686,8 @@ class TestFitDpErrorFamilies:
             from decoy_engine.quality.dp_budget import DpBudgetError
 
             raise DpBudgetError(code="dp_budget_infeasible", message="synthetic budget failure")
+
+        _pass_gate(monkeypatch)
 
         monkeypatch.setattr("decoy_engine.quality.dp.fit_dp_snapshot", _raise)
         src = _dp_source_csv(tmp_path)
@@ -680,6 +704,8 @@ class TestFitDpErrorFamilies:
 
             raise DpBudgetError(code="dp_schedule_mismatch", message="synthetic invariant failure")
 
+        _pass_gate(monkeypatch)
+
         monkeypatch.setattr("decoy_engine.quality.dp.fit_dp_snapshot", _raise)
         src = _dp_source_csv(tmp_path)
         result = runner.invoke(app, [*self._dp_args(src), "--json"])
@@ -692,6 +718,8 @@ class TestFitDpErrorFamilies:
             from decoy_engine.quality.dp import DpError
 
             raise DpError(code="dp_numeric_domain_invalid", message="synthetic domain failure")
+
+        _pass_gate(monkeypatch)
 
         monkeypatch.setattr("decoy_engine.quality.dp.fit_dp_snapshot", _raise)
         src = _dp_source_csv(tmp_path)
@@ -803,6 +831,7 @@ class TestFitDpArtifactShape:
         self, tmp_path: Path, monkeypatch
     ) -> None:
         fake = self._fake_dp_artifact()
+        _pass_gate(monkeypatch)
         monkeypatch.setattr("decoy_engine.quality.dp.fit_dp_snapshot", lambda *a, **k: fake)
         src = _dp_source_csv(tmp_path)
         out = tmp_path / "snapshot.json"
@@ -917,3 +946,194 @@ class TestFitDpDeclaredColumnMissing:
         assert result.exit_code == EXIT_USAGE
         assert "dp_schema_column_missing" in result.output
         assert "amt" in result.output
+
+
+_DP_ARGS = [
+    "--epsilon",
+    "1",
+    "--delta",
+    "1e-6",
+    "--dp-text",
+    "state",
+    "--dp-allow-omit",
+]
+
+
+class _ReadSpy:
+    """Wraps `pd.read_csv`, recording each call's keyword arguments.
+
+    Installed on `pandas` itself, the module `fit` calls through, so a call that bypasses it
+    shows up as an empty `calls` list (the precondition each test asserts)."""
+
+    def __init__(self, monkeypatch: pytest.MonkeyPatch, replace: Any = None) -> None:
+        self.calls: list[dict[str, Any]] = []
+        self._real = pd.read_csv
+        self._replace = replace
+        monkeypatch.setattr(pd, "read_csv", self)
+
+    def __call__(self, *args: Any, **kwargs: Any) -> Any:
+        self.calls.append(dict(kwargs))
+        if self._replace is not None:
+            return self._replace(self, self._real, *args, **kwargs)
+        return self._real(*args, **kwargs)
+
+
+class TestFitDpGate:
+    """Slice G: the DP request is checked on the header before any data row is read."""
+
+    def test_at_g1_uncertified_host_reads_header_only_and_never_fits(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        src = _dp_source_csv(tmp_path)
+        fitted: list[object] = []
+        monkeypatch.setattr(
+            "decoy_engine.quality.dp.fit_dp_snapshot", lambda *a, **k: fitted.append(1)
+        )
+        spy = _ReadSpy(monkeypatch)
+        result = runner.invoke(app, ["fit", str(src), *_DP_ARGS])
+        assert spy.calls, "the read_csv spy was never reached"
+        assert result.exit_code == EXIT_RUNTIME
+        assert len(spy.calls) == 1 and spy.calls[0].get("nrows") == 0
+        assert fitted == []
+
+    def test_at_g2_refusal_is_plain_and_details_stay_behind_verbose_and_json(
+        self, tmp_path: Path
+    ) -> None:
+        import re
+
+        src = _dp_source_csv(tmp_path)
+        code = expected_dp_refusal_code_required()
+        result = runner.invoke(app, ["fit", str(src), *_DP_ARGS])
+        err = _flat(result.stderr)
+        assert _REFUSAL_LINE in err
+        assert "hint: run decoy fit without --epsilon" in err
+        assert err.index("--include-values") < err.index("certified install")
+        assert "decoy explain differential-privacy" in err
+        for banned in ("dp_stack_uncertified", "dp_platform_uncertified", "fingerprint"):
+            assert banned not in err
+        assert "PlatformTriple" not in err and not re.search(r"\d{8,}", err)
+
+        verbose = runner.invoke(app, ["fit", str(src), *_DP_ARGS, "--verbose"])
+        assert code in verbose.stderr
+
+        as_json = runner.invoke(app, ["fit", str(src), *_DP_ARGS, "--json"])
+        assert as_json.exit_code == EXIT_RUNTIME
+        payload = json.loads(as_json.stdout)
+        assert payload["code"] == code
+        assert payload["message"] and payload["hint"]
+        assert payload["error"] == f"{code}: {payload['message']}"
+
+    @pytest.mark.parametrize(
+        ("extra", "code"),
+        [
+            (
+                ["--epsilon", "0", "--delta", "1e-6", "--dp-text", "state", "--dp-allow-omit"],
+                "dp_epsilon_invalid",
+            ),
+            (
+                ["--epsilon", "1", "--delta", "2", "--dp-text", "state", "--dp-allow-omit"],
+                "dp_delta_invalid",
+            ),
+            (
+                [*_DP_ARGS, "--numeric-bins", "0", "--dp-number", "amount:0:200"],
+                "dp_numeric_bins_invalid",
+            ),
+            ([*_DP_ARGS, "--dp-number", "amt:0:200"], "dp_schema_column_missing"),
+            (["--epsilon", "1", "--delta", "1e-6", "--dp-text", "state"], "dp_columns_omitted"),
+        ],
+    )
+    def test_at_g3_request_errors_keep_their_codes_before_the_gate(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, extra: list[str], code: str
+    ) -> None:
+        src = _dp_source_csv(tmp_path)
+        spy = _ReadSpy(monkeypatch)
+        result = runner.invoke(app, ["fit", str(src), *extra, "--json"], catch_exceptions=False)
+        assert spy.calls, "the read_csv spy was never reached"
+        assert result.exit_code == EXIT_USAGE
+        assert json.loads(result.stdout)["code"] == code
+        assert [c.get("nrows") for c in spy.calls] == [0]
+
+    def test_at_g3_fit_uses_only_the_public_engine_check(self) -> None:
+        import ast
+
+        import decoy.cli.fit as fit_module
+
+        tree = ast.parse(Path(fit_module.__file__).read_text(encoding="utf-8"))
+        for node in ast.walk(tree):
+            if isinstance(node, ast.ImportFrom) and (node.module or "").startswith(
+                "decoy_engine.quality"
+            ):
+                assert not [a.name for a in node.names if a.name.startswith("_")]
+                if node.module != "decoy_engine.quality":
+                    assert "check_dp_fit_request" not in [a.name for a in node.names]
+        assert any(
+            isinstance(n, ast.ImportFrom)
+            and n.module == "decoy_engine.quality"
+            and "check_dp_fit_request" in [a.name for a in n.names]
+            for n in ast.walk(tree)
+        ), "fit must import check_dp_fit_request from the decoy_engine.quality facade"
+        checks = [
+            n.lineno
+            for n in ast.walk(tree)
+            if isinstance(n, ast.Call)
+            and isinstance(n.func, ast.Name)
+            and n.func.id == "check_dp_fit_request"
+        ]
+        body_reads = [
+            n.lineno
+            for n in ast.walk(tree)
+            if isinstance(n, ast.Call)
+            and isinstance(n.func, ast.Attribute)
+            and n.func.attr == "read_csv"
+            and any(
+                k.arg is None and isinstance(k.value, ast.Name) and k.value.id == "body_kwargs"
+                for k in n.keywords
+            )
+        ]
+        assert len(checks) == 1 and len(body_reads) == 1
+        assert checks[0] < body_reads[0]
+
+    def test_at_g4_a_changed_header_is_a_coded_usage_error(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        _pass_gate(monkeypatch)
+        src = _dp_source_csv(tmp_path)
+
+        def _swap(spy: _ReadSpy, real: Any, *args: Any, **kwargs: Any) -> Any:
+            frame = real(*args, **kwargs)
+            return frame.rename(columns={"state": "region"}) if len(spy.calls) > 1 else frame
+
+        spy = _ReadSpy(monkeypatch, replace=_swap)
+        result = runner.invoke(app, ["fit", str(src), *_DP_ARGS, "--json"], catch_exceptions=False)
+        assert len(spy.calls) == 2
+        assert result.exit_code == EXIT_USAGE
+        payload = json.loads(result.stdout)
+        assert payload["code"] == "dp_source_changed"
+        assert payload["status"] == "error"
+
+    @pytest.mark.parametrize("mode", ["exact", "dp-header", "dp-body"])
+    def test_at_g5_read_errors_never_echo_the_exception(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, mode: str
+    ) -> None:
+        _pass_gate(monkeypatch)
+        src = _dp_source_csv(tmp_path)
+
+        def _boom(spy: _ReadSpy, real: Any, *args: Any, **kwargs: Any) -> Any:
+            header_read = kwargs.get("nrows") == 0
+            if mode == "dp-body" and header_read:
+                return real(*args, **kwargs)
+            raise ValueError("RAW-CELL-CANARY")
+
+        spy = _ReadSpy(monkeypatch, replace=_boom)
+        args = ["fit", str(src)] if mode == "exact" else ["fit", str(src), *_DP_ARGS]
+        for flag in ([], ["--json"]):
+            result = runner.invoke(app, [*args, *flag], catch_exceptions=False)
+            assert spy.calls, "the read_csv spy was never reached"
+            assert result.exit_code == EXIT_USAGE
+            assert "RAW-CELL-CANARY" not in result.stdout + result.stderr
+            assert "could not read" in _flat(result.stdout + result.stderr)
+
+    def test_at_g6_help_marks_dp_as_certified_only(self) -> None:
+        result = runner.invoke(app, ["fit", "--help"])
+        assert result.exit_code == 0
+        assert "certified" in _flat(result.stdout).lower()
