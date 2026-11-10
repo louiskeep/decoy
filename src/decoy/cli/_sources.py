@@ -27,10 +27,39 @@ import pyarrow as pa
 def resolve_path(raw_path: str, base_dir: Path) -> Path:
     """Resolve a YAML path against the config's directory; absolute paths pass through.
 
-    The one YAML path resolver: `run`, `demo` and the target writers share it.
+    The one YAML path resolver: `run`, `demo` and the target writers share it. The choice of
+    base and the join belong to the engine (`fileaccess.config_relative`); this wrapper keeps
+    the CLI's `Path` type and its canonical form for a relative path.
     """
-    p = Path(raw_path)
-    return p if p.is_absolute() else (base_dir / p).resolve()
+    from decoy_engine.fileaccess import config_relative
+
+    joined = config_relative(raw_path, base_dir)
+    return Path(joined) if Path(raw_path).is_absolute() else Path(joined).resolve()
+
+
+def resolved_source_config(config_dict: dict[str, Any], base_dir: Path) -> dict[str, Any]:
+    """A shallow copy of a config whose file sources name their files by absolute path.
+
+    The engine profiles a run from the declared source descriptors and opens `path` and
+    `column_names_file` as written, so a relative one reads from the working directory. The
+    CLI hands the engine this copy instead (the engine's capacity estimate does the same).
+    Sources are not part of the config hash, so the copy leaves the run's identity unchanged.
+    """
+    from decoy_engine import FILE_SOURCE_PATH_FIELDS
+
+    sources = config_dict.get("sources")
+    if not isinstance(sources, dict) or not sources:
+        return config_dict
+    resolved: dict[str, Any] = {}
+    for name, descriptor in sources.items():
+        if isinstance(descriptor, dict) and descriptor.get("type") == "file":
+            descriptor = dict(descriptor)
+            for field in FILE_SOURCE_PATH_FIELDS:
+                value = descriptor.get(field)
+                if isinstance(value, str) and value:
+                    descriptor[field] = str(resolve_path(value, base_dir))
+        resolved[name] = descriptor
+    return {**config_dict, "sources": resolved}
 
 
 # The CSV dialect keys of a file-source descriptor, the engine's `CsvDialect` fields plus
@@ -80,6 +109,11 @@ def read_csv_frame(
     """
     from decoy_engine import read_csv_source, resolve_csv_dialect
 
+    # The names file sits beside the data file in the YAML, so it resolves like `path`. The
+    # descriptor copy keeps the caller's dict (and the config hash, which excludes sources) intact.
+    names_file = src.get("column_names_file")
+    if names_file:
+        src = {**src, "column_names_file": str(resolve_path(names_file, base_dir))}
     return read_csv_source(
         resolve_path(src["path"], base_dir),
         resolve_csv_dialect(src),

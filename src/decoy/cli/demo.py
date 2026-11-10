@@ -22,7 +22,7 @@ from pathlib import Path
 
 import typer
 
-from decoy.cli._sources import csv_file_source, read_source
+from decoy.cli._sources import csv_file_source, read_source, resolved_source_config
 from decoy.cli.exit_codes import EXIT_RUNTIME, EXIT_USAGE
 from decoy.cli.io._targets import check_target_formats, write_targets
 from decoy.ui.card import render_card
@@ -50,16 +50,25 @@ See also: decoy scan, decoy run.
 def _write_sample_csv(path: Path) -> None:
     rows = [
         ("customer_id", "first_name", "last_name", "email", "ssn", "dob", "zip", "gender"),
-        ("C001", "Alice",   "Anderson", "alice@example.com",   "111-22-3333", "1990-01-15", "10001", "F"),
-        ("C002", "Bob",     "Brown",    "bob@example.com",     "222-33-4444", "1985-05-20", "90210", "M"),
-        ("C003", "Carol",   "Carter",   "carol@example.com",   "333-44-5555", "1992-08-30", "60601", "F"),
-        ("C004", "David",   "Davis",    "david@example.com",   "444-55-6666", "1988-11-04", "77001", "M"),
-        ("C005", "Eve",     "Evans",    "eve@example.com",     "555-66-7777", "2000-02-14", "94016", "F"),
-        ("C006", "Frank",   "Foster",   "frank@example.com",   "666-77-8888", "1979-09-09", "30301", "M"),
-        ("C007", "Grace",   "Green",    "grace@example.com",   "777-88-9999", "1995-12-25", "10001", "F"),
-        ("C008", "Henry",   "Harris",   "henry@example.com",   "888-99-0000", "1983-06-18", "20001", "M"),
-        ("C009", "Iris",    "Ingram",   "iris@example.com",    "999-00-1111", "1997-03-22", "33101", "F"),
-        ("C010", "Jack",    "Johnson",  "jack@example.com",    "000-11-2222", "1991-07-11", "75201", "M"),
+        (
+            "C001",
+            "Alice",
+            "Anderson",
+            "alice@example.com",
+            "111-22-3333",
+            "1990-01-15",
+            "10001",
+            "F",
+        ),
+        ("C002", "Bob", "Brown", "bob@example.com", "222-33-4444", "1985-05-20", "90210", "M"),
+        ("C003", "Carol", "Carter", "carol@example.com", "333-44-5555", "1992-08-30", "60601", "F"),
+        ("C004", "David", "Davis", "david@example.com", "444-55-6666", "1988-11-04", "77001", "M"),
+        ("C005", "Eve", "Evans", "eve@example.com", "555-66-7777", "2000-02-14", "94016", "F"),
+        ("C006", "Frank", "Foster", "frank@example.com", "666-77-8888", "1979-09-09", "30301", "M"),
+        ("C007", "Grace", "Green", "grace@example.com", "777-88-9999", "1995-12-25", "10001", "F"),
+        ("C008", "Henry", "Harris", "henry@example.com", "888-99-0000", "1983-06-18", "20001", "M"),
+        ("C009", "Iris", "Ingram", "iris@example.com", "999-00-1111", "1997-03-22", "33101", "F"),
+        ("C010", "Jack", "Johnson", "jack@example.com", "000-11-2222", "1991-07-11", "75201", "M"),
     ]
     path.write_text("\n".join(",".join(r) for r in rows) + "\n", encoding="utf-8")
 
@@ -92,12 +101,9 @@ def _build_pipeline_yaml(input_path: Path, output_path: Path) -> str:
                 "name": "customers",
                 "columns": [
                     {"name": "customer_id", "strategy": "redact"},
-                    {"name": "first_name", "strategy": "faker",
-                     "provider": "person_first_name"},
-                    {"name": "last_name", "strategy": "faker",
-                     "provider": "person_last_name"},
-                    {"name": "email", "strategy": "faker",
-                     "provider": "person_email"},
+                    {"name": "first_name", "strategy": "faker", "provider": "person_first_name"},
+                    {"name": "last_name", "strategy": "faker", "provider": "person_last_name"},
+                    {"name": "email", "strategy": "faker", "provider": "person_email"},
                     {"name": "ssn", "strategy": "redact"},
                     {"name": "dob", "strategy": "redact"},
                     {"name": "zip", "strategy": "redact"},
@@ -224,10 +230,15 @@ def _run_v2_mask(pipeline_yaml: Path) -> None:
 
     job_seed = (config_dict.get("global_settings") or {}).get("seed")
     profile = profile_source(
-        config_dict,
+        resolved_source_config(config_dict, pipeline_yaml.parent),
         seed=job_seed if isinstance(job_seed, int) else None,
     )
-    plan = compile_plan(config_dict, profile, decoy_engine_version=engine_version)
+    plan = compile_plan(
+        config_dict,
+        profile,
+        decoy_engine_version=engine_version,
+        base_dir=pipeline_yaml.parent,
+    )
     ns_registry = build_namespace_registry(config_dict, profile)
     if profile.relationships:
         lookup = check_orphan_fk_policy_completeness(config_dict, profile.relationships)
@@ -282,21 +293,77 @@ def _write_mask_outputs(config_dict: dict, result, base_dir: Path) -> None:
 
 
 _FIRST_NAMES = [
-    "Alice", "Bob", "Carol", "David", "Eve", "Frank", "Grace", "Henry",
-    "Iris", "Jack", "Kate", "Liam", "Mia", "Noah", "Olivia", "Paul",
-    "Quinn", "Rosa", "Sam", "Tara", "Uma", "Vince", "Wendy", "Xavier",
-    "Yara", "Zane",
+    "Alice",
+    "Bob",
+    "Carol",
+    "David",
+    "Eve",
+    "Frank",
+    "Grace",
+    "Henry",
+    "Iris",
+    "Jack",
+    "Kate",
+    "Liam",
+    "Mia",
+    "Noah",
+    "Olivia",
+    "Paul",
+    "Quinn",
+    "Rosa",
+    "Sam",
+    "Tara",
+    "Uma",
+    "Vince",
+    "Wendy",
+    "Xavier",
+    "Yara",
+    "Zane",
 ]
 _LAST_NAMES = [
-    "Anderson", "Brown", "Carter", "Davis", "Evans", "Foster", "Green",
-    "Harris", "Ingram", "Johnson", "Klein", "Lopez", "Mitchell", "Nash",
-    "Owens", "Patel", "Quinn", "Rivera", "Singh", "Thomas", "Underwood",
-    "Vance", "Wright", "Young", "Zhang",
+    "Anderson",
+    "Brown",
+    "Carter",
+    "Davis",
+    "Evans",
+    "Foster",
+    "Green",
+    "Harris",
+    "Ingram",
+    "Johnson",
+    "Klein",
+    "Lopez",
+    "Mitchell",
+    "Nash",
+    "Owens",
+    "Patel",
+    "Quinn",
+    "Rivera",
+    "Singh",
+    "Thomas",
+    "Underwood",
+    "Vance",
+    "Wright",
+    "Young",
+    "Zhang",
 ]
 _DOMAINS = ["example.com", "acme.io", "samplecorp.net", "testmail.org"]
 _ZIPS = [
-    "10001", "90210", "60601", "77001", "94016", "30301", "20001", "33101",
-    "75201", "98101", "02101", "15201", "43215", "55401", "80202",
+    "10001",
+    "90210",
+    "60601",
+    "77001",
+    "94016",
+    "30301",
+    "20001",
+    "33101",
+    "75201",
+    "98101",
+    "02101",
+    "15201",
+    "43215",
+    "55401",
+    "80202",
 ]
 _GENDERS = ["F", "M", "X"]
 _ORDER_STATUSES = ["pending", "shipped", "delivered", "cancelled", "refunded"]
@@ -327,10 +394,19 @@ def _generate_ref_datasets(out_dir: Path, n_rows: int, seed: int = 42) -> tuple[
     customer_ids: list[str] = []
     with customers_path.open("w", encoding="utf-8", newline="") as fh:
         w = csv.writer(fh)
-        w.writerow([
-            "customer_id", "first_name", "last_name", "email", "ssn",
-            "dob", "zip", "phone", "gender",
-        ])
+        w.writerow(
+            [
+                "customer_id",
+                "first_name",
+                "last_name",
+                "email",
+                "ssn",
+                "dob",
+                "zip",
+                "phone",
+                "gender",
+            ]
+        )
         for i in range(1, n_rows + 1):
             cid = f"C{i:05d}"
             customer_ids.append(cid)
@@ -423,14 +499,16 @@ def _run_ref_demo(state: OutputState, out_dir: Path, n_rows: int) -> int:
         "decoy demo --ref is deferred to a follow-up sprint.",
     )
     state.err_console.print(
-        " ", hint("why:"),
+        " ",
+        hint("why:"),
         "The V2 multi-table FK-preservation demo needs a single",
         "PipelineConfig with a `relationships:` block; the V1 shape",
         "(three V1 YAMLs joined by a shared truncated hash) no longer",
         "runs against the V2 engine.",
     )
     state.err_console.print(
-        " ", hint("workaround:"),
+        " ",
+        hint("workaround:"),
         "Use `decoy demo` (single-table walkthrough) until the",
         "multi-table follow-up lands.",
     )
@@ -462,9 +540,7 @@ def _demo(
         max=100_000,
         hidden=True,
     ),
-    json_: bool = typer.Option(
-        False, "--json", help="Emit a JSON summary instead of cards."
-    ),
+    json_: bool = typer.Option(False, "--json", help="Emit a JSON summary instead of cards."),
     quiet: bool = typer.Option(
         False, "--quiet", "-q", help="Suppress stdout. Errors still go to stderr."
     ),
@@ -524,7 +600,9 @@ def _demo(
             )
         elif state.mode is not OutputMode.quiet:
             state.err_console.print(error("error:"), error_text)
-            state.err_console.print(" ", hint("hint:"), "rerun with --verbose for the full traceback.")
+            state.err_console.print(
+                " ", hint("hint:"), "rerun with --verbose for the full traceback."
+            )
         if state.verbose:
             print_traceback(state)
         raise typer.Exit(code=_exit_code)

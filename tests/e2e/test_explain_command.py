@@ -140,3 +140,18 @@ def test_explain_keys_states_the_keyed_mask_secret_is_required():
     assert "keyed_strategy_requires_secret" in body
     assert "falling back to job_seed" not in body
     assert "still run" not in body
+
+
+def test_explain_differential_privacy_says_dp_is_certified_only():
+    result = runner.invoke(app, ["explain", "differential-privacy", "--json"])
+    assert result.exit_code == 0, result.stdout
+    payload = _json.loads(result.stdout)
+    assert "certified installs only" in payload["summary"]
+    first_paragraph = " ".join(payload["body"].split("\n\n")[0].split())
+    assert "certified" in first_paragraph
+    assert "--include-values" in first_paragraph
+
+    listing = runner.invoke(app, ["explain", "--json"])
+    assert listing.exit_code == 0
+    topics = {t["name"]: t["summary"] for t in _json.loads(listing.stdout)["topics"]}
+    assert "certified installs only" in topics["differential-privacy"]
