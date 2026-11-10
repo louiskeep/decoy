@@ -30,17 +30,44 @@ fail-open release of exact data).
 
 from __future__ import annotations
 
+import contextlib
+import csv
+import io
 import json
 import math
+import warnings
+from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
 
 import typer
 
 from decoy._atomic import AtomicWriteError, WriteMode, describe, write_local_target
+from decoy._resources import ResourceError, read_fit_max_rows
+from decoy._row_sample import sample_positions
 from decoy.cli.exit_codes import EXIT_RUNTIME, EXIT_USAGE
 from decoy.ui.output import OutputMode, emit_json, setup_output
 from decoy.ui.theme import code, error, hint, success, warn
+
+# Fixed so the same file always gives the same sample. Part of the documented behavior: change
+# it and every sampled fit changes.
+FIT_SAMPLE_SEED = 42
+_COUNT_CHUNK = 100_000
+
+
+@contextlib.contextmanager
+def _strict_csv() -> Iterator[None]:
+    """Turn pandas' ParserWarning into an error for the reads inside.
+
+    With `index_col=False`, pandas drops the extra fields of an over-wide first record and only
+    warns; as an error the read fails and fit refuses the file instead of fitting cut rows.
+    """
+    import pandas as pd
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", pd.errors.ParserWarning)
+        yield
+
 
 _DP_REFUSED_LINE = (
     "DP fit is not available on this install: it runs only on a certified platform and package set."
@@ -64,6 +91,13 @@ Examples:
     Capture the (state, tier) contingency table so a statistical column
     can use `condition_on`.
 
+  decoy fit customers.csv --rows 100000
+    Fit on a seeded random sample of 100,000 rows spread across the whole
+    file (never the first 100,000). Without --rows the limit is the
+    `fit.max_rows` setting in settings.json, default 1,000,000. A file at
+    or under the limit uses every row. The summary and --json say how many
+    rows were used out of how many.
+
   decoy fit customers.csv --epsilon 1.0 --delta 1e-6 \\
       --dp-number amount:0:500 --dp-text state --dp-flag is_active
     Differentially private release (dps-marginal/v3), certified installs
@@ -74,7 +108,8 @@ Examples:
     categorical column, --dp-flag for a boolean column); an undeclared
     source column is a usage error unless --dp-allow-omit is passed.
     --epsilon requires --delta and is incompatible with --joint and
-    --parse-dates.
+    --parse-dates. A DP fit never samples: it uses every row, ignores the
+    `fit.max_rows` setting, and refuses --rows.
 
 See also: decoy run, decoy validate, decoy explain differential-privacy.
 """
@@ -123,6 +158,18 @@ def _parse_dp_number_spec(spec: str) -> tuple[str, tuple[float, float]]:
             code="dp_numeric_domain_invalid",
         )
     return col, (lo, hi)
+
+
+def _parse_rows(text: str) -> int:
+    """`--rows` as a whole number of 1 or more. Parsed here (not by typer) so a bad value is the
+    CLI's usage error (exit 1) with the same envelope as every other fit usage error."""
+    try:
+        value = int(text)
+    except ValueError:
+        value = 0
+    if value < 1:
+        raise _FitUsageError("--rows must be a whole number of 1 or more.", code="fit_rows_invalid")
+    return value
 
 
 def _build_column_schema(
@@ -232,6 +279,19 @@ def fit(
         "--joint",
         help="Column pair 'a,b' whose contingency table to capture (repeatable). Needed for `condition_on`. Not supported with --epsilon.",
     ),
+    rows: str | None = typer.Option(
+        None,
+        "--rows",
+        metavar="N",
+        help=(
+            "Fit on at most N rows. A larger file is cut to a random sample of N rows "
+            f"spread across the whole file, never the first N (fixed seed {FIT_SAMPLE_SEED}: "
+            "the same file gives the same sample). Sensitive-column detection and the "
+            "snapshot use the same sampled rows. Default: the fit.max_rows setting in "
+            "settings.json, else 1000000. A whole number of 1 or more. Not supported "
+            "with --epsilon (a DP fit uses every row and ignores the setting)."
+        ),
+    ),
     epsilon: float = typer.Option(
         None,
         "--epsilon",
@@ -313,6 +373,9 @@ def fit(
     writes the JSON artifact `type: statistical` generate columns reference
     via `snapshot_file`.
 
+    A file over the row limit (--rows, else the fit.max_rows setting, default
+    1,000,000) is fitted on a seeded random sample spread across the whole file.
+
     With --epsilon: fits a `dps-marginal/v3` artifact instead, releasing
     ONLY the columns declared via --dp-number/--dp-flag/--dp-text under one
     (epsilon, delta) budget. DP runs only on a certified install. Exits 0 on success, 1 on bad input, 3 if the
@@ -369,6 +432,14 @@ def fit(
 
     # --- D0: DP mode is explicit and fail-closed, decided BEFORE the CSV is
     # read and before any carrier declaration is parsed for content. ---------
+    row_limit: int | None = None
+    try:
+        if rows is not None:
+            row_limit = _parse_rows(rows)
+    except _FitUsageError as exc:
+        _emit_error(exc.message, err_code=exc.code)
+        raise typer.Exit(code=EXIT_USAGE)
+
     has_carrier_decls = bool(dp_number or dp_flag or dp_text)
     delta_given = delta is not None
     numeric_bins_given = numeric_bins is not None
@@ -392,6 +463,13 @@ def fit(
                     code="dp_mode_not_selected",
                 )
         else:
+            if row_limit is not None:
+                raise _FitUsageError(
+                    "--rows with --epsilon is not supported: a DP fit uses every row "
+                    "under its own budget rules and never samples. Drop --rows or omit "
+                    "--epsilon.",
+                    code="dp_mode_rows_unsupported",
+                )
             if include_values:
                 raise _FitUsageError(
                     "--include-values with --epsilon is not supported: a DP release "
@@ -430,10 +508,20 @@ def fit(
                 )
 
         column_schema = _build_column_schema(dp_number, dp_flag, dp_text)
+        if epsilon is None and row_limit is None:
+            setting_error: str | None = None
+            try:
+                row_limit = read_fit_max_rows()
+            except ResourceError as exc:
+                setting_error = str(exc)
+            if setting_error is not None:
+                # Raised after the except block closes: no __context__ to carry the cause.
+                raise _FitUsageError(setting_error, code="fit_rows_setting_invalid")
     except _FitUsageError as exc:
         _emit_error(exc.message, err_code=exc.code)
         raise typer.Exit(code=EXIT_USAGE)
 
+    import numpy as np
     import pandas as pd
     from decoy_engine import distribution_snapshot_document
 
@@ -449,7 +537,7 @@ def fit(
     # codecs see). Both are required for D6 boxing invariance and stability-1.
     # _build_typed_frame below converts only flags; number and text columns
     # reach the engine as raw strings.
-    dp_read_kwargs: dict[str, Any] = {"dtype": str, "keep_default_na": False}
+    dp_read_kwargs: dict[str, Any] = {"dtype": str, "keep_default_na": False, "index_col": False}
     omitted_columns: list[str] = []
     dp_header: list[str] = []
     dp_kwargs: dict[str, Any] = {}
@@ -464,9 +552,12 @@ def fit(
         # Header only: the name checks and the engine's request check below
         # decide from column names and options, so no data row is read when the
         # request is invalid or this install cannot run a DP fit.
+        header_failed = False
         try:
             dp_header = list(pd.read_csv(source, nrows=0, **dp_read_kwargs).columns)
         except Exception:
+            header_failed = True
+        if header_failed:
             _unreadable()
 
         # D3: only declared columns are ever released; an undeclared
@@ -528,11 +619,82 @@ def fit(
     # The one body read: exact mode keeps pandas' inference and the requested
     # datetime columns; DP mode reads the literal lexemes.
     body_kwargs: dict[str, Any] = (
-        {"parse_dates": list(parse_dates) or False} if epsilon is None else dp_read_kwargs
+        {"parse_dates": list(parse_dates) or False, "index_col": False}
+        if epsilon is None
+        else dp_read_kwargs
     )
+    # Every read uses `index_col=False`: with pandas' default, a record wider than the header
+    # silently turns the first column into the index and shifts every value one column left.
+    # With False, pandas raises on a wide record or, for the first one, drops the extra fields
+    # with a ParserWarning; `_strict_csv` makes that warning an error, so an over-wide record is
+    # always refused instead of fitted.
+    # A file over the limit is sampled by record position BEFORE pandas infers types, so a row
+    # outside the sample cannot change a column's kind and the file is never fully loaded.
+    # Both passes below read the file through pandas' own record rule (blank lines skipped,
+    # quoted newlines inside one record), so a position means the same record in each. The
+    # sampled records are then parsed by the one read below, exactly as if they were the file.
+    rows_total: int | None = None
+    read_target: Any = source
+    if epsilon is None:
+        assert row_limit is not None
+        # One call site, two passes over the same records: "count" reads the first column of
+        # every record, "select" reads whole records and keeps the sampled positions.
+        rows_total = 0
+        kept: Any = None
+        seen = 0
+        kept_rows: list[list[Any]] = []
+        sample_header: list[Any] = []
+        read_failed = False
+        for phase in ("count", "select"):
+            if phase == "select":
+                if rows_total <= row_limit:
+                    break
+                kept = sample_positions(rows_total, row_limit, FIT_SAMPLE_SEED, keep_order=True)
+                seen = 0
+            try:
+                with _strict_csv():
+                    for chunk in pd.read_csv(
+                        source,
+                        chunksize=_COUNT_CHUNK,
+                        dtype=str,
+                        index_col=False,
+                        usecols=[0] if phase == "count" else None,
+                        # Literal text, so the parse below sees what the file holds.
+                        na_filter=phase == "count",
+                    ):
+                        if kept is None:
+                            rows_total += len(chunk)
+                            continue
+                        lo, hi = np.searchsorted(kept, [seen, seen + len(chunk)])
+                        sample_header = list(chunk.columns)
+                        picked = chunk.iloc[kept[lo:hi] - seen]
+                        kept_rows.extend(picked.fillna("").to_numpy().tolist())
+                        seen += len(chunk)
+            except Exception:
+                read_failed = True
+            if read_failed:
+                _unreadable()
+        if kept is not None:
+            if seen != rows_total:
+                _emit_error(
+                    "the CSV changed while it was being read; run the command again.",
+                    err_code="fit_source_changed",
+                )
+                raise typer.Exit(code=EXIT_USAGE)
+            # The sampled records as CSV text, parsed below exactly as if they were the file.
+            sample_text = io.StringIO()
+            sample_writer = csv.writer(sample_text, lineterminator="\n")
+            sample_writer.writerow(sample_header)
+            sample_writer.writerows(kept_rows)
+            sample_text.seek(0)
+            read_target = sample_text
+    read_failed = False
     try:
-        df = pd.read_csv(source, **body_kwargs)
+        with _strict_csv():
+            df = pd.read_csv(read_target, **body_kwargs)
     except Exception:
+        read_failed = True
+    if read_failed:
         _unreadable()
 
     missing = [c for c in parse_dates if c not in df.columns]
@@ -540,7 +702,10 @@ def fit(
         _emit_error(f"--parse-dates column(s) not in the CSV: {', '.join(missing)}.")
         raise typer.Exit(code=EXIT_USAGE)
 
+    if rows_total is None:
+        rows_total = len(df)
     if epsilon is None:
+        # Detection and the snapshot see exactly the rows read above.
         # No profile_row_cap: it profiles head rows only, and a sensitive column can start late.
         snapshot = distribution_snapshot_document(
             df,
@@ -609,6 +774,8 @@ def fit(
             "source": str(source),
             "output": str(out_path),
             "row_count": snapshot["row_count"],
+            "rows_used": len(df),
+            "rows_total": rows_total,
             "columns": {name: entry["kind"] for name, entry in snapshot["columns"].items()},
             "joints": [j["columns"] for j in snapshot["joints"]],
             "null_rates": null_rates,
@@ -629,7 +796,7 @@ def fit(
         f"{n} ({e['kind']}{f', {null_rates[n]:.1%} null' if null_rates.get(n) else ''})"
         for n, e in snapshot["columns"].items()
     )
-    state.console.print(f"  {snapshot['row_count']} rows; columns: {kinds}")
+    state.console.print(f"  fitted on {len(df):,} of {rows_total:,} rows; columns: {kinds}")
     if snapshot["joints"]:
         pairs = ", ".join("x".join(j["columns"]) for j in snapshot["joints"])
         state.console.print(f"  joints captured: {pairs}")

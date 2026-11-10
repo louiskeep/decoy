@@ -132,7 +132,7 @@ decoy fit customers.csv --epsilon 1.0 --delta 0.000001 \
 ```text
 notice: omitting 4 undeclared source column(s) from the DP release: customer_id, email, full_name, signup_date.
 OK customers.dp.json
-  499 rows; columns: amount (numeric), is_active (categorical), state (categorical), tier
+  fitted on 499 of 499 rows; columns: amount (numeric), is_active (categorical), state (categorical), tier
 (categorical)
   DP release: dps-marginal/v3, epsilon=1.0, delta=1e-06
 ```

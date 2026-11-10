@@ -18,7 +18,7 @@ decoy fit customers.csv --parse-dates signup_date --joint state,tier
 
 ```text
 OK customers.snapshot.json
-  500 rows; columns: customer_id (numeric), full_name (freetext), email
+  fitted on 500 of 500 rows; columns: customer_id (numeric), full_name (freetext), email
 (freetext), state (categorical), tier (categorical), amount (numeric),
 signup_date (datetime), is_active (categorical)
   joints captured: statextier
@@ -29,10 +29,37 @@ signup_date (datetime), is_active (categorical)
 | `-o, --output PATH` | Where to write the snapshot. Default is `<source>.snapshot.json`. |
 | `--parse-dates COL` | Treat a column as dates. Repeatable. CSV has no types, so you must name date columns. |
 | `--joint a,b` | Also record how two columns go together. Repeatable. Needed for `condition_on`. |
+| `--rows N` | Fit on at most N rows. See [Large files](#large-files-the-row-limit). Not allowed with `--epsilon`. |
 | `--include-values` | Keep the real values of columns the profiler flags as sensitive. The file then holds real data. Not allowed with `--epsilon`. |
 
 The source must be a CSV. The snapshot file is written readable by its owner
 only (mode 0600).
+
+### Large files: the row limit
+
+`fit` fits on at most 1,000,000 rows. A bigger file is cut to a random sample of that many rows, drawn from the whole file, never the first N. The summary and `--json` say how much was used:
+
+```text
+  fitted on 1,000,000 of 4,200,000 rows; columns: ...
+```
+
+`fit --json` carries `rows_used` and `rows_total`. A file at or under the limit uses every row and gives the same snapshot as before.
+
+```bash
+decoy fit customers.csv --rows 100000
+```
+
+- The sample uses a fixed seed (42) and keeps file order, so the same file and the same limit give the same snapshot. A different limit gives a different sample.
+- The sample is taken first. The check for sensitive columns and the stored values both come from those rows, so a stored value was always checked. A column that turns sensitive only in the last 20% of a file is still found when its rows land in the sample, and a sample of 10,000 rows from a 50,000-row file does reach them.
+- A sample is a summary of a summary. A rare category that falls outside the sample is missing from the snapshot, and counts are for the sampled rows.
+- To change the default for every run, set `fit.max_rows` in `$DECOY_HOME/settings.json` (default `~/.decoy/settings.json`), next to the `resources` section that `decoy setup` writes. `decoy setup` keeps the key:
+
+  ```json
+  {"schema_version": "1.0", "fit": {"max_rows": 250000}}
+  ```
+
+  `--rows` on a single run wins over the file. A value that is not a whole number of 1 or more is a usage error (exit 1).
+- `--epsilon` never samples. A DP fit uses every row under its own budget rules, ignores `fit.max_rows`, and refuses `--rows`.
 
 ### What is in a snapshot
 
@@ -51,7 +78,7 @@ Every column also records its null count, non-null count and distinct count. The
 In the sample file, `full_name` has 80 distinct values, so it is treated as
 free text and only its length is kept.
 
-**The snapshot can still be sensitive.** `fit` profiles the whole file and withholds the values of every column it flags as personal data (an SSN, a name, an id). The snapshot then carries `value_policy: flagged-redacted/v1` and lists those columns under `redacted_columns`. `fit` prints their names, never their values. A withheld number column keeps one coarse range and a withheld date column keeps years. A column the profiler does not flag still holds its real values. For a category column that looks like this:
+**The snapshot can still be sensitive.** `fit` profiles every row it fits on (the whole file, or the sample for a file over the row limit) and withholds the values of every column it flags as personal data (an SSN, a name, an id). The snapshot then carries `value_policy: flagged-redacted/v1` and lists those columns under `redacted_columns`. `fit` prints their names, never their values. A withheld number column keeps one coarse range and a withheld date column keeps years. A column the profiler does not flag still holds its real values. For a category column that looks like this:
 
 ```json
 "state": {
