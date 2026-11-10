@@ -404,7 +404,7 @@ def test_no_native_stays_compatible_with_an_older_engine(
         # DE-02 (engine 0.4.0, the floor) predates the slice; a real old engine has it.
         key_provider=None,
         base_dir=None,
-        # The pin is decoy-engine==0.21.0, which has the resource keywords every run sends.
+        # The pin is decoy-engine==0.22.0, which has the resource keywords every run sends.
         native_threads=1,
         out_of_core_threads=None,
         out_of_core_budget_bytes=None,
