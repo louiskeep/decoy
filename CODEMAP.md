@@ -55,6 +55,7 @@ First row of the layout map the LAYOUT slice completes (one line per kind of mod
 | Shared cross-suite test helpers (constants and lookups used by more than one test folder) | `tests/` root, one module per concern | `keyed_secret.py`, `dp_env.py` |
 | Repository policy sentries and their scanners (CI scan helpers shared with the engine in the `ci_scan/` sub-package) | `tests/sentry/` | `_ratchet.py`, `_ci_lock_scan.py`, `test_ci_lock_installs.py`; shared CI scan helpers in `tests/sentry/ci_scan/` |
 | I/O policy sentries (reads and writes) and their shared call scanner | `tests/sentry/io_policy/` | `_calls.py`, `test_target_writes.py` |
+| Task-oriented user guides (one folder per topic, with a `README.md` index) | `docs/guides/<topic>/` | `docs/guides/shape-and-privacy/` |
 | Build and gate evidence records | `docs/records/` | `2026-11-06-ci-l1-build.md` |
 | CLI format contract tests (new ones go in these named folders, not the flat `tests/e2e/` and `tests/unit/`) | `tests/e2e/cli_fmt/`, `tests/unit/cli_fmt/` | `test_target_format_dispatch.py`, `test_targets_format.py` |
 | Private-file contract tests (new ones go in these named folders, not the flat `tests/e2e/` and `tests/unit/`) | `tests/unit/private_file/`, `tests/e2e/private_file/` | `test_private_file.py` |
@@ -65,6 +66,7 @@ First row of the layout map the LAYOUT slice completes (one line per kind of mod
 |---|---|
 | Current roadmap (all repos) | [docs/ROADMAP.md](docs/ROADMAP.md); shipped log [docs/RECENTLY-SHIPPED.md](docs/RECENTLY-SHIPPED.md) |
 | CLI role guide | [AGENTS.md](AGENTS.md) (summary) |
+| User guide: data shape, fit and generate, fidelity reports, differential privacy | [docs/guides/shape-and-privacy/README.md](docs/guides/shape-and-privacy/README.md) |
 | Command registration | `src/decoy/__main__.py` |
 | Run command | `src/decoy/cli/run.py` |
 | Tokenize / detokenize | `src/decoy/cli/tokenize.py` (store: `_token_vault.py`) |

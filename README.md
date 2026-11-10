@@ -161,6 +161,9 @@ the same table from the CLI.
 ## Where to go next
 
 - `examples/` -- runnable mask and generate YAML configs.
+- `docs/guides/shape-and-privacy/` -- user guide: check what shape masking
+  kept, fit and generate look-alike data, read fidelity reports, and use the
+  differential-privacy fit.
 - `src/decoy/templates/` -- the starter templates `decoy init` ships.
 - `CHANGELOG.md` -- release notes and the versioning policy.
 - `SECURITY.md` -- how to report a vulnerability privately.
