@@ -95,9 +95,9 @@ def test_full_ci_validation_runs_config_only_checks_exactly_once(
     real = decoy_engine.run_config_only_checks
     calls = {"n": 0}
 
-    def _spy(raw: Any) -> Any:
+    def _spy(raw: Any, **kwargs: Any) -> Any:
         calls["n"] += 1
-        return real(raw)
+        return real(raw, **kwargs)
 
     monkeypatch.setattr(decoy_engine, "run_config_only_checks", _spy)
     monkeypatch.chdir(repo)

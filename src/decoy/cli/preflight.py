@@ -453,7 +453,7 @@ def _check_capacity(raw: dict[str, Any], config_path: Path, acc: _PreflightAccum
     # P1-2 / re-gate MEDIUM).
     config_dump = PipelineConfig.model_validate(raw).model_dump()
     try:
-        estimate = _engine_execution.estimate_job_capacity(config_dump, config_path.parent)
+        estimate = _engine_execution.estimate_job_capacity(config_dump, base_dir=config_path.parent)
     except ExecutionError as exc:
         if exc.code == "out_of_core_fanin_exceeds_budget":
             # Round-4 (engine): the build-floor gate is now advisory, so
@@ -751,7 +751,7 @@ def preflight(
 
     # -- Step 3: Profile-free plan-compile checks ----------------------------
     try:
-        run_config_only_checks(raw)
+        run_config_only_checks(raw, base_dir=config.parent)
         acc.add_pass(name="config.plan_checks", message="Profile-free plan-compile checks passed.")
     except PlanCompileError as exc:
         # Rewrite ner_spacy_not_installed to decoy-cli's own [ner] extra;

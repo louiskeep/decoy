@@ -52,6 +52,7 @@ from decoy.cli.evidence import _render_manifest_card, verify_manifest
 from decoy.cli.exit_codes import EXIT_FINDINGS, EXIT_RUNTIME, EXIT_USAGE
 from decoy.cli.io import entry_format
 from decoy.ui.output import OutputMode, OutputState, emit_json, print_traceback, setup_output
+from decoy.ui.summary import render_fidelity_report
 from decoy.ui.theme import accent, code, error, hint, info, risk_high, success, warn
 
 # Grade -> minimum overall_score, mirroring the engine's own grade thresholds
@@ -1823,87 +1824,10 @@ def _fidelity(
         envelope["policy"] = policy_result
         emit_json(state, envelope)
     elif state.mode is not OutputMode.quiet:
-        _render_fidelity_report(state, report, policy_result)
+        render_fidelity_report(state, report, policy_result)
 
     if verdict == "fail" or (verdict == "warn" and fail_on_warning):
         raise typer.Exit(code=EXIT_FINDINGS)
-
-
-def _render_fidelity_report(
-    state: Any,
-    report: dict[str, Any],
-    policy_result: dict[str, Any],
-) -> None:
-    """Human-readable rendering of a quality-report/v1 + policy result."""
-    from decoy.ui.table import make_table
-
-    grade = report.get("grade", "unavailable")
-    overall = report.get("overall_score")
-    overall_str = f"{overall:.3f}" if isinstance(overall, (int, float)) else "n/a"
-    verdict = policy_result.get("verdict", "pass")
-    violations = policy_result.get("violations", [])
-
-    # The engine's report-mode verdict is always "pass", even with violations
-    # (strategy defaults apply with no flags), so a green PASS beside grade F
-    # read as approval. Report mode names what it recorded instead.
-    if policy_result.get("mode") == "report":
-        if violations:
-            verdict_text = info(
-                f"REPORT ONLY: {len(violations)} threshold violation(s) not enforced "
-                "(use --mode fail)"
-            )
-        else:
-            verdict_text = info("REPORT ONLY (no threshold violations)")
-    elif verdict == "pass":
-        verdict_text = success(verdict.upper())
-    elif verdict == "warn":
-        verdict_text = warn(verdict.upper())
-    else:
-        verdict_text = error(verdict.upper())
-    state.console.print(verdict_text, f"grade {grade}  overall_score {overall_str}")
-
-    columns = report.get("marginal", {}).get("columns", [])
-    if columns:
-        table = make_table("Column", "Comparable", "Similarity", title="Marginal fidelity")
-        for col in columns:
-            if not isinstance(col, dict):
-                continue
-            sim = col.get("similarity")
-            sim_str = f"{sim:.3f}" if isinstance(sim, (int, float)) else "n/a"
-            table.add_row(
-                str(col.get("column", "?")),
-                "yes" if col.get("comparable") else "no",
-                sim_str,
-            )
-        state.console.print(table)
-
-    joints = report.get("pairwise", {}).get("joints", [])
-    if joints:
-        table = make_table("Joint", "Comparable", "Similarity", title="Pairwise fidelity")
-        for j in joints:
-            if not isinstance(j, dict):
-                continue
-            sim = j.get("similarity")
-            sim_str = f"{sim:.3f}" if isinstance(sim, (int, float)) else "n/a"
-            table.add_row(
-                "x".join(j.get("columns", [])),
-                "yes" if j.get("comparable") else "no",
-                sim_str,
-            )
-        state.console.print(table)
-
-    if violations:
-        table = make_table("Check", "Column", "Expected", "Actual", title="Policy violations")
-        for v in violations:
-            table.add_row(
-                str(v.get("check", "?")),
-                str(v.get("column", "-")),
-                str(v.get("expected", "-")),
-                str(v.get("actual", "-")),
-            )
-        state.console.print(table)
-    elif verdict == "pass":
-        state.console.print(success("OK"), "no policy violations.")
 
 
 def _render_residual_pii(state: Any, findings: list[Any]) -> None:

@@ -179,7 +179,7 @@ def _run_config_base(
     # Looked up on the module (not a `from ... import` binding) so a test can
     # spy the single call via `decoy_engine.run_config_only_checks`.
     try:
-        checks_run = decoy_engine.run_config_only_checks(raw)
+        checks_run = decoy_engine.run_config_only_checks(raw, base_dir=config_path.parent)
     except PlanCompileError as exc:
         err_code, message, extra = _plan_error_fields(exc)
         finding = GateFinding(
@@ -201,7 +201,7 @@ def _run_config_base(
     return validated, tuple(checks_run), findings
 
 
-def _run_compile_layer(raw: dict[str, Any]) -> list[GateFinding]:
+def _run_compile_layer(raw: dict[str, Any], config_dir: Path) -> list[GateFinding]:
     """The compile layer: a no-profile compile and its plan-compile checks,
     composed from the same helpers `validate compile --no-profile` uses (the
     unique-cardinality detector, the empty sentinel profile, `compile_plan`,
@@ -242,7 +242,13 @@ def _run_compile_layer(raw: dict[str, Any]) -> list[GateFinding]:
 
     profile = empty_profile_for_no_profile(raw, engine_version)
     try:
-        plan = compile_plan(raw, profile, decoy_engine_version=engine_version, no_profile=True)
+        plan = compile_plan(
+            raw,
+            profile,
+            decoy_engine_version=engine_version,
+            no_profile=True,
+            base_dir=config_dir,
+        )
     except PlanCompileError as exc:
         err_code, message, extra = _plan_error_fields(exc)
         findings.append(
@@ -307,7 +313,7 @@ def run_gate_on_config(
     config, checks_run, config_findings = _run_config_base(raw, config_path)
     if config is None:
         return GateResult(config_findings, frozenset({"config"}), False)
-    compile_findings = _run_compile_layer(raw)
+    compile_findings = _run_compile_layer(raw, config_path.parent)
     preflight_findings, capacity_insufficient = _run_preflight_layer(raw, config_path, route)
     return GateResult(
         config_findings + compile_findings + preflight_findings,

@@ -33,7 +33,7 @@ import pyarrow as pa
 
 from decoy import _mask_secret, _mask_secret_guidance, _native_gate
 from decoy._mask_secret import is_valid_mask_secret_ref as _is_valid_mask_secret_ref
-from decoy.cli._sources import CSV_DIALECT_KEYS, csv_file_source
+from decoy.cli._sources import CSV_DIALECT_KEYS, csv_file_source, resolved_source_config
 from decoy.cli.extras import UnsupportedCloudEndpointError
 from decoy.cli.io._targets import claimed_format, format_for_path
 from decoy.cli.run import (
@@ -522,11 +522,12 @@ def mask(
             with _mask_secret.admitted_key_provider(config_dict) as key_provider:
                 key_kwargs = {} if key_provider is None else {"key_provider": key_provider}
                 result = run_pipeline(
-                    config_dict,
+                    resolved_source_config(config_dict, base_dir),
                     sources,
                     engine_version=engine_version,
                     derive_key=resolver,
                     instance_default_locale=instance_locale,
+                    base_dir=base_dir,
                     **key_kwargs,
                     **extra_run_pipeline_kwargs,
                 )
