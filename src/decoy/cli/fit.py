@@ -30,6 +30,8 @@ fail-open release of exact data).
 
 from __future__ import annotations
 
+import csv
+import io
 import json
 import math
 from pathlib import Path
@@ -501,6 +503,7 @@ def fit(
         _emit_error(exc.message, err_code=exc.code)
         raise typer.Exit(code=EXIT_USAGE)
 
+    import numpy as np
     import pandas as pd
     from decoy_engine import distribution_snapshot_document
 
@@ -531,9 +534,12 @@ def fit(
         # Header only: the name checks and the engine's request check below
         # decide from column names and options, so no data row is read when the
         # request is invalid or this install cannot run a DP fit.
+        header_failed = False
         try:
             dp_header = list(pd.read_csv(source, nrows=0, **dp_read_kwargs).columns)
         except Exception:
+            header_failed = True
+        if header_failed:
             _unreadable()
 
         # D3: only declared columns are ever released; an undeclared
@@ -599,25 +605,67 @@ def fit(
     )
     # A file over the limit is sampled by record position BEFORE pandas infers types, so a row
     # outside the sample cannot change a column's kind and the file is never fully loaded.
-    # Counting reads one column as text in chunks; the final read parses the same records.
+    # Both passes below read the file through pandas' own record rule (blank lines skipped,
+    # quoted newlines inside one record), so a position means the same record in each. The
+    # sampled records are then parsed by the one read below, exactly as if they were the file.
     rows_total: int | None = None
+    read_target: Any = source
     if epsilon is None:
         assert row_limit is not None
-        try:
-            rows_total = sum(
-                len(chunk)
-                for chunk in pd.read_csv(source, usecols=[0], dtype=str, chunksize=_COUNT_CHUNK)
-            )
-        except Exception:
-            _unreadable()
-        if rows_total > row_limit:
-            kept = set(
-                sample_positions(rows_total, row_limit, FIT_SAMPLE_SEED, keep_order=True).tolist()
-            )
-            body_kwargs["skiprows"] = lambda i: i > 0 and (i - 1) not in kept
+        # One call site, two passes over the same records: "count" reads the first column of
+        # every record, "select" reads whole records and keeps the sampled positions.
+        rows_total = 0
+        kept: Any = None
+        seen = 0
+        kept_rows: list[list[Any]] = []
+        sample_header: list[Any] = []
+        read_failed = False
+        for phase in ("count", "select"):
+            if phase == "select":
+                if rows_total <= row_limit:
+                    break
+                kept = sample_positions(rows_total, row_limit, FIT_SAMPLE_SEED, keep_order=True)
+                seen = 0
+            try:
+                for chunk in pd.read_csv(
+                    source,
+                    chunksize=_COUNT_CHUNK,
+                    dtype=str,
+                    usecols=[0] if phase == "count" else None,
+                    # Literal text, so the parse below sees what the file holds.
+                    na_filter=phase == "count",
+                ):
+                    if kept is None:
+                        rows_total += len(chunk)
+                        continue
+                    lo, hi = np.searchsorted(kept, [seen, seen + len(chunk)])
+                    sample_header = list(chunk.columns)
+                    kept_rows.extend(chunk.iloc[kept[lo:hi] - seen].fillna("").to_numpy().tolist())
+                    seen += len(chunk)
+            except Exception:
+                read_failed = True
+            if read_failed:
+                _unreadable()
+        if kept is not None:
+            if seen != rows_total:
+                _emit_error(
+                    "the CSV changed while it was being read; run the command again.",
+                    err_code="fit_source_changed",
+                )
+                raise typer.Exit(code=EXIT_USAGE)
+            # The sampled records as CSV text, parsed below exactly as if they were the file.
+            sample_text = io.StringIO()
+            sample_writer = csv.writer(sample_text, lineterminator="\n")
+            sample_writer.writerow(sample_header)
+            sample_writer.writerows(kept_rows)
+            sample_text.seek(0)
+            read_target = sample_text
+    read_failed = False
     try:
-        df = pd.read_csv(source, **body_kwargs)
+        df = pd.read_csv(read_target, **body_kwargs)
     except Exception:
+        read_failed = True
+    if read_failed:
         _unreadable()
 
     missing = [c for c in parse_dates if c not in df.columns]

@@ -1,6 +1,6 @@
 """`decoy fit --rows`: a row limit with a seeded sample spread across the whole file.
 
-Owner decision 2026-11-10 (roadmap row 24f). A file over the limit is fitted on a random sample
+Owner decision 2026-11-10. A file over the limit is fitted on a random sample
 of N rows (fixed seed), never the first N. Sensitivity detection and the snapshot see the same
 sampled rows. The limit comes from `--rows`, else `fit.max_rows` in settings.json, else 1,000,000.
 A DP fit (`--epsilon`) never samples.
@@ -352,5 +352,247 @@ def test_a_bad_setting_error_carries_no_exception_context(
     )
     result = _fit(_small_csv(tmp_path), tmp_path / "snap.json")
     assert json.loads(result.stdout)["code"] == "fit_rows_setting_invalid"
+    assert raised
+    assert all(e.__context__ is None and e.__cause__ is None for e in raised)
+
+
+# --- sampling by logical record: blank lines must not shift the chosen rows -------------------
+
+_RECORDS = 5
+
+
+def _record_lines(
+    *, header: str = "idx,name,amount", n: int = _RECORDS, col0_multiline: bool = False
+) -> tuple[str, list[str]]:
+    if col0_multiline:
+        return header, [f'"q{i}\n\nz",{i},{i}.5' for i in range(n)]
+    return header, [f"{i},n{i},{i}.5" for i in range(n)]
+
+
+def _with_blanks(
+    header: str,
+    records: list[str],
+    *,
+    before_header: str = "",
+    after_header: str | None = None,
+    interior: dict[int, str] | None = None,
+    trailing: str = "",
+    eol: str = "\n",
+) -> str:
+    """A CSV whose blank lines sit where the arguments say; `interior[i]` follows record i."""
+    interior = interior or {}
+    lines = [header]
+    if after_header is not None:
+        lines.append(after_header)
+    for i, rec in enumerate(records):
+        lines.append(rec)
+        if i in interior:
+            lines.append(interior[i])
+    return before_header + eol.join(lines) + eol + trailing
+
+
+def _twin_fit_bytes(
+    tmp_path: Path, name: str, header: str, records: list[str], kept: list[int]
+) -> bytes:
+    """The snapshot of a clean file holding exactly the `kept` records (same file name)."""
+    twin_dir = tmp_path / "twin"
+    twin_dir.mkdir(exist_ok=True)
+    twin = twin_dir / name
+    twin.write_text("\n".join([header, *(records[i] for i in kept)]) + "\n", encoding="utf-8")
+    out = twin_dir / "snap.json"
+    assert _fit(twin, out).exit_code == 0
+    return out.read_bytes()
+
+
+_BLANK_CASES = {
+    "leading_blank": {"before_header": "\n"},
+    "leading_whitespace_line": {"before_header": "   \n"},
+    "several_leading_blanks": {"before_header": "\n\n  \n"},
+    "blank_after_header": {"after_header": ""},
+    "interior_blank": {"interior": {1: ""}},
+    "interior_whitespace_only": {"interior": {1: "   "}},
+    "interior_tab_only": {"interior": {2: "\t"}},
+    "many_interior_blanks": {"interior": {0: "", 1: " ", 3: ""}},
+    "trailing_blank": {"trailing": "\n"},
+    "trailing_blanks_and_whitespace": {"trailing": "\n  \n\n"},
+    "everywhere": {"before_header": "\n", "interior": {0: "", 2: "  "}, "trailing": "\n\n"},
+    "crlf_with_blanks": {"before_header": "\r\n", "interior": {1: ""}, "eol": "\r\n"},
+}
+
+
+@pytest.mark.parametrize("keep", [1, 2, 3, 4])
+@pytest.mark.parametrize("case", list(_BLANK_CASES))
+def test_blank_lines_do_not_shift_the_sampled_records(tmp_path: Path, case: str, keep: int) -> None:
+    header, records = _record_lines()
+    src = tmp_path / "blanks.csv"
+    src.write_bytes(_with_blanks(header, records, **_BLANK_CASES[case]).encode("utf-8"))  # type: ignore[arg-type]
+    out = tmp_path / "snap.json"
+    result = _fit(src, out, "--rows", str(keep))
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.stdout)
+    assert (payload["rows_used"], payload["rows_total"], payload["row_count"]) == (
+        keep,
+        _RECORDS,
+        keep,
+    )
+    assert list(payload["columns"]) == ["idx", "name", "amount"]
+    kept = sample_positions(_RECORDS, keep, 42, keep_order=True).tolist()
+    assert out.read_bytes() == _twin_fit_bytes(tmp_path, "blanks.csv", header, records, kept)
+
+
+def test_a_blank_line_before_the_header_keeps_the_real_header(tmp_path: Path) -> None:
+    header, records = _record_lines()
+    src = tmp_path / "lead.csv"
+    src.write_text(_with_blanks(header, records, before_header="\n"), encoding="utf-8")
+    out = tmp_path / "snap.json"
+    result = _fit(src, out, "--rows", "2")
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.stdout)
+    assert payload["columns"] == {"idx": "numeric", "name": "categorical", "amount": "numeric"}
+    assert payload["row_count"] == 2
+    kept = sample_positions(_RECORDS, 2, 42, keep_order=True).tolist()
+    assert out.read_bytes() == _twin_fit_bytes(tmp_path, "lead.csv", header, records, kept)
+
+
+@pytest.mark.parametrize("seed_rows", [(_RECORDS, 1), (_RECORDS, 4), (40, 7)])
+def test_blank_lines_everywhere_still_pick_the_seeded_records(
+    tmp_path: Path, seed_rows: tuple[int, int]
+) -> None:
+    n, k = seed_rows
+    header, records = _record_lines(n=n)
+    interior = {i: ("" if i % 3 else "  ") for i in range(0, n, 2)}
+    src = tmp_path / "many.csv"
+    src.write_text(
+        _with_blanks(header, records, before_header="\n\n", interior=interior, trailing="\n"),
+        encoding="utf-8",
+    )
+    out = tmp_path / "snap.json"
+    result = _fit(src, out, "--rows", str(k))
+    assert result.exit_code == 0, result.output
+    assert json.loads(result.stdout)["rows_total"] == n
+    kept = sample_positions(n, k, 42, keep_order=True).tolist()
+    assert out.read_bytes() == _twin_fit_bytes(tmp_path, "many.csv", header, records, kept)
+
+
+def test_quoted_newlines_in_column_zero_with_blank_lines(tmp_path: Path) -> None:
+    header, records = _record_lines(header="note,idx,amount", col0_multiline=True)
+    src = tmp_path / "col0.csv"
+    src.write_text(
+        _with_blanks(header, records, before_header="\n", interior={1: "", 3: " "}, trailing="\n"),
+        encoding="utf-8",
+    )
+    out = tmp_path / "snap.json"
+    result = _fit(src, out, "--rows", "3")
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.stdout)
+    assert (payload["rows_used"], payload["rows_total"]) == (3, _RECORDS)
+    assert list(payload["columns"]) == ["note", "idx", "amount"]
+    kept = sample_positions(_RECORDS, 3, 42, keep_order=True).tolist()
+    assert out.read_bytes() == _twin_fit_bytes(tmp_path, "col0.csv", header, records, kept)
+
+
+def test_a_bom_with_blank_lines_and_short_rows(tmp_path: Path) -> None:
+    header, records = _record_lines()
+    records[2] = "2,n2"  # a short row: the missing cell is null
+    src = tmp_path / "bom.csv"
+    src.write_bytes(
+        _with_blanks(header, records, interior={0: "", 3: "  "}, trailing="\n").encode("utf-8-sig")
+    )
+    out = tmp_path / "snap.json"
+    result = _fit(src, out, "--rows", "3")
+    assert result.exit_code == 0, result.output
+    assert list(json.loads(result.stdout)["columns"]) == ["idx", "name", "amount"]
+    kept = sample_positions(_RECORDS, 3, 42, keep_order=True).tolist()
+    assert out.read_bytes() == _twin_fit_bytes(tmp_path, "bom.csv", header, records, kept)
+
+
+def test_a_sampled_cell_is_parsed_as_the_file_spells_it(tmp_path: Path) -> None:
+    """Sampling must not change what a cell means: leading zeros, NA words, empty and quoted cells."""
+    rows = 40
+    lines = ["idx,code,flag,note"]
+    for i in range(rows):
+        flag = ["NA", "yes", "", "null"][i % 4]
+        lines.append(f'{i},{i % 7:03d},{flag},"a, ""b"" {i}"')
+    src = tmp_path / "cells.csv"
+    src.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    sampled = tmp_path / "sampled.json"
+    assert _fit(src, sampled, "--rows", "30").exit_code == 0
+    kept = sample_positions(rows, 30, 42, keep_order=True).tolist()
+    # The same 30 records written out as their own file fit to the same bytes.
+    assert sampled.read_bytes() == _twin_fit_bytes(tmp_path, "cells.csv", lines[0], lines[1:], kept)
+
+
+@pytest.mark.parametrize("extra", [(), ("--rows", "1000")])
+def test_a_file_with_blank_lines_under_the_limit_is_unchanged(
+    tmp_path: Path, extra: tuple[str, ...]
+) -> None:
+    from decoy_engine import distribution_snapshot_document
+
+    header, records = _record_lines()
+    src = tmp_path / "under.csv"
+    src.write_text(
+        _with_blanks(header, records, before_header="\n", interior={1: "  "}, trailing="\n"),
+        encoding="utf-8",
+    )
+    expected = json.dumps(
+        distribution_snapshot_document(pd.read_csv(src), source_label=src.name), indent=1
+    ).encode("utf-8")
+    out = tmp_path / "snap.json"
+    result = _fit(src, out, *extra)
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.stdout)
+    assert (payload["rows_used"], payload["rows_total"]) == (_RECORDS, _RECORDS)
+    assert out.read_bytes() == expected
+
+
+def test_a_file_changed_between_the_two_passes_is_refused(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    src = _small_csv(tmp_path)
+    real = pd.read_csv
+    calls = {"n": 0}
+
+    def growing(*args: Any, **kwargs: Any) -> Any:
+        if "chunksize" in kwargs:
+            calls["n"] += 1
+            if calls["n"] == 2:  # the select pass: a record arrives after the count
+                with src.open("a", encoding="utf-8") as fh:
+                    fh.write("99,CA,1.5\n")
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(pd, "read_csv", growing)
+    out = tmp_path / "snap.json"
+    result = _fit(src, out, "--rows", "20")
+    assert result.exit_code == EXIT_USAGE, result.output
+    assert json.loads(result.stdout)["code"] == "fit_source_changed"
+    assert not out.exists()
+
+
+@pytest.mark.parametrize(
+    "extra",
+    [
+        (),
+        ("--rows", "2"),
+        ("--epsilon", "1.0", "--delta", "1e-6", "--dp-text", "state", "--dp-allow-omit"),
+    ],
+)
+def test_an_unreadable_source_error_carries_no_exception_context(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, extra: tuple[str, ...]
+) -> None:
+    import typer
+
+    raised: list[BaseException] = []
+
+    class Recording(typer.Exit):
+        def __init__(self, *args: Any, **kwargs: Any) -> None:
+            super().__init__(*args, **kwargs)
+            raised.append(self)
+
+    monkeypatch.setattr(typer, "Exit", Recording)
+    src = tmp_path / "bad.csv"
+    src.write_bytes(b"a,b\n\xff\xfe\x00,2\n3,4\n")
+    result = _fit(src, tmp_path / "snap.json", *extra)
+    assert result.exit_code == EXIT_USAGE, result.output
+    assert "could not read" in json.loads(result.stdout)["error"]
     assert raised
     assert all(e.__context__ is None and e.__cause__ is None for e in raised)

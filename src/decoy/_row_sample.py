@@ -1,6 +1,6 @@
 """Seeded row-position selection, the one rule for "a random sample of N rows".
 
-`decoy scan --sample random`, the `decoy.scan` API and `decoy fit --rows` all draw their rows
+`decoy scan --strategy random`, the `decoy.scan` API and `decoy fit --rows` all draw their rows
 here. The positions are exactly the ones `DataFrame.sample(n=k, random_state=seed)` picks, so a
 saved sample does not change when a caller moves onto this module. Positions are chosen from the
 row count alone, before any cell is read, so a caller that holds only a count (a file too large
