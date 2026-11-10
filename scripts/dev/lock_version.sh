@@ -14,7 +14,7 @@ set -euo pipefail
 
 PROFILE_PYTHON_MINOR=3.10
 SUPPORTED_MINORS="3.10 3.11 3.12"
-ENGINE_SPEC="git+https://github.com/louiskeep/decoy-engine@v0.20.0"
+ENGINE_SPEC="git+https://github.com/louiskeep/decoy-engine@v0.21.0"
 RUFF_PIN=0.15.14
 KEY_DEPS="duckdb pyarrow polars pandas pydantic pydantic-core typer ruff"
 OUTSIDE_LOCK="decoy-cli,decoy-engine-native"   # installed by bootstrap, not in the lock
