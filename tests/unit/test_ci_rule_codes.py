@@ -64,6 +64,12 @@ def _registry_codes() -> set[str]:
     return {entry["code"] for entry in reasons.manifest()["entries"]}  # type: ignore[index, union-attr]
 
 
+# Engine errors whose first positional argument is not a code, so the scan skips it.
+# `ScanSourceError(table, cause_class)` names the table (`"relationships"` for the declared
+# relationships scan, engine #422); its wire code is the class's own.
+_FIRST_ARG_NOT_A_CODE = frozenset({"ScanSourceError"})
+
+
 def _engine_literal_codes() -> set[str]:
     """Literal codes the engine raises or reports outside the registry."""
     import decoy_engine
@@ -76,7 +82,8 @@ def _engine_literal_codes() -> set[str]:
             if isinstance(node, ast.Call):
                 values += [kw.value for kw in node.keywords if kw.arg in ("code", "reason")]
                 name = _call_name(node)
-                if node.args and (name.endswith("Error") or name.endswith("Exception")):
+                is_error = name.endswith("Error") or name.endswith("Exception")
+                if node.args and is_error and name not in _FIRST_ARG_NOT_A_CODE:
                     values.append(node.args[0])
             elif isinstance(node, (ast.Assign, ast.AnnAssign)) and node.value is not None:
                 targets = node.targets if isinstance(node, ast.Assign) else [node.target]
