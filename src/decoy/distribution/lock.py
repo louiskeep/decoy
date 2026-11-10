@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import contextlib
 import os
+from collections.abc import Callable
 from pathlib import Path
 from typing import Iterator
 
@@ -40,20 +41,27 @@ BUSY_MESSAGE = (
 )
 
 
+def _install_busy() -> Exception:
+    return InstallBusyError(BUSY_MESSAGE)
+
+
 @contextlib.contextmanager
-def exclusive(home: Path) -> Iterator[None]:
+def exclusive(
+    home: Path, name: str = LOCK_NAME, busy: Callable[[], Exception] = _install_busy
+) -> Iterator[None]:
+    """Hold ``<home>/<name>`` or raise ``busy()`` at once. Other files reuse this with their own name."""
     if fcntl is None:
         yield
         return
     home.mkdir(parents=True, exist_ok=True)
     # O_CLOEXEC (Python's default) keeps the fd out of spawned validators/self-checks, so
     # a child cannot outlive the holder and keep the lock.
-    fd = os.open(home / LOCK_NAME, os.O_RDWR | os.O_CREAT, 0o600)
+    fd = os.open(home / name, os.O_RDWR | os.O_CREAT, 0o600)
     try:
         try:
             fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except OSError as exc:
-            raise InstallBusyError(BUSY_MESSAGE) from exc
+            raise busy() from exc
         yield
     finally:
         os.close(fd)

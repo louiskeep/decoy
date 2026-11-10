@@ -143,3 +143,67 @@ def test_doctor_warns_on_a_writable_settings_file(_home: Path, mode: int, warns:
     if warns:
         assert rows["settings-file"]["status"] == "warn"
         assert str(_home) not in rows["settings-file"]["note"]
+
+
+@pytest.mark.parametrize(
+    "body",
+    ['{"schema_version": "2.0", "keep": 1}', '{"schema_version": "1.0", "resources": 3}'],
+)
+def test_setup_refuses_a_readable_document_it_does_not_understand(_home: Path, body: str) -> None:
+    _home.mkdir()
+    (_home / "settings.json").write_text(body)
+    result = runner.invoke(app, ["setup", "--yes"])
+    assert result.exit_code == 1
+    assert (_home / "settings.json").read_text() == body
+    assert "2.0" not in result.output
+
+
+@pytest.mark.parametrize("body", ["not json [", "[1, 2]", '{"a": 1, "a": 2}'])
+def test_setup_replaces_only_a_truly_unusable_file(_home: Path, body: str) -> None:
+    _home.mkdir()
+    (_home / "settings.json").write_text(body)
+    assert runner.invoke(app, ["setup", "--yes"]).exit_code == 0
+    assert json.loads((_home / "settings.json").read_text())["schema_version"] == "1.0"
+
+
+def test_setup_refuses_at_once_while_another_writer_holds_the_lock(_home: Path) -> None:
+    from decoy.cli.setup import SETTINGS_LOCK
+    from decoy.distribution import lock
+
+    _home.mkdir()
+    path = _home / "settings.json"
+    path.write_text('{"schema_version": "1.0", "keep": 1}')
+    with lock.exclusive(_home, SETTINGS_LOCK):
+        result = runner.invoke(app, ["setup", "--yes"])
+    assert result.exit_code == 1
+    assert "re-run" in result.output
+    assert path.read_text() == '{"schema_version": "1.0", "keep": 1}'
+    assert runner.invoke(app, ["setup", "--yes"]).exit_code == 0
+
+
+def test_a_change_made_while_setup_prompts_is_merged_not_lost(
+    _home: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from decoy.cli.setup._resources import ResourcesSection
+
+    _home.mkdir()
+    path = _home / "settings.json"
+    path.write_text('{"schema_version": "1.0"}')
+    real = ResourcesSection.propose
+
+    def propose(self, stored):
+        out = real(self, stored)
+        path.write_text('{"schema_version": "1.0", "added_meanwhile": true}')
+        return out
+
+    monkeypatch.setattr(ResourcesSection, "propose", propose)
+    assert runner.invoke(app, ["setup", "--yes"]).exit_code == 0
+    assert json.loads(path.read_text())["added_meanwhile"] is True
+
+
+def test_setup_reports_the_version_it_wrote(_home: Path) -> None:
+    _home.mkdir()
+    (_home / "settings.json").write_text('{"schema_version": "1.7"}')
+    payload = json.loads(runner.invoke(app, ["setup", "--yes", "--json"]).stdout)
+    assert payload["schema_version"] == "1.7"
+    assert json.loads((_home / "settings.json").read_text())["schema_version"] == "1.7"

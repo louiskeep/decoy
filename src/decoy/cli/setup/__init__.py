@@ -13,8 +13,18 @@ from decoy import _resources as host
 from decoy._atomic import AtomicWriteError, describe
 from decoy.cli.exit_codes import EXIT_RUNTIME, EXIT_USAGE
 from decoy.cli.setup._sections import SECTIONS
+from decoy.distribution import lock
 from decoy.ui.output import OutputMode, emit_json, setup_output
 from decoy.ui.theme import accent, error, hint, success
+
+SETTINGS_LOCK = ".settings.lock"
+# Only an unreadable or non-JSON/non-object file is replaced; anything else is the user's data.
+_UNUSABLE = frozenset({"unreadable", "invalid"})
+
+
+def _busy() -> Exception:
+    return host.ResourceError("settings.json", "busy")
+
 
 SETUP_EPILOG = """\
 Examples:
@@ -58,32 +68,39 @@ def setup_command(
     if not yes and not sys.stdin.isatty():
         state.err_console.print(error("error:"), "setup needs a terminal; pass --yes to accept.")
         raise typer.Exit(code=EXIT_USAGE)
-    replaced = False
-    try:
-        existing = host.load_document()
-    except host.ResourceError:
-        existing, replaced = None, True  # an unusable file is replaced, not trusted
-    doc: dict[str, Any] = dict(existing or {})
-    doc["schema_version"] = _version(existing)
     try:
         stored = host.read_settings()
     except host.ResourceError:
         stored = {}
     written: dict[str, Any] = {}
+    replaced = False
     try:
+        proposals = []
         for section in SECTIONS:
             proposed = section.propose(stored)
             if not yes:
                 state.console.print(accent(section.title))
             values = proposed if yes else section.ask(proposed, _prompt)
             written[section.name] = values
-            # Keys this section does not own, and other top-level sections, stay as they were.
-            owned = doc.get(section.name)
-            doc[section.name] = {
-                **(owned if isinstance(owned, dict) else {}),
-                **section.render(values),
-            }
-        path = host.write_settings(json.dumps(doc, indent=2) + "\n")
+            proposals.append((section, values))
+        # The file is read again under the lock, so a change made while the user answered
+        # the prompts is merged, not lost. The lock serializes decoy processes only; an
+        # editor or another tool writing the file is outside its reach.
+        with lock.exclusive(host.decoy_home(), SETTINGS_LOCK, _busy):
+            try:
+                existing = host.load_document()
+            except host.ResourceError as exc:
+                if exc.code not in _UNUSABLE:
+                    raise  # a readable document we do not understand is refused, never replaced
+                existing, replaced = None, True
+            doc: dict[str, Any] = dict(existing or {})
+            doc["schema_version"] = _version(existing)
+            for section, values in proposals:
+                # Keys this section does not own, and other top-level sections, stay as they were.
+                owned = doc.get(section.name)
+                rendered = section.render(values)
+                doc[section.name] = {**(owned if isinstance(owned, dict) else {}), **rendered}
+            path = host.write_settings(json.dumps(doc, indent=2) + "\n")
     except host.ResourceError as exc:
         state.err_console.print(error("error:"), str(exc))
         raise typer.Exit(code=EXIT_USAGE) from None
@@ -98,7 +115,7 @@ def setup_command(
                 "command": "setup",
                 "status": "ok",
                 "settings_path": str(path),
-                "schema_version": host.SCHEMA_VERSION,
+                "schema_version": doc["schema_version"],
                 "sections": written,
                 "replaced_unusable_file": replaced,
             },

@@ -58,6 +58,7 @@ _TEXT = {
     "table": "resources must be a table",
     "unreadable": "cannot be read",
     "invalid": "is not a valid settings object",
+    "busy": "is being updated by another decoy process; re-run in a moment",
     "detect": "could not detect this host's value; set it explicitly",
 }
 
@@ -87,6 +88,7 @@ class ResourceError(Exception):
 
     def __init__(self, where: str, code: str) -> None:
         super().__init__(f"{where} {_TEXT[code]}")
+        self.code = code
 
 
 @dataclass(frozen=True)
