@@ -18,8 +18,8 @@ Part of the roadmap: [ROADMAP.md](../ROADMAP.md). Path shorthand (`E:`, `C:`, `P
   read, not run. 20.1 is overstated ([findings-register.md](findings-register.md)).
 - **R1-c** signing key and license review (owner and counsel); needed for the first signed
   release, not before. Engine, native companion and CLI are FSL-1.1-ALv2 (owner decision
-  2026-11-10); counsel confirms the licensor entity (Decoy Labs, Inc. is a placeholder until
-  incorporation) and a contributor license agreement. Platform `LICENSE-COMMERCIAL.md`, decoy-web
+  2026-11-10); counsel confirms the licensor entity (Decoy Labs LLC is a placeholder until
+  the LLC is formed) and a contributor license agreement. Platform `LICENSE-COMMERCIAL.md`, decoy-web
   no LICENSE file.
 - **R1 gate:** canonical CLI release smoke with recorded runs (G3: `smoke-log.md` had no green runs);
   a filled `release-readiness.md` instance; claims and license checkpoint; docs honesty; local gates

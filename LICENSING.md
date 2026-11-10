@@ -7,7 +7,7 @@ Version 1.1, Apache 2.0 Future License** (SPDX: `FSL-1.1-ALv2`). The full terms 
 license ever disagree, the license wins.
 
 > TODO(counsel): review this page with the license before the first public release
-> (release gate R1-c). "Decoy Labs, Inc." is the licensor name pending incorporation.
+> (release gate R1-c). "Decoy Labs LLC" is the licensor name pending formation of the LLC.
 
 ## The short version
 
