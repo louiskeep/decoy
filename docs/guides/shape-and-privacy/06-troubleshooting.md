@@ -109,8 +109,8 @@ The inline check covers masked tables only. Use
 
 On engine 0.19.0, values are drawn uniformly inside histogram buckets with no
 rounding. Round them downstream. After 0.19.0 a snapshot with a recorded cell
-format rounds to the source's decimal places; `decoy fit` writes that block
-once roadmap row 24l ships.
+format rounds to the source's decimal places. Current `decoy fit` writes that
+block, so refit to get rounded values.
 
 ### Generated columns are correlated when the source columns are not
 
@@ -125,10 +125,10 @@ settings differ.
 
 ### Blanks in the source do not appear in generated data
 
-A snapshot from `decoy fit` carries no blank rate yet, so statistical columns
-come out with no blanks. Set `null_probability` to the source's blank rate.
-A snapshot with a recorded cell format (engine after 0.19.0) reproduces the
-rate itself; then leave `null_probability` unset, because it replaces the
+A snapshot from an older CLI version carries no blank rate, so statistical
+columns come out with no blanks: refit, or set `null_probability` to the
+source's blank rate. A current `decoy fit` snapshot records the cell format and
+reproduces the rate itself; then leave `null_probability` unset, because it replaces the
 fitted rate rather than adding to it. See
 [page 3](03-fit-and-generate.md#blanks).
 
