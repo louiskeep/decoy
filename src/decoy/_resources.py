@@ -171,10 +171,11 @@ def _refuse_constant(_name: str) -> Any:
     raise ValueError("NaN and Infinity are not allowed")
 
 
-def read_settings(path: Path | None = None) -> dict[str, int | str]:
-    """The stored `resources` values that are present: `max_memory` (bytes or auto), `threads`.
+def load_document(path: Path | None = None) -> dict[str, Any] | None:
+    """The settings document, or None when the file does not exist.
 
-    A missing file is empty. Unknown keys and unknown minor versions are accepted.
+    Checks the structure only (an object, `schema_version` major 1, `resources` an object). Values
+    are checked per key by `read_settings`, so one bad stored value never blocks another key.
     """
     path = path or settings_path()
     where = SETTINGS_NAME
@@ -184,7 +185,7 @@ def read_settings(path: Path | None = None) -> dict[str, int | str]:
         with path.open("rb") as handle:
             raw = handle.read(_MAX_FILE_BYTES + 1)
     except FileNotFoundError:
-        return {}
+        return None
     except OSError:
         failure = "unreadable"
     data: Any = None
@@ -208,23 +209,38 @@ def read_settings(path: Path | None = None) -> dict[str, int | str]:
         match = _VERSION.fullmatch(version) if isinstance(version, str) else None
         if match is None or match[1] != "1":
             failure, where = "version", f"{SETTINGS_NAME} schema_version"
-    table: Any = data.get("resources", {}) if failure is None else {}
-    if failure is None and not isinstance(table, dict):
-        failure, where = "table", SETTINGS_NAME
-    out: dict[str, int | str] = {}
-    for key, parse, code in (
-        ("max_memory", parse_memory, "size"),
-        ("threads", _stored_threads, "count"),
-    ):
-        if failure is not None or key not in table:
-            continue
-        value = parse(table[key])
-        if value is None:
-            failure, where = code, f"{SETTINGS_NAME} resources.{key}"
-        else:
-            out[key] = value
+        elif not isinstance(data.get("resources", {}), dict):
+            failure = "table"
     if failure is not None:
         raise ResourceError(where, failure)
+    return data
+
+
+_STORED = {
+    "max_memory": (parse_memory, "size"),
+    "threads": (_stored_threads, "count"),
+}
+
+
+def read_settings(
+    path: Path | None = None, keys: tuple[str, ...] = tuple(_STORED)
+) -> dict[str, int | str]:
+    """The stored `resources` values for `keys` that are present (`max_memory` bytes or auto).
+
+    A missing file is empty. Only the requested keys are validated. Unknown keys and unknown
+    minor versions are accepted.
+    """
+    data = load_document(path)
+    table = (data or {}).get("resources", {})
+    out: dict[str, int | str] = {}
+    for key in keys:
+        if key not in table:
+            continue
+        parse, code = _STORED[key]
+        value = parse(table[key])
+        if value is None:
+            raise ResourceError(f"{SETTINGS_NAME} resources.{key}", code)
+        out[key] = value
     return out
 
 
@@ -267,7 +283,6 @@ def resolve(
     settings: Path | None = None,
 ) -> Resolved:
     env = os.environ if env is None else env
-    stored: dict[str, int | str] | None = None
     picks: dict[str, tuple[int | str, str]] = {}
     for key, flag, flag_name, var, parse, code in (
         ("max_memory", max_memory, "--max-memory", ENV_MEMORY, parse_memory, "size"),
@@ -281,10 +296,11 @@ def resolve(
                 raise ResourceError(where, code)
             picks[key] = (value, source)
             break
-        else:
-            if stored is None:
-                stored = read_settings(settings)
-            picks[key] = (stored[key], "settings") if key in stored else (AUTO, AUTO)
+    # Only a key that falls through to the file may fail on its stored value.
+    wanted = tuple(k for k in _STORED if k not in picks)
+    stored = read_settings(settings, wanted) if wanted else {}
+    for key in wanted:
+        picks[key] = (stored[key], "settings") if key in stored else (AUTO, AUTO)
     memory, memory_source = picks["max_memory"]
     count, threads_source = picks["threads"]
     return Resolved(

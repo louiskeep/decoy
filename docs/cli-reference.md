@@ -729,8 +729,9 @@ See also: decoy --version, decoy info.
 Set this box&#x27;s max memory and threads for `decoy run`.
 
 Shows what this host reports, asks you to confirm or change it, and writes
-$DECOY_HOME/settings.json (default ~/.decoy/settings.json). A flag or environment
-variable on a single run still wins over the file.
+$DECOY_HOME/settings.json (default ~/.decoy/settings.json). Other sections and keys
+already in the file are kept. A flag or environment variable on a single run still
+wins over the file.
 
 **Usage**:
 
@@ -1765,4 +1766,3 @@ Examples:
 Exit codes: 0 clean; 1 invalid input or validation errors; 2 blocking warnings;
 3 runtime failure; 4 findings; 5 capacity refusal. See docs/ci-contracts.md.
 Decoy never uploads or comments; uploads belong to your CI workflow.
-

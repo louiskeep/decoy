@@ -31,6 +31,14 @@ def _prompt(label: str, default: str, check: Callable[[str], Any]) -> Any:
     return typer.prompt(label, default=default, value_proc=check)
 
 
+def _version(existing: dict[str, Any] | None) -> str:
+    """Our schema version, unless the file already holds a higher minor of major 1."""
+    stored = (existing or {}).get("schema_version", "")
+    if stored and int(stored.split(".")[1]) > int(host.SCHEMA_VERSION.split(".")[1]):
+        return stored
+    return host.SCHEMA_VERSION
+
+
 def setup_command(
     yes: bool = typer.Option(
         False, "--yes", "-y", help="Accept the detected or stored values; do not prompt."
@@ -42,18 +50,25 @@ def setup_command(
     """Set this box's max memory and threads for `decoy run`.
 
     Shows what this host reports, asks you to confirm or change it, and writes
-    $DECOY_HOME/settings.json (default ~/.decoy/settings.json). A flag or environment
-    variable on a single run still wins over the file.
+    $DECOY_HOME/settings.json (default ~/.decoy/settings.json). Other sections and keys
+    already in the file are kept. A flag or environment variable on a single run still
+    wins over the file.
     """
     state = setup_output(json_, quiet, verbose)
     if not yes and not sys.stdin.isatty():
         state.err_console.print(error("error:"), "setup needs a terminal; pass --yes to accept.")
         raise typer.Exit(code=EXIT_USAGE)
+    replaced = False
+    try:
+        existing = host.load_document()
+    except host.ResourceError:
+        existing, replaced = None, True  # an unusable file is replaced, not trusted
+    doc: dict[str, Any] = dict(existing or {})
+    doc["schema_version"] = _version(existing)
     try:
         stored = host.read_settings()
     except host.ResourceError:
-        stored = {}  # an unusable file is replaced, not trusted
-    doc: dict[str, Any] = {"schema_version": host.SCHEMA_VERSION}
+        stored = {}
     written: dict[str, Any] = {}
     try:
         for section in SECTIONS:
@@ -62,7 +77,12 @@ def setup_command(
                 state.console.print(accent(section.title))
             values = proposed if yes else section.ask(proposed, _prompt)
             written[section.name] = values
-            doc[section.name] = section.render(values)
+            # Keys this section does not own, and other top-level sections, stay as they were.
+            owned = doc.get(section.name)
+            doc[section.name] = {
+                **(owned if isinstance(owned, dict) else {}),
+                **section.render(values),
+            }
         path = host.write_settings(json.dumps(doc, indent=2) + "\n")
     except host.ResourceError as exc:
         state.err_console.print(error("error:"), str(exc))
@@ -80,7 +100,10 @@ def setup_command(
                 "settings_path": str(path),
                 "schema_version": host.SCHEMA_VERSION,
                 "sections": written,
+                "replaced_unusable_file": replaced,
             },
         )
     elif state.mode is not OutputMode.quiet:
+        if replaced:
+            state.console.print(hint("note:"), "the existing settings file was unusable; replaced.")
         state.console.print(success("Wrote"), str(path))

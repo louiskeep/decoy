@@ -105,3 +105,41 @@ def test_run_rejects_a_bad_flag_with_usage_exit(tmp_path: Path) -> None:
     cfg.write_text("version: 1\n")
     result = runner.invoke(app, ["run", str(cfg), "--threads", "0"])
     assert result.exit_code == 1
+
+
+def test_setup_keeps_other_sections_unknown_keys_and_a_higher_minor(_home: Path) -> None:
+    _home.mkdir()
+    before = {
+        "schema_version": "1.7",
+        "future": {"a": [1, 2]},
+        "scan": {"ml": True},
+        "resources": {"max_memory": "2GiB", "threads": 3, "extra": "x"},
+    }
+    (_home / "settings.json").write_text(json.dumps(before))
+    assert runner.invoke(app, ["setup", "--yes"]).exit_code == 0
+    after = json.loads((_home / "settings.json").read_text())
+    assert after == before
+
+
+def test_setup_says_when_it_replaces_an_unusable_file(_home: Path) -> None:
+    _home.mkdir()
+    (_home / "settings.json").write_text("not json [")
+    payload = json.loads(runner.invoke(app, ["setup", "--yes", "--json"]).stdout)
+    assert payload["replaced_unusable_file"] is True
+    result = runner.invoke(app, ["setup", "--yes"])
+    assert "replaced" not in result.stdout
+
+
+@pytest.mark.parametrize(("mode", "warns"), [(0o666, True), (0o620, True), (0o600, False)])
+def test_doctor_warns_on_a_writable_settings_file(_home: Path, mode: int, warns: bool) -> None:
+    _home.mkdir()
+    path = _home / "settings.json"
+    path.write_text('{"schema_version": "1.0"}')
+    path.chmod(mode)
+    rows = {
+        c["name"]: c for c in json.loads(runner.invoke(app, ["doctor", "--json"]).stdout)["checks"]
+    }
+    assert ("settings-file" in rows) is warns
+    if warns:
+        assert rows["settings-file"]["status"] == "warn"
+        assert str(_home) not in rows["settings-file"]["note"]

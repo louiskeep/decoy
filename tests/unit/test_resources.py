@@ -247,3 +247,16 @@ def test_resources_module_has_no_inline_writer_and_a_seeded_one_is_seen() -> Non
     assert _atomic_sites(real) == []
     seeded = real + "\nimport os\nos.replace('a', 'b')\n"
     assert _atomic_sites(seeded) != []
+
+
+def test_a_bad_stored_value_only_fails_the_key_that_reads_it(tmp_path: Path) -> None:
+    bad_memory = _file(tmp_path, memory="8gb ", threads=4)
+    got = resolve(max_memory="1GiB", env={}, settings=bad_memory)
+    assert (got.memory_bytes, got.threads, got.threads_source) == (GIB, 4, "settings")
+    with pytest.raises(ResourceError, match=r"resources\.max_memory"):
+        resolve(env={}, settings=bad_memory)
+    bad_threads = _file(tmp_path, memory="2GiB", threads=0)
+    got = resolve(threads="3", env={}, settings=bad_threads)
+    assert (got.threads, got.memory_bytes, got.memory_source) == (3, 2 * GIB, "settings")
+    with pytest.raises(ResourceError, match=r"resources\.threads"):
+        resolve(env={}, settings=bad_threads)
