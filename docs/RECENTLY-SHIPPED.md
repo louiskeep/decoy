@@ -15,13 +15,27 @@ Moved here from `decoy-platform/docs/backlog/RECENTLY-SHIPPED.md` on 2026-11-05 
 ([ROADMAP.md](ROADMAP.md)). The platform copy is frozen at that date. Entries below 2026-11-05 are
 copied unchanged; paths in them are relative to the repo they name.
 
-Last updated: 2026-11-09 (entries for 2026-10-27 to 2026-10-30 are not filled in here; see the repos'
+Last updated: 2026-11-10 (entries for 2026-10-27 to 2026-10-30 are not filled in here; see the repos'
 git logs).
 
 ---
 
+## 2026-11-10
+
+- **Engine** (`5c24a75e`, engine #450): REG-RELEASE part E1. Changelog fragments: a PR that changes behavior adds one `changelog.d/<slug>.md` file instead of editing `CHANGELOG.md`, which keeps an empty `[Unreleased]` heading. Release prep compiles the fragments into the dated section with `scripts/release/stamp_release.py` and deletes them; a release is refused while fragments remain. PRs get a fragment check. E2 (registry stamping at release) waits on owner question R1.
+- **Engine** (`f3816b81`, engine #441): CONFIG-EXPLICIT part E2a (roadmap row 22). The declared-columns module (`source_columns`, `declared_columns`, `check_columns_declared`, `prepare_declared_sources`) and the `config_explicit` codemod modes `declare-columns` and `source-schema`. Registry 1.19.0 adds `source_file.undeclared_column` and `source_file.undeclared_table`. No run route calls the check yet, so runs are unchanged.
+- **Engine** (`937d9e53`, engine #446): GEN-UNIQUE part E2 (roadmap row 24m). `unique: true` works on faker, categorical and reference generate columns, and a table can declare `unique_together` column pairs. A domain too small for the row count is refused with the E0 codes. Faker retries reseed and stop at 1,000 attempts per row. Nested values (such as dict parents) are matched by equality. Unique plans run resident; the pinned route refuses `unique_together`. Columns without `unique` generate the same cells as before.
+- **Engine** (`125f479b`, engine #447): SIZE-CEIL (roadmap row 7, owner rule 2026-11-10). Module-size pins are ceilings: each census entry is the file's lines plus 20, capped at 700, and a ceiling more than 40 above the file fails until it is lowered. Files already over 700 stay exact and may only shrink. Test-only.
+- **Engine** (`e82b89b8`, engine #451): main fix. The H-1 owner fixture lists `parent_keys` (added by #440) under its owner file, so the wave-b owner coverage test passes again.
+- **Engine** (`d43e2845`, engine #449): main fix. Two r3 route baseline scenarios re-pinned for the `value_similarity` and `missing_value_similarity` keys #438 added; no existing value changed.
+
 ## 2026-11-09
 
+- **Engine** (`fbc42f14`, engine #439): RUN-STREAM part E1a (roadmap row 63a). `run_pipeline(execution_mode="stream")` is a strict switch: a strict preflight either confirms the run can stream or refuses it with `runtime.streaming_unavailable`. Registry 1.18.0 adds that code. There is no size threshold.
+- **Engine** (`9257cdff`, engine #443): CI. A push to a feature branch runs a fast hosted check (environment, ruff, format, mypy, sentries). The self-hosted gate runs on dispatch (impact-selected tests in 2 shards; the baseline reruns only the branch's failures) and on main pushes (full suite in 2 shards). Owner-approved 2026-11-09 to stop gate queueing.
+- **Engine** (`79d5ded7`, engine #438): GEN-FIT-SHAPE part E3 (roadmap row 24l). `report fidelity` column entries gain `value_similarity` and `missing_value_similarity`, so null-rate drift lowers the score; DP snapshots report the null rate without scoring it. Six fidelity goldens re-pinned for the two new keys.
+- **Engine** (`84f4290d`, engine #440): GEN-UNIQUE part E1 (roadmap row 24m). Groundwork for `unique` with nothing wired to it yet: config checks, the shared parent key list and one uniqueness refusal builder. A golden test pins that existing configs generate the same bytes.
+- **Engine** (`35719f55`, engine #437): RUN-STREAM part E2 (roadmap row 63a). `CsvLazySource` reads CSV in chunks through the one CSV reader, checks the header before counting, and checks file identity around facts and batches.
 - **Engine** (`6bdd4840`, engine #436): GEN-FIT-SHAPE part E2 (roadmap row 24l). The statistical sampler reads the snapshot's `cell_format` block: generated columns keep the source null rate (unless `null_probability` is set, `0` included), the freetext blank fraction, the decimal places (whole numbers come out as `int`) and the datetime resolution (day resolution emits `datetime.date`, Parquet `date32`). An all-null source column generates all nulls. A malformed block is refused with `plan.statistical_cell_format_invalid`. Snapshots without the block, and DP snapshots, generate the same bytes as before. The `gen.statistical_per_row` draw-site entry is re-pinned.
 - **Engine** (`ad0e6683`, engine #435): GEN-UNIQUE part E0 (roadmap row 24m). Registry 1.17.0 adds `config.generate_unique_conflict`, `config.generate_unique_domain_too_small`, `config.generate_unique_unsupported` and `plan.pinned_unique_pair_unsupported`. Nothing raises them yet; E1 and E2 add the checks.
 - **Engine** (`5a7f14dc`, engine #434): GEN-FIT-SHAPE part E1 (roadmap row 24l). `compute_distribution_snapshot(..., cell_format=True)` adds a `cell_format` block per column (decimal places, datetime resolution, blank count), and `decoy fit` writes it. The block holds counts and fixed names only, so redacted fits carry it for sensitive columns too. Generation reads it from E2.
@@ -38,6 +52,7 @@ git logs).
 - **CLI** (`6a175432`, #148): CLI-QA1 part C0b (roadmap row 24e). `validate preflight` records an uncompilable plan as a capacity FAIL with the engine code, not a traceback.
 - **Engine** (`3b1b285d`, engine #429): CLI-QA1 engine part (roadmap row 24e). `decoy_engine.profile.profile_relationships_from_config` is public. Importing the engine attaches a NullHandler to its logger.
 - **Engine** (`98551956`, engine #423): PROJECT-LAYOUT part E1 (roadmap row 24t). Optional `name:` on the pipeline config, one shared name rule, and the `config.pipeline_name_invalid` reason code.
+- **Engine** (`67fe6d45`, engine #424): GEN-STRICT part E3 (roadmap row 24k). A resident generate run whose output cannot fit in detected memory is refused up front with `generation_budget_exceeded`, before any provider runs; `estimate_job_capacity` returns INSUFFICIENT for it. Skipped when a byte budget is set, when the plan streams to a bounded sink, or when memory cannot be detected.
 - **CLI** (`4eb43a52`, #147): CLI-QA1 part C4 (roadmap row 24e). Report-mode fidelity no longer prints PASS beside a failing grade. `report integrity` lists each residual-PII finding. `decoy scan` shows reid risk as `x / 100`.
 - **CLI** (`df418657`, #145): CLI-QA1 (roadmap row 24e). The root app turns an unexpected exception into one line, `error: internal error (<ClassName>)`, with exit 1. `--verbose` adds the traceback.
 - **Engine** (`38517493`, engine #417): CLASS-SWEEP part B1. Sixteen internal `re` patterns end with `\Z` instead of `$`, so a trailing newline no longer matches; this includes the S3 endpoint check. `decoy_engine.reasons` exports `COUNT_KEYS`, `MAX_COUNTS` and `is_count`. Two new ratchet sentries keep both classes from coming back. Gate: Dennis GO, Codex GO; full suite 0 new failures; T1 on the main merge green.
