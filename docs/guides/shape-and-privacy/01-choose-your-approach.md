@@ -54,8 +54,9 @@ different ways:
 
 ## Two things people get wrong
 
-- **A plain snapshot is sensitive.** For category columns it stores the real
-  values and their exact counts. Treat it like the source file. See
+- **A plain snapshot is sensitive.** For category columns that are not flagged
+  sensitive it stores the real values and their exact counts. Flagged columns
+  are withheld unless you pass `--include-values`. Treat it like the source file. See
   [page 3](03-fit-and-generate.md#what-is-in-a-snapshot).
 - **A high fidelity score is not a privacy score.** A perfect copy of the
   source scores 1.0 on every metric and protects nobody.

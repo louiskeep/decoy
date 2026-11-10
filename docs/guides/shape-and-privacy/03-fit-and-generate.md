@@ -259,7 +259,7 @@ Measured results from [the QA record](../../records/2026-11-10-cli-qa-generation
 | A number column with one extreme value | The whole column is ruined. Values near 100 with one value of 1,000,000 generated a mean of 50,084, and 99.8% of rows landed above 200. | Remove or cap outliers before fitting. |
 | A heavily skewed number column | The median moved from 20.5 to 92.1. | Fit a transformed column (for example a log), or generate it another way. |
 | A number column with a few fixed values (prices, ratings) | Four price points became 20,000 different values, none of them a real price. With a recorded cell format they keep two decimals but are still spread out: 3,585 values, 0.08% on a real price. | Do not fit it. Generate it as a `categorical` column with the values and weights written out. |
-| A column with blanks | With a `decoy fit` snapshot, 10% and 90% blank both came out 0%. A snapshot with a recorded cell format keeps them. | See [blanks](#blanks). |
+| A column with blanks | Snapshots from older CLI versions dropped blanks (10% and 90% blank both came out 0%). Current `decoy fit` snapshots record the cell format and keep the blank rate. | See [blanks](#blanks). |
 | A date column | Only the year mix is kept. 66% January became 8%. | Generate dates another way if month or weekday matters. |
 | Codes with leading zeros (zip, account numbers) | Read as numbers; leading zeros are lost (10.9% of generated zips were short). | Not fixable at fit time today. Generate these with `faker` or a format rule. |
 | A category held by one person | Stored with `count: 1` and can be generated. | Remove rare values before fitting, or use the DP fit. |
@@ -277,8 +277,6 @@ Measured results from [the QA record](../../records/2026-11-10-cli-qa-generation
 - **Free text content.** Only length is kept.
 - **Links between columns** unless you fit the pair with `--joint` and use
   `condition_on`.
-- **Null rates from `decoy fit`.** Its snapshots carry no blank rate yet. See
-  [blanks](#blanks).
 - **Rare categories** beyond the top 20 are lumped into "other".
 - **Table relationships.** A snapshot describes one file. It does not make a
   child table follow the parent's real fan-out (for example orders per
