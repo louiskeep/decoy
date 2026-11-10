@@ -35,7 +35,6 @@ def _people(folder: Path) -> Path:
         {
             "age": [20 + (i % 40) for i in range(120)],
             "score": [round(i * 0.37, 2) for i in range(120)],
-            "city": ["Austin", "Boston", "Denver", "Eugene"] * 30,
         }
     ).to_csv(path, index=False)
     return path
@@ -99,7 +98,7 @@ def test_csv_scaffold_writes_snapshot_and_config_that_run_from_the_parent(
     cfg = yaml.safe_load((tmp_path / "gen" / "pipeline.yaml").read_text(encoding="utf-8"))
     (table,) = cfg["tables"]
     assert table["row_count"] == 120
-    assert [c["name"] for c in table["generate_columns"]] == ["age", "score", "city"]
+    assert [c["name"] for c in table["generate_columns"]] == ["age", "score"]
     assert {c["type"] for c in table["generate_columns"]} == {"statistical"}
     assert {c["snapshot_file"] for c in table["generate_columns"]} == {"people.snapshot.json"}
     (target,) = cfg["targets"].values()
@@ -109,7 +108,7 @@ def test_csv_scaffold_writes_snapshot_and_config_that_run_from_the_parent(
 
     assert run.exit_code == 0, run.output
     out = pd.read_csv(tmp_path / "gen" / "people.synthetic.csv")
-    assert list(out.columns) == ["age", "score", "city"] and len(out) == 120
+    assert list(out.columns) == ["age", "score"] and len(out) == 120
 
 
 @posix
@@ -365,4 +364,21 @@ def test_a_control_character_in_a_path_is_refused_before_any_write(
     assert res.exit_code == EXIT_USAGE, res.output
     assert "control character" in _flat(res.output)
     assert "evil" not in res.output
+    assert _listing(tmp_path) == before
+
+
+def test_a_categorical_column_stops_the_scaffold_with_the_opt_in_message(
+    tmp_path: Path,
+) -> None:
+    pd.DataFrame(
+        {"age": list(range(60)), "city": ["Austin", "Boston", "Denver", "Eugene"] * 15}
+    ).to_csv(tmp_path / "people.csv", index=False)
+    before = _listing(tmp_path)
+
+    res = _scaffold(tmp_path, "--json")
+
+    assert res.exit_code == EXIT_USAGE, res.output
+    text = _flat(res.output)
+    assert "city" in text and "allow_real_categories: true" in text and "by hand" in text
+    assert "Austin" not in res.output
     assert _listing(tmp_path) == before

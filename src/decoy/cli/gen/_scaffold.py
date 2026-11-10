@@ -30,6 +30,8 @@ _NAME_OK = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
 _SHOWN_FINDINGS = 3
 # The header comments carry the CSV name and the config path, so a line break in either would
 # end the comment and put the rest into the YAML. Any C0 control or DEL is refused up front.
+_REAL_CATEGORIES = "allow_real_categories"
+_COLUMN_IN_MESSAGE = re.compile(r"column '([^']+)'")
 _CONTROL = re.compile(r"[\x00-\x1f\x7f]")
 
 
@@ -72,14 +74,12 @@ def layout_for(csv: Path, out: Path) -> Layout:
 def build_config(layout: Layout, snapshot: dict[str, Any], rows: int) -> str:
     """The YAML text: one statistical column per fitted column, in file order."""
     columns = []
-    for name, entry in snapshot["columns"].items():
+    for name in snapshot["columns"]:
         column: dict[str, Any] = {
             "name": name,
             "type": "statistical",
             "snapshot_file": layout.snapshot_name,
         }
-        if entry.get("kind") == "categorical":
-            column["allow_real_categories"] = True
         columns.append(column)
     body = {
         "version": 2,
@@ -93,8 +93,6 @@ def build_config(layout: Layout, snapshot: dict[str, Any], rows: int) -> str:
         "# Decoy generate scaffold.\n"
         f"# Fitted from {layout.source_name} by `decoy init`; the shape comes from the "
         "snapshot beside this file.\n"
-        "# Categorical columns carry allow_real_categories: true, so the output can repeat\n"
-        "# category values seen in the CSV. Remove it from a column you do not want that for.\n"
         f"# Next: decoy run {layout.config}  (add --rows 5 to preview first)\n\n"
     )
     return header + yaml.safe_dump(body, sort_keys=False)
@@ -227,6 +225,20 @@ def scaffold_generate(state: OutputState, csv: Path, out: Path, *, yes: bool) ->
             except OSError:
                 break
     if invalid is not None:
+        # A column the snapshot withheld values for also names the flag; it is not an opt-in.
+        opt_in = [m for m in invalid.messages if _REAL_CATEGORIES in m and "withheld" not in m]
+        if opt_in:
+            names = [g.group(1) for m in opt_in if (g := _COLUMN_IN_MESSAGE.search(m))]
+            _fail(
+                state,
+                "the CSV has categorical column(s) "
+                + (", ".join(names) or "that need an opt-in")
+                + ": the scaffold does not copy real category values into generated output, "
+                "so it wrote nothing.",
+                f"to opt in, add `{_REAL_CATEGORIES}: true` to that column by hand; "
+                "otherwise replace the column with a generator type (decoy explain types) "
+                "or remove it.",
+            )
         shown = invalid.messages[:_SHOWN_FINDINGS]
         more = len(invalid.messages) - len(shown)
         _fail(
