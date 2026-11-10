@@ -51,31 +51,41 @@ error: dp_stack_uncertified: no certified proof-stack row for (cpython '3.10.20.
 That is exit code 3. A normal `pip install decoy-cli` produces this error,
 because its package set differs from the tested one.
 
-To build the certified environment, use a fresh virtual environment with
-nothing else in it:
+To build the certified environment, work from a checkout of the `decoy` repo at
+the release you run. The steps match the certified CI job.
+
+Build the CLI wheel from the checkout:
+
+```bash
+git clone https://github.com/louiskeep/decoy.git && cd decoy
+```
+
+```bash
+uv build --wheel
+```
+
+Create a fresh virtual environment with nothing else in it:
 
 ```bash
 uv venv --python 3.10.20 dp-env
 ```
 
-```bash
-source dp-env/bin/activate
-```
+Install the engine from its git tag and the CLI wheel, with no dependencies:
 
 ```bash
-uv pip install --no-deps "git+https://github.com/louiskeep/decoy-engine@v0.19.0" decoy-cli
+uv pip install --python dp-env/bin/python --no-deps "git+https://github.com/louiskeep/decoy-engine@v0.19.0" dist/*.whl
 ```
 
+Install the pinned set from the lock file at the root of the checkout:
+
 ```bash
-uv pip install -r requirements-certified.txt
+uv pip install --python dp-env/bin/python -r requirements-certified.txt
 ```
 
 The engine is not on PyPI, so it installs from its git tag (the same form
 `pyproject.toml` and CI use). `--no-deps` keeps the resolver from adding
-packages; the next command installs the full certified set.
-
-`requirements-certified.txt` is not part of the installed package. It is at the
-root of the `decoy` repo, so take it from a checkout at the matching release.
+packages; the last command installs the full certified set. Use the engine tag
+that the checkout's `pyproject.toml` pins.
 Its header names the exact fingerprint the set produces.
 
 This guide was run from source checkouts instead: `uv pip install --no-deps
