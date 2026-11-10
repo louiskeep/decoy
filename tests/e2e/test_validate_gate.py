@@ -253,9 +253,9 @@ def test_gate_runs_config_only_checks_exactly_once(
     real = decoy_engine.run_config_only_checks
     calls = {"n": 0}
 
-    def _spy(raw: Any) -> Any:
+    def _spy(raw: Any, **kwargs: Any) -> Any:
         calls["n"] += 1
-        return real(raw)
+        return real(raw, **kwargs)
 
     monkeypatch.setattr(decoy_engine, "run_config_only_checks", _spy)
     result = _gate(_clean_config(tmp_path))

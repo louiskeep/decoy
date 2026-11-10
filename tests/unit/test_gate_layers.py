@@ -139,7 +139,7 @@ def test_missing_ner_extra_keeps_the_extra_name(
     import decoy_engine
     from decoy_engine.plan import PlanCompileError
 
-    def _no_spacy(_raw: Any) -> Any:
+    def _no_spacy(_raw: Any, **_kwargs: Any) -> Any:
         raise PlanCompileError("ner_spacy_not_installed", "tables.t.columns.c", "spacy absent")
 
     monkeypatch.setattr(decoy_engine, "run_config_only_checks", _no_spacy)
