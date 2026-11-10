@@ -21,12 +21,13 @@ an error, because a file that is not a saved scan can hold cell data.
 from __future__ import annotations
 
 import json
+import math
 import re
 import sys
 from pathlib import Path
 from typing import Any
 
-from decoy.cli.scanning._multi import table_name_from_path
+from decoy.cli.scanning import table_name_from_path
 
 _NOT_A_SCAN = "not a saved scan Decoy can read"
 _SCHEMA_MAJOR = "scan-set/v1"
@@ -76,11 +77,30 @@ def load_scan_set(path_or_dash: str) -> dict[str, Any]:
 
 def scan_set_from_data(data: object) -> dict[str, Any]:
     """The same interpretation for an already-parsed document."""
-    if not isinstance(data, dict):
+    if not isinstance(data, dict) or _has_non_finite(data):
         raise ScanSetFormatError(_NOT_A_SCAN)
     if "scan_schema" in data:
         return _from_core(data)
     return _from_legacy(data)
+
+
+def _has_non_finite(node: object) -> bool:
+    """True when a parsed document holds NaN, Infinity or an overflowed float anywhere.
+
+    The one check for both saved formats: `json.loads` accepts the bare constants and turns
+    `1e999` into infinity, and none of them is valid JSON on the way back out.
+    """
+    stack = [node]
+    while stack:
+        item = stack.pop()
+        if isinstance(item, float):
+            if not math.isfinite(item):
+                return True
+        elif isinstance(item, dict):
+            stack.extend(item.values())
+        elif isinstance(item, list):
+            stack.extend(item)
+    return False
 
 
 def select_table(scan_set: dict[str, Any], table: str | None) -> dict[str, Any]:

@@ -148,7 +148,7 @@ def validation_outcome(
 
 def _load_scan(path: Path) -> dict:
     # An absolute path always: the shared loader treats the literal "-" as stdin.
-    from decoy.cli.io._scan_set import load_scan_set, select_table
+    from decoy.cli.io import load_scan_set, select_table
 
     return select_table(load_scan_set(str(path)), None)
 

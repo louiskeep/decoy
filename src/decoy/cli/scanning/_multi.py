@@ -193,10 +193,19 @@ def _layout_columns(layout: Path | None) -> list[dict]:
         raise ScanUsageError(f"Layout file not found: {layout}")
     from decoy.cli.scan import _parse_layout
 
+    columns: list[dict] | None = None
     try:
-        return _parse_layout(layout)
-    except Exception as exc:
-        raise ScanUsageError(f"Could not parse layout file {layout.name}: {exc}") from None
+        columns = _parse_layout(layout)
+    except Exception:
+        columns = None
+    # Raised outside the handler with fixed text: the parser's message quotes the rejected
+    # layout literal, and the error must not chain to it.
+    if columns is None:
+        raise ScanUsageError(
+            f"Could not parse layout file {layout.name}: it must be a mapping with a "
+            "'columns' list, each column with a string 'name' and integer 'start' and 'width'."
+        )
+    return columns
 
 
 # ---------------------------------------------------------------------------

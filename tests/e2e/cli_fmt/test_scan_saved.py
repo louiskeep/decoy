@@ -245,3 +245,52 @@ def test_a_legacy_file_is_a_one_table_set_named_from_its_source_label(legacy_fil
     assert named.exit_code == 0, named.output
     other = runner.invoke(app, ["scan", "fields", str(legacy_file), "--table", "table"])
     assert other.exit_code == 1
+
+
+# -- non-finite numbers ---------------------------------------------------------------
+
+
+def _legacy_with(legacy: dict, literal: str) -> str:
+    """The legacy document as text with one field's `pii_score` set to a raw JSON literal."""
+    legacy["fields"][0]["pii_score"] = "@@"
+    return json.dumps(legacy).replace('"@@"', literal)
+
+
+def _core_with(core: dict, literal: str) -> str:
+    core["tables"][0]["fields"][0]["pii_score"] = "@@"
+    return json.dumps(core).replace('"@@"', literal)
+
+
+@pytest.mark.parametrize("literal", ["NaN", "Infinity", "-Infinity", "1e999", "-1e999"])
+@pytest.mark.parametrize("fmt", ["legacy", "core"])
+@pytest.mark.parametrize("cmd", [["fields"], ["show"]])
+def test_a_non_finite_number_in_a_saved_scan_is_refused(
+    tmp_path: Path, legacy: dict, core_file: Path, literal: str, fmt: str, cmd: list[str]
+) -> None:
+    text = (
+        _legacy_with(legacy, literal)
+        if fmt == "legacy"
+        else _core_with(json.loads(core_file.read_text()), literal)
+    )
+    path = tmp_path / "bad.json"
+    path.write_text(text, encoding="utf-8")
+    field = legacy["fields"][0]["name"] if fmt == "legacy" else "ssn"
+    args = ["scan", *cmd, str(path)] + ([field, "--json"] if cmd == ["show"] else ["--json"])
+    result = runner.invoke(app, args)
+    assert result.exit_code == 1
+    assert "not a saved scan Decoy can read" in result.output
+    assert "NaN" not in result.output and "Infinity" not in result.output
+
+
+@pytest.mark.parametrize("fmt", ["legacy", "core"])
+def test_a_normal_float_in_a_saved_scan_is_still_accepted(
+    tmp_path: Path, legacy: dict, core_file: Path, fmt: str
+) -> None:
+    text = (
+        _legacy_with(legacy, "0.25")
+        if fmt == "legacy"
+        else _core_with(json.loads(core_file.read_text()), "0.25")
+    )
+    path = tmp_path / "ok.json"
+    path.write_text(text, encoding="utf-8")
+    assert runner.invoke(app, ["scan", "fields", str(path), "--json"]).exit_code == 0

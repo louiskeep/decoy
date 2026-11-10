@@ -296,3 +296,32 @@ def test_an_unexpected_engine_error_text_never_reaches_the_output(
         assert result.exit_code == 3
         assert "ZQCANARY" not in result.output + result.stdout
         assert "ValueError" in result.output
+
+
+# -- fixed-width layout errors stay value-free -------------------------------------------
+
+LAYOUT_CANARY = "ZQCANARY_LAYOUT_SECRET"
+
+
+@pytest.mark.parametrize(
+    "layout_text",
+    [
+        f"columns:\n  - name: a\n    start: {LAYOUT_CANARY}\n    width: 3\n",
+        f"columns:\n  - name: {LAYOUT_CANARY}\n    start: 0\n    width: -{LAYOUT_CANARY}\n",
+        f"columns: {LAYOUT_CANARY}\n",
+        f"- {LAYOUT_CANARY}\n",
+    ],
+)
+@pytest.mark.parametrize("as_json", [False, True])
+def test_a_bad_layout_never_echoes_the_rejected_value(
+    tmp_path: Path, layout_text: str, as_json: bool
+) -> None:
+    data = tmp_path / "records.fwf"
+    data.write_text("abc\ndef\n", encoding="utf-8")
+    layout = tmp_path / "layout.yaml"
+    layout.write_text(layout_text, encoding="utf-8")
+    args = ["scan", str(data), "--layout", str(layout)] + (["--json"] if as_json else [])
+    result = runner.invoke(app, args)
+    assert result.exit_code != 0
+    assert "Could not parse layout file" in result.output
+    assert "ZQCANARY" not in result.output

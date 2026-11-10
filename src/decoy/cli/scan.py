@@ -38,7 +38,7 @@ import typer
 
 from decoy.cli._default_group import make_default_group
 from decoy.cli.exit_codes import EXIT_USAGE
-from decoy.cli.io._scan_set import ScanSetFormatError, load_scan_set, select_table
+from decoy.cli.io import ScanSetFormatError, load_scan_set, select_table
 from decoy.ui.card import render_card
 from decoy.ui.output import OutputMode, OutputState, emit_json, setup_output
 from decoy.ui.table import make_table
@@ -590,7 +590,7 @@ def _scan(
     input requires an explicit --layout spec. Format is inferred from the
     extension when --format is not supplied.
     """
-    from decoy.cli.scanning._multi import run_scan
+    from decoy.cli.scanning import run_scan
 
     run_scan(
         setup_output(json_, quiet, verbose),

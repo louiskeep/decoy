@@ -72,3 +72,29 @@ def test_a_seeded_bypass_is_flagged() -> None:
     assert offenders('def f(data):\n    return "scan_schema" in data\n')
     assert offenders("def f(blob):\n    return records.decode(blob)\n")
     assert not offenders('def f():\n    return {"scan_schema": "scan-set/v1"}\n')
+
+
+_PRIVATE_SURFACES = {
+    "decoy.cli.io._scan_set": "cli/io",
+    "decoy.cli.scanning._multi": "cli/scanning",
+}
+
+
+def test_scan_packages_are_used_through_their_public_names() -> None:
+    """Outside its own package no module imports `cli.io._scan_set` or `cli.scanning._multi`;
+    the owning `__init__` exports the names to use."""
+    bad: dict[str, list[str]] = {}
+    for path in sorted(_SRC.rglob("*.py")):
+        rel = path.relative_to(_SRC).as_posix()
+        for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
+            names: list[str] = []
+            if isinstance(node, ast.ImportFrom) and node.level == 0:
+                base = node.module or ""
+                names = [base, *(f"{base}.{a.name}" for a in node.names)]
+            elif isinstance(node, ast.Import):
+                names = [a.name for a in node.names]
+            for name in names:
+                owner = _PRIVATE_SURFACES.get(name)
+                if owner and not rel.startswith(owner + "/"):
+                    bad.setdefault(rel, []).append(name)
+    assert not bad, f"import the package's public names, not its private module: {bad}"
