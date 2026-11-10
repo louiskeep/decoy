@@ -238,3 +238,10 @@ def test_a_json_list_is_refused(tmp_path: Path) -> None:
     path = tmp_path / "list.json"
     path.write_text("[1, 2]")
     assert runner.invoke(app, ["scan", "fields", str(path)]).exit_code == 1
+
+
+def test_a_legacy_file_is_a_one_table_set_named_from_its_source_label(legacy_file: Path) -> None:
+    named = runner.invoke(app, ["scan", "fields", str(legacy_file), "--table", "people"])
+    assert named.exit_code == 0, named.output
+    other = runner.invoke(app, ["scan", "fields", str(legacy_file), "--table", "table"])
+    assert other.exit_code == 1
