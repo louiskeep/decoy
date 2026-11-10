@@ -17,6 +17,7 @@ from typer.testing import CliRunner
 
 import decoy
 from decoy.__main__ import app
+from tests.csv_sources import csv_source
 
 runner = CliRunner()
 LOOPBACK = "http://127.0.0.1:4318/v1/traces"
@@ -48,7 +49,7 @@ def _pipeline(tmp_path: Path) -> Path:
     cfg = {
         "version": 2,
         "global_settings": {"seed": 42},
-        "sources": {"accounts": {"type": "file", "format": "csv", "path": str(src)}},
+        "sources": {"accounts": csv_source(src)},
         "tables": [{"name": "accounts", "columns": [{"name": "name", "strategy": "redact"}]}],
         "targets": {
             "accounts": {"type": "file", "format": "csv", "path": str(tmp_path / "out.csv")}

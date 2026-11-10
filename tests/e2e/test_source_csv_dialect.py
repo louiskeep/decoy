@@ -21,6 +21,7 @@ from typer.testing import CliRunner
 import decoy
 from decoy.__main__ import app
 from decoy.api import ConfigValidationError
+from tests.csv_sources import file_source
 from tests.keyed_secret import TEST_MASK_SECRET_REF
 
 pytestmark = pytest.mark.usefixtures("mask_secret")
@@ -56,7 +57,7 @@ def _config(
     out: str = "out.csv",
     fmt: str = "csv",
 ) -> Path:
-    source: dict[str, Any] = {"type": "file", "format": fmt, "path": str(src), **(dialect or {})}
+    source = file_source(src, fmt, **(dialect or {}))
     cfg = {
         "version": 2,
         "global_settings": {"seed": 42, "mask_secret_ref": TEST_MASK_SECRET_REF},
@@ -127,7 +128,8 @@ def test_delimiters(tmp_path: Path, kind: str) -> None:
 
 def test_default_dialect_unchanged(tmp_path: Path) -> None:
     outs = []
-    for label, dialect in (("plain", None), ("explicit", {"has_header": True, "delimiter": ","})):
+    plain = {"has_header": True}
+    for label, dialect in (("plain", plain), ("explicit", {**plain, "delimiter": ","})):
         d = tmp_path / label
         d.mkdir()
         cfg = _config(d, _write(d / "in.csv"), dialect=dialect)

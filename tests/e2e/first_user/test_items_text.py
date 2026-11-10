@@ -19,6 +19,7 @@ from typer.testing import CliRunner
 from decoy.__main__ import app
 from decoy.cli.exit_codes import EXIT_USAGE
 from decoy.cli.explain import topic_names
+from tests.csv_sources import csv_source
 from tests.keyed_secret import TEST_MASK_SECRET, TEST_MASK_SECRET_ENV, with_mask_secret
 
 runner = CliRunner()
@@ -213,9 +214,7 @@ def old_engine(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Path:
     cfg = {
         "version": 2,
         "global_settings": {"seed": 42},
-        "sources": {
-            "people": {"type": "file", "format": "csv", "path": str(tmp_path / "people.csv")}
-        },
+        "sources": {"people": csv_source(tmp_path / "people.csv")},
         "tables": [
             {
                 "name": "people",

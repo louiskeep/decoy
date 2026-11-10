@@ -21,6 +21,7 @@ from typer.testing import CliRunner
 
 from decoy.__main__ import app
 from decoy.cli.exit_codes import EXIT_RUNTIME
+from tests.csv_sources import csv_source
 from tests.keyed_secret import TEST_MASK_SECRET_REF
 
 pytest.importorskip("cryptography")
@@ -49,7 +50,7 @@ def _pipeline(root: Path, *, strategy: str = "hash") -> Path:
     cfg = {
         "version": 2,
         "global_settings": {"seed": 3, "mask_secret_ref": TEST_MASK_SECRET_REF},
-        "sources": {"a": {"type": "file", "format": "csv", "path": str(src)}},
+        "sources": {"a": csv_source(src)},
         "tables": [{"name": "a", "columns": [column]}],
         "targets": {"a": {"type": "file", "format": "csv", "path": str(root / "out.csv")}},
     }

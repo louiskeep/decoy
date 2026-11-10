@@ -28,6 +28,7 @@ import yaml
 from typer.testing import CliRunner
 
 from decoy.__main__ import app
+from tests.csv_sources import csv_source
 
 runner = CliRunner()
 
@@ -45,7 +46,7 @@ def _valid_config(tmp_path: Path) -> tuple[dict, Path]:
         "version": 2,
         "global_settings": {"seed": 42},
         "sources": {
-            "customers": {"type": "file", "format": "csv", "path": str(src)},
+            "customers": csv_source(src),
         },
         "tables": [
             {
@@ -80,11 +81,7 @@ def _missing_source_config(tmp_path: Path) -> Path:
         "version": 2,
         "global_settings": {"seed": 42},
         "sources": {
-            "customers": {
-                "type": "file",
-                "format": "csv",
-                "path": str(tmp_path / "DOES_NOT_EXIST.csv"),
-            },
+            "customers": csv_source(tmp_path / "DOES_NOT_EXIST.csv"),
         },
         "tables": [
             {

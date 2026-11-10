@@ -18,6 +18,7 @@ from decoy.ci.rule_codes import validation_codes
 from decoy.cli.exit_codes import EXIT_OK, EXIT_USAGE
 from decoy.cli.io import _targets
 from tests.ci_support import ci_check, ci_manifest, commit_all, make_repo, parse_stdout, write
+from tests.csv_sources import csv_source
 
 runner = CliRunner()
 
@@ -28,7 +29,7 @@ def _config(tmp_path: Path, fmt: str, out: str) -> Path:
     cfg = {
         "version": 2,
         "global_settings": {"seed": 42},
-        "sources": {"people": {"type": "file", "format": "csv", "path": str(src)}},
+        "sources": {"people": csv_source(src)},
         "tables": [
             {
                 "name": "people",

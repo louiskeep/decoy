@@ -24,6 +24,7 @@ import decoy
 from decoy.__main__ import app
 from decoy.api import ConfigValidationError
 from decoy.cli.exit_codes import EXIT_USAGE
+from tests.csv_sources import csv_source, file_source
 from tests.keyed_secret import TEST_MASK_SECRET_REF
 
 # Keyed strategies need an admitted mask secret (engine 0.17.0); see tests/keyed_secret.py.
@@ -72,7 +73,7 @@ def _config(
     tgt_name: str = "out.csv",
     columns: list[dict] | None = None,
 ) -> Path:
-    source: dict[str, Any] = {"type": "file", "format": fmt, "path": str(src)}
+    source = file_source(src, fmt)
     if layout is not None:
         source["layout"] = layout
     cfg = {
@@ -179,7 +180,7 @@ def test_csv_and_parquet_sources_read_as_before(tmp_path: Path):
     df.to_parquet(pq_path, index=False)
     config = {
         "sources": {
-            "c": {"type": "file", "format": "csv", "path": str(csv_path)},
+            "c": csv_source(csv_path),
             "p": {"type": "file", "format": "parquet", "path": str(pq_path)},
         }
     }
@@ -320,7 +321,7 @@ def test_fixed_width_chunked_writes_no_table_even_with_other_tables(tmp_path: Pa
         "version": 2,
         "global_settings": {"seed": 42, "mask_secret_ref": TEST_MASK_SECRET_REF},
         "sources": {
-            "a": {"type": "file", "format": "csv", "path": str(csv_src)},
+            "a": csv_source(csv_src),
             "b": {"type": "file", "format": "fixed_width", "path": str(fw_src), "layout": _LAYOUT},
         },
         "tables": [

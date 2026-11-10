@@ -23,6 +23,7 @@ from typer.testing import CliRunner
 import decoy
 from decoy.__main__ import app
 from decoy.cli.exit_codes import EXIT_RUNTIME, EXIT_USAGE
+from tests.csv_sources import file_source
 from tests.e2e.test_source_format_dispatch import (
     _COLUMNS,
     _LAYOUT,
@@ -213,7 +214,7 @@ def _csv_config(tmp_path: Path, targets: dict[str, dict], *, src_fmt: str = "csv
         else:
             src = tmp_path / f"src_{name}.parquet"
             _frame().to_parquet(src, index=False)
-        sources[name] = {"type": "file", "format": src_fmt, "path": str(src)}
+        sources[name] = file_source(src, src_fmt)
         tables.append({"name": name, "columns": _COLUMNS})
     cfg = {
         "version": 2,
@@ -413,7 +414,7 @@ def _passthrough_config(tmp_path: Path, src: Path, src_fmt: str, out: Path, layo
     cfg = {
         "version": 2,
         "global_settings": {"seed": 42},
-        "sources": {"t": {"type": "file", "format": src_fmt, "path": str(src)}},
+        "sources": {"t": file_source(src, src_fmt)},
         "tables": [
             {
                 "name": "t",

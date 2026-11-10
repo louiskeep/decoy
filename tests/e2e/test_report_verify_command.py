@@ -26,6 +26,7 @@ from typer.testing import CliRunner
 
 from decoy.__main__ import app
 from decoy.cli.evidence import build_manifest
+from tests.csv_sources import csv_source
 
 runner = CliRunner()
 
@@ -39,7 +40,7 @@ def _minimal_config(src_path: Path, out_path: Path) -> dict:
         "version": 2,
         "global_settings": {"seed": 42},
         "sources": {
-            "customers": {"type": "file", "format": "csv", "path": str(src_path)},
+            "customers": csv_source(src_path),
         },
         "tables": [
             {

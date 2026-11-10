@@ -20,6 +20,7 @@ from typer.testing import CliRunner
 
 from decoy.__main__ import app
 from decoy.cli.exit_codes import EXIT_USAGE
+from tests.csv_sources import csv_source
 from tests.keyed_secret import TEST_MASK_SECRET_REF, with_mask_secret
 
 # Keyed strategies need an admitted mask secret (engine 0.17.0); see tests/keyed_secret.py.
@@ -119,7 +120,7 @@ def _pipeline(tmp_path: Path, *, seed: int = 42) -> Path:
     cfg = {
         "version": 2,
         "global_settings": {"seed": seed, "mask_secret_ref": TEST_MASK_SECRET_REF},
-        "sources": {"accounts": {"type": "file", "format": "csv", "path": str(src)}},
+        "sources": {"accounts": csv_source(src)},
         "tables": [
             {
                 "name": "accounts",
@@ -240,11 +241,7 @@ class TestUnmaskErrors:
                 ],
             }
         )
-        cfg["sources"]["orders"] = {
-            "type": "file",
-            "format": "csv",
-            "path": str(tmp_path / "orders.csv"),
-        }
+        cfg["sources"]["orders"] = csv_source(tmp_path / "orders.csv")
         cfg["targets"]["orders"] = {
             "type": "file",
             "format": "csv",
@@ -292,7 +289,7 @@ class TestUnmaskVaultError:
         cfg = {
             "version": 2,
             "global_settings": {"seed": 42, "mask_secret_ref": TEST_MASK_SECRET_REF},
-            "sources": {"accounts": {"type": "file", "format": "csv", "path": str(src)}},
+            "sources": {"accounts": csv_source(src)},
             "tables": [
                 {
                     "name": "accounts",
@@ -550,7 +547,7 @@ def _multitable_cfg(tmp_path: Path) -> tuple[Path, Path]:
     cfg = {
         "version": 2,
         "global_settings": {"seed": 42, "mask_secret_ref": TEST_MASK_SECRET_REF},
-        "sources": {"accounts": {"type": "file", "format": "csv", "path": str(src)}},
+        "sources": {"accounts": csv_source(src)},
         "tables": [
             {
                 "name": "accounts",
@@ -620,9 +617,7 @@ class TestUnmaskSummaryIsCompleteCensus:
             return {
                 "version": 2,
                 "global_settings": {"seed": 42, "mask_secret_ref": TEST_MASK_SECRET_REF},
-                "sources": {
-                    "accounts": {"type": "file", "format": "csv", "path": str(src)}
-                },
+                "sources": {"accounts": csv_source(src)},
                 "tables": [
                     {
                         "name": "accounts",

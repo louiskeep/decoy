@@ -31,6 +31,7 @@ from decoy.cli.gate import (
     run_gate,
 )
 from decoy.ui.output import OutputMode
+from tests.csv_sources import csv_source
 from tests.e2e.test_run_preflight_capacity_parity import _fanin_config
 from tests.keyed_secret import TEST_MASK_SECRET_REF
 
@@ -50,7 +51,7 @@ def _cfg(tmp_path: Path, **over: Any) -> dict[str, Any]:
     cfg: dict[str, Any] = {
         "version": 2,
         "global_settings": {"seed": 42},
-        "sources": {"customers": {"type": "file", "format": "csv", "path": str(src)}},
+        "sources": {"customers": csv_source(src)},
         "tables": [{"name": "customers", "columns": [{"name": "email", "strategy": "redact"}]}],
         "targets": {
             "customers": {"type": "file", "format": "csv", "path": str(tmp_path / "out.csv")}

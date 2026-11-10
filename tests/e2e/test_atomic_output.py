@@ -22,6 +22,7 @@ from typer.testing import CliRunner
 
 import decoy
 from decoy.__main__ import app
+from tests.csv_sources import file_source
 from tests.keyed_secret import TEST_MASK_SECRET_REF
 
 pytestmark = pytest.mark.usefixtures("mask_secret")
@@ -75,9 +76,7 @@ def _config(
     cfg = {
         "version": 2,
         "global_settings": {"seed": 42, "mask_secret_ref": TEST_MASK_SECRET_REF},
-        "sources": {
-            "people": {"type": "file", "format": src.suffix.lstrip(".") or "csv", "path": str(src)}
-        },
+        "sources": {"people": file_source(src, src.suffix.lstrip(".") or "csv")},
         "tables": [{"name": "people", "columns": columns or _COLUMNS}],
         "targets": {"people": {"type": "file", "format": fmt, "path": str(tmp_path / out)}},
     }

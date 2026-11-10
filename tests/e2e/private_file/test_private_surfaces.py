@@ -19,6 +19,7 @@ import pytest
 import yaml
 
 from tests.ci_support import MANIFEST_NAME, ci_manifest, make_repo, write, write_clean_pipeline
+from tests.csv_sources import csv_source
 from tests.keyed_secret import TEST_MASK_SECRET_REF, secret_env
 
 pytestmark = pytest.mark.skipif(os.name != "posix", reason="POSIX file modes")
@@ -60,7 +61,7 @@ def _config(
     cfg = {
         "version": 2,
         "global_settings": {"seed": 42, "mask_secret_ref": TEST_MASK_SECRET_REF},
-        "sources": {"people": {"type": "file", "format": "csv", "path": str(src)}},
+        "sources": {"people": csv_source(src)},
         "tables": [{"name": "people", "columns": columns}],
         "targets": {"people": {"type": "file", "format": "csv", "path": str(root / out)}},
     }

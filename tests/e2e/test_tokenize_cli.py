@@ -26,6 +26,7 @@ from typer.testing import CliRunner
 
 from decoy.__main__ import app
 from decoy.cli.exit_codes import EXIT_RUNTIME, EXIT_USAGE
+from tests.csv_sources import csv_source
 
 runner = CliRunner()
 
@@ -67,7 +68,7 @@ def _pipeline(
     cfg = {
         "version": 2,
         "global_settings": global_settings,
-        "sources": {"people": {"type": "file", "format": "csv", "path": str(src)}},
+        "sources": {"people": csv_source(src)},
         "tables": [{"name": "people", "columns": columns}],
         "targets": {
             "people": {"type": "file", "format": out_format, "path": str(tmp_path / out_name)}
@@ -209,7 +210,7 @@ class TestNamespaceDistinctness:
         cfg = {
             "version": 2,
             "global_settings": {"seed": 42, "mask_secret_ref": _mask_secret_ref(tmp_path)},
-            "sources": {"people": {"type": "file", "format": "csv", "path": str(src)}},
+            "sources": {"people": csv_source(src)},
             "tables": [{"name": "people", "columns": cols}],
             "targets": {
                 "people": {"type": "file", "format": "csv", "path": str(tmp_path / "out.csv")}
@@ -547,7 +548,7 @@ def _tokenize_two_columns(tmp_path: Path) -> tuple[Path, Path]:
     cfg = {
         "version": 2,
         "global_settings": {"seed": 42, "mask_secret_ref": _mask_secret_ref(tmp_path)},
-        "sources": {"people": {"type": "file", "format": "csv", "path": str(src)}},
+        "sources": {"people": csv_source(src)},
         "tables": [{"name": "people", "columns": cols}],
         "targets": {
             "people": {"type": "file", "format": "csv", "path": str(tmp_path / "tokenized.csv")}

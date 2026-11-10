@@ -20,6 +20,7 @@ import yaml
 from typer.testing import CliRunner
 
 from decoy.__main__ import app
+from tests.csv_sources import csv_source
 from tests.keyed_secret import TEST_MASK_SECRET_REF
 
 # Keyed strategies need an admitted mask secret (engine 0.17.0); see tests/keyed_secret.py.
@@ -52,7 +53,7 @@ def _mixed_cfg(tmp_path: Path, orders_csv: Path) -> dict:
         "version": 2,
         "global_settings": {"seed": 42, "mask_secret_ref": TEST_MASK_SECRET_REF},
         "sources": {
-            "orders": {"type": "file", "format": "csv", "path": str(orders_csv)},
+            "orders": csv_source(orders_csv),
         },
         "tables": [
             {
@@ -284,7 +285,7 @@ def _mixed_vault_cfg(tmp_path: Path, orders_csv: Path) -> dict:
         "version": 2,
         "global_settings": {"seed": 42, "mask_secret_ref": TEST_MASK_SECRET_REF},
         "sources": {
-            "orders": {"type": "file", "format": "csv", "path": str(orders_csv)},
+            "orders": csv_source(orders_csv),
         },
         "tables": [
             {

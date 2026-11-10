@@ -300,6 +300,7 @@ sources:
   data:
     type: file
     format: csv
+    has_header: true
     path: {input_path.as_posix()!r}
 
 tables:

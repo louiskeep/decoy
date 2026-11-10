@@ -25,6 +25,7 @@ from pathlib import Path
 import pandas as pd
 import pytest
 import yaml
+from tests.csv_sources import csv_source
 from typer.testing import CliRunner
 
 import decoy
@@ -66,7 +67,7 @@ def _mask_config_dict(source_path: Path, target_path: Path) -> dict:
         "version": 2,
         "global_settings": {"seed": 42},
         "sources": {
-            "customers": {"type": "file", "format": "csv", "path": str(source_path)},
+            "customers": csv_source(source_path),
         },
         "tables": [
             {
@@ -517,7 +518,7 @@ def test_mask_gcs_target_fails_closed_instead_of_dropping_output(
     sample_csv: Path, tmp_path: Path, no_cloud_extra: None, engine_must_not_run: None
 ):
     config = _single_table_config(
-        {"type": "file", "format": "csv", "path": str(sample_csv)},
+        csv_source(sample_csv),
         {"type": "gcs", "format": "csv", "bucket": "test-bucket", "object": "out.csv"},
     )
     with pytest.raises(decoy.UnsupportedCloudEndpointError) as excinfo:
