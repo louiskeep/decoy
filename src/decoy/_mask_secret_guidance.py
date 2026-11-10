@@ -46,6 +46,36 @@ API = (
     "config (one place, not both). See `decoy explain keys`."
 )
 
+# The installed engine predates keyed masking (no `keyprovider` module), so it would ignore a mask
+# secret and emit unkeyed output. One fixed text per surface, each naming its own remedy.
+_OLD_ENGINE_HEAD = (
+    "the installed decoy-engine is too old to honor it: it has no keyed-masking support, "
+    "so it would silently emit "
+)
+_OLD_ENGINE_TAIL = ". Upgrade decoy-engine to 0.4.0 or later."
+
+OLD_ENGINE_RUN = (
+    "a mask secret is configured (mask_secret_ref or --mask-secret) but "
+    + _OLD_ENGINE_HEAD
+    + "UNKEYED output"
+    + _OLD_ENGINE_TAIL
+    + " See `decoy explain keys`."
+)
+
+OLD_ENGINE_TOKENIZE = (
+    "a mask secret is configured but "
+    + _OLD_ENGINE_HEAD
+    + "UNKEYED (forgeable) tokens"
+    + _OLD_ENGINE_TAIL
+)
+
+OLD_ENGINE_API = (
+    "a mask secret is configured (mask_secret= or mask_secret_ref) but "
+    + _OLD_ENGINE_HEAD
+    + "UNKEYED output"
+    + _OLD_ENGINE_TAIL
+)
+
 INIT_HINT = (
     "this pipeline uses keyed strategies, so `decoy run` needs a mask secret: "
     "--mask-secret env:DECOY_MASK_SECRET (or file:/PATH), or "

@@ -262,14 +262,14 @@ def test_compile_json_envelopes_are_unchanged(tmp_path: Path, good_config: Path,
     )
     payload = _json.loads(bad.stdout)
     assert set(payload) == {"command", "config", "error", "status"}
-    assert payload["command"] == "compile explain"
+    assert payload["command"] == "validate compile"
     assert str(profile) in payload["error"]
 
     cfg = _non_mapping_config(tmp_path)
     flat = runner.invoke(app, ["validate", "compile", str(cfg), "--json"])
     payload = _json.loads(flat.stdout)
     assert set(payload) == {"command", "config", "error", "status"}
-    assert payload["command"] == "compile explain"
+    assert payload["command"] == "validate compile"
     assert str(cfg) in payload["config"] and str(cfg) in payload["error"]
 
 

@@ -31,6 +31,7 @@ import pyarrow as pa
 from decoy._atomic import staged_local_target, staged_private_target
 from decoy.cli._sources import resolve_path
 from decoy.cli.io._compression import csv_compression, is_archive_csv, split_compression
+from decoy.cli.io._layout import owning_run, placed_path, same_path
 
 if TYPE_CHECKING:
     import pandas as pd
@@ -199,13 +200,33 @@ def _unreadable(fmt: object, layout: object) -> TargetFormatError | None:
     return None
 
 
+def _is_declared_target(
+    path: Path, raw: str, base_dir: Path, pipeline: tuple[Path, str] | None
+) -> bool:
+    """True when `path` is the target declared as `raw`, at the old place or in a run folder."""
+    if same_path(path, resolve_path(raw, base_dir)):
+        return True
+    if pipeline is None:
+        return False
+    run = owning_run(path, *pipeline)
+    placed = placed_path(run, raw) if run is not None else None
+    return placed is not None and same_path(path, placed)
+
+
 def input_format(
-    config_dict: Mapping[str, Any], table: str, path: Path, base_dir: Path
+    config_dict: Mapping[str, Any],
+    table: str,
+    path: Path,
+    base_dir: Path,
+    pipeline: tuple[Path, str] | None = None,
 ) -> tuple[str, Mapping[str, Any] | None]:
     """The format and layout to read a CLI-written file in, for `detokenize` and `unmask`.
 
     When `path` is the table's file target (both sides fully resolved), the target's declared
     format and layout apply, and an undeclared or unknown format is refused before any read.
+    The target is the file at the old place (declared path against `base_dir`) or, when
+    `pipeline` (project root, pipeline name) is given, the same declared path inside a run
+    folder of that pipeline.
     Any other path has no declaration and takes the suffix rule.
     """
     targets = config_dict.get("targets")
@@ -214,7 +235,7 @@ def input_format(
         isinstance(entry, Mapping)
         and entry.get("type", "file") == "file"
         and isinstance(entry.get("path"), str)
-        and path.resolve() == resolve_path(entry["path"], base_dir).resolve()
+        and _is_declared_target(path, entry["path"], base_dir, pipeline)
     ):
         layout = entry.get("layout")
         error = _unreadable(entry.get("format"), layout)
@@ -398,15 +419,19 @@ def write_private_table(
     _write_table(data, fmt, path, layout, staged_private_target)
 
 
-def write_targets(config_dict: dict, outputs: Mapping[str, pa.Table], base_dir: Path) -> None:
+def write_targets(
+    config_dict: dict, outputs: Mapping[str, pa.Table], base_dir: Path
+) -> dict[str, Path]:
     """Write each declared file target from `outputs`, by its declared format.
 
     Callers run `check_target_formats` first so a contradiction is refused before the
-    first table is written; this resolves each entry as it iterates.
+    first table is written; this resolves each entry as it iterates. Returns table name to
+    path for the files actually published: a path is added only after its write returns.
     """
+    published: dict[str, Path] = {}
     targets = config_dict.get("targets") or {}
     if not isinstance(targets, dict):
-        return
+        return published
     for table_name, entry in targets.items():
         if not isinstance(entry, dict):
             continue
@@ -420,6 +445,8 @@ def write_targets(config_dict: dict, outputs: Mapping[str, pa.Table], base_dir: 
         path = resolve_path(raw_path, base_dir)
         path.parent.mkdir(parents=True, exist_ok=True)
         write_table(table, fmt, path, entry.get("layout"))
+        published[str(table_name)] = path
+    return published
 
 
 def write_chunked_output(
@@ -428,12 +455,13 @@ def write_chunked_output(
     out_path: Path,
     *,
     empty_schema: Callable[[], pa.Schema] | None,
-) -> None:
+) -> Path | None:
     """Stream masked chunks to `out_path` in `fmt`. The only chunked writer in the CLI.
 
     The chunks go to a staged temp beside `out_path`, published only after the last one, so
     a failure after chunk one keeps the old output. The first chunk is read before staging:
     an empty source that writes nothing leaves the old output alone and makes no temp.
+    Returns `out_path` once the file is published, or None when nothing was published.
     """
     import pyarrow.parquet as pq
 
@@ -444,7 +472,7 @@ def write_chunked_output(
     schema = None
     if first is _EXHAUSTED:
         if fmt == "csv" or empty_schema is None:
-            return
+            return None
         # Empty parquet source: emit a valid zero-row file with the source schema, matching
         # what a plain run writes. Read before staging so a schema error leaves no temp.
         schema = empty_schema()
@@ -455,13 +483,30 @@ def write_chunked_output(
             with pq.ParquetWriter(str(tmp), schema) as writer:
                 for masked in () if first is _EXHAUSTED else itertools.chain((first,), chunks):
                     writer.write_table(masked)
-            return
-        compression = csv_compression(out_path)
-        for index, masked in enumerate(itertools.chain((first,), chunks)):
-            masked.to_pandas().to_csv(
-                tmp,
-                index=False,
-                header=index == 0,
-                mode="a" if index else "w",
-                compression=compression,
-            )
+        else:
+            compression = csv_compression(out_path)
+            for index, masked in enumerate(itertools.chain((first,), chunks)):
+                masked.to_pandas().to_csv(
+                    tmp,
+                    index=False,
+                    header=index == 0,
+                    mode="a" if index else "w",
+                    compression=compression,
+                )
+    # Reached only after the staging context published the file.
+    return out_path
+
+
+def table_records(
+    rows: Mapping[str, int | None], paths: Mapping[str, Path | None]
+) -> list[dict[str, Any]]:
+    """One `{name, rows, path}` record per table for the run summary.
+
+    `rows` is None when the writer streamed and never counted; `path` is None when no file
+    was published. Neither is ever inferred from the config.
+    """
+    return [
+        {"name": name, "rows": count, "path": str(path) if path is not None else None}
+        for name, count in rows.items()
+        for path in (paths.get(name),)
+    ]

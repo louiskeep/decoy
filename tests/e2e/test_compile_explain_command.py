@@ -166,7 +166,7 @@ def test_compile_explain_json_structure(tmp_path: Path) -> None:
     result = runner.invoke(app, ["validate", "compile", str(config_path), "--explain", "--json"])
     assert result.exit_code == 0, result.output
     payload = _json.loads(result.stdout)
-    assert payload["command"] == "compile explain"
+    assert payload["command"] == "validate compile"
     assert payload["status"] == "ok"
     assert "tables" in payload
     assert len(payload["tables"]) == 1

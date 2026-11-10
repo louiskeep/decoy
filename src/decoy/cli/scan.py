@@ -849,7 +849,14 @@ def _scan(
         )
     else:
         facts.append(("PII candidates", "none detected"))
-    facts.append(("Reid risk", f"{profile.reid_risk_score}"))
+    # The score is 100/k: say the scale and the k behind it.
+    k = profile.k_anonymity
+    facts.append(
+        (
+            "Reid risk",
+            f"{profile.reid_risk_score:.1f} / 100 (k={k if k is not None else 'n/a'})",
+        )
+    )
     if profile.quasi_identifier_groups:
         qi = ", ".join("(" + " + ".join(g) + ")" for g in profile.quasi_identifier_groups)
         facts.append(("Quasi-identifiers", qi))
@@ -1348,7 +1355,7 @@ def _diff(
     ]
     if risk_delta is not None:
         sign = "+" if risk_delta > 0 else ""
-        facts.append(("Reid risk delta", f"{sign}{risk_delta:.2f}"))
+        facts.append(("Reid risk delta", f"{sign}{risk_delta:.2f} points"))
     if qi_added or qi_removed:
         facts.append(("QI groups", f"+{len(qi_added)} -{len(qi_removed)}"))
 

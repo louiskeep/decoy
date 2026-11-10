@@ -12,8 +12,9 @@ so a new copy inside an allowlisted file is also red.
 Named limits, all invisible to a syntax walk: a call through a runtime-bound name
 (`getattr(os, "replace")`), alias by assignment (`mv = os.replace; mv(a, b)`), a starred
 argument list on `.replace(*args)`, and `from os import *`.
-Size 4 is today's baseline. L1b.1 left 5 entries, after `cli/ci.py` and `ci/debug.py` moved
-onto `_atomic.write_atomic`; X7c S2 then moved `api.py` onto `_private_file`. Entries leave this list when their file moves onto the writer;
+Size 3 is today's baseline. L1b.1 left 5 entries, after `cli/ci.py` and `ci/debug.py` moved
+onto `_atomic.write_atomic`; X7c S2 then moved `api.py` onto `_private_file`; PROJECT-LAYOUT P1a
+moved the distribution link swap onto `_atomic.replace_symlink`. Entries leave this list when their file moves onto the writer;
 none may be added without a reviewed change (shrink-only ratchet,
 tests/sentry/baselines/atomic-writer-allow.json, which also records each entry's site count).
 """
@@ -63,11 +64,6 @@ ALLOWLIST: tuple[AllowedInline, ...] = (
         "Moves a staged runtime directory into versions/ and writes the 0755 launcher shim "
         "(temp file, chmod, replace); a directory move and an executable-mode write, not a "
         "0600 data write.",
-    ),
-    AllowedInline(
-        "distribution/layout.py",
-        1,
-        "Flips the current-version symlink under the install lock; not a file write.",
     ),
     AllowedInline(
         "distribution/first_install.py",
@@ -172,9 +168,9 @@ def test_no_inline_atomic_write_outside_the_choke_point() -> None:
     assert findings(scan(SRC)) == []
 
 
-def test_allowlist_baseline_is_four_with_reasons() -> None:
-    assert len(ALLOWLIST) == 4
-    assert len({e.file for e in ALLOWLIST}) == 4
+def test_allowlist_baseline_is_three_with_reasons() -> None:
+    assert len(ALLOWLIST) == 3
+    assert len({e.file for e in ALLOWLIST}) == 3
     assert all(len(e.reason.strip()) >= 15 and e.sites > 0 for e in ALLOWLIST)
 
 

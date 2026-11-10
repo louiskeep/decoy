@@ -139,13 +139,7 @@ def _apply_mask_secret(config_dict: dict, mask_secret: str | None) -> None:
         try:
             import decoy_engine.keyprovider  # noqa: F401
         except ImportError as exc:
-            raise MaskSecretConfigError(
-                "a mask secret is configured (mask_secret_ref / "
-                "mask_secret=) but the installed decoy-engine is too old "
-                "to honor it -- it has no DE-02 keyprovider, so it would "
-                "silently emit UNKEYED output. Upgrade to "
-                "decoy-engine>=0.4.0."
-            ) from exc
+            raise MaskSecretConfigError(_mask_secret_guidance.OLD_ENGINE_API) from exc
 
 
 def _build_generation_resolver(master_key: str | bytes | None, key_label: str | None):

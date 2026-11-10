@@ -113,6 +113,9 @@ See also: decoy validate, decoy run, decoy report verify, decoy explain exit-cod
 
 # The capacity check's name; `decoy.cli.gate` keys its chunked-route rule on it.
 CAPACITY_CHECK = "capacity.out_of_core_fk"
+# A plan the engine cannot compile, found while pricing capacity. Not CAPACITY_CHECK, so the
+# chunked-route downgrade leaves it a FAIL.
+PLAN_UNCOMPILABLE_CHECK = "capacity.plan_uncompilable"
 
 
 @dataclass
@@ -384,23 +387,16 @@ def _check_capacity(raw: dict[str, Any], config_path: Path, acc: _PreflightAccum
     `estimate_job_capacity` degrades to "not checked" rather than an
     ImportError -- the CLI's engine floor is >=0.6.0 either way.
 
-    R3 (Codex P1-2): an UNEXPECTED exception from `estimate_job_capacity`
-    (a genuine engine defect -- a compile bug, ...) is NOT caught here.
-    `estimate_job_capacity` itself only raises for a real defect (its own R3
-    contract) or returns a typed verdict, including `UNKNOWN` for EXPECTED
-    indeterminacy (an undetectable memory ceiling, an unpriceable CSV row
-    count) -- so an exception reaching this call site is never "capacity
-    merely unknown", and folding it into a WARN here would make `decoy
-    preflight` report a false pass on a real defect. Only the THREE guarded
+    R3 (Codex P1-2): `estimate_job_capacity` returns a typed verdict
+    (`UNKNOWN` for expected indeterminacy) or raises. A plan the engine
+    rejects (`PlanCompileError`) becomes a `capacity.plan_uncompilable` FAIL;
+    any other exception is a real defect and propagates, since folding it
+    into a WARN would report a false pass. Only the THREE guarded
     early-returns below (capability-detect, non-file sources, a source
-    already known missing/unreadable from disk) degrade this section
-    without running the estimator at all; once it runs, its exceptions
-    propagate and its `UNKNOWN` verdict renders as "not checked". The third
-    guard exists because a missing source is ALSO one of `estimate_job_
-    capacity`'s own documented propagating cases ("an unreadable source") --
-    without it, a job Step 4 (`_check_source_files`) already flagged as
-    missing would reach the estimator a second time and crash the whole
-    command before any finding (including Step 4's own) is ever printed.
+    already known missing/unreadable from disk) skip the estimator. The third
+    exists because a missing source is also one of the estimator's documented
+    propagating cases: without it, a source Step 4 (`_check_source_files`)
+    already flagged would crash the command before any finding is printed.
 
     Scope + posture: this section reads FILE-source metadata (parquet footer /
     a bounded local sample) to size the job. To keep preflight local and
@@ -443,6 +439,7 @@ def _check_capacity(raw: dict[str, Any], config_path: Path, acc: _PreflightAccum
         return
 
     from decoy_engine import CapacityVerdict, ExecutionError, PipelineConfig
+    from decoy_engine.plan import PlanCompileError
 
     # The ONE narrow catch here (R3): a source that is present but corrupt /
     # not-the-declared-format passes the on-disk guard above (which only tests
@@ -479,6 +476,23 @@ def _check_capacity(raw: dict[str, Any], config_path: Path, acc: _PreflightAccum
         acc.add_fail(
             name="capacity.source_unreadable",
             message=f"Cannot estimate capacity -- source not parsed ({type(exc.__cause__).__name__})",
+            code=exc.code,
+        )
+        return
+    except PlanCompileError as exc:
+        # Own check name so CHUNKED's CAPACITY_CHECK downgrade cannot make it a warning.
+        # Only the structured code and path are shown, never the engine's message text.
+        from decoy_engine.relationships import NamespaceConfigError
+
+        hint = (
+            "Run `decoy explain pipeline` for how namespaces are resolved."
+            if isinstance(exc, NamespaceConfigError)
+            else "Run `decoy validate compile` for the compile error."
+        )
+        acc.add_fail(
+            name=PLAN_UNCOMPILABLE_CHECK,
+            message=f"Cannot estimate capacity -- the plan does not compile ({exc.code}). {hint}",
+            location=exc.path,
             code=exc.code,
         )
         return
@@ -792,7 +806,7 @@ def _emit_preflight_result(
         if status == "ok" and fail_on_warning and acc.has_warnings:
             status = "warn"
         payload: dict[str, Any] = {
-            "command": "preflight",
+            "command": "validate preflight",
             "status": status,
             "config": config_str,
             "checks": acc.to_dicts(),

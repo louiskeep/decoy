@@ -240,7 +240,7 @@ exclude = [".pytest_cache", "__pycache__", "logs", "docs/_build"]
 # Focused selection: core pyflakes/pycodestyle (E/F), import order (I),
 # bugbear (B), and Ruff-native rules (RUF, which catches ambiguous unicode
 # including em-dashes per the no-em-dash repo rule).
-select = ["E", "F", "I", "B", "RUF"]
+select = ["E", "F", "I", "B", "RUF", "TID252"]
 ignore = [
     "E501",   # line-too-long: owned by ruff format; not gated here yet
     "B008",   # typer.Option/Argument in defaults: idiomatic Typer pattern
@@ -249,6 +249,10 @@ ignore = [
     "RUF012", # mutable-class-default: false positives on dataclass-like defaults
     "RUF013", # implicit-Optional: cleanup as touched; high-volume
 ]
+
+[tool.ruff.lint.flake8-tidy-imports]
+# The AST sentries (`tests/sentry/io_policy/_calls.py`) resolve absolute imports only.
+ban-relative-imports = "all"
 
 [tool.ruff.lint.per-file-ignores]
 # Tests can use assert and have lower naming / style bars.

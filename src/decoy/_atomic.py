@@ -30,8 +30,11 @@ allowlist):
 * `CREATE_ONCE` never replaces a file. Where the mount offers no atomic no-clobber
   move, it fails with `atomic_noclobber_unsupported` instead of checking then replacing.
 
+* `replace_symlink` is the one link swap: a temp link beside the target, then `os.replace`.
+  It replaces only a symlink (or nothing), never a regular file or directory.
+
 Not covered: the vault commit in `cli/run.py`, which needs a hard-link backup and rollback,
-and the install-directory swaps in `distribution/`. Both are allowlisted with reasons.
+and the install-directory moves in `distribution/`. Both are allowlisted with reasons.
 """
 
 from __future__ import annotations
@@ -41,6 +44,7 @@ import enum
 import errno
 import os
 import re
+import secrets
 import stat
 import time
 from collections.abc import Callable, Iterator
@@ -64,6 +68,7 @@ __all__ = [
     "WriteMode",
     "describe",
     "fsync_directory",
+    "replace_symlink",
     "staged_local_target",
     "staged_private_target",
     "write_atomic",
@@ -452,6 +457,40 @@ def _retry_on_windows(move: Callable[[], None]) -> None:
                 raise
             _sleep(delay)
             delay = min(delay * 2, _RETRY_CAP_SECONDS)
+
+
+def replace_symlink(link: Path, target: str) -> None:
+    """Point `link` at `target` (stored as given, so pass a relative one) in one step.
+
+    A symlink cannot be retargeted in place, so the new link is made under a temporary name
+    in the same folder and `os.replace`d over the old one: a reader sees the old target or
+    the new one, never a missing link. Only a symlink (or nothing) is replaced; a regular
+    file or folder in the way is refused so a pointer swap cannot clobber user data. Raises
+    `AtomicWriteError` (no path, no cause) and leaves no temp link behind.
+    """
+    failed = False
+    failed_errno: int | None = None
+    try:
+        if not stat.S_ISLNK(os.lstat(link).st_mode):
+            failed = True
+    except FileNotFoundError:
+        pass
+    except OSError as exc:
+        failed, failed_errno = True, exc.errno
+    # Raised outside the except blocks so an OSError (its text names the path) is not kept as
+    # `__context__`.
+    if failed:
+        raise AtomicWriteError(ATOMIC_WRITE_FAILED, failed_errno)
+    tmp = link.with_name(f".{link.name}.decoy-{secrets.token_hex(6)}.tmp")
+    try:
+        os.symlink(target, tmp)
+        _retry_on_windows(lambda: os.replace(tmp, link))
+    except OSError as exc:
+        failed, failed_errno = True, exc.errno
+        with contextlib.suppress(OSError):
+            os.unlink(tmp)
+    if failed:
+        raise AtomicWriteError(ATOMIC_WRITE_FAILED, failed_errno)
 
 
 def fsync_directory(directory: Path) -> None:

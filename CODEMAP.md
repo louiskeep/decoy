@@ -55,10 +55,13 @@ First row of the layout map the LAYOUT slice completes (one line per kind of mod
 | Shared cross-suite test helpers (constants and lookups used by more than one test folder) | `tests/` root, one module per concern | `keyed_secret.py`, `dp_env.py` |
 | Repository policy sentries and their scanners (CI scan helpers shared with the engine in the `ci_scan/` sub-package) | `tests/sentry/` | `_ratchet.py`, `_ci_lock_scan.py`, `test_ci_lock_installs.py`; shared CI scan helpers in `tests/sentry/ci_scan/` |
 | I/O policy sentries (reads and writes) and their shared call scanner | `tests/sentry/io_policy/` | `_calls.py`, `test_target_writes.py` |
+| User-facing CLI text and crash-handling sentries (new ones go here, not the flat `tests/sentry/`; `io_policy/` is the adjacent pattern) | `tests/sentry/cli_text/` | `test_no_traceback_escape.py` |
 | Task-oriented user guides (one folder per topic, with a `README.md` index) | `docs/guides/<topic>/` | `docs/guides/shape-and-privacy/` |
 | Build and gate evidence records | `docs/records/` | `2026-11-06-ci-l1-build.md` |
 | CLI format contract tests (new ones go in these named folders, not the flat `tests/e2e/` and `tests/unit/`) | `tests/e2e/cli_fmt/`, `tests/unit/cli_fmt/` | `test_target_format_dispatch.py`, `test_targets_format.py` |
 | Private-file contract tests (new ones go in these named folders, not the flat `tests/e2e/` and `tests/unit/`) | `tests/unit/private_file/`, `tests/e2e/private_file/` | `test_private_file.py` |
+| First-user QA item tests, grouped by behavior (new ones go here, not the flat `tests/e2e/`; `cli_fmt/` is the adjacent pattern) | `tests/e2e/first_user/` | `test_items_text.py`, `test_items_reports.py`, `test_items_preflight.py` |
+| Shared first-user QA fixture (patients and visits CSVs plus two pipelines; copy it to `tmp_path`, never edit in place) | `tests/fixtures/qa_first_user/` | `patients.csv`, `pipeline_no_namespace.yaml` |
 
 ## Where Do I Find...
 

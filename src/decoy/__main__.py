@@ -5,7 +5,13 @@ The Typer app is exported as `app` so the project script in pyproject.toml
 through `if __name__ == "__main__":`.
 """
 
+import copy
+import errno
+import os
+from typing import Any
+
 import typer
+from typer.core import TyperGroup
 
 from decoy import __version__
 from decoy.cli.ci import ci_app
@@ -36,6 +42,8 @@ from decoy.cli.unmask import unmask as unmask_command
 from decoy.cli.upgrade import UPGRADE_EPILOG
 from decoy.cli.upgrade import upgrade as upgrade_command
 from decoy.cli.validate import validate_app
+from decoy.ui.output import print_traceback, setup_output
+from decoy.ui.theme import error, hint
 
 # Quick-start hints embedded in the root help. Picked up by Typer's
 # default formatter; the `decoy info` command renders the same idea
@@ -67,11 +75,101 @@ Try one of:
 Run `decoy --install-completion` to enable shell tab completion.
 """
 
+# Typer's usage-error base (bad flag, unknown command, BadParameter), taken from a public
+# export so the guard never imports Typer's bundled Click package.
+_USAGE_ERROR = typer.BadParameter.__base__
+
+# Exceptions Click and Typer already turn into a clean exit. The guard must not touch them.
+_PASS_THROUGH = (typer.Exit, typer.Abort, _USAGE_ERROR, EOFError)
+
+
+_SEEN_CTXS = "decoy.guard.contexts"
+
+
+def _record_contexts(cmd: Any) -> Any:
+    """Return a shallow copy of `cmd` that records every context Click builds for it.
+
+    The crash guard reads `--verbose` from what Click parsed, never from raw tokens: after
+    `--` the same text is a positional value, and an option value can equal `-v`. `ctx.meta`
+    is shared down the context chain, so one list collects the root and every sub-command.
+    """
+    wrapped = copy.copy(cmd)
+    # Bound to the copy, not to `cmd`: the context Click builds must point at the copy so
+    # its `resolve_command` (below) runs for nested groups too. Binding to the original
+    # would make Click invoke the original group and skip every deeper recording.
+    original = type(cmd).make_context.__get__(wrapped)
+
+    def make_context(info_name: Any, args: Any, parent: Any = None, **extra: Any) -> Any:
+        sub = original(info_name, args, parent=parent, **extra)
+        sub.meta.setdefault(_SEEN_CTXS, []).append(sub)
+        return sub
+
+    wrapped.make_context = make_context
+    if isinstance(cmd, TyperGroup):
+        inner = type(cmd).resolve_command.__get__(wrapped)
+
+        def resolve_command(ctx: Any, args: list[str]) -> Any:
+            name, found, rest = inner(ctx, args)
+            return name, _record_contexts(found) if found is not None else found, rest
+
+        wrapped.resolve_command = resolve_command
+    return wrapped
+
+
+def _parsed_verbose(ctx: Any) -> bool:
+    # A crash before parsing finished leaves no parsed value, which counts as not verbose.
+    seen = ctx.meta.get(_SEEN_CTXS, [])
+    return any(bool(c.params.get("verbose")) for c in seen)
+
+
+class _GuardedGroup(TyperGroup):
+    """Root group that keeps a Python traceback from reaching the user.
+
+    An unexpected `Exception` from any command prints `error: internal error (<ClassName>)`
+    and exits 1. `--verbose` adds the traceback; `DECOY_DEBUG=1` re-raises untouched (the
+    test suite sets it). `KeyboardInterrupt` and `SystemExit` are not `Exception`s and go to
+    Click as before. A closed pipe (EPIPE) also goes to Click; every other `OSError` is a crash.
+    """
+
+    def resolve_command(self, ctx: Any, args: list[str]) -> Any:
+        name, cmd, rest = super().resolve_command(ctx, args)
+        return name, _record_contexts(cmd) if cmd is not None else cmd, rest
+
+    def invoke(self, ctx: Any) -> Any:
+        debug = os.environ.get("DECOY_DEBUG") == "1"
+        try:
+            return super().invoke(ctx)
+        except _PASS_THROUGH:
+            raise
+        except Exception as exc:
+            if isinstance(exc, OSError) and exc.errno == errno.EPIPE:
+                raise
+            if debug:
+                raise
+            name = type(exc).__name__
+            verbose = _parsed_verbose(ctx)
+            state = setup_output(json_=False, quiet=False, verbose=verbose)
+            state.err_console.print(error("error:"), f"internal error ({name})")
+            state.err_console.print(
+                " ", hint("hint:"), "rerun with --verbose for the full traceback."
+            )
+            if verbose:
+                state.err_console.print(
+                    hint("(--verbose: traceback below; diagnostic output may contain row data)")
+                )
+                print_traceback(state)
+        # Raised outside the `except` block so the safe exit carries neither the original
+        # exception as __cause__ nor as __context__.
+        raise typer.Exit(1)
+
+
 app = typer.Typer(
     name="decoy",
+    cls=_GuardedGroup,
     help=_ROOT_HELP,
     no_args_is_help=True,
     add_completion=True,
+    pretty_exceptions_enable=False,
 )
 
 
@@ -135,7 +233,9 @@ def _root(
     # rollback precede any network), and an unresolved placeholder key means this build
     # cannot act on a notice, so the startup probe never runs ahead of either.
     _update_check.maybe_print_notice(
-        suppress=no_update_check or ctx.invoked_subcommand in _NO_NOTICE_COMMANDS or _key_unresolved()
+        suppress=no_update_check
+        or ctx.invoked_subcommand in _NO_NOTICE_COMMANDS
+        or _key_unresolved()
     )
 
 

@@ -17,13 +17,16 @@ POSIX only: the mode check is skipped on Windows, where these bits do not descri
 
 from __future__ import annotations
 
+import ast
 import json
 import os
+from collections.abc import Mapping
 from pathlib import Path
 
 import pandas as pd
 import pytest
 import yaml
+from tests.sentry.io_policy._calls import sites
 from typer.testing import CliRunner
 
 from decoy import _mask_secret
@@ -93,10 +96,72 @@ def _argv(surface: str, root: Path, ref: str, written: tuple[Path, Path] | None)
     if surface == "unmask":
         out = root / "unmasked.csv"
         return ["unmask", str(cfg), str(masked), "--vault", str(vault), "--output", str(out)]
-    return ["report", "vault", str(vault), "--config", str(cfg)]
+    if surface == "report_vault":
+        return ["report", "vault", str(vault), "--config", str(cfg)]
+    raise AssertionError(f"no argv for surface {surface!r}")
 
 
-_CLI_SURFACES = ("run", "run_chunked", "tokenize", "unmask", "report_vault")
+# Each place that admits a `file:` secret (a call to `admitted_key_provider`, keyed
+# `file::function::ordinal` and derived from the AST below) to the surface ids that exercise it
+# through the CLI, or the test functions in this module that exercise it through `decoy.mask()`.
+ADMISSION_SITES: dict[str, tuple[str, ...]] = {
+    "cli/run.py::run::1": ("run", "run_chunked"),
+    "cli/tokenize.py::tokenize::1": ("tokenize",),
+    "cli/unmask.py::unmask::1": ("unmask",),
+    "cli/report.py::_vault::1": ("report_vault",),
+    "api.py::mask::1": (
+        "test_api_mask_refuses_an_unsafe_file",
+        "test_api_mask_reads_the_checked_descriptor",
+    ),
+}
+_SRC = Path(__file__).resolve().parents[2] / "src" / "decoy"
+_ADMITTER = "decoy._mask_secret.admitted_key_provider"
+
+
+def admission_sites(files: Mapping[str, str]) -> list[str]:
+    """Every `file::function::ordinal` that calls the admitting context manager."""
+    found: list[str] = []
+    for rel in sorted(files):
+        seen: dict[str, int] = {}
+        for site in sites(ast.parse(files[rel])):
+            if isinstance(site.node, ast.Call) and site.name == _ADMITTER:
+                n = seen[site.scope] = seen.get(site.scope, 0) + 1
+                found.append(f"{rel}::{site.scope}::{n}")
+    return found
+
+
+def _is_test_name(ident: str) -> bool:
+    return ident.startswith("test_")
+
+
+def admission_findings(
+    found: list[str], mapping: Mapping[str, tuple[str, ...]], module_source: str
+) -> list[str]:
+    """Derived sites against the mapping, and every mapped id against what handles it."""
+    tree = ast.parse(module_source)
+    tests = {n.name for n in tree.body if isinstance(n, ast.FunctionDef)}
+    argv = next(n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == "_argv")
+    handled = {
+        c.value
+        for cmp in ast.walk(argv)
+        if isinstance(cmp, ast.Compare)
+        for c in cmp.comparators
+        if isinstance(c, ast.Constant) and isinstance(c.value, str)
+    }
+    out = [f"admission site with no surface test: {k}" for k in sorted(set(found) - mapping.keys())]
+    out += [f"mapping key with no live site: {k}" for k in sorted(mapping.keys() - set(found))]
+    for key, ids in mapping.items():
+        for ident in ids:
+            if _is_test_name(ident) and ident not in tests:
+                out.append(f"{key}: no test function {ident}")
+            elif not _is_test_name(ident) and ident not in handled:
+                out.append(f"{key}: surface {ident} is not handled by _argv")
+    return out
+
+
+_CLI_SURFACES = tuple(
+    dict.fromkeys(i for ids in ADMISSION_SITES.values() for i in ids if not _is_test_name(i))
+)
 _NEEDS_VAULT = {"unmask", "report_vault"}
 
 
@@ -282,6 +347,74 @@ def test_api_mask_reads_the_checked_descriptor(
     assert key.read_text(encoding="utf-8") == OTHER_SECRET
     assert (tmp_path / "s.csv").read_bytes() == (tmp_path / "c.csv").read_bytes()
     assert swapped is not None and control is not None
+
+
+# --- the admission sites are derived from the AST (AT-S1) ---------------------------------
+
+
+def _live_sources() -> dict[str, str]:
+    return {
+        p.relative_to(_SRC).as_posix(): p.read_text(encoding="utf-8")
+        for p in sorted(_SRC.rglob("*.py"))
+    }
+
+
+def test_the_five_admission_sites_are_found_and_mapped() -> None:
+    found = admission_sites(_live_sources())
+    assert len(found) == 5
+    assert admission_findings(found, ADMISSION_SITES, Path(__file__).read_text("utf-8")) == []
+
+
+def test_a_sixth_admission_call_with_no_surface_test_fails() -> None:
+    files = {**_live_sources(), "cli/new.py": _SEEDED_ADMIT}
+    assert "cli/new.py::go::1" in admission_sites(files)
+    findings = admission_findings(
+        admission_sites(files), ADMISSION_SITES, Path(__file__).read_text("utf-8")
+    )
+    assert findings == ["admission site with no surface test: cli/new.py::go::1"]
+
+
+def test_a_second_call_in_an_already_mapped_function_fails() -> None:
+    files = _live_sources()
+    old = "with _mask_secret.admitted_key_provider(raw) as key_provider:"
+    assert old in files["cli/unmask.py"]
+    files["cli/unmask.py"] = files["cli/unmask.py"].replace(
+        old,
+        "with _mask_secret.admitted_key_provider(raw), "
+        "_mask_secret.admitted_key_provider(raw) as key_provider:",
+        1,
+    )
+    found = admission_sites(files)
+    assert "cli/unmask.py::unmask::2" in found
+    findings = admission_findings(found, ADMISSION_SITES, Path(__file__).read_text("utf-8"))
+    assert findings == ["admission site with no surface test: cli/unmask.py::unmask::2"]
+
+
+def test_a_mapped_id_that_is_not_handled_or_a_missing_test_fails() -> None:
+    source = Path(__file__).read_text("utf-8")
+    found = admission_sites(_live_sources())
+    bad = {**ADMISSION_SITES, "cli/unmask.py::unmask::1": ("unmask", "unmask_twice")}
+    assert admission_findings(found, bad, source) == [
+        "cli/unmask.py::unmask::1: surface unmask_twice is not handled by _argv"
+    ]
+    bad = {**ADMISSION_SITES, "api.py::mask::1": ("test_api_mask_is_gone",)}
+    assert admission_findings(found, bad, source) == [
+        "api.py::mask::1: no test function test_api_mask_is_gone"
+    ]
+
+
+def test_a_mapping_key_with_no_live_site_fails() -> None:
+    found = admission_sites(_live_sources())
+    stale = {**ADMISSION_SITES, "cli/gone.py::f::1": ("run",)}
+    assert admission_findings(found, stale, Path(__file__).read_text("utf-8")) == [
+        "mapping key with no live site: cli/gone.py::f::1"
+    ]
+
+
+_SEEDED_ADMIT = (
+    "from decoy import _mask_secret\n"
+    "def go(raw):\n    with _mask_secret.admitted_key_provider(raw):\n        pass\n"
+)
 
 
 # --- non-mapping YAML is guarded before the file check -------------------------------------

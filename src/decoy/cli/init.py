@@ -44,7 +44,7 @@ Examples:
     Skip the wizard; scaffold from the HIPAA template.
 
   decoy init customers.csv --output pipeline.yaml
-    Column-aware scaffolding (OSS.4c, 2026-06-02). Runs STORM against
+    Column-aware scaffolding. Runs STORM against
     the file, picks a starter strategy per column from the inference
     table, writes the YAML with `# REVIEW:` comments above every
     inferred entry. The user must read + edit before running.
@@ -298,8 +298,8 @@ def _build_scaffold_yaml(
 ) -> str:
     """Compose the full scaffold YAML body from the per-column inferences.
 
-    The header line cites OSS.4c and the input file so the user has the
-    provenance pinned at the top of the file. Path values are quoted so
+    The header names the input file so the user has the provenance pinned
+    at the top of the file. Path values are quoted so
     Windows paths with backslashes round-trip cleanly through YAML 1.1.
     """
     input_quoted = _yaml_quote(str(input_path))
@@ -312,7 +312,7 @@ def _build_scaffold_yaml(
         "# When you are satisfied with the choices, delete the REVIEW comments\n"
         "# and run `decoy validate config <this-file>` followed by `decoy run`.\n"
         "#\n"
-        "# V2 PipelineConfig shape per decoy-engine `decoy_engine.config._pipeline`.\n"
+        "# Run `decoy explain pipeline` for the V2 pipeline shape.\n"
     )
 
     delimiter_line = f"    delimiter: {_json.dumps(delimiter)}\n" if delimiter else ""
