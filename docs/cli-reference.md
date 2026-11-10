@@ -4,7 +4,7 @@ Decoy -- data masking and synthetic generation CLI.
 
 Try one of:
   decoy demo                       30-second end-to-end walkthrough.
-  decoy scan data.csv              Profile a dataset for PII and re-id risk (candidates as suggestions).
+  decoy scan data.csv --has-header Profile a dataset for PII and re-id risk (candidates as suggestions).
   decoy validate pipeline.yaml     Run the whole pre-run gate (config + compile + preflight).
   decoy validate compile pipeline.yaml --explain  Explain per-column strategy and compile decisions.
   decoy run pipeline.yaml          Run a masking or generation pipeline.
@@ -1079,7 +1079,7 @@ See also: decoy validate, decoy run, decoy report verify, decoy explain exit-cod
 
 ## `decoy scan`
 
-Profile a dataset for PII and re-identification risk. `decoy scan SOURCE` scans a CSV/Parquet/fixed-width file (shape, field stats, PII candidates as suggestions, quasi-identifiers, reid risk) and, with `--output scan.json`, saves the scan. Subcommands operate on a saved scan: list fields (`fields`), per-field detail (`show`), compare two scans (`diff`).
+Profile a dataset for PII and re-identification risk. `decoy scan SOURCES...` scans CSV/Parquet/fixed-width files, one table each (shape, field stats, PII candidates as suggestions, quasi-identifiers, reid risk) and, with `--output scan.json`, saves the value-free scan. Subcommands operate on a saved scan: list fields (`fields`), per-field detail (`show`), compare two scans (`diff`).
 
 **Usage**:
 
@@ -1093,20 +1093,27 @@ $ decoy scan [OPTIONS] COMMAND [ARGS]...
 
 Examples:
 
-  decoy scan data.csv
+  decoy scan data.csv --has-header
     Profile a CSV: row/field counts, PII candidates (as suggestions), reid risk.
+    A CSV always needs --has-header or --no-header: scan never guesses.
     Reads the first 10 000 rows by default (--rows 0 for a full scan).
 
-  decoy scan data.csv --show-fields
+  decoy scan customers.csv orders.csv --has-header
+    Scan several files in one run: one table each, named from the file stem.
+
+  decoy scan raw.csv --no-header --column-names id,name,email
+    A headerless CSV: row 1 is data, the names come from you.
+
+  decoy scan data.csv --has-header --show-fields
     Per-field detail: dtype, null_rate, distinct_count, PII candidate flag.
 
-  decoy scan data.csv --rows 50000 --strategy random
+  decoy scan data.csv --has-header --rows 50000 --strategy random
     Sample 50K random rows instead of the first 10 000.
 
-  decoy scan data.csv --output scan.json
-    Save the scan to scan.json, then: decoy scan fields scan.json
+  decoy scan data.csv --has-header --output scan.json
+    Save the value-free scan to scan.json, then: decoy scan fields scan.json
 
-  decoy scan data.csv --output -
+  decoy scan data.csv --has-header --output -
     Stream the scan JSON to stdout for downstream tooling.
 
   decoy scan records.fwf --layout layout.yaml
@@ -1117,8 +1124,8 @@ HONESTY: PII candidates are SUGGESTIONS based on STORM pattern matching. They
 are NOT authoritative classifications. You review each flagged field and decide
 what masking to apply. Decoy never auto-classifies PII.
 
-No raw cell values appear in the inline output. Field stats include dtype,
-null_rate, distinct_count only.
+No raw cell values appear in the inline output or in --output. Field stats
+include dtype, null_rate, distinct_count only.
 
 See also: decoy scan fields, decoy scan show, decoy scan diff,
   decoy explain storm, decoy validate.
@@ -1152,6 +1159,7 @@ $ decoy scan fields [OPTIONS] SCAN
 
 * `--pii [high|med|low|none]`: Filter to fields whose PII score falls in this bucket.
 * `--quasi`: Only fields that participate in any quasi-identifier group.
+* `--table TEXT`: Table to read when the saved scan holds more than one.
 * `--json`: Emit the filtered field list as JSON to stdout.
 * `-q, --quiet`: Suppress stdout. Errors still go to stderr.
 * `-v, --verbose`: Enable debug-level CLI logs on stderr.
@@ -1175,8 +1183,9 @@ See also: decoy scan, decoy scan show.
 
 Per-field detail from a saved scan.
 
-The drill-down view of one field: PII score + bucket, detector matches,
-sentinel hits, top values, quasi-identifier membership. Read-only.
+The drill-down view of one field: PII score + bucket, detector hits,
+quasi-identifier membership. Read-only. Counts and labels only: the top
+values and sentinel values of a legacy scan are never printed.
 
 **Usage**:
 
@@ -1191,6 +1200,7 @@ $ decoy scan show [OPTIONS] SCAN FIELD
 
 **Options**:
 
+* `--table TEXT`: Table to read when the saved scan holds more than one.
 * `--json`: Emit the full field detail as JSON to stdout.
 * `-q, --quiet`: Suppress stdout. Errors still go to stderr.
 * `-v, --verbose`: Enable debug-level CLI logs on stderr.
@@ -1199,12 +1209,12 @@ $ decoy scan show [OPTIONS] SCAN FIELD
 Examples:
 
   decoy scan show scan.json ssn
-    Per-field detail card -- PII score, detectors, sentinels, top values, QI.
+    Per-field detail card -- type, PII score, detectors, QI. No cell values.
 
   decoy scan show scan.json email --json
     Same data as a structured JSON envelope.
 
-  decoy scan data.csv --output - | decoy scan show - ssn
+  decoy scan data.csv --has-header --output - | decoy scan show - ssn
     Pipe a fresh scan straight in.
 
 See also: decoy scan, decoy scan fields.
@@ -1233,6 +1243,7 @@ $ decoy scan diff [OPTIONS] OLD NEW
 **Options**:
 
 * `--strict`: Exit 1 on drift -- any PII bucket bumped up, any new high-PII field, or any new quasi-identifier group.
+* `--table TEXT`: Table to read when the saved scan holds more than one.
 * `--json`: Emit the categorized diff as JSON to stdout.
 * `-q, --quiet`: Suppress stdout. Errors still go to stderr.
 * `-v, --verbose`: Enable debug-level CLI logs on stderr.

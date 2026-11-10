@@ -512,7 +512,7 @@ def test_init_and_scan_parquet_unchanged(tmp_path: Path) -> None:
     out = tmp_path / "pipeline.yaml"
     init = runner.invoke(app, ["init", str(src), "--output", str(out), "--yes"])
     assert init.exit_code == 0, init.output
-    scan = runner.invoke(app, ["scan", str(src), "--json"])
+    scan = runner.invoke(app, ["scan", str(src), "--has-header", "--json"])
     assert scan.exit_code == 0, scan.output
     texts = (out.read_text(encoding="utf-8"), scan.stdout)
     digests = [

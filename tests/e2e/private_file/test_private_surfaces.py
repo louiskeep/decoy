@@ -212,7 +212,7 @@ def test_fit_and_scan_outputs_are_private(tmp_path: Path) -> None:
     )
     snapshot, scan_out = tmp_path / "snapshot.json", tmp_path / "scan.json"
     _decoy(tmp_path, "fit", str(src), "-o", str(snapshot))
-    _decoy(tmp_path, "scan", str(src), "-o", str(scan_out))
+    _decoy(tmp_path, "scan", str(src), "--has-header", "-o", str(scan_out))
     assert _mode(snapshot) == 0o600
     assert _mode(scan_out) == 0o600
 

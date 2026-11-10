@@ -54,7 +54,7 @@ Decoy -- data masking and synthetic generation CLI.
 
 Try one of:
   decoy demo                       30-second end-to-end walkthrough.
-  decoy scan data.csv              Profile a dataset for PII and re-id risk (candidates as suggestions).
+  decoy scan data.csv --has-header Profile a dataset for PII and re-id risk (candidates as suggestions).
   decoy validate pipeline.yaml     Run the whole pre-run gate (config + compile + preflight).
   decoy validate compile pipeline.yaml --explain  Explain per-column strategy and compile decisions.
   decoy run pipeline.yaml          Run a masking or generation pipeline.

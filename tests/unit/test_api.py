@@ -432,14 +432,15 @@ def test_scan_invalid_data_type_raises():
 
 def test_scan_parity_with_cli_storm_analyze(sample_csv: Path, tmp_path: Path):
     scan_out = tmp_path / "scan.json"
-    result = runner.invoke(app, ["scan", str(sample_csv), "--output", str(scan_out)])
+    result = runner.invoke(app, ["scan", str(sample_csv), "--has-header", "--output", str(scan_out)])
     assert result.exit_code == 0, result.stdout
-    cli_profile = _json.loads(scan_out.read_text())
+    # --output holds the value-free scan-set/v1 core; its table is named from the file stem.
+    cli_profile = _json.loads(scan_out.read_text())["tables"][0]
 
     lib_profile = decoy.scan(sample_csv).to_dict()
 
     assert lib_profile["row_count"] == cli_profile["row_count"]
-    assert lib_profile["source_label"] == cli_profile["source_label"]
+    assert Path(lib_profile["source_label"]).stem == cli_profile["name"]
     assert lib_profile["reid_risk_score"] == cli_profile["reid_risk_score"]
     lib_fields = {f["name"]: f["pii_score"] for f in lib_profile["fields"]}
     cli_fields = {f["name"]: f["pii_score"] for f in cli_profile["fields"]}

@@ -168,9 +168,9 @@ def test_integrity_human_output_survives_markup_like_column_names(tmp_path: Path
 def test_scan_reid_risk_names_its_scale_and_k(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, k: int | None, shown: str
 ) -> None:
-    import decoy_engine
+    from decoy_engine.profiling import scan_set
 
-    real = decoy_engine.profile_columns
+    real = scan_set.profile_columns
 
     def profile_with_k(*args, **kwargs):
         profile = real(*args, **kwargs)
@@ -178,11 +178,12 @@ def test_scan_reid_risk_names_its_scale_and_k(
         profile.k_anonymity = k
         return profile
 
-    monkeypatch.setattr(decoy_engine, "profile_columns", profile_with_k)
+    # scan reaches the profiler through the engine scan module, so that is the seam.
+    monkeypatch.setattr(scan_set, "profile_columns", profile_with_k)
     src = tmp_path / "people.csv"
     pd.DataFrame({"zip": ["78701", "02110", "10001"], "age": [30, 41, 52]}).to_csv(src, index=False)
 
-    result = runner.invoke(app, ["scan", str(src)])
+    result = runner.invoke(app, ["scan", str(src), "--has-header"])
 
     assert result.exit_code == 0, result.output
     assert f"100.0 / 100 ({shown})" in _flat(result.stdout)

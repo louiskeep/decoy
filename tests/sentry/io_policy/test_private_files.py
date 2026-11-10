@@ -117,7 +117,7 @@ PRIVATE_CASES: dict[str, str] = {
     "cli/compile_explain.py::compile::write_local_target::1": _E2E
     + "test_compile_output_is_private_and_its_bytes_are_the_rendered_plan",
     "cli/fit.py::fit::write_local_target::1": _FIT_SCAN,
-    "cli/scan.py::_scan::write_local_target::1": _FIT_SCAN,
+    "cli/scanning/_multi.py::run_scan::write_local_target::1": _FIT_SCAN,
     "cli/report.py::_write_out::write_local_target::1": _REPORT,
     "cli/report.py::_render::write_local_target::1": _REPORT,
     "cli/run.py::run::write_local_target::1": _E2E + "test_run_vault_and_evidence_are_private",

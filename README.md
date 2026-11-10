@@ -113,7 +113,7 @@ declared under `targets:` in the YAML.
 | `decoy setup`                    | Set this box's max memory and threads (`~/.decoy/settings.json`); `--max-memory` and `--threads` override per run. |
 | `decoy tokenize <path>`          | Run the pipeline, replace each `strategy: tokenize` column with a deterministic surrogate, and record the mapping in a local vault. Needs a mask secret. |
 | `decoy detokenize <path> <file>` | Reverse a tokenized file from its vault. Fails closed on a missing/wrong vault or namespace. |
-| `decoy scan <path>`              | Profile a source file: distributions, PII candidates, cardinality hints.      |
+| `decoy scan <path>...`           | Profile source files, one table each: distributions, PII candidates, cardinality hints. A CSV needs `--has-header` or `--no-header`. |
 | `decoy report show <evidence.json>` | The post-run surface: show / verify / fidelity / integrity / diff / vault over run artifacts. |
 | `decoy ci check [manifest]`      | Run the checks in a `decoy-ci/v1` manifest and emit one value-free JSON, SARIF 2.1.0, or Markdown report. See [CI integration](#ci-integration). |
 | `decoy list templates`           | List the bundled pipeline templates.                                         |

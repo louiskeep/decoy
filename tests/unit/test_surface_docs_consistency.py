@@ -318,13 +318,15 @@ def _default_command_flags() -> dict[str, list[str]]:
 _DEFAULT_COMMAND_FLAGS = {
     "validate": ["<arg:config>", "--json", "--quiet/-q", "--verbose/-v", "--fail-on-warning"],
     "scan": [
-        "<arg:source>",
+        "<arg:sources>",
         "--show-fields",
         "--rows",
         "--strategy",
         "--output/-o",
         "--format",
         "--layout",
+        "--has-header/--no-header",
+        "--column-names",
         "--json",
         "--quiet/-q",
         "--verbose/-v",
