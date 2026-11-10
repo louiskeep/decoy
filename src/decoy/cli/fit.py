@@ -455,8 +455,8 @@ def fit(
     dp_kwargs: dict[str, Any] = {}
 
     if epsilon is not None:
-        from decoy_engine.quality.carriers import CarrierError
         from decoy_engine.quality import check_dp_fit_request
+        from decoy_engine.quality.carriers import CarrierError
         from decoy_engine.quality.dp import DpError, fit_dp_snapshot
         from decoy_engine.quality.dp_budget import DpBudgetError
         from decoy_engine.quality.dp_provenance import ProvenanceError

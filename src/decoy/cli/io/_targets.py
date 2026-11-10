@@ -353,24 +353,13 @@ def _csv_frame(table: pa.Table) -> pd.DataFrame:
     """The one Arrow-to-pandas step before a CSV write.
 
     `Table.to_pandas()` turns an integer column that holds a null into float64, which prints
-    `23.0` and loses `uint64` values above 2**53. Each Arrow integer type maps to its matching
-    pandas nullable dtype instead, so the cell text is the integer. Bool and every non-integer
-    type convert as before. Unlike `_coerce_int_columns` this never reads a layout: it keeps the
-    type the table already has.
+    `23.0` and loses `uint64` values above 2**53. The engine converter keeps each integer type
+    as its pandas nullable dtype, so the cell text is the integer. Unlike `_coerce_int_columns`
+    this never reads a layout: it keeps the type the table already has.
     """
-    import pandas as pd
+    from decoy_engine import generated_table_to_pandas
 
-    dtypes: dict[Any, Any] = {
-        pa.int8(): pd.Int8Dtype(),
-        pa.int16(): pd.Int16Dtype(),
-        pa.int32(): pd.Int32Dtype(),
-        pa.int64(): pd.Int64Dtype(),
-        pa.uint8(): pd.UInt8Dtype(),
-        pa.uint16(): pd.UInt16Dtype(),
-        pa.uint32(): pd.UInt32Dtype(),
-        pa.uint64(): pd.UInt64Dtype(),
-    }
-    return table.to_pandas(types_mapper=dtypes.get)
+    return generated_table_to_pandas(table)
 
 
 def _write_fixed_width(table: pa.Table, layout: Mapping[str, Any] | None, path: Path) -> None:
