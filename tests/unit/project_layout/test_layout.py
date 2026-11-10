@@ -168,6 +168,13 @@ def test_the_first_run_writes_the_claim_and_the_same_yaml_passes_again(root: Pat
     assert _claim(root, "orders", "jobs/orders.yaml") is None
 
 
+@pytest.mark.parametrize("yaml_rel", [" jobs/orders.yaml", "jobs/orders.yaml ", "jobs/ x .yaml"])
+def test_a_claim_keeps_spaces_at_either_end_of_the_path(root: Path, yaml_rel: str) -> None:
+    assert _claim(root, "orders", yaml_rel) is None
+    assert read_claim(root / "out", "orders") == yaml_rel
+    assert _claim(root, "orders", yaml_rel) is None
+
+
 def test_a_claim_held_by_another_yaml_is_reported(root: Path) -> None:
     _claim(root, "orders", "jobs/orders.yaml")
     assert _claim(root, "orders", "other/orders.yaml") == "jobs/orders.yaml"

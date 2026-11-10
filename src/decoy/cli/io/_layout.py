@@ -258,7 +258,8 @@ def read_claim(out: Path, name: str) -> str | None:
         raw = b""
     finally:
         os.close(fd)
-    return raw.decode("utf-8", errors="replace").strip() or None
+    # Only the writer's newline goes: spaces are valid at either end of a POSIX path.
+    return raw.decode("utf-8", errors="replace").removesuffix("\n") or None
 
 
 def _taken(root: Path, name: str, yaml_rel: str) -> str | None:

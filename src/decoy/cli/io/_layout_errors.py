@@ -94,7 +94,7 @@ OUTPUT_PATH_ESCAPES = Descriptor(
 )
 PATH_TOO_LONG = Descriptor(
     "layout.path_too_long",
-    "The output path would be {length} characters long; Windows allows {limit}. "
+    "The output path would be {length} characters long as Windows counts them; Windows allows {limit}. "
     "Shorten the project path, the pipeline name or the output path.",
 )
 PROJECT_ROOT_REFUSED = Descriptor(
