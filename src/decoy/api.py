@@ -34,7 +34,7 @@ import pyarrow as pa
 from decoy import _mask_secret, _mask_secret_guidance, _native_gate
 from decoy._mask_secret import is_valid_mask_secret_ref as _is_valid_mask_secret_ref
 from decoy._row_sample import sample_frame
-from decoy.cli._sources import CSV_DIALECT_KEYS, csv_file_source
+from decoy.cli._sources import CSV_DIALECT_KEYS, csv_file_source, resolved_source_config
 from decoy.cli.extras import UnsupportedCloudEndpointError
 from decoy.cli.io._targets import claimed_format, format_for_path
 from decoy.cli.run import (
@@ -523,11 +523,12 @@ def mask(
             with _mask_secret.admitted_key_provider(config_dict) as key_provider:
                 key_kwargs = {} if key_provider is None else {"key_provider": key_provider}
                 result = run_pipeline(
-                    config_dict,
+                    resolved_source_config(config_dict, base_dir),
                     sources,
                     engine_version=engine_version,
                     derive_key=resolver,
                     instance_default_locale=instance_locale,
+                    base_dir=base_dir,
                     **key_kwargs,
                     **extra_run_pipeline_kwargs,
                 )
@@ -602,9 +603,11 @@ def scan(
             list (`[{"name": ..., "start": ..., "width": ...}, ...]`).
 
     Returns:
-        A `decoy_engine.ColumnProfile` -- the same object `decoy scan
-        --output scan.json` serializes. Call `.to_dict()` for the
-        JSON-ready shape.
+        The in-memory `decoy_engine.ColumnProfile`, which holds cell values
+        (top values, modes, ranges). `decoy scan --output` writes only the
+        value-free `scan-set/v1` core. To save the profile, write
+        `decoy_engine.profile_document(profile)`, which redacts the
+        sensitive columns.
     """
     from decoy_engine import profile_columns
 

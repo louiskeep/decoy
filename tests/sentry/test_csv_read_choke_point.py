@@ -10,7 +10,8 @@ spelling (`pd.read_csv`, `from pandas import read_csv`, an `import ... as` alias
 - `pyarrow.dataset`: `dataset`, `parquet_dataset`;
 - `pyarrow.parquet` (and its `core` submodule): `read_table`, `read_pandas`, `ParquetFile`, `ParquetDataset`,
   `read_schema`, `read_metadata`;
-- `decoy_engine`: `read_csv_source` and `read_fixed_width`.
+- `decoy_engine`: `read_csv_source`, `read_fixed_width` and `resolve_csv_dialect` (the names-file
+  read sits inside it, so it is called only where `column_names_file` is resolved).
 
 A call outside `cli/_sources.py` fails unless its (file, enclosing function) is in ALLOWLIST with
 the exact recorded site count. The allowlisted readers read files a caller named with their own
@@ -85,7 +86,7 @@ _PYARROW_PARQUET = {
     "read_metadata",
 }
 _PYARROW_DATASET = {"dataset", "parquet_dataset"}
-_ENGINE = {"read_csv_source", "read_fixed_width"}
+_ENGINE = {"read_csv_source", "read_fixed_width", "resolve_csv_dialect"}
 
 
 def _owns(package: str, name: str) -> bool:
