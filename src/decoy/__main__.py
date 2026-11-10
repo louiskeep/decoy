@@ -32,6 +32,7 @@ from decoy.cli.run import run as run_command
 from decoy.cli.scan import scan_app
 from decoy.cli.schema import SCHEMA_EPILOG
 from decoy.cli.schema import schema as schema_command
+from decoy.cli.setup import SETUP_EPILOG, setup_command
 from decoy.cli.subset import SUBSET_EPILOG
 from decoy.cli.subset import subset as subset_command
 from decoy.cli.tokenize import DETOKENIZE_EPILOG, TOKENIZE_EPILOG
@@ -63,6 +64,7 @@ Try one of:
   decoy detokenize pipeline.yaml tokenized.csv --vault tokens.db   Reverse a tokenized file from the local vault.
   decoy fit source.csv             Fit a distribution snapshot for statistical generation.
   decoy init                       Scaffold a starter pipeline interactively.
+  decoy setup                      Set this box's max memory and threads for `decoy run`.
   decoy list templates             Browse bundled pipeline templates.
   decoy show template hipaa        Dump one bundled template to stdout.
   decoy explain modes              Plain-English topic help. `explain` lists topics.
@@ -256,6 +258,7 @@ app.add_typer(ci_app, name="ci")
 app.command(name="list", epilog=LIST_EPILOG)(list_)
 app.command(name="show", epilog=SHOW_EPILOG)(show)
 app.command(name="doctor", epilog=DOCTOR_EPILOG)(doctor)
+app.command(name="setup", epilog=SETUP_EPILOG)(setup_command)
 app.command(name="subset", epilog=SUBSET_EPILOG)(subset_command)
 app.command(name="upgrade", epilog=UPGRADE_EPILOG)(upgrade_command)
 

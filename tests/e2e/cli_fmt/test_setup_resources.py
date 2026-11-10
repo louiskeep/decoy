@@ -1,0 +1,108 @@
+"""AT-C3b: `decoy setup`, the settings file it writes, and the doctor rows."""
+
+from __future__ import annotations
+
+import json
+from pathlib import Path
+
+import pytest
+from typer.testing import CliRunner
+
+from decoy import _resources
+from decoy.__main__ import app
+
+GIB = 2**30
+tomllib = _resources.tomllib  # stdlib on 3.11+, tomli on 3.10
+runner = CliRunner()
+
+
+@pytest.fixture(autouse=True)
+def _home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    home = tmp_path / "home"
+    monkeypatch.setenv("DECOY_HOME", str(home))
+    monkeypatch.delenv("DECOY_MAX_MEMORY", raising=False)
+    monkeypatch.delenv("DECOY_THREADS", raising=False)
+    monkeypatch.setattr(_resources, "_auto_memory", lambda: 8 * GIB)
+    monkeypatch.setattr(_resources, "_auto_threads", lambda: 6)
+    return home
+
+
+def test_yes_json_writes_versioned_settings_with_detected_values(_home: Path) -> None:
+    result = runner.invoke(app, ["setup", "--yes", "--json"])
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.stdout)
+    assert payload["sections"] == {"resources": {"max_memory": "8GiB", "threads": 6}}
+    data = tomllib.loads((_home / "settings.toml").read_text(encoding="utf-8"))
+    assert data == {"schema_version": "1.0", "resources": {"max_memory": "8GiB", "threads": 6}}
+    assert (_home / "settings.toml").stat().st_mode & 0o077 == 0
+    assert list(_home.glob(".*.tmp")) == []
+
+
+def test_write_goes_through_the_atomic_writer(monkeypatch: pytest.MonkeyPatch, _home: Path) -> None:
+    calls: list[tuple[Path, str, object]] = []
+    real = _resources.write_atomic
+
+    def spy(directory, name, data, mode, **kw):
+        calls.append((directory, name, mode))
+        return real(directory, name, data, mode, **kw)
+
+    monkeypatch.setattr(_resources, "write_atomic", spy)
+    assert runner.invoke(app, ["setup", "--yes"]).exit_code == 0
+    assert calls == [(_home, "settings.toml", _resources.WriteMode.REPLACE)]
+
+
+def test_off_a_terminal_without_yes_exits_1_and_writes_nothing(_home: Path) -> None:
+    result = runner.invoke(app, ["setup"])
+    assert result.exit_code == 1
+    assert not (_home / "settings.toml").exists()
+
+
+def test_setup_keeps_a_valid_stored_value_as_the_default(_home: Path) -> None:
+    _home.mkdir()
+    (_home / "settings.toml").write_text(
+        'schema_version = "1.0"\n[resources]\nmax_memory = "2GiB"\nthreads = "auto"\n'
+    )
+    assert runner.invoke(app, ["setup", "--yes"]).exit_code == 0
+    data = tomllib.loads((_home / "settings.toml").read_text())
+    assert data["resources"] == {"max_memory": "2GiB", "threads": "auto"}
+
+
+def test_setup_replaces_an_unusable_file(_home: Path) -> None:
+    _home.mkdir()
+    (_home / "settings.toml").write_text("not toml [")
+    assert runner.invoke(app, ["setup", "--yes"]).exit_code == 0
+    assert _resources.read_settings() == {"max_memory": 8 * GIB, "threads": 6}
+
+
+def test_setup_section_order_is_fixed() -> None:
+    from decoy.cli.setup._sections import SECTIONS
+
+    assert [s.name for s in SECTIONS] == ["resources"]
+
+
+def test_doctor_shows_each_value_and_its_source(
+    _home: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("DECOY_THREADS", "3")
+    result = runner.invoke(app, ["doctor", "--json"])
+    assert result.exit_code == 0, result.output
+    rows = {c["name"]: c["note"] for c in json.loads(result.stdout)["checks"]}
+    assert rows["max-memory"] == "8GiB (auto)"
+    assert rows["threads"] == "3 (env)"
+
+
+def test_doctor_warns_on_an_unusable_settings_file(_home: Path) -> None:
+    _home.mkdir()
+    (_home / "settings.toml").write_text('schema_version = "9.0"\n')
+    result = runner.invoke(app, ["doctor", "--json"])
+    assert result.exit_code == 0
+    row = next(c for c in json.loads(result.stdout)["checks"] if c["name"] == "resources")
+    assert row["status"] == "warn"
+    assert "9.0" not in row["note"]
+
+
+def test_run_rejects_a_bad_flag_with_usage_exit(tmp_path: Path) -> None:
+    cfg = tmp_path / "p.yaml"
+    cfg.write_text("version: 1\n")
+    result = runner.invoke(app, ["run", str(cfg), "--threads", "0"])
+    assert result.exit_code == 1
