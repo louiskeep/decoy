@@ -10,7 +10,7 @@ Status: current
 |---|---|---|---|
 | A safe copy of a real file, same rows and joins | Masking: `decoy run` with `columns:` strategies | Yes, it transforms it | Keyed transforms. No formal proof. |
 | Fake data from rules you write | Generation: `decoy run` with `generate_columns:` of type `faker`, `categorical`, `sequence`, and so on | No | Never reads real data. |
-| Fake data shaped like your real data | `decoy fit`, then `type: statistical` columns | Yes, at fit time | None by default. The snapshot holds real values. |
+| Fake data shaped like your real data | `decoy fit`, then `type: statistical` columns | Yes, at fit time | None by default. The snapshot withholds the values of columns the profiler flags as personal data; every other category column keeps its real values. |
 | Fake data shaped like your real data, with a privacy guarantee | `decoy fit --epsilon`, then `type: statistical` columns under `global_settings.dp` | Yes, at fit time | Differential privacy, one column at a time. |
 | A score for how much shape survived | `decoy report fidelity`, or `decoy run --fidelity` | Reads source and output | A measurement only. |
 
@@ -54,8 +54,9 @@ different ways:
 
 ## Two things people get wrong
 
-- **A plain snapshot is sensitive.** For category columns it stores the real
-  values and their exact counts. Treat it like the source file. See
+- **A plain snapshot is sensitive.** For category columns that are not flagged
+  sensitive it stores the real values and their exact counts. Flagged columns
+  are withheld unless you pass `--include-values`. Treat it like the source file. See
   [page 3](03-fit-and-generate.md#what-is-in-a-snapshot).
 - **A high fidelity score is not a privacy score.** A perfect copy of the
   source scores 1.0 on every metric and protects nobody.
