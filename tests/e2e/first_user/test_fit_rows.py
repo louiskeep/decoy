@@ -596,3 +596,32 @@ def test_an_unreadable_source_error_carries_no_exception_context(
     assert "could not read" in json.loads(result.stdout)["error"]
     assert raised
     assert all(e.__context__ is None and e.__cause__ is None for e in raised)
+
+
+def _over_wide_csv(path: Path, wide_line: int, rows: int = 5) -> Path:
+    lines = ["a,b,c"] + [f"{i},v{i},w{i}" for i in range(rows)]
+    lines[wide_line] += ",EXTRA"
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    return path
+
+
+@pytest.mark.parametrize("extra", [(), ("--rows", "1")], ids=["under-limit", "sampled"])
+@pytest.mark.parametrize("wide_line", [1, 3], ids=["first-record", "later-record"])
+def test_an_over_wide_record_is_refused_not_fitted(
+    tmp_path: Path, wide_line: int, extra: tuple[str, ...]
+) -> None:
+    # With pandas' default index rule an over-wide first record turned column `a` into the index
+    # and shifted every value left (`a="v1"`); the file must be refused, never fitted shifted.
+    src = _over_wide_csv(tmp_path / "wide.csv", wide_line)
+    out = tmp_path / "snap.json"
+    result = _fit(src, out, *extra)
+    assert result.exit_code == EXIT_USAGE, result.output
+    assert not out.exists()
+    assert "EXTRA" not in result.output
+
+
+def test_an_excluded_over_wide_first_record_cannot_shift_the_sample(tmp_path: Path) -> None:
+    src = tmp_path / "wide.csv"
+    src.write_text("a,b,c\n0,x,y,EXTRA\n1,p,q\n2,u,v\n3,m,n\n", encoding="utf-8")
+    result = _fit(src, tmp_path / "snap.json", "--rows", "1")
+    assert result.exit_code == EXIT_USAGE, result.output

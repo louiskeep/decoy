@@ -30,10 +30,13 @@ fail-open release of exact data).
 
 from __future__ import annotations
 
+import contextlib
 import csv
 import io
 import json
 import math
+import warnings
+from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
 
@@ -50,6 +53,21 @@ from decoy.ui.theme import code, error, hint, success, warn
 # it and every sampled fit changes.
 FIT_SAMPLE_SEED = 42
 _COUNT_CHUNK = 100_000
+
+
+@contextlib.contextmanager
+def _strict_csv() -> Iterator[None]:
+    """Turn pandas' ParserWarning into an error for the reads inside.
+
+    With `index_col=False`, pandas drops the extra fields of an over-wide first record and only
+    warns; as an error the read fails and fit refuses the file instead of fitting cut rows.
+    """
+    import pandas as pd
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", pd.errors.ParserWarning)
+        yield
+
 
 _DP_REFUSED_LINE = (
     "DP fit is not available on this install: it runs only on a certified platform and package set."
@@ -519,7 +537,7 @@ def fit(
     # codecs see). Both are required for D6 boxing invariance and stability-1.
     # _build_typed_frame below converts only flags; number and text columns
     # reach the engine as raw strings.
-    dp_read_kwargs: dict[str, Any] = {"dtype": str, "keep_default_na": False}
+    dp_read_kwargs: dict[str, Any] = {"dtype": str, "keep_default_na": False, "index_col": False}
     omitted_columns: list[str] = []
     dp_header: list[str] = []
     dp_kwargs: dict[str, Any] = {}
@@ -601,8 +619,15 @@ def fit(
     # The one body read: exact mode keeps pandas' inference and the requested
     # datetime columns; DP mode reads the literal lexemes.
     body_kwargs: dict[str, Any] = (
-        {"parse_dates": list(parse_dates) or False} if epsilon is None else dp_read_kwargs
+        {"parse_dates": list(parse_dates) or False, "index_col": False}
+        if epsilon is None
+        else dp_read_kwargs
     )
+    # Every read uses `index_col=False`: with pandas' default, a record wider than the header
+    # silently turns the first column into the index and shifts every value one column left.
+    # With False, pandas raises on a wide record or, for the first one, drops the extra fields
+    # with a ParserWarning; `_strict_csv` makes that warning an error, so an over-wide record is
+    # always refused instead of fitted.
     # A file over the limit is sampled by record position BEFORE pandas infers types, so a row
     # outside the sample cannot change a column's kind and the file is never fully loaded.
     # Both passes below read the file through pandas' own record rule (blank lines skipped,
@@ -627,21 +652,24 @@ def fit(
                 kept = sample_positions(rows_total, row_limit, FIT_SAMPLE_SEED, keep_order=True)
                 seen = 0
             try:
-                for chunk in pd.read_csv(
-                    source,
-                    chunksize=_COUNT_CHUNK,
-                    dtype=str,
-                    usecols=[0] if phase == "count" else None,
-                    # Literal text, so the parse below sees what the file holds.
-                    na_filter=phase == "count",
-                ):
-                    if kept is None:
-                        rows_total += len(chunk)
-                        continue
-                    lo, hi = np.searchsorted(kept, [seen, seen + len(chunk)])
-                    sample_header = list(chunk.columns)
-                    kept_rows.extend(chunk.iloc[kept[lo:hi] - seen].fillna("").to_numpy().tolist())
-                    seen += len(chunk)
+                with _strict_csv():
+                    for chunk in pd.read_csv(
+                        source,
+                        chunksize=_COUNT_CHUNK,
+                        dtype=str,
+                        index_col=False,
+                        usecols=[0] if phase == "count" else None,
+                        # Literal text, so the parse below sees what the file holds.
+                        na_filter=phase == "count",
+                    ):
+                        if kept is None:
+                            rows_total += len(chunk)
+                            continue
+                        lo, hi = np.searchsorted(kept, [seen, seen + len(chunk)])
+                        sample_header = list(chunk.columns)
+                        picked = chunk.iloc[kept[lo:hi] - seen]
+                        kept_rows.extend(picked.fillna("").to_numpy().tolist())
+                        seen += len(chunk)
             except Exception:
                 read_failed = True
             if read_failed:
@@ -662,7 +690,8 @@ def fit(
             read_target = sample_text
     read_failed = False
     try:
-        df = pd.read_csv(read_target, **body_kwargs)
+        with _strict_csv():
+            df = pd.read_csv(read_target, **body_kwargs)
     except Exception:
         read_failed = True
     if read_failed:
