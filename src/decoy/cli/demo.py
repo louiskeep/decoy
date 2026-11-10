@@ -147,11 +147,11 @@ def _run_single_demo(state: OutputState, out_dir: Path) -> int:
     if state.mode is OutputMode.default:
         state.console.print(accent("[2/3]"), "Scanning with STORM...")
     import pandas as pd
-    from decoy_engine import profile_columns
+    from decoy_engine import profile_columns, profile_document
 
     df = pd.read_csv(sample_csv)
     profile = profile_columns(df, source_label=sample_csv.name, sample_strategy="full")
-    scan_json.write_text(_json.dumps(profile.to_dict(), indent=2))
+    scan_json.write_text(_json.dumps(profile_document(profile), indent=2))
 
     if state.mode is OutputMode.default:
         state.console.print(accent("[3/3]"), "Running V2 masking pipeline...")

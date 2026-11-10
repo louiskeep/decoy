@@ -281,7 +281,10 @@ Measured results from [the QA record](../../records/2026-11-10-cli-qa-generation
 - **Table relationships.** A snapshot describes one file. It does not make a
   child table follow the parent's real fan-out (for example orders per
   customer).
-- **Uniqueness.** There is no control to force unique generated values.
+- **Uniqueness.** A fitted column repeats values. A `statistical` column takes no
+  `unique` option. For distinct values use `unique: true` on a `faker`, `categorical`,
+  `reference` or `sequence` column, or `unique_together` for a junction table (see
+  `decoy explain unique`).
 
 ## Fixed: columns move together when they should not
 

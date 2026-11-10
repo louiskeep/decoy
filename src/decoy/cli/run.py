@@ -44,11 +44,11 @@ from decoy.cli.extras import (
     translate_ner_unavailable,
 )
 from decoy.cli.gate import (
-    CAPACITY_CODES,
     GateFinding,
     GateRoute,
     PreRunCheckError,
     cap_error_text,
+    capacity_codes,
     check_before_run,
     parse_pipeline_yaml,
 )
@@ -74,8 +74,11 @@ from decoy.ui.summary import (
 )
 from decoy.ui.theme import error, hint, warn
 
-# The engine's capacity-refusal codes live with the gate (`CAPACITY_CODES`); see
+# The engine's capacity-refusal codes come from its registry (`capacity_codes()`); see
 # docs/plans/2026-07-24-oom-checker-cli-v1.md R8 for why the match is narrow.
+
+# The engine's code for a `unique` generate column or pair that the data cannot satisfy.
+UNIQUENESS_IMPOSSIBLE_CODE = "uniqueness_impossible"
 
 
 class Mode(str, Enum):
@@ -923,7 +926,7 @@ def run(
     except Exception as exc:
         # Dispatch on type: config wrong (EXIT_USAGE) vs run blew up (EXIT_RUNTIME).
         # Imported lazily to keep the engine import off the help path.
-        from decoy_engine import ConfigError, PipelineValidationError
+        from decoy_engine import ConfigError, DecoyError, GenerationError, PipelineValidationError
         from decoy_engine.plan import PlanCompileError
 
         # CLI install DX (2026-09-25): a pipeline step that lazily imports an
@@ -986,7 +989,12 @@ def run(
             _execution_error_types = ()
 
         capacity_code: str | None = None
-        if isinstance(exc, _execution_error_types) and exc.code in CAPACITY_CODES:
+        if isinstance(exc, _execution_error_types) and exc.code in capacity_codes():
+            capacity_code = exc.code
+        # A generate run whose output cannot fit the memory
+        # budget raises `GenerationBudgetExceeded`, a plain DecoyError carrying its code. It
+        # is a memory refusal like the two above, so it exits 5 and labels the JSON the same.
+        elif isinstance(exc, DecoyError) and getattr(exc, "code", None) in capacity_codes():
             capacity_code = exc.code
 
         # Phase 3.1: `NativeGateError.code` distinguishes a usage refusal
@@ -1002,6 +1010,12 @@ def run(
             _exit_code = exc.exit_code
         elif capacity_code is not None:
             _exit_code = EXIT_CAPACITY
+        elif isinstance(exc, GenerationError) and exc.code == UNIQUENESS_IMPOSSIBLE_CODE:
+            # A `unique` column or pair the data cannot satisfy (a parent with too
+            # few distinct keys, a faker type that ran out) is fixed in the config, so it exits 1
+            # like the validate-time domain checks. Other GenerationError codes (dtype_unsafe,
+            # timezone_naive_datetime) stay runtime errors. The engine text is value-free.
+            _exit_code = EXIT_USAGE
         else:
             _exit_code = (
                 EXIT_USAGE

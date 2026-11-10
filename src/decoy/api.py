@@ -602,9 +602,11 @@ def scan(
             list (`[{"name": ..., "start": ..., "width": ...}, ...]`).
 
     Returns:
-        A `decoy_engine.ColumnProfile` -- the same object `decoy scan
-        --output scan.json` serializes. Call `.to_dict()` for the
-        JSON-ready shape.
+        The in-memory `decoy_engine.ColumnProfile`, which holds cell values
+        (top values, modes, ranges). `decoy scan --output` writes only the
+        value-free `scan-set/v1` core. To save the profile, write
+        `decoy_engine.profile_document(profile)`, which redacts the
+        sensitive columns.
     """
     from decoy_engine import profile_columns
 

@@ -425,7 +425,10 @@ _TOPICS: dict[str, _Topic] = {
             "or evidence packages.\n\n"
             "Keep these artifacts private:\n"
             "  - Raw input files and masked/generated outputs.\n"
-            "  - STORM scan JSON, because it can contain sensitive aggregates and top values.\n"
+            "  - `decoy scan --output` files. They hold counts, rates, types and detector\n"
+            "    ids, never cell values, but column names and rates still describe your data.\n"
+            "  - Fit snapshots from `decoy fit`. A plain run withholds the values of sensitive\n"
+            "    columns; `--include-values` keeps every column's values.\n"
             "  - Master keys and key labels (generation) and mask_secret_ref secrets\n"
             "    (masking) -- see `decoy explain keys`.\n"
             "  - Reference files and categorical policy values.\n\n"
@@ -445,7 +448,9 @@ _TOPICS: dict[str, _Topic] = {
             "  0   Success. The command did what it said. POSIX convention.\n"
             "  1   Usage error. The caller's request was wrong: config did not\n"
             "      validate, a path did not exist, an incompatible flag\n"
-            "      combination was passed. The fix is in the user's input.\n"
+            "      combination was passed, or a `unique` generate column that\n"
+            "      the data cannot satisfy (`uniqueness_impossible`). The fix is\n"
+            "      in the user's input.\n"
             "  2   Warnings. The command ran clean except for advisory\n"
             "      warnings, and --fail-on-warning was set (the warning-\n"
             "      blocking CI gate). Without --fail-on-warning the same run\n"
@@ -466,13 +471,46 @@ _TOPICS: dict[str, _Topic] = {
             "      bigger host/cgroup ceiling or a smaller job. `decoy validate\n"
             "      preflight` v1 checks this for the out-of-core-FK route only; it does\n"
             "      not cover the ingestion peak `decoy run` pays before the\n"
-            "      engine gate runs, or the generate path.\n\n"
+            "      engine gate runs, or the generate path. A generate run whose\n"
+            "      output cannot fit the memory budget\n"
+            "      (`generation_budget_exceeded`) also exits 5.\n\n"
             "Integer values are stable across releases.\n"
             "The named constants (EXIT_OK / EXIT_USAGE / EXIT_WARNINGS /\n"
             "EXIT_RUNTIME / EXIT_FINDINGS / EXIT_CAPACITY) live in\n"
             "`decoy.cli.exit_codes` for callers that import them in Python."
         ),
         see_also=("decoy --help", "decoy run --help", "decoy validate preflight --help"),
+    ),
+    "unique": _Topic(
+        name="unique",
+        summary="Unique generated values: `unique`, `unique_together` and `pooled`.",
+        body=(
+            "A generate column draws each row on its own, so repeats are normal. Two options\n"
+            "promise distinct values:\n\n"
+            "  unique: true      On a generate column. Takes `sequence` (always distinct),\n"
+            "                    `categorical`, `faker` and `reference`. Other types refuse it.\n"
+            "                    A null never counts as a repeat.\n"
+            "  unique_together   On a table: a list of column pairs, e.g. [[item_id, shelf_id]].\n"
+            "                    Both columns are `reference`; each pair of parent keys occurs\n"
+            "                    once. Use it for a junction table.\n\n"
+            "Refusals:\n\n"
+            "  `decoy validate` and `decoy run` refuse a domain that is plainly too small (a\n"
+            "  `categorical` with fewer categories than rows, a pair whose parents hold fewer\n"
+            "  pairs than the row count) with a `generate_unique_*` code, exit 1.\n"
+            "  When the size is known only at run time (a parent with repeated or null keys, a\n"
+            "  `faker` type that runs out of values), `decoy run` stops with\n"
+            "  `uniqueness_impossible`, exit 1, before any output is written. The message names\n"
+            "  the table and column, with the counts or the row where values ran out, never a\n"
+            "  generated or source value.\n"
+            "  A unique column that cannot fit in memory exits 5 (see `decoy explain exit-codes`).\n"
+            "  Unique columns run whole-table, so very large unique runs hit memory sooner.\n\n"
+            "pooled (`faker` columns only):\n\n"
+            "  Draws come from a pool of about 10,000 values. It turns on by itself at 50,000\n"
+            "  rows and up for the types that support it, so a pooled column repeats values.\n"
+            "  `pooled: false` opts out. `pooled: true` changes nothing at those sizes, and is\n"
+            "  refused together with `unique: true`; `unique: true` turns pooling off."
+        ),
+        see_also=("decoy explain exit-codes", "decoy schema", "decoy validate --help"),
     ),
     "completion": _Topic(
         name="completion",
