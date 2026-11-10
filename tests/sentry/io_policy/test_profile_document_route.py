@@ -18,7 +18,7 @@ from pathlib import Path
 
 from tests.sentry.io_policy._calls import sites
 
-_SRC = Path(__file__).resolve().parents[2] / "src" / "decoy"
+_SRC = Path(__file__).resolve().parents[3] / "src" / "decoy"
 _PRODUCER = "profile_columns"
 
 

@@ -273,3 +273,5 @@ def test_c4_explain_security_says_saved_scans_hold_no_values() -> None:
     body = " ".join(json.loads(result.stdout)["body"].split())
     assert "top values" not in body
     assert "never cell values" in body
+    assert "A plain run withholds the values of sensitive columns" in body
+    assert "--include-values" in body
