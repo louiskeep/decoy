@@ -46,7 +46,7 @@ only (mode 0600).
 | freetext | Text columns with more than 30 distinct values | Text length statistics only. No content. |
 | joint | Pairs named with `--joint` | A table of how often each pair of values occurs |
 
-Every column also records its null count, non-null count and distinct count.
+Every column also records its null count, non-null count and distinct count. The `fit` summary adds `, N% null` after the kind of each column that has nulls, and `fit --json` carries a `null_rates` map (column to null share). Generation keeps the source null rate unless the column sets `null_probability`.
 
 In the sample file, `full_name` has 80 distinct values, so it is treated as
 free text and only its length is kept.

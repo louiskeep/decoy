@@ -24,6 +24,10 @@ means nothing was enforced. With no rules set, nothing can fail. Set `--mode` an
 a threshold to make the verdict mean something
 ([page 2](02-check-shape-after-masking.md#make-the-check-fail-a-script)).
 
+## Null rates
+
+A column's score is its value score times a missing-value score, `1 - |source null share - output null share|`. The factor is 1 when the two shares match, so the value score stands alone. When any column's shares differ, the per-column table gains a `Nulls (source/output)` column that shows both, for example `13.8% / 0.0%`. With `--json`, read `missing_value_similarity` and `value_similarity` per column. A column that is all null on one side stays out of the grade but still shows its null rates.
+
 ## Grades
 
 | Grade | Overall score |
