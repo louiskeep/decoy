@@ -123,6 +123,27 @@ def test_a_capacity_compile_error_the_compile_layer_missed_stays_an_error(
     assert [(f.layer, f.severity) for f in hits] == [("preflight", "error")]
 
 
+def test_a_same_code_capacity_error_at_another_path_stays_an_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import yaml
+    from decoy_engine import execution as engine_execution
+    from decoy_engine.plan import PlanCompileError
+
+    def _raise(*_args: object, **_kwargs: object) -> None:
+        raise PlanCompileError("namespace_missing", "relationships[9]", "SECRET-MSG-4e2a")
+
+    monkeypatch.setattr(engine_execution, "estimate_job_capacity", _raise)
+    config = _stage(tmp_path, "pipeline_no_namespace.yaml")
+    result = run_gate_on_config(yaml.safe_load(config.read_text()), config)
+    hits = [f for f in result.findings if f.code == "namespace_missing"]
+    assert sorted((f.layer, f.severity) for f in hits) == [
+        ("compile", "error"),
+        ("preflight", "error"),
+    ]
+    assert [f.location for f in hits if f.layer == "preflight"] == ["relationships[9]"]
+
+
 def test_a_namespaced_pipeline_still_passes_preflight(tmp_path: Path) -> None:
     config = _stage(tmp_path, "pipeline_namespaced.yaml")
     result = runner.invoke(app, ["validate", "preflight", str(config), "--json"])

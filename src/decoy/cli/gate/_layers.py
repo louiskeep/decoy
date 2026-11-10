@@ -277,7 +277,7 @@ def _run_preflight_layer(
     raw: dict[str, Any],
     config: Path,
     route: GateRoute,
-    compile_error_codes: frozenset[str] = frozenset(),
+    compile_errors: frozenset[tuple[str, str | None]] = frozenset(),
 ) -> tuple[list[GateFinding], bool]:
     """The preflight layer: source/file readiness, out-of-core-FK capacity, and native
     companion/eligibility -- the check functions `validate preflight` runs, reused as-is
@@ -287,8 +287,9 @@ def _run_preflight_layer(
     `capacity_insufficient` (the EXIT_CAPACITY precedence), except on the CHUNKED route,
     which never takes the route that check prices: there it is a warning.
 
-    A `capacity.plan_uncompilable` FAIL whose code is in `compile_error_codes` repeats an
-    error the compile layer already reports, so it becomes a not-checked warning.
+    A `capacity.plan_uncompilable` FAIL whose (code, location) is in `compile_errors` repeats
+    an error the compile layer already reports, so it becomes a not-checked warning. Matching
+    the location too keeps a same-code failure at another config path.
     """
     from decoy.cli.preflight import (
         CAPACITY_CHECK,
@@ -314,7 +315,7 @@ def _run_preflight_layer(
         if (
             c.name == PLAN_UNCOMPILABLE_CHECK
             and c.status == "fail"
-            and c.code in compile_error_codes
+            and (c.code, c.location or None) in compile_errors
         ):
             c.status = "warn"
             c.code = None
@@ -331,9 +332,11 @@ def run_gate_on_config(
     if config is None:
         return GateResult(config_findings, frozenset({"config"}), False)
     compile_findings = _run_compile_layer(raw, config_path.parent)
-    compile_error_codes = frozenset(f.code for f in compile_findings if f.severity == "error")
+    compile_errors = frozenset(
+        (f.code, f.location) for f in compile_findings if f.severity == "error"
+    )
     preflight_findings, capacity_insufficient = _run_preflight_layer(
-        raw, config_path, route, compile_error_codes
+        raw, config_path, route, compile_errors
     )
     return GateResult(
         config_findings + compile_findings + preflight_findings,
