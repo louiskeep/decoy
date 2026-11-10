@@ -49,6 +49,7 @@ SENTRIES = (
     "tests/sentry/test_one_stderr_console.py",
     "tests/sentry/test_otel_closed.py",
     "tests/sentry/io_policy/test_profile_document_route.py",
+    "tests/sentry/layout/test_codemap_paths.py",
     "tests/sentry/layout/test_run_package_shape.py",
     "tests/sentry/test_profile_raw_value_isolation.py",
     "tests/sentry/test_ratchet_check.py",
