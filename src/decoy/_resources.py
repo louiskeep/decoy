@@ -32,6 +32,7 @@ SETTINGS_NAME = "settings.json"
 ENV_MEMORY = "DECOY_MAX_MEMORY"
 ENV_THREADS = "DECOY_THREADS"
 AUTO = "auto"
+DEFAULT_FIT_MAX_ROWS = 1_000_000
 
 _MAX_FILE_BYTES = 64 * 1024
 _MAX_BYTES = 2**62
@@ -56,6 +57,8 @@ _TEXT = {
     "count": 'must be a whole number from 1 to 65535, or "auto"',
     "version": 'schema_version must be a string like "1.0" with major version 1',
     "table": "resources must be a table",
+    "fit_table": "fit must be a table",
+    "rows": "must be a whole number of 1 or more",
     "unreadable": "cannot be read",
     "invalid": "is not a valid settings object",
     "too_large": "is larger than the 64 KiB settings limit; shrink it by hand",
@@ -177,7 +180,7 @@ def _refuse_constant(_name: str) -> Any:
 def load_document(path: Path | None = None) -> dict[str, Any] | None:
     """The settings document, or None when the file does not exist.
 
-    Checks the structure only (an object, `schema_version` major 1, `resources` an object). Values
+    Checks the structure only (an object, `schema_version` major 1, `resources` and `fit` objects). Values
     are checked per key by `read_settings`, so one bad stored value never blocks another key.
     """
     path = path or settings_path()
@@ -215,6 +218,8 @@ def load_document(path: Path | None = None) -> dict[str, Any] | None:
             failure, where = "version", f"{SETTINGS_NAME} schema_version"
         elif not isinstance(data.get("resources", {}), dict):
             failure = "table"
+        elif not isinstance(data.get("fit", {}), dict):
+            failure = "fit_table"
     if failure is not None:
         raise ResourceError(where, failure)
     return data
@@ -246,6 +251,22 @@ def read_settings(
             raise ResourceError(f"{SETTINGS_NAME} resources.{key}", code)
         out[key] = value
     return out
+
+
+def read_fit_max_rows(path: Path | None = None) -> int:
+    """The `fit.max_rows` setting: how many rows `decoy fit` fits on, else the 1,000,000 default.
+
+    A missing file or key gives the default. A stored value that is not a whole number of 1 or
+    more (a JSON boolean counts as not a number) is refused with the key named.
+    """
+    data = load_document(path)
+    table = (data or {}).get("fit", {})
+    if "max_rows" not in table:
+        return DEFAULT_FIT_MAX_ROWS
+    value = table["max_rows"]
+    if type(value) is not int or value < 1:
+        raise ResourceError(f"{SETTINGS_NAME} fit.max_rows", "rows")
+    return value
 
 
 def _auto_memory() -> int:
