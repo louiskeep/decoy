@@ -192,27 +192,57 @@ Noise is roughly the same size whatever the row count, so it matters much more
 on small data. The budget is also shared between all the released columns, so
 more columns means more noise each.
 
-On the 500-row sample at epsilon 1.0:
+### How much data you need
 
-| | Source | DP snapshot |
-|---|---|---|
-| `state` values | CA 216, TX 117, NY 99, FL 45, WA 23 | CA 217, NY 142, other 147 |
-| `is_active` | true 394, false 106 | true 393, other 100 |
-| `amount` top bucket (450 to 500) | 1 | 55 |
+Category values that survived, for a column with 5 values and a column with 20
+values. One run per cell, delta one in a million. Full method in
+[the QA record](../../records/2026-11-10-cli-qa-generation-distribution-models.md).
 
-Three of the five states and the `false` label were dropped. A value is only
-released when its noisy count clears a safety threshold, because a rare value
-can identify the few people who have it. Fidelity for the generated file was
-grade C (0.732).
+| Columns released | Rows | epsilon 0.1 | epsilon 1 | epsilon 5 |
+|---|---|---|---|---|
+| 2 | 500 | 0 of 5 | 3 of 5 | 5 of 5 |
+| 2 | 5,000 | 3 of 5 | 5 of 5 | 5 of 5 |
+| 2 | 50,000 | 5 of 5 | 5 of 5 | 5 of 5 |
+| 8 | 500 | 0 of 5, 0 of 20 | 0 of 5, 0 of 20 | 4 of 5, 3 of 20 |
+| 8 | 5,000 | 1 of 5, 0 of 20 | 5 of 5, 6 of 20 | 5 of 5, 20 of 20 |
+| 8 | 50,000 | 5 of 5, 6 of 20 | 5 of 5, 20 of 20 | 5 of 5, 20 of 20 |
+| 20 | 500 | 0 of 5, 0 of 20 | 0 of 5, 0 of 20 | 3 of 5, 1 of 20 |
+| 20 | 5,000 | 0 of 5, 0 of 20 | 4 of 5, 3 of 20 | 5 of 5, 16 of 20 |
+| 20 | 50,000 | 4 of 5, 4 of 20 | 5 of 5, 20 of 20 | 5 of 5, 20 of 20 |
 
-On 50,000 rows with the same settings and three columns:
+At 500,000 rows every value survived in every case.
 
-| | DP snapshot |
+Rules of thumb at epsilon 1:
+
+- About 5,000 rows for a release of two columns.
+- About 50,000 rows for 8 to 20 columns.
+- A column with many distinct values needs far more data than one with few.
+- Number columns hold up better than category columns.
+
+A value is only released when its noisy count clears a safety threshold,
+because a rare value can identify the few people who have it. On the 500-row
+sample at epsilon 1.0, three of the five states and the `false` label were
+dropped, and the generated file scored grade C (0.732).
+
+### An empty release
+
+With very little data, a release can contain no values at all, and its row
+count can be far from the truth (20 real rows were reported as 318). Such a
+snapshot passes `decoy validate` and then fails at `decoy run` with
+`statistical_stats_degenerate`. Open the snapshot and check that each category
+column has entries under `top_values` before you build on it.
+
+### Fit time
+
+The DP fit spends most of its time working out how to split the budget, before
+it reads your data. That cost depends on the number of columns and is paid on
+every run:
+
+| Columns declared | Time on 500 rows |
 |---|---|
-| `state` values | CA 20167, TX 12432, NY 9864, FL 5089, WA 2438, other 13 |
-| `is_active` | true 39893, false 10118 |
-
-All values survive and the counts are close to the truth.
+| 2 | 13 s |
+| 8 | 37 s |
+| 20 | 88 s |
 
 Set `source_column` on every column, as in the example above. Without it the
 [column independence defect](03-fit-and-generate.md#known-defect-columns-move-together-when-they-should-not)

@@ -80,6 +80,47 @@ A column is skipped, and left out of the overall score, when:
 - Its type differs between source and output (a number column hashed to text).
 - It exists on one side only.
 
+## What the report misses
+
+A good grade does not mean the data is right. In testing, a generated file with
+these faults got grade B and "OK no policy violations"
+([QA record](../../records/2026-11-10-cli-qa-generation-distribution-models.md)):
+
+| Fault | Score for that column |
+|---|---|
+| One outlier moved the mean from 150 to 49,940 | 0.940 |
+| Median moved from 19.9 to 91.5 | 0.968 |
+| Four fixed prices became 20,000 different values | 0.935 |
+| 10% blanks became 0% | 0.996 |
+| 90% blanks became 0% | 0.997 |
+| Two unrelated number columns locked together | pair score 0.986 |
+
+Why:
+
+- A number column's score is measured relative to the source's full range. One
+  extreme value makes the range huge, so every error looks small.
+- Blanks are not part of any score.
+- The printed output shows scores only. Warnings such as `null_drift` and
+  `kind_drift` are in the JSON, not on screen.
+
+What to do:
+
+- Always look at `--json` or `--report-out`, and read `warnings` and
+  `diagnostic`.
+- For number columns, also read `shape_fidelity`. It scored the outlier column
+  0.102 where the main score said 0.940.
+- Gate on structure as well as score:
+
+  ```yaml
+  mode: fail
+  thresholds:
+    diagnostic: {required: true}
+    overall: {min: 0.90}
+  ```
+
+- Compare a few plain statistics yourself (mean, median, blank rate, distinct
+  count) for the columns that matter.
+
 ## Marginal, pairwise and overall
 
 - **Marginal** means one column on its own. The marginal score is the average

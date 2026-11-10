@@ -193,6 +193,50 @@ The low `signup_date` score is a reporting artifact, not a generation fault.
 The source has `2022-10-02` and the output has `2023-06-28 06:34:49.426341`.
 The report compares them as text, and the lengths differ.
 
+## Using `condition_on`
+
+`condition_on` makes one category column depend on another, so real
+combinations carry over and impossible ones do not appear.
+
+1. Fit the pair: `decoy fit customers.csv --joint state,tier`.
+2. Declare the parent column first, then put `condition_on: state` on the child.
+
+For each row, the child is drawn only from the values seen with that row's
+parent value. In the sample data no Florida customer is gold, and none is
+generated.
+
+Rules:
+
+- The child must be a category column. One parent per column. Chains work
+  (`tier` on `state`, then `plan` on `tier`).
+- The parent's generated `name` must equal its name in the snapshot. A renamed
+  parent cannot be conditioned on.
+- **Only the 25 most common pairs are kept.** A parent value whose pairs all
+  fall outside the top 25 is drawn from the child's overall counts instead,
+  with no warning. In a test with 36 real pairs this produced combinations that
+  never occur in the source. Check the snapshot: under `joints`, compare
+  `cell_count` with the number of entries in `cells`.
+- A parent value that was never in the fit also falls back silently.
+- Not allowed with differential privacy.
+
+## Check your source before you fit
+
+The fit handles some data badly, and the fidelity report will not tell you
+(see [page 5](05-reading-fidelity-reports.md#what-the-report-misses)).
+Measured results from [the QA record](../../records/2026-11-10-cli-qa-generation-distribution-models.md):
+
+| Source column | What happens | What to do |
+|---|---|---|
+| A number column with one extreme value | The whole column is ruined. Values near 100 with one value of 1,000,000 generated a mean of 49,940. | Remove or cap outliers before fitting. |
+| A heavily skewed number column | The median moved from 19.9 to 91.5. | Fit a transformed column (for example a log), or generate it another way. |
+| A number column with a few fixed values (prices, ratings) | Four price points became 20,000 different values. | Do not fit it. Generate it as a `categorical` column with the values and weights written out. |
+| A column with blanks | Blanks are not reproduced: 10% and 90% blank both came out 0%. | Add `null_probability` to the generate column yourself. |
+| A date column | Only the year mix is kept. 66% January became 9%. | Generate dates another way if month or weekday matters. |
+| Codes with leading zeros (zip, account numbers) | Read as numbers; leading zeros are lost. | Not fixable at fit time today. Generate these with `faker` or a format rule. |
+| A category held by one person | Stored with `count: 1` and can be generated. | Remove rare values before fitting, or use the DP fit. |
+| A number column's largest or smallest value | Stored exactly as `max` / `min`. | Cap the column before fitting if an extreme identifies someone. |
+| Short free text with 30 or fewer distinct values | Stored and generated word for word. | Drop the column, or mask it first. |
+
 ## What this method cannot do
 
 - **Fine numeric detail.** Shape is only as fine as 10 buckets. Values come out

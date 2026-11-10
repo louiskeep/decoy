@@ -115,7 +115,44 @@ the settings differ, or accept the duplication.
 
 ### Blanks in the source do not appear in generated data
 
-Null rates are not reproduced by statistical columns.
+Null rates are not reproduced by statistical columns. Add `null_probability`
+to the generate column.
+
+### A generated number column looks nothing like the source
+
+Check the source for an extreme value or heavy skew. One outlier stretches the
+fit's ten buckets and ruins the column. See
+[page 3](03-fit-and-generate.md#check-your-source-before-you-fit).
+
+### A good grade on output that is clearly wrong
+
+The report has blind spots. See
+[page 5](05-reading-fidelity-reports.md#what-the-report-misses).
+
+### `condition_on` produced a combination that is not in the source
+
+More than 25 distinct pairs were fitted and the rest were dropped, or the
+parent value was not in the fit. See
+[page 3](03-fit-and-generate.md#using-condition_on).
+
+### "no joint contingency for (...)" when the pair was fitted
+
+The parent column was renamed. `condition_on` needs the parent's generated
+`name` to match its snapshot name.
+
+### `statistical_stats_degenerate` at run after validate passed
+
+A DP snapshot released no values for that column. See
+[page 4](04-differential-privacy.md#an-empty-release).
+
+### The DP fit takes a long time
+
+Expected. Time grows with the number of declared columns. See
+[page 4](04-differential-privacy.md#fit-time).
+
+### A fidelity warning was configured but nothing was printed
+
+`fidelity_warn_threshold` writes to `logs/decoy_engine.log` only.
 
 ### The DP output is missing categories
 
@@ -142,6 +179,7 @@ An unrecognized key is ignored silently. Check the key names on
 
 - `decoy fit --help`, `decoy report fidelity --help`
 - `decoy explain differential-privacy`, `decoy explain keys`, `decoy explain exit-codes`
-- Known issues from hands-on testing:
+- Known issues from hands-on testing, newest first:
+  [`docs/records/2026-11-10-cli-qa-generation-distribution-models.md`](../../records/2026-11-10-cli-qa-generation-distribution-models.md),
   [`docs/records/2026-11-08-cli-qa-distribution-integrity.md`](../../records/2026-11-08-cli-qa-distribution-integrity.md)
   and [`docs/records/2026-11-08-cli-qa-generation.md`](../../records/2026-11-08-cli-qa-generation.md)

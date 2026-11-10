@@ -46,6 +46,18 @@ customer_id,full_name,email,state,tier,amount,signup_date,is_active
 `state` has five values (CA 216, TX 117, NY 99, FL 45, WA 23). `tier` depends
 on `state`. `amount` is skewed toward small values.
 
+## Known issues
+
+This guide describes the product as tested, including its faults. The full
+test results, with code locations, are in
+[`docs/records/2026-11-10-cli-qa-generation-distribution-models.md`](../../records/2026-11-10-cli-qa-generation-distribution-models.md).
+The three to know before you start:
+
+- Fitted number columns break on outliers and heavy skew.
+- The fidelity report gives good grades to several kinds of wrong output.
+- Generated columns with identical settings come out identical unless each has
+  its own `source_column`.
+
 ## Related reference
 
 - Command reference: [`docs/cli-reference.md`](../../cli-reference.md)
