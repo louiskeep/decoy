@@ -10,6 +10,7 @@ from __future__ import annotations
 import hashlib
 import os
 import re
+import stat
 import uuid
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -228,11 +229,25 @@ def _derived(root: Path, yaml_rel: str, stem: str) -> str:
 
 def read_claim(out: Path, name: str) -> str | None:
     """The YAML path `out/<name>/PIPELINE` names, or None when there is no claim."""
+    flags = (
+        os.O_RDONLY
+        | getattr(os, "O_NOFOLLOW", 0)
+        | getattr(os, "O_NONBLOCK", 0)
+        | getattr(os, "O_NOCTTY", 0)
+    )
+    raw = b""
     try:
-        with open(out / name / _CLAIM_NAME, "rb") as handle:
-            raw = handle.read(_CLAIM_MAX_BYTES)
+        fd = os.open(out / name / _CLAIM_NAME, flags)
     except OSError:
         return None
+    try:
+        # A FIFO or device at the claim path is not a claim; the open above cannot block on it.
+        if stat.S_ISREG(os.fstat(fd).st_mode):
+            raw = os.read(fd, _CLAIM_MAX_BYTES)
+    except OSError:
+        raw = b""
+    finally:
+        os.close(fd)
     return raw.decode("utf-8", errors="replace").strip() or None
 
 

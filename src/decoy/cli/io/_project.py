@@ -65,7 +65,14 @@ def _home() -> Path | None:
 
 def _read_marker_bytes(marker: Path) -> bytes | None:
     """The marker's bytes, None when there is no file, or a refusal for an unsafe one."""
-    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+    # O_NONBLOCK and O_NOCTTY: opening a FIFO read-only would otherwise block until a writer
+    # appears, and the regular-file check below only runs after the open returns.
+    flags = (
+        os.O_RDONLY
+        | getattr(os, "O_NOFOLLOW", 0)
+        | getattr(os, "O_NONBLOCK", 0)
+        | getattr(os, "O_NOCTTY", 0)
+    )
     failure: Exception | None = None
     data: bytes | None = None
     try:

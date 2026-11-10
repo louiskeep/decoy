@@ -290,3 +290,24 @@ def test_the_marker_codes_are_registered_gate_codes() -> None:
     }
     assert codes <= GATE_CODES
     assert all(re.fullmatch(r"layout\.[a-z_]+", c) for c in GATE_CODES)
+
+
+@posix_only
+def test_a_fifo_at_the_marker_path_is_refused_not_waited_on(tmp_path: Path) -> None:
+    import threading
+
+    root = _tree(tmp_path, "acme")
+    os.mkfifo(root / "decoy.yaml")
+    outcome: list[str] = []
+
+    def probe() -> None:
+        try:
+            find_project(root, None)
+        except LayoutError as exc:
+            outcome.append(exc.code)
+
+    thread = threading.Thread(target=probe, daemon=True)
+    thread.start()
+    thread.join(10)
+    assert not thread.is_alive(), "opening the marker blocked on a FIFO"
+    assert outcome == ["layout.project_marker_invalid"]

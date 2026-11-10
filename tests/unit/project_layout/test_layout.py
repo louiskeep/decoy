@@ -400,3 +400,22 @@ def test_the_same_path_passes_on_posix(root: Path, monkeypatch: pytest.MonkeyPat
     folder = root / "out" / "orders"
     monkeypatch.setattr(_layout, "_on_windows", lambda: False)
     check_path_budget(folder, _rel_for(folder, 400))
+
+
+@posix_only
+def test_a_fifo_at_the_claim_path_is_no_claim_and_does_not_block(root: Path) -> None:
+    import threading
+
+    out, _ = prepare_out(root)
+    folder = name_dir(out, "orders")
+    os.mkfifo(folder / "PIPELINE")
+    result: list[str | None] = ["unset"]
+
+    def probe() -> None:
+        result[0] = read_claim(out, "orders")
+
+    thread = threading.Thread(target=probe, daemon=True)
+    thread.start()
+    thread.join(10)
+    assert not thread.is_alive(), "reading the claim blocked on a FIFO"
+    assert result == [None]
