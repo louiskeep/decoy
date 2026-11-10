@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from decoy_engine.generation.pool._events import QualityWarning
+from decoy_engine import QualityWarning
 
 from decoy.ui.summary import (
     report_warning_records,
