@@ -9,10 +9,13 @@ columns consume. The loop is:
     # reference snapshot.json from generate_columns, then:
     decoy run generate.yaml
 
-The snapshot contains aggregate shape only (bins, quantiles, top-k
-category counts) -- EXCEPT categorical `top_values`, which carry real
-source values; that is why statistical categorical columns require the
-`allow_real_categories: true` opt-in at run time.
+The snapshot is written through the engine's `distribution_snapshot_document`:
+columns the sensitivity profile flags have their cell values withheld
+(`value_policy: flagged-redacted/v1`, names in `redacted_columns`).
+`--include-values` keeps them and stamps `value_policy: raw`. Unflagged
+categorical `top_values` still carry real source values; that is why
+statistical categorical columns require the `allow_real_categories: true`
+opt-in at run time.
 
 DPS-CLI rewire (docs/plans/2026-07-24-dps-cli-fit-rewire.md). `--epsilon`
 now selects a second, disjoint mode that calls the engine's
@@ -265,6 +268,14 @@ def fit(
             "listing the columns). Requires --epsilon."
         ),
     ),
+    include_values: bool = typer.Option(
+        False,
+        "--include-values",
+        help=(
+            "Keep real values of sensitive columns in the snapshot. The file then "
+            "holds real data. Not supported with --epsilon."
+        ),
+    ),
     json_: bool = typer.Option(
         False,
         "--json",
@@ -359,6 +370,13 @@ def fit(
                     code="dp_mode_not_selected",
                 )
         else:
+            if include_values:
+                raise _FitUsageError(
+                    "--include-values with --epsilon is not supported: a DP release "
+                    "never holds real cell values. Drop --include-values or omit "
+                    "--epsilon.",
+                    code="dp_usage_include_values",
+                )
             if joint_pairs:
                 raise _FitUsageError(
                     "--epsilon with --joint is not supported: releasing marginals "
@@ -395,7 +413,7 @@ def fit(
         raise typer.Exit(code=EXIT_USAGE)
 
     import pandas as pd
-    from decoy_engine.quality.snapshot import compute_distribution_snapshot
+    from decoy_engine import distribution_snapshot_document
 
     try:
         if epsilon is None:
@@ -409,8 +427,9 @@ def fit(
             # invariance and stability-1. _build_typed_frame below converts only
             # flags; number and text columns reach the engine as raw strings.
             df = pd.read_csv(source, dtype=str, keep_default_na=False)
-    except Exception as exc:
-        _emit_error(f"could not read {source}: {exc}")
+    except Exception:
+        # No str(exc): a pandas parse error can quote a source cell.
+        _emit_error(f"could not read {source} as a CSV.")
         raise typer.Exit(code=EXIT_USAGE)
 
     missing = [c for c in parse_dates if c not in df.columns]
@@ -419,7 +438,13 @@ def fit(
         raise typer.Exit(code=EXIT_USAGE)
 
     if epsilon is None:
-        snapshot = compute_distribution_snapshot(df, joint_columns=joint_pairs or None)
+        # No profile_row_cap: it profiles head rows only, and a sensitive column can start late.
+        snapshot = distribution_snapshot_document(
+            df,
+            source_label=source.name,
+            include_values=include_values,
+            joint_columns=joint_pairs or None,
+        )
         omitted_columns: list[str] = []
     else:
         from decoy_engine.quality.carriers import CarrierError
@@ -490,6 +515,7 @@ def fit(
             _emit_error(exc.message, err_code=exc.code)
             raise typer.Exit(code=EXIT_USAGE)
 
+    withheld: list[str] = list(snapshot.get("redacted_columns") or []) if epsilon is None else []
     # Only reached on success: no artifact is created or overwritten when the
     # fit above raised.
     out_path = output if output is not None else source.with_suffix(".snapshot.json")
@@ -501,6 +527,13 @@ def fit(
         _emit_error(f"could not write the snapshot: {describe(exc)}", err_code=exc.code)
         raise typer.Exit(code=EXIT_RUNTIME)
 
+    if withheld and snapshot.get("value_policy") == "raw" and state.mode is not OutputMode.quiet:
+        state.err_console.print(
+            warn("warning:"),
+            f"{out_path} holds real values of {len(withheld)} sensitive "
+            f"column(s): {', '.join(withheld)}. Do not share or commit it.",
+        )
+
     if state.mode is OutputMode.json:
         payload: dict[str, Any] = {
             "command": "fit",
@@ -511,6 +544,9 @@ def fit(
             "columns": {name: entry["kind"] for name, entry in snapshot["columns"].items()},
             "joints": [j["columns"] for j in snapshot["joints"]],
         }
+        if epsilon is None:
+            payload["value_policy"] = snapshot.get("value_policy")
+            payload["redacted_columns"] = withheld
         if epsilon is not None:
             payload["dp"] = {"schema": snapshot["dp"]["schema"]}
             payload["omitted_columns"] = omitted_columns
@@ -525,6 +561,20 @@ def fit(
     if snapshot["joints"]:
         pairs = ", ".join("x".join(j["columns"]) for j in snapshot["joints"])
         state.console.print(f"  joints captured: {pairs}")
+    if withheld:
+        names = ", ".join(withheld)
+        if snapshot.get("value_policy") != "raw":
+            state.console.print(
+                f"  {len(withheld)} sensitive column(s) withheld: {names} (no cell "
+                "values kept; numbers reduced to one range, dates to years)"
+            )
+            state.console.print(
+                " ",
+                hint("hint:"),
+                "to sample these as categories, re-run with --include-values (the "
+                "file then holds real data). A DP release (--epsilon) needs a "
+                "certified DP install; see decoy explain differential-privacy.",
+            )
     if epsilon is not None:
         state.console.print(
             f"  DP release: {snapshot['dp']['schema']}, epsilon={epsilon}, delta={delta}"
