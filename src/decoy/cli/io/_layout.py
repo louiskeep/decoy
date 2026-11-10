@@ -151,6 +151,11 @@ def _inside(child: Path, parent: Path) -> bool:
     return any(_same_dir(ancestor, parent) for ancestor in (child, *child.parents))
 
 
+def _utf16_units(text: str) -> int:
+    # Windows measures paths in UTF-16 units: a character past U+FFFF counts twice.
+    return len(text.encode("utf-16-le", "surrogatepass")) // 2
+
+
 def check_path_budget(name_dir: Path, rel: str) -> None:
     """Refuse on Windows a placed path that can pass 259 characters with the longest run id.
 
@@ -160,7 +165,7 @@ def check_path_budget(name_dir: Path, rel: str) -> None:
     """
     if not _on_windows():
         return
-    length = len(str(name_dir)) + 1 + MAX_RUN_ID_LENGTH + 1 + len(rel)
+    length = _utf16_units(str(name_dir)) + 1 + MAX_RUN_ID_LENGTH + 1 + _utf16_units(rel)
     if length > WINDOWS_PATH_LIMIT:
         raise PATH_TOO_LONG.error(length=length, limit=WINDOWS_PATH_LIMIT)
 

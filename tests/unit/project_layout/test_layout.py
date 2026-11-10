@@ -396,6 +396,19 @@ def test_a_placed_path_over_259_characters_is_refused_on_windows(
     assert "260" in exc.value.message
 
 
+def test_the_budget_counts_utf16_units_on_windows(
+    root: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    folder = root / "out" / "orders"
+    monkeypatch.setattr(_layout, "_on_windows", lambda: True)
+    # One character past U+FFFF: 259 Python characters, 260 UTF-16 units.
+    rel = _rel_for(folder, 258) + "\U0001f600"
+    assert len(str(folder)) + 1 + 55 + 1 + len(rel) == 259
+    with pytest.raises(LayoutError) as exc:
+        check_path_budget(folder, rel)
+    assert "260" in exc.value.message
+
+
 def test_the_same_path_passes_on_posix(root: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     folder = root / "out" / "orders"
     monkeypatch.setattr(_layout, "_on_windows", lambda: False)
