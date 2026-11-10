@@ -1,5 +1,7 @@
 # 5. Reading fidelity reports
 
+Status: current
+
 [Back to the guide index](README.md)
 
 What the numbers from `decoy report fidelity` and `decoy run --fidelity` mean.
@@ -82,24 +84,28 @@ A column is skipped, and left out of the overall score, when:
 
 ## What the report misses
 
-A good grade does not mean the data is right. In testing, a generated file with
-these faults got grade B and "OK no policy violations"
-([QA record](../../records/2026-11-10-cli-qa-generation-distribution-models.md)):
+A good grade does not mean the data is right. In testing on engine 0.19.0, a
+generated file with these faults got grade B and "OK no policy violations"
+([QA record](../../records/2026-11-10-cli-qa-generation-distribution-models.md)).
+The last column is the same check re-run on engine main:
 
-| Fault | Score for that column |
-|---|---|
-| One outlier moved the mean from 150 to 49,940 | 0.940 |
-| Median moved from 19.9 to 91.5 | 0.968 |
-| Four fixed prices became 20,000 different values | 0.935 |
-| 10% blanks became 0% | 0.996 |
-| 90% blanks became 0% | 0.997 |
-| Two unrelated number columns locked together | pair score 0.986 |
+| Fault | Score on 0.19.0 | Score on engine main |
+|---|---|---|
+| One outlier moved the mean from 150 to about 50,000 | 0.940 | 0.940 |
+| Median moved from 20 to 92 | 0.968 | 0.969 |
+| Four fixed prices became 20,000 different values | 0.935 | 0.926 |
+| 10% blanks became 0% | 0.996 | 0.893 |
+| 90% blanks became 0% | 0.997 | 0.096 |
+| Two unrelated number columns locked together | pair score 0.986 | fault fixed (engine #421) |
 
 Why:
 
 - A number column's score is measured relative to the source's full range. One
-  extreme value makes the range huge, so every error looks small.
-- Blanks are not part of any score.
+  extreme value makes the range huge, so every error looks small. Still open
+  on engine main.
+- On engine 0.19.0, blanks are not part of any score. After 0.19.0 (engine
+  #438) each column's score is its value score times a blank-rate score, and
+  the JSON shows both as `value_similarity` and `missing_value_similarity`.
 - The printed output shows scores only. Warnings such as `null_drift` and
   `kind_drift` are in the JSON, not on screen.
 
@@ -140,7 +146,7 @@ Without `--joint`, a file can score A with every cross-column link broken.
 | Field | Content |
 |---|---|
 | `overall_score`, `grade` | As printed |
-| `marginal.columns[]` | Per column: `similarity`, `method`, `comparable`, `extra_metrics` |
+| `marginal.columns[]` | Per column: `similarity`, `method`, `comparable`, `extra_metrics`; after engine 0.19.0 also `value_similarity` and `missing_value_similarity` |
 | `pairwise` | Per-pair scores |
 | `diagnostic` | Structural checks: missing columns, row count, type changes |
 | `warnings` | For example `column_survival` listing columns missing from the output |

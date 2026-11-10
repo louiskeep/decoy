@@ -1,5 +1,7 @@
 # 4. Differential privacy
 
+Status: current
+
 [Back to the guide index](README.md)
 
 A private version of [fit and generate](03-fit-and-generate.md). The snapshot
@@ -144,19 +146,15 @@ tables:
     generate_columns:
       - name: state
         type: statistical
-        source_column: state
         snapshot_file: customers.dp.json
       - name: tier
         type: statistical
-        source_column: tier
         snapshot_file: customers.dp.json
       - name: amount
         type: statistical
-        source_column: amount
         snapshot_file: customers.dp.json
       - name: is_active
         type: statistical
-        source_column: is_active
         snapshot_file: customers.dp.json
 targets:
   synthetic_dp:
@@ -195,7 +193,9 @@ more columns means more noise each.
 ### How much data you need
 
 Category values that survived, for a column with 5 values and a column with 20
-values. One run per cell, delta one in a million. Full method in
+values, delta one in a million. Each cell is one random draw, so a cell near
+the cut-off can come out differently on another run; read the table as a guide,
+not a bound. Full method in
 [the QA record](../../records/2026-11-10-cli-qa-generation-distribution-models.md).
 
 | Columns released | Rows | epsilon 0.1 | epsilon 1 | epsilon 5 |
@@ -244,12 +244,14 @@ every run:
 | 8 | 37 s |
 | 20 | 88 s |
 
-Set `source_column` on every column, as in the example above. Without it the
-[column independence defect](03-fit-and-generate.md#known-defect-columns-move-together-when-they-should-not)
+On engine 0.19.0, add `source_column: <name>` to every column in the example
+above. Without it the
+[column independence defect](03-fit-and-generate.md#fixed-columns-move-together-when-they-should-not)
 applies: in an earlier run of this example every generated NY row had tier
-gold. The privacy guarantee holds either way, because the output is built only
-from the noisy snapshot. Even with the workaround, columns are generated
-independently, so real relationships between columns are not reproduced.
+gold. It is fixed after engine 0.19.0 (engine #421). The privacy guarantee
+holds either way, because the output is built only from the noisy snapshot.
+Columns from a DP snapshot are generated independently, so real relationships
+between columns are not reproduced.
 
 Practical guidance:
 

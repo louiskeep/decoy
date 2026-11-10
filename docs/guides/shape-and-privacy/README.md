@@ -1,11 +1,19 @@
 # Data shape and privacy: user guide
 
+Status: current
+
 How to keep, copy, measure and protect the statistical shape of your data with
 the `decoy` CLI. "Shape" means things like how many customers are in each
 state, or how order amounts are spread out.
 
 Every command and output on these pages was run against decoy-cli 0.1.0 and
-decoy-engine 0.19.0 on a 500-row sample file.
+decoy-engine 0.19.0 on a 500-row sample file. 0.19.0 is the engine version the
+CLI pins today.
+
+Several faults found in testing are fixed on engine main but are not in 0.19.0.
+These pages mark them "fixed after engine 0.19.0" with the engine PR number.
+You get those fixes when the CLI moves to the next engine release. A few of
+them also need a CLI change, and the page says so.
 
 ## Pick the page for your task
 
@@ -49,14 +57,19 @@ on `state`. `amount` is skewed toward small values.
 ## Known issues
 
 This guide describes the product as tested, including its faults. The full
-test results, with code locations, are in
+test results, with code locations and a re-test on current main, are in
 [`docs/records/2026-11-10-cli-qa-generation-distribution-models.md`](../../records/2026-11-10-cli-qa-generation-distribution-models.md).
-The three to know before you start:
+The ones to know before you start:
 
-- Fitted number columns break on outliers and heavy skew.
-- The fidelity report gives good grades to several kinds of wrong output.
-- Generated columns with identical settings come out identical unless each has
-  its own `source_column`.
+- Fitted number columns break on outliers and heavy skew. Still open.
+- The fidelity report gives good grades to wrong number columns, because it
+  measures error against the source's full range. Still open. Blanks are
+  scored after engine 0.19.0 (engine #438).
+- A plain snapshot can hold one person's value: a rare category, a column's
+  largest or smallest number, or a short note. `decoy fit` does not warn.
+- On engine 0.19.0, generated columns with identical settings come out
+  identical unless each has its own `source_column`. Fixed after engine 0.19.0
+  (engine #421).
 
 ## Related reference
 

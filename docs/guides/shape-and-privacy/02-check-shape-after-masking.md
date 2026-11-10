@@ -1,5 +1,7 @@
 # 2. Check shape after masking
 
+Status: current
+
 [Back to the guide index](README.md)
 
 Masking changes values. Some strategies keep a column's shape, some change it

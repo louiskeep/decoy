@@ -1,5 +1,7 @@
 # 3. Fit and generate
 
+Status: current
+
 [Back to the guide index](README.md)
 
 Make new rows that follow the shape of a real file. Three steps: fit, generate,
@@ -70,6 +72,13 @@ State codes are harmless. A column of 25 surnames or diagnosis codes is not.
 `fit` prints no warning about this. Do not share a plain snapshot more widely
 than you would share the source.
 
+Engine main hides the values of columns that its profiler flags as personal
+data (engine #420, after 0.19.0). `decoy fit` does not use that yet; roadmap
+row 24f brings it to the CLI. Even then, a column the profiler does not flag
+keeps its values, including a rare category and its exact largest and smallest
+number. In the re-test, a 30-value note column was not flagged and every note
+was stored word for word.
+
 ## Step 2: generate from the snapshot
 
 `gen.yaml`:
@@ -92,22 +101,18 @@ tables:
         faker_type: name
       - name: state
         type: statistical
-        source_column: state
         snapshot_file: customers.snapshot.json
         allow_real_categories: true
       - name: tier
         type: statistical
-        source_column: tier
         snapshot_file: customers.snapshot.json
         allow_real_categories: true
         condition_on: state
       - name: amount
         type: statistical
-        source_column: amount
         snapshot_file: customers.snapshot.json
       - name: signup_date
         type: statistical
-        source_column: signup_date
         snapshot_file: customers.snapshot.json
 targets:
   synthetic:
@@ -130,18 +135,20 @@ customer_id,full_name,state,tier,amount,signup_date
 2,Marilyn Mclaughlin,TX,bronze,79.2657871313156,2022-09-25 02:46:11.246438
 ```
 
-Always set `source_column` on every statistical column, even when it matches
-the column's `name`. Without it, columns come out wrongly correlated. See
-[the known defect below](#known-defect-columns-move-together-when-they-should-not).
+On engine 0.19.0, also add `source_column: <name>` to every statistical
+column, even when it matches the column's `name`. Without it, columns with the
+same settings come out locked together. Fixed after engine 0.19.0; see
+[the fixed defect below](#fixed-columns-move-together-when-they-should-not).
 
 ### Options for a `type: statistical` column
 
 | Key | Meaning |
 |---|---|
 | `snapshot_file` | Required. Path to the snapshot. |
-| `source_column` | The snapshot column to sample from. Defaults to the column's own `name`, but set it anyway (see the known defect below). |
+| `source_column` | The snapshot column to sample from. Defaults to the column's own `name`. Set it when the generated name differs from the snapshot name, or on engine 0.19.0 (see the fixed defect below). |
 | `allow_real_categories: true` | Required for a category column from a plain snapshot. You are confirming that real values will appear in the output. |
 | `condition_on: other_col` | Pick this column's value based on another generated column. The pair must have been fitted with `--joint`. |
+| `null_probability` | Share of rows set to blank. With a snapshot that records cell formats it replaces the fitted blank rate; it is never added on top. See [blanks](#blanks). |
 | `other_mode` | What to do with the "other" count: `redistribute` (default, spread it over the top values) or `emit` (output the placeholder `__other__`). |
 
 You can mix statistical columns with any other generate type (`faker`,
@@ -151,13 +158,27 @@ You can mix statistical columns with any other generate type (`faker`,
 
 | Kind | Method |
 |---|---|
-| numeric | Pick a histogram bucket by its count, then a uniform random value inside it. |
+| numeric | Pick a histogram bucket by its count, then a uniform random value inside it. With a recorded cell format the value is rounded to the source's decimal places. |
 | categorical | Weighted draw from the stored values. |
-| datetime | Pick a year by its count, then a random moment in that year, kept between the earliest and latest source dates. |
+| datetime | Pick a year by its count, then a random moment in that year, kept between the earliest and latest source dates. With a recorded cell format the value is cut to the source resolution, so a date-only source gives dates. |
 | freetext | Pick a length from the length histogram and fill it with lorem ipsum words. |
 | with `condition_on` | Draw from the row of the pair table that matches the parent value. If the parent value was never seen, fall back to the column's own distribution. |
 
 Output is reproducible: the same seed and the same snapshot give the same file.
+
+### Blanks
+
+A snapshot that records each column's cell format also holds its blank rate,
+and generation reproduces it. The engine writes that block after 0.19.0
+(engine #434 and #436). In a re-test, 10% and 90% blank columns came out at
+9.7% and 90.2%.
+
+`null_probability` on a column replaces the fitted rate. It is not added on
+top: `0` turns blanks off and `0.1` gives 10%, whatever the source had.
+
+`decoy fit` on the current CLI writes no cell format block, so its snapshots
+give no blanks at all (roadmap row 24l adds it). Until then, set
+`null_probability` to the source's blank rate if blanks matter.
 
 ## Step 3: check the result
 
@@ -191,7 +212,8 @@ OK no policy violations.
 
 The low `signup_date` score is a reporting artifact, not a generation fault.
 The source has `2022-10-02` and the output has `2023-06-28 06:34:49.426341`.
-The report compares them as text, and the lengths differ.
+The report compares them as text, and the lengths differ. A snapshot with a
+recorded cell format generates date-only values, which removes the mismatch.
 
 ## Using `condition_on`
 
@@ -213,8 +235,9 @@ Rules:
   parent cannot be conditioned on.
 - **Only the 25 most common pairs are kept.** A parent value whose pairs all
   fall outside the top 25 is drawn from the child's overall counts instead,
-  with no warning. In a test with 36 real pairs this produced combinations that
-  never occur in the source. Check the snapshot: under `joints`, compare
+  with no warning. In a re-test with 12 parent values and 36 real pairs, the
+  rarest parent lost all its pairs and 43 of 6,000 rows (0.7%) had
+  combinations that never occur in the source. Check the snapshot: under `joints`, compare
   `cell_count` with the number of entries in `cells`.
 - A parent value that was never in the fit also falls back silently.
 - Not allowed with differential privacy.
@@ -227,63 +250,50 @@ Measured results from [the QA record](../../records/2026-11-10-cli-qa-generation
 
 | Source column | What happens | What to do |
 |---|---|---|
-| A number column with one extreme value | The whole column is ruined. Values near 100 with one value of 1,000,000 generated a mean of 49,940. | Remove or cap outliers before fitting. |
-| A heavily skewed number column | The median moved from 19.9 to 91.5. | Fit a transformed column (for example a log), or generate it another way. |
-| A number column with a few fixed values (prices, ratings) | Four price points became 20,000 different values. | Do not fit it. Generate it as a `categorical` column with the values and weights written out. |
-| A column with blanks | Blanks are not reproduced: 10% and 90% blank both came out 0%. | Add `null_probability` to the generate column yourself. |
-| A date column | Only the year mix is kept. 66% January became 9%. | Generate dates another way if month or weekday matters. |
-| Codes with leading zeros (zip, account numbers) | Read as numbers; leading zeros are lost. | Not fixable at fit time today. Generate these with `faker` or a format rule. |
+| A number column with one extreme value | The whole column is ruined. Values near 100 with one value of 1,000,000 generated a mean of 50,084, and 99.8% of rows landed above 200. | Remove or cap outliers before fitting. |
+| A heavily skewed number column | The median moved from 20.5 to 92.1. | Fit a transformed column (for example a log), or generate it another way. |
+| A number column with a few fixed values (prices, ratings) | Four price points became 20,000 different values, none of them a real price. With a recorded cell format they keep two decimals but are still spread out: 3,585 values, 0.08% on a real price. | Do not fit it. Generate it as a `categorical` column with the values and weights written out. |
+| A column with blanks | With a `decoy fit` snapshot, 10% and 90% blank both came out 0%. A snapshot with a recorded cell format keeps them. | See [blanks](#blanks). |
+| A date column | Only the year mix is kept. 66% January became 8%. | Generate dates another way if month or weekday matters. |
+| Codes with leading zeros (zip, account numbers) | Read as numbers; leading zeros are lost (10.9% of generated zips were short). | Not fixable at fit time today. Generate these with `faker` or a format rule. |
 | A category held by one person | Stored with `count: 1` and can be generated. | Remove rare values before fitting, or use the DP fit. |
 | A number column's largest or smallest value | Stored exactly as `max` / `min`. | Cap the column before fitting if an extreme identifies someone. |
 | Short free text with 30 or fewer distinct values | Stored and generated word for word. | Drop the column, or mask it first. |
 
 ## What this method cannot do
 
-- **Fine numeric detail.** Shape is only as fine as 10 buckets. Values come out
-  with many decimals (`25.849769587687348`), not the source's two.
+- **Fine numeric detail.** Shape is only as fine as 10 buckets. On engine
+  0.19.0 values come out with many decimals (`25.849769587687348`); a recorded
+  cell format rounds them to the source's places.
 - **Date patterns.** The year mix is kept. Month, weekday and time-of-day
-  patterns are not. Dates come out as full timestamps.
+  patterns are not. On engine 0.19.0 dates come out as full timestamps; a
+  recorded cell format keeps the source resolution.
 - **Free text content.** Only length is kept.
 - **Links between columns** unless you fit the pair with `--joint` and use
   `condition_on`.
-- **Null rates.** Blanks in the source are not reproduced in the output.
+- **Null rates from `decoy fit`.** Its snapshots carry no blank rate yet. See
+  [blanks](#blanks).
 - **Rare categories** beyond the top 20 are lumped into "other".
 - **Table relationships.** A snapshot describes one file. It does not make a
   child table follow the parent's real fan-out (for example orders per
   customer).
 - **Uniqueness.** There is no control to force unique generated values.
 
-## Known defect: columns move together when they should not
+## Fixed: columns move together when they should not
 
-Two statistical columns with identical settings draw the same random number on
-every row. Each column's own shape is still right, but the columns are locked
-together. In a test with two unrelated source columns (correlation 0.02), the
-generated columns had a correlation of 0.97, and two unrelated category
-columns came out as near-functions of each other.
+On engine 0.19.0, two statistical columns with identical settings draw the
+same random number on every row. Each column's own shape is right, but the
+columns are locked together: two unrelated source columns (correlation 0.02)
+came out at 0.97. The same applies to two `faker` columns with the same
+`faker_type`. The cause was a column seed built from its settings with the
+`name` left out.
 
-**Cause.** A column's random seed is built from its settings, and the column's
-`name` is deliberately left out of that. Two columns that differ only by name
-(same `type`, same `snapshot_file`) get the same seed.
+Fixed after engine 0.19.0 (engine #421): the seed now includes the column name.
+In a re-test on engine main, two columns with identical settings matched on no
+rows (statistical, `pyint`) or at chance (0.4% for `first_name`), and two
+unrelated statistical columns kept their source correlation (-0.01 against
+-0.01).
 
-**Workaround.** Give every statistical column an explicit `source_column`. That
-makes the settings differ, so the seeds differ:
-
-```yaml
-      - name: state
-        type: statistical
-        source_column: state
-        snapshot_file: customers.snapshot.json
-        allow_real_categories: true
-```
-
-With that one line per column, the same test gave a correlation of 0.02 and
-the category pair scored 0.964 against the source.
-
-The same cause affects other generate types: two `faker` columns with the same
-`faker_type` produce identical values. This is recorded as finding C1 in
+On 0.19.0, give every statistical column an explicit `source_column` so the
+settings differ. This is finding C1 in
 [`docs/records/2026-11-08-cli-qa-generation.md`](../../records/2026-11-08-cli-qa-generation.md).
-
-**Detecting it.** `decoy report fidelity` only partly catches it. With
-`--joint`, the unrelated category pair scored 0.649, a visible drop. The
-unrelated number pair still scored 0.986. Check number pairs yourself, for
-example with a correlation in pandas.

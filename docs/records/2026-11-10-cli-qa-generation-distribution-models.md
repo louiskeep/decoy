@@ -1,5 +1,7 @@
 # QA record: distribution models for data generation (ten-question pass)
 
+Status: record
+
 Date: 2026-11-10. decoy-cli 0.1.0, decoy-engine 0.19.0, CPython 3.10.20, Linux x86-64, NO_COLOR.
 Fourth record in the series (`2026-11-08-cli-qa-first-user.md`,
 `2026-11-08-cli-qa-distribution-integrity.md`, `2026-11-08-cli-qa-generation.md`).
@@ -21,6 +23,17 @@ Scope: `decoy fit`, `type: statistical` generation, `condition_on`, `decoy repor
 - Every number below was measured in this pass. Each DP sweep cell is one random draw.
 - Paths in "Where" are relative to `decoy-engine/src/decoy_engine/` unless they start with
   `cli/`, which is `decoy/src/decoy/cli/`. Line numbers are for the commits above.
+- Re-tested the same day on engine `5c24a75e` (main, after #450) and CLI `9f603536` (main),
+  macOS arm64, CPython 3.10, with the CLI installed against engine main in place of its
+  0.19.0 pin. Scripts and data generators are in
+  [`2026-11-10-di-repro/`](2026-11-10-di-repro/README.md); `run.sh` prints every number in
+  the status table below. Two fit paths were tested:
+  - `decoy fit`: CLI main still calls `compute_distribution_snapshot` (`cli/fit.py:422`), so
+    its snapshots have no `cell_format` block and no redaction.
+  - The engine's `distribution_snapshot_document`, the call the CLI halves of rows 24f and
+    24l will make. It adds `cell_format` and hides flagged columns' values.
+- The fixes below are on engine main only. None is in engine 0.19.0, the version CLI main
+  pins.
 
 ## Summary
 
@@ -36,6 +49,42 @@ Scope: `decoy fit`, `type: statistical` generation, `condition_on`, `decoy repor
 | 8 | Do plain snapshots leak? | Yes | H6, H7, M6 |
 | 9 | When is a DP release usable? | Sizing table below | H8, M7, M8 |
 | 10 | Does the DP contract fail closed? | Yes for misuse, no for a forged file | M9 |
+
+## Status after the re-test (engine `5c24a75e`, CLI `9f603536`)
+
+| # | Status | Re-test numbers |
+|---|---|---|
+| C1 | FIXED by engine #421 | Identical settings, share of equal rows: statistical 0, `first_name` 0.004, `pyint` 0, `date_between` 0.002, `categorical` 0.395 (chance level). Independent statistical columns: corr -0.01, source -0.013. |
+| C2 | STILL OPEN | Outlier column mean 149.8 to 50,084; 99.8% of rows above 200 (source 0.005%). Same through the cell-format fit (50,187). |
+| C3 | PARTLY: null scoring FIXED by engine #438; range normalization STILL OPEN | Engine `compute_fidelity` on the `decoy fit` output: outlier 0.940, skew 0.969, price 0.926; null90 now 0.096 and null10 0.893. `decoy report fidelity` could not be run, see the note under this table. |
+| H1 | STILL OPEN | 36 real pairs, 25 cells kept, `other_count` 380. Parent P11 has no cell; 43 of 6,000 rows (0.72%) are pairs absent from the source, all P11. No warning. |
+| H2 | PARTLY: FIXED in the engine by #434 and #436; not reachable through `decoy fit` until row 24l's CLI part | `decoy fit` snapshot: 10.0% and 90.3% nulls to 0% and 0%. Cell-format snapshot: 9.7% and 90.2%. |
+| H3 | PARTLY: decimals FIXED with a cell format (#436); bucket shape STILL OPEN | Skew median 20.5 to 92.1, mean 42.4 to 98.6. Price via `decoy fit`: 4 to 20,000 distinct, up to 15 decimals, 0% on a real price. Via cell format: 3,585 distinct, 2 decimals, 0.08% on a real price. The two-peak gap held 0% in source and both outputs, so the original 1.4% did not reproduce with this generator. |
+| H4 | STILL OPEN (code read) | `_render_fidelity_report` (`cli/report.py:1832` on main) prints no warnings. Not run, for the same reason as C3. |
+| H5 | STILL OPEN, and now fully silent | With `fidelity_warn_threshold: 1.0`: nothing on stdout, stderr or `--json`, and no `logs/` directory, because engine #426 dropped the default log file and #429 added a `NullHandler`. With Python logging turned on, the warning fires (overall 0.861, worst `null90` 0.096), so the default 0.8 still passes this file. |
+| H6 | PARTLY: engine #420 hides flagged columns; `decoy fit` does not use it; unflagged columns are not covered | `decoy fit`: `RARE-HIV-B20` stored with count 1, in 7 of 5,000 generated rows; salary max 987,654 stored exactly, generated max 917,569. Engine document fit: `id`, `diagnosis`, `salary` flagged and withheld (salary bounds -1,000,000 to 2,000,000); generating `diagnosis` from it is refused with a clear message. |
+| H7 | STILL OPEN | `decoy fit`: note fitted as categorical, 100% of generated notes are real source strings. Engine document fit: `note` is not flagged, all 30 strings stored. |
+| H8 | Not re-run | No merged PR touched `quality/dp_session.py` or `quality/dp_budget.py` since `44d6afe`. |
+| M1 | Not re-run | No merged PR targets it. |
+| M2 | Not re-run | The H1 run went through the same silent fallback (`_sample.py`). |
+| M3 | PARTLY: time part FIXED with a cell format (#436); month and weekday shape STILL OPEN | January 66.5% to 8.4% (`decoy fit`) and 8.8% (cell format). Time part on 100% of values via `decoy fit`, 0% via cell format. Year mix kept. |
+| M4 | STILL OPEN | 10.9% of generated zips shorter than 5 characters (10.4% via cell format). |
+| M5 | Not re-run | `decoy report fidelity` fails on this pair, see below. |
+| M6 | Not re-run | `cli/fit.py` unchanged since `d73328c`. |
+| M7, M8 | Not re-run | No merged PR targets the DP release size or the validate gate for it. |
+| M9 | Not re-run | Documented limit. |
+
+`null_probability` with a fitted null rate: it replaces the rate, it is not applied twice.
+On a cell-format snapshot of a 10% null column, unset gave 9.9%, `0` gave 0%, `0.1` gave
+10.2% and `0.5` gave 50.2% (engine `_cell_format.py`: `apply_nulls` is false when the column
+sets `null_probability`). On a `decoy fit` snapshot the fitted rate is not used at all
+(unset 0%, `0.1` 10.1%), so a CLI user still needs `null_probability` today.
+
+`decoy report fidelity` on CLI `9f603536` with engine main exits with "resolve_csv_dialect:
+has_header must be true or false". Engine #409 made `has_header` required and the CLI's
+report path does not set it. CLI main pins engine 0.19.0, which predates #409, so this
+breaks at the next engine re-pin unless the CLI sets it first. C3 was re-scored with
+`decoy_engine.quality.fidelity.compute_fidelity` instead (`engine_check.py fidelity`).
 
 ## What held up (do not regress)
 
@@ -73,6 +122,7 @@ Scope: `decoy fit`, `type: statistical` generation, `condition_on`, `decoy repor
   dropped to 0.017 and the category pair scored 0.964 against the source.
 - Roadmap: row 24i (GEN-C1). New in this pass: the root-cause location, the workaround, and
   confirmation that a keyed run is affected.
+- Re-test: FIXED by engine #421. The workaround is needed only on engine 0.19.0.
 
 **C2. One outlier ruins a numeric column.**
 - Evidence: 20,000 rows near 100 plus one value of 1,000,000. Source mean 150, generated mean
@@ -83,6 +133,7 @@ Scope: `decoy fit`, `type: statistical` generation, `condition_on`, `decoy repor
   (`_DEFAULT_NUMERIC_BINS = 10`); sampler `generation/statistical/_sample.py:160`
   (`_numeric_row`), `:265`.
 - Roadmap: not listed. Proposed new row.
+- Re-test: STILL OPEN. Mean 149.8 to 50,084.
 
 **C3. The fidelity report passes C2 and most other defects here.**
 - Evidence, same file as C2 and H3: grade B, overall 0.918, "OK no policy violations".
@@ -102,6 +153,8 @@ Scope: `decoy fit`, `type: statistical` generation, `condition_on`, `decoy repor
   exits 4, on the null drift only.
 - Roadmap: row 24l covers null scoring. The range-normalization blind spot is not listed.
   Proposed new row.
+- Re-test: PARTLY. Null scoring FIXED by engine #438 (null90 0.096). Range normalization
+  STILL OPEN (outlier 0.940).
 
 ### High
 
@@ -113,12 +166,15 @@ Scope: `decoy fit`, `type: statistical` generation, `condition_on`, `decoy repor
   (`_joint_snapshot`); fallback at `generation/statistical/_sample.py:323`. `decoy fit` has no
   flag to raise the cap (`cli/fit.py:422`).
 - Roadmap: not listed. Proposed new row.
+- Re-test: STILL OPEN. 43 of 6,000 rows (0.72%).
 
 **H2. Null rates are not reproduced.**
 - Evidence: source nulls 10.3% and 89.9%; generated 0% and 0%.
 - Where: `null_count` is fitted (`quality/snapshot.py:232`) and never read by
   `generation/statistical/_sample.py:234`.
 - Roadmap: row 24l (GEN-FIT-SHAPE).
+- Re-test: PARTLY. FIXED in the engine by #434 and #436 (9.7% and 90.2%); `decoy fit` still
+  gives 0% until row 24l's CLI part.
 
 **H3. Skewed and discrete numeric columns are distorted.**
 - Evidence, 20,000 rows each: lognormal median 19.9 to 91.5 and mean 41 to 98; four price
@@ -126,12 +182,14 @@ Scope: `decoy fit`, `type: statistical` generation, `condition_on`, `decoy repor
   of rows in a gap that held 0.04%.
 - Where: same as C2.
 - Roadmap: row 24l covers precision only. Bucket shape is not listed. Proposed with C2.
+- Re-test: PARTLY. Decimals FIXED with a cell format (#436). Skew and price shape STILL OPEN.
 
 **H4. Report warnings never reach the terminal.**
 - Evidence: `null_drift` and `kind_drift` appear in `--json` under `warnings` and
   `diagnostic`. The human output prints the score table and "OK no policy violations".
 - Where: `cli/report.py:1843` (`_render_fidelity_report`).
 - Roadmap: not listed. Fits row 24e (CLI-QA1) or 24o (GEN-CLI).
+- Re-test: STILL OPEN (code read).
 
 **H5. The generation fidelity warning is invisible, and its default misses real failures.**
 - Evidence: with `fidelity_warn_threshold: 1.0` the warning
@@ -141,6 +199,8 @@ Scope: `decoy fit`, `type: statistical` generation, `condition_on`, `decoy repor
 - Where: `generation/_fidelity_gate.py:52`, `:163`; `config/_global_settings.py:116`;
   `cli/run.py:1379` renders mask-table reports only.
 - Roadmap: row 24o (GEN-CLI) covers visibility. The default threshold is not listed.
+- Re-test: STILL OPEN. On engine main no log file is written either (#426), so the warning
+  reaches no output unless the caller turns on Python logging.
 
 **H6. A plain snapshot stores single-person values, and `fit` says nothing.**
 - Evidence, 1,000 rows:
@@ -152,6 +212,8 @@ Scope: `decoy fit`, `type: statistical` generation, `condition_on`, `decoy repor
   `generation/statistical/_spec.py:373` covers categories only; `cli/fit.py:422`.
 - Roadmap: row 24f (QA-FIT-REDACT). New in this pass: the numeric `min`/`max` case and the
   count-of-one case.
+- Re-test: PARTLY. Engine #420 hides profiler-flagged columns; `decoy fit` does not use it
+  yet, and unflagged columns keep rare labels and exact `min`/`max`.
 
 **H7. Short free text is stored and emitted verbatim.**
 - Evidence: a note column with 30 distinct strings such as `note: patient Surname24 called` was
@@ -159,6 +221,7 @@ Scope: `decoy fit`, `type: statistical` generation, `condition_on`, `decoy repor
   source strings.
 - Where: `quality/snapshot.py:133` (`_CATEGORICAL_DISTINCT_CAP = 30`), `:269` (`_stats_for`).
 - Roadmap: row 24f.
+- Re-test: STILL OPEN on both fit paths.
 
 **H8. A DP fit is slow, and the cost is paid on every CLI call.**
 - Evidence, 500 rows through the CLI: 13 s for 2 columns, 37 s for 8, 88 s for 20. In one
@@ -186,10 +249,11 @@ value `ZZZ` not in the fit drew its child from the overall counts. Where:
 8.8%. Output is `2021-08-11 11:47:15.446627` for a date-only source. Where:
 `quality/snapshot.py:487` (`_datetime_stats`), `generation/statistical/_sample.py:327`.
 Roadmap: row 24l covers resolution. Month and weekday shape are not listed.
+Re-test: PARTLY. Time part FIXED with a cell format (#436); January still 8.4%.
 
 **M4. Zero-padded codes become numbers.** A five-digit zip column was fitted as numeric;
 9.8% of generated values were shorter than five characters. Where: `cli/fit.py:402` reads
-with pandas type inference.
+with pandas type inference. Re-test: STILL OPEN (10.9%).
 
 **M5. `run --fidelity` and `report fidelity` infer types differently.** Same masked run:
 
@@ -256,7 +320,10 @@ Reading it:
 
 ## Roadmap mapping
 
-The roadmap is `docs/ROADMAP.md`. This record adds no rows; the owner decides.
+The roadmap is `docs/ROADMAP.md`. The owner approved the proposals on 2026-11-10. After the
+re-test they land as new rows 24u GEN-NUM-SHAPE (C2, H3), 24v FID-RANGE (C3) and 24w
+GEN-COND-CAP (H1), plus notes on 24b, 24f, 24i and 24o. H8, M1 to M6 and M8 go to the V2
+backlog. The table is the mapping as proposed before the re-test.
 
 | Finding | Existing row | Proposed |
 |---|---|---|

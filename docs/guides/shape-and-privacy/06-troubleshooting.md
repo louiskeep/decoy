@@ -1,5 +1,7 @@
 # 6. Troubleshooting
 
+Status: current
+
 [Back to the guide index](README.md)
 
 ## Errors
@@ -85,7 +87,8 @@ Free text is compared by length only. It does not mean real names survived.
 
 ### A date column scores low after generation
 
-Generated dates are full timestamps and the report compares dates as text.
+On engine 0.19.0, generated dates are full timestamps and the report compares
+dates as text. A snapshot with a recorded cell format generates dates only.
 See [page 3](03-fit-and-generate.md#step-3-check-the-result).
 
 ### `run --fidelity` and `report fidelity` give different grades
@@ -100,23 +103,30 @@ The inline check covers masked tables only. Use
 
 ### Generated numbers have too many decimals
 
-Values are drawn uniformly inside histogram buckets. Round them downstream.
+On engine 0.19.0, values are drawn uniformly inside histogram buckets with no
+rounding. Round them downstream. After 0.19.0 a snapshot with a recorded cell
+format rounds to the source's decimal places; `decoy fit` writes that block
+once roadmap row 24l ships.
 
 ### Generated columns are correlated when the source columns are not
 
-A known defect with a one-line workaround: set `source_column` on every
-statistical column. See
-[page 3](03-fit-and-generate.md#known-defect-columns-move-together-when-they-should-not).
+On engine 0.19.0, columns with identical settings share a seed. Set
+`source_column` on every statistical column. Fixed after 0.19.0 (engine #421).
+See [page 3](03-fit-and-generate.md#fixed-columns-move-together-when-they-should-not).
 
 ### Two faker columns have identical values
 
-Same cause. Two generate columns with identical settings share a seed. Make
-the settings differ, or accept the duplication.
+Same cause, same fix (engine #421, after 0.19.0). On 0.19.0, make the
+settings differ.
 
 ### Blanks in the source do not appear in generated data
 
-Null rates are not reproduced by statistical columns. Add `null_probability`
-to the generate column.
+A snapshot from `decoy fit` carries no blank rate yet, so statistical columns
+come out with no blanks. Set `null_probability` to the source's blank rate.
+A snapshot with a recorded cell format (engine after 0.19.0) reproduces the
+rate itself; then leave `null_probability` unset, because it replaces the
+fitted rate rather than adding to it. See
+[page 3](03-fit-and-generate.md#blanks).
 
 ### A generated number column looks nothing like the source
 
@@ -152,7 +162,11 @@ Expected. Time grows with the number of declared columns. See
 
 ### A fidelity warning was configured but nothing was printed
 
-`fidelity_warn_threshold` writes to `logs/decoy_engine.log` only.
+On engine 0.19.0, `fidelity_warn_threshold` writes to `logs/decoy_engine.log`
+only. After 0.19.0 the engine writes no log file by default (engine #426), so
+the warning is not shown or saved anywhere unless your program turns on Python
+logging for `decoy_engine`. Roadmap row 24o tracks showing it on screen and in
+`--json`.
 
 ### The DP output is missing categories
 
@@ -169,7 +183,7 @@ An unrecognized key is ignored silently. Check the key names on
 
 | Artifact | Sensitivity |
 |---|---|
-| Plain snapshot (`*.snapshot.json`) | As sensitive as the source for category columns. It holds real values and exact counts. |
+| Plain snapshot (`*.snapshot.json`) | As sensitive as the source. Category columns hold real values and exact counts; number columns hold the exact largest and smallest value. |
 | DP snapshot | Safe to share within the stated (epsilon, delta). Columns you omitted are not in it. |
 | Fidelity report JSON | Scores and counts only. No data values. |
 | Masked output | Protected by the strategies you chose. No formal guarantee. |

@@ -1,5 +1,7 @@
 # 1. Choose your approach
 
+Status: current
+
 [Back to the guide index](README.md)
 
 ## The options
