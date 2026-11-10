@@ -53,7 +53,7 @@ def _pass_gate(monkeypatch: pytest.MonkeyPatch) -> None:
 
     The CLI now asks the engine's `check_dp_fit_request` before it reads a data row, and this
     host is uncertified, so the real check would refuse before the stubbed fit is reached."""
-    monkeypatch.setattr("decoy_engine.quality.dp.check_dp_fit_request", lambda *a, **k: None)
+    monkeypatch.setattr("decoy_engine.quality.check_dp_fit_request", lambda *a, **k: None)
 
 
 def _dp_source_csv(tmp_path: Path) -> Path:
@@ -1064,6 +1064,14 @@ class TestFitDpGate:
                 "decoy_engine.quality"
             ):
                 assert not [a.name for a in node.names if a.name.startswith("_")]
+                if node.module != "decoy_engine.quality":
+                    assert "check_dp_fit_request" not in [a.name for a in node.names]
+        assert any(
+            isinstance(n, ast.ImportFrom)
+            and n.module == "decoy_engine.quality"
+            and "check_dp_fit_request" in [a.name for a in n.names]
+            for n in ast.walk(tree)
+        ), "fit must import check_dp_fit_request from the decoy_engine.quality facade"
         checks = [
             n.lineno
             for n in ast.walk(tree)
