@@ -1,0 +1,16 @@
+# H1: a 12-parent, 36-pair link drawn through condition_on.
+version: 2
+global_settings:
+  seed: 11
+sources: {}
+tables:
+  - name: cond_out
+    row_count: 6000
+    generate_columns:
+      - {name: parent, type: statistical, snapshot_file: cond.snapshot.json, source_column: parent, allow_real_categories: true}
+      - {name: kid, type: statistical, snapshot_file: cond.snapshot.json, source_column: kid, allow_real_categories: true, condition_on: parent}
+targets:
+  cond_out:
+    type: file
+    format: csv
+    path: ./out/cond_out.csv

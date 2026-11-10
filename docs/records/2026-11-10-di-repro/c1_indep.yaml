@@ -1,0 +1,18 @@
+# C1: two statistical columns from independent sources, no source_column (name is the column).
+version: 2
+global_settings:
+  seed: 7
+sources: {}
+tables:
+  - name: c1_indep
+    row_count: 2000
+    generate_columns:
+      - {name: a, type: statistical, snapshot_file: c1.snapshot.json}
+      - {name: b, type: statistical, snapshot_file: c1.snapshot.json}
+      - {name: cat1, type: statistical, snapshot_file: c1.snapshot.json, allow_real_categories: true}
+      - {name: cat2, type: statistical, snapshot_file: c1.snapshot.json, allow_real_categories: true}
+targets:
+  c1_indep:
+    type: file
+    format: csv
+    path: ./out/c1_indep.csv

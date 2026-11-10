@@ -1,0 +1,24 @@
+# C1: pairs of columns whose settings differ only by name.
+version: 2
+global_settings:
+  seed: 7
+sources: {}
+tables:
+  - name: c1_ident
+    row_count: 2000
+    generate_columns:
+      - {name: stat_a, type: statistical, snapshot_file: c1.snapshot.json, source_column: a}
+      - {name: stat_b, type: statistical, snapshot_file: c1.snapshot.json, source_column: a}
+      - {name: fn_a, type: faker, faker_type: first_name}
+      - {name: fn_b, type: faker, faker_type: first_name}
+      - {name: cat_a, type: categorical, categories: [x, y, z], weights: [0.5, 0.3, 0.2]}
+      - {name: cat_b, type: categorical, categories: [x, y, z], weights: [0.5, 0.3, 0.2]}
+      - {name: int_a, type: faker, faker_type: pyint, faker_kwargs: {min_value: 0, max_value: 9999}}
+      - {name: int_b, type: faker, faker_type: pyint, faker_kwargs: {min_value: 0, max_value: 9999}}
+      - {name: date_a, type: faker, faker_type: date_between, faker_kwargs: {start_date: "-3y", end_date: "today"}}
+      - {name: date_b, type: faker, faker_type: date_between, faker_kwargs: {start_date: "-3y", end_date: "today"}}
+targets:
+  c1_ident:
+    type: file
+    format: csv
+    path: ./out/c1_ident.csv

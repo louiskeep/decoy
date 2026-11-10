@@ -1,0 +1,18 @@
+# H6, H7: generate from a plain (no --epsilon) snapshot of leak.csv.
+version: 2
+global_settings:
+  seed: 31
+sources: {}
+tables:
+  - name: leak_out
+    row_count: 5000
+    generate_columns:
+      - {name: state, type: statistical, snapshot_file: leak.snapshot.json, source_column: state, allow_real_categories: true}
+      - {name: diagnosis, type: statistical, snapshot_file: leak.snapshot.json, source_column: diagnosis, allow_real_categories: true}
+      - {name: salary, type: statistical, snapshot_file: leak.snapshot.json, source_column: salary}
+      - {name: note, type: statistical, snapshot_file: leak.snapshot.json, source_column: note, allow_real_categories: true}
+targets:
+  leak_out:
+    type: file
+    format: csv
+    path: ./out/leak_out.csv
