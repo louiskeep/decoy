@@ -59,6 +59,10 @@ snapshot together with a `global_settings.dp` block.
 
 A DP snapshot used without a `dp:` block gives this same error.
 
+### `statistical_snapshot_values_redacted`
+
+A `statistical` category column, or a `condition_on` through it, points at a column the snapshot withheld. `decoy fit` flagged the column as sensitive and kept no values. Re-run `decoy fit --include-values` (the file then holds real data) and set `allow_real_categories: true` on the column, or drop the column from the generate config. A DP release (`--epsilon`) needs a certified DP install.
+
 ### `statistical_snapshot_unreadable`
 
 The `snapshot_file` path does not exist or is not valid JSON. Check the path
@@ -105,8 +109,8 @@ The inline check covers masked tables only. Use
 
 On engine 0.19.0, values are drawn uniformly inside histogram buckets with no
 rounding. Round them downstream. After 0.19.0 a snapshot with a recorded cell
-format rounds to the source's decimal places; `decoy fit` writes that block
-once roadmap row 24l ships.
+format rounds to the source's decimal places. Current `decoy fit` writes that
+block, so refit to get rounded values.
 
 ### Generated columns are correlated when the source columns are not
 
@@ -121,10 +125,10 @@ settings differ.
 
 ### Blanks in the source do not appear in generated data
 
-A snapshot from `decoy fit` carries no blank rate yet, so statistical columns
-come out with no blanks. Set `null_probability` to the source's blank rate.
-A snapshot with a recorded cell format (engine after 0.19.0) reproduces the
-rate itself; then leave `null_probability` unset, because it replaces the
+A snapshot from an older CLI version carries no blank rate, so statistical
+columns come out with no blanks: refit, or set `null_probability` to the
+source's blank rate. A current `decoy fit` snapshot records the cell format and
+reproduces the rate itself; then leave `null_probability` unset, because it replaces the
 fitted rate rather than adding to it. See
 [page 3](03-fit-and-generate.md#blanks).
 
@@ -183,7 +187,7 @@ An unrecognized key is ignored silently. Check the key names on
 
 | Artifact | Sensitivity |
 |---|---|
-| Plain snapshot (`*.snapshot.json`) | As sensitive as the source. Category columns hold real values and exact counts; number columns hold the exact largest and smallest value. |
+| Plain snapshot (`*.snapshot.json`) | Columns the profiler flags are withheld unless you passed `--include-values`, which makes the file as sensitive as the source. Unflagged category columns hold real values and exact counts; unflagged number columns hold the exact largest and smallest value. |
 | DP snapshot | Safe to share within the stated (epsilon, delta). Columns you omitted are not in it. |
 | Fidelity report JSON | Scores and counts only. No data values. |
 | Masked output | Protected by the strategies you chose. No formal guarantee. |
