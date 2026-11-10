@@ -9,17 +9,18 @@ What the numbers from `decoy report fidelity` and `decoy run --fidelity` mean.
 ## The first line
 
 ```text
-PASS grade B  overall_score 0.911
+REPORT ONLY (no threshold violations) grade B  overall_score 0.911
 ```
 
 | Part | Meaning |
 |---|---|
-| `PASS` / `WARN` / `FAIL` | The policy verdict. In the default `report` mode it is always PASS, whatever the score. |
+| `REPORT ONLY` | The default `report` mode. Thresholds are recorded and not enforced, whatever the score. With violations the line reads `REPORT ONLY: N threshold violation(s) not enforced`. |
+| `PASS` / `WARN` / `FAIL` | The policy verdict with `--mode warn` or `--mode fail`. |
 | `grade` | A letter for the overall score. |
 | `overall_score` | 0 to 1. 1 means the output's shape matches the source. |
 
-So `PASS grade F` is possible and is not a contradiction. PASS means "no rule
-you set was broken". With no rules set, nothing can be broken. Set `--mode` and
+So `REPORT ONLY` next to grade F is possible and is not a contradiction. It
+means nothing was enforced. With no rules set, nothing can fail. Set `--mode` and
 a threshold to make the verdict mean something
 ([page 2](02-check-shape-after-masking.md#make-the-check-fail-a-script)).
 

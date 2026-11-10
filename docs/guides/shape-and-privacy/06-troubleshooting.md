@@ -71,7 +71,7 @@ and `max_days` go under `provider_config:`.
 
 ## Surprising results
 
-### `PASS` next to a low grade
+### `REPORT ONLY` next to a low grade
 
 The default mode only records. See
 [page 5](05-reading-fidelity-reports.md#the-first-line).

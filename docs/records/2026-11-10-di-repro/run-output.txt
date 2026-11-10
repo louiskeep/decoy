@@ -1,6 +1,6 @@
 == fit c1
 OK c1.snapshot.json
-  2000 rows; columns: a (numeric), b (numeric), cat1 (categorical), cat2 
+  2000 rows; columns: a (numeric), b (numeric), cat1 (categorical), cat2
 (categorical)
 == run c1
 ╭─ v decoy run ────────────────────────────────────────────────────────────────╮
@@ -23,8 +23,8 @@ OK c1.snapshot.json
 ╰──────────────────────────────────────────────────────────────────────────────╯
 == fit types
 OK types.snapshot.json
-  20000 rows; columns: null10 (numeric), null90 (categorical), age (numeric), 
-skew (numeric), bimodal (numeric), outlier (numeric), price (numeric), day 
+  20000 rows; columns: null10 (numeric), null90 (categorical), age (numeric),
+skew (numeric), bimodal (numeric), outlier (numeric), price (numeric), day
 (datetime), bit (numeric), zip (numeric)
 == run types
 ╭─ v decoy run ────────────────────────────────────────────────────────────────╮
@@ -60,7 +60,7 @@ cond rc=0
 == fit leak
 leak fit rc=0
 OK leak.snapshot.json
-  1000 rows; columns: id (numeric), state (categorical), diagnosis 
+  1000 rows; columns: id (numeric), state (categorical), diagnosis
 (categorical), salary (numeric), note (categorical)
 == run leak
 leak rc=0

@@ -111,7 +111,7 @@ decoy report fidelity customers.csv masked.csv --config mask.yaml
 ```
 
 ```text
-PASS grade A  overall_score 0.962
+REPORT ONLY (no threshold violations) grade A  overall_score 0.962
            Marginal fidelity
 
  Column        Comparable   Similarity

@@ -321,8 +321,8 @@ Reading it:
 ## Roadmap mapping
 
 The roadmap is `docs/ROADMAP.md`. The owner approved the proposals on 2026-11-10. After the
-re-test they land as new rows 24u GEN-NUM-SHAPE (C2, H3), 24v FID-RANGE (C3) and 24w
-GEN-COND-CAP (H1), plus notes on 24b, 24f, 24i and 24o. H8, M1 to M6 and M8 go to the V2
+re-test the roadmap PR (louiskeep/decoy#159) adds new rows 24u GEN-NUM-SHAPE (C2, H3),
+24v FID-RANGE (C3) and 24w GEN-COND-CAP (H1), plus notes on 24b, 24f, 24i and 24o. H8, M1 to M6 and M8 go to the V2
 backlog. The table is the mapping as proposed before the re-test.
 
 | Finding | Existing row | Proposed |

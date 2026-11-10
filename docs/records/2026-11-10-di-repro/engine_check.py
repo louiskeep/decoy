@@ -14,7 +14,7 @@ import json
 import sys
 
 import pandas as pd
-from decoy_engine.profiling._snapshot_values import distribution_snapshot_document
+from decoy_engine import distribution_snapshot_document
 from decoy_engine.quality.fidelity import compute_fidelity
 from decoy_engine.quality.snapshot import compute_distribution_snapshot
 

@@ -63,15 +63,20 @@ source dp-env/bin/activate
 ```
 
 ```bash
-uv pip install decoy-engine==0.19.0 decoy-cli
+uv pip install --no-deps "git+https://github.com/louiskeep/decoy-engine@v0.19.0" decoy-cli
 ```
 
 ```bash
 uv pip install -r requirements-certified.txt
 ```
 
-`requirements-certified.txt` is at the root of the `decoy` repo. Its header
-gives these install steps and names the exact fingerprint they produce.
+The engine is not on PyPI, so it installs from its git tag (the same form
+`pyproject.toml` and CI use). `--no-deps` keeps the resolver from adding
+packages; the next command installs the full certified set.
+
+`requirements-certified.txt` is not part of the installed package. It is at the
+root of the `decoy` repo, so take it from a checkout at the matching release.
+Its header names the exact fingerprint the set produces.
 
 This guide was run from source checkouts instead: `uv pip install --no-deps
 <engine-path> <cli-path>`, then the requirements file. That produced the
@@ -144,17 +149,22 @@ tables:
   - name: synthetic_dp
     row_count: 500
     generate_columns:
+      # source_column is needed on engine 0.19.0, until the engine repin.
       - name: state
         type: statistical
+        source_column: state
         snapshot_file: customers.dp.json
       - name: tier
         type: statistical
+        source_column: tier
         snapshot_file: customers.dp.json
       - name: amount
         type: statistical
+        source_column: amount
         snapshot_file: customers.dp.json
       - name: is_active
         type: statistical
+        source_column: is_active
         snapshot_file: customers.dp.json
 targets:
   synthetic_dp:

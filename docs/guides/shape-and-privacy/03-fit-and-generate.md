@@ -99,20 +99,25 @@ tables:
       - name: full_name
         type: faker
         faker_type: name
+      # source_column is needed on engine 0.19.0, until the engine repin.
       - name: state
         type: statistical
+        source_column: state
         snapshot_file: customers.snapshot.json
         allow_real_categories: true
       - name: tier
         type: statistical
+        source_column: tier
         snapshot_file: customers.snapshot.json
         allow_real_categories: true
         condition_on: state
       - name: amount
         type: statistical
+        source_column: amount
         snapshot_file: customers.snapshot.json
       - name: signup_date
         type: statistical
+        source_column: signup_date
         snapshot_file: customers.snapshot.json
 targets:
   synthetic:
@@ -187,7 +192,7 @@ decoy report fidelity customers.csv synthetic.csv --generate --joint state,tier
 ```
 
 ```text
-PASS grade B  overall_score 0.910
+REPORT ONLY (no threshold violations) grade B  overall_score 0.910
            Marginal fidelity
 
  Column        Comparable   Similarity
