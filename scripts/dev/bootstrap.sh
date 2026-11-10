@@ -29,7 +29,7 @@ esac
 
 die() { echo "BOOTSTRAP FAIL: $1" >&2; echo "  fix: $2" >&2; exit 1; }
 case " $SUPPORTED " in *" $PY_SERIES "*) ;; *) die "python $PY_SERIES is not supported (supported: $SUPPORTED)" "set DECOY_PYTHON to one of: $SUPPORTED" ;; esac
-# The engine spec every install uses, e.g. git+https://github.com/louiskeep/decoy-engine@v0.20.0
+# The engine spec every install uses, e.g. git+https://github.com/louiskeep/decoy-engine@v0.21.0
 ENGINE_SPEC=$(bash "$PROFILE" --engine-spec)
 ENGINE_REF=${ENGINE_SPEC##*@}
 PYPROJECT_PIN=$(sed -n 's/^ *"decoy-engine==\([^"]*\)",.*/\1/p' pyproject.toml)

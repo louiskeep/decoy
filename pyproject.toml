@@ -109,10 +109,13 @@ dependencies = [
     # generated tables with `generated_table_to_pandas`; it also certifies row
     # 725f80a3 for the CLI runtime profile.
     #
+    # 0.21.0 bounds `contingency_top_k` to 1..1000 and certifies row aa038ddd
+    # for the CLI runtime profile.
+    #
     # Hard-pinned to one engine release. The platform is parked and stays on
     # 0.18.0, so the two pins differ for now. The engine is not on PyPI, so CI
-    # and the smoke docs install the `v0.20.0` git tag.
-    "decoy-engine==0.20.0",
+    # and the smoke docs install the `v0.21.0` git tag.
+    "decoy-engine==0.21.0",
     # Pin the typer minor: `typer utils docs` metavar rendering differs across
     # typer minors (0.26.x emits `TEXT`/`FILE`; 0.27.x emits `<str>`/`<file>`),
     # and docs/cli-reference.md is committed and checked by the test_cli_surface
