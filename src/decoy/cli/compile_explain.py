@@ -233,7 +233,11 @@ def compile(
     # hand-maintain a parallel skip list (it drifts from the engine's contract).
     try:
         plan = compile_plan(
-            raw, profile, decoy_engine_version=engine_version, no_profile=not use_profile
+            raw,
+            profile,
+            decoy_engine_version=engine_version,
+            no_profile=not use_profile,
+            base_dir=config.parent,
         )
     except Exception as exc:
         _compile_error(state, config, exc)

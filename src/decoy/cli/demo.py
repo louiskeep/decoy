@@ -227,7 +227,12 @@ def _run_v2_mask(pipeline_yaml: Path) -> None:
         config_dict,
         seed=job_seed if isinstance(job_seed, int) else None,
     )
-    plan = compile_plan(config_dict, profile, decoy_engine_version=engine_version)
+    plan = compile_plan(
+        config_dict,
+        profile,
+        decoy_engine_version=engine_version,
+        base_dir=pipeline_yaml.parent,
+    )
     ns_registry = build_namespace_registry(config_dict, profile)
     if profile.relationships:
         lookup = check_orphan_fk_policy_completeness(config_dict, profile.relationships)
