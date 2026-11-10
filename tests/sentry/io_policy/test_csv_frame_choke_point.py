@@ -3,7 +3,7 @@
 1. Arrow to CSV goes through `io/_targets.py::_csv_frame`. A bare `to_pandas()` widens an integer
    column that holds a null to float64, so a CSV cell prints `23.0`. The scan flags a `to_csv`
    call whose receiver is a `to_pandas(...)` call, and a `to_csv` on a local name that the same
-   function bound from a `to_pandas(...)` call.
+   function bound from a `to_pandas(...)` call, plain or annotated.
 2. A null rate comes from the engine's `snapshot_null_fraction`. The scan flags a division in a
    statement that reads `null_count` or `non_null_count`, so the CLI never keeps a second ratio
    (and its own zero-row rule).
@@ -42,13 +42,17 @@ def csv_bypass_lines(source: str) -> list[int]:
     lines: set[int] = set()
     for scope in _scopes(tree):
         nodes = [n for n in ast.walk(scope)]
-        bound = {
-            t.id
-            for n in nodes
-            if isinstance(n, ast.Assign) and _to_pandas_call(n.value)
-            for t in n.targets
-            if isinstance(t, ast.Name)
-        }
+        bound: set[str] = set()
+        for n in nodes:
+            if isinstance(n, ast.Assign) and _to_pandas_call(n.value):
+                bound |= {t.id for t in n.targets if isinstance(t, ast.Name)}
+            elif (
+                isinstance(n, ast.AnnAssign)
+                and n.value is not None
+                and _to_pandas_call(n.value)
+                and isinstance(n.target, ast.Name)
+            ):
+                bound.add(n.target.id)
         for n in nodes:
             if not (isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute)):
                 continue
@@ -111,9 +115,11 @@ def test_csv_frame_is_the_conversion_both_writers_use() -> None:
 def test_seeded_direct_arrow_to_csv_is_detected() -> None:
     direct = "def w(t, p):\n    t.to_pandas().to_csv(p)\n"
     by_name = "def w(t, p):\n    frame = t.to_pandas()\n    frame.to_csv(p)\n"
+    annotated = "def w(t, p):\n    frame: object = t.to_pandas()\n    frame.to_csv(p)\n"
     clean = "def w(t, p):\n    _csv_frame(t).to_csv(p)\n    pd_frame.to_csv(p)\n"
     assert csv_bypass_lines(direct) == [2]
     assert csv_bypass_lines(by_name) == [3]
+    assert csv_bypass_lines(annotated) == [3]
     assert csv_bypass_lines(clean) == []
 
 
