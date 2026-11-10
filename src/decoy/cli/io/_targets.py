@@ -349,6 +349,13 @@ def _coerce_int_columns(frame: pd.DataFrame, layout: Mapping[str, Any]) -> pd.Da
     return out
 
 
+def _csv_frame(table: pa.Table) -> pd.DataFrame:
+    """Arrow to pandas for csv text, keeping int columns that hold a null as ints, not 1.0."""
+    from decoy_engine import generated_table_to_pandas
+
+    return generated_table_to_pandas(table)
+
+
 def _write_fixed_width(table: pa.Table, layout: Mapping[str, Any] | None, path: Path) -> None:
     from decoy_engine import write_fixed_width
 
@@ -382,7 +389,7 @@ def _write_table(
     compression = csv_compression(path)
     with stage(path) as tmp:
         if fmt == "csv":
-            (data if frame else data.to_pandas()).to_csv(tmp, index=False, compression=compression)
+            (data if frame else _csv_frame(data)).to_csv(tmp, index=False, compression=compression)
         elif frame:
             data.to_parquet(tmp, index=False)
         else:
@@ -486,7 +493,7 @@ def write_chunked_output(
         else:
             compression = csv_compression(out_path)
             for index, masked in enumerate(itertools.chain((first,), chunks)):
-                masked.to_pandas().to_csv(
+                _csv_frame(masked).to_csv(
                     tmp,
                     index=False,
                     header=index == 0,
