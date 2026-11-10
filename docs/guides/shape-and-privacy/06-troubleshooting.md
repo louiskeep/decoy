@@ -59,6 +59,10 @@ snapshot together with a `global_settings.dp` block.
 
 A DP snapshot used without a `dp:` block gives this same error.
 
+### `statistical_snapshot_values_redacted`
+
+A `statistical` category column, or a `condition_on` through it, points at a column the snapshot withheld. `decoy fit` flagged the column as sensitive and kept no values. Re-run `decoy fit --include-values` (the file then holds real data) and set `allow_real_categories: true` on the column, or drop the column from the generate config. A DP release (`--epsilon`) needs a certified DP install.
+
 ### `statistical_snapshot_unreadable`
 
 The `snapshot_file` path does not exist or is not valid JSON. Check the path
@@ -183,7 +187,7 @@ An unrecognized key is ignored silently. Check the key names on
 
 | Artifact | Sensitivity |
 |---|---|
-| Plain snapshot (`*.snapshot.json`) | As sensitive as the source. Category columns hold real values and exact counts; number columns hold the exact largest and smallest value. |
+| Plain snapshot (`*.snapshot.json`) | Columns the profiler flags are withheld unless you passed `--include-values`, which makes the file as sensitive as the source. Unflagged category columns hold real values and exact counts; unflagged number columns hold the exact largest and smallest value. |
 | DP snapshot | Safe to share within the stated (epsilon, delta). Columns you omitted are not in it. |
 | Fidelity report JSON | Scores and counts only. No data values. |
 | Masked output | Protected by the strategies you chose. No formal guarantee. |

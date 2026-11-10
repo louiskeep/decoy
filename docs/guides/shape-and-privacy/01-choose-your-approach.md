@@ -10,7 +10,7 @@ Status: current
 |---|---|---|---|
 | A safe copy of a real file, same rows and joins | Masking: `decoy run` with `columns:` strategies | Yes, it transforms it | Keyed transforms. No formal proof. |
 | Fake data from rules you write | Generation: `decoy run` with `generate_columns:` of type `faker`, `categorical`, `sequence`, and so on | No | Never reads real data. |
-| Fake data shaped like your real data | `decoy fit`, then `type: statistical` columns | Yes, at fit time | None by default. The snapshot holds real values. |
+| Fake data shaped like your real data | `decoy fit`, then `type: statistical` columns | Yes, at fit time | None by default. The snapshot withholds the values of columns the profiler flags as personal data; every other category column keeps its real values. |
 | Fake data shaped like your real data, with a privacy guarantee | `decoy fit --epsilon`, then `type: statistical` columns under `global_settings.dp` | Yes, at fit time | Differential privacy, one column at a time. |
 | A score for how much shape survived | `decoy report fidelity`, or `decoy run --fidelity` | Reads source and output | A measurement only. |
 

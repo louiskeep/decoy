@@ -166,3 +166,22 @@ def test_f7_snapshot_carries_cell_format_per_column(tmp_path: Path) -> None:
     _, out = _fit(tmp_path)
     doc = json.loads(out.read_text(encoding="utf-8"))
     assert all("cell_format" in col for col in doc["columns"].values())
+
+
+def test_f9_sensitive_column_empty_in_the_head_rows_is_still_withheld(tmp_path: Path) -> None:
+    """A row cap on the sensitivity profile would see only blanks here and keep the values."""
+    rows, blank = 10_050, 10_010
+    late = _SSNS[:8]
+    src = tmp_path / "late.csv"
+    pd.DataFrame(
+        {
+            "ssn": [""] * blank + [late[i % 8] for i in range(rows - blank)],
+            "amount": [float(i % 97) for i in range(rows)],
+        }
+    ).to_csv(src, index=False)
+    out = tmp_path / "late.json"
+    result = runner.invoke(app, ["fit", str(src), "-o", str(out)])
+    assert result.exit_code == 0, result.output
+    text = out.read_text(encoding="utf-8")
+    assert "ssn" in json.loads(text)["redacted_columns"]
+    assert not any(v in text for v in late)

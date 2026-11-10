@@ -29,6 +29,7 @@ signup_date (datetime), is_active (categorical)
 | `-o, --output PATH` | Where to write the snapshot. Default is `<source>.snapshot.json`. |
 | `--parse-dates COL` | Treat a column as dates. Repeatable. CSV has no types, so you must name date columns. |
 | `--joint a,b` | Also record how two columns go together. Repeatable. Needed for `condition_on`. |
+| `--include-values` | Keep the real values of columns the profiler flags as sensitive. The file then holds real data. Not allowed with `--epsilon`. |
 
 The source must be a CSV. The snapshot file is written readable by its owner
 only (mode 0600).
@@ -50,7 +51,7 @@ Every column also records its null count, non-null count and distinct count.
 In the sample file, `full_name` has 80 distinct values, so it is treated as
 free text and only its length is kept.
 
-**The snapshot is sensitive.** For a category column it holds the real values:
+**The snapshot can still be sensitive.** `fit` profiles the whole file and withholds the values of every column it flags as personal data (an SSN, a name, an id). The snapshot then carries `value_policy: flagged-redacted/v1` and lists those columns under `redacted_columns`. `fit` prints their names, never their values. A withheld number column keeps one coarse range and a withheld date column keeps years. A column the profiler does not flag still holds its real values. For a category column that looks like this:
 
 ```json
 "state": {
@@ -69,15 +70,16 @@ free text and only its length is kept.
 ```
 
 State codes are harmless. A column of 25 surnames or diagnosis codes is not.
-`fit` prints no warning about this. Do not share a plain snapshot more widely
-than you would share the source.
+Do not share a plain snapshot more widely than you would share the source.
 
-Engine main hides the values of columns that its profiler flags as personal
-data (engine #420, after 0.19.0). `decoy fit` does not use that yet; roadmap
-row 24f brings it to the CLI. Even then, a column the profiler does not flag
-keeps its values, including a rare category and its exact largest and smallest
-number. In the re-test, a 30-value note column was not flagged and every note
-was stored word for word.
+A column the profiler does not flag keeps its values, including a rare
+category and its exact largest and smallest number. In the re-test, a
+30-value note column was not flagged and every note was stored word for word.
+
+To sample a withheld column as categories, re-run with `--include-values`. The
+file then holds real data and `fit` warns on stderr with the column names. A
+differentially private release (`--epsilon`) never holds real values, but it
+needs a certified DP install; see `decoy explain differential-privacy`.
 
 ## Step 2: generate from the snapshot
 
@@ -181,9 +183,8 @@ and generation reproduces it. The engine writes that block after 0.19.0
 `null_probability` on a column replaces the fitted rate. It is not added on
 top: `0` turns blanks off and `0.1` gives 10%, whatever the source had.
 
-`decoy fit` on the current CLI writes no cell format block, so its snapshots
-give no blanks at all (roadmap row 24l adds it). Until then, set
-`null_probability` to the source's blank rate if blanks matter.
+`decoy fit` records the cell format per column, so its snapshots carry the
+blank rate.
 
 ## Step 3: check the result
 

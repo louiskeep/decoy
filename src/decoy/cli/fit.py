@@ -70,10 +70,6 @@ See also: decoy run, decoy validate, decoy explain differential-privacy.
 """
 
 
-# The head rows the sensitivity profile sees: the `decoy scan` default sample.
-_PROFILE_ROW_CAP = 10_000
-
-
 class _FitUsageError(Exception):
     """A pre-CSV-read validation failure: bad flag combination, malformed
     carrier declaration, or an omitted column with no `--dp-allow-omit`.
@@ -442,12 +438,12 @@ def fit(
         raise typer.Exit(code=EXIT_USAGE)
 
     if epsilon is None:
+        # No profile_row_cap: it profiles head rows only, and a sensitive column can start late.
         snapshot = distribution_snapshot_document(
             df,
             source_label=source.name,
             include_values=include_values,
             joint_columns=joint_pairs or None,
-            profile_row_cap=_PROFILE_ROW_CAP,
         )
         omitted_columns: list[str] = []
     else:
