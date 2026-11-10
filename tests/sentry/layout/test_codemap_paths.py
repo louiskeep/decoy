@@ -8,6 +8,7 @@ cover each grammar case, so this file checks the CLI's map and the one CLI-speci
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 from tests.sentry.layout import map_paths, section
@@ -16,16 +17,78 @@ ROOT = Path(__file__).resolve().parents[3]
 # `Goes in`, `File naming`, `Tests`, `Sentries and registries`; column 0 is the kind.
 LAYOUT_COLUMNS = (1, 2, 3, 4)
 LAYOUT_HEADING = "## Where Things Go"
-MIN_ROWS = 25
+HEADER = ("Kind", "Goes in", "File naming", "Tests", "Sentries and registries")
+# Every kind the map names, so a dropped or renamed row is red with its name. Adding a row means
+# adding its kind here in the same reviewed diff.
+KINDS = frozenset(
+    {
+        "Command module",
+        "Command-private helpers",
+        "`decoy run` internals (phases, error arm, summary, evidence, notifications, vault commit)",
+        "`decoy scan` internals (argument resolution, engine call, card and `--json`)",
+        "Pre-run check gate shared by `validate`, `ci check` and `run`",
+        "Source readers and target writers (owner rule 2026-11-06: new ones go here from now on)",
+        "Project layout services: project root finder and `.decoy/` setup, pipeline names and claims, run folders, `out/`, the Windows path budget, the `layout.*` descriptors. Everything outside `src/decoy/cli/io/` imports them from the public `decoy.cli.io` package",
+        "Exit codes",
+        "Python API",
+        "CI integration",
+        "Terminal output",
+        "User-facing CLI text and crash handling",
+        "Shipped install and update",
+        "Build-host release tools (not shipped in the wheel)",
+        "Packaged templates",
+        "Private shared filesystem or process primitives used by more than one package",
+        "Notifications, telemetry",
+        "First-user QA item tests, grouped by behavior",
+        "Sentry test",
+        "Layer contracts",
+        "Shared cross-suite test helpers (constants and lookups used by more than one test folder)",
+        "Developer environment scripts",
+        "Release scripts",
+        "CI install, vendor and lane policy",
+        "Composite CI actions",
+        "Task-oriented user guides (one folder per topic, with a `README.md` index)",
+        "Roadmap, plans, records",
+    }
+)
+# Paths the map marks `(target)`. A new or misspelled target is red; C3 removes the layer entries
+# when it creates the files.
+TARGETS = frozenset(
+    {
+        ".importlinter",
+        "pyproject.toml",
+        "tests/sentry/baselines/import-layers.json",
+        "tests/sentry/layout/test_import_layers.py",
+    }
+)
+_TARGET = re.compile(r"`([^`]+)` \(target\)")
 
 
 def _layout_text() -> str:
     return section((ROOT / "CODEMAP.md").read_text(encoding="utf-8"), LAYOUT_HEADING)
 
 
-def test_the_codemap_layout_section_keeps_its_rows() -> None:
-    rows = [line for line in _layout_text().splitlines() if line.startswith("| ") and "`" in line]
-    assert len(rows) >= MIN_ROWS, "the CODEMAP layout section lost its rows"
+def _table() -> list[list[str]]:
+    lines = [ln for ln in _layout_text().splitlines() if ln.startswith("|")]
+    return [[c.strip() for c in ln.strip().strip("|").split("|")] for ln in lines]
+
+
+def test_the_codemap_layout_table_has_the_five_named_columns() -> None:
+    rows = _table()
+    assert tuple(rows[0]) == HEADER
+    assert all(len(r) == len(HEADER) for r in rows), "a row has a different number of cells"
+
+
+def test_the_codemap_layout_section_keeps_its_kinds() -> None:
+    kinds = [r[0] for r in _table()[2:]]
+    assert len(kinds) == len(set(kinds)), "a kind appears twice"
+    assert set(kinds) - KINDS == set(), "a row kind is new or renamed: add it to KINDS"
+    assert KINDS - set(kinds) == set(), "the map lost or renamed a row"
+
+
+def test_the_codemap_target_paths_are_the_approved_ones() -> None:
+    found = set(_TARGET.findall(_layout_text()))
+    assert found == TARGETS, f"unapproved or missing (target) paths: {found ^ TARGETS}"
 
 
 def test_every_path_in_the_codemap_layout_section_exists() -> None:

@@ -96,7 +96,7 @@ One row per kind of module. Path cells are checked by `tests/sentry/layout/test_
 
 | Situation | Convention |
 |---|---|
-| Add command | Add command module under `src/decoy/cli/`, register in `__main__.py`, test with CliRunner |
+| Add command | Put it in a named sub-package below `src/decoy/cli/` (the flat folder is frozen); see the "Command module" row of Where Things Go. Register in `__main__.py`, test with CliRunner |
 | Data behavior | Add to `decoy-engine`, not CLI |
 | Output | Use Rich helpers; avoid raw `print()` in command bodies |
 | Examples | Prefer graph-mode YAML for new examples |
