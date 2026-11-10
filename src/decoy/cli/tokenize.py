@@ -29,7 +29,7 @@ import typer
 
 from decoy import _mask_secret, _mask_secret_guidance
 from decoy._atomic import AtomicWriteError, describe
-from decoy.cli._sources import read_file
+from decoy.cli._sources import read_file, resolved_source_config
 from decoy.cli._token_vault import LocalTokenVault, TokenVaultError, iter_tokenize_columns
 from decoy.cli._yaml_errors import sanitize_yaml_error
 from decoy.cli.exit_codes import EXIT_RUNTIME, EXIT_USAGE
@@ -341,12 +341,13 @@ def tokenize(
             with _mask_secret.admitted_key_provider(config_dict) as key_provider:
                 token_vault = LocalTokenVault(vault, create=True)
                 result = run_pipeline(
-                    config_dict,
+                    resolved_source_config(config_dict, config.parent),
                     sources,
                     engine_version=engine_version,
                     instance_default_locale=instance_locale,
                     token_vault_writer=token_vault,
                     key_provider=key_provider,
+                    base_dir=config.parent,
                 )
             vault_count = token_vault.count()
             row_count = sum(len(tbl) for tbl in result.outputs.values())
