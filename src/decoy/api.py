@@ -555,7 +555,16 @@ def mask(
         for tmp_path in tmp_paths:
             tmp_path.unlink(missing_ok=True)
 
-    outputs = {name: table.to_pandas() for name, table in result.outputs.items()}
+    from decoy_engine import generated_table_to_pandas
+
+    # Plain to_pandas() widens a generated int column holding a null to float64 (1 becomes 1.0).
+    generated = {
+        t.get("name") for t in tables_list if isinstance(t, dict) and t.get("generate_columns")
+    }
+    outputs = {
+        name: generated_table_to_pandas(table) if name in generated else table.to_pandas()
+        for name, table in result.outputs.items()
+    }
     if len(outputs) == 1:
         return next(iter(outputs.values()))
     return outputs
