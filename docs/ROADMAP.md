@@ -448,8 +448,9 @@ Source: `C:docs/plans/2026-10-22-cli-distribution-and-packaging-spec.md`.
   reason registry.
 - CLI `--version` (literal `0.1.0` today, G2), CLI NOTICE and SBOM, security contact, release notes.
 - Public docs, download page, install and upgrade docs.
-- License: BUSL-1.1 for the self-hosted distribution per the 2026-10-22 CLI launch direction; owner
-  and counsel confirm in R1-c (the engine license, Apache-2.0 versus BUSL-1.1, is also R1-c).
+- License: FSL-1.1-ALv2 for the engine, native companion and CLI (owner decision 2026-11-10,
+  replacing BUSL-1.1 on the CLI and Apache-2.0 on the engine); counsel confirms the licensor entity
+  and a contributor license agreement in R1-c. Plain-English terms: [LICENSING.md](../LICENSING.md).
 - Production-readiness checks.
 
 ### 5.6 Open questions for the owner (CLI V1)

@@ -7,8 +7,8 @@ bring your own Python, and a fast native run is guaranteed: every bundle ships t
 platform-matched Rust companion and refuses loudly if it is missing, rather than silently
 dropping to the slow path.
 
-> License: the engine and CLI ship under BUSL-1.1 at launch. Public `pip install` arrives
-> later, with the license change; it is not the install path today.
+> License: the engine and CLI ship under FSL-1.1-ALv2 (see [LICENSING.md](../LICENSING.md)).
+> Public `pip install` is not the install path today.
 
 ## Quick install
 

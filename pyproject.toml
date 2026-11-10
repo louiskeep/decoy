@@ -13,16 +13,11 @@ version = "0.1.0"
 description = "Source-available CLI for data masking and synthetic generation. Wraps the decoy-engine library; runs masking + generate jobs from the terminal or a notebook."
 readme = "README.md"
 requires-python = ">=3.10"
-# OSS.2 (license flip to Apache-2.0) is DEFERRED INDEFINITELY per PO
-# decision 2026-06-02: the CLI + engine are staying private. The
-# Apache-2.0 lock from 2026-06-01 still stands as the intended
-# end-state IF + WHEN the OSS launch resumes; the timing is
-# unscheduled. Until then the CLI carries BUSL-1.1, the commercial
-# platform pairs with it, and the LICENSE.md auto-converts to
-# Apache-2.0 on its Change Date (see LICENSE.md for the exact date).
-# Also: the description = "Free, open-source CLI..." line on the
-# project block above will need rewriting alongside any future flip.
-license = "LicenseRef-BUSL-1.1"
+# FSL-1.1-ALv2 (owner decision 2026-11-10, replacing BUSL-1.1): the CLI
+# and engine share it. Any use except a Competing Use; each release
+# becomes Apache-2.0 two years after it ships. Counsel confirms in R1-c.
+# FSL has no Trove classifier, hence Other/Proprietary below.
+license = "FSL-1.1-ALv2"
 license-files = ["LICENSE.md"]
 authors = [{ name = "louiskeep" }]
 

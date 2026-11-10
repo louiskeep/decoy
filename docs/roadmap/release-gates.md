@@ -12,13 +12,15 @@ Part of the roadmap: [ROADMAP.md](../ROADMAP.md). Path shorthand (`E:`, `C:`, `P
   (`e68b66c1`, replay by patch after R1).
 - **B-3** Marketing-web currency: `docs-src/` off STORM branding and the old command surface;
   `CLAIMS-AUDIT.md` complete; `/proof` synced to the catalog.
-- **D-5** Public Fumadocs launch-gate flip, aligned to BUSL at launch.
+- **D-5** Public Fumadocs launch-gate flip, aligned to FSL-1.1-ALv2 at launch.
 - **GA-confidentiality freeze (audit packets 11 to 20):** 11.1 and the 12.1 residue land before the
   pre-GA to GA flip (rows 11, 13). 12.2 is closed on the full-frame path; chunked and native paths were
   read, not run. 20.1 is overstated ([findings-register.md](findings-register.md)).
-- **R1-c** signing key and CLI license values (owner and counsel); needed for the first signed
-  release, not before. Licenses differ per repo today: engine Apache-2.0, CLI `pyproject.toml`
-  BUSL-1.1, platform `LICENSE-COMMERCIAL.md`, decoy-web no LICENSE file.
+- **R1-c** signing key and license review (owner and counsel); needed for the first signed
+  release, not before. Engine, native companion and CLI are FSL-1.1-ALv2 (owner decision
+  2026-11-10); counsel confirms the licensor entity (Decoy Labs, Inc. is a placeholder until
+  incorporation) and a contributor license agreement. Platform `LICENSE-COMMERCIAL.md`, decoy-web
+  no LICENSE file.
 - **R1 gate:** canonical CLI release smoke with recorded runs (G3: `smoke-log.md` had no green runs);
   a filled `release-readiness.md` instance; claims and license checkpoint; docs honesty; local gates
   and the worker-bootstrap gates (R1-d).
