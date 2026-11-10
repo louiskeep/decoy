@@ -1824,10 +1824,43 @@ def _fidelity(
         envelope["policy"] = policy_result
         emit_json(state, envelope)
     elif state.mode is not OutputMode.quiet:
-        render_fidelity_report(state, report, policy_result)
+        render_fidelity_report(
+            state, report, policy_result, null_rates=_null_rate_pairs(report, src_df, out_df)
+        )
 
     if verdict == "fail" or (verdict == "warn" and fail_on_warning):
         raise typer.Exit(code=EXIT_FINDINGS)
+
+
+def _null_rate_pairs(
+    report: dict[str, Any], src_df: Any, out_df: Any
+) -> dict[str, tuple[float | None, float | None]]:
+    """Source and output null rates per column, only when some column's rates differ.
+
+    The report carries `missing_value_similarity` but not the rates behind it, so the two
+    frames are profiled again and each rate comes from the engine's `snapshot_null_fraction`.
+    Returns an empty map when every column scored 1 (or None), so the common case pays nothing.
+    """
+    columns = [c for c in report.get("marginal", {}).get("columns", []) if isinstance(c, dict)]
+    if not any(
+        isinstance(c.get("missing_value_similarity"), (int, float))
+        and c["missing_value_similarity"] < 1
+        for c in columns
+    ):
+        return {}
+    from decoy_engine import distribution_snapshot_document
+    from decoy_engine.quality import snapshot_null_fraction
+
+    # Only the counts are read. The redacting writer is the one snapshot builder the CLI uses.
+    src_cols = distribution_snapshot_document(src_df, source_label="source")["columns"]
+    out_cols = distribution_snapshot_document(out_df, source_label="output")["columns"]
+    return {
+        str(c.get("column")): (
+            snapshot_null_fraction(src_cols[c["column"]]) if c.get("column") in src_cols else None,
+            snapshot_null_fraction(out_cols[c["column"]]) if c.get("column") in out_cols else None,
+        )
+        for c in columns
+    }
 
 
 def _render_residual_pii(state: Any, findings: list[Any]) -> None:

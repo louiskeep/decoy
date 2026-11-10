@@ -291,12 +291,21 @@ def render_post_validation(state, qm: dict, *, enforce: bool) -> None:
         )
 
 
+def _rate_text(rate: float | None) -> str:
+    return "n/a" if rate is None else f"{rate:.1%}"
+
+
 def render_fidelity_report(
     state: Any,
     report: dict[str, Any],
     policy_result: dict[str, Any],
+    null_rates: Mapping[str, tuple[float | None, float | None]] | None = None,
 ) -> None:
-    """Human-readable rendering of a quality-report/v1 + policy result."""
+    """Human-readable rendering of a quality-report/v1 + policy result.
+
+    `null_rates` maps a column to its (source, output) null rate; when given, the marginal
+    table gains a nulls column.
+    """
     grade = report.get("grade", "unavailable")
     overall = report.get("overall_score")
     overall_str = f"{overall:.3f}" if isinstance(overall, (int, float)) else "n/a"
@@ -324,17 +333,24 @@ def render_fidelity_report(
 
     columns = report.get("marginal", {}).get("columns", [])
     if columns:
-        table = make_table("Column", "Comparable", "Similarity", title="Marginal fidelity")
+        headers = ["Column", "Comparable", "Similarity"]
+        if null_rates:
+            headers.append("Nulls (source/output)")
+        table = make_table(*headers, title="Marginal fidelity")
         for col in columns:
             if not isinstance(col, dict):
                 continue
             sim = col.get("similarity")
             sim_str = f"{sim:.3f}" if isinstance(sim, (int, float)) else "n/a"
-            table.add_row(
+            row = [
                 str(col.get("column", "?")),
                 "yes" if col.get("comparable") else "no",
                 sim_str,
-            )
+            ]
+            if null_rates:
+                src_rate, out_rate = null_rates.get(str(col.get("column")), (None, None))
+                row.append(f"{_rate_text(src_rate)} / {_rate_text(out_rate)}")
+            table.add_row(*row)
         state.console.print(table)
 
     joints = report.get("pairwise", {}).get("joints", [])

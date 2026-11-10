@@ -350,7 +350,13 @@ def _coerce_int_columns(frame: pd.DataFrame, layout: Mapping[str, Any]) -> pd.Da
 
 
 def _csv_frame(table: pa.Table) -> pd.DataFrame:
-    """Arrow to pandas for csv text, keeping int columns that hold a null as ints, not 1.0."""
+    """The one Arrow-to-pandas step before a CSV write.
+
+    `Table.to_pandas()` turns an integer column that holds a null into float64, which prints
+    `23.0` and loses `uint64` values above 2**53. The engine converter keeps each integer type
+    as its pandas nullable dtype, so the cell text is the integer. Unlike `_coerce_int_columns`
+    this never reads a layout: it keeps the type the table already has.
+    """
     from decoy_engine import generated_table_to_pandas
 
     return generated_table_to_pandas(table)

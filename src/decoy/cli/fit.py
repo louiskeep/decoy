@@ -593,6 +593,15 @@ def fit(
             f"column(s): {', '.join(withheld)}. Do not share or commit it.",
         )
 
+    from decoy_engine.quality import snapshot_null_fraction
+
+    # The engine's one null-rate rule (zero-row and corrupt counts give None, left out here).
+    null_rates = {
+        name: rate
+        for name, entry in snapshot["columns"].items()
+        if (rate := snapshot_null_fraction(entry)) is not None
+    }
+
     if state.mode is OutputMode.json:
         payload: dict[str, Any] = {
             "command": "fit",
@@ -602,6 +611,7 @@ def fit(
             "row_count": snapshot["row_count"],
             "columns": {name: entry["kind"] for name, entry in snapshot["columns"].items()},
             "joints": [j["columns"] for j in snapshot["joints"]],
+            "null_rates": null_rates,
         }
         if epsilon is None:
             payload["value_policy"] = snapshot.get("value_policy")
@@ -615,7 +625,10 @@ def fit(
         return
 
     state.console.print(success("OK"), code(str(out_path)))
-    kinds = ", ".join(f"{n} ({e['kind']})" for n, e in snapshot["columns"].items())
+    kinds = ", ".join(
+        f"{n} ({e['kind']}{f', {null_rates[n]:.1%} null' if null_rates.get(n) else ''})"
+        for n, e in snapshot["columns"].items()
+    )
     state.console.print(f"  {snapshot['row_count']} rows; columns: {kinds}")
     if snapshot["joints"]:
         pairs = ", ".join("x".join(j["columns"]) for j in snapshot["joints"])
