@@ -92,7 +92,6 @@ __all__ = [
     "is_run_id",
     "iter_source_chunks",
     "load_scan_set",
-    "load_scan_set",
     "name_dir",
     "new_run_id",
     "parquet_schema",
