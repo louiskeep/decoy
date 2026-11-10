@@ -279,3 +279,20 @@ def test_a_header_row_that_looks_like_data_warns_and_is_not_named_in_the_core(
     text = out.read_text()
     assert "123-45-6789" not in text and "555-12-3456" not in text
     assert [f["name"] for f in json.loads(text)["tables"][0]["fields"]] == ["c0", "c1"]
+
+
+def test_an_unexpected_engine_error_text_never_reaches_the_output(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import decoy_engine
+
+    def boom(*args: object, **kwargs: object):
+        raise ValueError("ZQCANARY row value")
+
+    monkeypatch.setattr(decoy_engine, "scan_sources", boom)
+    src = _csv(tmp_path / "x.csv", "x")
+    for extra in ([], ["--json"]):
+        result = runner.invoke(app, ["scan", str(src), "--has-header", *extra])
+        assert result.exit_code == 3
+        assert "ZQCANARY" not in result.output + result.stdout
+        assert "ValueError" in result.output

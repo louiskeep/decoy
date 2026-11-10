@@ -11,7 +11,7 @@ import pytest
 from typer.testing import CliRunner
 
 from decoy.__main__ import app
-from decoy.cli import _scan_set_io
+from decoy.cli.io import _scan_set
 
 runner = CliRunner()
 FIXTURE = Path(__file__).resolve().parents[2] / "fixtures" / "scan" / "legacy_profile.json"
@@ -67,10 +67,10 @@ def load_calls(monkeypatch: pytest.MonkeyPatch) -> list[str]:
 
 
 def test_the_fixture_meets_the_legacy_shape_check(legacy: dict) -> None:
-    for key in _scan_set_io._LEGACY_TOP_REQUIRED:
+    for key in _scan_set._LEGACY_TOP_REQUIRED:
         assert key in legacy
     for field in legacy["fields"]:
-        for key in _scan_set_io._LEGACY_FIELD_REQUIRED:
+        for key in _scan_set._LEGACY_FIELD_REQUIRED:
             assert key in field
     assert CANARY in json.dumps(legacy["fields"][1]["top_values"])
 

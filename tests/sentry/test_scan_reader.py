@@ -1,6 +1,6 @@
-"""G-ONE-SCAN-READER: `_scan_set_io.load_scan_set` is the only reader of a saved scan.
+"""G-ONE-SCAN-READER: `_scan_set.load_scan_set` is the only reader of a saved scan.
 
-Walks the syntax tree of every module under `src/decoy`. Outside `_scan_set_io.py` no code may
+Walks the syntax tree of every module under `src/decoy`. Outside `_scan_set.py` no code may
 read a `scan_schema` key (subscript, `.get`, `in`, or a comparison against it) or call
 `records.decode`, which is how a `scan-set` record envelope would be opened. Writing the key
 into a dict literal (the `--json` envelope) is not a read.
@@ -12,7 +12,7 @@ import ast
 from pathlib import Path
 
 _SRC = Path(__file__).resolve().parents[2] / "src" / "decoy"
-_READER = "cli/_scan_set_io.py"
+_READER = "cli/io/_scan_set.py"
 _KEY = "scan_schema"
 
 

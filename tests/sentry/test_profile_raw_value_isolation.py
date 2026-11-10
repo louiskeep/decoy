@@ -96,7 +96,7 @@ def test_text_sentry_bites_if_raw_value_injected(tmp_path: Path) -> None:
     csv_path = tmp_path / "data.csv"
     _write_sentinel_csv(csv_path)
 
-    import decoy.cli._scan_multi as profile_mod
+    import decoy.cli.scanning._multi as profile_mod
 
     original_safe = profile_mod.safe_field_record
 

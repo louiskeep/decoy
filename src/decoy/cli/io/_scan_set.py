@@ -26,7 +26,7 @@ import sys
 from pathlib import Path
 from typing import Any
 
-from decoy.cli._scan_multi import table_name_from_path
+from decoy.cli.scanning._multi import table_name_from_path
 
 _NOT_A_SCAN = "not a saved scan Decoy can read"
 _SCHEMA_MAJOR = "scan-set/v1"
@@ -104,7 +104,7 @@ def _from_core(data: dict[str, Any]) -> dict[str, Any]:
 
     tag = data.get("scan_schema")
     if not (isinstance(tag, str) and (tag == _SCHEMA_MAJOR or tag.startswith(_SCHEMA_MAJOR + "."))):
-        shown = tag if isinstance(tag, str) and _TAG_SHAPE.match(tag) else "an unrecognised tag"
+        shown = tag if isinstance(tag, str) and _TAG_SHAPE.fullmatch(tag) else "an unrecognised tag"
         raise ScanSetFormatError(f"scan_schema {shown} is not supported (expected {_SCHEMA_MAJOR})")
     failed = False
     try:

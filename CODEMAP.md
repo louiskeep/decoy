@@ -47,7 +47,8 @@ First row of the layout map the LAYOUT slice completes (one line per kind of mod
 |---|---|---|
 | Private shared filesystem or process primitives used by more than one package | top-level `src/decoy/`, file named `_<noun>.py`, tests in `tests/unit/test_<noun>.py`, its sentry in `tests/sentry/` | `_atomic.py`, `_private_file.py` (owner-only creation and every mode change), `_mask_secret.py`, `_native_gate.py` |
 | Pre-run check gate shared by `validate`, `ci check` and `run` | `src/decoy/cli/gate/`, file named `_<noun>.py`, tests in `tests/unit/test_gate_*.py` and `tests/e2e/test_run_validate_always.py` | `_layers.py` (layers and entries); `cli/io/` is the sibling sub-package |
-| CLI source readers and target writers (owner rule 2026-11-06: new ones go here from now on; `cli/` is frozen) | `src/decoy/cli/io/`, file named `_<noun>.py` | target writer `cli/io/_targets.py` (CLI-FMT); today's exception `cli/_sources.py` moves here under H-1 |
+| CLI source readers and target writers (owner rule 2026-11-06: new ones go here from now on; `cli/` is frozen) | `src/decoy/cli/io/`, file named `_<noun>.py` | target writer `cli/io/_targets.py` (CLI-FMT), saved-scan reader `cli/io/_scan_set.py`; today's exception `cli/_sources.py` moves here under H-1 |
+| `decoy scan` internals (argument resolution, engine call, card and `--json`) | `src/decoy/cli/scanning/`, file named `_<noun>.py`; `scan.py` keeps only the options | `_multi.py` |
 | Composite CI actions (`action.yml`) | `.github/actions/<name>/` | `setup-uv`, `lock-env` |
 | CI install, vendor and lane policy (`*.toml`) | `ci/` | `ci/install-policy.toml` (the install registry), `ci/vendored.toml`, `ci/ci-tools.in`, `ci/ci-tools.lock` |
 | Developer environment scripts | `scripts/dev/` | `lock.sh`, `bootstrap.sh`, `lock_version.sh`, `fetch_ci_binary.py` |
