@@ -470,6 +470,29 @@ def _check_importable(pkg: str) -> tuple[bool, str]:
         return False, f"import error: {exc}"
 
 
+def _resource_checks() -> list[dict]:
+    """One row per resolved resource value and where it came from (flag, env, settings, auto)."""
+    from decoy import _resources
+
+    extra: list[dict] = []
+    try:
+        mode = _resources.settings_path().stat().st_mode
+    except OSError:
+        mode = 0
+    if mode & 0o022:  # group or world writable: anyone could raise this box's limits
+        note = "settings file is group or world writable; run chmod 600 on it"
+        extra.append({"name": "settings-file", "kind": "soft", "status": "warn", "note": note})
+    try:
+        r = _resources.resolve()
+    except _resources.ResourceError as exc:
+        return [*extra, {"name": "resources", "kind": "soft", "status": "warn", "note": str(exc)}]
+    rows = (
+        ("max-memory", f"{_resources.format_size(r.memory_bytes)} ({r.memory_source})"),
+        ("threads", f"{r.threads} ({r.threads_source})"),
+    )
+    return extra + [{"name": n, "kind": "info", "status": "pass", "note": t} for n, t in rows]
+
+
 def doctor(
     json_: bool = typer.Option(
         False,
@@ -530,6 +553,8 @@ def doctor(
         present, note = _check_importable(pkg)
         status = "pass" if present else "warn"
         checks.append({"name": pkg, "kind": "soft", "status": status, "note": note})
+
+    checks.extend(_resource_checks())
 
     overall = "fail" if hard_failed else "pass"
 

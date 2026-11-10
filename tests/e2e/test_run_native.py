@@ -403,6 +403,10 @@ def test_no_native_stays_compatible_with_an_older_engine(
         vault_writer=None,
         # DE-02 (engine 0.4.0, the floor) predates the slice; a real old engine has it.
         key_provider=None,
+        # The pin is decoy-engine==0.20.0, which has the resource keywords every run sends.
+        native_threads=1,
+        out_of_core_threads=None,
+        out_of_core_budget_bytes=None,
     ):
         return real_run_pipeline(
             config,
@@ -413,6 +417,9 @@ def test_no_native_stays_compatible_with_an_older_engine(
             instance_default_locale=instance_default_locale,
             vault_writer=vault_writer,
             key_provider=key_provider,
+            native_threads=native_threads,
+            out_of_core_threads=out_of_core_threads,
+            out_of_core_budget_bytes=out_of_core_budget_bytes,
         )
 
     monkeypatch.setattr("decoy_engine.run_pipeline", _old_engine_run_pipeline)
