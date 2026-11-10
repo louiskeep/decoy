@@ -30,6 +30,7 @@ sources:
   transactions:
     type: file
     format: csv
+    has_header: true
     path: ./transactions.csv
 
 tables:

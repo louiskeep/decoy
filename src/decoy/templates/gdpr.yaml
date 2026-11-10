@@ -33,6 +33,7 @@ sources:
   users:
     type: file
     format: csv
+    has_header: true
     path: ./users.csv
 
 tables:

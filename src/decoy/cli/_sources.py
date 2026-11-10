@@ -33,6 +33,17 @@ def resolve_path(raw_path: str, base_dir: Path) -> Path:
     return p if p.is_absolute() else (base_dir / p).resolve()
 
 
+def csv_file_source(path: str | Path, **dialect: Any) -> dict[str, Any]:
+    """A `format: csv` file-source descriptor for a file the CLI names itself.
+
+    The engine requires `has_header` on every csv descriptor (`resolve_csv_dialect` refuses
+    one without it, and so does `FileSource`), so a descriptor built here states it. A file
+    with no declaration is read the way it always was, with a header row. `dialect` keys
+    (`delimiter`, `has_header`, `column_names`) override that.
+    """
+    return {"type": "file", "format": "csv", "path": str(path), "has_header": True, **dialect}
+
+
 def _unknown_format(table_name: str, fmt: object, kind: str = "source") -> ValueError:
     return ValueError(
         f"{kind} {table_name!r}: unsupported format {fmt!r} "
@@ -87,7 +98,7 @@ def read_report_source(path: Path, config_dict: dict[str, Any], config_dir: Path
         ):
             return read_csv_frame(name, src, config_dir, dtype=None)
     # The user's own path is relative to the current folder, never to the config directory.
-    return read_csv_frame(path.stem, {"path": str(target)}, config_dir, dtype=None)
+    return read_csv_frame(path.stem, csv_file_source(target), config_dir, dtype=None)
 
 
 def read_file(path: Path, fmt: str, layout: Mapping[str, Any] | None, *, table: str) -> Any:
@@ -99,7 +110,7 @@ def read_file(path: Path, fmt: str, layout: Mapping[str, Any] | None, *, table: 
     """
     if fmt == "csv":
         # Absolute, so `resolve_path` does not join a relative path onto its own folder.
-        return read_csv_frame(table, {"path": str(path.resolve())}, path.parent, dtype=str)
+        return read_csv_frame(table, csv_file_source(path.resolve()), path.parent, dtype=str)
     if fmt == "parquet":
         import pandas as pd
 

@@ -22,7 +22,7 @@ from pathlib import Path
 
 import typer
 
-from decoy.cli._sources import read_source
+from decoy.cli._sources import csv_file_source, read_source
 from decoy.cli.exit_codes import EXIT_RUNTIME, EXIT_USAGE
 from decoy.cli.io._targets import check_target_formats, write_targets
 from decoy.ui.card import render_card
@@ -85,11 +85,7 @@ def _build_pipeline_yaml(input_path: Path, output_path: Path) -> str:
         "version": 2,
         "global_settings": {"seed": 42},
         "sources": {
-            "customers": {
-                "type": "file",
-                "format": "csv",
-                "path": str(input_path),
-            },
+            "customers": csv_file_source(input_path),
         },
         "tables": [
             {

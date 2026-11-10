@@ -33,6 +33,7 @@ import pyarrow as pa
 
 from decoy import _mask_secret, _mask_secret_guidance, _native_gate
 from decoy._mask_secret import is_valid_mask_secret_ref as _is_valid_mask_secret_ref
+from decoy.cli._sources import csv_file_source
 from decoy.cli.extras import UnsupportedCloudEndpointError
 from decoy.cli.io._targets import claimed_format, format_for_path
 from decoy.cli.run import (
@@ -243,7 +244,10 @@ def _stage_source_entry(name: str, value: Any, tmp_paths: list[Path], declared: 
                 if key in declared:
                     entry[key] = declared[key]
             return entry
-        return {"type": "file", "format": format_for_path(path), "path": str(path)}
+        fmt = format_for_path(path)
+        if fmt == "csv":
+            return csv_file_source(path)
+        return {"type": "file", "format": fmt, "path": str(path)}
 
     table = _to_pa_table(value)
     from decoy._private_file import create_private_temp

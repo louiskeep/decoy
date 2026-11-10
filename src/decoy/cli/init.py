@@ -21,6 +21,7 @@ from __future__ import annotations
 import json as _json
 import re
 from pathlib import Path
+from typing import Any
 
 import typer
 import yaml
@@ -160,7 +161,7 @@ multiple init runs.
 """
 
 
-def _scaffold_source(input_file: Path) -> dict[str, str]:
+def _scaffold_source(input_file: Path) -> dict[str, Any]:
     """The source descriptor the scaffold declares for `input_file`, from its suffix.
 
     The one suffix rule for both the inference read and the YAML: `.parquet` and `.pq` are
@@ -172,9 +173,13 @@ def _scaffold_source(input_file: Path) -> dict[str, str]:
     if suffix in (".parquet", ".pq"):
         return {"type": "file", "format": "parquet", "path": path}
     if suffix == ".tsv":
-        return {"type": "file", "format": "csv", "path": path, "delimiter": "\t"}
+        from decoy.cli._sources import csv_file_source
+
+        return csv_file_source(path, delimiter="\t")
     if suffix == ".csv":
-        return {"type": "file", "format": "csv", "path": path}
+        from decoy.cli._sources import csv_file_source
+
+        return csv_file_source(path)
     raise ValueError(f"unsupported file extension {suffix!r}; expected .csv, .tsv, or .parquet")
 
 
@@ -316,12 +321,15 @@ def _build_scaffold_yaml(
     )
 
     delimiter_line = f"    delimiter: {_json.dumps(delimiter)}\n" if delimiter else ""
+    # The engine requires `has_header` on a csv source; the scaffold read used a header row.
+    header_line = "    has_header: true\n" if file_format == "csv" else ""
     sources_block = (
         "sources:\n"
         f"  {_TABLE_NAME}:\n"
         "    type: file\n"
         f"    format: {file_format}\n"
         f"    path: {input_quoted}\n"
+        f"{header_line}"
         f"{delimiter_line}"
     )
     targets_block = (
