@@ -33,11 +33,13 @@ import tempfile
 from pathlib import Path
 
 __all__ = [
+    "PRIVATE_EXISTS",
     "PRIVATE_MODE_FAILED",
     "PRIVATE_OPEN_FAILED",
     "PrivateFileError",
     "apply_mode",
     "create_exclusive",
+    "create_private_directory",
     "create_private_temp",
     "open_private",
     "restrict_owner_only",
@@ -45,6 +47,7 @@ __all__ = [
 
 PRIVATE_OPEN_FAILED = "private_open_failed"
 PRIVATE_MODE_FAILED = "private_mode_failed"
+PRIVATE_EXISTS = "private_exists"
 
 _WINDOWS = sys.platform == "win32"
 _OWNER_FILE = 0o600
@@ -183,6 +186,49 @@ def _restrict_directory(directory: Path) -> None:
         raise _ModeError(exc.errno or errno.EPERM, PRIVATE_MODE_FAILED) from None
     finally:
         os.close(fd)
+
+
+def _narrow_new_directory(path: Path) -> None:
+    """Narrow a directory this process just made.
+
+    A umask that strips the owner's bits leaves a folder the owner cannot open, so that one case
+    sets the mode by path first (the name was created exclusively a moment ago) and then goes
+    through the descriptor, which also proves it is a real directory and reads the mode back.
+    """
+    try:
+        _restrict_directory(path)
+    except PermissionError:
+        os.chmod(path, _OWNER_DIR)
+        _restrict_directory(path)
+
+
+def create_private_directory(path: Path) -> None:
+    """Create `path` as a new owner-only directory; its parent must exist.
+
+    Exclusive `mkdir` (an existing entry, a symlink included, is `PRIVATE_EXISTS`, so a caller
+    that picks names can retry), then the directory is opened with `O_NOFOLLOW | O_DIRECTORY`,
+    narrowed to 0700 through that descriptor and read back with `fstat`. A narrowing failure
+    removes the directory again, so no wider folder is left for data to land in. Windows has no
+    descriptor to open, so it keeps the plain exclusive `mkdir`. Raises `PrivateFileError`.
+    """
+    code: str | None = None
+    failed_errno: int | None = None
+    try:
+        os.mkdir(path, _OWNER_DIR)
+    except FileExistsError as exc:
+        code, failed_errno = PRIVATE_EXISTS, exc.errno
+    except OSError as exc:
+        code, failed_errno = PRIVATE_OPEN_FAILED, exc.errno
+    if code is None and not _WINDOWS:
+        try:
+            _narrow_new_directory(path)
+        except OSError as exc:
+            code = PRIVATE_MODE_FAILED if isinstance(exc, _ModeError) else PRIVATE_OPEN_FAILED
+            failed_errno = exc.errno
+            with contextlib.suppress(OSError):
+                os.rmdir(path)
+    if code is not None:
+        raise PrivateFileError(code, failed_errno)
 
 
 def create_private_temp(prefix: str) -> Path:

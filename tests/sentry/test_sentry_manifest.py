@@ -24,6 +24,8 @@ GATES = ROOT / "scripts" / "dev" / "gates.sh"
 SENTRIES = (
     "tests/sentry/test_atomic_writer.py",
     "tests/sentry/test_bash32_compat.py",
+    "tests/sentry/io_policy/test_layout_errors.py",
+    "tests/sentry/io_policy/test_pipeline_argument.py",
     "tests/sentry/io_policy/test_private_files.py",
     "tests/sentry/io_policy/test_target_writes.py",
     "tests/sentry/cli_text/test_no_traceback_escape.py",
