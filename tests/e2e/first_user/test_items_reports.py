@@ -8,6 +8,7 @@ columns leaked unless `--json` was set, the reid risk had no unit, and
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 
 import pandas as pd
@@ -253,3 +254,45 @@ def test_missing_manifest_quiet_prints_nothing_on_stderr(tmp_path: Path) -> None
 
     assert proc.returncode == EXIT_USAGE
     assert proc.stderr == ""
+
+
+# --- GEN-CLI C1: report fidelity prints its warnings ----------------------------
+
+
+def test_report_fidelity_prints_null_drift_per_column(tmp_path: Path) -> None:
+    src, out = tmp_path / "source.csv", tmp_path / "output.csv"
+    blanks = [None] * 90 + ["v"] * 10
+    pd.DataFrame({"null90": blanks, "n": list(range(100))}).to_csv(src, index=False)
+    pd.DataFrame({"null90": ["v"] * 100, "n": list(range(100))}).to_csv(out, index=False)
+
+    human, payload = _fidelity(src, out, "--generate")
+
+    assert human.exit_code == 0, human.output
+    text = _flat(human.stdout)
+    assert re.search(r"Warnings: \d+", text)
+    assert "column null90: 90.0% empty in the source, 0.0% in the output (limit 10 points)" in text
+    assert "null_drift" in [w["code"] for w in payload["warnings"]]
+    assert "OK no policy violations" in text or "REPORT ONLY" in text
+
+
+def test_report_fidelity_prints_kind_drift_per_column(tmp_path: Path) -> None:
+    src, out = tmp_path / "source.csv", tmp_path / "output.csv"
+    pd.DataFrame({"age": list(range(60))}).to_csv(src, index=False)
+    pd.DataFrame({"age": ["young", "old"] * 30}).to_csv(out, index=False)
+
+    human, payload = _fidelity(src, out, "--generate")
+
+    text = _flat(human.stdout)
+    assert "column age: numeric in the source, categorical in the output" in text
+    assert any(w["code"] == "kind_drift" for w in payload["warnings"])
+    assert "young" not in text
+
+
+def test_report_fidelity_with_no_warnings_prints_no_warnings_line(tmp_path: Path) -> None:
+    src = tmp_path / "source.csv"
+    pd.DataFrame({"a": list(range(50))}).to_csv(src, index=False)
+
+    human, payload = _fidelity(src, src)
+
+    assert payload["warnings"] == []
+    assert "Warnings" not in human.stdout

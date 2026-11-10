@@ -27,7 +27,12 @@ from decoy import __version__ as _cli_version
 from decoy import _mask_secret, _mask_secret_guidance, _native_gate, _resources
 from decoy._atomic import AtomicWriteError, WriteMode, describe, fsync_directory, write_local_target
 from decoy.cli._duckdb_source import DuckDBSourceError, acquire_relation, parse_flag
-from decoy.cli._sources import iter_source_chunks, parquet_schema, read_source
+from decoy.cli._sources import (
+    iter_source_chunks,
+    parquet_schema,
+    read_source,
+    resolved_source_config,
+)
 from decoy.cli._sources import resolve_path as _resolve_path
 from decoy.cli.exit_codes import EXIT_CAPACITY, EXIT_FINDINGS, EXIT_RUNTIME, EXIT_USAGE
 from decoy.cli.extras import (
@@ -58,8 +63,16 @@ from decoy.cli.io._targets import (
 from decoy.ui.card import render_card
 from decoy.ui.output import OutputMode, emit_json, print_traceback, setup_output
 from decoy.ui.progress import spinner
-from decoy.ui.table import make_table
-from decoy.ui.theme import accent, code, error, hint, success, warn
+from decoy.ui.summary import (
+    render_execution_route,
+    render_fidelity,
+    render_generated_fidelity_pointer,
+    render_post_validation,
+    render_table_lines,
+    render_warnings,
+    warning_records,
+)
+from decoy.ui.theme import error, hint, warn
 
 # The engine's capacity-refusal codes live with the gate (`CAPACITY_CODES`); see
 # docs/plans/2026-07-24-oom-checker-cli-v1.md R8 for why the match is narrow.
@@ -298,6 +311,8 @@ def run(
             "across runs and machines. Reads DECOY_MASTER_KEY env var when "
             "omitted; without either, generation falls back to the legacy "
             "seeded path (per-input deterministic but not portable). "
+            "With a key, global_settings.seed is not used for generated tables "
+            "(masked tables still use it). "
             "This flag does NOT affect masking -- masking's keyed "
             "determinism is configured separately via '--mask-secret' (or "
             "the pipeline YAML's 'global_settings.mask_secret_ref'), never "
@@ -537,6 +552,8 @@ def run(
     yaml_mode = _detect_mode(raw_cfg) or mode.value
 
     resolver = _build_resolver(master_key, key_label, raw_cfg, state)
+    if fidelity and raw_cfg is not None and not _has_kind(raw_cfg, "columns"):
+        _refuse_fidelity_without_mask(state, config_str, raw_cfg)
 
     # Temp dir holding Parquet snapshots acquired from --duckdb-source inputs;
     # created only when the flag is used, torn down in the run's finally.
@@ -862,12 +879,13 @@ def run(
                     else {}
                 )
                 result = run_pipeline(
-                    config_dict,
+                    resolved_source_config(config_dict, config.parent),
                     sources,
                     engine_version=engine_version,
                     derive_key=resolver,
                     instance_default_locale=instance_locale,
                     vault_writer=vault_writer,
+                    base_dir=config.parent,
                     **_key_kwargs,
                     **_report_kwargs,
                     **_native_gate.run_pipeline_kwargs(gate_result),
@@ -1190,16 +1208,21 @@ def run(
     # evidence are already written. --post-validate (without enforce) is
     # warn-only and leaves the exit code at 0.
     _qm = _report_quality_metrics or {}
+    _warnings = warning_records(
+        _ev_engine_warnings,
+        _seed_warnings(raw_cfg, key_in_effect=resolver is not None),
+    )
     _enforce_fires = bool(post_validate_enforce and _qm.get("failed_checks"))
 
     if state.mode is OutputMode.json:
-        payload = {
+        payload: dict = {
             "command": "run",
             "status": "ok",
             "config": config_str,
             "mode": yaml_mode,
             "elapsed_s": round(elapsed, 3),
             "tables": _table_records,
+            "warnings": _warnings,
         }
         payload["resources"] = _resources_record
         if notify_channels:
@@ -1239,6 +1262,8 @@ def run(
         ("Rows", "n/a (chunked)" if chunked else str(sum(r["rows"] for r in _table_records))),
         ("Files", str(sum(1 for r in _table_records if r["path"] is not None))),
     ]
+    if _warnings:
+        facts.append(("Warnings", str(len(_warnings))))
     if _native_route is not None:
         facts.append(("Route", _native_route.label))
     if notify_channels:
@@ -1256,12 +1281,16 @@ def run(
     # S5 report sections (human mode). Rendered below the summary card so the
     # card stays the one-glance result; each is report-only and reads the
     # captured quality metrics.
+    render_table_lines(state, _table_records)
+    render_warnings(state, _warnings)
     if explain_plan:
-        _render_execution_route(state, _qm.get("execution_plan"))
+        render_execution_route(state, _qm.get("execution_plan"))
     if fidelity:
-        _render_fidelity(state, _qm.get("fidelity_reports"))
+        render_fidelity(state, _qm.get("fidelity_reports"))
+        if _has_kind(raw_cfg, "generate_columns"):
+            render_generated_fidelity_pointer(state)
     if post_validation:
-        _render_post_validation(state, _qm, enforce=post_validate_enforce)
+        render_post_validation(state, _qm, enforce=post_validate_enforce)
 
     if _enforce_fires:
         raise typer.Exit(code=EXIT_FINDINGS)
@@ -1337,6 +1366,52 @@ def _detect_mode(raw_cfg: dict | None) -> str | None:
     return None
 
 
+def _has_kind(raw_cfg: dict | None, field: str) -> bool:
+    """Whether any table of the raw config declares `field` (`columns` is a mask table,
+    `generate_columns` a generate table)."""
+    tables = raw_cfg.get("tables") if isinstance(raw_cfg, dict) else None
+    return isinstance(tables, list) and any(isinstance(t, dict) and t.get(field) for t in tables)
+
+
+_FIDELITY_NEEDS_MASK = (
+    "--fidelity scores mask tables and this pipeline has none. Score generated tables with: "
+    "decoy report fidelity <source.csv> <synthetic.csv> --generate"
+)
+
+
+def _refuse_fidelity_without_mask(state, config_str: str, raw_cfg: dict) -> None:
+    """Exit 1 before any engine call when `--fidelity` is given and no table is a mask table.
+
+    A config with no tables at all is left to the normal config check.
+    """
+    if not raw_cfg.get("tables"):
+        return
+    if state.mode is OutputMode.json:
+        emit_json(
+            state,
+            {
+                "command": "run",
+                "status": "error",
+                "config": config_str,
+                "error": _FIDELITY_NEEDS_MASK,
+            },
+        )
+    elif state.mode is not OutputMode.quiet:
+        state.err_console.print(error("error:"), _FIDELITY_NEEDS_MASK, markup=False)
+    raise typer.Exit(code=EXIT_USAGE)
+
+
+def _seed_warnings(raw_cfg: dict | None, *, key_in_effect: bool) -> list[dict]:
+    """The `seed_ignored_with_master_key` warning: a key is set, the YAML sets a seed and the
+    config has a generate table, where the key and `--key-label` decide the output instead."""
+    if not (key_in_effect and _has_kind(raw_cfg, "generate_columns")):
+        return []
+    settings = raw_cfg.get("global_settings") if isinstance(raw_cfg, dict) else None
+    if not isinstance(settings, dict) or settings.get("seed") is None:
+        return []
+    return [{"code": "seed_ignored_with_master_key"}]
+
+
 def _next_hint_for_run(raw_cfg: dict | None, mode: "Mode") -> str | None:
     """Best-effort follow-up hint based on the YAML's output path."""
     try:
@@ -1346,110 +1421,6 @@ def _next_hint_for_run(raw_cfg: dict | None, mode: "Mode") -> str | None:
     except Exception:
         pass
     return None
-
-
-def _render_execution_route(state, execution_plan: dict | None) -> None:
-    """Render the EXECUTION ROUTE decision (--explain-plan).
-
-    `execution_plan` is `quality_metrics["execution_plan"]` =
-    `{mode, reason, rejections}`: which run lane the engine chose (sequential /
-    full_frame / out_of_core) and why. This is deliberately NOT the per-column
-    masking rationale `validate compile --explain` renders pre-run (plan P1-1) --
-    a different payload, so a small dedicated renderer rather than reusing
-    compile_explain's column table. `rejections` maps each lane the engine
-    DECLINED to the reason it was declined.
-    """
-    state.console.print()
-    state.console.print(accent("Execution route"))
-    if not execution_plan:
-        # explain_plan was requested but the engine stamped nothing (e.g. a path
-        # that produced no decision). Say so rather than render an empty table.
-        state.console.print(hint("  "), "no execution-route decision was recorded for this run.")
-        return
-    state.console.print("  Mode:", code(str(execution_plan.get("mode", "?"))))
-    state.console.print("  Reason:", str(execution_plan.get("reason", "?")))
-    rejections = execution_plan.get("rejections") or {}
-    if rejections:
-        tbl = make_table("Lane declined", "Why")
-        for lane, why in rejections.items():
-            tbl.add_row(str(lane), str(why))
-        state.console.print(tbl)
-    state.console.print(
-        hint("  Note:"),
-        "this is the execution ROUTE decision, not the per-column masking rationale. For that, run",
-        code("decoy validate compile --explain"),
-        "before the run.",
-    )
-
-
-def _render_fidelity(state, fidelity_reports: dict | None) -> None:
-    """Render the QUICK inline marginal-fidelity check (--fidelity).
-
-    `fidelity_reports` is `quality_metrics["fidelity_reports"]`, a per-mask-table
-    `quality-report/v1` block. This is a quick inline glance (letter grade +
-    overall score, marginal-only); it NEVER fails the run. The fuller post-hoc
-    grade is `decoy report fidelity` (plan P2-4).
-    """
-    state.console.print()
-    state.console.print(accent("Fidelity (quick inline check)"))
-    if not fidelity_reports:
-        state.console.print(hint("  "), "no mask-table fidelity report was produced for this run.")
-        return
-    tbl = make_table("Table", "Grade", "Overall score")
-    for table_name, rep in fidelity_reports.items():
-        rep = rep or {}
-        score = rep.get("overall_score")
-        tbl.add_row(
-            str(table_name),
-            str(rep.get("grade", "?")),
-            "n/a" if score is None else f"{score:.3f}",
-        )
-    state.console.print(tbl)
-    state.console.print(
-        hint("  Note:"),
-        "a quick marginal check; a low grade does not fail the run. For the "
-        "fuller post-hoc grade, run",
-        code("decoy report fidelity"),
-        ".",
-    )
-
-
-def _render_post_validation(state, qm: dict, *, enforce: bool) -> None:
-    """Render the post-execution validator results (--post-validate[-enforce]).
-
-    Reads `quality_metrics["failed_checks"]` (a list of `{code, message}`) and
-    `["quality_summary"]` (the manifest block). Warn-only by default; under
-    --post-validate-enforce a non-empty `failed_checks` maps to EXIT_FINDINGS in
-    the caller (the engine never fails the job -- plan P1-2).
-    """
-    state.console.print()
-    state.console.print(accent("Post-validation"))
-    failed = qm.get("failed_checks") or []
-    summary = qm.get("quality_summary")
-    if summary is None:
-        state.console.print(hint("  "), "no post-validation summary was produced for this run.")
-        return
-    if not failed:
-        state.console.print(success("  All post-validation checks passed."))
-        return
-    tbl = make_table("Failed check", "Detail")
-    for item in failed:
-        item = item or {}
-        tbl.add_row(str(item.get("code", "?")), str(item.get("message", "")))
-    state.console.print(tbl)
-    if enforce:
-        state.console.print(
-            warn("  enforce:"),
-            f"{len(failed)} hard-failed check(s); outputs were written, exiting "
-            "with findings (code 4).",
-        )
-    else:
-        state.console.print(
-            hint("  Note:"),
-            f"{len(failed)} hard-failed check(s) reported; warn-only, the run still exits 0. Use",
-            code("--post-validate-enforce"),
-            "to exit with findings.",
-        )
 
 
 def _run_chunked_mask(
