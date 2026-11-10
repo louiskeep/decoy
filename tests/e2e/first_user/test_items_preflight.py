@@ -2,7 +2,8 @@
 
 A parent and child that share `patient_id` with no namespace made the capacity
 estimator compile the plan, and the engine's `namespace_missing` escaped as a
-traceback. The capacity row now records a FAIL under its own check name.
+traceback. The capacity row now records a FAIL under its own check name. In the aggregate gate the
+compile layer reports the same error, so the capacity row becomes a not-checked warning.
 """
 
 from __future__ import annotations
@@ -57,24 +58,68 @@ def test_preflight_fail_names_no_data_value(tmp_path: Path) -> None:
     assert "000-00-0001" not in result.output
 
 
-def test_aggregate_validate_emits_one_preflight_namespace_error(tmp_path: Path) -> None:
+def test_aggregate_validate_reports_the_namespace_error_once(tmp_path: Path) -> None:
     config = _stage(tmp_path, "pipeline_no_namespace.yaml")
     result = runner.invoke(app, ["validate", str(config), "--json"])
     _no_traceback(result)
     assert result.exit_code == EXIT_USAGE
     messages = json.loads(result.stdout)["messages"]
     hits = [m for m in messages if m["code"] == "namespace_missing"]
-    assert [(m["layer"], m["severity"]) for m in hits] == [("preflight", "error")]
+    assert [(m["layer"], m["severity"]) for m in hits] == [("compile", "error")]
+    capacity = [m for m in messages if m["code"] == _CHECK]
+    assert [(m["layer"], m["severity"]) for m in capacity] == [("preflight", "warning")]
+    assert "not checked" in capacity[0]["message"]
+
+
+def test_the_preflight_layer_does_not_claim_it_passed(tmp_path: Path) -> None:
+    config = _stage(tmp_path, "pipeline_no_namespace.yaml")
+    result = runner.invoke(app, ["validate", str(config)])
+    _no_traceback(result)
+    assert result.exit_code == EXIT_USAGE
+    assert "Preflight: passed" not in result.output
+    assert "not checked" in result.output
 
 
 @pytest.mark.parametrize("route", [GateRoute.PLAIN, GateRoute.CHUNKED])
-def test_the_fail_stays_an_error_on_every_route(tmp_path: Path, route: GateRoute) -> None:
+def test_the_gate_reports_the_error_once_on_every_route(tmp_path: Path, route: GateRoute) -> None:
     import yaml
 
     config = _stage(tmp_path, "pipeline_no_namespace.yaml")
     raw = yaml.safe_load(config.read_text())
     result = run_gate_on_config(raw, config, route)
     hits = [f for f in result.findings if f.code == "namespace_missing"]
+    assert [(f.layer, f.severity) for f in hits] == [("compile", "error")]
+    capacity = [f for f in result.findings if f.code == _CHECK]
+    assert [(f.layer, f.severity) for f in capacity] == [("preflight", "warning")]
+
+
+@pytest.mark.parametrize("route", [GateRoute.PLAIN, GateRoute.CHUNKED])
+def test_preflight_alone_keeps_the_fail_on_every_route(tmp_path: Path, route: GateRoute) -> None:
+    import yaml
+
+    from decoy.cli.gate._layers import _run_preflight_layer
+
+    config = _stage(tmp_path, "pipeline_no_namespace.yaml")
+    findings, _ = _run_preflight_layer(yaml.safe_load(config.read_text()), config, route)
+    hits = [f for f in findings if f.code == "namespace_missing"]
+    assert [(f.layer, f.severity) for f in hits] == [("preflight", "error")]
+
+
+def test_a_capacity_compile_error_the_compile_layer_missed_stays_an_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import yaml
+    from decoy_engine import execution as engine_execution
+    from decoy_engine.plan import PlanCompileError
+
+    def _raise(*_args: object, **_kwargs: object) -> None:
+        raise PlanCompileError("orphan_fk_policy_missing", "tables.visits", "SECRET-MSG-7c1d")
+
+    monkeypatch.setattr(engine_execution, "estimate_job_capacity", _raise)
+    config = _stage(tmp_path, "pipeline_namespaced.yaml")
+    result = run_gate_on_config(yaml.safe_load(config.read_text()), config)
+    assert not [f for f in result.findings if f.layer == "compile" and f.severity == "error"]
+    hits = [f for f in result.findings if f.code == "orphan_fk_policy_missing"]
     assert [(f.layer, f.severity) for f in hits] == [("preflight", "error")]
 
 
