@@ -17,6 +17,7 @@ import yaml
 from typer.testing import CliRunner
 
 from decoy.__main__ import app
+from tests.csv_sources import csv_source
 from tests.keyed_secret import TEST_MASK_SECRET, TEST_MASK_SECRET_REF
 
 pytest.importorskip("cryptography")
@@ -49,7 +50,7 @@ def _pipeline(tmp_path: Path, ref: str, *, tables: tuple[str, ...] = ("a",), vau
         pd.DataFrame({"email": [f"u{i}@{name}.example" for i in range(12)]}).to_csv(
             src, index=False
         )
-        sources[name] = {"type": "file", "format": "csv", "path": str(src)}
+        sources[name] = csv_source(src)
         targets[name] = {"type": "file", "format": "csv", "path": str(tmp_path / f"{name}.out.csv")}
         column = {"name": "email", "strategy": "hash", "namespace": "em", "vault": vault}
         entries.append({"name": name, "columns": [column]})

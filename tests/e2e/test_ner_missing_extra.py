@@ -28,6 +28,7 @@ from typer.testing import CliRunner
 
 from decoy.__main__ import app
 from decoy.cli.exit_codes import EXIT_USAGE
+from tests.csv_sources import csv_source
 
 runner = CliRunner()
 
@@ -38,7 +39,7 @@ def _ner_pipeline(tmp_path: Path) -> Path:
     cfg = {
         "version": 2,
         "global_settings": {"seed": 42},
-        "sources": {"notes": {"type": "file", "format": "csv", "path": str(src)}},
+        "sources": {"notes": csv_source(src)},
         "tables": [
             {
                 "name": "notes",

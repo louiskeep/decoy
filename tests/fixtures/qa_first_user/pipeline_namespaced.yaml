@@ -3,8 +3,8 @@ version: 2
 global_settings:
   seed: 7
 sources:
-  patients: {type: file, path: patients.csv, format: csv}
-  visits: {type: file, path: visits.csv, format: csv}
+  patients: {type: file, path: patients.csv, format: csv, has_header: true}
+  visits: {type: file, path: visits.csv, format: csv, has_header: true}
 targets:
   patients: {type: file, path: out/patients.csv, format: csv}
   visits: {type: file, path: out/visits.csv, format: csv}

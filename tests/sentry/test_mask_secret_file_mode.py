@@ -26,6 +26,7 @@ from pathlib import Path
 import pandas as pd
 import pytest
 import yaml
+from tests.csv_sources import csv_source
 from tests.sentry.io_policy._calls import sites
 from typer.testing import CliRunner
 
@@ -63,7 +64,7 @@ def _pipeline(root: Path, ref: str, *, strategy: str = "hash", vault: bool = Tru
     cfg = {
         "version": 2,
         "global_settings": {"seed": 3, "mask_secret_ref": ref},
-        "sources": {"a": {"type": "file", "format": "csv", "path": str(src)}},
+        "sources": {"a": csv_source(src)},
         "tables": [{"name": "a", "columns": [column]}],
         "targets": {"a": {"type": "file", "format": "csv", "path": str(root / "out.csv")}},
     }

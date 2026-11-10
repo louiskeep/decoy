@@ -24,6 +24,7 @@ from typer.testing import CliRunner
 from decoy.__main__ import app
 from decoy.cli.evidence import build_manifest, compute_manifest_hash
 from decoy.cli.exit_codes import EXIT_RUNTIME, EXIT_USAGE
+from tests.csv_sources import csv_source
 from tests.e2e.cli_fmt.test_target_format_dispatch import _csv_config, _target, _target_layout
 from tests.e2e.test_source_format_dispatch import _COLUMNS, _PEOPLE
 from tests.e2e.test_tokenize_cli import _TOKENIZE_COLS
@@ -152,7 +153,7 @@ def _vault_config(d: Path, target: dict[str, Any]) -> Path:
     cfg = {
         "version": 2,
         "global_settings": {"seed": 42, "mask_secret_ref": TEST_MASK_SECRET_REF},
-        "sources": {"accounts": {"type": "file", "format": "csv", "path": str(src)}},
+        "sources": {"accounts": csv_source(src)},
         "tables": [
             {
                 "name": "accounts",
@@ -270,7 +271,7 @@ def _people_config(d: Path, target: dict[str, Any], rows: list[tuple] = _PEOPLE)
     cfg = {
         "version": 2,
         "global_settings": {"seed": 42, "mask_secret_ref": TEST_MASK_SECRET_REF},
-        "sources": {"people": {"type": "file", "format": "csv", "path": str(src)}},
+        "sources": {"people": csv_source(src)},
         "tables": [{"name": "people", "columns": _COLUMNS}],
         "targets": {"people": {"type": "file", **target}},
     }

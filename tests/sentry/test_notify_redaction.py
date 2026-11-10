@@ -28,6 +28,7 @@ from unittest import mock
 import pandas as pd
 import pytest
 import yaml
+from tests.csv_sources import csv_source
 from tests.keyed_secret import TEST_MASK_SECRET_REF
 from typer.testing import CliRunner
 
@@ -108,7 +109,7 @@ def _write_mask_config(tmp_path: Path) -> Path:
     cfg = {
         "version": 2,
         "global_settings": {"seed": 42, "mask_secret_ref": TEST_MASK_SECRET_REF},
-        "sources": {"customers": {"type": "file", "format": "csv", "path": str(src)}},
+        "sources": {"customers": csv_source(src)},
         "tables": [
             {
                 "name": "customers",

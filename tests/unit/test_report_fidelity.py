@@ -17,6 +17,7 @@ from unittest import mock
 import pandas as pd
 import pytest
 import yaml
+from tests.csv_sources import csv_source
 from typer.testing import CliRunner
 
 from decoy.__main__ import app
@@ -305,7 +306,7 @@ def test_distribution_config_prevents_intentional_loss_from_flagging(tmp_path: P
     cfg = {
         "version": 2,
         "global_settings": {"seed": 1},
-        "sources": {"t": {"type": "file", "format": "csv", "path": str(src)}},
+        "sources": {"t": csv_source(src)},
         "tables": [{"name": "t", "columns": [{"name": "email", "strategy": "hash"}]}],
         "targets": {"t": {"type": "file", "format": "csv", "path": str(out)}},
     }

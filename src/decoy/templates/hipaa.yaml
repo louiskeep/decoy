@@ -50,6 +50,7 @@ sources:
   patients:
     type: file
     format: csv
+    has_header: true
     path: ./patients.csv
 
 tables:

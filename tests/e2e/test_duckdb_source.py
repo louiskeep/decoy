@@ -22,6 +22,7 @@ from typer.testing import CliRunner
 
 from decoy.__main__ import app
 from decoy.cli.exit_codes import EXIT_USAGE
+from tests.csv_sources import csv_source
 from tests.keyed_secret import TEST_MASK_SECRET_REF
 
 # Keyed strategies need an admitted mask secret (engine 0.17.0); see tests/keyed_secret.py.
@@ -131,7 +132,7 @@ def test_duckdb_source_overrides_declared_yaml_source(tmp_path: Path):
     # The YAML declares a source that does not exist; the flag must override it.
     config = _config(
         tmp_path,
-        {"people": {"type": "file", "format": "csv", "path": str(tmp_path / "nope.csv")}},
+        {"people": csv_source(tmp_path / "nope.csv")},
     )
     result = runner.invoke(app, ["run", str(config), "--duckdb-source", f"people={db}"])
     assert result.exit_code == 0, result.output

@@ -18,6 +18,7 @@ from typer.testing import CliRunner
 
 from decoy.__main__ import app
 from decoy.ui.output import _make_console
+from tests.csv_sources import csv_source
 
 runner = CliRunner()
 ANSI_RE = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
@@ -34,7 +35,7 @@ def good_config(tmp_path: Path) -> Path:
         "version": 2,
         "global_settings": {"seed": 42},
         "sources": {
-            "people": {"type": "file", "format": "csv", "path": str(sample)},
+            "people": csv_source(sample),
         },
         "tables": [
             {
@@ -176,7 +177,7 @@ def _missing_source_config(tmp_path: Path) -> tuple[Path, Path]:
     cfg = {
         "version": 2,
         "global_settings": {"seed": 42},
-        "sources": {"customers": {"type": "file", "format": "csv", "path": str(absent)}},
+        "sources": {"customers": csv_source(absent)},
         "tables": [
             {
                 "name": "customers",

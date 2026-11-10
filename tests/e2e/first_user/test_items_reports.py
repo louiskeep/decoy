@@ -18,6 +18,7 @@ from typer.testing import CliRunner
 from decoy.__main__ import app
 from decoy.cli.exit_codes import EXIT_FINDINGS, EXIT_USAGE
 from tests.ci_support import make_repo, run_decoy
+from tests.csv_sources import csv_source
 
 runner = CliRunner()
 
@@ -78,7 +79,7 @@ def test_strategy_defaults_alone_can_produce_unenforced_violations(tmp_path: Pat
     cfg = {
         "version": 2,
         "global_settings": {"seed": 1},
-        "sources": {"t": {"type": "file", "format": "csv", "path": str(src)}},
+        "sources": {"t": csv_source(src)},
         "tables": [{"name": "t", "columns": [{"name": "a", "strategy": "shuffle"}]}],
         "targets": {"t": {"type": "file", "format": "csv", "path": str(out)}},
     }

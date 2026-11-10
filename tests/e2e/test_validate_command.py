@@ -20,6 +20,7 @@ from typer.testing import CliRunner
 from decoy import __version__
 from decoy.__main__ import app
 from decoy.cli.exit_codes import EXIT_USAGE
+from tests.csv_sources import csv_source
 
 runner = CliRunner()
 
@@ -41,7 +42,7 @@ def _valid_v2_mask_config(tmp_path: Path) -> dict:
         "version": 2,
         "global_settings": {"seed": 42},
         "sources": {
-            "customers": {"type": "file", "format": "csv", "path": str(src)},
+            "customers": csv_source(src),
         },
         "tables": [
             {
@@ -223,7 +224,7 @@ class TestConfigOnlyPlanChecks:
         cfg = {
             "version": 2,
             "global_settings": {"seed": 1},
-            "sources": {"t": {"type": "file", "format": "csv", "path": "./t.csv"}},
+            "sources": {"t": csv_source("./t.csv")},
             "tables": [{"name": "t", "columns": columns}],
             "targets": {"t": {"type": "file", "format": "csv", "path": "./t_masked.csv"}},
         }

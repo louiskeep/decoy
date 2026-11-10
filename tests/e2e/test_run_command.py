@@ -19,6 +19,7 @@ import yaml
 from typer.testing import CliRunner
 
 from decoy.__main__ import app
+from tests.csv_sources import csv_source
 
 runner = CliRunner()
 
@@ -62,7 +63,7 @@ def mask_config(tmp_path: Path, sample_csv: Path) -> Path:
         "version": 2,
         "global_settings": {"seed": 42},
         "sources": {
-            "customers": {"type": "file", "format": "csv", "path": str(sample_csv)},
+            "customers": csv_source(sample_csv),
         },
         "tables": [
             {
@@ -282,7 +283,7 @@ class TestExitCodeDispatch:
         cfg = {
             "version": 2,
             "global_settings": {"seed": 1},
-            "sources": {"t": {"type": "file", "format": "csv", "path": str(sample_csv)}},
+            "sources": {"t": csv_source(sample_csv)},
             "tables": [
                 {
                     "name": "t",
@@ -307,7 +308,7 @@ class TestExitCodeDispatch:
         cfg = {
             "version": 2,
             "global_settings": {"seed": 1},
-            "sources": {"t": {"type": "file", "format": "csv", "path": str(sample_csv)}},
+            "sources": {"t": csv_source(sample_csv)},
             "tables": [
                 {
                     "name": "t",
@@ -333,7 +334,7 @@ class TestExitCodeDispatch:
         cfg = {
             "version": 2,
             "global_settings": {"seed": 1},
-            "sources": {"t": {"type": "file", "format": "csv", "path": str(tmp_path / "nope.csv")}},
+            "sources": {"t": csv_source(tmp_path / "nope.csv")},
             "tables": [{"name": "t", "columns": [{"name": "a", "strategy": "redact"}]}],
             "targets": {
                 "t": {"type": "file", "format": "csv", "path": str(tmp_path / "out.csv")}
@@ -355,7 +356,7 @@ class TestMixedConfigSuccess:
         cfg = {
             "version": 2,
             "global_settings": {"seed": 1},
-            "sources": {"t": {"type": "file", "format": "csv", "path": str(sample_csv)}},
+            "sources": {"t": csv_source(sample_csv)},
             "tables": [
                 {"name": "t", "columns": [{"name": "email", "strategy": "redact"}]},
                 {

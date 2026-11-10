@@ -21,12 +21,14 @@ from __future__ import annotations
 import json as _json
 import re
 from pathlib import Path
+from typing import Any
 
 import typer
 import yaml
 
 from decoy import _mask_secret_guidance
 from decoy.cli._init_inference import Inference, _infer_strategy_for_column
+from decoy.cli._sources import CSV_DIALECT_KEYS, csv_file_source
 from decoy.cli.completers import init_presets
 from decoy.cli.exit_codes import EXIT_RUNTIME, EXIT_USAGE
 from decoy.templates import get_template
@@ -160,7 +162,7 @@ multiple init runs.
 """
 
 
-def _scaffold_source(input_file: Path) -> dict[str, str]:
+def _scaffold_source(input_file: Path) -> dict[str, Any]:
     """The source descriptor the scaffold declares for `input_file`, from its suffix.
 
     The one suffix rule for both the inference read and the YAML: `.parquet` and `.pq` are
@@ -172,9 +174,13 @@ def _scaffold_source(input_file: Path) -> dict[str, str]:
     if suffix in (".parquet", ".pq"):
         return {"type": "file", "format": "parquet", "path": path}
     if suffix == ".tsv":
-        return {"type": "file", "format": "csv", "path": path, "delimiter": "\t"}
+        from decoy.cli._sources import csv_file_source
+
+        return csv_file_source(path, delimiter="\t")
     if suffix == ".csv":
-        return {"type": "file", "format": "csv", "path": path}
+        from decoy.cli._sources import csv_file_source
+
+        return csv_file_source(path)
     raise ValueError(f"unsupported file extension {suffix!r}; expected .csv, .tsv, or .parquet")
 
 
@@ -193,6 +199,11 @@ def _load_dataframe(input_file: Path):
     from decoy.cli._sources import read_file
 
     return read_file(input_file, "parquet", None, table=_TABLE_NAME)
+
+
+def _yaml_scalar(value: object) -> str:
+    """A dialect value as a YAML scalar: bools as true/false, text as a JSON-quoted string."""
+    return str(value).lower() if isinstance(value, bool) else _json.dumps(value)
 
 
 def _yaml_quote(value: str) -> str:
@@ -315,14 +326,27 @@ def _build_scaffold_yaml(
         "# Run `decoy explain pipeline` for the V2 pipeline shape.\n"
     )
 
-    delimiter_line = f"    delimiter: {_json.dumps(delimiter)}\n" if delimiter else ""
+    # The csv dialect lines come from the one csv descriptor builder, not a second copy of its
+    # defaults; the descriptor's own type/format/path lines are written below.
+    dialect = (
+        {
+            k: v
+            for k, v in csv_file_source(
+                input_path, **({"delimiter": delimiter} if delimiter else {})
+            ).items()
+            if k in CSV_DIALECT_KEYS
+        }
+        if file_format == "csv"
+        else {}
+    )
+    dialect_lines = "".join(f"    {k}: {_yaml_scalar(v)}\n" for k, v in dialect.items())
     sources_block = (
         "sources:\n"
         f"  {_TABLE_NAME}:\n"
         "    type: file\n"
         f"    format: {file_format}\n"
         f"    path: {input_quoted}\n"
-        f"{delimiter_line}"
+        f"{dialect_lines}"
     )
     targets_block = (
         "targets:\n"

@@ -27,6 +27,7 @@ from typer.testing import CliRunner
 from decoy import _mask_secret_guidance
 from decoy.__main__ import app
 from decoy.cli.exit_codes import EXIT_USAGE
+from tests.csv_sources import csv_source
 
 runner = CliRunner()
 
@@ -100,7 +101,7 @@ def _mask_pipeline(
     cfg = {
         "version": 2,
         "global_settings": global_settings,
-        "sources": {"accounts": {"type": "file", "format": "csv", "path": str(src)}},
+        "sources": {"accounts": csv_source(src)},
         "tables": [
             {
                 "name": "accounts",
@@ -140,7 +141,7 @@ def _mixed_pipeline(tmp_path: Path, *, mask_secret_ref: str | None = None) -> Pa
     cfg = {
         "version": 2,
         "global_settings": global_settings,
-        "sources": {"accounts": {"type": "file", "format": "csv", "path": str(src)}},
+        "sources": {"accounts": csv_source(src)},
         "tables": [
             {
                 "name": "employees",
@@ -508,7 +509,7 @@ class TestMaskSecretWrongTypeYaml:
         raw_cfg = {
             "version": 2,
             "global_settings": [{"mask_secret_ref": [_SECRET_MARKER]}],
-            "sources": {"accounts": {"type": "file", "format": "csv", "path": str(src)}},
+            "sources": {"accounts": csv_source(src)},
             "tables": [
                 {
                     "name": "accounts",

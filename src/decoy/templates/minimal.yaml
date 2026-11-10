@@ -18,6 +18,7 @@ sources:
   people:
     type: file
     format: csv
+    has_header: true
     path: ./input.csv
 
 tables:

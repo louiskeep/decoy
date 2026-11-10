@@ -23,6 +23,8 @@ from __future__ import annotations
 import json as _json
 from pathlib import Path
 
+from tests.csv_sources import csv_source
+
 from decoy.cli.evidence import build_manifest, compute_manifest_hash, hash_file, verify_manifest
 
 # ---------------------------------------------------------------------------
@@ -40,7 +42,7 @@ def _make_config_dict(src_path: Path, out_path: Path) -> dict:
         "version": 2,
         "global_settings": {"seed": 42},
         "sources": {
-            "customers": {"type": "file", "format": "csv", "path": str(src_path)},
+            "customers": csv_source(src_path),
         },
         "tables": [
             {

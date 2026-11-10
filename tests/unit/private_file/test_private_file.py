@@ -10,6 +10,7 @@ import sys
 from pathlib import Path
 
 import pytest
+from tests.csv_sources import csv_source
 
 from decoy import _private_file
 from decoy._private_file import (
@@ -317,7 +318,7 @@ def test_a_failed_spool_write_removes_the_registered_temp(
     cfg = {
         "version": 2,
         "global_settings": {"seed": 1},
-        "sources": {"t": {"type": "file", "format": "csv", "path": "unused.csv"}},
+        "sources": {"t": csv_source("unused.csv")},
         "tables": [{"name": "t", "columns": [{"name": "a", "strategy": "passthrough"}]}],
         "targets": {"t": {"type": "file", "format": "csv", "path": str(tmp_path / "o.csv")}},
     }

@@ -33,6 +33,7 @@ import pyarrow as pa
 
 from decoy import _mask_secret, _mask_secret_guidance, _native_gate
 from decoy._mask_secret import is_valid_mask_secret_ref as _is_valid_mask_secret_ref
+from decoy.cli._sources import CSV_DIALECT_KEYS, csv_file_source
 from decoy.cli.extras import UnsupportedCloudEndpointError
 from decoy.cli.io._targets import claimed_format, format_for_path
 from decoy.cli.run import (
@@ -219,8 +220,7 @@ def _stage_source_entry(name: str, value: Any, tmp_paths: list[Path], declared: 
     `declared` is the config's own `sources[name]` entry, if any. A path
     `value` replaces the source with a local file. When the declaration
     is a file source with a `format`, that format (and `layout`, for
-    fixed_width) and any CSV dialect keys (`has_header`, `column_names`,
-    `delimiter`) are the user's statement of how the bytes are laid out
+    fixed_width) and any CSV dialect keys (`CSV_DIALECT_KEYS`) are the user's statement of how the bytes are laid out
     and win over the file suffix; a file declaration without a valid
     format is left for schema validation to reject. A cloud (s3/gcs)
     declaration, or none at all, falls back to inferring the format from
@@ -239,11 +239,14 @@ def _stage_source_entry(name: str, value: Any, tmp_paths: list[Path], declared: 
                 entry["layout"] = declared["layout"]
             # Carried whatever the format: schema validation rejects a dialect key on a
             # non-csv source instead of the override dropping it silently.
-            for key in ("has_header", "column_names", "delimiter"):
+            for key in CSV_DIALECT_KEYS:
                 if key in declared:
                     entry[key] = declared[key]
             return entry
-        return {"type": "file", "format": format_for_path(path), "path": str(path)}
+        fmt = format_for_path(path)
+        if fmt == "csv":
+            return csv_file_source(path)
+        return {"type": "file", "format": fmt, "path": str(path)}
 
     table = _to_pa_table(value)
     from decoy._private_file import create_private_temp

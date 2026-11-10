@@ -20,6 +20,7 @@ from typer.testing import CliRunner
 
 from decoy.__main__ import app
 from decoy.cli.io import _targets
+from tests.csv_sources import csv_source
 from tests.keyed_secret import TEST_MASK_SECRET_REF
 
 pytestmark = pytest.mark.usefixtures("mask_secret")
@@ -52,7 +53,7 @@ def _chunked_config(tmp_path: Path, source_text: str) -> Path:
     cfg = {
         "version": 2,
         "global_settings": {"seed": 7},
-        "sources": {"patients": {"type": "file", "path": "in.csv", "format": "csv"}},
+        "sources": {"patients": csv_source("in.csv")},
         "targets": {"patients": {"type": "file", "path": "out.csv", "format": "csv"}},
         "tables": [
             {

@@ -22,6 +22,7 @@ import yaml
 from typer.testing import CliRunner
 
 from decoy.__main__ import app
+from tests.csv_sources import csv_source
 
 runner = CliRunner()
 
@@ -43,7 +44,7 @@ def _valid_v2_mask_config(tmp_path: Path, out_name: str = "out.csv") -> tuple[di
         "version": 2,
         "global_settings": {"seed": 42},
         "sources": {
-            "customers": {"type": "file", "format": "csv", "path": str(src)},
+            "customers": csv_source(src),
         },
         "tables": [
             {
@@ -176,7 +177,7 @@ def test_validate_json_emits_multiple_errors_for_invalid_config(tmp_path: Path):
     # Config missing both `version` and `tables` triggers multiple pydantic errors.
     bad_cfg = {
         "global_settings": {"seed": 42},
-        "sources": {"t": {"type": "file", "format": "csv", "path": "./t.csv"}},
+        "sources": {"t": csv_source("./t.csv")},
         "targets": {"t": {"type": "file", "format": "csv", "path": "./out.csv"}},
         # missing `version` and `tables`
     }

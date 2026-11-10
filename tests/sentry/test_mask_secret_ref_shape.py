@@ -16,6 +16,7 @@ from pathlib import Path
 import pandas as pd
 import pytest
 import yaml
+from tests.csv_sources import csv_source
 from typer.testing import CliRunner
 
 from decoy.__main__ import app
@@ -43,7 +44,7 @@ def _config(tmp_path: Path, global_settings: object) -> Path:
     cfg = {
         "version": 2,
         "global_settings": global_settings,
-        "sources": {"accounts": {"type": "file", "format": "csv", "path": str(src)}},
+        "sources": {"accounts": csv_source(src)},
         "tables": [
             {
                 "name": "accounts",

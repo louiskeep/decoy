@@ -37,6 +37,7 @@ import yaml
 from typer.testing import CliRunner
 
 from decoy.__main__ import app
+from tests.csv_sources import csv_source
 
 runner = CliRunner()
 
@@ -253,11 +254,7 @@ def test_csv_source_rejected_with_exact_phrase(tmp_path: Path):
     pl.read_parquet(customers_path).write_csv(customers_csv)
 
     config = _base_config(tmp_path, customers_path, orders_path)
-    config["sources"]["customers"] = {
-        "type": "file",
-        "format": "csv",
-        "path": str(customers_csv),
-    }
+    config["sources"]["customers"] = csv_source(customers_csv)
     config["subset"] = {
         "seeds": [{"table": "customers", "mode": "sample", "key_columns": ["id"], "fraction": 0.5}],
     }
