@@ -65,6 +65,7 @@ def not_applicable(check_id: str, kind: str) -> CheckOutcome:
 # Validation (full / config) over the existing pre-run gate
 # ---------------------------------------------------------------------------
 
+
 def validation_outcome(
     loaded: LoadedManifest,
     ref: PipelineRef,
@@ -147,12 +148,9 @@ def validation_outcome(
 
 def _load_scan(path: Path) -> dict:
     # An absolute path always: the shared loader treats the literal "-" as stdin.
-    from decoy.cli.scan import _load_scan_dict
+    from decoy.cli._scan_set_io import load_scan_set, select_table
 
-    data = _load_scan_dict(str(path))
-    if not isinstance(data, dict):
-        raise ValueError("scan is not a mapping")
-    return data
+    return select_table(load_scan_set(str(path)), None)
 
 
 def drift_outcome(loaded: LoadedManifest, check: DriftCheck, sink: DebugSink) -> CheckOutcome:

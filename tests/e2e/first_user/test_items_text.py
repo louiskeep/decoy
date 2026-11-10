@@ -46,7 +46,7 @@ def _topic(name: str) -> dict:
 
 @pytest.mark.parametrize(
     ("group", "argument", "missing"),
-    [("scan", "SOURCE", "nofile.csv"), ("validate", "CONFIG", "nofile.yaml")],
+    [("scan", "SOURCES...", "nofile.csv"), ("validate", "CONFIG", "nofile.yaml")],
 )
 def test_usage_error_names_the_group_not_the_hidden_command(
     tmp_path: Path, group: str, argument: str, missing: str
@@ -61,7 +61,7 @@ def test_usage_error_names_the_group_not_the_hidden_command(
     assert "_gate" not in result.output
 
 
-@pytest.mark.parametrize(("group", "argument"), [("scan", "SOURCE"), ("validate", "CONFIG")])
+@pytest.mark.parametrize(("group", "argument"), [("scan", "SOURCES..."), ("validate", "CONFIG")])
 def test_help_after_a_positional_shows_the_default_command_help(
     tmp_path: Path, group: str, argument: str
 ) -> None:

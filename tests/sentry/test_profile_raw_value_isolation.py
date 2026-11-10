@@ -70,7 +70,7 @@ def test_profile_text_output_no_raw_values(tmp_path: Path) -> None:
     csv_path = tmp_path / "data.csv"
     _write_sentinel_csv(csv_path)
 
-    result = runner.invoke(app, ["scan", str(csv_path), "--show-fields"], env=_WIDE_ENV)
+    result = runner.invoke(app, ["scan", str(csv_path), "--has-header", "--show-fields"], env=_WIDE_ENV)
     assert result.exit_code == 0, result.output
 
     assert _STRING_SENTINEL not in result.output, (
@@ -85,7 +85,7 @@ def test_profile_text_output_no_raw_values(tmp_path: Path) -> None:
 def test_text_sentry_bites_if_raw_value_injected(tmp_path: Path) -> None:
     """Prove the wide-console text sentry detects raw cell leaks.
 
-    Monkeypatches _safe_field_record to inject the sentinel into a profile
+    Monkeypatches safe_field_record to inject the sentinel into a profile
     cell (simulating a bug that emits raw values), then verifies the isolation
     test WOULD catch it -- i.e., the sentinel appears un-truncated in the
     wide-console output.  Reverts the patch at the end.
@@ -96,9 +96,9 @@ def test_text_sentry_bites_if_raw_value_injected(tmp_path: Path) -> None:
     csv_path = tmp_path / "data.csv"
     _write_sentinel_csv(csv_path)
 
-    import decoy.cli.scan as profile_mod
+    import decoy.cli._scan_multi as profile_mod
 
-    original_safe = profile_mod._safe_field_record
+    original_safe = profile_mod.safe_field_record
 
     def leaky_safe_field_record(field_stats):
         rec = original_safe(field_stats)
@@ -106,8 +106,8 @@ def test_text_sentry_bites_if_raw_value_injected(tmp_path: Path) -> None:
         rec["dtype"] = _STRING_SENTINEL
         return rec
 
-    with patch.object(profile_mod, "_safe_field_record", leaky_safe_field_record):
-        result = runner.invoke(app, ["scan", str(csv_path), "--show-fields"], env=_WIDE_ENV)
+    with patch.object(profile_mod, "safe_field_record", leaky_safe_field_record):
+        result = runner.invoke(app, ["scan", str(csv_path), "--has-header", "--show-fields"], env=_WIDE_ENV)
 
     assert result.exit_code == 0, result.output
     # With a leaky implementation the sentinel MUST appear in the wide output.
@@ -123,7 +123,7 @@ def test_profile_json_output_no_raw_values(tmp_path: Path) -> None:
     csv_path = tmp_path / "data.csv"
     _write_sentinel_csv(csv_path)
 
-    result = runner.invoke(app, ["scan", str(csv_path), "--show-fields", "--json"])
+    result = runner.invoke(app, ["scan", str(csv_path), "--has-header", "--show-fields", "--json"])
     assert result.exit_code == 0, result.output
 
     payload_str = result.stdout

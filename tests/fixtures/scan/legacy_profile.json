@@ -1,0 +1,386 @@
+{
+  "source_label": "people.csv",
+  "row_count": 5,
+  "sample_strategy": "head",
+  "sample_row_cap": 10000,
+  "fields": [
+    {
+      "name": "customer_id",
+      "inferred_type": "string",
+      "dtype_raw": "object",
+      "row_count": 5,
+      "null_count": 0,
+      "null_rate": 0.0,
+      "distinct_count": 5,
+      "unique_rate": 1.0,
+      "is_likely_unique": true,
+      "min_value": null,
+      "max_value": null,
+      "mean_value": null,
+      "min_length": 2,
+      "max_length": 2,
+      "avg_length": 2.0,
+      "date_min": null,
+      "date_max": null,
+      "date_format": null,
+      "invalid_count": null,
+      "sample_invalid": [],
+      "casing_pattern": "upper",
+      "format_pattern": null,
+      "alphabet": "alphanum",
+      "value_set_size_class": "low",
+      "numeric_range_class": null,
+      "mode_value": "C1",
+      "mode_freq": 0.2,
+      "top_values": [
+        {
+          "value": "C1",
+          "count": 1,
+          "pct": 20.0
+        },
+        {
+          "value": "C2",
+          "count": 1,
+          "pct": 20.0
+        },
+        {
+          "value": "C3",
+          "count": 1,
+          "pct": 20.0
+        },
+        {
+          "value": "C4",
+          "count": 1,
+          "pct": 20.0
+        },
+        {
+          "value": "C5",
+          "count": 1,
+          "pct": 20.0
+        }
+      ],
+      "detector_matches": [],
+      "sentinels": [],
+      "pii_score": 0.0,
+      "distribution": {
+        "kind": "categorical",
+        "data": [
+          20.0,
+          20.0,
+          20.0,
+          20.0,
+          20.0
+        ],
+        "labels": [
+          "C1",
+          "C2",
+          "C3",
+          "C4",
+          "C5"
+        ],
+        "min": null,
+        "max": null,
+        "mean": null
+      },
+      "detection_trail": [],
+      "domain": null
+    },
+    {
+      "name": "first_name",
+      "inferred_type": "string",
+      "dtype_raw": "object",
+      "row_count": 5,
+      "null_count": 0,
+      "null_rate": 0.0,
+      "distinct_count": 5,
+      "unique_rate": 1.0,
+      "is_likely_unique": true,
+      "min_value": null,
+      "max_value": null,
+      "mean_value": null,
+      "min_length": 9,
+      "max_length": 9,
+      "avg_length": 9.0,
+      "date_min": null,
+      "date_max": null,
+      "date_format": null,
+      "invalid_count": null,
+      "sample_invalid": [],
+      "casing_pattern": "upper",
+      "format_pattern": null,
+      "alphabet": "alphanum",
+      "value_set_size_class": "low",
+      "numeric_range_class": null,
+      "mode_value": "ZQCANARY0",
+      "mode_freq": 0.2,
+      "top_values": [
+        {
+          "value": "ZQCANARY0",
+          "count": 1,
+          "pct": 20.0
+        },
+        {
+          "value": "ZQCANARY1",
+          "count": 1,
+          "pct": 20.0
+        },
+        {
+          "value": "ZQCANARY2",
+          "count": 1,
+          "pct": 20.0
+        },
+        {
+          "value": "ZQCANARY3",
+          "count": 1,
+          "pct": 20.0
+        },
+        {
+          "value": "ZQCANARY4",
+          "count": 1,
+          "pct": 20.0
+        }
+      ],
+      "detector_matches": [],
+      "sentinels": [],
+      "pii_score": 0.0,
+      "distribution": {
+        "kind": "categorical",
+        "data": [
+          20.0,
+          20.0,
+          20.0,
+          20.0,
+          20.0
+        ],
+        "labels": [
+          "ZQCANARY0",
+          "ZQCANARY1",
+          "ZQCANARY2",
+          "ZQCANARY3",
+          "ZQCANARY4"
+        ],
+        "min": null,
+        "max": null,
+        "mean": null
+      },
+      "detection_trail": [],
+      "domain": null
+    },
+    {
+      "name": "email",
+      "inferred_type": "string",
+      "dtype_raw": "object",
+      "row_count": 5,
+      "null_count": 0,
+      "null_rate": 0.0,
+      "distinct_count": 5,
+      "unique_rate": 1.0,
+      "is_likely_unique": true,
+      "min_value": null,
+      "max_value": null,
+      "mean_value": null,
+      "min_length": 21,
+      "max_length": 21,
+      "avg_length": 21.0,
+      "date_min": null,
+      "date_max": null,
+      "date_format": null,
+      "invalid_count": null,
+      "sample_invalid": [],
+      "casing_pattern": "lower",
+      "format_pattern": null,
+      "alphabet": "mixed",
+      "value_set_size_class": "low",
+      "numeric_range_class": null,
+      "mode_value": "zqcanary0@example.com",
+      "mode_freq": 0.2,
+      "top_values": [
+        {
+          "value": "zqcanary0@example.com",
+          "count": 1,
+          "pct": 20.0
+        },
+        {
+          "value": "zqcanary1@example.com",
+          "count": 1,
+          "pct": 20.0
+        },
+        {
+          "value": "zqcanary2@example.com",
+          "count": 1,
+          "pct": 20.0
+        },
+        {
+          "value": "zqcanary3@example.com",
+          "count": 1,
+          "pct": 20.0
+        },
+        {
+          "value": "zqcanary4@example.com",
+          "count": 1,
+          "pct": 20.0
+        }
+      ],
+      "detector_matches": [
+        {
+          "detector_id": "email",
+          "match_rate": 1.0,
+          "sample_misses": [],
+          "format_pattern": null,
+          "confidence": "high",
+          "domain": "CONTACT"
+        }
+      ],
+      "sentinels": [],
+      "pii_score": 1.0,
+      "distribution": {
+        "kind": "categorical",
+        "data": [
+          20.0,
+          20.0,
+          20.0,
+          20.0,
+          20.0
+        ],
+        "labels": [
+          "zqcanary0@example.com",
+          "zqcanary1@example.com",
+          "zqcanary2@example.com",
+          "zqcanary3@example.com",
+          "zqcanary4@example.com"
+        ],
+        "min": null,
+        "max": null,
+        "mean": null
+      },
+      "detection_trail": [
+        {
+          "signal": "regex \u00b7 email_pattern",
+          "confidence": 100.0,
+          "winner": true,
+          "ml": false,
+          "skipped": false
+        },
+        {
+          "signal": "name-hint \u00b7 col=\"email\"",
+          "confidence": 100.0,
+          "winner": false,
+          "ml": false,
+          "skipped": false
+        }
+      ],
+      "domain": "CONTACT"
+    },
+    {
+      "name": "ssn",
+      "inferred_type": "string",
+      "dtype_raw": "object",
+      "row_count": 5,
+      "null_count": 0,
+      "null_rate": 0.0,
+      "distinct_count": 5,
+      "unique_rate": 1.0,
+      "is_likely_unique": true,
+      "min_value": null,
+      "max_value": null,
+      "mean_value": null,
+      "min_length": 11,
+      "max_length": 11,
+      "avg_length": 11.0,
+      "date_min": null,
+      "date_max": null,
+      "date_format": null,
+      "invalid_count": null,
+      "sample_invalid": [],
+      "casing_pattern": "digits_only",
+      "format_pattern": "\\d{3}-\\d{2}-\\d{4}",
+      "alphabet": "mixed",
+      "value_set_size_class": "low",
+      "numeric_range_class": null,
+      "mode_value": "111-22-3333",
+      "mode_freq": 0.2,
+      "top_values": [
+        {
+          "value": "111-22-3333",
+          "count": 1,
+          "pct": 20.0
+        },
+        {
+          "value": "222-33-4444",
+          "count": 1,
+          "pct": 20.0
+        },
+        {
+          "value": "333-44-5555",
+          "count": 1,
+          "pct": 20.0
+        },
+        {
+          "value": "444-55-6666",
+          "count": 1,
+          "pct": 20.0
+        },
+        {
+          "value": "555-66-7777",
+          "count": 1,
+          "pct": 20.0
+        }
+      ],
+      "detector_matches": [
+        {
+          "detector_id": "ssn",
+          "match_rate": 1.0,
+          "sample_misses": [],
+          "format_pattern": "\\d{3}-\\d{2}-\\d{4}",
+          "confidence": "high",
+          "domain": "IDENTITY"
+        }
+      ],
+      "sentinels": [],
+      "pii_score": 1.0,
+      "distribution": {
+        "kind": "categorical",
+        "data": [
+          20.0,
+          20.0,
+          20.0,
+          20.0,
+          20.0
+        ],
+        "labels": [
+          "111-22-3333",
+          "222-33-4444",
+          "333-44-5555",
+          "444-55-6666",
+          "555-66-7777"
+        ],
+        "min": null,
+        "max": null,
+        "mean": null
+      },
+      "detection_trail": [
+        {
+          "signal": "regex \u00b7 ssn_pattern",
+          "confidence": 100.0,
+          "winner": true,
+          "ml": false,
+          "skipped": false
+        },
+        {
+          "signal": "name-hint \u00b7 col=\"ssn\"",
+          "confidence": 100.0,
+          "winner": false,
+          "ml": false,
+          "skipped": false
+        }
+      ],
+      "domain": "IDENTITY"
+    }
+  ],
+  "reid_risk_columns": [],
+  "reid_risk_score": 0.0,
+  "quasi_identifier_groups": [],
+  "k_anonymity": null,
+  "engine_version": "0.1.0",
+  "generated_at": "2026-11-10T13:39:18.468672Z"
+}

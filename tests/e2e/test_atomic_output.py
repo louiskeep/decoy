@@ -398,7 +398,7 @@ def _artifact_cases(tmp_path: Path) -> dict[str, tuple[list[str], int]]:
     )
     return {
         "fit": (["fit", src, "-o", art], 3),
-        "scan": (["scan", src, "-o", art], 3),
+        "scan": (["scan", src, "--has-header", "-o", art], 3),
         "evidence": (["run", str(cfg), "--evidence-out", art], 3),
         "report_render": (["report", "render", str(ev), "-o", art], 1),
         "report_show": (["report", "show", str(ev), "--format", "markdown", "-o", art], 1),

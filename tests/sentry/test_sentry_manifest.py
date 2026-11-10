@@ -47,6 +47,7 @@ SENTRIES = (
     "tests/sentry/test_profile_raw_value_isolation.py",
     "tests/sentry/test_ratchet_check.py",
     "tests/sentry/test_report_raw_value_isolation.py",
+    "tests/sentry/test_scan_reader.py",
     "tests/sentry/test_sentry_manifest.py",
     "tests/sentry/test_source_hygiene.py",
     "tests/sentry/test_yaml_error_leak_isolation.py",
