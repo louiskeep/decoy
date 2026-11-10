@@ -70,16 +70,20 @@ Create a fresh virtual environment with nothing else in it:
 uv venv --python 3.10.20 dp-env
 ```
 
+```bash
+source dp-env/bin/activate
+```
+
 Install the engine from its git tag and the CLI wheel, with no dependencies:
 
 ```bash
-uv pip install --python dp-env/bin/python --no-deps "git+https://github.com/louiskeep/decoy-engine@v0.19.0" dist/*.whl
+uv pip install --no-deps "git+https://github.com/louiskeep/decoy-engine@v0.19.0" dist/*.whl
 ```
 
 Install the pinned set from the lock file at the root of the checkout:
 
 ```bash
-uv pip install --python dp-env/bin/python -r requirements-certified.txt
+uv pip install -r requirements-certified.txt
 ```
 
 The engine is not on PyPI, so it installs from its git tag (the same form
