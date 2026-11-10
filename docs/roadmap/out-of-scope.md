@@ -17,6 +17,7 @@ masking-policy export. Detail: `P:docs/backlog/v2-candidate-plan.md`.
 |---|---|---|
 | DETECT-PROFILES | Detection settings profiles: named sets of detection settings (detectors, overrides, thresholds, ML on or off) that a pipeline picks by name | owner, 2026-11-05 |
 | EXPAND | Core expansion candidates for V2 and V3 (more inputs and outputs, masks, generators, documents, images, video and audio), each with method, users, difficulty and placement: [v2-v3-expansion-candidates.md](v2-v3-expansion-candidates.md). Proposal for the V2/V3 discussion; not scheduled | owner, 2026-11-06 |
+| GEN-WINDOW | Local windowed generate in the CLI: expose the engine primitive behind GEN-API (`E:src/decoy_engine/generation/window.py` `generate_rows`) as a CLI command that returns a deterministic slice of a generate job by seed, offset and count, with no server or keys. Rows match what the platform GEN-API returns for the same job and seed. The GEN-API HTTP route, keys and quotas stay platform-only. Before building, the engine must enforce the spec's M5 window bound (`offset + count > row_count` is `422 window_exceeds_row_count`); a live QA run on 2026-11-09 found it unimplemented | owner, 2026-11-09 |
 
 Post-V1 on demand: route-coverage phase 2 (OOC address faker, FPE FK key, resident escape hatch, OOC
 quarantine); the CLI init wizard (spec CLI #73); value-based FK discovery (SCAN-MULTI plan section 7);

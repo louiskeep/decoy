@@ -4,6 +4,8 @@ Status: record
 
 Part of the roadmap: [ROADMAP.md](../ROADMAP.md). Path shorthand (`E:`, `C:`, `P:`, vault) is defined there.
 
+- **2026-11-09.** GEN-API is platform-only; it stays out of CLI V1. Exposing its engine windowed-read
+  primitive as a local CLI command is a V2 backlog row (GEN-WINDOW in out-of-scope.md).
 - **2026-11-05 (this move).** CLI V1 complete, then platform; the roadmap moves to the CLI repo and
   the platform links to it. Develop correctly: central registries for cross-cutting concerns and
   correctly sized files and directories (ROADMAP section 4). Registry slices may build in parallel with
