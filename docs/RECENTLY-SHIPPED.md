@@ -15,10 +15,17 @@ Moved here from `decoy-platform/docs/backlog/RECENTLY-SHIPPED.md` on 2026-11-05 
 ([ROADMAP.md](ROADMAP.md)). The platform copy is frozen at that date. Entries below 2026-11-05 are
 copied unchanged; paths in them are relative to the repo they name.
 
-Last updated: 2026-11-09 (entries for 2026-10-27 to 2026-10-30 are not filled in here; see the repos'
+Last updated: 2026-11-10 (entries for 2026-10-27 to 2026-10-30 are not filled in here; see the repos'
 git logs).
 
 ---
+
+## 2026-11-10
+
+- **Engine** (`937d9e53`, engine #446): GEN-UNIQUE part E2 (roadmap row 24m). `unique: true` works on faker, categorical and reference generate columns, and a table can declare `unique_together` column pairs. A domain too small for the row count is refused with the E0 codes. Faker retries reseed and stop at 1,000 attempts per row. Nested values (such as dict parents) are matched by equality. Unique plans run resident; the pinned route refuses `unique_together`. Columns without `unique` generate the same cells as before.
+- **Engine** (`125f479b`, engine #447): SIZE-CEIL (roadmap row 7, owner rule 2026-11-10). Module-size pins are ceilings: each census entry is the file's lines plus 20, capped at 700, and a ceiling more than 40 above the file fails until it is lowered. Files already over 700 stay exact and may only shrink. Test-only.
+- **Engine** (`e82b89b8`, engine #451): main fix. The H-1 owner fixture lists `parent_keys` (added by #440) under its owner file, so the wave-b owner coverage test passes again.
+- **Engine** (`d43e2845`, engine #449): main fix. Two r3 route baseline scenarios re-pinned for the `value_similarity` and `missing_value_similarity` keys #438 added; no existing value changed.
 
 ## 2026-11-09
 
