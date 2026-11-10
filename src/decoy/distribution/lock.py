@@ -60,8 +60,8 @@ def exclusive(
     try:
         try:
             fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        except OSError as exc:
-            raise busy() from exc
+        except OSError:
+            raise busy() from None
         yield
     finally:
         os.close(fd)

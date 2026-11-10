@@ -108,6 +108,13 @@ def setup_command(
         state.err_console.print(error("error:"), "settings not written:", describe(exc))
         state.err_console.print(" ", hint("hint:"), "check the directory is writable.")
         raise typer.Exit(code=EXIT_RUNTIME) from None
+    except OSError:
+        # Creating the settings lock (or its folder) failed; nothing was written.
+        state.err_console.print(
+            error("error:"), "settings not written: the settings lock could not be created"
+        )
+        state.err_console.print(" ", hint("hint:"), "check the directory is writable.")
+        raise typer.Exit(code=EXIT_RUNTIME) from None
     if state.mode is OutputMode.json:
         emit_json(
             state,

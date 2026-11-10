@@ -207,3 +207,32 @@ def test_setup_reports_the_version_it_wrote(_home: Path) -> None:
     payload = json.loads(runner.invoke(app, ["setup", "--yes", "--json"]).stdout)
     assert payload["schema_version"] == "1.7"
     assert json.loads((_home / "settings.json").read_text())["schema_version"] == "1.7"
+
+
+def test_setup_refuses_an_oversized_valid_file_and_keeps_its_bytes(_home: Path) -> None:
+    _home.mkdir()
+    path = _home / "settings.json"
+    body = json.dumps({"schema_version": "1.0", "notes": "x" * 70_000})
+    path.write_text(body)
+    result = runner.invoke(app, ["setup", "--yes"])
+    assert result.exit_code == 1
+    assert path.read_text() == body
+
+
+def test_setup_lock_creation_failure_is_a_runtime_error(
+    _home: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import contextlib
+
+    from decoy.cli import setup as setup_cmd
+
+    @contextlib.contextmanager
+    def broken(*args: object, **kwargs: object):
+        raise PermissionError("denied")
+        yield
+
+    monkeypatch.setattr(setup_cmd.lock, "exclusive", broken)
+    result = runner.invoke(app, ["setup", "--yes"])
+    assert result.exit_code == 3
+    assert "settings not written" in result.output
+    assert not (_home / "settings.json").exists()

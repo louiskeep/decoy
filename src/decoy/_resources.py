@@ -58,6 +58,7 @@ _TEXT = {
     "table": "resources must be a table",
     "unreadable": "cannot be read",
     "invalid": "is not a valid settings object",
+    "too_large": "is larger than the 64 KiB settings limit; shrink it by hand",
     "busy": "is being updated by another decoy process; re-run in a moment",
     "detect": "could not detect this host's value; set it explicitly",
 }
@@ -195,7 +196,8 @@ def load_document(path: Path | None = None) -> dict[str, Any] | None:
         assert raw is not None
         try:
             if len(raw) > _MAX_FILE_BYTES:
-                failure = "invalid"
+                # Its own code, so `decoy setup` refuses it instead of replacing it as unusable.
+                failure = "too_large"
             else:
                 data = json.loads(
                     raw.decode("utf-8"),
