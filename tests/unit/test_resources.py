@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import ast
 import importlib.util
+import json
 import sys
 from pathlib import Path
 
@@ -24,20 +25,18 @@ def _host(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def _settings(tmp_path: Path, text: str) -> Path:
-    path = tmp_path / "settings.toml"
+    path = tmp_path / "settings.json"
     path.write_text(text, encoding="utf-8")
     return path
 
 
-def _file(tmp_path: Path, memory: str = '"8GiB"', threads: str = "4") -> Path:
-    return _settings(
-        tmp_path,
-        f'schema_version = "1.0"\n[resources]\nmax_memory = {memory}\nthreads = {threads}\n',
-    )
+def _file(tmp_path: Path, memory: object = "8GiB", threads: object = 4) -> Path:
+    doc = {"schema_version": "1.0", "resources": {"max_memory": memory, "threads": threads}}
+    return _settings(tmp_path, json.dumps(doc))
 
 
 def test_auto_everywhere(tmp_path: Path) -> None:
-    got = resolve(env={}, settings=tmp_path / "missing.toml")
+    got = resolve(env={}, settings=tmp_path / "missing.json")
     assert got == Resolved(3 * GIB, 6, "auto", "auto")
     assert _resources.run_pipeline_kwargs(got) == {
         "native_threads": 6,
@@ -60,7 +59,7 @@ def test_memory_precedence(tmp_path, flag, env, file, source, expected) -> None:
     got = resolve(
         max_memory=flag,
         env={"DECOY_MAX_MEMORY": env} if env else {},
-        settings=_file(tmp_path) if file else tmp_path / "none.toml",
+        settings=_file(tmp_path) if file else tmp_path / "none.json",
     )
     assert (got.memory_bytes, got.memory_source) == (expected, source)
 
@@ -78,7 +77,7 @@ def test_threads_precedence(tmp_path, flag, env, file, source, expected) -> None
     got = resolve(
         threads=flag,
         env={"DECOY_THREADS": env} if env else {},
-        settings=_file(tmp_path) if file else tmp_path / "none.toml",
+        settings=_file(tmp_path) if file else tmp_path / "none.json",
     )
     assert (got.threads, got.threads_source) == (expected, source)
 
@@ -89,13 +88,13 @@ def test_a_key_is_resolved_independently(tmp_path: Path) -> None:
 
 
 def test_bad_settings_file_is_not_read_when_every_key_is_overridden(tmp_path: Path) -> None:
-    bad = _settings(tmp_path, "not toml [")
+    bad = _settings(tmp_path, "not json [")
     got = resolve(max_memory="1GiB", threads="2", env={}, settings=bad)
     assert (got.memory_bytes, got.threads) == (GIB, 2)
 
 
 def test_empty_env_value_counts_as_unset(tmp_path: Path) -> None:
-    got = resolve(env={"DECOY_THREADS": ""}, settings=tmp_path / "none.toml")
+    got = resolve(env={"DECOY_THREADS": ""}, settings=tmp_path / "none.json")
     assert got.threads_source == "auto"
 
 
@@ -136,50 +135,59 @@ def test_parse_size(text: str, bytes_: int) -> None:
     assert _resources.parse_size(text) == bytes_
 
 
+_R = '{"schema_version": "1.0", "resources": %s}'
+
+
 @pytest.mark.parametrize(
     "body",
     [
-        "schema_version = 1.0\n[resources]\nthreads = 2\n",  # number, not string
-        'schema_version = "1"\n',
-        'schema_version = "1.0\\n"\n',
-        'schema_version = "2.0"\n',
-        'schema_version = "0.9"\n',
-        'schema_version = "1.0.1"\n',
-        "[resources]\nthreads = 2\n",  # missing
-        'schema_version = "1.0"\nresources = 3\n',
-        'schema_version = "1.0"\n[resources]\nthreads = true\n',
-        'schema_version = "1.0"\n[resources]\nthreads = "6"\n',
-        'schema_version = "1.0"\n[resources]\nthreads = 0\n',
-        'schema_version = "1.0"\n[resources]\nthreads = 1.5\n',
-        'schema_version = "1.0"\n[resources]\nmax_memory = 8\n',
-        'schema_version = "1.0"\n[resources]\nmax_memory = "8gb "\n',
-        'schema_version = "1.0"\n[resources]\nmax_memory = true\n',
+        '{"schema_version": 1.0, "resources": {"threads": 2}}',  # number, not string
+        '{"schema_version": "1"}',
+        '{"schema_version": "1.0\\n"}',
+        '{"schema_version": "2.0"}',
+        '{"schema_version": "0.9"}',
+        '{"schema_version": "1.0.1"}',
+        '{"resources": {"threads": 2}}',  # missing
+        '{"schema_version": "1.0", "resources": 3}',
+        _R % '{"threads": true}',
+        _R % '{"threads": "6"}',
+        _R % '{"threads": 0}',
+        _R % '{"threads": 1.5}',
+        _R % '{"max_memory": 8}',
+        _R % '{"max_memory": "8gb "}',
+        _R % '{"max_memory": true}',
+        "[1, 2]",  # not an object
+        '{"schema_version": "1.0", "schema_version": "1.0"}',  # duplicate key
+        _R % '{"threads": 2, "threads": 3}',
+        _R % '{"threads": NaN}',
+        _R % '{"max_memory": Infinity}',
     ],
 )
 def test_strict_stored_types_and_versions(tmp_path: Path, body: str) -> None:
     with pytest.raises(ResourceError) as err:
         resolve(env={}, settings=_settings(tmp_path, body))
     assert (err.value.__cause__, err.value.__context__) == (None, None)
-    assert str(err.value).startswith("settings.toml")
+    assert str(err.value).startswith("settings.json")
 
 
 def test_unknown_minor_and_unknown_keys_are_accepted(tmp_path: Path) -> None:
     path = _settings(
         tmp_path,
-        'schema_version = "1.7"\nfuture = 1\n[resources]\nthreads = 2\nextra = "x"\n[scan]\nml = true\n',
+        '{"schema_version": "1.7", "future": 1, "scan": {"ml": true},'
+        ' "resources": {"threads": 2, "extra": "x"}}',
     )
     assert resolve(env={}, settings=path).threads == 2
 
 
 def test_auto_literals_in_the_file(tmp_path: Path) -> None:
-    got = resolve(env={}, settings=_file(tmp_path, '"auto"', '"auto"'))
+    got = resolve(env={}, settings=_file(tmp_path, "auto", "auto"))
     assert (got.memory_source, got.threads_source) == ("settings", "settings")
     assert (got.memory_bytes, got.threads) == (3 * GIB, 6)
 
 
-def test_invalid_toml_and_binary_are_refused_without_chaining(tmp_path: Path) -> None:
-    for payload in (b"x = [", b"\xff\xfe\x00", b"a" * 70000):
-        path = tmp_path / "settings.toml"
+def test_invalid_json_and_binary_are_refused_without_chaining(tmp_path: Path) -> None:
+    for payload in (b"{", b"\xff\xfe\x00", b"a" * 70000):
+        path = tmp_path / "settings.json"
         path.write_bytes(payload)
         with pytest.raises(ResourceError) as err:
             resolve(env={}, settings=path)
@@ -193,7 +201,7 @@ def test_auto_passes_the_engine_policy_bytes_not_none(monkeypatch: pytest.Monkey
 
     monkeypatch.setattr(decoy_engine, "resolve_conservative_ooc_budget_bytes", lambda: 5 * GIB)
     monkeypatch.setattr(decoy_engine, "detect_usable_cpus", lambda: 3)
-    got = resolve(env={}, settings=Path("/nonexistent/settings.toml"))
+    got = resolve(env={}, settings=Path("/nonexistent/settings.json"))
     assert _resources.run_pipeline_kwargs(got)["out_of_core_budget_bytes"] == 5 * GIB
     assert _resources.run_pipeline_kwargs(got)["out_of_core_threads"] == 3
 
@@ -207,7 +215,7 @@ def test_engine_detection_failure_is_a_coded_error(monkeypatch: pytest.MonkeyPat
 
     monkeypatch.setattr(decoy_engine, "detect_usable_cpus", boom)
     with pytest.raises(ResourceError) as err:
-        resolve(max_memory="1GiB", env={}, settings=Path("/nonexistent/settings.toml"))
+        resolve(max_memory="1GiB", env={}, settings=Path("/nonexistent/settings.json"))
     assert "secret-looking" not in str(err.value)
     assert (err.value.__cause__, err.value.__context__) == (None, None)
 

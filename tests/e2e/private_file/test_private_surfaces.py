@@ -202,7 +202,7 @@ def test_setup_settings_file_is_private(tmp_path: Path, monkeypatch: pytest.Monk
     home = tmp_path / "decoy-home"
     monkeypatch.setenv("DECOY_HOME", str(home))
     _decoy(tmp_path, "setup", "--yes")
-    assert _mode(home / "settings.toml") == 0o600
+    assert _mode(home / "settings.json") == 0o600
 
 
 def test_fit_and_scan_outputs_are_private(tmp_path: Path) -> None:

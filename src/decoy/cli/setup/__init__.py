@@ -1,7 +1,8 @@
-"""`decoy setup`: write this box's settings (`$DECOY_HOME/settings.toml`)."""
+"""`decoy setup`: write this box's settings (`$DECOY_HOME/settings.json`)."""
 
 from __future__ import annotations
 
+import json
 import sys
 from collections.abc import Callable
 from typing import Any
@@ -41,7 +42,7 @@ def setup_command(
     """Set this box's max memory and threads for `decoy run`.
 
     Shows what this host reports, asks you to confirm or change it, and writes
-    $DECOY_HOME/settings.toml (default ~/.decoy/settings.toml). A flag or environment
+    $DECOY_HOME/settings.json (default ~/.decoy/settings.json). A flag or environment
     variable on a single run still wins over the file.
     """
     state = setup_output(json_, quiet, verbose)
@@ -52,7 +53,7 @@ def setup_command(
         stored = host.read_settings()
     except host.ResourceError:
         stored = {}  # an unusable file is replaced, not trusted
-    lines = [f'schema_version = "{host.SCHEMA_VERSION}"']
+    doc: dict[str, Any] = {"schema_version": host.SCHEMA_VERSION}
     written: dict[str, Any] = {}
     try:
         for section in SECTIONS:
@@ -61,8 +62,8 @@ def setup_command(
                 state.console.print(accent(section.title))
             values = proposed if yes else section.ask(proposed, _prompt)
             written[section.name] = values
-            lines += ["", *section.render(values)]
-        path = host.write_settings("\n".join(lines) + "\n")
+            doc[section.name] = section.render(values)
+        path = host.write_settings(json.dumps(doc, indent=2) + "\n")
     except host.ResourceError as exc:
         state.err_console.print(error("error:"), str(exc))
         raise typer.Exit(code=EXIT_USAGE) from None

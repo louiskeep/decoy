@@ -1,6 +1,6 @@
 """The ordered list of `decoy setup` sections.
 
-Each section owns one table of `settings.toml`. The order here is the order in the file and the
+Each section owns one object of `settings.json`. The order here is the order in the file and the
 order of the prompts. A later feature appends its section to `SECTIONS`; nothing else changes.
 """
 
@@ -24,8 +24,8 @@ class Section(Protocol):
     def ask(self, proposed: Mapping[str, Any], prompt: Ask) -> dict[str, Any]:
         """Let the user confirm or change each proposed value."""
 
-    def render(self, values: Mapping[str, Any]) -> list[str]:
-        """The TOML lines of this section's table."""
+    def render(self, values: Mapping[str, Any]) -> dict[str, Any]:
+        """This section's JSON object."""
 
 
 SECTIONS: tuple[Section, ...] = (ResourcesSection(),)

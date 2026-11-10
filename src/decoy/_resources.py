@@ -1,22 +1,22 @@
 """Max memory and threads for `decoy run`: one resolver, one settings file.
 
-Order per key, first hit wins: flag, environment variable, `$DECOY_HOME/settings.toml`, `auto`.
+Order per key, first hit wins: flag, environment variable, `$DECOY_HOME/settings.json`, `auto`.
 `auto` threads is the engine's cgroup-aware `detect_usable_cpus()`. `auto` memory is the engine's
 `resolve_conservative_ooc_budget_bytes()` (25% of the memory ceiling, so two automatic runs share
 a host). The CLI passes the resulting bytes explicitly and never owns the floor or the 25%
 arithmetic: the engine's budget resolver refuses a value below its floor.
 
 Every value comes from an untrusted producer (flag, env, file). Sizes and counts are matched in
-full with `re.fullmatch`, stored primitives are checked by exact type (a TOML boolean is not an
+full with `re.fullmatch`, stored primitives are checked by exact type (a JSON boolean is not an
 integer), and an error names the key and a fixed reason, never the offending text. Errors are
 raised outside any `except` block so they carry neither `__cause__` nor `__context__`.
 """
 
 from __future__ import annotations
 
+import json
 import os
 import re
-import sys
 from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
@@ -27,16 +27,8 @@ import typer
 from decoy._atomic import WriteMode, write_atomic
 from decoy.distribution.layout import decoy_home
 
-if sys.version_info >= (3, 11):
-    import tomllib
-else:  # pragma: no cover - Python 3.10 only; tomli is not a declared dependency yet
-    try:
-        import tomli as tomllib
-    except ModuleNotFoundError:
-        tomllib = None  # type: ignore[assignment]
-
 SCHEMA_VERSION = "1.0"
-SETTINGS_NAME = "settings.toml"
+SETTINGS_NAME = "settings.json"
 ENV_MEMORY = "DECOY_MAX_MEMORY"
 ENV_THREADS = "DECOY_THREADS"
 AUTO = "auto"
@@ -65,8 +57,7 @@ _TEXT = {
     "version": 'schema_version must be a string like "1.0" with major version 1',
     "table": "resources must be a table",
     "unreadable": "cannot be read",
-    "invalid": "is not valid TOML",
-    "toml": "needs Python 3.11 or the tomli package",
+    "invalid": "is not a valid settings object",
     "detect": "could not detect this host's value; set it explicitly",
 }
 
@@ -76,7 +67,7 @@ MAX_MEMORY_OPTION: Any = typer.Option(
     metavar="SIZE",
     help=(
         "Memory budget for the out-of-core route, such as 8GiB, or auto. Overrides "
-        f"{ENV_MEMORY} and settings.toml. Default auto: 25% of the memory ceiling. "
+        f"{ENV_MEMORY} and settings.json. Default auto: 25% of the memory ceiling. "
         "Ignored by --chunked."
     ),
 )
@@ -86,7 +77,7 @@ THREADS_OPTION: Any = typer.Option(
     metavar="N",
     help=(
         "Worker threads for the native and out-of-core routes, or auto. Overrides "
-        f"{ENV_THREADS} and settings.toml. Default auto: the usable CPUs. Ignored by --chunked."
+        f"{ENV_THREADS} and settings.json. Default auto: the usable CPUs. Ignored by --chunked."
     ),
 )
 
@@ -159,7 +150,7 @@ def parse_threads(text: object) -> int | str | None:
 
 
 def _stored_threads(value: object) -> int | str | None:
-    # A TOML boolean is an int subclass in Python and a quoted "6" is text: neither is a count.
+    # A JSON boolean is an int subclass in Python and a quoted "6" is text: neither is a count.
     if type(value) is int:
         return _bounded(value)
     return AUTO if value == AUTO else None
@@ -167,6 +158,17 @@ def _stored_threads(value: object) -> int | str | None:
 
 def settings_path() -> Path:
     return decoy_home() / SETTINGS_NAME
+
+
+def _no_duplicates(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+    out = dict(pairs)
+    if len(out) != len(pairs):
+        raise ValueError("duplicate key")
+    return out
+
+
+def _refuse_constant(_name: str) -> Any:
+    raise ValueError("NaN and Infinity are not allowed")
 
 
 def read_settings(path: Path | None = None) -> dict[str, int | str]:
@@ -186,16 +188,20 @@ def read_settings(path: Path | None = None) -> dict[str, int | str]:
     except OSError:
         failure = "unreadable"
     data: Any = None
-    if failure is None and tomllib is None:
-        failure = "toml"
     if failure is None:
         assert raw is not None
         try:
             if len(raw) > _MAX_FILE_BYTES:
                 failure = "invalid"
             else:
-                data = tomllib.loads(raw.decode("utf-8"))
-        except (UnicodeDecodeError, tomllib.TOMLDecodeError):
+                data = json.loads(
+                    raw.decode("utf-8"),
+                    object_pairs_hook=_no_duplicates,
+                    parse_constant=_refuse_constant,
+                )
+        except (UnicodeDecodeError, ValueError, RecursionError):
+            failure = "invalid"
+        if failure is None and not isinstance(data, dict):
             failure = "invalid"
     if failure is None:
         version = data.get("schema_version")

@@ -47,7 +47,5 @@ class ResourcesSection:
             "threads": prompt("Threads (number or auto)", str(proposed["threads"]), _check_threads),
         }
 
-    def render(self, values: Mapping[str, Any]) -> list[str]:
-        threads = values["threads"]
-        shown = str(threads) if isinstance(threads, int) else f'"{threads}"'
-        return [f"[{self.name}]", f'max_memory = "{values["max_memory"]}"', f"threads = {shown}"]
+    def render(self, values: Mapping[str, Any]) -> dict[str, Any]:
+        return {"max_memory": values["max_memory"], "threads": values["threads"]}

@@ -98,8 +98,8 @@ $ decoy run [OPTIONS] CONFIG
 * `--mask-secret TEXT`: env:NAME or file:/PATH pointing at a &gt;=32-byte mask secret for keyed masking (mask: strategies -- fpe, hash, date_shift, and others). Independent of --master-key (which is generation-only). Sets &#x27;global_settings.mask_secret_ref&#x27; for this run; an error if the YAML already sets it. Explicit flag only -- it deliberately has NO env var, because the ref it carries (e.g. &#x27;env:DECOY_MASK_SECRET&#x27;) already indirects through the environment; a second env layer would absorb the raw exported secret as this flag&#x27;s value. See: decoy explain keys.
 * `--chunked`: Stream the source through the engine chunk-by-chunk, for inputs too large to load whole. Works for mask configs whose every strategy is value-keyed (hash, fpe, redact, truncate, text_redact, date_shift, bucketize), plus faker/categorical when deterministic with an explicit pool_size / categories declared in config; output is byte-identical to a plain run. Sources and targets use their declared format (csv or parquet; fixed_width and CSV in a zip or tar archive are not supported with --chunked). See: decoy explain chunked.
 * `--chunk-size INTEGER RANGE`: Rows per chunk in --chunked mode.  [default: 100000; x&gt;=1]
-* `--max-memory SIZE`: Memory budget for the out-of-core route, such as 8GiB, or auto. Overrides DECOY_MAX_MEMORY and settings.toml. Default auto: 25% of the memory ceiling. Ignored by --chunked.
-* `--threads N`: Worker threads for the native and out-of-core routes, or auto. Overrides DECOY_THREADS and settings.toml. Default auto: the usable CPUs. Ignored by --chunked.
+* `--max-memory SIZE`: Memory budget for the out-of-core route, such as 8GiB, or auto. Overrides DECOY_MAX_MEMORY and settings.json. Default auto: 25% of the memory ceiling. Ignored by --chunked.
+* `--threads N`: Worker threads for the native and out-of-core routes, or auto. Overrides DECOY_THREADS and settings.json. Default auto: the usable CPUs. Ignored by --chunked.
 * `--vault PATH`: Write the token vault (encrypted source-to-masked map for vault: true columns) to this path. The vault plus the config re-identify every vaulted value: store them separately and never alongside the masked output. Needs the engine&#x27;s vault extra (cryptography). Not supported with --chunked.
 * `--key-label TEXT`: Stable namespace string for the --master-key generation key hierarchy (synthetic generation only, not masking). Required when --master-key is set. Pick something durable (e.g. &#x27;customers_q4&#x27;); changing it produces different generated output. CLI flag only -- PipelineConfig forbids unknown top-level keys, so there is no YAML equivalent.
 * `--evidence-out PATH`: Write a local evidence manifest (JSON) to this path after a successful run. The manifest records pipeline hash, input/output file fingerprints, run metadata, and row counts/timings/warnings where available (these are omitted for --chunked runs). It does NOT contain raw data values. Use `decoy report verify` to check the manifest against current files. See: decoy explain evidence (when available).
@@ -729,7 +729,7 @@ See also: decoy --version, decoy info.
 Set this box&#x27;s max memory and threads for `decoy run`.
 
 Shows what this host reports, asks you to confirm or change it, and writes
-$DECOY_HOME/settings.toml (default ~/.decoy/settings.toml). A flag or environment
+$DECOY_HOME/settings.json (default ~/.decoy/settings.json). A flag or environment
 variable on a single run still wins over the file.
 
 **Usage**:

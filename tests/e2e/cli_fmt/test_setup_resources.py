@@ -12,7 +12,6 @@ from decoy import _resources
 from decoy.__main__ import app
 
 GIB = 2**30
-tomllib = _resources.tomllib  # stdlib on 3.11+, tomli on 3.10
 runner = CliRunner()
 
 
@@ -32,9 +31,9 @@ def test_yes_json_writes_versioned_settings_with_detected_values(_home: Path) ->
     assert result.exit_code == 0, result.output
     payload = json.loads(result.stdout)
     assert payload["sections"] == {"resources": {"max_memory": "8GiB", "threads": 6}}
-    data = tomllib.loads((_home / "settings.toml").read_text(encoding="utf-8"))
+    data = json.loads((_home / "settings.json").read_text(encoding="utf-8"))
     assert data == {"schema_version": "1.0", "resources": {"max_memory": "8GiB", "threads": 6}}
-    assert (_home / "settings.toml").stat().st_mode & 0o077 == 0
+    assert (_home / "settings.json").stat().st_mode & 0o077 == 0
     assert list(_home.glob(".*.tmp")) == []
 
 
@@ -48,28 +47,28 @@ def test_write_goes_through_the_atomic_writer(monkeypatch: pytest.MonkeyPatch, _
 
     monkeypatch.setattr(_resources, "write_atomic", spy)
     assert runner.invoke(app, ["setup", "--yes"]).exit_code == 0
-    assert calls == [(_home, "settings.toml", _resources.WriteMode.REPLACE)]
+    assert calls == [(_home, "settings.json", _resources.WriteMode.REPLACE)]
 
 
 def test_off_a_terminal_without_yes_exits_1_and_writes_nothing(_home: Path) -> None:
     result = runner.invoke(app, ["setup"])
     assert result.exit_code == 1
-    assert not (_home / "settings.toml").exists()
+    assert not (_home / "settings.json").exists()
 
 
 def test_setup_keeps_a_valid_stored_value_as_the_default(_home: Path) -> None:
     _home.mkdir()
-    (_home / "settings.toml").write_text(
-        'schema_version = "1.0"\n[resources]\nmax_memory = "2GiB"\nthreads = "auto"\n'
+    (_home / "settings.json").write_text(
+        '{"schema_version": "1.0", "resources": {"max_memory": "2GiB", "threads": "auto"}}'
     )
     assert runner.invoke(app, ["setup", "--yes"]).exit_code == 0
-    data = tomllib.loads((_home / "settings.toml").read_text())
+    data = json.loads((_home / "settings.json").read_text())
     assert data["resources"] == {"max_memory": "2GiB", "threads": "auto"}
 
 
 def test_setup_replaces_an_unusable_file(_home: Path) -> None:
     _home.mkdir()
-    (_home / "settings.toml").write_text("not toml [")
+    (_home / "settings.json").write_text("not json [")
     assert runner.invoke(app, ["setup", "--yes"]).exit_code == 0
     assert _resources.read_settings() == {"max_memory": 8 * GIB, "threads": 6}
 
@@ -93,7 +92,7 @@ def test_doctor_shows_each_value_and_its_source(
 
 def test_doctor_warns_on_an_unusable_settings_file(_home: Path) -> None:
     _home.mkdir()
-    (_home / "settings.toml").write_text('schema_version = "9.0"\n')
+    (_home / "settings.json").write_text('{"schema_version": "9.0"}')
     result = runner.invoke(app, ["doctor", "--json"])
     assert result.exit_code == 0
     row = next(c for c in json.loads(result.stdout)["checks"] if c["name"] == "resources")
