@@ -15,7 +15,7 @@ from typing import Any
 import pytest
 import yaml
 
-from decoy.cli._sources import csv_file_source, read_file, read_report_source
+from decoy.cli._sources import CSV_DIALECT_KEYS, csv_file_source, read_file, read_report_source
 
 
 def _csv_sources(config: dict[str, Any]) -> list[dict[str, Any]]:
@@ -93,3 +93,57 @@ def test_init_scaffold_yaml_states_has_header(tmp_path: Path, delimiter: str | N
     sources = _csv_sources(yaml.safe_load(body))
     assert sources
     assert all(s.get("has_header") is True for s in sources)
+
+
+def _engine_has_column_names_file() -> bool:
+    from decoy_engine.config._sources import FileSource
+
+    return "column_names_file" in FileSource.model_fields
+
+
+@pytest.mark.parametrize("key", CSV_DIALECT_KEYS)
+def test_data_override_carries_every_dialect_key(tmp_path: Path, key: str) -> None:
+    from decoy.api import _stage_source_entry
+
+    declared = {"type": "file", "format": "csv", "path": "old.csv", key: "marker"}
+    entry = _stage_source_entry("t", tmp_path / "new.csv", [], declared)
+    assert entry[key] == "marker"
+
+
+def test_csv_file_source_refuses_unknown_dialect_key() -> None:
+    with pytest.raises(TypeError, match="bogus"):
+        csv_file_source("a.csv", bogus=1)
+
+
+@pytest.mark.skipif(
+    not _engine_has_column_names_file(), reason="engine has no column_names_file (pre engine #409)"
+)
+def test_data_override_keeps_column_names_file(tmp_path: Path) -> None:
+    import pandas as pd
+
+    import decoy
+
+    (tmp_path / "names.csv").write_text("id,name\n", encoding="utf-8")
+    declared = tmp_path / "declared.csv"
+    declared.write_text("1,Ana\n2,Bo\n", encoding="utf-8")
+    other = tmp_path / "other.csv"
+    other.write_text("9,Zed\n8,Yan\n", encoding="utf-8")
+    config = {
+        "version": 2,
+        "global_settings": {"seed": 1},
+        "sources": {
+            "t": {
+                "type": "file",
+                "format": "csv",
+                "path": str(declared),
+                "has_header": False,
+                "column_names_file": str(tmp_path / "names.csv"),
+            }
+        },
+        "tables": [{"name": "t", "columns": [{"name": "name", "strategy": "redact"}]}],
+    }
+    got = decoy.mask(data={"t": str(other)}, config=config, out=str(tmp_path / "o.csv"))
+    assert isinstance(got, (pd.DataFrame, dict))
+    frame = got if isinstance(got, pd.DataFrame) else got["t"]
+    assert list(frame.columns) == ["id", "name"]
+    assert frame["id"].astype(str).tolist() == ["9", "8"]

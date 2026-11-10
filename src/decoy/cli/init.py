@@ -28,6 +28,7 @@ import yaml
 
 from decoy import _mask_secret_guidance
 from decoy.cli._init_inference import Inference, _infer_strategy_for_column
+from decoy.cli._sources import CSV_DIALECT_KEYS, csv_file_source
 from decoy.cli.completers import init_presets
 from decoy.cli.exit_codes import EXIT_RUNTIME, EXIT_USAGE
 from decoy.templates import get_template
@@ -200,6 +201,11 @@ def _load_dataframe(input_file: Path):
     return read_file(input_file, "parquet", None, table=_TABLE_NAME)
 
 
+def _yaml_scalar(value: object) -> str:
+    """A dialect value as a YAML scalar: bools as true/false, text as a JSON-quoted string."""
+    return str(value).lower() if isinstance(value, bool) else _json.dumps(value)
+
+
 def _yaml_quote(value: str) -> str:
     """Quote a string for the hand-emitted YAML.
 
@@ -320,17 +326,27 @@ def _build_scaffold_yaml(
         "# Run `decoy explain pipeline` for the V2 pipeline shape.\n"
     )
 
-    delimiter_line = f"    delimiter: {_json.dumps(delimiter)}\n" if delimiter else ""
-    # The engine requires `has_header` on a csv source; the scaffold read used a header row.
-    header_line = "    has_header: true\n" if file_format == "csv" else ""
+    # The csv dialect lines come from the one csv descriptor builder, not a second copy of its
+    # defaults; the descriptor's own type/format/path lines are written below.
+    dialect = (
+        {
+            k: v
+            for k, v in csv_file_source(
+                input_path, **({"delimiter": delimiter} if delimiter else {})
+            ).items()
+            if k in CSV_DIALECT_KEYS
+        }
+        if file_format == "csv"
+        else {}
+    )
+    dialect_lines = "".join(f"    {k}: {_yaml_scalar(v)}\n" for k, v in dialect.items())
     sources_block = (
         "sources:\n"
         f"  {_TABLE_NAME}:\n"
         "    type: file\n"
         f"    format: {file_format}\n"
         f"    path: {input_quoted}\n"
-        f"{header_line}"
-        f"{delimiter_line}"
+        f"{dialect_lines}"
     )
     targets_block = (
         "targets:\n"

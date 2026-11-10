@@ -33,14 +33,23 @@ def resolve_path(raw_path: str, base_dir: Path) -> Path:
     return p if p.is_absolute() else (base_dir / p).resolve()
 
 
+# The CSV dialect keys of a file-source descriptor, the engine's `CsvDialect` fields plus
+# `column_names_file`. The one list: `csv_file_source` accepts exactly these, and the `data=`
+# override in `decoy.api` carries exactly these over from a declared source.
+CSV_DIALECT_KEYS: tuple[str, ...] = ("has_header", "column_names", "column_names_file", "delimiter")
+
+
 def csv_file_source(path: str | Path, **dialect: Any) -> dict[str, Any]:
     """A `format: csv` file-source descriptor for a file the CLI names itself.
 
     The engine requires `has_header` on every csv descriptor (`resolve_csv_dialect` refuses
     one without it, and so does `FileSource`), so a descriptor built here states it. A file
     with no declaration is read the way it always was, with a header row. `dialect` keys
-    (`delimiter`, `has_header`, `column_names`) override that.
+    (`CSV_DIALECT_KEYS`) override that; any other key is a TypeError.
     """
+    unknown = sorted(set(dialect) - set(CSV_DIALECT_KEYS))
+    if unknown:
+        raise TypeError(f"csv_file_source: unknown dialect key(s) {unknown}")
     return {"type": "file", "format": "csv", "path": str(path), "has_header": True, **dialect}
 
 
