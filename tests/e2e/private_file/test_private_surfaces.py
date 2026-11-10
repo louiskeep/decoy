@@ -198,6 +198,13 @@ def test_run_vault_and_evidence_are_private(tmp_path: Path) -> None:
     assert _mode(evidence) == 0o600
 
 
+def test_setup_settings_file_is_private(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    home = tmp_path / "decoy-home"
+    monkeypatch.setenv("DECOY_HOME", str(home))
+    _decoy(tmp_path, "setup", "--yes")
+    assert _mode(home / "settings.json") == 0o600
+
+
 def test_fit_and_scan_outputs_are_private(tmp_path: Path) -> None:
     src = tmp_path / "source.csv"
     pd.DataFrame({"amount": [10.5, 22.1, 9.9] * 20, "state": ["CA", "NY", "TX"] * 20}).to_csv(

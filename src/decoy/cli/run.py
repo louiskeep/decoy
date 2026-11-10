@@ -24,7 +24,7 @@ import typer
 from rich.text import Text
 
 from decoy import __version__ as _cli_version
-from decoy import _mask_secret, _mask_secret_guidance, _native_gate
+from decoy import _mask_secret, _mask_secret_guidance, _native_gate, _resources
 from decoy._atomic import AtomicWriteError, WriteMode, describe, fsync_directory, write_local_target
 from decoy.cli._duckdb_source import DuckDBSourceError, acquire_relation, parse_flag
 from decoy.cli._sources import iter_source_chunks, parquet_schema, read_source
@@ -340,6 +340,8 @@ def run(
         min=1,
         help="Rows per chunk in --chunked mode.",
     ),
+    max_memory: str = _resources.MAX_MEMORY_OPTION,
+    threads: str = _resources.THREADS_OPTION,
     vault: Path = typer.Option(
         None,
         "--vault",
@@ -555,6 +557,7 @@ def run(
     # Native route classification (Phase 3.1), set on a successful run for
     # the run-summary line and JSON record.
     _native_route: _native_gate.RouteClassification | None = None
+    _resources_record: dict | None = None
 
     # S5 report flags. `post_validation` is on when EITHER post-validate flag
     # is set (--post-validate-enforce implies --post-validate); it feeds the
@@ -582,15 +585,11 @@ def run(
             if saved_findings:
                 raise PreRunCheckError.from_findings(saved_findings)
 
-            # DE-02 secret-disclosure ROOT guard: validate the RAW YAML
-            # `mask_secret_ref` BEFORE PipelineConfig.model_validate(raw). A
-            # wrong-type value (list/int/dict/...) would otherwise raise a
-            # Pydantic ValidationError whose message echoes `input_value` --
-            # i.e. the secret -- and that error is not classified EXIT_USAGE, so
-            # it would exit 3 and print the secret via str(exc). Catching it
-            # here with a redacted usage error means no mask_secret_ref value
-            # (string or not) ever reaches Pydantic's diagnostics. YAML-only:
-            # the --mask-secret flag is always a str from Typer.
+            # DE-02 secret-disclosure ROOT guard: validate the RAW YAML `mask_secret_ref`
+            # BEFORE PipelineConfig.model_validate(raw). A wrong-type value would raise a
+            # Pydantic ValidationError echoing `input_value` (the secret) as exit 3. A
+            # redacted usage error here keeps the value out of Pydantic's diagnostics.
+            # YAML-only: the --mask-secret flag is always a str from Typer.
             _raw_gs = raw.get("global_settings") if isinstance(raw, dict) else None
             # A non-dict `global_settings` (e.g. a YAML list) is malformed AND
             # could smuggle a mask_secret_ref value nested where the dict-path
@@ -819,6 +818,8 @@ def run(
             # Usage and source refusals come before the secret read, in the order the engine
             # used when it admitted inside each entry.
             _require_local_io_endpoints(config_dict)
+            _res = _resources.resolve(max_memory=max_memory, threads=threads)
+            _resources_record = _res.record()
             if chunked:
                 _check_chunked_tables(config_dict)
             else:
@@ -847,14 +848,9 @@ def run(
                 )
             else:
                 instance_locale = (config_dict.get("global_settings") or {}).get("default_locale")
-                # S5 report kwargs are passed ONLY when a report flag was
-                # requested. All four default off, so the default run sends no
-                # new kwargs -- keeping the hot path byte-identical and
-                # preserving compatibility with an older engine whose
-                # `run_pipeline` predates these parameters (the native-compat
-                # contract in test_run_native). When a flag IS set the user has
-                # opted into the engine feature and a too-old engine surfacing a
-                # TypeError is the honest outcome.
+                # S5 report kwargs are passed only when a report flag was requested, so
+                # the default call shape stays valid on an older engine (the native-compat
+                # contract in test_run_native).
                 _report_kwargs = (
                     {
                         "explain_plan": explain_plan,
@@ -875,6 +871,7 @@ def run(
                     **_key_kwargs,
                     **_report_kwargs,
                     **_native_gate.run_pipeline_kwargs(gate_result),
+                    **_resources.run_pipeline_kwargs(_res),
                 )
                 _native_route = _native_gate.classify_route(
                     chunked=False,
@@ -1007,6 +1004,7 @@ def run(
                         _VaultUsageError,
                         _MaskSecretUsageError,
                         _OtelSettingsUsageError,
+                        _resources.ResourceError,
                         # A fixable --duckdb-source flag (bad value, missing DB,
                         # unknown relation, unreadable database) -- the operator's
                         # request is wrong, not a runtime crash.
@@ -1203,6 +1201,7 @@ def run(
             "elapsed_s": round(elapsed, 3),
             "tables": _table_records,
         }
+        payload["resources"] = _resources_record
         if notify_channels:
             payload["notify"] = notify_results
         if _native_route is not None:

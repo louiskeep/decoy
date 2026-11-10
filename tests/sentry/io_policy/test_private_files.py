@@ -125,6 +125,7 @@ PRIVATE_CASES: dict[str, str] = {
     "cli/unmask.py::unmask::write_private_table::1": _RESTORED,
     "cli/_token_vault.py::LocalTokenVault.__init__::open_private::1": _VAULT,
     "cli/_token_vault.py::LocalTokenVault.__init__::sqlite3.connect::1": _VAULT,
+    "_resources.py::write_settings::write_atomic::1": _E2E + "test_setup_settings_file_is_private",
     "distribution/installer.py::check_document_freshness::write_atomic::1": _UNIT
     + "test_installer_trust_state_is_owner_only_under_umask_zero",
 }
@@ -574,10 +575,10 @@ def test_the_live_tree_is_clean(files: dict[str, str]) -> None:
     assert run(files) == []
 
 
-def test_the_census_is_48_watched_sinks(files: dict[str, str]) -> None:
+def test_the_census_is_49_watched_sinks(files: dict[str, str]) -> None:
     sinks = watched(collect(files))
-    assert len(sinks) == 48
-    assert len([s for s in sinks if is_entry(s)]) == 13
+    assert len(sinks) == 49
+    assert len([s for s in sinks if is_entry(s)]) == 14
     counts: dict[str, int] = {}
     for r in ROWS:
         counts[r.disposition] = counts.get(r.disposition, 0) + 1
