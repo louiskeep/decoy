@@ -260,7 +260,7 @@ jobs:
       - name: Install engine and CLI wheel without dependencies
         # Only the two named artifacts: --no-deps stops the resolver, and the
         # next step installs the complete fingerprinted closure.
-        run: uv pip install --python .venv-certified/bin/python --no-deps "git+https://github.com/louiskeep/decoy-engine@v0.19.0" dist/*.whl
+        run: uv pip install --python .venv-certified/bin/python --no-deps "git+https://github.com/louiskeep/decoy-engine@v0.20.0" dist/*.whl
 
       - name: Install the pinned closure
         run: uv pip install --python .venv-certified/bin/python -r requirements-certified.txt

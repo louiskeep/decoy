@@ -205,7 +205,7 @@ def _engine_registry_codes() -> frozenset[str]:
     return _codes_from_registry(reasons.manifest()["entries"])
 
 
-# Literal codes the engine emits outside the registry (sources at engine v0.19.0). The test
+# Literal codes the engine emits outside the registry (sources at engine v0.20.0). The test
 # holds this set equal to what an AST scan of the installed engine finds minus the registry.
 _ENGINE_LITERAL_CODES: frozenset[str] = frozenset(
     {
