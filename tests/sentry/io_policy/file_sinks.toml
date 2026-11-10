@@ -214,6 +214,14 @@ disposition = "public"
 reason = "Chunked masked output keeps the old file's mode bits (OQ3)."
 
 [[row]]
+file = "cli/io/_project.py"
+function = "_read_marker_bytes"
+sink = "os.open"
+ordinal = 1
+disposition = "read"
+reason = "Opens the project marker read-only with O_NOFOLLOW to check its owner on the descriptor; writes nothing."
+
+[[row]]
 file = "cli/run.py"
 function = "run"
 sink = "tempfile.mkdtemp"
