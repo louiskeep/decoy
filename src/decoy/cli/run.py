@@ -64,6 +64,9 @@ from decoy.ui.theme import accent, code, error, hint, success, warn
 # The engine's capacity-refusal codes live with the gate (`CAPACITY_CODES`); see
 # docs/plans/2026-07-24-oom-checker-cli-v1.md R8 for why the match is narrow.
 
+# The engine's code for a `unique` generate column or pair that the data cannot satisfy.
+UNIQUENESS_IMPOSSIBLE_CODE = "uniqueness_impossible"
+
 
 class Mode(str, Enum):
     mask = "mask"
@@ -908,7 +911,7 @@ def run(
     except Exception as exc:
         # Dispatch on type: config wrong (EXIT_USAGE) vs run blew up (EXIT_RUNTIME).
         # Imported lazily to keep the engine import off the help path.
-        from decoy_engine import ConfigError, PipelineValidationError
+        from decoy_engine import ConfigError, DecoyError, GenerationError, PipelineValidationError
         from decoy_engine.plan import PlanCompileError
 
         # CLI install DX (2026-09-25): a pipeline step that lazily imports an
@@ -973,6 +976,11 @@ def run(
         capacity_code: str | None = None
         if isinstance(exc, _execution_error_types) and exc.code in CAPACITY_CODES:
             capacity_code = exc.code
+        # GEN-UNIQUE C1 (owner question 6): a generate run whose output cannot fit the memory
+        # budget raises `GenerationBudgetExceeded`, a plain DecoyError carrying its code. It
+        # is a memory refusal like the two above, so it exits 5 and labels the JSON the same.
+        elif isinstance(exc, DecoyError) and getattr(exc, "code", None) in CAPACITY_CODES:
+            capacity_code = exc.code
 
         # Phase 3.1: `NativeGateError.code` distinguishes a usage refusal
         # (--native/--no-native conflict, an ineligible shape) from a
@@ -987,6 +995,12 @@ def run(
             _exit_code = exc.exit_code
         elif capacity_code is not None:
             _exit_code = EXIT_CAPACITY
+        elif isinstance(exc, GenerationError) and exc.code == UNIQUENESS_IMPOSSIBLE_CODE:
+            # GEN-UNIQUE C1: a `unique` column or pair the data cannot satisfy (a parent with too
+            # few distinct keys, a faker type that ran out) is fixed in the config, so it exits 1
+            # like the validate-time domain checks. Other GenerationError codes (dtype_unsafe,
+            # timezone_naive_datetime) stay runtime errors. The engine text is value-free.
+            _exit_code = EXIT_USAGE
         else:
             _exit_code = (
                 EXIT_USAGE

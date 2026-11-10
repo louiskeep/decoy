@@ -150,11 +150,11 @@ pipelines can switch on the integer; the contract is stable across releases.
 | Code | Name                   | Meaning                                                                                    |
 |------|------------------------|--------------------------------------------------------------------------------------------|
 | 0    | `EXIT_OK`              | Success.                                                                                   |
-| 1    | `EXIT_USAGE`           | Usage error: config did not validate, path did not exist, flag combination was invalid.    |
+| 1    | `EXIT_USAGE`           | Usage error: config did not validate, path did not exist, flag combination was invalid, or a `unique` generate column the data cannot satisfy (`uniqueness_impossible`). |
 | 2    | `EXIT_WARNINGS`        | The command ran clean except for advisory warnings, and `--fail-on-warning` was set. Returned by `decoy validate config` / `validate preflight` (and the `validate` aggregate). Without `--fail-on-warning` the same run exits 0. |
 | 3    | `EXIT_RUNTIME`         | The CLI itself failed mid-run (engine error, output write failure, transient I/O problem). |
 | 4    | `EXIT_FINDINGS`        | The CLI ran cleanly but found data issues (e.g. `decoy report integrity` flagged residual PII or FK preservation failures). The fix is in the data being checked, not in the CLI invocation. |
-| 5    | `EXIT_CAPACITY`        | `decoy run` or `decoy validate preflight` refused the job: it needs more memory than the host/budget has (the engine's out-of-core-FK memory gate). The fix is a bigger host/cgroup ceiling or a smaller job. `decoy validate preflight`'s v1 check covers the out-of-core-FK route only, not the ingestion peak or the generate path. |
+| 5    | `EXIT_CAPACITY`        | `decoy run` or `decoy validate preflight` refused the job: it needs more memory than the host/budget has (the engine's out-of-core-FK memory gate). The fix is a bigger host/cgroup ceiling or a smaller job. `decoy validate preflight`'s v1 check covers the out-of-core-FK route only, not the ingestion peak or the generate path. A generate run whose output cannot fit the memory budget (`generation_budget_exceeded`) also exits 5. |
 
 Constants live in `decoy.cli.exit_codes`. `decoy explain exit-codes` prints
 the same table from the CLI.
