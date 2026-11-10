@@ -39,6 +39,7 @@ import typer
 
 from decoy._atomic import AtomicWriteError, WriteMode, describe, write_local_target
 from decoy._resources import ResourceError, read_fit_max_rows
+from decoy._row_sample import sample_positions
 from decoy.cli.exit_codes import EXIT_RUNTIME, EXIT_USAGE
 from decoy.ui.output import OutputMode, emit_json, setup_output
 from decoy.ui.theme import code, error, hint, success, warn
@@ -46,6 +47,7 @@ from decoy.ui.theme import code, error, hint, success, warn
 # Fixed so the same file always gives the same sample. Part of the documented behavior: change
 # it and every sampled fit changes.
 FIT_SAMPLE_SEED = 42
+_COUNT_CHUNK = 100_000
 
 _DP_REFUSED_LINE = (
     "DP fit is not available on this install: it runs only on a certified platform and package set."
@@ -487,10 +489,14 @@ def fit(
 
         column_schema = _build_column_schema(dp_number, dp_flag, dp_text)
         if epsilon is None and row_limit is None:
+            setting_error: str | None = None
             try:
                 row_limit = read_fit_max_rows()
             except ResourceError as exc:
-                raise _FitUsageError(str(exc), code="fit_rows_setting_invalid")
+                setting_error = str(exc)
+            if setting_error is not None:
+                # Raised after the except block closes: no __context__ to carry the cause.
+                raise _FitUsageError(setting_error, code="fit_rows_setting_invalid")
     except _FitUsageError as exc:
         _emit_error(exc.message, err_code=exc.code)
         raise typer.Exit(code=EXIT_USAGE)
@@ -591,6 +597,24 @@ def fit(
     body_kwargs: dict[str, Any] = (
         {"parse_dates": list(parse_dates) or False} if epsilon is None else dp_read_kwargs
     )
+    # A file over the limit is sampled by record position BEFORE pandas infers types, so a row
+    # outside the sample cannot change a column's kind and the file is never fully loaded.
+    # Counting reads one column as text in chunks; the final read parses the same records.
+    rows_total: int | None = None
+    if epsilon is None:
+        assert row_limit is not None
+        try:
+            rows_total = sum(
+                len(chunk)
+                for chunk in pd.read_csv(source, usecols=[0], dtype=str, chunksize=_COUNT_CHUNK)
+            )
+        except Exception:
+            _unreadable()
+        if rows_total > row_limit:
+            kept = set(
+                sample_positions(rows_total, row_limit, FIT_SAMPLE_SEED, keep_order=True).tolist()
+            )
+            body_kwargs["skiprows"] = lambda i: i > 0 and (i - 1) not in kept
     try:
         df = pd.read_csv(source, **body_kwargs)
     except Exception:
@@ -601,18 +625,10 @@ def fit(
         _emit_error(f"--parse-dates column(s) not in the CSV: {', '.join(missing)}.")
         raise typer.Exit(code=EXIT_USAGE)
 
-    rows_total = len(df)
+    if rows_total is None:
+        rows_total = len(df)
     if epsilon is None:
-        assert row_limit is not None
-        if rows_total > row_limit:
-            # Sample BEFORE the engine call: detection and the snapshot see exactly these rows,
-            # so only rows that were checked for sensitive values can contribute stored values.
-            # File order is kept so a date column still reads in source order.
-            df = (
-                df.sample(n=row_limit, random_state=FIT_SAMPLE_SEED)
-                .sort_index()
-                .reset_index(drop=True)
-            )
+        # Detection and the snapshot see exactly the rows read above.
         # No profile_row_cap: it profiles head rows only, and a sensitive column can start late.
         snapshot = distribution_snapshot_document(
             df,

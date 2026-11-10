@@ -57,7 +57,7 @@ ALLOWLIST: tuple[AllowedRead, ...] = (
     AllowedRead(
         "cli/fit.py",
         "fit",
-        2,
+        3,
         "A caller-named file with its own parse flags; not a declared source.",
     ),
     AllowedRead(

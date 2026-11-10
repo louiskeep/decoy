@@ -36,6 +36,7 @@ from pathlib import Path
 
 import typer
 
+from decoy._row_sample import sample_frame
 from decoy.cli._default_group import make_default_group
 from decoy.cli.exit_codes import EXIT_USAGE
 from decoy.cli.io import ScanSetFormatError, load_scan_set, select_table
@@ -307,7 +308,7 @@ def _load_csv_with_sampling(path: Path, rows: int | None, strategy: SampleStrate
         df = pd.read_csv(path)
         if len(df) <= rows:
             return df
-        return df.sample(n=rows, random_state=42).reset_index(drop=True)
+        return sample_frame(df, rows, 42)
     return pd.read_csv(path)
 
 
@@ -326,7 +327,7 @@ def _load_parquet_with_sampling(path: Path, rows: int | None, strategy: SampleSt
     if strategy is SampleStrategy.head:
         return df.head(rows)
     if strategy is SampleStrategy.random:
-        return df.sample(n=rows, random_state=42).reset_index(drop=True)
+        return sample_frame(df, rows, 42)
     return df
 
 
@@ -356,7 +357,7 @@ def _load_fixed_width_with_sampling(
     df = pd.read_fwf(path, colspecs=colspecs, names=names, header=None)
     if len(df) <= rows:
         return df
-    return df.sample(n=rows, random_state=42).reset_index(drop=True)
+    return sample_frame(df, rows, 42)
 
 
 def _load_data(

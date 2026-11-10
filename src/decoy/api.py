@@ -33,6 +33,7 @@ import pyarrow as pa
 
 from decoy import _mask_secret, _mask_secret_guidance, _native_gate
 from decoy._mask_secret import is_valid_mask_secret_ref as _is_valid_mask_secret_ref
+from decoy._row_sample import sample_frame
 from decoy.cli._sources import CSV_DIALECT_KEYS, csv_file_source
 from decoy.cli.extras import UnsupportedCloudEndpointError
 from decoy.cli.io._targets import claimed_format, format_for_path
@@ -619,7 +620,7 @@ def scan(
             if strategy_enum is SampleStrategy.head:
                 df = df.head(rows)
             elif strategy_enum is SampleStrategy.random and len(df) > rows:
-                df = df.sample(n=rows, random_state=42).reset_index(drop=True)
+                df = sample_frame(df, rows, 42)
         label = source_label or "<dataframe>"
     elif isinstance(data, (str, Path)):
         path = Path(data)

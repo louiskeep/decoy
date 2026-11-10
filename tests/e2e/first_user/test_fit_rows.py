@@ -12,12 +12,14 @@ import json
 from pathlib import Path
 from typing import Any
 
+import numpy as np
 import pandas as pd
 import pytest
 from typer.testing import CliRunner
 
 from decoy import _resources
 from decoy.__main__ import app
+from decoy._row_sample import sample_positions
 from decoy.cli.exit_codes import EXIT_USAGE
 
 runner = CliRunner()
@@ -41,6 +43,7 @@ def _big_csv(tmp_path: Path) -> Path:
     pd.DataFrame(
         {
             "idx": range(_TOTAL),
+            "bucket": [i % 13 for i in range(_TOTAL)],
             "state": (["CA"] * 5 + ["NY"] * 2 + ["TX"]) * (_TOTAL // 8) + ["CA"] * (_TOTAL % 8),
             "tax_ref": ssn,
         }
@@ -222,3 +225,132 @@ def test_dp_fit_ignores_the_setting_and_uses_every_row(
     assert seen["rows"] == 60
     payload = json.loads(result.stdout)
     assert (payload["rows_used"], payload["rows_total"]) == (60, 60)
+
+
+def _bucket_counts(snapshot: Path, buckets: int) -> list[int]:
+    """Rows per `bucket` value in the snapshot (values 0..buckets-1, so sorted order is by value)."""
+    exact = json.loads(snapshot.read_text(encoding="utf-8"))["columns"]["bucket"]["stats"][
+        "exact_values"
+    ]
+    assert exact["values"] == list(range(buckets))
+    return exact["counts"]
+
+
+def _expected_bucket_counts(total: int, limit: int, buckets: int) -> list[int]:
+    kept = sample_positions(total, limit, 42, keep_order=True)
+    return np.bincount(kept % buckets, minlength=buckets).tolist()
+
+
+def test_sample_membership_is_pinned(tmp_path: Path) -> None:
+    """The fitted rows are exactly the seeded positions, in file order (idx is the row number)."""
+    out = tmp_path / "snap.json"
+    assert _fit(_big_csv(tmp_path), out, "--rows", "10000").exit_code == 0
+    assert _bucket_counts(out, 13) == _expected_bucket_counts(_TOTAL, 10_000, 13)
+
+
+def _mixed_csv(path: Path, *, v_bad: int | None = None, d_bad: int | None = None) -> Path:
+    rows = 2_000
+    v = [str(i) for i in range(rows)]
+    d = [f"2024-01-{(i % 28) + 1:02d}" for i in range(rows)]
+    if v_bad is not None:
+        v[v_bad] = "abc"
+    if d_bad is not None:
+        d[d_bad] = "not-a-date"
+    pd.DataFrame({"v": v, "d": d, "state": ["CA", "NY"] * (rows // 2)}).to_csv(path, index=False)
+    return path
+
+
+def test_an_excluded_row_cannot_change_the_result(tmp_path: Path) -> None:
+    limit = 500
+    kept = set(sample_positions(2_000, limit, 42, keep_order=True).tolist())
+    excluded = next(i for i in range(2_000) if i not in kept)
+    src = tmp_path / "data.csv"
+    runs: list[tuple[bytes, dict[str, str]]] = []
+    for bad in (
+        {},
+        {"v_bad": excluded},
+        {"d_bad": excluded},
+        {"v_bad": excluded, "d_bad": excluded},
+    ):
+        _mixed_csv(src, **bad)
+        out = tmp_path / "snap.json"
+        result = _fit(src, out, "--rows", str(limit), "--parse-dates", "d")
+        assert result.exit_code == 0, result.output
+        runs.append((out.read_bytes(), json.loads(result.stdout)["columns"]))
+    assert runs[0][1]["v"] == "numeric"
+    assert all(run == runs[0] for run in runs)
+    # Control: the same damage inside the sample does change the column kind.
+    inside = min(kept)
+    _mixed_csv(src, v_bad=inside)
+    result = _fit(src, tmp_path / "snap.json", "--rows", str(limit), "--parse-dates", "d")
+    assert json.loads(result.stdout)["columns"]["v"] != "numeric"
+
+
+def test_an_oversized_file_is_never_fully_materialized(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from decoy.cli import fit as fit_module
+
+    monkeypatch.setattr(fit_module, "_COUNT_CHUNK", 400)
+    seen: list[int] = []
+    real = pd.read_csv
+
+    def spy(*args: Any, **kwargs: Any) -> Any:
+        out = real(*args, **kwargs)
+        if isinstance(out, pd.DataFrame):
+            seen.append(len(out))
+            return out
+
+        def chunks() -> Any:
+            for chunk in out:
+                seen.append(len(chunk))
+                yield chunk
+
+        return chunks()
+
+    monkeypatch.setattr(pd, "read_csv", spy)
+    result = _fit(_mixed_csv(tmp_path / "data.csv"), tmp_path / "snap.json", "--rows", "300")
+    assert result.exit_code == 0, result.output
+    assert max(seen) <= 400  # the sample (300) or one counting chunk, never the 2,000-row file
+    assert json.loads(result.stdout)["rows_total"] == 2_000
+
+
+def test_quoted_multiline_cells_count_as_one_record(tmp_path: Path) -> None:
+    rows = 3_000
+    src = tmp_path / "notes.csv"
+    pd.DataFrame(
+        {
+            "idx": range(rows),
+            "bucket": [i % 11 for i in range(rows)],
+            "note": [f"line one {i}\nline two\n\nline four" for i in range(rows)],
+        }
+    ).to_csv(src, index=False)
+    out = tmp_path / "snap.json"
+    result = _fit(src, out, "--rows", "1000")
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.stdout)
+    assert (payload["rows_used"], payload["rows_total"]) == (1_000, rows)
+    assert _bucket_counts(out, 11) == _expected_bucket_counts(rows, 1_000, 11)
+
+
+def test_a_bad_setting_error_carries_no_exception_context(
+    tmp_path: Path, _home: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from decoy.cli import fit as fit_module
+
+    raised: list[BaseException] = []
+
+    class Recording(fit_module._FitUsageError):
+        def __init__(self, *args: Any, **kwargs: Any) -> None:
+            super().__init__(*args, **kwargs)
+            raised.append(self)
+
+    monkeypatch.setattr(fit_module, "_FitUsageError", Recording)
+    _home.mkdir()
+    (_home / "settings.json").write_text(
+        json.dumps({"schema_version": "1.0", "fit": {"max_rows": 0}})
+    )
+    result = _fit(_small_csv(tmp_path), tmp_path / "snap.json")
+    assert json.loads(result.stdout)["code"] == "fit_rows_setting_invalid"
+    assert raised
+    assert all(e.__context__ is None and e.__cause__ is None for e in raised)
