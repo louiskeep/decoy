@@ -28,7 +28,7 @@ ERROR_TEXT_CAP = 500
 # `ExecutionError` with one of the first two, and the preflight capacity check carries the same
 # code on its finding. `out_of_core_insufficient_memory` is legacy-engine compat (a current
 # engine's build-floor gate is advisory and never raises it). `generation_budget_exceeded` is the
-# generate route's memory refusal (GEN-UNIQUE C1, owner question 6).
+# generate route's memory refusal.
 CAPACITY_CODES = frozenset(
     {
         "out_of_core_insufficient_memory",

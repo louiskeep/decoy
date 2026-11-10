@@ -976,7 +976,7 @@ def run(
         capacity_code: str | None = None
         if isinstance(exc, _execution_error_types) and exc.code in CAPACITY_CODES:
             capacity_code = exc.code
-        # GEN-UNIQUE C1 (owner question 6): a generate run whose output cannot fit the memory
+        # A generate run whose output cannot fit the memory
         # budget raises `GenerationBudgetExceeded`, a plain DecoyError carrying its code. It
         # is a memory refusal like the two above, so it exits 5 and labels the JSON the same.
         elif isinstance(exc, DecoyError) and getattr(exc, "code", None) in CAPACITY_CODES:
@@ -996,7 +996,7 @@ def run(
         elif capacity_code is not None:
             _exit_code = EXIT_CAPACITY
         elif isinstance(exc, GenerationError) and exc.code == UNIQUENESS_IMPOSSIBLE_CODE:
-            # GEN-UNIQUE C1: a `unique` column or pair the data cannot satisfy (a parent with too
+            # A `unique` column or pair the data cannot satisfy (a parent with too
             # few distinct keys, a faker type that ran out) is fixed in the config, so it exits 1
             # like the validate-time domain checks. Other GenerationError codes (dtype_unsafe,
             # timezone_naive_datetime) stay runtime errors. The engine text is value-free.
