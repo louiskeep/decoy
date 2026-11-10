@@ -223,7 +223,7 @@ def compile(
                 "--profile <profile.json>, or remove the unique cardinality_mode.",
             )
             raise typer.Exit(code=EXIT_USAGE)
-        profile = empty_profile_for_no_profile(raw, engine_version)
+        profile = None
 
     # Compile: validate config, run plan-compile checks. no_profile=True in the
     # no-profile branch makes the ENGINE emit its own honest checks_skipped set
@@ -232,6 +232,9 @@ def compile(
     # keep structural checks like fk_plan_ordering in checks_passed. We do not
     # hand-maintain a parallel skip list (it drifts from the engine's contract).
     try:
+        if profile is None:
+            # Inside the try: an unequal composite relationship raises here.
+            profile = empty_profile_for_no_profile(raw, engine_version)
         plan = compile_plan(
             raw,
             profile,
