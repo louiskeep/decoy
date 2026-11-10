@@ -389,8 +389,12 @@ _TOPICS: dict[str, _Topic] = {
     ),
     "differential-privacy": _Topic(
         name="differential-privacy",
-        summary="Fit a dps-marginal/v3 release with `decoy fit --epsilon`.",
+        summary="Fit a DP release with `decoy fit --epsilon` (certified installs only).",
         body=(
+            "DP fit is gated: it runs only on a certified platform and package set.\n"
+            "On any other install `decoy fit --epsilon` exits 3 before reading a data\n"
+            "row. Without --epsilon, `decoy fit` still works and withholds sensitive\n"
+            "column values by default; add --include-values to keep them.\n\n"
             "`decoy fit` captures a distribution snapshot that `type: statistical`\n"
             "generate columns sample from. --epsilon selects a second, disjoint mode\n"
             "that fits a dps-marginal/v3 release through the engine's OpenDP-backed\n"
@@ -405,10 +409,10 @@ _TOPICS: dict[str, _Topic] = {
             "and the omission is printed). --delta is required alongside --epsilon\n"
             "(no default: it sets a real privacy parameter). --epsilon is\n"
             "incompatible with --joint and --parse-dates.\n\n"
-            "The fit also requires a certified DP proof stack (a pinned lock the\n"
-            "engine has been validated against). On an uncertified host it refuses\n"
-            "with dp_stack_uncertified rather than release under an unverified\n"
-            "guarantee."
+            "The certified stack is a pinned lock the engine has been validated\n"
+            "against. On an uncertified host the fit refuses (the code is\n"
+            "dp_stack_uncertified or dp_platform_uncertified, shown with --verbose\n"
+            "and in --json) rather than release under an unverified guarantee."
         ),
         see_also=("decoy fit --help", "decoy run --help"),
     ),
