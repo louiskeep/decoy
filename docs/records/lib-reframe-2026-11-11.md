@@ -121,3 +121,19 @@ about one flag.
 
 No tests, no gates: nothing was built. The dev environment was bootstrapped and matches
 `requirements-dev.lock` (Linux, Python 3.10, engine 0.22.0).
+
+## Owner answers (2026-11-11)
+
+- Q1: the default library root is `find_project(start, explicit).root / ".decoy"` (from
+  `decoy.cli.io`). `start` is the YAML's folder for a pipeline given by path, else the current
+  folder; `--project` and `DECOY_PROJECT` feed `explicit` as PROJECT-LAYOUT states. No second root
+  finder.
+- Q2: `--library DIR`, then `DECOY_LIBRARY`, stay ahead of the project rule. `DECOY_LIBRARY=off`
+  turns records off; the log root is the same chain with the env step skipped.
+- Q3: the scan `start` order is the `--emit-config` folder, then the `--config` folder, then the
+  current folder; then the `find_project` walk.
+- Q4: library error codes the engine registry does not hold (`library_busy`,
+  `library_lock_unavailable`, `library_path_too_long`, `library_layout_newer`,
+  `record_link_missing`) are CLI constants in `cli/library/_errors.py`. Engine codes that exist
+  (`record_invalid`, `record_corrupt`, ...) are imported from `decoy_engine.reasons`, never copied.
+- Q5: slice branches are allowed (for example `feat/lib-l1b2-store`).
