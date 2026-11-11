@@ -385,7 +385,7 @@ on `P:plan/h1-wave-b` `944fb295` (Codex GO). Only files no live branch touches.
 | 70 | F32 remainder: engine E1b to E3, CLI C0, C1, C1b | engine, CLI | plan Codex r5 GO, Dennis r4 GO-WITH-FIXES | `P:plan/f32-support-bundles` `39c2772c` | F32 E1 (row 15); F31 |
 | 71 | F30 CLI: C1b and the CLI repin to the F30 release | CLI | C1a MERGED (CLI #80); E1 MERGED (engine #369) | `P:plan/f30-telemetry` `4b385672` | F30 release; F31 |
 | 72 | F33 CLI verifier and engine signature envelope | engine, CLI | plan in review: rev 9 (V1 scope E1a, E1b, C1a, C1b; owner 2026-11-11) | `P:plan/f33-v1-scope` `bba8b625`; engine PR #335 (OPEN) | plan review; F31 |
-| 73 | F13 slices 3b and 5 | engine | plan in review: rev 5 (V1 scope, slice 5-v1; owner 2026-11-11) | `E:plan/f13-v1-scope` `17ff7fbb` | plan review |
+| 73 | F13 slices 3b and 5 | engine | plan in review: rev 5.1 (V1 scope, slice 5-v1; owner 2026-11-11) | `E:plan/f13-v1-scope` `872b05f7` | plan review |
 | 74 | F26 CLI local cleanup and engine part | engine, CLI | PARKED until F22 settles; Opus re-scope first | engine PR #337, CLI PR #68 (OPEN) | F22 |
 | 75 | One CLI journey for V1; the CLI smoke cites journey ids | CLI | NOT STARTED | none | CLI delivery |
 | 76 | Engine release R-d and CLI repin: SUB-RUN, F25, F22, POSTSCAN-STREAM, the engine halves of CONFIG-EXPLICIT (if not earlier), DELIV, RESULT, SAMPLE, and the engine parts of SCAN-LIB, DIST-INTEGRITY and DRIFT; under the cadence this becomes several releases | engine, CLI | NOT STARTED | none | the rows it carries |
