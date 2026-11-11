@@ -11,25 +11,32 @@ assignments and `for` targets:
 
 - group values: `x["input_fingerprints"]`, `x.get("output_fingerprints")`, and names spelled
   like a fingerprint group (`...fingerprints...`, `fps`, `out_fps_a`);
-- entries: a subscript or `.get` of a group, the value of `for k, v in group.items()`, and every
-  name a `for` unpacks from an iterable that holds an entry;
+- entries: a subscript or `.get` of a group (also through `or {}`, a conditional or a `dict()`
+  copy), the value of `for k, v in group.items()`, and every name a `for` unpacks from an
+  iterable that holds an entry, directly or through a name bound to a tuple of entries;
 - stored paths: `x["pipeline_path"]` / `x.get("pipeline_path")`, and `"path"` of an entry.
 
 A stored path passed to `pathlib.Path`/`PurePath` (direct, aliased or module-qualified),
 `os.path.*`, `open`, `contained_path`, `hash_file`, a data reader, a `/` join, or a filesystem
-method fails the test outside the allowlist. Arguments of a `resolve_manifest_path` call are its
-input, and its result is a resolved path, so neither is marked.
+method fails the test. So does a call that hands a whole entry or group (or a tuple holding
+entries) to a helper, which could build a path from it out of sight (`entry_format` once did
+`Path(entry["path"])`), unless the (file, function, callee) is in `ALLOWLIST`, registered as
+sentry `manifest-path-forward-allow`. A few builtins that cannot build a path are exempt; a copy
+they return stays marked. Arguments of a `resolve_manifest_path` call are its input, and its
+result is a resolved path, so neither is marked.
 
 `report show` and `report render` are metadata-only consumers: they render stored paths as text
-and make no filesystem call, so they need no entry here. Named limits: a stored path passed
-through a function parameter not spelled like a group, a container, or `getattr` is not traced.
+and make no filesystem call, so they need no entry here. Named limits: a stored path string
+handed to a helper, an entry inside a dict or comprehension, and `getattr` are not traced.
 """
 
 from __future__ import annotations
 
 import ast
+import json
 import re
 from collections.abc import Iterator
+from dataclasses import dataclass
 from pathlib import Path
 
 from tests.sentry.io_policy._calls import bindings, qualified
@@ -37,8 +44,28 @@ from tests.sentry.io_policy._calls import bindings, qualified
 ROOT = Path(__file__).resolve().parents[3]
 SRC = ROOT / "src" / "decoy"
 
+BASELINE = ROOT / "tests" / "sentry" / "baselines" / "manifest-path-forward-allow.json"
+
 RESOLVER = "resolve_manifest_path"
-PATH_BUILDING_ALLOW = {("src/decoy/cli/evidence.py", RESOLVER)}
+
+
+@dataclass(frozen=True)
+class AllowedForward:
+    file: str  # relative to the repo root
+    function: str
+    callee: str
+    reason: str
+
+
+# A whole entry or group may go only to a callee that cannot build a path from it.
+ALLOWLIST: tuple[AllowedForward, ...] = (
+    AllowedForward(
+        "src/decoy/cli/report.py",
+        "compare_manifests",
+        "_fp_changes",
+        "Compares recorded fingerprints by table name; it reads no `path` and opens nothing.",
+    ),
+)
 RESOLVER_CALLERS = {
     ("src/decoy/cli/evidence.py", "read_manifest"),
     ("src/decoy/cli/evidence.py", "verify_manifest_issues"),
@@ -68,6 +95,9 @@ _PATH_LEAVES = {
     "read_table",
 }
 _FS_METHODS = {"resolve", "exists", "is_file", "open", "read_text", "read_bytes", "stat"}
+# Builtins that cannot build a path from a dict; a copy they return stays marked by `learn`.
+_INERT = {"isinstance", "len", "bool", "sorted", "list", "dict", "set", "tuple", "any", "all"}
+_COPIES = {"dict", "list", "tuple"}
 _SCOPES = (ast.FunctionDef, ast.AsyncFunctionDef)
 
 
@@ -130,6 +160,7 @@ class _Taint:
         self.groups: set[str] = set()
         self.entries: set[str] = set()
         self.stored: set[str] = set()
+        self.holders: set[str] = set()  # names bound to a tuple/list/set literal holding an entry
 
     def group(self, e: ast.AST | None) -> bool:
         if isinstance(e, ast.Name):
@@ -185,7 +216,7 @@ class _Taint:
             if it is not None and self.group(it):
                 return self._add(self.entries, unpacked[-1:])
             # `for manifest, entry, where in ((m, entry_a, f), ...)`: any name may be the entry.
-            if self.has(self.entry, value):
+            if self.has(self.holds, value):
                 return self._add(self.entries, unpacked)
             return False
         names = [target] if isinstance(target, ast.Name) else []
@@ -193,11 +224,26 @@ class _Taint:
             names = list(target.elts)
         if self.has(self.path, value):
             return self._add(self.stored, names)
-        if self.has(self.entry, value):
+        if self.yields(self.entry, value):
             return self._add(self.entries, names)
-        if self.has(self.group, value):
+        if self.yields(self.group, value):
             return self._add(self.groups, names)
+        if isinstance(value, (ast.Tuple, ast.List, ast.Set)) and self.has(self.holds, value):
+            return self._add(self.holders, names)
         return False
+
+    def holds(self, e: ast.AST) -> bool:
+        return self.entry(e) or (isinstance(e, ast.Name) and e.id in self.holders)
+
+    def yields(self, test, e: ast.expr) -> bool:
+        """`e` evaluates to the marked dict itself, not to something built from it."""
+        if isinstance(e, ast.BoolOp):
+            return any(self.yields(test, v) for v in e.values)
+        if isinstance(e, ast.IfExp):
+            return self.yields(test, e.body) or self.yields(test, e.orelse)
+        if isinstance(e, ast.Call) and isinstance(e.func, ast.Name) and e.func.id in _COPIES:
+            return any(self.yields(test, a) for a in e.args)
+        return bool(test(e))
 
     @staticmethod
     def _add(into: set[str], names: list[ast.expr]) -> bool:
@@ -206,7 +252,18 @@ class _Taint:
         return bool(new)
 
 
-def _sinks(fn: ast.AST, taint: _Taint, bound: dict[str, str]) -> Iterator[int]:
+def _forwards(call: ast.Call, taint: _Taint) -> bool:
+    """`call` hands a whole entry or group to its callee, which could build a path from it."""
+    for arg in [*call.args, *(k.value for k in call.keywords)]:
+        arg = arg.value if isinstance(arg, ast.Starred) else arg
+        if taint.holds(arg) or taint.group(arg):
+            return True
+    return False
+
+
+def _sinks(
+    fn: ast.AST, taint: _Taint, bound: dict[str, str], forward_ok: set[str]
+) -> Iterator[int]:
     for n in _nodes(fn):
         if isinstance(n, ast.BinOp) and isinstance(n.op, ast.Div):
             if taint.has(taint.path, n.left) or taint.has(taint.path, n.right):
@@ -222,6 +279,8 @@ def _sinks(fn: ast.AST, taint: _Taint, bound: dict[str, str]) -> Iterator[int]:
         args = [*n.args, *(k.value for k in n.keywords)]
         building = name in _PATH_CALLS or name.startswith("os.path.") or last in _PATH_LEAVES
         if building and any(taint.has(taint.path, a) for a in args):
+            yield n.lineno
+        if last not in _INERT and last not in forward_ok and _forwards(n, taint):
             yield n.lineno
         if (
             isinstance(n.func, ast.Attribute)
@@ -243,8 +302,10 @@ def _functions(
             yield from _functions(child, inner, f"{scope}{child.name}.")
 
 
-def scan(src: Path, base: Path) -> tuple[list[tuple[str, str, int]], set[tuple[str, str]]]:
-    """(path-building sites outside the allowlist, every resolver-calling function)."""
+def scan(
+    src: Path, base: Path, allow: tuple[AllowedForward, ...] = ALLOWLIST
+) -> tuple[list[tuple[str, str, int]], set[tuple[str, str]]]:
+    """(path-building and entry-forwarding sites, every resolver-calling function)."""
     building: list[tuple[str, str, int]] = []
     callers: set[tuple[str, str]] = set()
     for file in sorted(src.rglob("*.py")):
@@ -255,8 +316,8 @@ def scan(src: Path, base: Path) -> tuple[list[tuple[str, str, int]], set[tuple[s
         for qual, fn, bound in scopes:
             taint = _Taint()
             taint.learn(fn)
-            if (rel, qual) not in PATH_BUILDING_ALLOW:
-                building.extend((rel, qual, line) for line in _sinks(fn, taint, bound))
+            ok = {a.callee for a in allow if (a.file, a.function) == (rel, qual)}
+            building.extend((rel, qual, line) for line in _sinks(fn, taint, bound, ok))
             for n in _own(fn):
                 if _is_resolver(n) and qual.rsplit(".", 1)[-1] != RESOLVER:
                     callers.add((rel, qual))
@@ -266,14 +327,30 @@ def scan(src: Path, base: Path) -> tuple[list[tuple[str, str, int]], set[tuple[s
 def test_only_the_resolver_turns_a_stored_manifest_path_into_a_file_path() -> None:
     building, _ = scan(SRC, ROOT)
     assert building == [], (
-        "a stored manifest path is used as a file path outside resolve_manifest_path; "
-        f"route it through decoy.cli.evidence.resolve_manifest_path: {building}"
+        "a stored manifest path is used as a file path, or an entry is handed to a helper, "
+        f"outside decoy.cli.evidence.resolve_manifest_path; resolve it there: {building}"
     )
 
 
 def test_the_resolver_is_called_by_exactly_the_allowed_consumers() -> None:
     _, callers = scan(SRC, ROOT)
     assert callers == RESOLVER_CALLERS
+
+
+def test_allowlist_entries_are_live_and_have_reasons() -> None:
+    """A stale entry would let a later helper of the same name take an entry unchecked."""
+    keys = {(a.file, a.function, a.callee) for a in ALLOWLIST}
+    assert len(keys) == len(ALLOWLIST)
+    assert all(len(a.reason) >= 15 for a in ALLOWLIST)
+    for a in ALLOWLIST:
+        building, _ = scan(SRC, ROOT, tuple(x for x in ALLOWLIST if x is not a))
+        assert any((f, q) == (a.file, a.function) for f, q, _l in building), a
+
+
+def test_baseline_json_records_the_same_entries_and_reasons() -> None:
+    entries = json.loads(BASELINE.read_text(encoding="utf-8"))["entries"]
+    expected = {f"{a.file}::{a.function}::{a.callee}": {"reason": a.reason} for a in ALLOWLIST}
+    assert entries == expected
 
 
 # --- self-tests: every realistic spelling turns the scan red --------------------------------
@@ -330,6 +407,19 @@ def f(manifest_a, manifest_b, t):
         raw = entry["path"]
         yield Path(raw)
 """,
+    "forward": """
+from decoy.cli.io import entry_format, read_file
+def f(manifest_a, path_a, table):
+    output_fps_a = manifest_a.get("output_fingerprints") or {}
+    fp_a = output_fps_a.get(table) or {}
+    return read_file(path_a, *entry_format(fp_a), table=table)
+""",
+    "forward_holder": """
+def f(manifest_a, manifest_b, t, helper):
+    fp_a = manifest_a["output_fingerprints"][t]
+    sides = ((manifest_a, fp_a), (manifest_b, None))
+    return helper(sides)
+""",
     "reader": """
 from decoy.cli.io import read_file
 def f(manifest):
@@ -341,11 +431,17 @@ def f(manifest):
 _CLEAN = """
 from pathlib import Path
 from decoy.cli.evidence import resolve_manifest_path
+from decoy.cli.io import entry_format
 def compare_data(m, f):
-    for name, entry in m["output_fingerprints"].items():
+    fps = m["output_fingerprints"]
+    if not isinstance(fps, dict) or len(fps) == 0:
+        return None
+    for name, entry in fps.items():
         path = resolve_manifest_path(m, entry["path"], manifest_file=f, field=name)
+        recorded = {k: entry[k] for k in ("format", "layout") if k in entry}
         if path.exists():
-            return Path(path), str(entry["path"]), entry.get("path", "?")
+            frame = entry_format(path, **recorded)
+            return Path(path), str(entry["path"]), entry.get("path", "?"), frame
 """
 
 
