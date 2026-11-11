@@ -473,6 +473,10 @@ def test_a_null_required_field_is_refused(tmp_path: Path, monkeypatch, field: st
         lambda m: m["output_fingerprints"]["a"].update(size_bytes="12"),
         lambda m: m.update(key_label=3),
         lambda m: m.update(run_id=5),
+        lambda m: m["output_fingerprints"]["a"].update(size_bytes=True),
+        lambda m: m["output_fingerprints"]["a"].update(size_bytes=12.0),
+        lambda m: m.update(row_counts={"a": True}),
+        lambda m: m.update(row_counts={"a": "3"}),
     ],
 )
 def test_other_shapes_the_writer_never_makes_are_refused(tmp_path: Path, monkeypatch, edit) -> None:
@@ -537,3 +541,106 @@ def test_a_nan_inside_a_well_formed_manifest_is_refused_without_a_crash(
     result = _verify(evidence)
     assert result.exit_code == 1, result.output
     assert "could not parse" in json.loads(result.output)["error"]
+
+
+# --- r2: one portable path rule in decoy.cli.io, exact stored primitives ------------------
+
+
+@pytest.mark.parametrize(
+    "path", ["sub\\in.txt", "C:in.txt", "C:/in.txt", "\\\\host\\share\\in.txt"]
+)
+def test_a_stored_path_with_a_backslash_or_a_windows_anchor_is_refused(
+    tmp_path: Path, monkeypatch, path: str
+) -> None:
+    """A stored path names the same file on every OS, so it uses "/" only and no drive or UNC
+    anchor. On POSIX each spelling is a real file here, so only the rule can refuse it."""
+    manifest, evidence = _valid(tmp_path, monkeypatch)
+    target = evidence.parent.joinpath(*path.split("/"))
+    target.parent.mkdir(parents=True, exist_ok=True)
+    _escape(manifest, evidence, path, target)
+    with pytest.raises(ManifestError) as caught:
+        verify_manifest_issues(manifest, manifest_file=evidence)
+    assert caught.value.kind == "path_outside_project"
+    assert "`input_fingerprints.a.path`" in caught.value.message
+    assert "in.txt" not in caught.value.message
+
+
+_PATH_CORPUS = [
+    "in.txt",
+    "sub/in.txt",
+    "./in.txt",
+    "sub/../in.txt",
+    "sub\\in.txt",
+    "C:in.txt",
+    "C:/in.txt",
+    "../in.txt",
+    "sub/../../in.txt",
+    "sub/",
+    ".",
+    "sub/..",
+]
+
+
+@pytest.mark.parametrize("raw", _PATH_CORPUS)
+def test_the_evidence_reader_and_the_layout_share_one_path_rule(tmp_path: Path, raw: str) -> None:
+    """Guard for the one validator: the reader accepts exactly what `contained_path` accepts."""
+    from decoy.cli.io import contained_path
+
+    root = tmp_path / "proj"
+    (root / "sub").mkdir(parents=True)
+    expected = contained_path(root, raw)
+    try:
+        got = evidence_module.resolve_manifest_path(raw, root)
+    except ManifestError as exc:
+        assert exc.kind == "path_outside_project"
+        got = None
+    assert got == expected
+
+
+def test_the_evidence_module_parses_no_path_text_itself() -> None:
+    source = Path(evidence_module.__file__).read_text(encoding="utf-8")
+    assert "PurePosixPath" not in source
+    assert "PureWindowsPath" not in source
+
+
+@pytest.mark.parametrize(
+    "edit",
+    [
+        lambda m: m["output_fingerprints"]["a"].update(size_bytes=True),
+        lambda m: m.update(row_counts={"a": False}),
+    ],
+)
+def test_a_boolean_in_a_number_field_is_refused_by_every_reader(
+    tmp_path: Path, monkeypatch, edit
+) -> None:
+    manifest, evidence = _valid(tmp_path, monkeypatch)
+    edit(manifest)
+    evidence.write_text(json.dumps(_rehash(manifest)), encoding="utf-8")
+    with pytest.raises(ManifestError) as caught:
+        evidence_module.read_manifest(evidence)
+    assert caught.value.kind == "malformed"
+    for command in ("verify", "show"):
+        result = runner.invoke(app, ["report", command, str(evidence), "--json"])
+        assert result.exit_code == 1, result.output
+        assert "malformed" in json.loads(result.output)["error"]
+
+
+def test_a_project_file_whose_name_the_reader_refuses_is_recorded_absolute(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """The writer records relative only what the reader's rule reads back; a POSIX name with a
+    backslash is recorded absolute, so the manifest still verifies."""
+    if Path("a\\b").name != "a\\b":
+        pytest.skip("a backslash separates folders on this OS")
+    root = _project(tmp_path / "proj")
+    cfg = _pipeline(root)
+    raw = yaml.safe_load(cfg.read_text(encoding="utf-8"))
+    source = Path(raw["sources"]["a"]["path"])
+    source = source if source.is_absolute() else cfg.parent / source
+    odd = source.with_name("in\\put.csv")
+    odd.write_bytes(source.read_bytes())
+    raw["sources"]["a"]["path"] = str(odd)
+    cfg.write_text(yaml.safe_dump(raw), encoding="utf-8")
+    manifest = _run(cfg, root / "ev.json", monkeypatch, root)
+    assert manifest["input_fingerprints"]["a"]["path"] == str(odd.resolve())
+    assert verify_manifest_issues(manifest, manifest_file=root / "ev.json") == []
