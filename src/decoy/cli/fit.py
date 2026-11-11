@@ -30,13 +30,8 @@ fail-open release of exact data).
 
 from __future__ import annotations
 
-import contextlib
-import csv
-import io
 import json
 import math
-import warnings
-from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
 
@@ -44,30 +39,16 @@ import typer
 
 from decoy._atomic import AtomicWriteError, WriteMode, describe, write_local_target
 from decoy._resources import ResourceError, read_fit_max_rows
-from decoy._row_sample import sample_positions
 from decoy.cli.exit_codes import EXIT_RUNTIME, EXIT_USAGE
+from decoy.cli.gen import (
+    FIT_SAMPLE_SEED,
+    FitSourceError,
+    fit_exact_snapshot,
+    read_fit_csv,
+    strict_csv,
+)
 from decoy.ui.output import OutputMode, emit_json, setup_output
 from decoy.ui.theme import code, error, hint, success, warn
-
-# Fixed so the same file always gives the same sample. Part of the documented behavior: change
-# it and every sampled fit changes.
-FIT_SAMPLE_SEED = 42
-_COUNT_CHUNK = 100_000
-
-
-@contextlib.contextmanager
-def _strict_csv() -> Iterator[None]:
-    """Turn pandas' ParserWarning into an error for the reads inside.
-
-    With `index_col=False`, pandas drops the extra fields of an over-wide first record and only
-    warns; as an error the read fails and fit refuses the file instead of fitting cut rows.
-    """
-    import pandas as pd
-
-    with warnings.catch_warnings():
-        warnings.simplefilter("error", pd.errors.ParserWarning)
-        yield
-
 
 _DP_REFUSED_LINE = (
     "DP fit is not available on this install: it runs only on a certified platform and package set."
@@ -544,18 +525,12 @@ def fit(
         _emit_error(exc.message, err_code=exc.code)
         raise typer.Exit(code=EXIT_USAGE)
 
-    import numpy as np
-    import pandas as pd
-    from decoy_engine import distribution_snapshot_document, snapshot_joint_warnings
+    from decoy_engine import snapshot_joint_warnings
     from decoy_engine.quality.snapshot import (
         DEFAULT_CONTINGENCY_TOP_K,
         MAX_CONTINGENCY_TOP_K,
         DistributionSnapshotError,
         check_contingency_top_k,
-    )
-    from decoy_engine.reasons.quality import (
-        CONTINGENCY_TOP_K_INVALID,
-        CONTINGENCY_TOP_K_KIND_UNSUPPORTED,
     )
 
     from decoy.ui.summary import warning_record
@@ -605,7 +580,7 @@ def fit(
         # request is invalid or this install cannot run a DP fit.
         header_failed = False
         try:
-            dp_header = list(pd.read_csv(source, nrows=0, **dp_read_kwargs).columns)
+            dp_header = list(read_fit_csv(source, nrows=0, **dp_read_kwargs).columns)
         except Exception:
             header_failed = True
         if header_failed:
@@ -667,116 +642,41 @@ def fit(
             _emit_error(exc.message, err_code=exc.code)
             raise typer.Exit(code=EXIT_USAGE)
 
-    # The one body read: exact mode keeps pandas' inference and the requested
-    # datetime columns; DP mode reads the literal lexemes.
-    body_kwargs: dict[str, Any] = (
-        {"parse_dates": list(parse_dates) or False, "index_col": False}
-        if epsilon is None
-        else dp_read_kwargs
-    )
-    # Every read uses `index_col=False`: with pandas' default, a record wider than the header
-    # silently turns the first column into the index and shifts every value one column left.
-    # With False, pandas raises on a wide record or, for the first one, drops the extra fields
-    # with a ParserWarning; `_strict_csv` makes that warning an error, so an over-wide record is
-    # always refused instead of fitted.
-    # A file over the limit is sampled by record position BEFORE pandas infers types, so a row
-    # outside the sample cannot change a column's kind and the file is never fully loaded.
-    # Both passes below read the file through pandas' own record rule (blank lines skipped,
-    # quoted newlines inside one record), so a position means the same record in each. The
-    # sampled records are then parsed by the one read below, exactly as if they were the file.
-    rows_total: int | None = None
-    read_target: Any = source
-    if epsilon is None:
-        assert row_limit is not None
-        # One call site, two passes over the same records: "count" reads the first column of
-        # every record, "select" reads whole records and keeps the sampled positions.
-        rows_total = 0
-        kept: Any = None
-        seen = 0
-        kept_rows: list[list[Any]] = []
-        sample_header: list[Any] = []
-        read_failed = False
-        for phase in ("count", "select"):
-            if phase == "select":
-                if rows_total <= row_limit:
-                    break
-                kept = sample_positions(rows_total, row_limit, FIT_SAMPLE_SEED, keep_order=True)
-                seen = 0
-            try:
-                with _strict_csv():
-                    for chunk in pd.read_csv(
-                        source,
-                        chunksize=_COUNT_CHUNK,
-                        dtype=str,
-                        index_col=False,
-                        usecols=[0] if phase == "count" else None,
-                        # Literal text, so the parse below sees what the file holds.
-                        na_filter=phase == "count",
-                    ):
-                        if kept is None:
-                            rows_total += len(chunk)
-                            continue
-                        lo, hi = np.searchsorted(kept, [seen, seen + len(chunk)])
-                        sample_header = list(chunk.columns)
-                        picked = chunk.iloc[kept[lo:hi] - seen]
-                        kept_rows.extend(picked.fillna("").to_numpy().tolist())
-                        seen += len(chunk)
-            except Exception:
-                read_failed = True
-            if read_failed:
-                _unreadable()
-        if kept is not None:
-            if seen != rows_total:
-                _emit_error(
-                    "the CSV changed while it was being read; run the command again.",
-                    err_code="fit_source_changed",
-                )
-                raise typer.Exit(code=EXIT_USAGE)
-            # The sampled records as CSV text, parsed below exactly as if they were the file.
-            sample_text = io.StringIO()
-            sample_writer = csv.writer(sample_text, lineterminator="\n")
-            sample_writer.writerow(sample_header)
-            sample_writer.writerows(kept_rows)
-            sample_text.seek(0)
-            read_target = sample_text
-    read_failed = False
-    try:
-        with _strict_csv():
-            df = pd.read_csv(read_target, **body_kwargs)
-    except Exception:
-        read_failed = True
-    if read_failed:
-        _unreadable()
-
-    missing = [c for c in parse_dates if c not in df.columns]
-    if missing:
-        _emit_error(f"--parse-dates column(s) not in the CSV: {', '.join(missing)}.")
-        raise typer.Exit(code=EXIT_USAGE)
-
-    if rows_total is None:
-        rows_total = len(df)
+    rows_total: int
     fit_warnings: list[dict[str, Any]] = []
     if epsilon is None:
-        # Detection and the snapshot see exactly the rows read above.
-        # No profile_row_cap: it profiles head rows only, and a sensitive column can start late.
+        assert row_limit is not None
+        source_error: FitSourceError | None = None
         try:
-            snapshot = distribution_snapshot_document(
-                df,
-                source_label=source.name,
+            fitted = fit_exact_snapshot(
+                source,
+                row_limit=row_limit,
+                parse_dates=parse_dates,
+                joint_pairs=joint_pairs,
                 include_values=include_values,
-                joint_columns=joint_pairs or None,
                 contingency_top_k=cell_cap,
             )
-        except DistributionSnapshotError as exc:
-            if exc.code not in (CONTINGENCY_TOP_K_INVALID, CONTINGENCY_TOP_K_KIND_UNSUPPORTED):
-                raise
-            _emit_error(exc.message, err_code=exc.code)
+        except FitSourceError as exc:
+            source_error = exc
+        if source_error is not None:  # raised outside the except block: no exception context
+            _emit_error(source_error.message, err_code=source_error.code)
             raise typer.Exit(code=EXIT_USAGE)
+        snapshot, rows_used, rows_total = fitted.snapshot, fitted.rows_used, fitted.rows_total
         fit_warnings = [
             warning_record(w.code, column=w.column, detail=w.detail)
             for w in snapshot_joint_warnings(snapshot, contingency_top_k=cell_cap)
         ]
     else:
+        # DP mode reads the literal lexemes (see dp_read_kwargs above).
+        read_failed = False
+        try:
+            with strict_csv():
+                df = read_fit_csv(source, **dp_read_kwargs)
+        except Exception:
+            read_failed = True
+        if read_failed:
+            _unreadable()
+        rows_used = rows_total = len(df)
         # The name checks ran on the header. A file replaced between the two
         # reads would reach the typed frame with names nobody checked.
         if list(df.columns) != dp_header:
@@ -841,7 +741,7 @@ def fit(
             "source": str(source),
             "output": str(out_path),
             "row_count": snapshot["row_count"],
-            "rows_used": len(df),
+            "rows_used": rows_used,
             "rows_total": rows_total,
             "columns": {name: entry["kind"] for name, entry in snapshot["columns"].items()},
             "joints": [j["columns"] for j in snapshot["joints"]],
@@ -864,7 +764,7 @@ def fit(
         f"{n} ({e['kind']}{f', {null_rates[n]:.1%} null' if null_rates.get(n) else ''})"
         for n, e in snapshot["columns"].items()
     )
-    state.console.print(f"  fitted on {len(df):,} of {rows_total:,} rows; columns: {kinds}")
+    state.console.print(f"  fitted on {rows_used:,} of {rows_total:,} rows; columns: {kinds}")
     if snapshot["joints"]:
         pairs = ", ".join("x".join(j["columns"]) for j in snapshot["joints"])
         state.console.print(f"  joints captured: {pairs}")
