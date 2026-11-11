@@ -1,4 +1,4 @@
-"""The record store: `put`, `get` and `resolve` over content-addressed object files.
+"""The record store: `put`, `get`, `resolve` and the ref entry points over content-addressed object files.
 
 The shape is git's object store: immutable objects named by their content hash under a two-hex
 fan-out (`objects/ab/<62 hex>.json`), written to a temp file and moved into place without ever
@@ -46,13 +46,15 @@ from decoy.cli.library._paths import (
     TMP,
     check_root_budget,
     is_project_folder,
+    record_digest,
 )
+from decoy.cli.library._refs import read_ref, set_ref
 
 __all__ = ["Library", "PutResult", "open_library"]
 
 _PREFIX = "sha256:"
 _HEX = frozenset("0123456789abcdef")
-_DIGEST_CHARS = 64
+_DIGEST_CHARS = 64  # a full id; `record_digest` checks one
 _MIN_PREFIX = 8  # as git allows abbreviated object names
 _SUFFIX = ".json"
 
@@ -70,12 +72,6 @@ class PutResult:
     warnings: tuple[LayoutWarning, ...] = ()
 
 
-def _digest(record_id: str) -> str | None:
-    """The 64 hex digits of a full record id, or None when it is not one (no path is built)."""
-    digest = record_id.removeprefix(_PREFIX) if record_id.startswith(_PREFIX) else ""
-    return digest if len(digest) == _DIGEST_CHARS and set(digest) <= _HEX else None
-
-
 class Library:
     """One library root. Build it with `open_library`; setup runs once, on the first `put`."""
 
@@ -91,14 +87,16 @@ class Library:
 
     def put(self, envelope: records.RecordEnvelope) -> PutResult:
         """Store a built envelope; storing it again is success. Raises `LibraryError`."""
-        digest = _digest(envelope.id) if isinstance(envelope, records.RecordEnvelope) else None
+        digest = (
+            record_digest(envelope.id) if isinstance(envelope, records.RecordEnvelope) else None
+        )
         if digest is None:
             raise LibraryError(RECORD_INVALID)
         for link in envelope.links:
-            target = _digest(link.id)
+            target = record_digest(link.id)
             if target is None or not self._object(target).is_file():
                 raise LibraryError(RECORD_LINK_MISSING)
-        warnings = self._prepare()
+        warnings = self.prepare()
         data = records.encode(envelope)
         folder = self._objects / digest[:2]
         ensure_private_dir(folder)
@@ -116,7 +114,7 @@ class Library:
         envelope, an `OpaqueRecord` for a kind this version does not know, or
         `RecordNeedsNewer`. This is the one library read (G-ONE-SCAN-READER exempts this file).
         """
-        digest = _digest(record_id)
+        digest = record_digest(record_id)
         data = None if digest is None else read_file(self._object(digest))
         if data is None:
             raise LibraryError(RECORD_NOT_FOUND)
@@ -157,11 +155,27 @@ class Library:
                 for name in names
                 if name.endswith(_SUFFIX)
                 and name.startswith(rest)
-                and _digest(f"{_PREFIX}{digest[:2]}{name.removesuffix(_SUFFIX)}") is not None
+                and record_digest(f"{_PREFIX}{digest[:2]}{name.removesuffix(_SUFFIX)}") is not None
             )
         )
 
-    def _prepare(self) -> tuple[LayoutWarning, ...]:
+    @property
+    def library_dir(self) -> Path:
+        return self._library
+
+    @property
+    def tmp_dir(self) -> Path:
+        return self._tmp
+
+    def set_ref(self, kind: str, name: str, record_id: str) -> None:
+        """Point `refs/<kind>/<name>` at a stored record, under the library lock (plan 4.5)."""
+        set_ref(self, kind, name, record_id)
+
+    def read_ref(self, kind: str, name: str) -> str | None:
+        """The record id `refs/<kind>/<name>` holds, or None when the ref is not set."""
+        return read_ref(self, kind, name)
+
+    def prepare(self) -> tuple[LayoutWarning, ...]:
         """Make the root, its git files, `library/`, `tmp/`, `LAYOUT` and `objects/`, once."""
         if self._ready:
             return ()

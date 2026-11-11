@@ -30,6 +30,7 @@ __all__ = [
     "ENV_VAR",
     "GITATTRIBUTES",
     "GITATTRIBUTES_TEXT",
+    "INDEX_FILE",
     "LAYOUT_FILE",
     "LAYOUT_VERSION",
     "LIBRARY",
@@ -37,6 +38,7 @@ __all__ = [
     "MAX_ROOT_CHARS",
     "OBJECTS",
     "OFF",
+    "POLICY_FILE",
     "QUARANTINE",
     "REFS",
     "SCRATCH",
@@ -44,6 +46,7 @@ __all__ = [
     "LibraryRoot",
     "check_root_budget",
     "is_project_folder",
+    "record_digest",
     "resolve_root",
 ]
 
@@ -55,6 +58,10 @@ QUARANTINE = "quarantine"
 LOGS = "logs"
 SCRATCH = "scratch"
 LAYOUT_FILE = "LAYOUT"
+# The rebuildable index (L1c); until then it holds only the library lock (plan L1b behavior).
+INDEX_FILE = "index.sqlite"
+# The optional retention policy beside `library/` (plan 4.7).
+POLICY_FILE = "library.yaml"
 LAYOUT_VERSION = 1
 GITATTRIBUTES = ".gitattributes"
 # Records are hashed after parsing, but git must still never rewrite their line endings.
@@ -110,3 +117,15 @@ def check_root_budget(root: Path) -> None:
 def is_project_folder(root: Path) -> bool:
     """A root named `.decoy` sits in a project work tree and gets the git files."""
     return root.name == DECOY_DIR
+
+
+_ID_PREFIX = "sha256:"
+_HEX = frozenset("0123456789abcdef")
+_DIGEST_CHARS = 64
+
+
+def record_digest(record_id: str) -> str | None:
+    """The 64 hex digits of a full record id, or None when it is not one (so no path is built
+    from it). Object files are named from these digits."""
+    digest = record_id.removeprefix(_ID_PREFIX) if record_id.startswith(_ID_PREFIX) else ""
+    return digest if len(digest) == _DIGEST_CHARS and set(digest) <= _HEX else None
