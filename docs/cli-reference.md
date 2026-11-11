@@ -403,6 +403,7 @@ $ decoy fit [OPTIONS] SOURCE
 * `--dp-text TEXT`: Declare COL as a DP categorical text carrier (repeatable). Requires --epsilon.
 * `--numeric-bins INTEGER`: Bin count per DP numeric column (engine default if omitted). Requires --epsilon.
 * `--dp-allow-omit`: Allow the DP release to omit source columns nobody declared with --dp-number/--dp-flag/--dp-text (default: omission is a usage error listing the columns). Requires --epsilon.
+* `--fanout COLUMN`: Record how many rows each key of COLUMN has (repeatable): the child-side key of a foreign key. A generate reference column with `distribution: fitted` then gives each generated parent about as many children as the source parents had. Counts only, never a key value. Not supported with --epsilon.
 * `--include-values`: Keep real values of sensitive columns in the snapshot. The file then holds real data. Not supported with --epsilon.
 * `--json`: Emit a structured JSON result on stdout.
 * `-q, --quiet`: Suppress stdout. Exit code carries the result.
@@ -433,6 +434,12 @@ Examples:
     `fit.max_rows` setting in settings.json, default 1,000,000. A file at
     or under the limit uses every row. The summary and --json say how many
     rows were used out of how many.
+
+  decoy fit visits.csv --fanout patient_id
+    Record how many visits each patient_id has (counts only). A reference
+    column with `distribution: fitted` and this snapshot then gives each
+    generated patient a visit count drawn from that shape. Not supported
+    with --epsilon.
 
   decoy fit customers.csv --epsilon 1.0 --delta 1e-6 \
       --dp-number amount:0:500 --dp-text state --dp-flag is_active
@@ -1812,4 +1819,3 @@ Examples:
 Exit codes: 0 clean; 1 invalid input or validation errors; 2 blocking warnings;
 3 runtime failure; 4 findings; 5 capacity refusal. See docs/ci-contracts.md.
 Decoy never uploads or comments; uploads belong to your CI workflow.
-

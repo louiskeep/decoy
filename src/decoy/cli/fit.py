@@ -85,6 +85,12 @@ Examples:
     or under the limit uses every row. The summary and --json say how many
     rows were used out of how many.
 
+  decoy fit visits.csv --fanout patient_id
+    Record how many visits each patient_id has (counts only). A reference
+    column with `distribution: fitted` and this snapshot then gives each
+    generated patient a visit count drawn from that shape. Not supported
+    with --epsilon.
+
   decoy fit customers.csv --epsilon 1.0 --delta 1e-6 \\
       --dp-number amount:0:500 --dp-text state --dp-flag is_active
     Differentially private release (dps-marginal/v3), certified installs
@@ -337,6 +343,18 @@ def fit(
             "listing the columns). Requires --epsilon."
         ),
     ),
+    fanout: list[str] = typer.Option(
+        [],
+        "--fanout",
+        metavar="COLUMN",
+        help=(
+            "Record how many rows each key of COLUMN has (repeatable): the child-side "
+            "key of a foreign key. A generate reference column with `distribution: "
+            "fitted` then gives each generated parent about as many children as the "
+            "source parents had. Counts only, never a key value. Not supported with "
+            "--epsilon."
+        ),
+    ),
     include_values: bool = typer.Option(
         False,
         "--include-values",
@@ -444,6 +462,7 @@ def fit(
         _emit_error(exc.message, err_code=exc.code)
         raise typer.Exit(code=EXIT_USAGE)
 
+    fanout_names = list(dict.fromkeys(fanout))
     has_carrier_decls = bool(dp_number or dp_flag or dp_text)
     delta_given = delta is not None
     numeric_bins_given = numeric_bins is not None
@@ -473,6 +492,12 @@ def fit(
                     "under its own budget rules and never samples. Drop --rows or omit "
                     "--epsilon.",
                     code="dp_mode_rows_unsupported",
+                )
+            if fanout_names:
+                raise _FitUsageError(
+                    "--fanout with --epsilon is not supported: a DP release carries no "
+                    "per-key counts. Drop --fanout or omit --epsilon.",
+                    code="dp_mode_fanout_unsupported",
                 )
             if include_values:
                 raise _FitUsageError(
@@ -655,6 +680,7 @@ def fit(
                 joint_pairs=joint_pairs,
                 include_values=include_values,
                 contingency_top_k=cell_cap,
+                fanout_columns=fanout_names,
             )
         except FitSourceError as exc:
             source_error = exc
@@ -745,6 +771,7 @@ def fit(
             "rows_total": rows_total,
             "columns": {name: entry["kind"] for name, entry in snapshot["columns"].items()},
             "joints": [j["columns"] for j in snapshot["joints"]],
+            "fanout_columns": fanout_names,
             "null_rates": null_rates,
             "warnings": [{k: r[k] for k in ("code", "message", "detail")} for r in fit_warnings],
         }
@@ -765,6 +792,19 @@ def fit(
         for n, e in snapshot["columns"].items()
     )
     state.console.print(f"  fitted on {rows_used:,} of {rows_total:,} rows; columns: {kinds}")
+    for name in fanout_names:
+        block = snapshot["columns"][name]["fanout"]
+        top = max((degree for degree, _ in block["degrees"]), default=0)
+        state.console.print(
+            f"  fan-out kept for {name}: {block['keys']} keys, up to {top} rows per key",
+            markup=False,
+        )
+    if fanout_names:
+        state.console.print(
+            " ",
+            hint("hint:"),
+            "use `distribution: fitted` on the reference column that points at the parent.",
+        )
     if snapshot["joints"]:
         pairs = ", ".join("x".join(j["columns"]) for j in snapshot["joints"])
         state.console.print(f"  joints captured: {pairs}")
