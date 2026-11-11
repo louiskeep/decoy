@@ -34,10 +34,14 @@ from decoy.cli._token_vault import LocalTokenVault, TokenVaultError, iter_tokeni
 from decoy.cli._yaml_errors import sanitize_yaml_error
 from decoy.cli.exit_codes import EXIT_RUNTIME, EXIT_USAGE
 from decoy.cli.io import (
+    LayoutError,
+    RunLayout,
     TargetFormatError,
     check_output_path,
     format_for_path,
     input_format,
+    mint_invocation_id,
+    open_run_layout,
     write_private_table,
 )
 from decoy.ui.output import OutputMode, emit_json, setup_output
@@ -330,8 +334,12 @@ def tokenize(
     vault_preexisted = vault.exists()
     token_vault: LocalTokenVault | None = None
     committed = False
+    layout: RunLayout | None = None
+    ok = False
     try:
         with spinner(state, "Tokenizing..."):
+            # The claim is checked before any source is read.
+            layout = open_run_layout(config, config_dict, mint_invocation_id())
             sources = _load_sources_from_config(config_dict, config.parent)
             instance_locale = (config_dict.get("global_settings") or {}).get("default_locale")
             # The CLI admits the secret (an owner-only `file:` is checked on its open
@@ -339,6 +347,9 @@ def tokenize(
             # ref itself.
             with _mask_secret.admitted_key_provider(config_dict) as key_provider:
                 token_vault = LocalTokenVault(vault, create=True)
+                # Sent only when set, so an engine without the keyword still runs a config without it.
+                quarantine_path = layout.place_quarantine(config_dict)
+                quarantine_kwargs = {"quarantine_path": quarantine_path} if quarantine_path else {}
                 result = run_pipeline(
                     resolved_source_config(config_dict, config.parent),
                     sources,
@@ -347,6 +358,7 @@ def tokenize(
                     token_vault_writer=token_vault,
                     key_provider=key_provider,
                     base_dir=config.parent,
+                    **quarantine_kwargs,
                 )
             vault_count = token_vault.count()
             row_count = sum(len(tbl) for tbl in result.outputs.values())
@@ -356,7 +368,8 @@ def tokenize(
             # for the finally's cleanup.
             token_vault.commit()
             committed = True
-            _write_mask_outputs(config_dict, result, config.parent)
+            _write_mask_outputs(config_dict, result, layout)
+            ok = True
     except TokenVaultError as exc:
         _emit_error(f"{exc.code}: {exc.message}")
         raise typer.Exit(code=EXIT_USAGE)
@@ -364,7 +377,7 @@ def tokenize(
         # A fixable operator problem; dispatched on the code before the classes below.
         _emit_error(_mask_secret_guidance.secret_error_text(exc, _mask_secret_guidance.TOKENIZE))
         raise typer.Exit(code=EXIT_USAGE)
-    except (PlanCompileError, ExecutionError, ConfigError, TargetFormatError) as exc:
+    except (PlanCompileError, ExecutionError, ConfigError, TargetFormatError, LayoutError) as exc:
         _emit_error(f"{getattr(exc, 'code', type(exc).__name__)}: {getattr(exc, 'message', exc)}")
         raise typer.Exit(code=EXIT_USAGE)
     except AtomicWriteError as exc:
@@ -391,6 +404,8 @@ def tokenize(
             )
         raise typer.Exit(code=EXIT_RUNTIME) from exc
     finally:
+        if layout is not None and not ok:
+            layout.abandon()
         if token_vault is not None:
             token_vault.close()
         # LocalTokenVault(create=True) writes the file + schema up front, so a
@@ -402,6 +417,12 @@ def tokenize(
         if not committed and not vault_preexisted and vault.exists():
             vault.unlink(missing_ok=True)
 
+    if layout is not None:
+        for item in layout.commit_latest():
+            if state.mode is not OutputMode.quiet:
+                state.err_console.print(
+                    warn("warning:"), f"{item.code}: {item.message}", markup=False
+                )
     columns = [{"table": t, "column": c, "namespace": ns} for (t, c, ns) in tok_cols]
     if state.mode is OutputMode.json:
         emit_json(

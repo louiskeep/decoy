@@ -65,6 +65,7 @@ from __future__ import annotations
 
 import hashlib
 import json as _json
+from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -168,8 +169,14 @@ def build_manifest(
     warnings: list[str] | None = None,
     timings: Any = None,
     engine_warnings: Any = None,
+    run_id: str | None = None,
+    output_paths: Mapping[str, Path] | None = None,
 ) -> dict[str, Any]:
     """Build an evidence manifest dict for a completed local run.
+
+    `run_id` is the command's invocation id (it names the run folder); a new one is made when
+    absent. `output_paths` maps a table to the file its writer published; such a target is
+    fingerprinted and recorded at that path (a run folder file is absolute), others as typed.
 
     The manifest records:
       - versions, run metadata, pipeline fingerprint
@@ -229,7 +236,7 @@ def build_manifest(
         tgt_path_str = tgt.get("path")
         if not tgt_path_str:
             continue
-        tgt_path = Path(tgt_path_str)
+        tgt_path = (output_paths or {}).get(table_name) or Path(tgt_path_str)
         entry: dict[str, Any] = {"path": str(tgt_path)}
         entry.update(_format_keys(table_name, tgt))
         if tgt_path.exists():
@@ -306,7 +313,7 @@ def build_manifest(
     manifest: dict[str, Any] = {
         "schema_version": _SCHEMA_VERSION,
         "producer": "decoy-cli",
-        "run_id": str(uuid4()),
+        "run_id": run_id if run_id is not None else str(uuid4()),
         "run_timestamp": datetime.now(tz=timezone.utc).isoformat(),
         "cli_version": cli_version,
         "engine_version": engine_version,

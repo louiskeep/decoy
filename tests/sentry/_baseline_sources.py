@@ -170,6 +170,26 @@ SOURCES: tuple[Source, ...] = (
         ),
     ),
     Source(
+        "output-placement-allow",
+        "tests/sentry/io_policy/test_output_placement.py",
+        InCode(
+            "tests/sentry/io_policy/test_output_placement.py",
+            "ALLOWLIST",
+            key=lambda e: f"{e.file}::{e.function}",
+            reason=lambda e: e.reason,
+        ),
+    ),
+    Source(
+        "output-name-allow",
+        "tests/sentry/io_policy/test_output_placement.py",
+        InCode(
+            "tests/sentry/io_policy/test_output_placement.py",
+            "NAME_ALLOWLIST",
+            key=lambda e: f"{e.file}::{e.function}",
+            reason=lambda e: e.reason,
+        ),
+    ),
+    Source(
         "private-file-sinks",
         "tests/sentry/io_policy/test_private_files.py",
         InCode(

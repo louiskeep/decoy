@@ -91,7 +91,7 @@ def _fail_directory_fsync(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def _assert_failed_clean(result, root: Path, vault: Path) -> None:
-    assert not (root / "out.csv").exists(), "masked output was published without its vault"
+    assert not list(root.rglob("out.csv")), "masked output was published without its vault"
     assert result.exit_code == EXIT_RUNTIME, result.output
     flat = " ".join(result.output.split())
     assert " ".join(_vault_failed_text().split()) in flat

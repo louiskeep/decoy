@@ -13,6 +13,7 @@ from pathlib import Path
 import pyarrow as pa
 import pytest
 
+from decoy.cli.io._layout import RunLayout
 from decoy.cli.io._targets import _csv_frame, write_chunked_output, write_table
 
 _BIG = 2**64 - 1
@@ -75,6 +76,12 @@ def test_whole_table_write_keeps_uint64_above_int64_exact(tmp_path: Path) -> Non
 def test_chunked_write_prints_nullable_integers_without_a_decimal(tmp_path: Path) -> None:
     out = tmp_path / "t.csv"
     table = _table()
-    write_chunked_output(iter([table.slice(0, 2), table.slice(2)]), "csv", out, empty_schema=None)
+    write_chunked_output(
+        iter([table.slice(0, 2), table.slice(2)]),
+        "csv",
+        str(out),
+        RunLayout.fixed(tmp_path),
+        empty_schema=None,
+    )
     assert _cells(out, "i64") == ["23", "", "-7"]
     assert _cells(out, "u64") == [str(_BIG), "", str(2**63 + 1)]

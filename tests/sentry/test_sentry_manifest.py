@@ -26,6 +26,7 @@ SENTRIES = (
     "tests/sentry/test_bash32_compat.py",
     "tests/sentry/io_policy/test_layout_errors.py",
     "tests/sentry/io_policy/test_pipeline_argument.py",
+    "tests/sentry/io_policy/test_output_placement.py",
     "tests/sentry/io_policy/test_private_files.py",
     "tests/sentry/io_policy/test_target_writes.py",
     "tests/sentry/cli_text/test_no_traceback_escape.py",

@@ -19,6 +19,7 @@ from typer.testing import CliRunner
 from decoy import _atomic
 from decoy.__main__ import app
 from decoy.cli.exit_codes import EXIT_USAGE
+from tests.run_outputs import latest_output
 
 runner = CliRunner()
 
@@ -107,7 +108,7 @@ def test_csv_scaffold_writes_snapshot_and_config_that_run_from_the_parent(
     run = runner.invoke(app, ["run", "gen/pipeline.yaml"])
 
     assert run.exit_code == 0, run.output
-    out = pd.read_csv(tmp_path / "gen" / "people.synthetic.csv")
+    out = pd.read_csv(latest_output(tmp_path / "gen", "people.synthetic.csv"))
     assert list(out.columns) == ["age", "score"] and len(out) == 120
 
 

@@ -31,7 +31,7 @@ import pyarrow as pa
 from decoy._atomic import staged_local_target, staged_private_target
 from decoy.cli._sources import resolve_path
 from decoy.cli.io._compression import csv_compression, is_archive_csv, split_compression
-from decoy.cli.io._layout import owning_run, placed_path, same_path
+from decoy.cli.io._layout import RunLayout, owning_run, placed_path, same_path
 
 if TYPE_CHECKING:
     import pandas as pd
@@ -433,12 +433,12 @@ def write_private_table(
 
 
 def write_targets(
-    config_dict: dict, outputs: Mapping[str, pa.Table], base_dir: Path
+    config_dict: dict, outputs: Mapping[str, pa.Table], layout: RunLayout
 ) -> dict[str, Path]:
     """Write each declared file target from `outputs`, by its declared format.
 
     Callers run `check_target_formats` first so a contradiction is refused before the
-    first table is written; this resolves each entry as it iterates. Returns table name to
+    first table is written; `layout` places each entry as it iterates. Returns table name to
     path for the files actually published: a path is added only after its write returns.
     """
     published: dict[str, Path] = {}
@@ -455,7 +455,7 @@ def write_targets(
         if table is None:
             continue
         fmt = resolve_target_format(str(table_name), entry)
-        path = resolve_path(raw_path, base_dir)
+        path = layout.place_target(raw_path)
         path.parent.mkdir(parents=True, exist_ok=True)
         write_table(table, fmt, path, entry.get("layout"))
         published[str(table_name)] = path
@@ -465,11 +465,14 @@ def write_targets(
 def write_chunked_output(
     masked_iter: Iterable[pa.Table],
     fmt: str,
-    out_path: Path,
+    raw_path: str,
+    layout: RunLayout,
     *,
     empty_schema: Callable[[], pa.Schema] | None,
 ) -> Path | None:
-    """Stream masked chunks to `out_path` in `fmt`. The only chunked writer in the CLI.
+    """Stream masked chunks to the placed `raw_path` in `fmt`. The only chunked writer in the CLI.
+
+    `layout` places the declared path (a run folder for a relative one).
 
     The chunks go to a staged temp beside `out_path`, published only after the last one, so
     a failure after chunk one keeps the old output. The first chunk is read before staging:
@@ -478,6 +481,7 @@ def write_chunked_output(
     """
     import pyarrow.parquet as pq
 
+    out_path = layout.place_target(raw_path)
     if fmt not in ("csv", "parquet") or is_archive_csv(fmt, out_path):
         raise TargetFormatError(STREAMING_UNSUPPORTED, _STREAMING_REFUSAL)
     chunks = iter(masked_iter)

@@ -1,8 +1,10 @@
 """Run folders under `<project>/out/<name>/<run-id>/`: the run-id rule and path placement.
 
-One place owns what a run id looks like (`is_run_id`), how a file is matched to the run
-folder that holds it (`owning_run`), and how a declared relative path is placed inside a
-run folder (`placed_path`). Writers and readers both go through these.
+`RunLayout` is the one builder of output paths: it opens the run folder, places each declared
+target and quarantine path inside it, and moves `latest` after a clean run. One place owns what
+a run id looks like (`is_run_id`), how a file is matched to the run folder that holds it
+(`owning_run`), and how a declared relative path is placed inside a run folder (`placed_path`).
+Writers and readers both go through these.
 """
 
 from __future__ import annotations
@@ -16,10 +18,19 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path, PurePosixPath, PureWindowsPath
 
-from decoy._atomic import AtomicWriteError, WriteMode, write_atomic, write_local_target
+from decoy._atomic import (
+    AtomicWriteError,
+    WriteMode,
+    replace_symlink,
+    write_atomic,
+    write_local_target,
+)
 from decoy._private_file import PRIVATE_EXISTS, PrivateFileError, create_private_directory
 from decoy.cli.io._layout_errors import (
     GITIGNORE_WRITE_FAILED,
+    LATEST_INVALID,
+    LATEST_LINK_FAILED,
+    LATEST_WRITE_FAILED,
     OUTPUT_PATH_ESCAPES,
     PATH_TOO_LONG,
     PIPELINE_NAME_COLLISION,
@@ -364,3 +375,193 @@ def create_run_folder(folder: Path, started: datetime, invocation_id: str) -> Ru
             continue
         return RunFolder(folder / run_id, run_id)
     raise PrivateFileError(PRIVATE_EXISTS)
+
+
+# --- the run layout ----------------------------------------------------------------------
+
+_LATEST_FILE = "LATEST"
+_LATEST_LINK = "latest"
+
+
+def mint_invocation_id() -> str:
+    """A new invocation id (UUID4 text). Called once per command, at its entry.
+
+    The run folder name, the evidence `run_id` and later run records all carry this one value.
+    """
+    return str(uuid.uuid4())
+
+
+class RunLayout:
+    """Where one command writes its files: a run folder, or a fixed base folder.
+
+    `RunLayout.open` makes `out/<name>/<run-id>/` (claim, `.gitignore`, private folder) and
+    `RunLayout.fixed(base)` places relative paths against `base` as the pre-layout code did
+    (`demo`, `mask()`): no claim, no run id, no `latest`. `place_target` and
+    `place_quarantine` are the only way a command turns a declared path into a file path.
+    """
+
+    def __init__(
+        self,
+        base: Path,
+        *,
+        run: RunFolder | None = None,
+        pipeline_dir: Path | None = None,
+        warnings: tuple[LayoutWarning, ...] = (),
+    ) -> None:
+        self._base = base
+        self._run = run
+        self._pipeline_dir = pipeline_dir
+        self.warnings = warnings
+
+    @classmethod
+    def fixed(cls, base: Path) -> RunLayout:
+        """A layout with no run folder: relative paths resolve against `base`."""
+        return cls(base)
+
+    @classmethod
+    def open(
+        cls,
+        root: Path,
+        name: PipelineName,
+        invocation_id: str,
+        started: datetime | None = None,
+    ) -> RunLayout:
+        """Make the run folder for pipeline `name` in project `root` (plan 3.6).
+
+        Runs after the gate passes and before the first write: `out/` and its `.gitignore`,
+        the claim, then `out/<name>/<run-id>/` (0700). A claim naming another YAML is a
+        collision. Raises `LayoutError`, `AtomicWriteError` or `PrivateFileError`.
+        """
+        out, warnings = prepare_out(root)
+        folder = name_dir(out, name.name)
+        other = write_claim(folder, name.yaml_rel)
+        if other is not None:
+            raise PIPELINE_NAME_COLLISION.error(
+                name=name.name,
+                other=other or "unreadable claim",
+                claim=f"out/{name.name}/{_CLAIM_NAME}",
+            )
+        run = create_run_folder(folder, started or datetime.now(timezone.utc), invocation_id)
+        return cls(root, run=run, pipeline_dir=folder, warnings=warnings)
+
+    @property
+    def run(self) -> RunFolder | None:
+        """The run folder, or None for a fixed layout."""
+        return self._run
+
+    @property
+    def base(self) -> Path:
+        """The folder relative paths resolve against: the run folder, or the fixed base."""
+        return self._run.path if self._run is not None else self._base
+
+    def place_target(self, raw: str) -> Path:
+        """The file path for a declared target path.
+
+        Absolute paths stay. In a run folder a relative path lands inside it and must name a
+        file (`layout.output_path_escapes` otherwise). A fixed layout resolves it against its
+        base. Raises `LayoutError`.
+        """
+        from decoy.cli._sources import resolve_path
+
+        if self._run is None or Path(raw).is_absolute():
+            return resolve_path(raw, self._base)
+        if self._pipeline_dir is not None:
+            check_path_budget(self._pipeline_dir, raw)
+        placed = placed_path(self._run, raw)
+        if placed is None:
+            raise OUTPUT_PATH_ESCAPES.error(path=raw, base=self._run.path)
+        return placed
+
+    def place_quarantine(self, config_dict: dict) -> str | None:
+        """The `run_pipeline(quarantine_path=...)` value: the placed quarantine file, when on.
+
+        None unless quarantine is enabled and names an output path; the engine then keeps its
+        own rule. The engine applies the path after it hashes the config, so the plan hash
+        matches the path as declared and the caller's dict is never edited.
+        """
+        quarantine = config_dict.get("quarantine")
+        if not isinstance(quarantine, dict) or not quarantine.get("enabled"):
+            return None
+        raw = quarantine.get("output_path")
+        if not isinstance(raw, str):
+            return None
+        return str(self.place_target(raw))
+
+    def commit_latest(self) -> tuple[LayoutWarning, ...]:
+        """Point `LATEST` and `latest` at this run, after a clean (exit 0) run.
+
+        Moves nothing when `LATEST` already names a later run id. An invalid `LATEST` is
+        treated as absent and warned. A failure here never changes the run's outcome: it is
+        returned as a warning.
+        """
+        if self._run is None or self._pipeline_dir is None:
+            return ()
+        folder, run_id = self._pipeline_dir, self._run.run_id
+        warnings: list[LayoutWarning] = []
+        current = _read_latest(folder)
+        if current is not None and not is_run_id(current):
+            warnings.append(LATEST_INVALID.warning(path=folder))
+        elif current is not None and current > run_id:
+            return ()
+        try:
+            write_atomic(folder, _LATEST_FILE, f"{run_id}\n".encode(), WriteMode.REPLACE)
+        except AtomicWriteError:
+            return (*warnings, LATEST_WRITE_FAILED.warning(path=folder))
+        if os.name == "posix":
+            try:
+                replace_symlink(folder / _LATEST_LINK, run_id)
+            except (AtomicWriteError, OSError):
+                warnings.append(LATEST_LINK_FAILED.warning(path=folder))
+        return tuple(warnings)
+
+    def abandon(self) -> None:
+        """Remove the run folder when it holds nothing (a run that failed before any write)."""
+        if self._run is not None:
+            try:
+                self._run.path.rmdir()
+            except OSError:
+                pass
+
+
+def _read_latest(folder: Path) -> str | None:
+    try:
+        raw = (folder / _LATEST_FILE).read_bytes()[:_CLAIM_MAX_BYTES]
+    except OSError:
+        return None
+    return raw.decode("utf-8", errors="replace").strip() or None
+
+
+def has_placed_output(config_dict: dict) -> bool:
+    """True when the config has a relative local file target or a relative enabled quarantine path.
+
+    Only such a config gets an `out/<name>/` folder and a claim (plan 3.5).
+    """
+    targets = config_dict.get("targets")
+    entries = (
+        [e for e in targets.values() if isinstance(e, dict)] if isinstance(targets, dict) else []
+    )
+    paths = [e.get("path") for e in entries if e.get("type", "file") == "file"]
+    quarantine = config_dict.get("quarantine")
+    if isinstance(quarantine, dict) and quarantine.get("enabled"):
+        paths.append(quarantine.get("output_path"))
+    return any(
+        isinstance(p, str) and p and not Path(p).is_absolute() and "://" not in p for p in paths
+    )
+
+
+def open_run_layout(
+    config: Path, config_dict: dict, invocation_id: str, *, project: Path | None = None
+) -> RunLayout:
+    """The layout for a pipeline YAML: a run folder when it has a placed output, else fixed.
+
+    The project root is the marker folder above the YAML, or the YAML's folder when none is
+    found. Raises `LayoutError`, `AtomicWriteError` or `PrivateFileError`.
+    """
+    from decoy.cli.io._project import find_project
+
+    yaml = config.resolve()
+    if not has_placed_output(config_dict):
+        return RunLayout.fixed(yaml.parent)
+    root = find_project(yaml.parent, project).root
+    name = pipeline_name_for(root, yaml, config_dict.get("name"))
+    return RunLayout.open(root, name, invocation_id)

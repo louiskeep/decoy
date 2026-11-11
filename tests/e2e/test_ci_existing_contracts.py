@@ -20,6 +20,7 @@ from tests.ci_support import (
     write,
     write_clean_pipeline,
 )
+from tests.run_outputs import latest_output
 
 
 def _repo(tmp_path: Path) -> Path:
@@ -98,7 +99,8 @@ def test_report_verify_output_and_exit_are_unchanged(tmp_path: Path) -> None:
         "issues": [],
         "issue_count": 0,
     }
-    write(repo, "out/out.csv", "tampered\n")
+    placed = latest_output(repo, "out/out.csv").resolve()
+    placed.write_text("tampered\n", encoding="utf-8")
     bad = run_decoy(["report", "verify", "build/evidence.json", "--json"], repo)
     assert bad.returncode == EXIT_FINDINGS
     payload = json.loads(bad.stdout)
@@ -106,6 +108,6 @@ def test_report_verify_output_and_exit_are_unchanged(tmp_path: Path) -> None:
     (issue,) = payload["issues"]
     # The public issue strings keep their exact prose shape.
     assert issue.startswith(
-        "output fingerprint changed: out/out.csv (table 'customers') (recorded sha256:"
+        f"output fingerprint changed: {placed} (table 'customers') (recorded sha256:"
     )
     assert issue.endswith("...)")

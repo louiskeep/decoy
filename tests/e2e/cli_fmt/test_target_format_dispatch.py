@@ -357,10 +357,11 @@ def test_mask_out_override_takes_the_suffix_format(tmp_path: Path) -> None:
 
 def test_demo_writer_uses_the_rule(tmp_path: Path) -> None:
     from decoy.cli.demo import _write_mask_outputs
+    from decoy.cli.io import RunLayout
 
     config = {"targets": {"people": {"type": "file", "format": "parquet", "path": "x.dat"}}}
     outputs = {"people": pa.Table.from_pandas(_frame(), preserve_index=False)}
-    _write_mask_outputs(config, SimpleNamespace(outputs=outputs), tmp_path)
+    _write_mask_outputs(config, SimpleNamespace(outputs=outputs), RunLayout.fixed(tmp_path))
     assert (tmp_path / "x.dat").read_bytes().startswith(_PAR1)
 
     result = runner.invoke(app, ["demo", "--dir", str(tmp_path / "demo")])
