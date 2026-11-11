@@ -44,7 +44,7 @@ def scale_row_counts(raw: Any, rows: int) -> Any:
     tables = raw.get("tables") if isinstance(raw, dict) else None
     if not isinstance(tables, list):
         return raw
-    declared = [_row_count(t) for t in tables]
+    declared = [declared_rows(t) for t in tables]
     counts = [c for c in declared if c is not None]
     if not counts:
         return raw
@@ -56,7 +56,7 @@ def scale_row_counts(raw: Any, rows: int) -> Any:
     return scaled
 
 
-def _row_count(table: Any) -> int | None:
+def declared_rows(table: Any) -> int | None:
     """The declared `row_count` of a generate table; None for anything else."""
     if not isinstance(table, dict) or not table.get("generate_columns"):
         return None

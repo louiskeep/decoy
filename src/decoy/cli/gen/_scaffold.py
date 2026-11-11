@@ -61,7 +61,7 @@ def notice_for(columns: list[str], config: Path) -> str:
         f"column(s) {_quoted(columns)} hold category values from the CSV. {config} is written, "
         "but `decoy run` refuses it until you add `allow_real_categories: true` to those "
         "columns (the output may then repeat CSV values) or change their type "
-        "(decoy explain types)."
+        "(decoy explain generation)."
     )
 
 
@@ -277,7 +277,7 @@ def scaffold_generate(state: OutputState, csv: Path, out: Path, *, yes: bool) ->
             "the generated config does not validate: "
             + "; ".join(shown)
             + (f" (and {more} more)" if more else ""),
-            "replace the column with a generator type (decoy explain types) or remove it.",
+            "replace the column with a generator type (decoy explain generation) or remove it.",
         )
     if atomic_code == _atomic.ATOMIC_SYNC_FAILED:
         _fail(
