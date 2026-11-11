@@ -20,7 +20,7 @@ TOPS = ("src", "scripts", "packaging_tools")
 
 # Legacy modules over the cap: exact line count at the build base; may only shrink.
 SIZE_ALLOWLIST: dict[str, int] = {
-    "src/decoy/cli/report.py": 2352,
+    "src/decoy/cli/report.py": 2349,
     "src/decoy/cli/scan.py": 1157,
     "src/decoy/cli/preflight.py": 891,
     "src/decoy/cli/fit.py": 831,

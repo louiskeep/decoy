@@ -1,15 +1,30 @@
 """The `--evidence-out` manifest of `decoy run`."""
 
 import json as _json
+from pathlib import Path
 
 import typer
 
 from decoy import __version__ as _cli_version
 from decoy._atomic import AtomicWriteError, WriteMode, describe, write_local_target
 from decoy.cli.exit_codes import EXIT_RUNTIME
+from decoy.cli.io import LayoutError, find_project
 from decoy.cli.run._context import RunContext
 from decoy.ui.output import OutputMode
 from decoy.ui.theme import error
+
+
+def _marked_project_root(config: Path) -> Path | None:
+    """The root of the project holding the YAML when it has a marker; None otherwise.
+
+    Paths are recorded project-relative only under a marker, which a verifier can find again
+    from the manifest's folder. Without one they are recorded absolute.
+    """
+    try:
+        found = find_project(config.resolve().parent, None)
+    except LayoutError:
+        return None
+    return None if found.implicit else found.root
 
 
 def write_evidence(ctx: RunContext) -> None:
@@ -28,6 +43,7 @@ def write_evidence(ctx: RunContext) -> None:
             key_label=ctx.key_label,
             run_id=ctx.invocation_id,
             place_target=ctx.layout.place_target if ctx.layout is not None else None,
+            project_root=_marked_project_root(ctx.config),
             timings=ctx._ev_timings,
             engine_warnings=ctx._ev_engine_warnings,
         )

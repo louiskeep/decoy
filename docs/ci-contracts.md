@@ -74,14 +74,21 @@ empty; `-` (the default) writes it to stdout. Like the other `--output` flags, a
 path is the operator's deliberate choice and replaces an existing regular file. The path
 must be inside the root, its directory must already exist, and it may not be a symlink.
 When the report goes to a file, one value-free summary line is printed on stderr.
-Evidence manifests record paths as `decoy run` saw them; they are resolved the way
-`decoy report verify` resolves them (relative to the working directory), so run the check
-from the repository root. A recorded path that exists but is not a regular file is treated
-as missing and never read. An output path that cannot be resolved safely (a symlink loop, an
-over-long name, a filesystem error) is refused with one fixed line and exit 1; the path is
-never echoed. `decoy ci` never writes or touches the engine's `logs/decoy_engine.log`: the
-engine's file logging is contained for the duration of the checks because its advisories name
-user tables.
+Evidence manifests are resolved the way `decoy report verify` resolves them, by one of two
+rules. A manifest with `path_base: "project"` (written by a run in a project with a
+`decoy.yaml` marker) records paths relative to the project root; the check reads them from the
+project whose marker is above the manifest file, so it passes from any folder, and it never
+uses `DECOY_PROJECT` or the working directory. With no marker above it the check is refused
+(`ci.evidence_unreadable`). A manifest without `path_base` keeps the old rule: paths as
+recorded, relative ones from the working directory, so run that check from the repository
+root. A manifest whose `schema_version` is not exactly `cli-local-1`, whose `path_base` is
+anything but absent or `"project"`, or whose paths and fingerprints are not strings is refused
+(`ci.evidence_unreadable`); unknown extra keys are allowed. A recorded path that exists but is
+not a regular file is treated as missing and never read. An output path that cannot be
+resolved safely (a symlink loop, an over-long name, a filesystem error) is refused with one
+fixed line and exit 1; the path is never echoed. `decoy ci` never writes or touches the
+engine's `logs/decoy_engine.log`: the engine's file logging is contained for the duration of
+the checks because its advisories name user tables.
 
 ## Report: `decoy-ci-report/v1` (`--format json`)
 

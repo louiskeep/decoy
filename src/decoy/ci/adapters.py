@@ -226,7 +226,7 @@ def drift_outcome(loaded: LoadedManifest, check: DriftCheck, sink: DebugSink) ->
 def evidence_outcome(loaded: LoadedManifest, check: EvidenceCheck, sink: DebugSink) -> CheckOutcome:
     check_id = f"evidence.{check.id}"
     try:
-        from decoy.cli.evidence import verify_manifest_issues
+        from decoy.cli.evidence import ManifestError, verify_manifest_issues
 
         path = loaded.resolve(check.manifest)
         if not path.is_file():
@@ -238,7 +238,13 @@ def evidence_outcome(loaded: LoadedManifest, check: EvidenceCheck, sink: DebugSi
             return refused(check_id, "evidence", "ci.evidence_unreadable")
         if not isinstance(manifest, dict):
             return refused(check_id, "evidence", "ci.evidence_unreadable")
-        issues = verify_manifest_issues(manifest, regular_files_only=True)
+        try:
+            # A project-relative manifest reads from the marker above its own file, never the
+            # working directory or DECOY_PROJECT, so the check passes from any folder.
+            issues = verify_manifest_issues(manifest, manifest_file=path, regular_files_only=True)
+        except ManifestError as exc:
+            sink.add(check_id, exc.message)
+            return refused(check_id, "evidence", "ci.evidence_unreadable")
         for issue in issues:
             sink.add(check_id, issue.message)
         rel = loaded.repo_relative(path)

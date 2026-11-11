@@ -48,7 +48,7 @@ from decoy import _mask_secret
 from decoy._atomic import AtomicWriteError, WriteMode, describe, write_local_target
 from decoy.cli._sources import read_file, read_report_source
 from decoy.cli._yaml_errors import sanitize_yaml_error
-from decoy.cli.evidence import _render_manifest_card, verify_manifest
+from decoy.cli.evidence import ManifestError, _render_manifest_card, verify_manifest
 from decoy.cli.exit_codes import EXIT_FINDINGS, EXIT_RUNTIME, EXIT_USAGE
 from decoy.cli.io import entry_format
 from decoy.ui.output import OutputMode, OutputState, emit_json, print_traceback, setup_output
@@ -92,39 +92,24 @@ def _write_out(state: OutputState, path: Path, text: str) -> None:
 
 def _load_manifest(path: Path, state: OutputState, command: str) -> dict[str, Any]:
     """Load and parse a manifest file. Exit with EXIT_USAGE on any error."""
-    if not path.exists():
+    missing = not path.exists()
+    if missing:
         msg = f"evidence file not found: {path}"
-        if state.mode is OutputMode.json:
-            emit_json(state, {"command": command, "status": "error", "error": msg})
-        elif state.mode is not OutputMode.quiet:
-            state.err_console.print(error("error:"), msg)
-            state.err_console.print(
-                " ",
-                hint("hint:"),
-                "produce an evidence file with",
-                code("decoy run pipeline.yaml --evidence-out evidence.json"),
-            )
-        raise typer.Exit(code=EXIT_USAGE)
-
-    try:
-        raw = path.read_text(encoding="utf-8")
-        manifest = _json.loads(raw)
-    except _json.JSONDecodeError as exc:
-        msg = f"could not parse {path.name} as JSON: {exc.msg}"
-        if state.mode is OutputMode.json:
-            emit_json(state, {"command": command, "status": "error", "error": msg})
-        elif state.mode is not OutputMode.quiet:
-            state.err_console.print(error("error:"), msg)
-        raise typer.Exit(code=EXIT_USAGE)
-    except OSError as exc:
-        msg = f"could not read {path}: {exc}"
-        if state.mode is OutputMode.json:
-            emit_json(state, {"command": command, "status": "error", "error": msg})
-        elif state.mode is not OutputMode.quiet:
-            state.err_console.print(error("error:"), msg)
-        raise typer.Exit(code=EXIT_USAGE)
-
-    return manifest
+    else:
+        try:
+            return _json.loads(path.read_text(encoding="utf-8"))
+        except _json.JSONDecodeError as exc:
+            msg = f"could not parse {path.name} as JSON: {exc.msg}"
+        except OSError as exc:
+            msg = f"could not read {path}: {exc}"
+    if state.mode is OutputMode.json:
+        emit_json(state, {"command": command, "status": "error", "error": msg})
+    elif state.mode is not OutputMode.quiet:
+        state.err_console.print(error("error:"), msg)
+        if missing:
+            how = code("decoy run pipeline.yaml --evidence-out evidence.json")
+            state.err_console.print(" ", hint("hint:"), "produce an evidence file with", how)
+    raise typer.Exit(code=EXIT_USAGE)
 
 
 # ---------------------------------------------------------------------------
@@ -1466,6 +1451,9 @@ def _verify(
     verbose: bool = typer.Option(
         False, "--verbose", "-v", help="Enable debug-level CLI logs on stderr."
     ),
+    project: Path | None = typer.Option(
+        None, "--project", help="Project root for a manifest's project-relative paths."
+    ),
 ) -> None:
     """Verify a local evidence manifest's fingerprints against current files.
 
@@ -1486,8 +1474,17 @@ def _verify(
     """
     state = setup_output(json_, quiet, verbose)
     manifest = _load_manifest(evidence_file, state, "report verify")
-
-    issues = verify_manifest(manifest)
+    refusal = None
+    try:
+        issues = verify_manifest(manifest, manifest_file=evidence_file, project=project)
+    except ManifestError as exc:
+        refusal, issues = exc.message, []
+    if refusal is not None:
+        if state.mode is OutputMode.json:
+            emit_json(state, {"command": "report verify", "status": "error", "error": refusal})
+        elif state.mode is not OutputMode.quiet:
+            state.err_console.print(error("error:"), refusal)
+        raise typer.Exit(code=EXIT_USAGE)
 
     if state.mode is OutputMode.json:
         emit_json(
