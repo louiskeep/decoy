@@ -156,11 +156,12 @@ def _cli_gate_codes() -> tuple[set[str], set[str]]:
         if isinstance(node, ast.Call) and _call_name(node) == "GateFinding":
             if len(node.args) > 2 and isinstance(node.args[2], ast.Constant):
                 codes.add(node.args[2].value)
-        # The pydantic fallback: `e.get("type", "validation_error")`.
-        if isinstance(node, ast.Call) and _call_name(node) == "get" and len(node.args) == 2:
-            if isinstance(node.args[0], ast.Constant) and node.args[0].value == "type":
-                codes.update(_literals(node.args[1]))
-    gate_checks = {"_check_source_files", "_check_target_overwrite", "_check_capacity", "_check_native"}
+    gate_checks = {
+        "_check_source_files",
+        "_check_target_overwrite",
+        "_check_capacity",
+        "_check_native",
+    }
     for fn in ast.walk(_module_tree(cli_preflight)):
         if not (isinstance(fn, ast.FunctionDef) and fn.name in gate_checks):
             continue
@@ -254,7 +255,9 @@ def test_a_seeded_computed_code_site_is_reported(tmp_path: Path, shape: str) -> 
         "def g():\n    raise ExecutionError(code='literal_code', message='m')\n",
         encoding="utf-8",
     )
-    (pkg / "_seeded.py").write_text(f"def f(value):\n    {_SEEDED_SITES[shape]}\n", encoding="utf-8")
+    (pkg / "_seeded.py").write_text(
+        f"def f(value):\n    {_SEEDED_SITES[shape]}\n", encoding="utf-8"
+    )
     assert _unapproved_dynamic_sites(tmp_path / "fake_engine") == ["execution/_seeded.py"]
 
 
@@ -297,7 +300,7 @@ def test_every_pydantic_error_type_is_allowlisted() -> None:
 
 def test_every_cli_gate_code_and_preflight_template_is_allowlisted() -> None:
     codes, templates = _cli_gate_codes()
-    assert {"yaml.parse_error", "missing_extra", "validation_error", "compile.needs_profile"} <= codes
+    assert {"yaml.parse_error", "missing_extra", "compile.needs_profile"} <= codes
     assert sorted(codes - validation_codes()) == []
     assert templates, "the preflight scan found no templated check names"
     for template in templates:
@@ -364,8 +367,7 @@ def test_an_unknown_upstream_code_never_reaches_any_report_format(
 
     def _gate(*_a: object, **_k: object) -> cli_gate.GateResult:
         findings = [
-            cli_gate.GateFinding("config", "error", code, f"msg {CANARY}")
-            for code in gate_codes
+            cli_gate.GateFinding("config", "error", code, f"msg {CANARY}") for code in gate_codes
         ]
         return cli_gate.GateResult(findings, frozenset({"config"}), False)
 

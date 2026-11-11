@@ -256,7 +256,9 @@ def test_mask_data_override_keeps_dialect(tmp_path: Path, case: str) -> None:
         # validation, which refuses it on a non-csv source.
         with pytest.raises(ConfigValidationError) as exc:
             decoy.mask(config=str(cfg), data=str(pq_path))
-        assert "delimited params (delimiter) are only valid when format='csv'" in str(exc.value)
+        # Config errors are value-free: the stable reason code names the refusal.
+        assert "[source_file.csv_param_on_non_csv]" in str(exc.value)
+        assert "|" not in str(exc.value)
 
 
 def test_init_tsv_declares_delimiter(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
