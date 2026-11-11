@@ -392,6 +392,43 @@ def test_an_invalid_latest_warns_and_the_next_clean_run_repairs_it(tmp_path: Pat
 
 
 @posix_only
+def test_a_symlinked_latest_is_not_read_through(tmp_path: Path) -> None:
+    root = _project(tmp_path)
+    layout, later = _open(root, START), _open(root, START + timedelta(days=1))
+    assert layout.run is not None and later.run is not None
+    # The link names a later run, so reading through it would hold LATEST back.
+    victim = tmp_path / "victim.txt"
+    victim.write_text(f"{later.run.run_id}\n", encoding="utf-8")
+    latest = root / "out" / "orders" / "LATEST"
+    os.symlink(victim, latest)
+    warnings = layout.commit_latest()
+    assert [w.code for w in warnings] == ["layout.latest_invalid"]
+    assert not latest.is_symlink()
+    assert latest.read_text(encoding="utf-8").strip() == layout.run.run_id
+    assert victim.read_text(encoding="utf-8") == f"{later.run.run_id}\n"
+
+
+@posix_only
+def test_a_fifo_latest_is_warned_and_does_not_block(tmp_path: Path) -> None:
+    root = _project(tmp_path)
+    layout = _open(root, START)
+    latest = root / "out" / "orders" / "LATEST"
+    os.mkfifo(latest)
+    result: list[tuple] = []
+    thread = threading.Thread(target=lambda: result.append(layout.commit_latest()), daemon=True)
+    thread.start()
+    thread.join(10)
+    if thread.is_alive():
+        # Release a reader stuck on the pipe so the test run itself does not hang.
+        os.close(os.open(latest, os.O_WRONLY | os.O_NONBLOCK))
+    assert not thread.is_alive() and result, "commit_latest blocked on a FIFO LATEST"
+    (warnings,) = result
+    assert [w.code for w in warnings] == ["layout.latest_invalid"]
+    assert layout.run is not None
+    assert latest.read_text(encoding="utf-8").strip() == layout.run.run_id
+
+
+@posix_only
 def test_a_planted_latest_symlink_is_replaced_and_its_target_unchanged(tmp_path: Path) -> None:
     root = _project(tmp_path)
     layout = _open(root, START)

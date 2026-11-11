@@ -248,27 +248,34 @@ def _derived(root: Path, yaml_rel: str, stem: str) -> str:
     return f"pipeline-{digest}"
 
 
-def read_claim(out: Path, name: str) -> str | None:
-    """The YAML path `out/<name>/PIPELINE` names, or None when there is no claim."""
+def _read_small(path: Path) -> bytes | None:
+    """At most `_CLAIM_MAX_BYTES` of the regular file at `path`, else None.
+
+    None covers a missing or unreadable file and anything that is not a regular file. The open
+    does not follow a final symlink and cannot block on a FIFO, so a planted link or pipe in a
+    run's bookkeeping files is never read through.
+    """
     flags = (
         os.O_RDONLY
         | getattr(os, "O_NOFOLLOW", 0)
         | getattr(os, "O_NONBLOCK", 0)
         | getattr(os, "O_NOCTTY", 0)
     )
-    raw = b""
     try:
-        fd = os.open(out / name / _CLAIM_NAME, flags)
+        fd = os.open(path, flags)
     except OSError:
         return None
     try:
-        # A FIFO or device at the claim path is not a claim; the open above cannot block on it.
-        if stat.S_ISREG(os.fstat(fd).st_mode):
-            raw = os.read(fd, _CLAIM_MAX_BYTES)
+        return os.read(fd, _CLAIM_MAX_BYTES) if stat.S_ISREG(os.fstat(fd).st_mode) else None
     except OSError:
-        raw = b""
+        return None
     finally:
         os.close(fd)
+
+
+def read_claim(out: Path, name: str) -> str | None:
+    """The YAML path `out/<name>/PIPELINE` names, or None when there is no claim."""
+    raw = _read_small(out / name / _CLAIM_NAME) or b""
     # Only the writer's newline goes: spaces are valid at either end of a POSIX path.
     return raw.decode("utf-8", errors="replace").removesuffix("\n") or None
 
@@ -524,10 +531,12 @@ class RunLayout:
 
 
 def _read_latest(folder: Path) -> str | None:
-    try:
-        raw = (folder / _LATEST_FILE).read_bytes()[:_CLAIM_MAX_BYTES]
-    except OSError:
-        return None
+    """The run id `LATEST` names; None when absent, "" when something unreadable is there."""
+    path = folder / _LATEST_FILE
+    raw = _read_small(path)
+    if raw is None:
+        # A link, pipe or unreadable file is not absent: "" fails is_run_id, so it is warned.
+        return "" if os.path.lexists(path) else None
     return raw.decode("utf-8", errors="replace").strip() or None
 
 

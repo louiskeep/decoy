@@ -215,11 +215,11 @@ reason = "Chunked masked output keeps the old file's mode bits (OQ3)."
 
 [[row]]
 file = "cli/io/_layout.py"
-function = "read_claim"
+function = "_read_small"
 sink = "os.open"
 ordinal = 1
 disposition = "read"
-reason = "Opens a pipeline claim file read-only, non-blocking and without following links; writes nothing."
+reason = "Opens a claim or LATEST file read-only, non-blocking and without following links; writes nothing."
 
 [[row]]
 file = "cli/io/_project.py"
