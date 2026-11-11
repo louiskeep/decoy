@@ -44,6 +44,20 @@ local_path = "tests/sentry/ci_scan/test_identity.py"
 blob_sha256 = "ea864e19cd4ea0804f792520e23dec5fd181ebaae1bee8681e5cb80be97fea30"
 commit = "d9e18fa60b09beda88c86673806ca28ac698f28a"
 
+# The layout sentry helpers (LAYOUT E2). They originated in the engine; tests/sentry/layout/
+# test_vendored_files.py pins the same digests.
+[[vendored]]
+engine_path = "tests/sentry/layout/_layout.py"
+local_path = "tests/sentry/layout/_layout.py"
+blob_sha256 = "090676684a73bc90bb73240b1a3909434cd15ed8348c15bc365b7d764d94e96c"
+commit = "66d0f879174c6d3e54282645dc3bbc8da2f33b7f"
+
+[[vendored]]
+engine_path = "tests/sentry/layout/_ratchet_cases.py"
+local_path = "tests/sentry/layout/_ratchet_cases.py"
+blob_sha256 = "038d0dff5e370a8238712c365db283b9befefc40135956dc61f05930946bab00"
+commit = "66d0f879174c6d3e54282645dc3bbc8da2f33b7f"
+
 [[mirror]]
 engine_path = ".github/actions/lock-env/action.yml"
 local_path = ".github/actions/lock-env/action.yml"

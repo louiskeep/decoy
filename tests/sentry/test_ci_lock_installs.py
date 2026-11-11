@@ -498,7 +498,11 @@ def test_vendor_ledger_matches_the_copies(tmp_path: Path) -> None:
     assert shared <= vendored, (
         f"files in ci_scan missing from the ledger: {sorted(shared - vendored)}"
     )
-    assert vendored - shared == {".github/actions/setup-uv/action.yml"}, "only setup-uv besides"
+    assert vendored - shared == {
+        ".github/actions/setup-uv/action.yml",
+        "tests/sentry/layout/_layout.py",
+        "tests/sentry/layout/_ratchet_cases.py",
+    }, "only setup-uv and the layout helpers besides"
     assert len(ledger["mirror"]) == 3
     assert _vendor_findings(ledger) == []
     wrong = copy.deepcopy(ledger)

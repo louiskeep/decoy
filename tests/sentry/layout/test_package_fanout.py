@@ -1,0 +1,182 @@
+"""Sentry: no CLI package directory holds more than 25 modules, and the oversize ones only shrink.
+
+A package with dozens of loose modules has no structure a reader can learn, so the cap is
+25 direct ``*.py`` files per directory (``__init__.py`` and sub-packages are not counted).
+Packages already over the cap are frozen at their count in ``FANOUT_ALLOWLIST``: the count
+must match exactly and may only fall. The next module goes into a named sub-package from the
+"Where Things Go" map in ``CODEMAP.md``, which the map test ties to the live directory tree.
+Ported from the engine's ``tests/sentry/layout/test_package_fanout.py`` (LAYOUT E2).
+"""
+
+from __future__ import annotations
+
+from pathlib import Path
+
+import pytest
+from tests.sentry.layout import FANOUT_TERMS, direct_modules, ratchet_verdict, section
+
+ROOT = Path(__file__).resolve().parents[3]
+LIMIT = 25
+LAYOUT_HEADING = "## Where Things Go"
+TOPS = ("src/decoy", "scripts", "packaging_tools")
+
+# Frozen packages: exact direct-module count at the build base; may only shrink.
+FANOUT_ALLOWLIST: dict[str, int] = {
+    # next command: a named sub-package, src/decoy/cli/<command>/_<noun>.py.
+    "src/decoy/cli": 30,
+}
+
+
+def fanout_dirs(root: Path = ROOT) -> list[Path]:
+    """Every directory under the walked top-level folders of ``root`` that holds a module."""
+    found: set[Path] = set()
+    for top in TOPS:
+        start = root / top
+        if not start.is_dir():
+            continue
+        for d in [start, *start.rglob("*")]:
+            if d.is_dir() and "__pycache__" not in d.parts and direct_modules(d):
+                found.add(d)
+    return sorted(found)
+
+
+def rel(path: Path, root: Path = ROOT) -> str:
+    return path.relative_to(root).as_posix()
+
+
+def fanout_reason(directory: Path, allowlist: dict[str, int], root: Path = ROOT) -> str | None:
+    """The live check for one directory: its module count against the cap or its frozen entry."""
+    key = rel(directory, root)
+    return ratchet_verdict(
+        key,
+        direct_modules(directory),
+        allowlist.get(key),
+        goal=LIMIT,
+        limit=LIMIT,
+        margin=0,
+        terms=FANOUT_TERMS,
+    )
+
+
+@pytest.mark.parametrize("directory", fanout_dirs(), ids=rel)
+def test_package_fanout_within_limit(directory: Path) -> None:
+    reason = fanout_reason(directory, FANOUT_ALLOWLIST)
+    assert reason is None, reason
+
+
+def test_allowlist_entries_exist_and_are_still_over_the_limit() -> None:
+    for key, count in FANOUT_ALLOWLIST.items():
+        assert (ROOT / key).is_dir(), f"FANOUT_ALLOWLIST lists a missing directory: {key}"
+        assert count > LIMIT, f"{key}: frozen at {count}, not over {LIMIT}; delete the entry"
+
+
+def span_paths(markdown: str) -> set[str]:
+    """Repo-relative paths named in code spans of the map, without a trailing slash."""
+    spans: set[str] = set()
+    for line in markdown.splitlines():
+        if not line.startswith("|"):
+            continue
+        for chunk in line.split("`")[1::2]:
+            spans.add(chunk.removesuffix("/"))
+    return spans
+
+
+def unmapped_subpackages(frozen: list[Path], mapped: set[str], base: Path) -> list[str]:
+    """Direct sub-directories of the frozen packages that no map cell names."""
+    out = []
+    for pkg in frozen:
+        for sub in sorted(p for p in pkg.iterdir() if p.is_dir() and p.name != "__pycache__"):
+            path = sub.relative_to(base).as_posix()
+            if path not in mapped:
+                out.append(path)
+    return out
+
+
+def test_every_subpackage_of_a_frozen_package_is_in_the_map() -> None:
+    text = section((ROOT / "CODEMAP.md").read_text(encoding="utf-8"), LAYOUT_HEADING)
+    frozen = [ROOT / key for key in FANOUT_ALLOWLIST]
+    assert unmapped_subpackages(frozen, span_paths(text), ROOT) == []
+
+
+# --- meta-tests: seeded violations prove each guard sees them ----------------------------
+
+
+FROZEN = "src/decoy/frozen"
+OPEN = "src/decoy/open"
+
+
+def _plant(root: Path, package: str, count: int) -> None:
+    """A package of ``count`` empty modules plus an ``__init__.py`` under ``root``."""
+    pkg = root / package
+    pkg.mkdir(parents=True, exist_ok=True)
+    (pkg / "__init__.py").write_text("", encoding="utf-8")
+    for i in range(count):
+        (pkg / f"m{i:03}.py").write_text("", encoding="utf-8")
+
+
+def census(root: Path, allowlist: dict[str, int]) -> dict[str, str]:
+    """Run the live walk and check over a scratch tree: directory to refusal, failures only."""
+    out = {}
+    for d in fanout_dirs(root):
+        reason = fanout_reason(d, allowlist, root)
+        if reason is not None:
+            out[rel(d, root)] = reason
+    return out
+
+
+def test_direct_modules_counts_modules_only(tmp_path: Path) -> None:
+    (tmp_path / "__init__.py").write_text("", encoding="utf-8")
+    for name in ("a.py", "b.py", "c.py"):
+        (tmp_path / name).write_text("", encoding="utf-8")
+    (tmp_path / "sub").mkdir()
+    (tmp_path / "sub" / "d.py").write_text("", encoding="utf-8")
+    assert direct_modules(tmp_path) == 3
+
+
+def test_a_scratch_tree_at_its_frozen_counts_is_green(tmp_path: Path) -> None:
+    _plant(tmp_path, FROZEN, 30)
+    _plant(tmp_path, OPEN, LIMIT)
+    _plant(tmp_path, "scripts", 3)
+    _plant(tmp_path, "packaging_tools", 2)
+    walked = {rel(d, tmp_path) for d in fanout_dirs(tmp_path)}
+    assert walked == {FROZEN, OPEN, "scripts", "packaging_tools"}
+    assert census(tmp_path, {FROZEN: 30}) == {}
+
+
+def test_a_module_planted_in_a_frozen_package_is_red(tmp_path: Path) -> None:
+    _plant(tmp_path, FROZEN, 31)
+    found = census(tmp_path, {FROZEN: 30})
+    assert list(found) == [FROZEN] and "may only shrink" in found[FROZEN]
+
+
+def test_a_module_removed_from_a_frozen_package_demands_a_ratchet_down(tmp_path: Path) -> None:
+    _plant(tmp_path, FROZEN, 29)
+    found = census(tmp_path, {FROZEN: 30})
+    assert list(found) == [FROZEN] and "down to 29" in found[FROZEN]
+
+
+def test_a_26th_module_in_an_unfrozen_package_is_red(tmp_path: Path) -> None:
+    _plant(tmp_path, OPEN, LIMIT + 1)
+    found = census(tmp_path, {})
+    assert list(found) == [OPEN] and f"{LIMIT + 1} modules" in found[OPEN]
+
+
+def test_a_crowded_nested_package_and_scripts_folder_are_walked(tmp_path: Path) -> None:
+    nested = f"{OPEN}/deep/er"
+    _plant(tmp_path, nested, LIMIT + 1)
+    _plant(tmp_path, "scripts/dev", LIMIT + 1)
+    assert set(census(tmp_path, {})) == {nested, "scripts/dev"}
+
+
+def test_an_unmapped_subpackage_is_reported(tmp_path: Path) -> None:
+    (tmp_path / "pkg" / "known").mkdir(parents=True)
+    (tmp_path / "pkg" / "fresh").mkdir()
+    mapped = {"pkg/known"}
+    assert unmapped_subpackages([tmp_path / "pkg"], mapped, tmp_path) == ["pkg/fresh"]
+
+
+def test_a_real_subpackage_dropped_from_the_map_is_reported() -> None:
+    text = section((ROOT / "CODEMAP.md").read_text(encoding="utf-8"), LAYOUT_HEADING)
+    mapped = span_paths(text) - {"src/decoy/cli/gen"}
+    found = unmapped_subpackages([ROOT / key for key in FANOUT_ALLOWLIST], mapped, ROOT)
+    assert found == ["src/decoy/cli/gen"]

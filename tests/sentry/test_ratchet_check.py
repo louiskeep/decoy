@@ -13,6 +13,7 @@ import sys
 from pathlib import Path
 
 import pytest
+from tests.sentry.layout import MAX_VALUE_CASES
 
 ROOT = Path(__file__).resolve().parents[2]
 SCRIPT = ROOT / "scripts" / "dev" / "ratchet_check.py"
@@ -347,3 +348,50 @@ def test_a_merged_move_left_in_the_map_is_ignored(repo: Path) -> None:
     _write(repo, A, _moved({"m::f": _entry(), "n::g": _entry()}, {"n::g": "m::g"}))
     res = _run(repo)
     assert res.returncode == 0, res.stdout + res.stderr
+
+
+# --- numeric ``max`` entries: a head value above its base value is growth --------------------
+
+_CASES = pytest.mark.parametrize(
+    ("base_max", "head_max", "red"),
+    [c[1:] for c in MAX_VALUE_CASES],
+    ids=[c[0] for c in MAX_VALUE_CASES],
+)
+
+
+def _max_baseline(sid: str, max_value: int | None) -> str:
+    entry: dict[str, object] = {"reason": REASON}
+    if max_value is not None:
+        entry["max"] = max_value
+    return json.dumps({"sentry_id": sid, "created_in": "S0", "entries": {"m::f": entry}})
+
+
+@_CASES
+def test_numeric_max_may_not_rise(
+    repo: Path, base_max: int | None, head_max: int | None, red: bool
+) -> None:
+    _write(repo, A, _max_baseline("a", base_max))
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-q", "-m", "max")
+    _write(repo, A, _max_baseline("a", head_max))
+    res = _run(repo)
+    assert (res.returncode == 1) is red, res.stdout + res.stderr
+    if red:
+        assert "a: max raised or dropped for key(s): m::f" in res.stderr
+
+
+@_CASES
+def test_a_rename_may_not_raise_a_numeric_max(
+    repo: Path, base_max: int | None, head_max: int | None, red: bool
+) -> None:
+    _write(repo, A, _max_baseline("a", base_max))
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-q", "-m", "max")
+    renamed = "tests/sentry/baselines/r.json"
+    (repo / A).unlink()
+    _write(repo, renamed, _max_baseline("r", head_max))
+    _write(repo, REG, _registry({"r": renamed}))
+    res = _run(repo)
+    assert (res.returncode == 1) is red, res.stdout + res.stderr
+    if red:
+        assert "replacement or split of a raised or dropped max for key(s): m::f" in res.stderr

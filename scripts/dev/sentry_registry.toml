@@ -49,3 +49,11 @@ baseline = "tests/sentry/baselines/private-file-sinks.json"
 [[sentry]]
 id = "engine-reason-code-copies"
 baseline = "tests/sentry/baselines/engine-reason-code-copies.json"
+
+[[sentry]]
+id = "module-size"
+baseline = "tests/sentry/baselines/module-size.json"
+
+[[sentry]]
+id = "package-fanout"
+baseline = "tests/sentry/baselines/package-fanout.json"
