@@ -11,10 +11,11 @@ What preflight checks (honest framing)
 4. File existence:     Does each declared source file exist on disk?
 5. File readability:   Can each source file be opened for reading?
 6. Target overwrite:   Does any output target already exist (advisory)?
-7. Capacity (v1):      Out-of-core-FK memory feasibility. The build-floor
-                       estimate is advisory (warns, does not refuse); only a
-                       fan-in impossibility exits EXIT_CAPACITY. Covers the
-                       out-of-core-FK route ONLY -- see the OOM checker v1 note.
+7. Capacity (v1):      Out-of-core-FK memory feasibility and the generated-
+                       output floor. The build-floor estimate is advisory
+                       (warns, does not refuse); a fan-in impossibility and
+                       generated output that cannot fit memory exit
+                       EXIT_CAPACITY -- see the OOM checker v1 note.
 8. Native (Phase 3.1): decoy-engine-native companion health (pass/warn), plus
                        a STATIC config-shape native-eligibility possibility
                        -- not a guarantee of the resolved route at run time.
@@ -36,13 +37,17 @@ OOM checker v1 (docs/plans/2026-07-24-oom-checker-cli-v1.md): the capacity
 check is an "OOC-FK engine-gate capacity checker", NOT a whole-job OOM
 guarantee. `decoy run` fully loads every source into memory BEFORE it calls
 the engine, so an ingestion `MemoryError` or OS OOM-kill happens before this
-gate ever runs -- this check does not cover that, and does not cover the
-generate path. A "capacity: OK" here means only that no hard impossibility was
-found. The build-floor estimate is ADVISORY: when the predicted relation-build
-floor exceeds its cap, the check reports a WARNING with a recommended size and
-the job still proceeds (`--fail-on-warning` turns that warning into a nonzero
-exit). The one hard capacity refusal that exits EXIT_CAPACITY is a fan-in
-impossibility (more co-live DuckDB joiners than the budget can seat).
+gate ever runs -- this check does not cover that. A "capacity: OK" here means
+only that no hard impossibility was found. The build-floor estimate is
+ADVISORY: when the predicted relation-build floor exceeds its cap, the check
+reports a WARNING with a recommended size and the job still proceeds
+(`--fail-on-warning` turns that warning into a nonzero exit). Two hard
+capacity refusals exit EXIT_CAPACITY: a fan-in impossibility (more co-live
+DuckDB joiners than the budget can seat), and generate tables whose resident
+output cannot fit the machine's memory (`generation_budget_exceeded`, GEN-STRICT
+row 24k). A config with a non-file source skips the estimate, so a generate floor
+refusal exits 5 only at `decoy run`. A missing or unreadable source file
+fails first (exit 1), so the exit 5 needs readable sources.
 
 Do NOT describe the output of this command as "platform parity." Preflight
 here is a local file/source/schema readiness gate. The spec (cli-first-
@@ -67,6 +72,8 @@ from rich.text import Text
 
 from decoy.cli._yaml_errors import sanitize_yaml_error
 from decoy.cli.exit_codes import EXIT_CAPACITY, EXIT_USAGE, EXIT_WARNINGS
+from decoy.cli.gate._capacity_text import format_gib as _format_gib
+from decoy.cli.gate._capacity_text import insufficient_text as _insufficient_text
 from decoy.ui.output import OutputMode, emit_json, setup_output
 from decoy.ui.theme import code, error, hint, success, warn
 
@@ -89,8 +96,9 @@ What preflight checks:
   - YAML syntax and schema (same as `decoy validate`)
   - Source file existence and readability
   - Target overwrite risk (advisory warning)
-  - Out-of-core-FK memory capacity (v1; build-floor is advisory, only a fan-in
+  - Out-of-core-FK memory capacity (v1; build-floor is advisory, a fan-in
     impossibility exits EXIT_CAPACITY -- see: decoy explain exit-codes)
+  - Generated tables whose output cannot fit memory (exit EXIT_CAPACITY)
   - Native companion health, plus a STATIC (config-shape-only) native
     eligibility possibility -- see: decoy explain native
 
@@ -98,8 +106,8 @@ What preflight does NOT check:
   - Platform server-side conditions (secrets, RBAC, schedules, network targets)
   - Engine run-time constraints beyond out-of-core-FK capacity (row counts,
     provider limits)
-  - The ingestion peak `decoy run` pays before the engine's capacity gate runs,
-    or the generate path (both out of the v1 capacity check's scope)
+  - The ingestion peak `decoy run` pays before the engine's capacity gate runs
+    (out of the v1 capacity check's scope)
   - Data validity or masking quality
   - Vault or secrets accessibility
 
@@ -124,8 +132,8 @@ class _CheckResult:
     status: str  # "pass" | "warn" | "fail"
     message: str
     location: str | None = None
-    # OOM checker v1: the engine's capacity-refusal code (one of
-    # out_of_core_insufficient_memory / out_of_core_fanin_exceeds_budget),
+    # OOM checker v1: the engine's capacity-refusal code (out_of_core_insufficient_memory,
+    # out_of_core_fanin_exceeds_budget or generation_budget_exceeded),
     # carried as its own field so a --json caller can assert on it directly
     # instead of parsing `message` text (R9).
     code: str | None = None
@@ -311,12 +319,6 @@ def _check_target_overwrite(raw: dict[str, Any], acc: _PreflightAccumulator) -> 
 # ---------------------------------------------------------------------------
 # Capacity check (OOM checker v1, docs/plans/2026-07-24-oom-checker-cli-v1.md)
 # ---------------------------------------------------------------------------
-
-_GIB = 1024**3
-
-
-def _format_gib(byte_count: int | None) -> str:
-    return f"~{byte_count / _GIB:.1f} GB" if byte_count else "an unknown amount"
 
 
 def _file_sources_missing_on_disk(raw: dict[str, Any], base_dir: Path) -> bool:
@@ -528,15 +530,7 @@ def _check_capacity(raw: dict[str, Any], config_path: Path, acc: _PreflightAccum
         )
     elif estimate.verdict is CapacityVerdict.INSUFFICIENT:
         acc.capacity_insufficient = True
-        acc.add_fail(
-            name=CAPACITY_CHECK,
-            message=(
-                f"INSUFFICIENT -- needs {needed}, budget {available}; use a larger "
-                "tier or reduce the job. This estimate is conservative: a real run "
-                "may still admit the job via full-frame recovery."
-            ),
-            code=estimate.code,
-        )
+        acc.add_fail(name=CAPACITY_CHECK, message=_insufficient_text(estimate), code=estimate.code)
     elif estimate.verdict is CapacityVerdict.UNKNOWN:
         # An uncertain route (a byte-estimate-promoted OOC job) forces UNKNOWN,
         # but a build-floor advisory can still ride along on the estimate. Surface
@@ -679,16 +673,16 @@ def preflight(
     and (v1) the engine's out-of-core-FK memory feasibility. The build-floor
     estimate is advisory: an over-budget prediction reports a WARNING with a
     recommended size, not a refusal (`--fail-on-warning` makes it exit
-    nonzero). Only a fan-in impossibility exits EXIT_CAPACITY (see `decoy
-    explain exit-codes`), distinct from a config problem (EXIT_USAGE). Reports
+    nonzero). A fan-in impossibility, and generated tables whose output
+    cannot fit the machine's memory, exit EXIT_CAPACITY (see `decoy explain
+    exit-codes`), distinct from a config problem (EXIT_USAGE). Reports
     findings as pass/warn/fail with structured output available via --json.
 
     This is a LOCAL check only. It does NOT check platform server-side
     conditions, most engine run-time constraints, data quality, vault
     access, secrets availability, or network connectivity. The capacity
-    check covers the out-of-core-FK route only -- it does not cover the
-    ingestion peak `decoy run` pays before the engine's gate runs, or the
-    generate path. Use `decoy validate` for pure schema-only checks; use
+    check does not cover the ingestion peak `decoy run` pays before the
+    engine's gate runs. Use `decoy validate` for pure schema-only checks; use
     this command when you want to confirm source files are present and check
     the job's capacity feasibility before starting a run.
     """

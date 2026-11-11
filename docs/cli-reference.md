@@ -403,6 +403,7 @@ $ decoy fit [OPTIONS] SOURCE
 * `--dp-text TEXT`: Declare COL as a DP categorical text carrier (repeatable). Requires --epsilon.
 * `--numeric-bins INTEGER`: Bin count per DP numeric column (engine default if omitted). Requires --epsilon.
 * `--dp-allow-omit`: Allow the DP release to omit source columns nobody declared with --dp-number/--dp-flag/--dp-text (default: omission is a usage error listing the columns). Requires --epsilon.
+* `--fanout COLUMN`: Record how many rows each key of COLUMN has (repeatable): the child-side key of a foreign key. A generate reference column with `distribution: fitted` then gives each generated parent about as many children as the source parents had. Counts only, never a key value. Not supported with --epsilon.
 * `--include-values`: Keep real values of sensitive columns in the snapshot. The file then holds real data. Not supported with --epsilon.
 * `--json`: Emit a structured JSON result on stdout.
 * `-q, --quiet`: Suppress stdout. Exit code carries the result.
@@ -433,6 +434,12 @@ Examples:
     `fit.max_rows` setting in settings.json, default 1,000,000. A file at
     or under the limit uses every row. The summary and --json say how many
     rows were used out of how many.
+
+  decoy fit visits.csv --fanout patient_id
+    Record how many visits each patient_id has (counts only). A reference
+    column with `distribution: fitted` and this snapshot then gives each
+    generated patient a visit count drawn from that shape. Not supported
+    with --epsilon.
 
   decoy fit customers.csv --epsilon 1.0 --delta 1e-6 \
       --dp-number amount:0:500 --dp-text state --dp-flag is_active
@@ -1045,16 +1052,16 @@ Checks file existence, file readability, YAML syntax, schema validity,
 and (v1) the engine&#x27;s out-of-core-FK memory feasibility. The build-floor
 estimate is advisory: an over-budget prediction reports a WARNING with a
 recommended size, not a refusal (`--fail-on-warning` makes it exit
-nonzero). Only a fan-in impossibility exits EXIT_CAPACITY (see `decoy
-explain exit-codes`), distinct from a config problem (EXIT_USAGE). Reports
+nonzero). A fan-in impossibility, and generated tables whose output
+cannot fit the machine&#x27;s memory, exit EXIT_CAPACITY (see `decoy explain
+exit-codes`), distinct from a config problem (EXIT_USAGE). Reports
 findings as pass/warn/fail with structured output available via --json.
 
 This is a LOCAL check only. It does NOT check platform server-side
 conditions, most engine run-time constraints, data quality, vault
 access, secrets availability, or network connectivity. The capacity
-check covers the out-of-core-FK route only -- it does not cover the
-ingestion peak `decoy run` pays before the engine&#x27;s gate runs, or the
-generate path. Use `decoy validate` for pure schema-only checks; use
+check does not cover the ingestion peak `decoy run` pays before the
+engine&#x27;s gate runs. Use `decoy validate` for pure schema-only checks; use
 this command when you want to confirm source files are present and check
 the job&#x27;s capacity feasibility before starting a run.
 
@@ -1095,8 +1102,9 @@ What preflight checks:
   - YAML syntax and schema (same as `decoy validate`)
   - Source file existence and readability
   - Target overwrite risk (advisory warning)
-  - Out-of-core-FK memory capacity (v1; build-floor is advisory, only a fan-in
+  - Out-of-core-FK memory capacity (v1; build-floor is advisory, a fan-in
     impossibility exits EXIT_CAPACITY -- see: decoy explain exit-codes)
+  - Generated tables whose output cannot fit memory (exit EXIT_CAPACITY)
   - Native companion health, plus a STATIC (config-shape-only) native
     eligibility possibility -- see: decoy explain native
 
@@ -1104,8 +1112,8 @@ What preflight does NOT check:
   - Platform server-side conditions (secrets, RBAC, schedules, network targets)
   - Engine run-time constraints beyond out-of-core-FK capacity (row counts,
     provider limits)
-  - The ingestion peak `decoy run` pays before the engine's capacity gate runs,
-    or the generate path (both out of the v1 capacity check's scope)
+  - The ingestion peak `decoy run` pays before the engine's capacity gate runs
+    (out of the v1 capacity check's scope)
   - Data validity or masking quality
   - Vault or secrets accessibility
 
@@ -1812,4 +1820,3 @@ Examples:
 Exit codes: 0 clean; 1 invalid input or validation errors; 2 blocking warnings;
 3 runtime failure; 4 findings; 5 capacity refusal. See docs/ci-contracts.md.
 Decoy never uploads or comments; uploads belong to your CI workflow.
-
