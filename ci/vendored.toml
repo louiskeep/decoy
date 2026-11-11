@@ -44,6 +44,14 @@ local_path = "tests/sentry/ci_scan/test_identity.py"
 blob_sha256 = "ea864e19cd4ea0804f792520e23dec5fd181ebaae1bee8681e5cb80be97fea30"
 commit = "d9e18fa60b09beda88c86673806ca28ac698f28a"
 
+# The engine's recurring-defect AST index and class scanners (VALUE-FREE-ERRORS B1). The CLI's
+# class 1 and class 3 sentries in tests/sentry/defects/ run it over src/decoy.
+[[vendored]]
+engine_path = "tests/sentry/defects/_defect_scan.py"
+local_path = "tests/sentry/defects/_defect_scan.py"
+blob_sha256 = "4175ae214380bc9e8907a0abb62a388d773c8a6d9b95d2ca082e9b3098e0d7e5"
+commit = "38517493ab399f6d7ea321d116599c3725f046e9"
+
 [[mirror]]
 engine_path = ".github/actions/lock-env/action.yml"
 local_path = ".github/actions/lock-env/action.yml"
