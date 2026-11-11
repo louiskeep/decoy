@@ -121,9 +121,9 @@ def test_run_refuses_an_escaping_target_before_a_source_read(
 ) -> None:
     root = _project(tmp_path)
     cfg = _write(root, "pipelines/orders/pipeline.yaml", _config(root, target))
-    result = runner.invoke(app, ["run", str(cfg)])
+    result = runner.invoke(app, ["run", str(cfg), "--json"])
     assert result.exit_code == EXIT_USAGE, result.output
-    assert ESCAPES in result.output
+    assert ESCAPES in _codes(result.output)
     assert read_spy == []
     assert not (tmp_path / "x.csv").exists()
     assert not (root / "out").exists()
@@ -136,9 +136,9 @@ def test_an_escaping_quarantine_path_is_refused_before_a_source_read(
     root = _project(tmp_path)
     cfg_dict = _config(root, **_quarantine("../../q.jsonl"))
     cfg = _write(root, "pipelines/orders/pipeline.yaml", cfg_dict)
-    result = runner.invoke(app, [*command, str(cfg)])
+    result = runner.invoke(app, [*command, str(cfg), "--json"])
     assert result.exit_code == EXIT_USAGE, result.output
-    assert ESCAPES in result.output
+    assert ESCAPES in _codes(result.output)
     assert read_spy == []
 
 

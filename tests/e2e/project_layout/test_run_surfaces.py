@@ -1,9 +1,10 @@
 """AT-8 and the `--out-dir` cells (P4): what `decoy run` says about where it wrote.
 
 The summary prints the project, the run folder and the `current` link; `--json` adds
-`output_dir`, `outputs` (only files written), `project` and `pipeline`. Human paths are
-relative when under the current folder and absolute otherwise; `--json` paths are always
-absolute. `--out-dir DIR` replaces the run folder: no claim, no run id, no `LATEST`, no
+`output_dir`, `outputs` (`{table, path}` for files written only), `project` (`root`,
+`implicit`, `skipped`) and `pipeline` (`name`, `yaml`, `given_as`), the shapes of plan 7.6.
+Human paths are relative when under the current folder and absolute otherwise; `--json`
+paths are always absolute. `--out-dir DIR` replaces the run folder: no claim, no run id, no `LATEST`, no
 `out/.gitignore`, and a second run overwrites as before.
 """
 
@@ -36,9 +37,9 @@ def _project(tmp_path: Path) -> Path:
     return root
 
 
-def _pipeline(root: Path, target: str = "masked.csv", *, rows: bool = True) -> Path:
+def _pipeline(root: Path, target: str = "masked.csv") -> Path:
     src = root / "a.csv"
-    emails = ["a@example.com", "b@example.com"] if rows else []
+    emails = ["a@example.com", "b@example.com"]
     pd.DataFrame({"email": pd.Series(emails, dtype="string")}).to_csv(src, index=False)
     cfg = {
         "version": 2,
@@ -66,6 +67,10 @@ def _json(result) -> dict:
     return json.loads(result.stdout)
 
 
+def _paths(doc: dict) -> list[str]:
+    return [entry["path"] for entry in doc["outputs"]]
+
+
 # --- AT-8 --json -------------------------------------------------------------------------
 
 
@@ -77,14 +82,18 @@ def test_json_names_the_run_folder_outputs_project_and_pipeline(tmp_path: Path) 
     doc = _json(result)
     run = _only_run(root)
     assert doc["output_dir"] == str(run.resolve())
-    assert doc["outputs"] == [str((run / "masked.csv").resolve())]
-    assert doc["project"] == str(root.resolve())
-    assert doc["pipeline"] == "orders"
+    assert doc["outputs"] == [{"table": "a", "path": str((run / "masked.csv").resolve())}]
+    assert doc["project"] == {"root": str(root.resolve()), "implicit": False, "skipped": []}
+    assert doc["pipeline"] == {"name": "orders", "yaml": str(cfg.resolve()), "given_as": "path"}
 
 
-def test_an_empty_chunked_csv_is_absent_from_outputs(tmp_path: Path) -> None:
+def test_an_empty_chunked_source_is_absent_from_outputs(tmp_path: Path, monkeypatch) -> None:
+    # A source that yields no chunk at all: the chunked writer publishes nothing.
+    from decoy.cli.run import _execute
+
     root = _project(tmp_path)
-    cfg = _pipeline(root, rows=False)
+    cfg = _pipeline(root)
+    monkeypatch.setattr(_execute, "iter_source_chunks", lambda *args, **kwargs: iter(()))
     result = runner.invoke(app, ["run", str(cfg), "--chunked", "--json"])
     assert result.exit_code == EXIT_OK, result.output
     doc = _json(result)
@@ -139,7 +148,9 @@ def test_json_paths_are_absolute_even_under_the_current_folder(tmp_path: Path, m
     monkeypatch.chdir(root)
     doc = _json(runner.invoke(app, ["run", str(cfg.relative_to(root)), "--json"]))
     assert Path(doc["output_dir"]).is_absolute()
-    assert all(Path(p).is_absolute() for p in doc["outputs"])
+    assert Path(doc["project"]["root"]).is_absolute()
+    assert Path(doc["pipeline"]["yaml"]).is_absolute()
+    assert all(Path(p).is_absolute() for p in _paths(doc))
 
 
 def test_json_for_absolute_targets_only_has_no_run_folder(tmp_path: Path) -> None:
@@ -150,7 +161,7 @@ def test_json_for_absolute_targets_only_has_no_run_folder(tmp_path: Path) -> Non
     assert doc["output_dir"] is None
     assert doc["project"] is None
     assert doc["pipeline"] is None
-    assert doc["outputs"] == [str(target.resolve())]
+    assert doc["outputs"] == [{"table": "a", "path": str(target.resolve())}]
 
 
 # --- AT-8 summary ------------------------------------------------------------------------
@@ -204,7 +215,7 @@ def test_out_dir_replaces_the_run_folder(tmp_path: Path, monkeypatch) -> None:
     assert not (root / "out").exists()
     doc = _json(result)
     assert doc["output_dir"] == str(build.resolve())
-    assert doc["outputs"] == [str((build / "masked.csv").resolve())]
+    assert _paths(doc) == [str((build / "masked.csv").resolve())]
 
 
 @posix_only
