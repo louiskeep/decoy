@@ -91,6 +91,12 @@ Examples:
     Capture the (state, tier) contingency table so a statistical column
     can use `condition_on`.
 
+  decoy fit customers.csv --joint state,tier --joint-max-cells 100
+    Keep up to 100 (state, tier) combinations instead of 25. When the
+    cap drops combinations, fit warns on stderr and in --json. Without
+    --include-values a raised cap needs both columns to be plain
+    categories.
+
   decoy fit customers.csv --rows 100000
     Fit on a seeded random sample of 100,000 rows spread across the whole
     file (never the first 100,000). Without --rows the limit is the
@@ -279,6 +285,17 @@ def fit(
         "--joint",
         help="Column pair 'a,b' whose contingency table to capture (repeatable). Needed for `condition_on`. Not supported with --epsilon.",
     ),
+    joint_max_cells: str | None = typer.Option(
+        None,
+        "--joint-max-cells",
+        metavar="N",
+        help=(
+            "Keep up to N combinations per --joint pair (default 25, at most 1000); the "
+            "rest fall into one count. Rare combinations can point at one person, so "
+            "without --include-values a raised cap works only on pairs of plain "
+            "categorical columns. Needs --joint."
+        ),
+    ),
     rows: str | None = typer.Option(
         None,
         "--rows",
@@ -429,6 +446,12 @@ def fit(
             )
             raise typer.Exit(code=EXIT_USAGE)
         joint_pairs.append((parts[0], parts[1]))
+    if joint_max_cells is not None and not joint_pairs:
+        _emit_error(
+            "--joint-max-cells sets the cell cap of a --joint pair; pass --joint 'a,b' with it.",
+            err_code="fit_joint_max_cells_needs_joint",
+        )
+        raise typer.Exit(code=EXIT_USAGE)
 
     # --- D0: DP mode is explicit and fail-closed, decided BEFORE the CSV is
     # read and before any carrier declaration is parsed for content. ---------
@@ -523,7 +546,36 @@ def fit(
 
     import numpy as np
     import pandas as pd
-    from decoy_engine import distribution_snapshot_document
+    from decoy_engine import distribution_snapshot_document, snapshot_joint_warnings
+    from decoy_engine.quality.snapshot import (
+        DEFAULT_CONTINGENCY_TOP_K,
+        MAX_CONTINGENCY_TOP_K,
+        DistributionSnapshotError,
+        check_contingency_top_k,
+    )
+    from decoy_engine.reasons.quality import (
+        CONTINGENCY_TOP_K_INVALID,
+        CONTINGENCY_TOP_K_KIND_UNSUPPORTED,
+    )
+
+    from decoy.ui.summary import warning_record
+
+    # The engine owns the bound; the CLI only turns the text into a number for it.
+    cell_cap = DEFAULT_CONTINGENCY_TOP_K
+    if joint_max_cells is not None:
+        try:
+            parsed: object = int(joint_max_cells.strip())
+        except ValueError:
+            parsed = joint_max_cells
+        try:
+            check_contingency_top_k(parsed)
+        except DistributionSnapshotError as exc:
+            _emit_error(
+                f"--joint-max-cells must be a whole number from 1 to {MAX_CONTINGENCY_TOP_K}.",
+                err_code=exc.code,
+            )
+            raise typer.Exit(code=EXIT_USAGE)
+        cell_cap = int(joint_max_cells.strip())
 
     def _unreadable() -> None:
         # No str(exc): a pandas parse error can quote a source cell.
@@ -704,15 +756,27 @@ def fit(
 
     if rows_total is None:
         rows_total = len(df)
+    fit_warnings: list[dict[str, Any]] = []
     if epsilon is None:
         # Detection and the snapshot see exactly the rows read above.
         # No profile_row_cap: it profiles head rows only, and a sensitive column can start late.
-        snapshot = distribution_snapshot_document(
-            df,
-            source_label=source.name,
-            include_values=include_values,
-            joint_columns=joint_pairs or None,
-        )
+        try:
+            snapshot = distribution_snapshot_document(
+                df,
+                source_label=source.name,
+                include_values=include_values,
+                joint_columns=joint_pairs or None,
+                contingency_top_k=cell_cap,
+            )
+        except DistributionSnapshotError as exc:
+            if exc.code not in (CONTINGENCY_TOP_K_INVALID, CONTINGENCY_TOP_K_KIND_UNSUPPORTED):
+                raise
+            _emit_error(exc.message, err_code=exc.code)
+            raise typer.Exit(code=EXIT_USAGE)
+        fit_warnings = [
+            warning_record(w.code, column=w.column, detail=w.detail)
+            for w in snapshot_joint_warnings(snapshot, contingency_top_k=cell_cap)
+        ]
     else:
         # The name checks ran on the header. A file replaced between the two
         # reads would reach the typed frame with names nobody checked.
@@ -757,6 +821,10 @@ def fit(
             f"{out_path} holds real values of {len(withheld)} sensitive "
             f"column(s): {', '.join(withheld)}. Do not share or commit it.",
         )
+    if state.mode is OutputMode.default:
+        for record in fit_warnings:
+            # The line quotes column names from the CSV header: print it as plain text.
+            state.err_console.print(warn("warning:"), record["message"], markup=False)
 
     from decoy_engine.quality import snapshot_null_fraction
 
@@ -779,6 +847,7 @@ def fit(
             "columns": {name: entry["kind"] for name, entry in snapshot["columns"].items()},
             "joints": [j["columns"] for j in snapshot["joints"]],
             "null_rates": null_rates,
+            "warnings": [{k: r[k] for k in ("code", "message", "detail")} for r in fit_warnings],
         }
         if epsilon is None:
             payload["value_policy"] = snapshot.get("value_policy")

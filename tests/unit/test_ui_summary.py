@@ -7,6 +7,7 @@ from decoy_engine import QualityWarning
 from decoy.ui.summary import (
     report_warning_records,
     warning_lines,
+    warning_record,
     warning_records,
 )
 
@@ -110,3 +111,29 @@ def test_has_kind_counts_a_mask_table_with_empty_columns() -> None:
     )
     assert not _has_kind({"tables": [{"name": "t", "generate_columns": []}]}, "generate_columns")
     assert not _has_kind(None, "columns")
+
+
+def _joint_cap(**overrides: object) -> str:
+    detail = {
+        "columns": ["kid", "parent"],
+        "cell_count": 36,
+        "cells_kept": 22,
+        "cap_dropped": 11,
+        "policy_dropped": 3,
+        "other_count": 400,
+        **overrides,
+    }
+    return str(warning_record("fit_joint_cells_truncated", detail=detail)["message"])
+
+
+def test_joint_cap_line_keeps_policy_drops_apart_from_the_cap_advice() -> None:
+    line = _joint_cap()
+    assert line.startswith("joint kid x parent: 36 combinations, 22 kept; 11 dropped by the cell")
+    assert "3 more were left out by the value policy" in line
+    assert line.endswith("Raise --joint-max-cells (at most 1000) to keep the 11.")
+
+
+def test_joint_cap_line_without_policy_drops_says_nothing_of_policy() -> None:
+    line = _joint_cap(cells_kept=25, policy_dropped=0, other_count=366)
+    assert "value policy" not in line
+    assert "366 rows in all fall outside the kept ones" in line

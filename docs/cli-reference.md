@@ -387,6 +387,7 @@ $ decoy fit [OPTIONS] SOURCE
 * `-o, --output PATH`: Where to write the snapshot JSON. Default: &lt;source&gt;.snapshot.json.
 * `--parse-dates TEXT`: Column(s) to parse as datetimes (repeatable). CSV carries no dtype, so date columns must be named explicitly. Not supported with --epsilon.
 * `--joint TEXT`: Column pair &#x27;a,b&#x27; whose contingency table to capture (repeatable). Needed for `condition_on`. Not supported with --epsilon.
+* `--joint-max-cells N`: Keep up to N combinations per --joint pair (default 25, at most 1000); the rest fall into one count. Rare combinations can point at one person, so without --include-values a raised cap works only on pairs of plain categorical columns. Needs --joint.
 * `--rows N`: Fit on at most N rows. A larger file is cut to a random sample of N rows spread across the whole file, never the first N (fixed seed 42: the same file gives the same sample). Sensitive-column detection and the snapshot use the same sampled rows. Default: the fit.max_rows setting in settings.json, else 1000000. A whole number of 1 or more. Not supported with --epsilon (a DP fit uses every row and ignores the setting).
 * `--epsilon FLOAT`: Select DP mode: fit a dps-marginal/v3 artifact via the engine&#x27;s fit_dp_snapshot instead of the exact snapshot. Requires --delta and at least one carrier declaration (--dp-number/--dp-flag/--dp-text). This is the ONLY DP-mode selector -- every DP-only option is a usage error without it, so a forgotten --epsilon never silently falls back to the exact release. Runs only on a certified DP install; see decoy explain differential-privacy.
 * `--delta FLOAT`: DP failure probability, required with --epsilon (no default: a silent delta would set an unchosen privacy level). Finite, in (0, 1).
@@ -412,6 +413,12 @@ Examples:
   decoy fit customers.csv --joint state,tier
     Capture the (state, tier) contingency table so a statistical column
     can use `condition_on`.
+
+  decoy fit customers.csv --joint state,tier --joint-max-cells 100
+    Keep up to 100 (state, tier) combinations instead of 25. When the
+    cap drops combinations, fit warns on stderr and in --json. Without
+    --include-values a raised cap needs both columns to be plain
+    categories.
 
   decoy fit customers.csv --rows 100000
     Fit on a seeded random sample of 100,000 rows spread across the whole
