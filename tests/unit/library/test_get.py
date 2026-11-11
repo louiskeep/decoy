@@ -21,7 +21,9 @@ from decoy.cli.library._errors import RECORD_NOT_FOUND
 
 @pytest.fixture
 def root(tmp_path: Path) -> Path:
-    return tmp_path / "private-project-name" / DECOY_DIR
+    project = tmp_path / "private-project-name"
+    project.mkdir()
+    return project / DECOY_DIR
 
 
 def test_get_returns_the_typed_view_and_the_verified_raw_envelope(root: Path) -> None:

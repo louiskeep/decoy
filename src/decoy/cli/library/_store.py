@@ -1,9 +1,10 @@
-"""The record store: `put` and `resolve` over content-addressed object files.
+"""The record store: `put`, `get` and `resolve` over content-addressed object files.
 
 The shape is git's object store: immutable objects named by their content hash under a two-hex
 fan-out (`objects/ab/<62 hex>.json`), written to a temp file and moved into place without ever
 replacing a file. An existing object is success only when it passes the one id rule
-(`decoy_engine.records.record_id`: parse, drop `id`, canonicalize, hash), so a CRLF checkout of a
+(`decoy_engine.records.record_id`, which `records.decode` also applies: parse, drop `id`,
+canonicalize, hash), so a CRLF checkout of a
 valid record is fine and a different file under the same name is `record_corrupt` (plan 4.3,
 4.8). A record may only link to records already stored (plan 4.3): ids hash their links, so the
 link graph has no cycles by construction. Record writes take no lock (plan 4.8).
@@ -30,6 +31,7 @@ from decoy.cli.library._errors import (
     RECORD_CORRUPT,
     RECORD_INVALID,
     RECORD_LINK_MISSING,
+    RECORD_NOT_FOUND,
     LibraryError,
     library_error,
 )
@@ -53,6 +55,8 @@ _HEX = frozenset("0123456789abcdef")
 _DIGEST_CHARS = 64
 _MIN_PREFIX = 8  # as git allows abbreviated object names
 _SUFFIX = ".json"
+
+Decoded = records.DecodedRecord | records.OpaqueRecord | records.RecordNeedsNewer
 
 
 @dataclass(frozen=True)
@@ -102,6 +106,31 @@ class Library:
         if not created:
             self._verify(self._object(digest), envelope.id)
         return PutResult(envelope.id, created, warnings)
+
+    def get(self, record_id: str) -> Decoded:
+        """The verified record stored under this full id. Raises `LibraryError`:
+        `record_not_found`, `record_corrupt` (the content is not this record) or the engine's
+        `record_invalid` (a payload its read model refuses).
+
+        `records.decode` applies the one id rule and returns the typed view with the raw
+        envelope, an `OpaqueRecord` for a kind this version does not know, or
+        `RecordNeedsNewer`. This is the one library read (G-ONE-SCAN-READER exempts this file).
+        """
+        digest = _digest(record_id)
+        data = None if digest is None else read_file(self._object(digest))
+        if data is None:
+            raise LibraryError(RECORD_NOT_FOUND)
+        failure: records.RecordError | None = None
+        decoded: Decoded | None = None
+        try:
+            decoded = records.decode(data)
+        except records.RecordError as exc:
+            failure = exc
+        if failure is not None:
+            raise library_error(failure.code, failure)
+        if decoded is None or decoded.id != record_id or not getattr(decoded, "verified", True):
+            raise LibraryError(RECORD_CORRUPT)
+        return decoded
 
     def resolve(self, text: str) -> tuple[str, ...]:
         """Every stored id that `text` (a full id, or 8 or more hex digits) is a prefix of.
@@ -172,9 +201,8 @@ class Library:
     def _verify(path: Path, record_id: str) -> None:
         """An existing object is the same record only if its parsed content has this id.
 
-        Parsing first means a CRLF or re-indented copy keeps its id. Reading a record back as a
-        typed record (`records.decode`) is not done here: G-ONE-SCAN-READER keeps that call in
-        `cli/io/_scan_set.py`.
+        Parsing first means a CRLF or re-indented copy keeps its id. Only the id is checked: a
+        record of a kind or major this version cannot read is still the same bytes.
         """
         data = read_file(path)
         parsed: object = None

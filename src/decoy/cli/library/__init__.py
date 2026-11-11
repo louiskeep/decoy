@@ -1,8 +1,8 @@
 """The local record library: one store of value-free records per project (LIB plan, L1b.2).
 
 Commands import this facade, never a `_` module (G-LIB-WRITER). What exists so far: the root
-rule (`resolve_root`), the store (`open_library`, `Library.put`, `resolve`) and the error
-type. Reading records back, refs, the index, scratch and logs arrive in later slices. See docs/library.md.
+rule (`resolve_root`), the store (`open_library`, `Library.put`, `get`, `resolve`) and the error
+type. Refs, the index, scratch and logs arrive in later slices. See docs/library.md.
 """
 
 from __future__ import annotations

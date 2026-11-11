@@ -24,6 +24,7 @@ __all__ = [
     "RECORD_CORRUPT",
     "RECORD_INVALID",
     "RECORD_LINK_MISSING",
+    "RECORD_NOT_FOUND",
     "LibraryError",
     "library_error",
 ]
@@ -37,6 +38,7 @@ LIBRARY_LOCK_UNAVAILABLE = "library_lock_unavailable"
 LIBRARY_PATH_TOO_LONG = "library_path_too_long"
 LIBRARY_LAYOUT_NEWER = "library_layout_newer"
 RECORD_LINK_MISSING = "record_link_missing"
+RECORD_NOT_FOUND = "record_not_found"
 # An object file exists but cannot be read (permissions, I/O error); not corruption.
 LIBRARY_READ_FAILED = "library_read_failed"
 

@@ -61,6 +61,15 @@ indentation is still the same record. Any unique prefix of 8 or more hex digits 
 - A library whose `LAYOUT` names a version this Decoy does not write refuses writes with
   `library_layout_newer`.
 
+## How records are read
+
+Reading a record by its full id parses the file and checks it by the id rule above, so a CRLF
+or re-indented copy still reads. A file that holds another record (or no record) under the id
+fails with `record_corrupt`; an id that is not stored fails with `record_not_found`. A record
+of a kind this Decoy does not know is returned as an opaque record (kind, id, time, labels and
+links, payload unread); one written under a newer payload or envelope version is reported as
+needing a newer Decoy.
+
 Errors name a code and an error class, never a path.
 
 ## File modes
