@@ -644,3 +644,126 @@ def test_a_project_file_whose_name_the_reader_refuses_is_recorded_absolute(
     manifest = _run(cfg, root / "ev.json", monkeypatch, root)
     assert manifest["input_fingerprints"]["a"]["path"] == str(odd.resolve())
     assert verify_manifest_issues(manifest, manifest_file=root / "ev.json") == []
+
+
+# --- AT-9 consumer matrix: every consumer from outside the project ----------------------------
+# Each row runs with the working directory outside every project and DECOY_PROJECT exported for
+# another project, and spies on the one resolver: every stored output must reach it, and each path
+# it returns must be an existing file below the manifest's own project root.
+
+
+@pytest.fixture
+def outside(tmp_path: Path, monkeypatch, elsewhere: Path):
+    other = _project(tmp_path / "other")
+    _pipeline(other)
+    returned: list[Path] = []
+    real = evidence_module.resolve_manifest_path
+
+    def spy(*args, **kwargs):
+        path = real(*args, **kwargs)
+        returned.append(path)
+        return path
+
+    from decoy.cli import report as report_module
+
+    monkeypatch.setattr(evidence_module, "resolve_manifest_path", spy)
+    monkeypatch.setattr(report_module, "resolve_manifest_path", spy, raising=False)
+
+    def enter() -> list[Path]:
+        monkeypatch.chdir(elsewhere)
+        monkeypatch.setenv("DECOY_PROJECT", str(other))
+        returned.clear()
+        return returned
+
+    return enter
+
+
+def _project_run(tmp_path: Path, monkeypatch, name: str) -> tuple[Path, Path, dict]:
+    root = _project(tmp_path / name)
+    evidence = root / "ev.json"
+    manifest = _run(_pipeline(root), evidence, monkeypatch, root)
+    return root, evidence, manifest
+
+
+def _every_output_resolved(returned: list[Path], runs: list[tuple[Path, dict]]) -> None:
+    got = {p.resolve() for p in returned}
+    roots = [root.resolve() for root, _ in runs]
+    for root, manifest in runs:
+        for entry in manifest["output_fingerprints"].values():
+            placed = (root.resolve() / entry["path"]).resolve()
+            assert placed in got, f"output {entry['path']} never reached resolve_manifest_path"
+    for path in got:
+        assert path.is_file(), path
+        assert any(path.is_relative_to(r) for r in roots), path
+
+
+def test_at9_verify_manifest_issues_from_outside(tmp_path: Path, monkeypatch, outside) -> None:
+    root, evidence, manifest = _project_run(tmp_path, monkeypatch, "proj")
+    returned = outside()
+    assert verify_manifest_issues(manifest, manifest_file=evidence, project=root) == []
+    for entry in manifest["output_fingerprints"].values():
+        assert hash_file(root / entry["path"]) == entry["fingerprint"]
+    _every_output_resolved(returned, [(root, manifest)])
+
+
+def test_at9_report_show_from_outside(tmp_path: Path, monkeypatch, outside) -> None:
+    root, evidence, manifest = _project_run(tmp_path, monkeypatch, "proj")
+    returned = outside()
+    result = runner.invoke(app, ["report", "show", str(evidence), "--json"])
+    assert result.exit_code == 0, result.output
+    shown = json.loads(result.output)
+    assert shown["manifest"]["output_fingerprints"] == manifest["output_fingerprints"]
+    _every_output_resolved(returned, [(root, manifest)])
+
+
+def test_at9_report_render_from_outside(
+    tmp_path: Path, monkeypatch, outside, elsewhere: Path
+) -> None:
+    root, evidence, manifest = _project_run(tmp_path, monkeypatch, "proj")
+    returned = outside()
+    report = elsewhere / "report.html"
+    result = runner.invoke(app, ["report", "render", str(evidence), "--output", str(report)])
+    assert result.exit_code == 0, result.output
+    assert report.is_file()
+    _every_output_resolved(returned, [(root, manifest)])
+
+
+def test_at9_report_verify_from_outside(tmp_path: Path, monkeypatch, outside) -> None:
+    root, evidence, manifest = _project_run(tmp_path, monkeypatch, "proj")
+    returned = outside()
+    result = _verify(evidence, "--project", str(root))
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.output)
+    assert payload["status"] == "ok"
+    assert payload["issues"] == []
+    _every_output_resolved(returned, [(root, manifest)])
+
+
+def test_at9_ci_check_from_outside(tmp_path: Path, outside) -> None:
+    repo = _ci_repo(tmp_path)
+    root = repo / "proj"
+    manifest = json.loads((root / "build/evidence.json").read_text(encoding="utf-8"))
+    returned = outside()
+    result = runner.invoke(app, ["ci", "check", str(repo / MANIFEST_NAME), "--format", "json"])
+    assert result.exit_code == 0, result.output
+    report = json.loads(result.output)
+    (check,) = [c for c in report["checks"] if c["kind"] == "evidence"]
+    assert check["status"] == "ok", check
+    assert report["findings"] == []
+    _every_output_resolved(returned, [(root, manifest)])
+
+
+def test_at9_report_diff_require_data_from_outside(tmp_path: Path, monkeypatch, outside) -> None:
+    root_a, evidence_a, manifest_a = _project_run(tmp_path, monkeypatch, "proj_a")
+    root_b, evidence_b, manifest_b = _project_run(tmp_path, monkeypatch, "proj_b")
+    returned = outside()
+    result = runner.invoke(
+        app,
+        ["report", "diff", str(evidence_a), str(evidence_b), "--require-data", "--json"],
+    )
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.output)
+    assert payload["status"] == "ok"
+    assert payload["data_level"] == "compared"
+    assert payload.get("missing_files", []) == []
+    _every_output_resolved(returned, [(root_a, manifest_a), (root_b, manifest_b)])
