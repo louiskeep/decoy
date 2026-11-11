@@ -16,6 +16,7 @@ from __future__ import annotations
 import hashlib
 import json
 from pathlib import Path
+from urllib.parse import parse_qsl, urlsplit
 
 import pandas as pd
 import pytest
@@ -33,7 +34,13 @@ runner = CliRunner()
 # Ordinary shapes a real secret takes: 64 hex chars, and a long integer.
 CANARY_HEX = hashlib.sha256(b"decoy-ref-shape-canary").hexdigest()
 CANARY_INT = 731946205831774029
-_NEEDLES = (CANARY_HEX, CANARY_HEX[:16], CANARY_HEX[-16:], str(CANARY_INT), str(CANARY_INT)[:10])
+_NEEDLES = (
+    CANARY_HEX,
+    CANARY_HEX[:16],
+    CANARY_HEX[-16:],
+    str(CANARY_INT),
+    str(CANARY_INT)[:10],
+)
 
 _SHAPES: dict[str, object] = {
     "raw-secret-as-ref": {"seed": 42, "mask_secret_ref": CANARY_HEX},
@@ -66,7 +73,11 @@ def _config(tmp_path: Path, global_settings: object) -> Path:
             }
         ],
         "targets": {
-            "accounts": {"type": "file", "format": "csv", "path": str(tmp_path / "out.csv")}
+            "accounts": {
+                "type": "file",
+                "format": "csv",
+                "path": str(tmp_path / "out.csv"),
+            }
         },
     }
     path = tmp_path / "pipeline.yaml"
@@ -129,14 +140,27 @@ def test_mask_api_malformed_ref_raises_its_documented_error_without_echo(
 
 VAULT_CANARY = f"decoy-vault-canary-{CANARY_HEX[:12]}"
 VAULT_REF = f"vault://kv/{VAULT_CANARY}/app?version=3&field=key&encoding=hex"
+_PARSED_VAULT_REF = urlsplit(VAULT_REF)
+_VAULT_QUERY = parse_qsl(_PARSED_VAULT_REF.query, keep_blank_values=True)
+_VAULT_REF_LITERALS = {
+    _PARSED_VAULT_REF.netloc,
+    *(part for part in _PARSED_VAULT_REF.path.split("/") if part),
+    *(f"{key}={value}" for key, value in _VAULT_QUERY),
+}
 _VAULT_SURFACES = ["run", "tokenize", "unmask", "report vault", "decoy.mask()"]
+_API_VAULT_REFUSAL = "secret_provider_unknown: The referenced secret provider is not registered."
 
 
 def _vault_cfg(d: Path, ref: str, strategy: str = "hash") -> Path:
     d.mkdir()
     src = d / "in.csv"
     pd.DataFrame({"email": ["a@x.com", "b@y.com", "a@x.com"]}).to_csv(src, index=False)
-    col = {"name": "email", "strategy": strategy, "namespace": "em", "vault": strategy == "hash"}
+    col = {
+        "name": "email",
+        "strategy": strategy,
+        "namespace": "em",
+        "vault": strategy == "hash",
+    }
     cfg = {
         "version": 2,
         "global_settings": {"seed": 42, "mask_secret_ref": ref},
@@ -150,6 +174,42 @@ def _vault_cfg(d: Path, ref: str, strategy: str = "hash") -> Path:
 
 def _tree(root: Path) -> dict[str, bytes]:
     return {str(p.relative_to(root)): p.read_bytes() for p in root.rglob("*") if p.is_file()}
+
+
+def _assert_no_vault_ref_literal(*texts: str) -> None:
+    for literal in _VAULT_REF_LITERALS:
+        assert all(literal not in text for text in texts), f"vault ref literal leaked: {literal!r}"
+
+
+def _expected_json(surface: str, cfg: Path, vault: Path, remedy: str) -> str:
+    payload = {
+        "run": {
+            "command": "run",
+            "status": "error",
+            "config": str(cfg),
+            "mode": "mask",
+            "error": remedy,
+        },
+        "tokenize": {
+            "command": "tokenize",
+            "status": "error",
+            "config": str(cfg),
+            "error": remedy,
+        },
+        "unmask": {
+            "command": "unmask",
+            "status": "error",
+            "config": str(cfg),
+            "error": remedy,
+        },
+        "report vault": {
+            "command": "report vault",
+            "status": "error",
+            "vault": str(vault),
+            "error": remedy,
+        },
+    }[surface]
+    return json.dumps(payload) + "\n"
 
 
 @pytest.mark.usefixtures("mask_secret")
@@ -169,24 +229,57 @@ def test_vault_ref_is_refused_without_echo(tmp_path: Path, surface: str) -> None
         with pytest.raises(Exception) as info:
             mask(config=cfg)
         assert getattr(info.value, "code", None) == "secret_provider_unknown"
-        _assert_no_canary(str(info.value) + repr(info.value))
-        assert VAULT_CANARY not in str(info.value) + repr(info.value)
+        assert str(info.value) == _API_VAULT_REFUSAL
+        _assert_no_vault_ref_literal(str(info.value), repr(info.value))
         assert _tree(tmp_path) == before
         return
     argv = {
-        "run": ["run", str(cfg), "--vault", str(d / "vault.bin"), "--evidence-out", str(d / "e")],
+        "run": [
+            "run",
+            str(cfg),
+            "--vault",
+            str(d / "vault.bin"),
+            "--evidence-out",
+            str(d / "e"),
+        ],
         "tokenize": ["tokenize", str(cfg), "--vault", str(d / "tokens.db")],
-        "unmask": ["unmask", str(cfg), str(masked), "--vault", str(vault), "-o", str(d / "p.csv")],
+        "unmask": [
+            "unmask",
+            str(cfg),
+            str(masked),
+            "--vault",
+            str(vault),
+            "-o",
+            str(d / "p.csv"),
+        ],
         "report vault": ["report", "vault", str(vault), "--config", str(cfg)],
     }[surface]
     remedy = guidance.SECRET_REMEDIES["secret_provider_unknown"]
-    for extra in ([], ["--json"], ["--verbose"]):
-        result = runner.invoke(app, [*argv, *extra])
-        everything = result.output + repr(result.exception)
-        assert VAULT_CANARY not in everything and "vault://" not in everything, everything[:400]
-        assert result.exit_code == EXIT_USAGE, f"{surface}{extra}: {result.output}"
-        if extra == ["--json"]:
-            assert json.loads(result.stdout)["error"] == remedy
+    for mode, extra in (
+        ("human", []),
+        ("json", ["--json"]),
+        ("verbose", ["--verbose"]),
+    ):
+        result = runner.invoke(
+            app,
+            [*argv, *extra],
+            env={"COLUMNS": "240", "NO_COLOR": "1"},
+        )
+        assert result.exit_code == EXIT_USAGE, f"{surface}/{mode}: {result.output}"
+        _assert_no_vault_ref_literal(result.stdout, result.stderr, repr(result.exception))
+        if mode == "json":
+            assert result.stdout == _expected_json(surface, cfg, vault, remedy)
+            assert result.stderr == ""
         else:
-            assert " ".join(remedy.split()) in " ".join(result.output.split())
-        assert _tree(tmp_path) == before, f"{surface}{extra} wrote or changed a file"
+            assert result.stdout == ""
+            refusal = f"error: {remedy}\n"
+            if surface == "run":
+                refusal += "  hint: rerun with --verbose for the full traceback.\n"
+            if surface == "run" and mode == "verbose":
+                # Verbose run adds its documented diagnostic traceback after the fixed refusal.
+                fixed, separator, _diagnostic = result.stderr.partition("╭")
+                assert fixed == refusal
+                assert separator == "╭"
+            else:
+                assert result.stderr == refusal
+        assert _tree(tmp_path) == before, f"{surface}/{mode} wrote or changed a file"
