@@ -251,7 +251,9 @@ def test_no_raw_validation_error_route_in_src() -> None:
 
 def test_allowlist_entries_still_hold_a_violation() -> None:
     held = {
-        (path, function, kind) for path, found in _walk_src().items() for _, function, kind in found
+        (path, function, kind, n)
+        for path, found in _walk_src().items()
+        for _, function, kind, n in numbered(found)
     }
     stale = sorted(_allowed() - held)
     assert not stale, f"allowlist entries with no violation left, remove them: {stale}"
