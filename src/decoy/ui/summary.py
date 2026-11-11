@@ -69,6 +69,48 @@ def _generic_message(code_: str, table: object, column: object, detail: Mapping[
     return f"{head}: {facts}" if facts else head
 
 
+def _joint_cap_message(detail: Mapping[str, Any]) -> str:
+    """`fit_joint_cells_truncated`: counts and column names only, never a kept or dropped label."""
+    pair = " x ".join(str(c) for c in detail.get("columns") or [])
+    cap_dropped = detail.get("cap_dropped", 0)
+    policy_dropped = detail.get("policy_dropped", 0)
+    text = (
+        f"joint {pair}: {detail.get('cell_count')} combinations, {detail.get('cells_kept')} "
+        f"kept; {cap_dropped} dropped by the cell cap"
+    )
+    if policy_dropped:
+        text += f", {policy_dropped} more were left out by the value policy"
+    text += (
+        f", {detail.get('other_count')} rows in all fall outside the kept ones. A parent value "
+        "with no kept combination is generated from the child's overall counts."
+    )
+    if cap_dropped:
+        text += f" Raise --joint-max-cells (at most {_max_cells()}) to keep the {cap_dropped}."
+    return text
+
+
+def _max_cells() -> int:
+    from decoy_engine.quality.snapshot import MAX_CONTINGENCY_TOP_K
+
+    return MAX_CONTINGENCY_TOP_K
+
+
+def _parent_unseen_message(table: object, detail: Mapping[str, Any]) -> str:
+    """`generation_condition_parent_unseen`: how many rows fell back, never which parent values."""
+    # The engine caps how many distinct parent values it counts; past it the number is a floor.
+    count = (
+        f"at least {detail.get('parent_values')}"
+        if detail.get("parent_values_capped")
+        else f"one of {detail.get('parent_values')}"
+    )
+    return (
+        f"table {table}, column {detail.get('column')} (condition_on "
+        f"{detail.get('condition_on')}): {detail.get('rows')} of {detail.get('rows_total')} rows "
+        f"({detail.get('rows_null_parent')} of them with an empty parent) had {count} "
+        "parent values with no fitted combination and drew from the column's overall counts."
+    )
+
+
 def warning_record(
     code_: str,
     *,
@@ -79,6 +121,8 @@ def warning_record(
 ) -> dict[str, Any]:
     """One warning as the card and `--json` carry it: code, table, column, message, detail."""
     from decoy_engine.reasons.warning import (
+        FIT_JOINT_CELLS_TRUNCATED,
+        GENERATION_CONDITION_PARENT_UNSEEN,
         GENERATION_FIDELITY_BELOW_THRESHOLD,
         SEED_IGNORED_WITH_MASTER_KEY,
     )
@@ -88,6 +132,10 @@ def warning_record(
     if message is None:
         if code_ == GENERATION_FIDELITY_BELOW_THRESHOLD:
             message = _fidelity_message(table, detail)
+        elif code_ == FIT_JOINT_CELLS_TRUNCATED:
+            message = _joint_cap_message(detail)
+        elif code_ == GENERATION_CONDITION_PARENT_UNSEEN:
+            message = _parent_unseen_message(table, detail)
         elif code_ == SEED_IGNORED_WITH_MASTER_KEY:
             message = SEED_IGNORED_MESSAGE
         else:

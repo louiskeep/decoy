@@ -379,15 +379,14 @@ def _file_sources_missing_on_disk(raw: dict[str, Any], base_dir: Path) -> bool:
     return False
 
 
-# The generate floor holds whatever the values are, so no run admits that job; the
-# out-of-core estimate is conservative and full-frame recovery may still admit it.
-_GENERATION_BUDGET_EXCEEDED = "generation_budget_exceeded"
-
-
 def _insufficient_text(estimate: CapacityEstimate) -> str:
     """The INSUFFICIENT finding text for the engine code. The engine's generate message holds
     byte counts and a table name, never a generated value."""
-    if estimate.code == _GENERATION_BUDGET_EXCEEDED:
+    from decoy_engine.reasons.runtime import GENERATION_BUDGET_EXCEEDED
+
+    # The generate floor holds whatever the values are, so no run admits that job; the
+    # out-of-core estimate is conservative and full-frame recovery may still admit it.
+    if estimate.code == GENERATION_BUDGET_EXCEEDED:
         return (
             f"INSUFFICIENT -- {estimate.message} Lower the table's row_count or use a host "
             "with more memory."

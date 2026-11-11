@@ -7,6 +7,7 @@ import typer
 
 from decoy import _mask_secret_guidance, _native_gate, _resources
 from decoy._atomic import AtomicWriteError, describe
+from decoy.cli import gen
 from decoy.cli.exit_codes import EXIT_CAPACITY, EXIT_RUNTIME, EXIT_USAGE
 from decoy.cli.extras import (
     MissingExtraError,
@@ -222,6 +223,13 @@ def fail(ctx: RunContext, exc: Exception) -> NoReturn:
         state=ctx.state,
     )
 
+    # A preview shrinks the tables; a bound it can no longer meet is fixed by a larger --rows.
+    raise_rows_hint = (
+        ctx.rows is not None
+        and isinstance(exc, GenerationError)
+        and exc.code == UNIQUENESS_IMPOSSIBLE_CODE
+    )
+
     if ctx.state.mode is OutputMode.json:
         # R7: the capacity branch ADDS error_kind/code to this SAME
         # envelope -- command/config/mode/error are never dropped, and
@@ -235,6 +243,8 @@ def fail(ctx: RunContext, exc: Exception) -> NoReturn:
             "mode": ctx.yaml_mode,
             "error": error_text,
         }
+        if raise_rows_hint:
+            payload["hint"] = gen.RAISE_ROWS_HINT
         if isinstance(exc, PreRunCheckError):
             payload.update(exc.json_members())
         elif capacity_code is not None or out_of_memory:
@@ -277,6 +287,8 @@ def fail(ctx: RunContext, exc: Exception) -> NoReturn:
             ctx.state.err_console.print(error("error:"), error_text, markup=False)
         else:
             ctx.state.err_console.print(error("error:"), error_text, markup=False)
+            if raise_rows_hint:
+                ctx.state.err_console.print(" ", hint("hint:"), gen.RAISE_ROWS_HINT)
             ctx.state.err_console.print(
                 " ", hint("hint:"), "rerun with --verbose for the full traceback."
             )

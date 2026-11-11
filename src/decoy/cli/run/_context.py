@@ -16,6 +16,10 @@ from decoy import _native_gate, _resources
 from decoy.cli.gate import GateFinding
 from decoy.ui.output import OutputState
 
+# Rows per chunk when `--chunk-size` is not given. The option has no default of its own so a
+# preview can tell whether it was passed.
+DEFAULT_CHUNK_SIZE = 100_000
+
 
 class Mode(str, Enum):
     mask = "mask"
@@ -32,7 +36,7 @@ class NotifyOn(str, Enum):
 class RunContext:
     """Options, then the state each phase sets for the next; see the module docstring."""
 
-    # The 24 options of `decoy run`, as `run()` receives them.
+    # The 25 options of `decoy run`, as `run()` receives them.
     config: Path
     mode: Mode
     json_: bool
@@ -41,7 +45,7 @@ class RunContext:
     master_key: str
     mask_secret: str
     chunked: bool
-    chunk_size: int
+    chunk_size: int | None
     max_memory: str | None
     threads: str | None
     vault: Path
@@ -57,6 +61,7 @@ class RunContext:
     post_validate_enforce: bool
     duckdb_source: list[str]
     otel_endpoint: str
+    rows: int | None
     state: OutputState
 
     # Set before the try block.
@@ -99,6 +104,8 @@ class RunContext:
     _native_route: _native_gate.RouteClassification | None = field(init=False, default=None)
     _resources_record: dict | None = field(init=False, default=None)
     _report_quality_metrics: dict | None = field(init=False, default=None)
+    # `--rows` preview: the sampled tables, set by `_execute.execute_preview`.
+    _preview_tables: list[dict] = field(init=False, default_factory=list)
 
     # Set by `_prepare.prepare`, read by `_execute.execute`. `engine_version` is bound where the
     # lazy engine import runs, not at construction.

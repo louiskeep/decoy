@@ -9,6 +9,7 @@ import typer
 from rich.text import Text
 
 from decoy import _mask_secret, _mask_secret_guidance, _native_gate, _resources
+from decoy.cli import gen
 from decoy.cli.exit_codes import EXIT_USAGE
 from decoy.cli.gate import (
     GateFinding,
@@ -147,6 +148,18 @@ _FIDELITY_NEEDS_MASK = (
 )
 
 
+def _refuse_usage(state, config_str: str, text: str) -> None:
+    """Print a usage refusal in the active output mode and exit 1, before any engine call."""
+    if state.mode is OutputMode.json:
+        emit_json(
+            state,
+            {"command": "run", "status": "error", "config": config_str, "error": text},
+        )
+    elif state.mode is not OutputMode.quiet:
+        state.err_console.print(error("error:"), text, markup=False)
+    raise typer.Exit(code=EXIT_USAGE)
+
+
 def _refuse_fidelity_without_mask(state, config_str: str, raw_cfg: dict) -> None:
     """Exit 1 before any engine call when `--fidelity` is given and no table is a mask table.
 
@@ -154,42 +167,43 @@ def _refuse_fidelity_without_mask(state, config_str: str, raw_cfg: dict) -> None
     """
     if not raw_cfg.get("tables"):
         return
-    if state.mode is OutputMode.json:
-        emit_json(
-            state,
-            {
-                "command": "run",
-                "status": "error",
-                "config": config_str,
-                "error": _FIDELITY_NEEDS_MASK,
-            },
+    _refuse_usage(state, config_str, _FIDELITY_NEEDS_MASK)
+
+
+def refuse_preview(ctx: RunContext) -> None:
+    """Exit 1 before any engine call when `--rows` cannot run: a bad size, a flag that writes
+    or reports, or a mask table. Names flags only."""
+    assert ctx.rows is not None
+    flags = [
+        name
+        for name, given in (
+            ("--chunked", ctx.chunked),
+            ("--chunk-size", ctx.chunk_size is not None),
+            ("--evidence-out", ctx.evidence_out is not None),
+            ("--notify", bool(ctx.notify)),
+            ("--vault", ctx.vault is not None),
+            ("--fidelity", ctx.fidelity),
+            ("--explain-plan", ctx.explain_plan),
+            ("--post-validate", ctx.post_validate),
+            ("--post-validate-enforce", ctx.post_validate_enforce),
+            ("--native", ctx.native),
+            ("--duckdb-source", bool(ctx.duckdb_source)),
         )
-    elif state.mode is not OutputMode.quiet:
-        state.err_console.print(error("error:"), _FIDELITY_NEEDS_MASK, markup=False)
-    raise typer.Exit(code=EXIT_USAGE)
+        if given
+    ]
+    text = gen.refusal(ctx.rows, flags, _has_kind(ctx.raw_cfg, "columns"))
+    if text is not None:
+        _refuse_usage(ctx.state, ctx.config_str, text)
 
 
-def prepare(ctx: RunContext, _scopes: contextlib.ExitStack) -> None:
-    """Everything between the config read and the first row: the engine import, the config
-    guards, `--duckdb-source` staging, the gate, admission and the source load."""
-    from decoy_engine import (
-        __version__ as engine_version,
-    )
-    from decoy_engine import run_pipeline  # noqa: F401  (import kept at its original point)
-
-    ctx.engine_version = engine_version
-
-    if ctx.config_read_error is not None:
-        raise ctx.config_read_error
-    if ctx.saved_findings:
-        raise PreRunCheckError.from_findings(ctx.saved_findings)
-
-    # DE-02 secret-disclosure ROOT guard: validate the RAW YAML `mask_secret_ref`
-    # BEFORE PipelineConfig.model_validate(raw). A wrong-type value would raise a
-    # Pydantic ValidationError echoing `input_value` (the secret) as exit 3. A
-    # redacted usage error here keeps the value out of Pydantic's diagnostics.
-    # YAML-only: the --mask-secret flag is always a str from Typer.
-    _raw_gs = ctx.raw.get("global_settings") if isinstance(ctx.raw, dict) else None
+def _guard_mask_secret_ref(raw: object) -> None:
+    """DE-02 secret-disclosure ROOT guard: validate the RAW YAML `mask_secret_ref` BEFORE
+    PipelineConfig.model_validate(raw). A wrong-type value would raise a Pydantic
+    ValidationError echoing `input_value` (the secret) as exit 3. A redacted usage error here
+    keeps the value out of Pydantic's diagnostics. YAML-only: the --mask-secret flag is always
+    a str from Typer.
+    """
+    _raw_gs = raw.get("global_settings") if isinstance(raw, dict) else None
     # A non-dict `global_settings` (e.g. a YAML list) is malformed AND
     # could smuggle a mask_secret_ref value nested where the dict-path
     # check below can't see it -- Pydantic would then echo that value in
@@ -210,6 +224,44 @@ def prepare(ctx: RunContext, _scopes: contextlib.ExitStack) -> None:
             "It is a REFERENCE, never the raw secret. "
             "See: decoy explain keys."
         )
+
+
+def prepare_preview(ctx: RunContext) -> None:
+    """The `--rows` counterpart of `prepare`: the config guards and the gate on the scaled
+    config. No source is read and no vault or key provider is opened, because a preview has
+    no mask table."""
+    from decoy_engine import __version__ as engine_version
+
+    assert ctx.rows is not None
+    ctx.engine_version = engine_version
+    if ctx.config_read_error is not None:
+        raise ctx.config_read_error
+    if ctx.saved_findings:
+        raise PreRunCheckError.from_findings(ctx.saved_findings)
+    _guard_mask_secret_ref(ctx.raw)
+    ctx.config_dict = check_before_run(
+        gen.scale_row_counts(ctx.raw, ctx.rows), ctx.config, GateRoute.PLAIN, ctx.state
+    )
+    ctx.any_generate = True
+    ctx._res = _resources.resolve(max_memory=ctx.max_memory, threads=ctx.threads)
+
+
+def prepare(ctx: RunContext, _scopes: contextlib.ExitStack) -> None:
+    """Everything between the config read and the first row: the engine import, the config
+    guards, `--duckdb-source` staging, the gate, admission and the source load."""
+    from decoy_engine import (
+        __version__ as engine_version,
+    )
+    from decoy_engine import run_pipeline  # noqa: F401  (import kept at its original point)
+
+    ctx.engine_version = engine_version
+
+    if ctx.config_read_error is not None:
+        raise ctx.config_read_error
+    if ctx.saved_findings:
+        raise PreRunCheckError.from_findings(ctx.saved_findings)
+
+    _guard_mask_secret_ref(ctx.raw)
 
     # DuckDB-in sources: acquire each flagged relation read-only to a
     # temp Parquet and rewrite the in-memory source to that Parquet

@@ -97,7 +97,7 @@ $ decoy run [OPTIONS] CONFIG
 * `--master-key TEXT`: 64-char hex master key for keyed deterministic SYNTHETIC GENERATION only (generate_columns:). Same key + same --key-label always yield bitwise-identical generated output across runs and machines. Reads DECOY_MASTER_KEY env var when omitted; without either, generation falls back to the legacy seeded path (per-input deterministic but not portable). With a key, global_settings.seed is not used for generated tables (masked tables still use it). This flag does NOT affect masking -- masking&#x27;s keyed determinism is configured separately via &#x27;--mask-secret&#x27; (or the pipeline YAML&#x27;s &#x27;global_settings.mask_secret_ref&#x27;), never this flag or its env var. See: decoy explain keys.  [env var: DECOY_MASTER_KEY]
 * `--mask-secret TEXT`: env:NAME or file:/PATH pointing at a &gt;=32-byte mask secret for keyed masking (mask: strategies -- fpe, hash, date_shift, and others). Independent of --master-key (which is generation-only). Sets &#x27;global_settings.mask_secret_ref&#x27; for this run; an error if the YAML already sets it. Explicit flag only -- it deliberately has NO env var, because the ref it carries (e.g. &#x27;env:DECOY_MASK_SECRET&#x27;) already indirects through the environment; a second env layer would absorb the raw exported secret as this flag&#x27;s value. See: decoy explain keys.
 * `--chunked`: Stream the source through the engine chunk-by-chunk, for inputs too large to load whole. Works for mask configs whose every strategy is value-keyed (hash, fpe, redact, truncate, text_redact, date_shift, bucketize), plus faker/categorical when deterministic with an explicit pool_size / categories declared in config; output is byte-identical to a plain run. Sources and targets use their declared format (csv or parquet; fixed_width and CSV in a zip or tar archive are not supported with --chunked). See: decoy explain chunked.
-* `--chunk-size INTEGER RANGE`: Rows per chunk in --chunked mode.  [default: 100000; x&gt;=1]
+* `--chunk-size INTEGER RANGE`: Rows per chunk in --chunked mode (default 100000).  [x&gt;=1]
 * `--max-memory SIZE`: Memory budget for the out-of-core route, such as 8GiB, or auto. Overrides DECOY_MAX_MEMORY and settings.json. Default auto: 25% of the memory ceiling. Ignored by --chunked.
 * `--threads N`: Worker threads for the native and out-of-core routes, or auto. Overrides DECOY_THREADS and settings.json. Default auto: the usable CPUs. Ignored by --chunked.
 * `--vault PATH`: Write the token vault (encrypted source-to-masked map for vault: true columns) to this path. The vault plus the config re-identify every vaulted value: store them separately and never alongside the masked output. Needs the engine&#x27;s vault extra (cryptography). Not supported with --chunked.
@@ -112,6 +112,7 @@ $ decoy run [OPTIONS] CONFIG
 * `--post-validate`: After the run, run the post-execution validator suite over the masked output and show its results (findings + quality summary), from the result&#x27;s quality metrics. Warn-only: findings are reported but the run still exits 0. Use --post-validate-enforce to exit with findings. Default off. Not supported with --chunked.
 * `--post-validate-enforce`: Like --post-validate, but exit EXIT_FINDINGS (4) when the validator reports any hard-failed check. The masked output is still written (the mask succeeded; the findings are a data-quality signal). Implies --post-validate. Default off. Not supported with --chunked.
 * `--duckdb-source TEXT`: Read a pipeline input table from a DuckDB database file instead of a CSV/Parquet/fixed-width file. Repeatable; spec is &#x27;TABLE=DB_PATH&#x27;, where TABLE names a table in the pipeline&#x27;s `tables:` and the relation of the same name in the DuckDB file. The relation is acquired read-only (the database is never written) to a temporary Parquet file, which is then masked on the normal parquet path (native-on and --chunked apply unchanged). A flag entry overrides any `sources:` entry the YAML declares for TABLE. Not supported with --evidence-out yet. Needs no raw SQL: the relation name is the handle.
+* `--rows N`: Preview a generate pipeline: run it at a small size, print each table&#x27;s rows and write nothing. N is 1 to 1000 rows for the largest table; every other table is scaled by the same ratio, so parent and child sizes keep their proportions. Refused with a mask table, --chunked, --chunk-size, --evidence-out, --notify, --vault, --fidelity, --explain-plan, --post-validate, --post-validate-enforce, --native and --duckdb-source.
 * `--otel-endpoint TEXT`: Export OpenTelemetry traces of this run to the OTLP/HTTP traces URL of a collector you run (also DECOY_OTEL_ENDPOINT). Headers come only from DECOY_OTEL_HEADERS (name=value,...), which needs https unless the host is loopback. Standard OTEL_* variables are ignored. Needs decoy-cli[otel].
 * `--help`: Show this message and exit.
 
@@ -119,6 +120,10 @@ Examples:
 
   decoy run pipeline.yaml
     Run with default mode (mask).
+
+  decoy run generate.yaml --rows 5
+    Preview a generate pipeline: the largest table at 5 rows, the others in proportion.
+    Prints the rows and writes nothing.
 
   decoy run pipeline.yaml --json
     Suppress chrome and emit a structured result for scripting.
@@ -387,6 +392,7 @@ $ decoy fit [OPTIONS] SOURCE
 * `-o, --output PATH`: Where to write the snapshot JSON. Default: &lt;source&gt;.snapshot.json.
 * `--parse-dates TEXT`: Column(s) to parse as datetimes (repeatable). CSV carries no dtype, so date columns must be named explicitly. Not supported with --epsilon.
 * `--joint TEXT`: Column pair &#x27;a,b&#x27; whose contingency table to capture (repeatable). Needed for `condition_on`. Not supported with --epsilon.
+* `--joint-max-cells N`: Keep up to N combinations per --joint pair (default 25, at most 1000); the rest fall into one count. Rare combinations can point at one person, so without --include-values a raised cap works only on pairs of plain categorical columns. Needs --joint.
 * `--rows N`: Fit on at most N rows. A larger file is cut to a random sample of N rows spread across the whole file, never the first N (fixed seed 42: the same file gives the same sample). Sensitive-column detection and the snapshot use the same sampled rows. Default: the fit.max_rows setting in settings.json, else 1000000. A whole number of 1 or more. Not supported with --epsilon (a DP fit uses every row and ignores the setting).
 * `--epsilon FLOAT`: Select DP mode: fit a dps-marginal/v3 artifact via the engine&#x27;s fit_dp_snapshot instead of the exact snapshot. Requires --delta and at least one carrier declaration (--dp-number/--dp-flag/--dp-text). This is the ONLY DP-mode selector -- every DP-only option is a usage error without it, so a forgotten --epsilon never silently falls back to the exact release. Runs only on a certified DP install; see decoy explain differential-privacy.
 * `--delta FLOAT`: DP failure probability, required with --epsilon (no default: a silent delta would set an unchosen privacy level). Finite, in (0, 1).
@@ -412,6 +418,12 @@ Examples:
   decoy fit customers.csv --joint state,tier
     Capture the (state, tier) contingency table so a statistical column
     can use `condition_on`.
+
+  decoy fit customers.csv --joint state,tier --joint-max-cells 100
+    Keep up to 100 (state, tier) combinations instead of 25. When the
+    cap drops combinations, fit warns on stderr and in --json. Without
+    --include-values a raised cap needs both columns to be plain
+    categories.
 
   decoy fit customers.csv --rows 100000
     Fit on a seeded random sample of 100,000 rows spread across the whole
@@ -477,6 +489,13 @@ Examples:
     the file, picks a starter strategy per column from the inference
     table, writes the YAML with `# REVIEW:` comments above every
     inferred entry. The user must read + edit before running.
+
+  decoy init --preset generate -o -
+    Print the generate template on stdout and nothing else there.
+
+  decoy init people.csv --preset generate -o gen/pipeline.yaml
+    Fit people.csv, then write gen/people.snapshot.json and a generate config
+    that names it. Both files are written together or not at all.
 
   decoy init --yes
     Skip confirmation when overwriting an existing file.

@@ -4,6 +4,7 @@ from functools import partial
 from pathlib import Path
 
 from decoy import _native_gate, _resources
+from decoy.cli import gen
 from decoy.cli.extras import check_cloud_endpoints, check_cloud_endpoints_supported
 from decoy.cli.io import (
     check_target_formats,
@@ -19,7 +20,7 @@ from decoy.cli.io import (
 from decoy.cli.io import (
     resolve_path as _resolve_path,
 )
-from decoy.cli.run._context import RunContext
+from decoy.cli.run._context import DEFAULT_CHUNK_SIZE, RunContext
 from decoy.cli.run._vault import _commit_vault
 
 
@@ -199,7 +200,10 @@ def execute(ctx: RunContext) -> None:
     """Run the pipeline on the chunked or plain branch and record what the tail reports."""
     if ctx.chunked:
         _chunk_paths = _run_chunked_mask(
-            ctx.config_dict, ctx.config.parent, ctx.chunk_size, ctx.key_provider
+            ctx.config_dict,
+            ctx.config.parent,
+            ctx.chunk_size or DEFAULT_CHUNK_SIZE,
+            ctx.key_provider,
         )
         ctx._table_records = table_records(dict.fromkeys(_chunk_paths), _chunk_paths)
         ctx._native_route = _native_gate.classify_route(
@@ -267,3 +271,24 @@ def execute(ctx: RunContext) -> None:
         ctx._ev_timings = result.timings
         ctx._ev_engine_warnings = result.warnings
         ctx._notify_row_count = sum(len(tbl) for tbl in result.outputs.values())
+
+
+def execute_preview(ctx: RunContext) -> None:
+    """Run the scaled generate pipeline and keep its sampled rows. Nothing is written."""
+    from decoy_engine import run_pipeline
+    from decoy_engine.generation import generation_order
+
+    assert ctx.rows is not None
+    instance_locale = (ctx.config_dict.get("global_settings") or {}).get("default_locale")
+    result = run_pipeline(
+        resolved_source_config(ctx.config_dict, ctx.config.parent),
+        {},
+        engine_version=ctx.engine_version,
+        derive_key=ctx.resolver,
+        instance_default_locale=instance_locale,
+        base_dir=ctx.config.parent,
+        **_resources.run_pipeline_kwargs(ctx._res),
+    )
+    order = [name for name, _parents in generation_order(ctx.config_dict)]
+    ctx._preview_tables = gen.sample_tables(result.outputs, order, ctx.rows)
+    ctx._ev_engine_warnings = result.warnings
