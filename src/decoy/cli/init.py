@@ -89,7 +89,7 @@ def _render(preset: str, input_path: str | None, output_path: str | None) -> str
 
 
 # A plain-scalar value and an optional trailing comment; quoted values are replaced whole.
-_PLAIN_VALUE_WITH_COMMENT = re.compile(r"(?P<value>[^'\"#][^#]*?)(?P<comment>[ \t]+#.*)?$")
+_PLAIN_VALUE_WITH_COMMENT = re.compile(r"(?P<value>[^'\"#][^#]*?)(?P<comment>[ \t]+#.*)?\Z")
 
 
 def _entry_path_line(lines: list[str], key: str) -> int:

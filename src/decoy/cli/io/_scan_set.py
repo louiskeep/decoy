@@ -31,7 +31,7 @@ from decoy.cli.scanning import table_name_from_path
 
 _NOT_A_SCAN = "not a saved scan Decoy can read"
 _SCHEMA_MAJOR = "scan-set/v1"
-_TAG_SHAPE = re.compile(r"^[A-Za-z0-9._/-]{1,32}$")
+_TAG_SHAPE = re.compile(r"^[A-Za-z0-9._/-]{1,32}\Z")
 _PII_CANDIDATE_THRESHOLD = 0.6
 
 # What a legacy `profile.to_dict()` must carry. The capture script and fixture beside the
