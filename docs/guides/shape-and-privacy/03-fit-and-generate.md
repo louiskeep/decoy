@@ -29,6 +29,7 @@ signup_date (datetime), is_active (categorical)
 | `-o, --output PATH` | Where to write the snapshot. Default is `<source>.snapshot.json`. |
 | `--parse-dates COL` | Treat a column as dates. Repeatable. CSV has no types, so you must name date columns. |
 | `--joint a,b` | Also record how two columns go together. Repeatable. Needed for `condition_on`. |
+| `--joint-max-cells N` | Keep up to N combinations of each `--joint` pair (default 25, at most 1000). Needs `--joint`. Without `--include-values`, a cap above 25 works only when both columns are plain categories. See [Using `condition_on`](#using-condition_on). |
 | `--rows N` | Fit on at most N rows. See [Large files](#large-files-the-row-limit). Not allowed with `--epsilon`. |
 | `--include-values` | Keep the real values of columns the profiler flags as sensitive. The file then holds real data. Not allowed with `--epsilon`. |
 
@@ -266,13 +267,23 @@ Rules:
   (`tier` on `state`, then `plan` on `tier`).
 - The parent's generated `name` must equal its name in the snapshot. A renamed
   parent cannot be conditioned on.
-- **Only the 25 most common pairs are kept.** A parent value whose pairs all
-  fall outside the top 25 is drawn from the child's overall counts instead,
-  with no warning. In a re-test with 12 parent values and 36 real pairs, the
+- **Only the 25 most common pairs are kept by default.** A parent value whose
+  pairs all fall outside the kept ones is drawn from the child's overall
+  counts instead. In a re-test with 12 parent values and 36 real pairs, the
   rarest parent lost all its pairs and 43 of 6,000 rows (0.7%) had
-  combinations that never occur in the source. Check the snapshot: under `joints`, compare
-  `cell_count` with the number of entries in `cells`.
-- A parent value that was never in the fit also falls back silently.
+  combinations that never occur in the source. `decoy fit` warns when the cap
+  drops pairs (on stderr, and under `warnings` in `--json`), with the counts
+  and the number to pass to `--joint-max-cells` to keep them all. `decoy run`
+  then warns in its summary, and under `warnings` in `run --json`, how many
+  rows fell back. Neither warning names a value.
+- **A raised cap needs plain categories.** Rare pairs can point at one
+  person, so without `--include-values` a `--joint-max-cells` above 25 is
+  refused (exit 1, `contingency_top_k_kind_unsupported`) when either column
+  is a number, date, free text or high-cardinality column. A pair that
+  touches a column the profiler flags as sensitive keeps no pairs at any
+  cap without `--include-values`, and gets no cap warning.
+- A parent value that was never in the fit also falls back to the child's
+  overall counts, and the run warning counts those rows too.
 - Not allowed with differential privacy.
 
 ## Check your source before you fit
