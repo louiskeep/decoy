@@ -34,6 +34,8 @@ from decoy.ui.theme import error, hint
 # The engine's code for a `unique` generate column or pair that the data cannot satisfy.
 UNIQUENESS_IMPOSSIBLE_CODE = "uniqueness_impossible"
 
+_OUT_OF_MEMORY_TEXT = "the run ran out of memory."
+
 
 def fail(ctx: RunContext, exc: Exception) -> NoReturn:
     """Map `exc` to an exit code, notify, print the error and exit. Called inside the
@@ -110,6 +112,9 @@ def fail(ctx: RunContext, exc: Exception) -> NoReturn:
     # is a memory refusal like the two above, so it exits 5 and labels the JSON the same.
     elif isinstance(exc, DecoyError) and getattr(exc, "code", None) in capacity_codes():
         capacity_code = exc.code
+    # A bare MemoryError has no code and often no text; it is still the host running out of
+    # memory, so it takes the capacity exit with fixed text instead of an empty `error: `.
+    out_of_memory = isinstance(exc, MemoryError)
 
     # Phase 3.1: `NativeGateError.code` distinguishes a usage refusal
     # (--native/--no-native conflict, an ineligible shape) from a
@@ -122,7 +127,7 @@ def fail(ctx: RunContext, exc: Exception) -> NoReturn:
 
     if isinstance(exc, PreRunCheckError):
         _exit_code = exc.exit_code
-    elif capacity_code is not None:
+    elif capacity_code is not None or out_of_memory:
         _exit_code = EXIT_CAPACITY
     elif isinstance(exc, GenerationError) and exc.code == UNIQUENESS_IMPOSSIBLE_CODE:
         # A `unique` column or pair the data cannot satisfy (a parent with too
@@ -190,6 +195,8 @@ def fail(ctx: RunContext, exc: Exception) -> NoReturn:
     # downstream log aggregators.
     error_text = describe(exc) if isinstance(exc, AtomicWriteError) else str(exc)
     error_text = cap_error_text(error_text)
+    if out_of_memory:
+        error_text = _OUT_OF_MEMORY_TEXT
     keyed_refusal = _mask_secret_guidance.is_keyed_secret_refusal(exc)
     if isinstance(exc, _mask_secret_error_types):
         # Constant text by code; the engine message never reaches the terminal or --json.
@@ -230,9 +237,10 @@ def fail(ctx: RunContext, exc: Exception) -> NoReturn:
         }
         if isinstance(exc, PreRunCheckError):
             payload.update(exc.json_members())
-        elif capacity_code is not None:
+        elif capacity_code is not None or out_of_memory:
             payload["error_kind"] = "capacity"
-            payload["code"] = capacity_code
+            if capacity_code is not None:
+                payload["code"] = capacity_code
         elif native_code is not None:
             payload["error_kind"] = "native"
             payload["code"] = native_code
@@ -257,7 +265,7 @@ def fail(ctx: RunContext, exc: Exception) -> NoReturn:
             # The summary already names the command that lists every finding.
             label = "capacity:" if exc.error_kind == "capacity" else "error:"
             ctx.state.err_console.print(error(label), error_text, markup=False)
-        elif capacity_code is not None:
+        elif capacity_code is not None or out_of_memory:
             ctx.state.err_console.print(error("capacity:"), error_text, markup=False)
             ctx.state.err_console.print(
                 " ",
