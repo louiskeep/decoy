@@ -1,0 +1,10 @@
+{
+ "sentry_id": "package-fanout",
+ "created_in": "LAYOUT-C2",
+ "entries": {
+  "src/decoy/cli": {
+   "reason": "flat package over the 25-module cap when LAYOUT C2 froze it; may only shrink, the next module goes in a named sub-package from the CODEMAP map",
+   "max": 30
+  }
+ }
+}

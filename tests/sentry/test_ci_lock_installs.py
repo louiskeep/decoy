@@ -501,7 +501,9 @@ def test_vendor_ledger_matches_the_copies(tmp_path: Path) -> None:
     assert vendored - shared == {
         ".github/actions/setup-uv/action.yml",
         "tests/sentry/defects/_defect_scan.py",
-    }, "only setup-uv and the defect scanner besides"
+        "tests/sentry/layout/_layout.py",
+        "tests/sentry/layout/_ratchet_cases.py",
+    }, "only setup-uv, the defect scanner and the layout helpers besides"
     assert len(ledger["mirror"]) == 3
     assert _vendor_findings(ledger) == []
     wrong = copy.deepcopy(ledger)
