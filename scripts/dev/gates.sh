@@ -108,10 +108,15 @@ for name in ${STEPS//,/ }; do
 done
 LAYER_VENV=$ROOT/.venv-layers
 LAYERS_ONLY=0
+# The layer venv is bootstrapped once per run, here; the layers step only runs pytest in it.
+LAYER_BOOT=skip
+case ",$STEPS," in
+  *,layers,*) if DECOY_VENV=$LAYER_VENV bash "$ROOT/scripts/dev/bootstrap.sh" >&2; then LAYER_BOOT=ok; else LAYER_BOOT=fail; fi ;;
+esac
 if [ "$STEPS" = layers ]; then
   # The layer venv is the only venv this run needs, so it also runs the reporter.
   LAYERS_ONLY=1
-  DECOY_VENV=$LAYER_VENV bash "$ROOT/scripts/dev/bootstrap.sh" >&2 || { echo "gates: FAIL: could not bootstrap $LAYER_VENV" >&2; exit 2; }
+  [ $LAYER_BOOT = ok ] || { echo "gates: FAIL: could not bootstrap $LAYER_VENV" >&2; exit 2; }
   VENV=$LAYER_VENV BIN=$LAYER_VENV/bin
 fi
 [ -x "$BIN/python" ] || { echo "gates: no venv at $VENV; run scripts/dev/bootstrap.sh" >&2; exit 2; }
@@ -237,9 +242,9 @@ fi
 
 pypath() { local d out=""; for d in ${PYPATH_DIRS[@]+"${PYPATH_DIRS[@]}"}; do out="$out${out:+:}$1/$d"; done; echo "$out"; }
 
-# The layers step: bootstrap the layer venv, then run only the layer test in it (pytest args in $@).
+# The layers step: run only the layer test in the layer venv bootstrapped above (pytest args in $@).
 layer_step() {
-  DECOY_VENV=$LAYER_VENV bash "$ROOT/scripts/dev/bootstrap.sh" || { echo "gates: could not bootstrap $LAYER_VENV"; return 2; }
+  [ "$LAYER_BOOT" = ok ] || { echo "gates: could not bootstrap $LAYER_VENV"; return 2; }
   "$LAYER_VENV/bin/python" -m pytest "$@" "$LAYER_TEST"
 }
 
