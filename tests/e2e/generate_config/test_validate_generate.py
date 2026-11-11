@@ -87,21 +87,21 @@ def _formula(formula: str, **extra: Any) -> dict[str, Any]:
     return {"name": "twice", "type": "formula", "formula": formula, **extra}
 
 
-# --- AT-C1: each H3 input, refused by the config parse (located by index) ---------------------
+# --- AT-C1: each H3 input, refused by the config parse (located by index, engine spelling) ----
 
 _CONFIG_CELLS = [
-    pytest.param([_cat(weigths=[_CANARY])], "generate_option_unknown", "0.weigths", False,
+    pytest.param([_cat(weigths=[_CANARY])], "generate_option_unknown", "[0].weigths", False,
                  id="option-typo"),
-    pytest.param([_cat(weights=[-1, 2])], "generate_weights_invalid", "0.weights.0", True,
+    pytest.param([_cat(weights=[-1, 2])], "generate_weights_invalid", "[0].weights[0]", True,
                  id="negative-weight"),
     pytest.param([_faker(null_probability=2)], "generate_option_range",
-                 "0.null_probability", True, id="null-probability-over-1"),
-    pytest.param([{**_SEQ, "step": 0}], "generate_option_range", "0.step", True,
+                 "[0].null_probability", True, id="null-probability-over-1"),
+    pytest.param([{**_SEQ, "step": 0}], "generate_option_range", "[0].step", True,
                  id="step-0"),
-    pytest.param([_SEQ, {**_SEQ, "start": 5}], "generate_column_duplicate", "1.name", False,
+    pytest.param([_SEQ, {**_SEQ, "start": 5}], "generate_column_duplicate", "[1].name", False,
                  id="duplicate-name"),
     pytest.param([_SEQ, _formula(f"{_CANARY} +")], "generate_formula_invalid",
-                 "1.formula", False, id="formula-syntax"),
+                 "[1].formula", False, id="formula-syntax"),
 ]  # fmt: skip
 
 
@@ -111,7 +111,7 @@ def test_at_c1_config_refusal_names_the_option(
 ) -> None:
     result, messages = _validate(tmp_path, columns)
     assert result.exit_code == EXIT_USAGE, result.output
-    location = f"tables.0.generate_columns.{where}"
+    location = f"tables[0].generate_columns{where}"
     hits = [m for m in _errors(messages) if (m["code"], m.get("location")) == (code, location)]
     assert hits, {(m["code"], m.get("location")) for m in _errors(messages)}
     if numeric:
@@ -162,7 +162,7 @@ def test_at_c1_human_output_names_the_location(tmp_path: Path) -> None:
     assert result.exit_code == EXIT_USAGE
     text = " ".join(result.output.split())
     assert "Generate column option is not known for this column type." in text
-    assert "tables.0.generate_columns.0.weigths" in text
+    assert "tables[0].generate_columns[0].weigths" in text
     _no_canary(result)
 
 
@@ -183,7 +183,7 @@ def test_at_c1_boundary_values_still_validate(tmp_path: Path) -> None:
 # a parse-time refusal; `column` and `option` are the plan-time table/column/option text.
 _H4_CELLS = [
     pytest.param([_cat(weights=[0, 0])], "generate_weights_invalid",
-                 {"where": "tables.0.generate_columns.0.weights", "numeric": True},
+                 {"where": "tables[0].generate_columns[0].weights", "numeric": True},
                  id="zero-sum-weights"),
     pytest.param([{"name": "tier", "type": "categorical", "categories": [_CANARY, 1]}],
                  "generate_categories_mixed", {"column": "tier", "option": "categories"},
