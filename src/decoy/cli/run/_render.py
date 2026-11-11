@@ -3,6 +3,7 @@
 
 import typer
 
+from decoy.cli import gen
 from decoy.cli.exit_codes import EXIT_FINDINGS
 from decoy.cli.run._context import Mode, RunContext
 from decoy.cli.run._prepare import _has_kind
@@ -141,3 +142,27 @@ def finish(ctx: RunContext) -> None:
 
     if _enforce_fires:
         raise typer.Exit(code=EXIT_FINDINGS)
+
+
+def finish_preview(ctx: RunContext) -> None:
+    """Render a `--rows` preview: the sampled rows (or the `--json` payload) and the warnings."""
+    warnings = warning_records(
+        ctx._ev_engine_warnings,
+        _seed_warnings(ctx.raw_cfg, key_in_effect=ctx.resolver is not None),
+    )
+    if ctx.state.mode is OutputMode.json:
+        emit_json(
+            ctx.state,
+            {
+                "command": "run",
+                "status": "ok",
+                "preview": True,
+                "config": ctx.config_str,
+                "tables": ctx._preview_tables,
+                "warnings": warnings,
+            },
+        )
+        return
+    gen.render_preview(ctx.state, ctx._preview_tables)
+    if ctx.state.mode is not OutputMode.quiet:
+        render_warnings(ctx.state, warnings)
