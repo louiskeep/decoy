@@ -522,10 +522,16 @@ class RunLayout:
         return tuple(warnings)
 
     def abandon(self) -> None:
-        """Remove the run folder when it holds nothing (a run that failed before any write)."""
-        if self._run is not None:
+        """Remove the run folder when it holds no file (a run that failed before any write).
+
+        Empty sub-folders a nested target made are removed first, deepest first; `rmdir`
+        removes only empty folders, so a written file keeps the folder and its parents.
+        """
+        if self._run is None:
+            return
+        for current, _dirs, _files in os.walk(self._run.path, topdown=False):
             try:
-                self._run.path.rmdir()
+                os.rmdir(current)
             except OSError:
                 pass
 

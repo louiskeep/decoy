@@ -262,6 +262,29 @@ def test_the_evidence_run_id_is_the_invocation_id_in_the_folder_name(tmp_path: P
     assert run.name.endswith(uuid.UUID(run_id).hex[:8])
 
 
+def test_evidence_for_an_unwritten_target_names_the_run_folder_not_the_cwd(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """A chunked CSV whose stream yields nothing publishes nothing; a cwd file must not stand in."""
+    import decoy_engine
+
+    monkeypatch.setattr(decoy_engine, "run_mask_pipeline_chunked", lambda *a, **k: iter(()))
+    root = _project(tmp_path)
+    cfg = _write(root, "pipelines/orders/pipeline.yaml", _config(root))
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+    (elsewhere / "masked.csv").write_text("stale,unrelated\n", encoding="utf-8")
+    monkeypatch.chdir(elsewhere)
+    evidence = tmp_path / "ev.json"
+    result = _run(cfg, "--chunked", "--evidence-out", str(evidence))
+    assert result.exit_code == 0, result.output
+    (run,) = _runs(root, "orders")
+    entry = json.loads(evidence.read_text(encoding="utf-8"))["output_fingerprints"]["a"]
+    assert entry["path"] == str(run / "masked.csv")
+    assert (entry["fingerprint"], entry["size_bytes"]) == (None, None)
+    assert not (run / "masked.csv").exists()
+
+
 def test_one_invocation_id_is_minted_per_command(tmp_path: Path, monkeypatch) -> None:
     from decoy.cli.run import _flow
 
@@ -380,6 +403,21 @@ def test_a_file_named_latest_gives_a_warning_and_exit_zero(tmp_path: Path) -> No
     assert (root / "out" / "orders" / "latest").read_text(encoding="utf-8") == "mine"
 
 
+def test_abandon_removes_empty_nested_folders_and_keeps_written_files(tmp_path: Path) -> None:
+    root = _project(tmp_path)
+    empty, written = _open(root, START), _open(root, START + timedelta(seconds=1))
+    assert empty.run is not None and written.run is not None
+    (empty.run.path / "a" / "b").mkdir(parents=True)
+    (written.run.path / "a" / "b").mkdir(parents=True)
+    (written.run.path / "a" / "b" / "t.csv").write_text("x\n", encoding="utf-8")
+    (written.run.path / "c").mkdir()
+    empty.abandon()
+    written.abandon()
+    assert not empty.run.path.exists()
+    assert (written.run.path / "a" / "b" / "t.csv").is_file()
+    assert not (written.run.path / "c").exists()
+
+
 def test_an_invalid_latest_warns_and_the_next_clean_run_repairs_it(tmp_path: Path) -> None:
     root = _project(tmp_path)
     layout = _open(root, START)
@@ -391,41 +429,51 @@ def test_an_invalid_latest_warns_and_the_next_clean_run_repairs_it(tmp_path: Pat
     assert held == layout.run.run_id
 
 
-@posix_only
-def test_a_symlinked_latest_is_not_read_through(tmp_path: Path) -> None:
-    root = _project(tmp_path)
-    layout, later = _open(root, START), _open(root, START + timedelta(days=1))
-    assert layout.run is not None and later.run is not None
-    # The link names a later run, so reading through it would hold LATEST back.
-    victim = tmp_path / "victim.txt"
-    victim.write_text(f"{later.run.run_id}\n", encoding="utf-8")
-    latest = root / "out" / "orders" / "LATEST"
-    os.symlink(victim, latest)
-    warnings = layout.commit_latest()
-    assert [w.code for w in warnings] == ["layout.latest_invalid"]
-    assert not latest.is_symlink()
-    assert latest.read_text(encoding="utf-8").strip() == layout.run.run_id
-    assert victim.read_text(encoding="utf-8") == f"{later.run.run_id}\n"
-
-
-@posix_only
-def test_a_fifo_latest_is_warned_and_does_not_block(tmp_path: Path) -> None:
-    root = _project(tmp_path)
-    layout = _open(root, START)
-    latest = root / "out" / "orders" / "LATEST"
-    os.mkfifo(latest)
+def _commit_within(layout: RunLayout, latest: Path, seconds: float = 10) -> tuple:
+    """`commit_latest()` on a thread, so a read that blocks fails the test instead of hanging."""
     result: list[tuple] = []
     thread = threading.Thread(target=lambda: result.append(layout.commit_latest()), daemon=True)
     thread.start()
-    thread.join(10)
-    if thread.is_alive():
+    thread.join(seconds)
+    if thread.is_alive() and latest.is_fifo():
         # Release a reader stuck on the pipe so the test run itself does not hang.
         os.close(os.open(latest, os.O_WRONLY | os.O_NONBLOCK))
-    assert not thread.is_alive() and result, "commit_latest blocked on a FIFO LATEST"
-    (warnings,) = result
+    assert not thread.is_alive() and result, "commit_latest blocked reading LATEST"
+    return result[0]
+
+
+def _plant_latest(kind: str, latest: Path, later_id: str, scratch: Path) -> Path | None:
+    """Put a non-regular `LATEST` in place; returns the link target a run must not touch."""
+    if kind == "fifo":
+        os.mkfifo(latest)
+        return None
+    if kind == "device link":
+        os.symlink("/dev/zero", latest)
+        return None
+    # The target names a later run, so reading through the link would hold LATEST back.
+    target = scratch / "victim.txt"
+    target.write_text(f"{later_id}\n", encoding="utf-8")
+    os.symlink(target, latest)
+    return target
+
+
+@posix_only
+@pytest.mark.parametrize("kind", ["fifo", "link to a later run id", "device link"])
+def test_a_latest_that_is_not_a_regular_file_is_warned_and_replaced(
+    tmp_path: Path, kind: str
+) -> None:
+    """A device node needs root to make, so a link to /dev/zero stands in for it."""
+    root = _project(tmp_path)
+    layout, later = _open(root, START), _open(root, START + timedelta(days=1))
+    assert layout.run is not None and later.run is not None
+    latest = root / "out" / "orders" / "LATEST"
+    target = _plant_latest(kind, latest, later.run.run_id, tmp_path)
+    warnings = _commit_within(layout, latest)
     assert [w.code for w in warnings] == ["layout.latest_invalid"]
-    assert layout.run is not None
+    assert latest.is_file() and not latest.is_symlink()
     assert latest.read_text(encoding="utf-8").strip() == layout.run.run_id
+    if target is not None:
+        assert target.read_text(encoding="utf-8") == f"{later.run.run_id}\n"
 
 
 @posix_only
