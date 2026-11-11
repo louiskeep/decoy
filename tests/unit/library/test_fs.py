@@ -10,11 +10,11 @@ import os
 from pathlib import Path
 
 import pytest
-from decoy.cli.library import LibraryError, open_library
-from decoy.cli.library._errors import LIBRARY_WRITE_FAILED, library_error
 from tests.unit.library._helpers import envelope, mode, object_files
 
 from decoy.cli.io import DECOY_DIR
+from decoy.cli.library import LibraryError, open_library
+from decoy.cli.library._errors import LIBRARY_WRITE_FAILED, library_error
 
 posix_only = pytest.mark.skipif(os.name != "posix", reason="POSIX file modes")
 

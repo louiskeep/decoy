@@ -49,6 +49,13 @@ def object_path(library_root: Path, record_id: str) -> Path:
     return library_root / "library" / "objects" / digest[:2] / f"{digest[2:]}.json"
 
 
+def decoded_at(library_root: Path, record_id: str) -> object:
+    """The stored object read back through the engine's own reader (`records.decode`)."""
+    decoded = records.decode(object_path(library_root, record_id).read_bytes())
+    assert decoded.id == record_id
+    return decoded
+
+
 def object_files(library_root: Path) -> list[Path]:
     return sorted((library_root / "library" / "objects").glob("*/*.json"))
 

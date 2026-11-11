@@ -11,11 +11,11 @@ import sys
 from pathlib import Path
 
 import pytest
-from decoy.cli.library import LibraryError, _paths, open_library, resolve_root
-from decoy.cli.library._errors import LIBRARY_PATH_TOO_LONG
 from tests.unit.library._helpers import envelope, object_files
 
 from decoy.cli import io as cli_io
+from decoy.cli.library import LibraryError, _paths, open_library, resolve_root
+from decoy.cli.library._errors import LIBRARY_PATH_TOO_LONG
 
 MARKER = "kind: decoy-project/v1\n"
 

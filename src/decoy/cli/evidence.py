@@ -64,7 +64,6 @@ legacy rule: `.parquet` is Parquet, everything else CSV. It must not use the suf
 from __future__ import annotations
 
 import hashlib
-import json as _json
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -124,18 +123,13 @@ def compute_manifest_hash(manifest: dict[str, Any]) -> str:
 
     This lets `evidence verify` detect edits to the manifest file itself.
     """
+    # Imported here so the engine stays off the CLI's start-up path.
+    from decoy_engine.records import canonical_bytes
+
     body = {k: v for k, v in manifest.items() if k not in _MANIFEST_HASH_STRIP_FIELDS}
-    # ensure_ascii=False mirrors the platform canonical_json rule (api/evidence/
-    # hashing.py) byte-for-byte, so a future R4 import adapter sees identical
-    # manifest_hash bytes for non-ASCII content (unicode column names/paths).
-    canonical = _json.dumps(
-        body,
-        sort_keys=True,
-        separators=(",", ":"),
-        allow_nan=False,
-        ensure_ascii=False,
-    )
-    return f"sha256:{hashlib.sha256(canonical.encode('utf-8')).hexdigest()}"
+    # The one canonical form (engine records, byte-identical to the platform's canonical_json:
+    # sorted, compact, ensure_ascii=False), so a manifest hash and a record id agree on bytes.
+    return f"sha256:{hashlib.sha256(canonical_bytes(body)).hexdigest()}"
 
 
 def _format_keys(table: str, tgt: dict[str, Any]) -> dict[str, Any]:

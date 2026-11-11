@@ -46,7 +46,7 @@ from decoy.cli.io._layout_errors import (
     LayoutError,
     LayoutWarning,
 )
-from decoy.cli.io._project import Project, ensure_decoy_dir, find_project
+from decoy.cli.io._project import DECOY_DIR, Project, ensure_decoy_dir, find_project
 from decoy.cli.io._scan_set import (
     ScanSetFormatError,
     load_scan_set,
@@ -70,6 +70,7 @@ from decoy.cli.io._targets import (
 )
 
 __all__ = [
+    "DECOY_DIR",
     "GATE_CODES",
     "GATE_DESCRIPTORS",
     "WARNING_CODES",

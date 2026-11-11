@@ -11,11 +11,10 @@ import os
 from pathlib import Path
 
 import pytest
-from decoy.cli.library import LibraryError, open_library
-from decoy.cli.library._errors import LIBRARY_LAYOUT_NEWER, RECORD_LINK_MISSING
 from decoy_engine import records
 from decoy_engine.reasons import runtime
 from tests.unit.library._helpers import (
+    decoded_at,
     envelope,
     object_files,
     object_path,
@@ -24,6 +23,8 @@ from tests.unit.library._helpers import (
 )
 
 from decoy.cli.io import DECOY_DIR
+from decoy.cli.library import LibraryError, open_library
+from decoy.cli.library._errors import LIBRARY_LAYOUT_NEWER, RECORD_LINK_MISSING
 
 
 @pytest.fixture
@@ -43,23 +44,20 @@ def test_put_stores_the_canonical_bytes_under_the_id(root: Path) -> None:
     assert json.loads((root / "library" / "LAYOUT").read_text(encoding="utf-8")) == {"layout": 1}
 
 
-def test_get_returns_the_verified_record_and_none_when_absent(root: Path) -> None:
+def test_a_stored_record_decodes_with_the_engine_reader(root: Path) -> None:
     env = envelope()
-    library = open_library(root)
-    assert library.get(env.id) is None
-    library.put(env)
-    got = library.get(env.id)
+    open_library(root).put(env)
+    got = decoded_at(root, env.id)
     assert isinstance(got, records.DecodedRecord) and got.id == env.id
 
 
-def test_get_refuses_a_file_whose_content_is_another_record(root: Path) -> None:
+def test_another_valid_record_under_an_id_is_record_corrupt(root: Path) -> None:
     library = open_library(root)
     a, b = envelope(0), envelope(1)
     library.put(a)
-    library.put(b)
     object_path(root, a.id).write_bytes(records.encode(b))
     with pytest.raises(LibraryError) as caught:
-        library.get(a.id)
+        library.put(a)
     assert caught.value.code == runtime.RECORD_CORRUPT
 
 
@@ -202,7 +200,7 @@ def test_a_writer_killed_mid_put_leaves_no_readable_record(root: Path) -> None:
     temps = [p for p in (root / "library" / "tmp").iterdir() if p.is_file()]
     assert len(temps) == 1 and 0 < temps[0].stat().st_size < full  # killed mid-write
     again = open_library(root).put(envelope())
-    assert again.created is True and open_library(root).get(again.id) is not None
+    assert again.created is True and decoded_at(root, again.id).id == again.id
 
 
 # -- B1-no-clobber ----------------------------------------------------------------------------
@@ -235,6 +233,7 @@ _RACE_SAME = (
 def test_two_processes_racing_one_envelope_never_clobber(tmp_path: Path) -> None:
     """MB1-check-then-replace: `exists()` then `os.replace` shows replace calls; red."""
     go = tmp_path / "go"
+    (tmp_path / "libs").mkdir()  # each round's root is created by the racing puts themselves
     kids = [start_child(_RACE_SAME, str(tmp_path / "libs"), str(go)) for _ in range(2)]
     go.touch()
     outs = []
@@ -249,7 +248,7 @@ def test_two_processes_racing_one_envelope_never_clobber(tmp_path: Path) -> None
     for i in range(50):
         lib_root = tmp_path / "libs" / str(i)
         assert object_files(lib_root) == [object_path(lib_root, env.id)]
-        assert open_library(lib_root).get(env.id) is not None
+        assert decoded_at(lib_root, env.id).id == env.id
         assert int(outs[0][0][i]) + int(outs[1][0][i]) == 1  # exactly one creator per round
 
 
@@ -279,13 +278,11 @@ def test_two_processes_put_fifty_records_each(root: Path, tmp_path: Path) -> Non
         assert out.strip() == "50"
     files = object_files(root)
     assert len(files) == 100
-    library = open_library(root)
     ids = {envelope(n).id for n in range(100)}
     for path in files:
         decoded = records.decode(path.read_bytes())
         assert decoded.id in ids
         assert path == Path(object_path(root, decoded.id))
-        assert library.get(decoded.id) is not None
     assert [p for p in (root / "library" / "tmp").iterdir()] == []
 
 
