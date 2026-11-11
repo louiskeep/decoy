@@ -115,8 +115,9 @@ def _run_config_base(
     raw: Any, config_path: Path
 ) -> tuple[dict[str, Any] | None, tuple[str, ...], list[GateFinding]]:
     """The config layer: the empty and non-mapping refusals, schema validation, the
-    profile-free plan-compile checks, the target-overwrite advisory and the target format
-    contradictions (`target_format_issues`, the same rule `decoy run` refuses on).
+    profile-free plan-compile checks, the target-overwrite advisory, the target format
+    contradictions (`target_format_issues`, the same rule `decoy run` refuses on) and the
+    project layout checks (`layout_issues`).
 
     `run_config_only_checks` is called here EXACTLY ONCE for the whole gate (F5 dedup).
     Returns `(config, checks_run, findings)`; `config` is None when the layer failed, so the
@@ -177,7 +178,7 @@ def _run_config_base(
         )
         return None, (), [finding]
 
-    from decoy.cli.io import target_format_issues
+    from decoy.cli.io import layout_issues, target_format_issues
     from decoy.cli.preflight import _check_target_overwrite, _PreflightAccumulator
 
     advisory = _PreflightAccumulator()
@@ -188,6 +189,14 @@ def _run_config_base(
         GateFinding("config", "error", i.code, i.message, location=f"targets.{i.table}.format")
         for i in target_format_issues(raw, chunked=False)
     )
+    # Plan 3.14: the layout faults found without a write. One stops the gate here, so the
+    # preflight layer never reads a source for a run that cannot place its output.
+    layout = [
+        GateFinding("config", "error", refusal.code, refusal.message, location)
+        for location, refusal in layout_issues(config_path, raw)
+    ]
+    if layout:
+        return None, (), findings + layout
     return validated, tuple(checks_run), findings
 
 

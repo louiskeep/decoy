@@ -284,7 +284,7 @@ def _check_target_overwrite(raw: dict[str, Any], acc: _PreflightAccumulator) -> 
 
     This is a warning, not a failure. The run succeeds by overwriting,
     but this check surfaces the risk in CI so it can be treated as blocking
-    with --fail-on-warning.
+    with --fail-on-warning. A relative path lands in a new run folder (AT-16).
     """
     targets = raw.get("targets") or {}
     if not isinstance(targets, dict):
@@ -296,7 +296,7 @@ def _check_target_overwrite(raw: dict[str, Any], acc: _PreflightAccumulator) -> 
         if target.get("type") not in ("file", None):
             continue
         out_path_str = target.get("path")
-        if not out_path_str:
+        if not isinstance(out_path_str, str) or not Path(out_path_str).is_absolute():
             continue
         out_path = Path(out_path_str)
         if out_path.exists():

@@ -21,6 +21,7 @@ from decoy.cli.run._context import RunContext
 from decoy.cli.run._execute import (
     _ChunkedFixedWidthError,
     _ChunkedGenerateError,
+    _ChunkedQuarantineError,
     _ChunkedReportFlagError,
 )
 from decoy.cli.run._notify import _dispatch_run_notifications, _OtelSettingsUsageError
@@ -147,6 +148,7 @@ def fail(ctx: RunContext, exc: Exception) -> NoReturn:
                     ConfigError,
                     _ChunkedGenerateError,
                     _ChunkedFixedWidthError,
+                    _ChunkedQuarantineError,
                     TargetFormatError,
                     LayoutError,
                     _ChunkedReportFlagError,
@@ -246,6 +248,12 @@ def fail(ctx: RunContext, exc: Exception) -> NoReturn:
             "mode": ctx.yaml_mode,
             "error": error_text,
         }
+        # Named only when files were written: an empty run folder is removed first.
+        if ctx.layout is not None:
+            ctx.layout.abandon()
+            output_dir = ctx.layout.describe()["output_dir"]
+            if output_dir is not None:
+                payload["output_dir"] = output_dir
         if raise_rows_hint:
             payload["hint"] = gen.RAISE_ROWS_HINT
         if isinstance(exc, PreRunCheckError):

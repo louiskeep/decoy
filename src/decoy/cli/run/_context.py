@@ -37,7 +37,7 @@ class NotifyOn(str, Enum):
 class RunContext:
     """Options, then the state each phase sets for the next; see the module docstring."""
 
-    # The 25 options of `decoy run`, as `run()` receives them.
+    # The 26 options of `decoy run`, as `run()` receives them.
     config: Path
     mode: Mode
     json_: bool
@@ -52,6 +52,7 @@ class RunContext:
     vault: Path
     key_label: str
     evidence_out: Path
+    out_dir: Path | None
     notify: list[str]
     notify_on: NotifyOn
     native: bool

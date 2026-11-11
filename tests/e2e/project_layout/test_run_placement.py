@@ -540,7 +540,8 @@ def test_a_second_yaml_declaring_a_claimed_name_exits_1_before_any_write(tmp_pat
     second = _write(root, "old/b.yaml", _config(root, name="orders"))
     assert _run(first).exit_code == 0
     before = _runs(root, "orders")
-    result = _run(second)
+    # The gate finds the claim (read only) before the run opens a folder (P4).
+    result = _run(second, "--json")
     assert result.exit_code == 1, result.output
     assert "layout.pipeline_name_collision" in result.output
     assert _runs(root, "orders") == before
@@ -563,7 +564,7 @@ def test_a_pipelines_folder_name_is_taken_even_before_its_first_run(tmp_path: Pa
     assert not (root / "out" / "orders").exists()
     assert any(p.name.startswith("orders-") for p in (root / "out").iterdir())
     declared = _write(root, "jobs/other.yaml", _config(root, name="orders"))
-    result = _run(declared)
+    result = _run(declared, "--json")
     assert result.exit_code == 1 and "layout.pipeline_name_collision" in result.output
 
 

@@ -1,11 +1,14 @@
 """The success tail of `decoy run`: JSON payload, summary card, report sections and the
 `--post-validate-enforce` exit."""
 
+from pathlib import Path
+
 import typer
 from rich.text import Text
 
 from decoy.cli import gen
 from decoy.cli.exit_codes import EXIT_FINDINGS
+from decoy.cli.io import shown_path
 from decoy.cli.run._context import Mode, RunContext
 from decoy.cli.run._prepare import _has_kind
 from decoy.ui.card import render_card
@@ -57,6 +60,29 @@ def commit_latest(ctx: RunContext) -> None:
             ctx.state.err_console.print(warn("warning:"), Text(f"{item.code}: {item.message}"))
 
 
+def _where_written(ctx: RunContext) -> dict:
+    """The plan 7.6 `--json` members: the run folder, the files written, project and pipeline.
+
+    `outputs` lists only files this run published, absolute; a table with no file is left out.
+    """
+    described = (
+        ctx.layout.describe()
+        if ctx.layout is not None
+        else {"output_dir": None, "project": None, "pipeline": None}
+    )
+    outputs = [
+        {"table": r["name"], "path": str(Path(r["path"]).resolve())}
+        for r in ctx._table_records
+        if r["path"] is not None
+    ]
+    return {
+        "output_dir": described["output_dir"],
+        "outputs": outputs,
+        "project": described["project"],
+        "pipeline": described["pipeline"],
+    }
+
+
 def finish(ctx: RunContext) -> None:
     """Render the success result and apply the `--post-validate-enforce` exit mapping."""
     # S5 enforce mapping (plan P1-2): the engine never fails the job on a
@@ -81,6 +107,7 @@ def finish(ctx: RunContext) -> None:
             "elapsed_s": round(ctx.elapsed, 3),
             "tables": ctx._table_records,
             "warnings": _warnings,
+            **_where_written(ctx),
         }
         payload["resources"] = ctx._resources_record
         if ctx.notify_channels:
@@ -123,6 +150,8 @@ def finish(ctx: RunContext) -> None:
         ),
         ("Files", str(sum(1 for r in ctx._table_records if r["path"] is not None))),
     ]
+    if ctx.layout is not None:
+        facts.extend(ctx.layout.summary_facts())
     if _warnings:
         facts.append(("Warnings", str(len(_warnings))))
     if ctx._native_route is not None:
@@ -142,7 +171,13 @@ def finish(ctx: RunContext) -> None:
     # S5 report sections (human mode). Rendered below the summary card so the
     # card stays the one-glance result; each is report-only and reads the
     # captured quality metrics.
-    render_table_lines(ctx.state, ctx._table_records)
+    render_table_lines(
+        ctx.state,
+        [
+            {**r, "path": shown_path(Path(r["path"]).resolve()) if r["path"] else None}
+            for r in ctx._table_records
+        ],
+    )
     render_warnings(ctx.state, _warnings)
     if ctx.explain_plan:
         render_execution_route(ctx.state, _qm.get("execution_plan"))

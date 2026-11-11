@@ -34,6 +34,15 @@ class _ChunkedFixedWidthError(Exception):
     """--chunked with a fixed_width source; user error (exits EXIT_USAGE)."""
 
 
+class _ChunkedQuarantineError(Exception):
+    """--chunked with quarantine enabled; user error (exits EXIT_USAGE).
+
+    The chunked path streams through `run_mask_pipeline_chunked`, which takes no quarantine
+    path, so the rows quarantine would hold are never written there. Refused before any
+    source is read rather than run without the quarantine the config asks for.
+    """
+
+
 class _ChunkedReportFlagError(Exception):
     """--chunked combined with a report flag (--explain-plan / --fidelity /
     --post-validate[-enforce]); user error (exits EXIT_USAGE).
@@ -115,7 +124,14 @@ def _run_chunked_mask(
 
 
 def _check_chunked_tables(config_dict: dict) -> None:
-    """The config-only chunked checks: target formats, then the engine's per mask table."""
+    """The config-only chunked checks: quarantine, target formats, then the engine's per
+    mask table."""
+    quarantine = config_dict.get("quarantine")
+    if isinstance(quarantine, dict) and quarantine.get("enabled"):
+        raise _ChunkedQuarantineError(
+            "--chunked does not support quarantine (quarantine.enabled is true). "
+            "Run without --chunked, or turn quarantine off."
+        )
     check_target_formats(config_dict, chunked=True)
     from decoy_engine import get_default_registry
     from decoy_engine.execution import check_chunked_compatibility
@@ -201,8 +217,13 @@ def _write_mask_outputs(config_dict: dict, result, layout: RunLayout) -> dict[st
 
 def execute(ctx: RunContext) -> None:
     """Run the pipeline on the chunked or plain branch and record what the tail reports."""
-    # After the gate and before the first write: the run folder, claim and `out/`.
-    layout = ctx.layout = open_run_layout(ctx.config, ctx.config_dict, ctx.invocation_id)
+    # After the gate and before the first write: the run folder, claim and `out/`, or the
+    # folder `--out-dir` names in their place.
+    layout = ctx.layout = (
+        RunLayout.out_dir(ctx.out_dir)
+        if ctx.out_dir is not None
+        else open_run_layout(ctx.config, ctx.config_dict, ctx.invocation_id)
+    )
     if ctx.chunked:
         _chunk_paths = _run_chunked_mask(
             ctx.config_dict,

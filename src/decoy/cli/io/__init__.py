@@ -29,6 +29,7 @@ from decoy.cli.io._layout import (
     create_run_folder,
     has_placed_output,
     is_run_id,
+    layout_issues,
     mint_invocation_id,
     name_dir,
     new_run_id,
@@ -36,6 +37,7 @@ from decoy.cli.io._layout import (
     pipeline_name_for,
     prepare_out,
     read_claim,
+    shown_path,
     write_claim,
 )
 from decoy.cli.io._layout_errors import (
@@ -99,6 +101,7 @@ __all__ = [
     "input_format",
     "is_run_id",
     "iter_source_chunks",
+    "layout_issues",
     "load_scan_set",
     "mint_invocation_id",
     "name_dir",
@@ -115,6 +118,7 @@ __all__ = [
     "resolved_source_config",
     "scan_set_from_data",
     "select_table",
+    "shown_path",
     "table_records",
     "target_format_issues",
     "write_chunked_output",
