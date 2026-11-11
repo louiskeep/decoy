@@ -218,7 +218,8 @@ def _emit_result(
         # unrecognized tag without markup=False (matches the run.py fix).
         state.err_console.print(
             error("error:"),
-            f"Invalid config: {first_error.code}: {first_error.message}",
+            f"Invalid config: {first_error.code}: {first_error.message}"
+            + (f" ({first_error.location})" if first_error.location else ""),
             markup=False,
         )
         state.err_console.print(

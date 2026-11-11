@@ -1,0 +1,15 @@
+{
+ "sentry_id": "config-route-allow",
+ "created_in": "VALUE-FREE-ERRORS-A3",
+ "entries": {
+  "cli/io/_scan_set.py::_from_core::validate-engine#1": {
+   "reason": "validates the engine's scan-set read model, catches the error without reading it and raises a fixed message outside the handler; a scan file is not a pipeline config"
+  },
+  "ci/manifest.py::<module>::pydantic-import#1": {
+   "reason": "validates the CLI-owned CiManifest and reads only the error type, never a value or a message (FU-4 moves it onto validation_problems if its codes ever need a location)"
+  },
+  "ci/manifest.py::load_manifest::errors-call#1": {
+   "reason": "reads only the error type of the CLI-owned CiManifest, never a value or a message (FU-4 moves it onto validation_problems if its codes ever need a location)"
+  }
+ }
+}
