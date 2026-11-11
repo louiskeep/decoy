@@ -28,12 +28,10 @@ from decoy.ui.theme import code, error, hint, success
 _STDOUT = "-"
 _NAME_OK = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
 _SHOWN_FINDINGS = 3
-# The gate's code for a categorical column whose snapshot holds real values and that has no
-# `allow_real_categories: true` yet. It is the one finding the scaffold publishes through.
-OPT_IN_CODE = "statistical_real_categories_not_allowed"
 # The header comments carry the CSV name and the config path, so a line break in either would
-# end the comment and put the rest into the YAML. Any C0 control or DEL is refused up front.
-_CONTROL = re.compile(r"[\x00-\x1f\x7f]")
+# end the comment and put the rest into the YAML. Any C0 control or DEL is refused up front,
+# and so are NEL, LINE SEPARATOR and PARAGRAPH SEPARATOR, which PyYAML also reads as line breaks.
+_CONTROL = re.compile("[\x00-\x1f\x7f\x85\u2028\u2029]")
 
 
 class ScaffoldInvalid(Exception):
@@ -129,13 +127,15 @@ def _validate_pair(config_text: str, staged_snapshot: Path) -> list[str]:
     """Run the pre-run gate on the candidate config against the staged snapshot.
 
     Returns the columns that only need the real-categories opt-in (the gate's structured
-    finding: code `OPT_IN_CODE`, column from its config path). Any other error raises
+    finding: the engine's `STATISTICAL_REAL_CATEGORIES_NOT_ALLOWED`, column from its config path). Any other error raises
     `ScaffoldInvalid`.
 
     The staged file is the sibling layout: it sits beside the destination, owner-only, and
     holds the exact bytes about to be published. The copy of the config the gate reads names
     it by absolute path; the published config names the snapshot relative to itself.
     """
+    from decoy_engine.reasons.plan import STATISTICAL_REAL_CATEGORIES_NOT_ALLOWED as opt_in_code
+
     from decoy.cli.gate import GateRoute, run_gate_on_config
 
     raw = yaml.safe_load(config_text)
@@ -147,12 +147,12 @@ def _validate_pair(config_text: str, staged_snapshot: Path) -> list[str]:
     opt_in = [
         f.logical_path.removeprefix(prefix)
         for f in problems
-        if f.code == OPT_IN_CODE and (f.logical_path or "").startswith(prefix)
+        if f.code == opt_in_code and (f.logical_path or "").startswith(prefix)
     ]
     others = [
         f
         for f in problems
-        if f.code != OPT_IN_CODE or not (f.logical_path or "").startswith(prefix)
+        if f.code != opt_in_code or not (f.logical_path or "").startswith(prefix)
     ]
     if others:
         raise ScaffoldInvalid(
@@ -232,6 +232,7 @@ def scaffold_generate(state: OutputState, csv: Path, out: Path, *, yes: bool) ->
     problem = ""
     atomic_code = ""
     kept: tuple[str, ...] = ()
+    left: tuple[str, ...] = ()
     invalid: ScaffoldInvalid | None = None
     opt_in: list[str] = []
     try:
@@ -255,7 +256,8 @@ def scaffold_generate(state: OutputState, csv: Path, out: Path, *, yes: bool) ->
     except ScaffoldInvalid as exc:
         invalid = exc
     except _atomic.AtomicWriteError as exc:
-        problem, atomic_code, kept = _atomic.describe(exc), exc.code, exc.kept
+        problem, atomic_code = _atomic.describe(exc), exc.code
+        kept, left = exc.kept, exc.left
     except OSError:
         problem = "write failed"
     # A sync failure means both files are in place, and an incomplete rollback means the old
@@ -284,11 +286,15 @@ def scaffold_generate(state: OutputState, csv: Path, out: Path, *, yes: bool) ->
             f"check {layout.config} and {layout.snapshot} before you use them.",
         )
     if atomic_code == _atomic.ATOMIC_ROLLBACK_INCOMPLETE:
+        parts = []
+        if kept:
+            parts.append(f"The old file is kept at {', '.join(kept)} in {layout.config.parent}.")
+        if left:
+            parts.append(f"A new file could not be removed: {', '.join(left)}.")
         _fail(
             state,
-            "could not write the scaffold and could not put every old file back. "
-            f"The old file is kept at {', '.join(kept)} in {layout.config.parent}.",
-            "rename that file back over the one it replaced.",
+            "could not write the scaffold and could not undo every file. " + " ".join(parts),
+            "rename a kept file back over the one it replaced; delete a left-over new file.",
         )
     if problem:
         _fail(state, f"could not write the scaffold: {problem}. Nothing was changed.")

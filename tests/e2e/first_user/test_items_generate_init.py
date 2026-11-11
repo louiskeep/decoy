@@ -322,6 +322,30 @@ def test_a_sync_failure_is_reported_as_written_and_removes_nothing(
 
 
 @posix
+def test_an_unremovable_new_file_is_named_and_never_called_unchanged(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _people(tmp_path)
+    _fail_second_replace(monkeypatch)
+    real_unlink = os.unlink
+
+    def unlink(path: str, *args: object, **kwargs: object) -> None:
+        if str(path).endswith("people.snapshot.json"):
+            raise OSError(errno.EIO, "cannot remove")
+        real_unlink(path, *args, **kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(_atomic.os, "unlink", unlink)
+
+    res = _scaffold(tmp_path, "--yes")
+
+    assert res.exit_code == EXIT_USAGE, res.output
+    text = _flat(res.output)
+    assert "Nothing was changed" not in text
+    assert "people.snapshot.json" in text
+    assert (tmp_path / "people.snapshot.json").is_file()
+
+
+@posix
 def test_an_incomplete_rollback_names_the_kept_old_file(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -348,14 +372,15 @@ def test_an_incomplete_rollback_names_the_kept_old_file(
     assert len(kept) == 1 and f"The old file is kept at {kept[0]}" in text
 
 
+@pytest.mark.parametrize("char", ["\n", "\x85", "\u2028", "\u2029"])
 @pytest.mark.parametrize("where", ["csv", "out"])
 def test_a_control_character_in_a_path_is_refused_before_any_write(
-    tmp_path: Path, where: str
+    tmp_path: Path, where: str, char: str
 ) -> None:
     people = _people(tmp_path)
-    csv_path = tmp_path / "evil\nname.csv"
+    csv_path = tmp_path / f"evil{char}name.csv"
     csv_path.write_bytes(people.read_bytes())
-    out = tmp_path / ("p\n.yaml" if where == "out" else "p.yaml")
+    out = tmp_path / (f"p{char}.yaml" if where == "out" else "p.yaml")
     src = csv_path if where == "csv" else people
     before = _listing(tmp_path)
 

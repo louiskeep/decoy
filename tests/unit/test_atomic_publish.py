@@ -305,3 +305,28 @@ def test_a_lock_failure_that_is_not_contention_is_a_write_failure(
     assert caught.value.code == _atomic.ATOMIC_WRITE_FAILED
     assert caught.value.errno == errno.ENOLCK
     assert _names(tmp_path) == []
+
+
+@posix
+def test_a_failed_removal_of_a_new_target_is_reported_not_ignored(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    first, second = tmp_path / "a.json", tmp_path / "b.yaml"
+    _fail_on_call(monkeypatch, 2)
+    real_unlink = os.unlink
+
+    def unlink(path: str, *args: object, **kwargs: object) -> None:
+        if str(path).endswith("a.json"):
+            raise OSError(errno.EIO, "cannot remove /secret/path")
+        real_unlink(path, *args, **kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(_atomic.os, "unlink", unlink)
+
+    with pytest.raises(AtomicWriteError) as caught:
+        publish_local_targets([LocalTarget(first, b"new-a"), LocalTarget(second, b"new-b")])
+
+    err = caught.value
+    assert err.code == _atomic.ATOMIC_ROLLBACK_INCOMPLETE
+    assert err.left == ("a.json",) and err.kept == ()
+    assert "/secret" not in str(err)
+    assert first.read_bytes() == b"new-a" and not second.exists()

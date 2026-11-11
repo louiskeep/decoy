@@ -170,6 +170,11 @@ def fit_reader_callers(root: Path) -> set[tuple[str, str]]:
 
 def _fit_reader_scopes(source: str) -> list[str]:
     scopes: list[str] = []
+    tree = ast.parse(source)
+    names = {FIT_READER}
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ImportFrom):
+            names.update(a.asname for a in node.names if a.name == FIT_READER and a.asname)
 
     def walk(node: ast.AST, scope: str) -> None:
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
@@ -177,12 +182,12 @@ def _fit_reader_scopes(source: str) -> list[str]:
         if isinstance(node, ast.Call):
             func = node.func
             name = func.attr if isinstance(func, ast.Attribute) else getattr(func, "id", "")
-            if name == FIT_READER:
+            if name in names:
                 scopes.append(scope)
         for child in ast.iter_child_nodes(node):
             walk(child, scope)
 
-    walk(ast.parse(source), "<module>")
+    walk(tree, "<module>")
     return scopes
 
 
@@ -201,7 +206,15 @@ def test_a_third_read_fit_csv_caller_is_red(tmp_path: Path) -> None:
         "from decoy.cli import gen\ndef load(p):\n    return gen.read_fit_csv(p)\n",
         encoding="utf-8",
     )
-    assert fit_reader_callers(tmp_path) == {("cli/third.py", "load"), ("cli/fourth.py", "load")}
+    (pkg / "fifth.py").write_text(
+        "from decoy.cli.gen import read_fit_csv as rf\ndef load(p):\n    return rf(p)\n",
+        encoding="utf-8",
+    )
+    assert fit_reader_callers(tmp_path) == {
+        ("cli/third.py", "load"),
+        ("cli/fourth.py", "load"),
+        ("cli/fifth.py", "load"),
+    }
 
 
 def test_the_choke_point_reads_through_the_engine() -> None:
