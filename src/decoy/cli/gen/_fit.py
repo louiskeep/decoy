@@ -70,6 +70,7 @@ def fit_exact_snapshot(
     joint_pairs: Sequence[tuple[str, str]] | None = None,
     include_values: bool = False,
     contingency_top_k: int | None = None,
+    fanout_columns: Sequence[str] = (),
 ) -> ExactFit:
     """Fit the exact (non-DP) snapshot of `source`. Raises `FitSourceError`."""
     import numpy as np
@@ -78,6 +79,7 @@ def fit_exact_snapshot(
     from decoy_engine.reasons.quality import (
         CONTINGENCY_TOP_K_INVALID,
         CONTINGENCY_TOP_K_KIND_UNSUPPORTED,
+        FANOUT_COLUMN_UNKNOWN,
     )
 
     def unreadable() -> FitSourceError:
@@ -165,8 +167,17 @@ def fit_exact_snapshot(
             include_values=include_values,
             joint_columns=list(joint_pairs) if joint_pairs else None,
             contingency_top_k=contingency_top_k or DEFAULT_CONTINGENCY_TOP_K,
+            fanout_columns=list(fanout_columns),
         )
     except DistributionSnapshotError as exc:
+        if exc.code == FANOUT_COLUMN_UNKNOWN:
+            # The engine's message gives only a count. The names (never values) are worked out
+            # here for the message text alone; the engine did the refusing.
+            known = {str(c) for c in df.columns}
+            absent = sorted({str(n) for n in fanout_columns} - known)
+            raise FitSourceError(
+                f"--fanout column(s) not in the CSV: {', '.join(absent)}.", exc.code
+            ) from None
         # Only the cap refusals are the caller's to fix; anything else is a real failure.
         if exc.code not in (CONTINGENCY_TOP_K_INVALID, CONTINGENCY_TOP_K_KIND_UNSUPPORTED):
             raise
