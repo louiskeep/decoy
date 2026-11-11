@@ -10,11 +10,11 @@ import os
 from pathlib import Path
 
 import pytest
-from tests.unit.library._helpers import envelope, mode, object_files
+from tests.unit.library._helpers import envelope, mode, object_files, object_path
 
 from decoy.cli.io import DECOY_DIR
 from decoy.cli.library import LibraryError, open_library
-from decoy.cli.library._errors import LIBRARY_WRITE_FAILED, library_error
+from decoy.cli.library._errors import LIBRARY_READ_FAILED, LIBRARY_WRITE_FAILED, library_error
 
 posix_only = pytest.mark.skipif(os.name != "posix", reason="POSIX file modes")
 
@@ -86,6 +86,22 @@ def test_a_write_failure_names_the_code_and_class_not_the_path(tmp_path: Path) -
     assert err.error_class  # non-vacuous: the failure came from a real OS error class
     assert str(err) == f"{LIBRARY_WRITE_FAILED} ({err.error_class})"
     assert "secret-folder-name" not in str(err) and str(tmp_path) not in repr(err)
+    assert err.__cause__ is None and err.__context__ is None
+
+
+def test_a_read_failure_whose_os_text_names_the_path_keeps_it_out(tmp_path: Path) -> None:
+    """The OS error here (`IsADirectoryError`) carries the path in its text; the library's does
+    not. MB1-exc turns this red."""
+    root = tmp_path / "secret-folder-name" / DECOY_DIR
+    root.parent.mkdir()
+    env = envelope()
+    blocked = object_path(root, env.id)
+    blocked.mkdir(parents=True)  # a folder where the record file must be
+    with pytest.raises(LibraryError) as caught:
+        open_library(root).put(env)
+    err = caught.value
+    assert (err.code, err.error_class) == (LIBRARY_READ_FAILED, "IsADirectoryError")
+    assert "secret-folder-name" not in str(err) and "secret-folder-name" not in repr(err)
     assert err.__cause__ is None and err.__context__ is None
 
 
