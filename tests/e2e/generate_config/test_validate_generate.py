@@ -157,7 +157,7 @@ def test_at_c1_plan_refusal_names_table_column_and_option(
 def test_at_c1_human_output_names_the_location(tmp_path: Path) -> None:
     # The human line carries the engine's fixed text and the location; the code is in --json.
     result = runner.invoke(
-        app, ["validate", str(_config(tmp_path, [_cat(weigths=[0.99, 0.01])]))], env=_WIDE
+        app, ["validate", str(_config(tmp_path, [_cat(weigths=[_CANARY])]))], env=_WIDE
     )
     assert result.exit_code == EXIT_USAGE
     text = " ".join(result.output.split())
@@ -194,7 +194,7 @@ _H4_CELLS = [
                  "grouped_series_group_by_equals_order_by",
                  {"column": "n", "option": "order_by"}, id="group-by-equals-order-by"),
     pytest.param([{**_SEQ, "name": "a"},
-                  {"name": "d", "type": "derived", "expression": "b + 1"},
+                  {"name": "d", "type": "derived", "expression": f'b + (1 if "{_CANARY}" else 0)'},
                   {**_SEQ, "name": "b"}],
                  "generate_column_forward_reference",
                  {"column": "d", "option": "expression"}, id="derived-forward-reference"),
@@ -235,6 +235,10 @@ def test_at_c2_run_stops_at_the_gate(
     assert not (tmp_path / "out" / "people.csv").exists()
     if "where" in names:
         assert names["where"] in result.stdout, result.stdout
+        if names.get("numeric"):
+            sent = [m for m in json.loads(result.stdout)["messages"] if m["code"] == code]
+            assert sent, result.stdout
+            _value_free(sent[0]["message"])
     else:
         assert f"table '{_TABLE}', column '{names['column']}'" in result.stdout, result.stdout
         assert f"option '{names['option']}'" in result.stdout, result.stdout
