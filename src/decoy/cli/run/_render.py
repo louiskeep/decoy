@@ -47,7 +47,7 @@ def _next_hint_for_run(raw_cfg: dict | None, mode: "Mode") -> str | None:
 
 
 def commit_latest(ctx: RunContext) -> None:
-    """Move `latest` to this run when the run will exit 0, and warn if it could not."""
+    """Move `LATEST` and `current` to this run when the run will exit 0, and warn if it could not."""
     if ctx.layout is None:
         return
     if ctx.post_validate_enforce and (ctx._report_quality_metrics or {}).get("failed_checks"):

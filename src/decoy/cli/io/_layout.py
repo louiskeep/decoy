@@ -1,7 +1,7 @@
 """Run folders under `<project>/out/<name>/<run-id>/`: the run-id rule and path placement.
 
 `RunLayout` is the one builder of output paths: it opens the run folder, places each declared
-target and quarantine path inside it, and moves `latest` after a clean run. One place owns what
+target and quarantine path inside it, and moves `LATEST` and `current` after a clean run. One place owns what
 a run id looks like (`is_run_id`), how a file is matched to the run folder that holds it
 (`owning_run`), and how a declared relative path is placed inside a run folder (`placed_path`).
 Writers and readers both go through these.
@@ -100,7 +100,7 @@ def _same_dir(a: Path, b: Path) -> bool:
 def owning_run(path: Path, root: Path, name: str) -> RunFolder | None:
     """The run folder of pipeline `name` in project `root` that holds `path`, else None.
 
-    `path` is resolved first, so a `latest` link is followed and a link that leaves the run
+    `path` is resolved first, so a `current` link is followed and a link that leaves the run
     folder is judged by where it lands. A run folder is found by identity: the ancestor of
     the file whose parent is the pipeline folder. The run folder itself holds no file and
     gives None. An unresolvable path gives None.
@@ -375,7 +375,8 @@ def create_run_folder(folder: Path, started: datetime, invocation_id: str) -> Ru
 # --- the run layout ----------------------------------------------------------------------
 
 _LATEST_FILE = "LATEST"
-_LATEST_LINK = "latest"
+# Not `latest`: macOS and Windows fold case by default, so it would collide with `LATEST`.
+_LATEST_LINK = "current"
 
 
 def mint_invocation_id() -> str:
@@ -391,7 +392,7 @@ class RunLayout:
 
     `RunLayout.open` makes `out/<name>/<run-id>/` (claim, `.gitignore`, private folder) and
     `RunLayout.fixed(base)` places relative paths against `base` as the pre-layout code did
-    (`demo`, `mask()`): no claim, no run id, no `latest`. `place_target` and
+    (`demo`, `mask()`): no claim, no run id, no `LATEST` or `current`. `place_target` and
     `place_quarantine` are the only way a command turns a declared path into a file path.
     """
 
@@ -483,7 +484,7 @@ class RunLayout:
         return str(self.place_target(raw))
 
     def commit_latest(self) -> tuple[LayoutWarning, ...]:
-        """Point `LATEST` and `latest` at this run, after a clean (exit 0) run.
+        """Point `LATEST` and `current` at this run, after a clean (exit 0) run.
 
         Moves nothing when `LATEST` already names a later run id. An invalid `LATEST` is
         treated as absent and warned. A failure here never changes the run's outcome: it is

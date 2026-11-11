@@ -1,7 +1,7 @@
 """AT-3, AT-5, AT-6, AT-7 and AT-10 (P2b): `run` and `tokenize` write into a run folder.
 
-A relative target lands at `out/<name>/<run-id>/<path>`; the run folder, the claim and `latest`
-come from `RunLayout`. `demo` and `mask()` keep fixed paths. Table writes go through the one
+A relative target lands at `out/<name>/<run-id>/<path>`; the run folder, the claim, `LATEST`
+and the `current` link come from `RunLayout`. `demo` and `mask()` keep fixed paths. Table writes go through the one
 writer in `cli/io/_targets.py`; these cells check where they land and what else is left behind.
 """
 
@@ -29,6 +29,7 @@ from decoy.cli.io import (
     LayoutError,
     PipelineName,
     RunLayout,
+    _layout,
     mint_invocation_id,
     write_targets,
 )
@@ -39,7 +40,7 @@ runner = CliRunner()
 RUN_ID_RULE = re.compile(r"[0-9]{8}T[0-9]{12}Z-[0-9a-f]{8}(?:[0-9a-f]{4}){0,6}")
 START = datetime(2026, 11, 9, 10, 15, 0, 123456, tzinfo=timezone.utc)
 ORDERS = PipelineName("orders", True, "pipelines/orders/pipeline.yaml")
-posix_only = pytest.mark.skipif(sys.platform == "win32", reason="latest is a symlink on POSIX")
+posix_only = pytest.mark.skipif(sys.platform == "win32", reason="current is a symlink on POSIX")
 
 
 def _source(root: Path) -> Path:
@@ -312,12 +313,26 @@ def test_a_clean_run_moves_latest(tmp_path: Path) -> None:
     assert (root / "out" / "orders" / "LATEST").read_text(encoding="utf-8").strip() == run.name
 
 
+def test_the_latest_file_and_link_names_do_not_fold_together() -> None:
+    """macOS and Windows fold case by default, so `LATEST` and the link need distinct names."""
+    assert _layout._LATEST_FILE.casefold() != _layout._LATEST_LINK.casefold()
+
+
+def test_no_two_names_in_the_pipeline_folder_fold_together(tmp_path: Path) -> None:
+    root = _project(tmp_path)
+    layout = _open(root, START)
+    assert layout.commit_latest() == ()
+    names = os.listdir(root / "out" / "orders")
+    assert "LATEST" in names
+    assert len({n.casefold() for n in names}) == len(names), sorted(names)
+
+
 @posix_only
-def test_latest_is_a_relative_symlink_to_the_run_folder(tmp_path: Path) -> None:
+def test_current_is_a_relative_symlink_to_the_run_folder(tmp_path: Path) -> None:
     root = _project(tmp_path)
     layout = _open(root, START)
     assert layout.run is not None and layout.commit_latest() == ()
-    link = root / "out" / "orders" / "latest"
+    link = root / "out" / "orders" / "current"
     assert link.is_symlink()
     assert os.readlink(link) == layout.run.run_id
 
@@ -392,15 +407,15 @@ def test_an_interrupt_after_a_write_keeps_the_folder_and_leaves_latest(
 
 
 @posix_only
-def test_a_file_named_latest_gives_a_warning_and_exit_zero(tmp_path: Path) -> None:
+def test_a_file_named_current_gives_a_warning_and_exit_zero(tmp_path: Path) -> None:
     root = _project(tmp_path)
     cfg = _write(root, "pipelines/orders/pipeline.yaml", _config(root))
     (root / "out" / "orders").mkdir(parents=True)
-    (root / "out" / "orders" / "latest").write_text("mine", encoding="utf-8")
+    (root / "out" / "orders" / "current").write_text("mine", encoding="utf-8")
     result = _run(cfg)
     assert result.exit_code == 0, result.output
     assert "layout.latest_link_failed" in result.output
-    assert (root / "out" / "orders" / "latest").read_text(encoding="utf-8") == "mine"
+    assert (root / "out" / "orders" / "current").read_text(encoding="utf-8") == "mine"
 
 
 def test_abandon_removes_empty_nested_folders_and_keeps_written_files(tmp_path: Path) -> None:
@@ -489,13 +504,13 @@ def test_a_latest_that_is_not_a_regular_file_is_warned_and_replaced(
 
 
 @posix_only
-def test_a_planted_latest_symlink_is_replaced_and_its_target_unchanged(tmp_path: Path) -> None:
+def test_a_planted_current_symlink_is_replaced_and_its_target_unchanged(tmp_path: Path) -> None:
     root = _project(tmp_path)
     layout = _open(root, START)
     victim = tmp_path / "victim"
     victim.mkdir()
     (victim / "keep.txt").write_text("keep", encoding="utf-8")
-    link = root / "out" / "orders" / "latest"
+    link = root / "out" / "orders" / "current"
     os.symlink(victim, link)
     layout.commit_latest()
     assert layout.run is not None
