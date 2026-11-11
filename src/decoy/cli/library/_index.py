@@ -255,10 +255,21 @@ def all_rows(conn: sqlite3.Connection) -> list[IndexRow]:
     links: dict[str, list[tuple[str, str]]] = {}
     for src, rel, dst in conn.execute("SELECT src, rel, dst FROM links ORDER BY rowid"):
         links.setdefault(src, []).append((rel, dst))
-    rows = conn.execute("SELECT * FROM records").fetchall()
+    rows = conn.execute(
+        "SELECT id, kind, payload_schema, created_at, invocation_id, pipeline, status,"
+        " payload_digest, size, known FROM records"
+    ).fetchall()
     return [
         IndexRow(
-            *r[:9],
+            id=r[0],
+            kind=r[1],
+            payload_schema=r[2],
+            created_at=r[3],
+            invocation_id=r[4],
+            pipeline=r[5],
+            status=r[6],
+            payload_digest=r[7],
+            size=r[8],
             known=bool(r[9]),
             tables=tuple(tables.get(r[0], ())),
             links=tuple(links.get(r[0], ())),

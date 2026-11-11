@@ -56,7 +56,7 @@ def test_put_indexes_the_record_and_latest_is_virtual(root: Path) -> None:
     ids = _put_many(root, 3)
     assert _rows(root) == set(ids)
     library = open_library(root, probe=lambda _p: None)
-    rows = library.records(kind="sample-run")
+    rows = library.rows(kind="sample-run")
     assert [r.id for r in rows] == sorted(ids)  # same created_at, so ordered by id
     assert {r.known for r in rows} == {True}
     assert library.latest("sample-run") == max(ids)  # the largest (created_at, id)
@@ -82,7 +82,7 @@ def test_latest_filters_by_pipeline_and_table(root: Path) -> None:
     assert library.latest("sample-run", pipeline="a.yaml") == a.id
     assert library.latest("sample-run", table="orders") == a.id
     assert library.latest("sample-run", table="missing") is None
-    rows = library.records(pipeline="b.yaml")
+    rows = library.rows(pipeline="b.yaml")
     assert [(r.id, r.pipeline, r.tables) for r in rows] == [(b.id, "b.yaml", ("users",))]
 
 
@@ -115,7 +115,7 @@ def test_an_index_of_another_version_is_rebuilt_not_migrated(root: Path) -> None
     conn.close()
     library = open_library(root, probe=lambda _p: None)
     assert _rows(root) == set(ids)
-    assert [r.id for r in library.records()] == sorted(ids)
+    assert [r.id for r in library.rows()] == sorted(ids)
     conn = sqlite3.connect(str(_index_file(root)))
     assert conn.execute("PRAGMA user_version").fetchone()[0] == _index.SCHEMA_VERSION
     conn.close()
@@ -131,7 +131,7 @@ def test_random_bytes_in_the_index_still_list_and_are_rebuilt(root: Path) -> Non
     with pytest.raises(sqlite3.DatabaseError):  # non-vacuous: the file really is not a database
         sqlite3.connect(str(_index_file(root))).execute("SELECT 1 FROM records")
     library = open_library(root, probe=lambda _p: None)
-    assert [r.id for r in library.records()] == sorted(ids)
+    assert [r.id for r in library.rows()] == sorted(ids)
     assert _rows(root) == set(ids)
     assert library.degraded is None
 
@@ -151,7 +151,7 @@ def test_a_hand_added_object_is_listed_without_fsck(root: Path, tmp_path: Path) 
     shutil.copyfile(object_path(other, extra.id), target)  # as `git pull` would
     assert extra.id not in _rows(root)  # non-vacuous: the index did not know it
     library = open_library(root, probe=lambda _p: None)
-    assert extra.id in {r.id for r in library.records()}
+    assert extra.id in {r.id for r in library.rows()}
     assert library.latest("sample-run") == max([*_rows(root)])
     assert extra.id in _rows(root)
 
@@ -162,7 +162,7 @@ def test_a_hand_deleted_object_drops_its_row(root: Path) -> None:
     object_path(root, ids[0]).unlink()
     assert ids[0] in _rows(root)  # non-vacuous: the row was there
     library = open_library(root, probe=lambda _p: None)
-    assert ids[0] not in {r.id for r in library.records()}
+    assert ids[0] not in {r.id for r in library.rows()}
     assert ids[0] not in _rows(root)
 
 
@@ -196,7 +196,7 @@ def test_a_writer_killed_between_link_and_insert_is_caught_up(root: Path) -> Non
     assert object_path(root, missing).is_file()  # the object was linked before the insert
     assert missing not in _rows(root)
     library = open_library(root, probe=lambda _p: None)
-    assert missing in {r.id for r in library.records()}
+    assert missing in {r.id for r in library.rows()}
     assert missing in _rows(root)
 
 
@@ -219,7 +219,7 @@ def test_an_unknown_kind_is_indexed_as_opaque(root: Path) -> None:
     ids = _put_many(root, 2)
     future = _pull_future_thing(root)
     library = open_library(root, probe=lambda _p: None)
-    rows = {r.id: r for r in library.records()}
+    rows = {r.id: r for r in library.rows()}
     assert set(rows) == {*ids, future}
     assert (rows[future].kind, rows[future].known) == ("future-thing", False)
     assert rows[future].created_at == "2027-01-01T00:00:00.000000Z"
@@ -269,7 +269,7 @@ def test_an_unlockable_index_degrades_put_works_and_refs_refuse(root: Path) -> N
         library.set_ref("sample-run", "baseline", first)
     assert caught.value.code == LIBRARY_LOCK_UNAVAILABLE
     assert not (root / "library" / "refs").exists()
-    assert {r.id for r in library.records()} == {first, second}  # listed from the files
+    assert {r.id for r in library.rows()} == {first, second}  # listed from the files
 
 
 # -- C1-remote-fs ------------------------------------------------------------------------------
@@ -338,7 +338,7 @@ def test_listing_a_fresh_index_opens_no_object_file(root: Path) -> None:
     _OPENS.append(seen)
     try:
         library = open_library(root, probe=lambda _p: None)
-        rows = library.records(kind="sample-run")
+        rows = library.rows(kind="sample-run")
         under_objects = [p for p in seen if marker in p]
         object_path(root, ids[0]).read_bytes()  # non-vacuous: the hook does see an object open
     finally:

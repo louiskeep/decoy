@@ -147,20 +147,20 @@ class Library:
         except LibraryError:
             self.stale = True  # the object is stored; the next locked open inserts the row
 
-    def records(
+    def rows(
         self, *, kind: str | None = None, pipeline: str | None = None, table: str | None = None
     ) -> list[IndexRow]:
         """Rows matching the filters, oldest first. From the index; when the library is
         degraded or the index is stale, from the object files."""
-        return _index.select(self._rows(), kind=kind, pipeline=pipeline, table=table)
+        return _index.select(self._all_rows(), kind=kind, pipeline=pipeline, table=table)
 
     def latest(
         self, kind: str, *, pipeline: str | None = None, table: str | None = None
     ) -> str | None:
         """The virtual `latest` (plan 4.5): the largest `(created_at, id)` of `kind`."""
-        return _index.latest(self._rows(), kind=kind, pipeline=pipeline, table=table)
+        return _index.latest(self._all_rows(), kind=kind, pipeline=pipeline, table=table)
 
-    def _rows(self) -> list[IndexRow]:
+    def _all_rows(self) -> list[IndexRow]:
         if not self._library.is_dir():
             return []
         if self.degraded is None and not self.stale:
