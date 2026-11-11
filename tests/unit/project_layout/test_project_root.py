@@ -19,6 +19,7 @@ from decoy.cli.io import (
     LayoutError,
     Project,
     _project,
+    _small_file,
     ensure_decoy_dir,
     find_project,
 )
@@ -168,11 +169,17 @@ def test_a_marker_owned_by_another_user_is_untrusted(
 
 
 @posix_only
-def test_a_symlinked_marker_is_refused(tmp_path: Path) -> None:
+@pytest.mark.parametrize("gap", [False, True], ids=["all flags", "no O_NOFOLLOW"])
+def test_a_symlinked_marker_is_refused(
+    tmp_path: Path, gap: bool, monkeypatch: pytest.MonkeyPatch
+) -> None:
     root = _tree(tmp_path, "acme")
     real = tmp_path / "real.yaml"
     real.write_text(MARKER, encoding="utf-8")
     (root / "decoy.yaml").symlink_to(real)
+    if gap:
+        for name in ("O_NOFOLLOW", "O_NONBLOCK", "O_NOCTTY"):
+            monkeypatch.delattr(os, name, raising=False)
     with pytest.raises(LayoutError) as exc:
         find_project(root, None)
     assert _code(exc) == "layout.project_marker_invalid"
@@ -193,7 +200,7 @@ def test_a_marker_swapped_after_the_open_is_judged_by_the_opened_file(
             marker.write_text("kind: other\n", encoding="utf-8")
         return fd
 
-    monkeypatch.setattr(_project.os, "open", swapping_open)
+    monkeypatch.setattr(_small_file.os, "open", swapping_open)
     assert find_project(root, None).root == root.resolve()
 
 

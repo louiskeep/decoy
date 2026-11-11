@@ -136,6 +136,8 @@ PRIVATE_CASES: dict[str, str] = {
     + "test_layout_files_are_owner_only_under_umask_zero",
     "cli/io/_layout.py::write_claim::write_atomic::1": _UNIT
     + "test_layout_files_are_owner_only_under_umask_zero",
+    "cli/io/_layout.py::RunLayout.commit_latest::write_atomic::1": _UNIT
+    + "test_layout_files_are_owner_only_under_umask_zero",
     "cli/io/_project.py::ensure_decoy_dir::write_local_target::1": _UNIT
     + "test_layout_files_are_owner_only_under_umask_zero",
 }
@@ -588,11 +590,11 @@ def test_the_live_tree_is_clean(files: dict[str, str]) -> None:
 def test_the_census_is_55_watched_sinks(files: dict[str, str]) -> None:
     sinks = watched(collect(files))
     assert len(sinks) == 55
-    assert len([s for s in sinks if is_entry(s)]) == 18
+    assert len([s for s in sinks if is_entry(s)]) == 19
     counts: dict[str, int] = {}
     for r in ROWS:
         counts[r.disposition] = counts.get(r.disposition, 0) + 1
-    assert counts == {"public": 23, "private": 4, "staged": 3, "temp": 3, "read": 4}
+    assert counts == {"public": 23, "private": 4, "staged": 3, "temp": 3, "read": 3}
 
 
 def test_the_baseline_has_five_rows_with_exits() -> None:

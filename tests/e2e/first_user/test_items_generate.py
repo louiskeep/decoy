@@ -20,6 +20,7 @@ from decoy.__main__ import app
 from decoy.cli.exit_codes import EXIT_USAGE
 from tests.csv_sources import csv_source
 from tests.keyed_secret import TEST_MASK_SECRET_REF
+from tests.run_outputs import latest_output
 
 pytestmark = pytest.mark.usefixtures("mask_secret")
 
@@ -136,14 +137,14 @@ def test_run_from_another_folder_reads_the_snapshot_beside_the_config(
 
     monkeypatch.chdir(a)
     assert runner.invoke(app, ["run", str(cfg)]).exit_code == 0
-    from_a = (a / "synthetic.csv").read_bytes()
-    (a / "synthetic.csv").unlink()
+    from_a = latest_output(a, "synthetic.csv").read_bytes()
 
     monkeypatch.chdir(b)
     res = runner.invoke(app, ["run", str(cfg)])
 
     assert res.exit_code == 0, res.output
-    assert (a / "synthetic.csv").read_bytes() == from_a
+    assert latest_output(a, "synthetic.csv").read_bytes() == from_a
+    assert list(b.iterdir()) == []
 
 
 def test_validate_and_ci_gate_agree_with_run_from_another_folder(
@@ -208,7 +209,7 @@ def test_column_names_file_reads_from_the_config_folder(
     res = runner.invoke(app, ["run", str(path)])
 
     assert res.exit_code == 0, res.output
-    assert list(pd.read_csv(a / "out.csv").columns) == ["name"]
+    assert list(pd.read_csv(latest_output(a, "out.csv")).columns) == ["name"]
 
 
 # --- AT-9, AT-10: warnings and per-table lines ---------------------------------
@@ -277,7 +278,7 @@ def test_fidelity_on_a_generate_only_pipeline_is_refused_before_any_work(tmp_pat
 
     assert res.exit_code == EXIT_USAGE
     assert _FIDELITY_REFUSAL in _flat(res.output)
-    assert not (tmp_path / "synthetic.csv").exists()
+    assert not list(tmp_path.rglob("synthetic.csv"))
 
 
 def test_fidelity_refusal_in_json_mode(tmp_path: Path) -> None:
@@ -314,7 +315,7 @@ def test_seed_with_a_key_warns_for_generate_only(tmp_path: Path) -> None:
 
     keyed_only = runner.invoke(app, ["run", str(cfg), *_keyed(), "--json"])
     codes = [w["code"] for w in json.loads(keyed_only.stdout)["warnings"]]
-    out_with_seed = (tmp_path / "synthetic.csv").read_bytes()
+    out_with_seed = latest_output(tmp_path, "synthetic.csv").read_bytes()
 
     assert keyed_only.exit_code == 0, keyed_only.output
     assert codes == ["seed_ignored_with_master_key"]
@@ -326,10 +327,9 @@ def test_seed_with_a_key_warns_for_generate_only(tmp_path: Path) -> None:
     other = yaml.safe_load(cfg.read_text(encoding="utf-8"))
     other["global_settings"]["seed"] = 7
     cfg.write_text(yaml.safe_dump(other), encoding="utf-8")
-    (tmp_path / "synthetic.csv").unlink()
     res = runner.invoke(app, ["run", str(cfg), *_keyed(), "--json"])
     assert res.exit_code == 0, res.output
-    assert (tmp_path / "synthetic.csv").read_bytes() == out_with_seed
+    assert latest_output(tmp_path, "synthetic.csv").read_bytes() == out_with_seed
 
 
 def test_seed_with_a_key_warns_on_a_mixed_pipeline_and_masks_still_use_the_seed(
@@ -343,7 +343,7 @@ def test_seed_with_a_key_warns_on_a_mixed_pipeline_and_masks_still_use_the_seed(
         assert res.exit_code == 0, res.output
         codes = [w["code"] for w in json.loads(res.stdout)["warnings"]]
         assert "seed_ignored_with_master_key" in codes
-        outputs.append((tmp_path / "people_out.csv").read_bytes())
+        outputs.append(latest_output(tmp_path, "people_out.csv").read_bytes())
     assert len(set(outputs)) > 1
 
 

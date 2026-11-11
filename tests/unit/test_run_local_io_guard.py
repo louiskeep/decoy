@@ -17,6 +17,7 @@ import pyarrow as pa
 import pytest
 
 from decoy.cli.extras import UnsupportedCloudEndpointError
+from decoy.cli.io import RunLayout
 from decoy.cli.run import _write_mask_outputs
 
 
@@ -41,14 +42,14 @@ def _result() -> SimpleNamespace:
 
 def test_cloud_target_refused_before_any_write(tmp_path: Path) -> None:
     with pytest.raises(UnsupportedCloudEndpointError, match="gcs target 'remote'"):
-        _write_mask_outputs(_config(tmp_path), _result(), tmp_path)
+        _write_mask_outputs(_config(tmp_path), _result(), RunLayout.fixed(tmp_path))
     assert not (tmp_path / "local.csv").exists()
 
 
 def test_local_only_targets_still_write(tmp_path: Path) -> None:
     cfg = _config(tmp_path)
     del cfg["targets"]["remote"]
-    _write_mask_outputs(cfg, _result(), tmp_path)
+    _write_mask_outputs(cfg, _result(), RunLayout.fixed(tmp_path))
     assert (tmp_path / "local.csv").read_text(encoding="utf-8").splitlines() == [
         "ssn",
         "000000000",

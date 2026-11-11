@@ -28,6 +28,7 @@ from tests.ci_support import (
     write,
     write_clean_pipeline,
 )
+from tests.run_outputs import latest_output
 
 # `decoy ci` emits the fixed family token for a preflight check named after a table
 # (`target.<table>.would_overwrite` -> `target.would_overwrite`): the table name is user data.
@@ -142,7 +143,7 @@ def test_evidence_findings_equal_report_verify_issue_count(tmp_path: Path) -> No
     repo = make_repo(tmp_path / "repo")
     write_clean_pipeline(repo)
     make_evidence(repo)
-    write(repo, "out/out.csv", "changed\n")
+    latest_output(repo, "out/out.csv").write_text("changed\n", encoding="utf-8")
     write(repo, "data/in.csv", "changed input\n")
     direct = json.loads(
         run_decoy(["report", "verify", "build/evidence.json", "--json"], repo).stdout

@@ -18,6 +18,7 @@ from decoy.__main__ import app
 from decoy.cli.exit_codes import EXIT_USAGE
 from tests.csv_sources import csv_source
 from tests.keyed_secret import TEST_MASK_SECRET_REF
+from tests.run_outputs import latest_output
 
 pytestmark = pytest.mark.usefixtures("mask_secret")
 
@@ -241,4 +242,4 @@ def test_a_plain_run_still_writes_targets(tmp_path: Path) -> None:
     res = runner.invoke(app, ["run", str(cfg)])
 
     assert res.exit_code == 0, res.output
-    assert (tmp_path / "children.csv").is_file()
+    assert latest_output(tmp_path, "children.csv").is_file()

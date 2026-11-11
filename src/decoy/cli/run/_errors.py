@@ -16,7 +16,7 @@ from decoy.cli.extras import (
     translate_ner_unavailable,
 )
 from decoy.cli.gate import PreRunCheckError, cap_error_text, capacity_codes
-from decoy.cli.io import DuckDBSourceError, TargetFormatError
+from decoy.cli.io import DuckDBSourceError, LayoutError, TargetFormatError
 from decoy.cli.run._context import RunContext
 from decoy.cli.run._execute import (
     _ChunkedFixedWidthError,
@@ -148,6 +148,7 @@ def fail(ctx: RunContext, exc: Exception) -> NoReturn:
                     _ChunkedGenerateError,
                     _ChunkedFixedWidthError,
                     TargetFormatError,
+                    LayoutError,
                     _ChunkedReportFlagError,
                     _ChunkedVaultError,
                     _VaultUsageError,
@@ -195,6 +196,8 @@ def fail(ctx: RunContext, exc: Exception) -> NoReturn:
     # the truncation a single malformed row's value can land in
     # downstream log aggregators.
     error_text = describe(exc) if isinstance(exc, AtomicWriteError) else str(exc)
+    if isinstance(exc, LayoutError):
+        error_text = f"{exc.code}: {exc.message}"
     error_text = cap_error_text(error_text)
     if out_of_memory:
         error_text = _OUT_OF_MEMORY_TEXT

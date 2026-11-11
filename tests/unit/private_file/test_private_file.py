@@ -420,23 +420,28 @@ def test_a_mount_that_ignores_chmod_is_refused_by_the_read_back(
 _LAYOUT_FILES = (
     "import os, stat, sys\n"
     "from pathlib import Path\n"
-    "from decoy.cli.io import ensure_decoy_dir, name_dir, prepare_out, write_claim\n"
+    "from decoy.cli.io import (\n"
+    "    PipelineName, RunLayout, ensure_decoy_dir, name_dir, prepare_out, write_claim,\n"
+    ")\n"
     "os.umask(0)\n"
     "root = Path(sys.argv[1])\n"
     "out, _ = prepare_out(root)\n"
     "ensure_decoy_dir(root)\n"
     "write_claim(name_dir(out, 'p'), 'jobs/p.yaml')\n"
-    "for rel in ('out/.gitignore', '.decoy/.gitignore', 'out/p/PIPELINE'):\n"
+    "name = PipelineName('p', False, 'jobs/p.yaml')\n"
+    "assert RunLayout.open(root, name, '0a1b2c3d-0000-4000-8000-000000000000').commit_latest() == ()\n"
+    "for rel in ('out/.gitignore', '.decoy/.gitignore', 'out/p/PIPELINE', 'out/p/LATEST'):\n"
     "    print(rel, oct(stat.S_IMODE(os.stat(root / rel).st_mode)))\n"
 )
 
 
 @posix_only
 def test_layout_files_are_owner_only_under_umask_zero(tmp_path: Path) -> None:
-    """`out/.gitignore`, `.decoy/.gitignore` and the claim go through the atomic writer."""
+    """`out/.gitignore`, `.decoy/.gitignore`, the claim and `LATEST` go through the atomic writer."""
     got = _run(_LAYOUT_FILES, str(tmp_path)).splitlines()
     assert got == [
         "out/.gitignore 0o600",
         ".decoy/.gitignore 0o600",
         "out/p/PIPELINE 0o600",
+        "out/p/LATEST 0o600",
     ]

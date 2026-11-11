@@ -6,6 +6,7 @@ from datetime import datetime, timezone
 
 import typer
 
+from decoy.cli.io import mint_invocation_id
 from decoy.cli.run import _errors, _evidence, _execute, _prepare, _render
 from decoy.cli.run._context import RunContext
 from decoy.cli.run._notify import _dispatch_run_notifications, _start_telemetry, parse_channels
@@ -21,6 +22,7 @@ from decoy.ui.progress import spinner
 
 def execute(ctx: RunContext) -> None:
     """Run the phases in order. Everything after the `try` runs only on success."""
+    ctx.invocation_id = mint_invocation_id()
     ctx.config_str = str(ctx.config)
 
     parse_channels(ctx)
@@ -41,6 +43,7 @@ def execute(ctx: RunContext) -> None:
 
     ctx._run_started_at = datetime.now(timezone.utc)
     ctx.started = time.perf_counter()
+    finished = False
     try:
         # F30: refuse a bad telemetry setting before any work. Spans and the exit
         # flush bind to `_otel` in C1b.
@@ -52,12 +55,16 @@ def execute(ctx: RunContext) -> None:
             else:
                 _prepare.prepare_preview(ctx)
                 _execute.execute_preview(ctx)
+        finished = True
     except typer.Exit:
         # An inner typer.Exit already set its exit code; keep it out of the catch-all below.
         raise
     except Exception as exc:
         _errors.fail(ctx, exc)
     finally:
+        # A run that failed before writing anything leaves no empty run folder.
+        if not finished and ctx.layout is not None:
+            ctx.layout.abandon()
         # Tear down any --duckdb-source Parquet snapshots. Runs on success
         # (before the summary tail) and on every error path. By here the run
         # has already consumed the staged Parquet, and --evidence-out is
@@ -75,6 +82,7 @@ def execute(ctx: RunContext) -> None:
         return
 
     _evidence.write_evidence(ctx)
+    _render.commit_latest(ctx)
 
     ctx.notify_results = _dispatch_run_notifications(
         ctx.notify_channels,

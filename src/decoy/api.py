@@ -36,6 +36,7 @@ from decoy._mask_secret import is_valid_mask_secret_ref as _is_valid_mask_secret
 from decoy._row_sample import sample_frame
 from decoy.cli._sources import CSV_DIALECT_KEYS, csv_file_source, resolved_source_config
 from decoy.cli.extras import UnsupportedCloudEndpointError
+from decoy.cli.io import RunLayout
 from decoy.cli.io._targets import claimed_format, format_for_path
 from decoy.cli.run import (
     _load_sources_from_config,
@@ -324,7 +325,9 @@ def _file_target_entry(existing: Any, path: Any) -> dict:
     that claims nothing keeps the declared format and `layout`. This is the opposite of
     `data=` paths, where the declared source format wins (`_stage_source_entry`)."""
     entry = dict(existing) if isinstance(existing, dict) else {}
-    entry["path"] = str(path)
+    # A relative `out=` is relative to the current folder, like a typed flag (plan 3.8).
+    text = str(path)
+    entry["path"] = text if "://" in text else str(Path(text).absolute())
     entry.setdefault("type", "file")
     if "format" not in entry:
         entry["format"] = format_for_path(Path(str(path)))
@@ -518,6 +521,8 @@ def mask(
         # `decoy run pipeline.yaml`.
         sources = _load_sources_from_config(config_dict, base_dir)
 
+        # Library callers get fixed, predictable paths: no run folder, claim or `latest`.
+        layout = RunLayout.fixed(base_dir)
         resolver = _build_generation_resolver(master_key, key_label)
         instance_locale = (config_dict.get("global_settings") or {}).get("default_locale")
 
@@ -536,6 +541,9 @@ def mask(
             # None keeps run_pipeline's call shape for an unkeyed config.
             with _mask_secret.admitted_key_provider(config_dict) as key_provider:
                 key_kwargs = {} if key_provider is None else {"key_provider": key_provider}
+                # Sent only when set, so an engine without the keyword still runs a config without it.
+                quarantine_path = layout.place_quarantine(config_dict)
+                quarantine_kwargs = {"quarantine_path": quarantine_path} if quarantine_path else {}
                 result = run_pipeline(
                     resolved_source_config(config_dict, base_dir),
                     sources,
@@ -543,6 +551,7 @@ def mask(
                     derive_key=resolver,
                     instance_default_locale=instance_locale,
                     base_dir=base_dir,
+                    **quarantine_kwargs,
                     **key_kwargs,
                     **extra_run_pipeline_kwargs,
                 )
@@ -566,7 +575,7 @@ def mask(
         # library's own write/return point).
         _native_gate.post_run_verify(intent=native_intent, route=route)
 
-        _write_mask_outputs(config_dict, result, base_dir)
+        _write_mask_outputs(config_dict, result, layout)
     finally:
         for tmp_path in tmp_paths:
             tmp_path.unlink(missing_ok=True)

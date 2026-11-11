@@ -2,6 +2,7 @@
 `--post-validate-enforce` exit."""
 
 import typer
+from rich.text import Text
 
 from decoy.cli import gen
 from decoy.cli.exit_codes import EXIT_FINDINGS
@@ -18,6 +19,7 @@ from decoy.ui.summary import (
     render_warnings,
     warning_records,
 )
+from decoy.ui.theme import warn
 
 
 def _seed_warnings(raw_cfg: dict | None, *, key_in_effect: bool) -> list[dict]:
@@ -42,6 +44,17 @@ def _next_hint_for_run(raw_cfg: dict | None, mode: "Mode") -> str | None:
     except Exception:
         pass
     return None
+
+
+def commit_latest(ctx: RunContext) -> None:
+    """Move `latest` to this run when the run will exit 0, and warn if it could not."""
+    if ctx.layout is None:
+        return
+    if ctx.post_validate_enforce and (ctx._report_quality_metrics or {}).get("failed_checks"):
+        return
+    for item in ctx.layout.commit_latest():
+        if ctx.state.mode is not OutputMode.quiet:
+            ctx.state.err_console.print(warn("warning:"), Text(f"{item.code}: {item.message}"))
 
 
 def finish(ctx: RunContext) -> None:

@@ -1,0 +1,18 @@
+{
+ "sentry_id": "output-placement-allow",
+ "created_in": "PROJECT-LAYOUT-P2b",
+ "entries": {
+  "cli/io/_layout.py::RunLayout.place_target": {
+   "reason": "The one placement site: a fixed layout and an absolute path resolve as the old code did."
+  },
+  "cli/io/_targets.py::_is_declared_target": {
+   "reason": "Compares a file with the declared target path; reads, writes nothing."
+  },
+  "cli/run/_execute.py::_run_chunked_mask": {
+   "reason": "Resolves the chunked source path for the empty-parquet schema; an input."
+  },
+  "cli/run/_prepare.py::prepare": {
+   "reason": "Resolves the --duckdb-source database path; an input."
+  }
+ }
+}
