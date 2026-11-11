@@ -158,13 +158,6 @@ def fit_exact_snapshot(
     if missing:
         raise FitSourceError(f"--parse-dates column(s) not in the CSV: {', '.join(missing)}.")
 
-    # Names only, so the message is value-free; checked before the snapshot is computed.
-    absent = [c for c in fanout_columns if c not in df.columns]
-    if absent:
-        raise FitSourceError(
-            f"--fanout column(s) not in the CSV: {', '.join(absent)}.", FANOUT_COLUMN_UNKNOWN
-        )
-
     # Detection and the snapshot see exactly the rows read above.
     # No profile_row_cap: it profiles head rows only, and a sensitive column can start late.
     try:
@@ -177,6 +170,14 @@ def fit_exact_snapshot(
             fanout_columns=list(fanout_columns),
         )
     except DistributionSnapshotError as exc:
+        if exc.code == FANOUT_COLUMN_UNKNOWN:
+            # The engine's message gives only a count. The names (never values) are worked out
+            # here for the message text alone; the engine did the refusing.
+            known = {str(c) for c in df.columns}
+            absent = sorted({str(n) for n in fanout_columns} - known)
+            raise FitSourceError(
+                f"--fanout column(s) not in the CSV: {', '.join(absent)}.", exc.code
+            ) from None
         # Only the cap refusals are the caller's to fix; anything else is a real failure.
         if exc.code not in (CONTINGENCY_TOP_K_INVALID, CONTINGENCY_TOP_K_KIND_UNSUPPORTED):
             raise
