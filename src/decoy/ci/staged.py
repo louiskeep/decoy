@@ -43,7 +43,7 @@ __all__ = [
 
 CHECK_ID = "staged_scan"
 _REGULAR_MODES = {"100644", "100755"}
-_OID = re.compile(r"^[0-9a-f]{40}([0-9a-f]{24})?$")
+_OID = re.compile(r"^[0-9a-f]{40}([0-9a-f]{24})?\Z")
 _SCANNED = {"A", "C", "M", "R", "T"}
 _COUNT_CAP = 1_000_000
 
