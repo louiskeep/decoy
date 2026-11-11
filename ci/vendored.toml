@@ -58,6 +58,14 @@ local_path = "tests/sentry/layout/_ratchet_cases.py"
 blob_sha256 = "038d0dff5e370a8238712c365db283b9befefc40135956dc61f05930946bab00"
 commit = "66d0f879174c6d3e54282645dc3bbc8da2f33b7f"
 
+# The engine's recurring-defect AST index and class scanners (VALUE-FREE-ERRORS B1). The CLI's
+# class 1 and class 3 sentries in tests/sentry/defects/ run it over src/decoy.
+[[vendored]]
+engine_path = "tests/sentry/defects/_defect_scan.py"
+local_path = "tests/sentry/defects/_defect_scan.py"
+blob_sha256 = "4175ae214380bc9e8907a0abb62a388d773c8a6d9b95d2ca082e9b3098e0d7e5"
+commit = "38517493ab399f6d7ea321d116599c3725f046e9"
+
 [[mirror]]
 engine_path = ".github/actions/lock-env/action.yml"
 local_path = ".github/actions/lock-env/action.yml"

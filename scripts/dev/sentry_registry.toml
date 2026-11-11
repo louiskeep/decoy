@@ -43,6 +43,10 @@ id = "config-route-allow"
 baseline = "tests/sentry/baselines/config-route-allow.json"
 
 [[sentry]]
+id = "exception-context"
+baseline = "tests/sentry/baselines/exception-context.json"
+
+[[sentry]]
 id = "private-file-sinks"
 baseline = "tests/sentry/baselines/private-file-sinks.json"
 

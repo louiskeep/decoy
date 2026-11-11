@@ -129,8 +129,8 @@ EXIT_PRECEDENCE: tuple[int, ...] = (
     EXIT_OK,
 )
 
-_TOKEN = re.compile(r"^[a-z][a-z0-9_.-]{0,127}$")
-_HEX64 = re.compile(r"^[0-9a-f]{64}$")
+_TOKEN = re.compile(r"^[a-z][a-z0-9_.-]{0,127}\Z")
+_HEX64 = re.compile(r"^[0-9a-f]{64}\Z")
 
 
 class UnsafeFindingError(ValueError):
@@ -489,7 +489,7 @@ def _check_repo_path(value: str) -> str:
 
 RepoPath = Annotated[StrictStr, Field(max_length=1024)]
 
-_GLOB_CHARS = re.compile(r"^[^\x00-\x1f\\\[\]{}!]+$")
+_GLOB_CHARS = re.compile(r"^[^\x00-\x1f\\\[\]{}!]+\Z")
 
 
 def _check_glob(value: str) -> str:

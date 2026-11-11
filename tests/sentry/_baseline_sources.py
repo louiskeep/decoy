@@ -140,6 +140,9 @@ _README_WHY = (
     "real command the README Common commands table deliberately does not repeat; "
     "the table points readers to decoy --help"
 )
+_EXCEPTION_CONTEXT_WHY = (
+    "existing raise-from-None inside an except block at the B2 base; hoist is V2 corrective work"
+)
 SOURCES: tuple[Source, ...] = (
     Source(
         "engine-internal-allow",
@@ -240,6 +243,16 @@ SOURCES: tuple[Source, ...] = (
             "ALLOWLIST",
             key=lambda e: f"{e[0]}::{e[1]}::{e[2]}#{e[3]}",
             reason=lambda e: e[4],
+        ),
+    ),
+    Source(  # keys of the ratchet-schema baseline itself
+        "exception-context",
+        "tests/sentry/defects/test_exception_context.py",
+        InCode(
+            "tests/sentry/defects/test_exception_context.py",
+            "BASELINE_KEYS",
+            key=str,
+            reason=lambda e: _EXCEPTION_CONTEXT_WHY,
         ),
     ),
     Source(

@@ -29,7 +29,7 @@ from pathlib import Path
 # allowlist is exactly a simple SQL identifier, so the name cannot carry a
 # quote, a space, or any metacharacter -- interpolation is injection-safe by
 # construction and no identifier-quoting helper is needed.
-_IDENT_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+_IDENT_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*\Z")
 
 
 class DuckDBSourceError(Exception):
