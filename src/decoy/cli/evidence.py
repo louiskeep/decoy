@@ -71,8 +71,9 @@ same from any folder. A manifest without `path_base` keeps the old rule (paths a
 relative ones from the working directory).
 
 Paths are resolved before they are made relative, so a lexical `..` or a symlinked folder is
-never recorded as inside the project. The reader refuses a project-relative path with a `..`
-part or one that resolves outside the root.
+never recorded as inside the project. The reader parses a project-relative path with
+`decoy.cli.io.contained_path`, the layout's one rule: "/" separators only, no drive or UNC
+anchor, no climb above the root, no symlink out.
 
 Project binding: a `path_base` manifest records `project_manifest`, where it was written
 relative to its project root, or null when written outside the project. The reader refuses a
@@ -82,7 +83,8 @@ manifest written outside its project has nothing to check and needs the typed `-
 Limit: an exact copy at the same relative place in another project still binds there; its
 fingerprints then report the other project's files as changed.
 
-Schema: `_FIELDS` and `_ENTRY_FIELDS` are the one schema. `build_manifest` checks its own output
+Schema: `_FIELDS` and `_ENTRY_FIELDS` are the one schema. Types are exact JSON types: `true` is
+not an integer and `"12"` is not a number, for `size_bytes` and every `row_counts` value. `build_manifest` checks its own output
 against them and `read_manifest` checks every file it reads, so the writer and the readers
 (`report`, `decoy ci check`) cannot disagree.
 """
@@ -92,10 +94,11 @@ from __future__ import annotations
 import hashlib
 import json as _json
 import os
+import posixpath
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from pathlib import Path, PurePosixPath
+from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
@@ -103,6 +106,7 @@ from decoy.cli.io import (
     LayoutError,
     RunLayout,
     TargetFormatError,
+    contained_path,
     find_project,
     resolve_target_format,
     resolved_source_config,
@@ -239,15 +243,18 @@ def _placed(place_target: Callable[[str], Path] | None, raw: str, base: Path) ->
 
 
 def _inside(path: Path, root: Path) -> str | None:
-    """`path` relative to `root` (POSIX) with both resolved first; None when it lies outside.
+    """`path` relative to `root` (POSIX) with both resolved first; None when it lies outside or
+    when the reader's rule (`contained_path`) would not read the text back, such as a POSIX
+    file name holding a backslash.
 
     Resolving first keeps `sub/../../x` and a symlink out of the project from passing a lexical
     prefix test.
     """
     try:
-        return path.resolve().relative_to(root.resolve()).as_posix()
+        text = path.resolve().relative_to(root.resolve()).as_posix()
     except (ValueError, OSError, RuntimeError):
         return None
+    return text if contained_path(root, text) is not None else None
 
 
 def _recorded(path: Path, root: Path | None) -> str:
@@ -458,6 +465,11 @@ def _malformed(field: str, rule: str) -> ManifestError:
     return ManifestError("malformed", f"evidence manifest is malformed: `{field}` {rule}.")
 
 
+def _is(value: Any, types: tuple[type, ...]) -> bool:
+    """Exact JSON types: `true` is not an integer and `"12"` is not a number."""
+    return any(t is object or type(value) is t for t in types)
+
+
 def _check_fields(obj: dict[str, Any], fields: dict[str, _Rule], prefix: str) -> None:
     for key, (types, required, wording) in fields.items():
         if key not in obj:
@@ -465,7 +477,7 @@ def _check_fields(obj: dict[str, Any], fields: dict[str, _Rule], prefix: str) ->
                 raise _malformed(prefix + key, "is required")
             continue
         value = obj[key]
-        if not isinstance(value, types) or (required and value == ""):
+        if not _is(value, types) or (required and value == ""):
             raise _malformed(prefix + key, f"must be {wording}")
 
 
@@ -491,6 +503,9 @@ def check_manifest(manifest: Any) -> dict[str, Any]:
             if not isinstance(info, dict):
                 raise _malformed(f"{group}.{table}", "must be an object")
             _check_fields(info, _ENTRY_FIELDS, f"{group}.{table}.")
+    for table, count in manifest.get("row_counts", {}).items():
+        if not _is(count, (int,)):
+            raise _malformed(f"row_counts.{table}", "must be an integer")
     return manifest
 
 
@@ -577,17 +592,19 @@ def _manifest_root(
 def resolve_manifest_path(text: str, root: Path | None, field: str = "path") -> Path:
     """A recorded path as a file path: project-relative under `root`, else as recorded.
 
-    A project-relative path must stay in the project: no `..` part, and it must not resolve
-    outside the root (a symlink out). Otherwise `ManifestError` names `field`, not the path.
+    An absolute path (a file outside the project, recorded as such) is read as recorded.
+    Every other path is parsed by `decoy.cli.io.contained_path`, the one rule for stored
+    relative paths: "/" only, no drive or UNC anchor, and it must stay inside the root
+    (no climb above it, no symlink out). Otherwise `ManifestError` names `field`, not the path.
     """
-    if root is None or PurePosixPath(text).is_absolute() or Path(text).is_absolute():
+    if root is None or posixpath.isabs(text) or os.path.isabs(text):
         return Path(text)
-    parts = PurePosixPath(text).parts
-    path = root.joinpath(*parts)
-    if not parts or ".." in parts or _inside(path, root) is None:
+    path = contained_path(root, text)
+    if path is None:
         raise ManifestError(
             "path_outside_project",
-            f"evidence manifest is malformed: `{field}` must name a file inside the project.",
+            f"evidence manifest is malformed: `{field}` must name a file inside the project, "
+            'written with "/".',
         )
     return path
 
