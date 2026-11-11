@@ -221,7 +221,7 @@ def run(
             "where available (these are omitted for --chunked runs). It does "
             "NOT contain raw data values. Use `decoy report verify` to check "
             "the manifest against current files. "
-            "See: decoy explain evidence (when available)."
+            "See: decoy report show."
         ),
     ),
     notify: list[str] = typer.Option(

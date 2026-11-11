@@ -40,6 +40,8 @@ $ decoy [OPTIONS] COMMAND [ARGS]...
 * `--show-completion`: Show completion for the current shell, to copy it or customize the installation.
 * `--help`: Show this message and exit.
 
+Generate synthetic data: decoy fit source.csv, then decoy run pipeline.yaml, then decoy report fidelity <source.csv> <synthetic.csv> --generate. Details: decoy explain generation.
+
 **Commands**:
 
 * `run`: Run a decoy pipeline from a YAML config.
@@ -102,7 +104,7 @@ $ decoy run [OPTIONS] CONFIG
 * `--threads N`: Worker threads for the native and out-of-core routes, or auto. Overrides DECOY_THREADS and settings.json. Default auto: the usable CPUs. Ignored by --chunked.
 * `--vault PATH`: Write the token vault (encrypted source-to-masked map for vault: true columns) to this path. The vault plus the config re-identify every vaulted value: store them separately and never alongside the masked output. Needs the engine&#x27;s vault extra (cryptography). Not supported with --chunked.
 * `--key-label TEXT`: Stable namespace string for the --master-key generation key hierarchy (synthetic generation only, not masking). Required when --master-key is set. Pick something durable (e.g. &#x27;customers_q4&#x27;); changing it produces different generated output. CLI flag only -- PipelineConfig forbids unknown top-level keys, so there is no YAML equivalent.
-* `--evidence-out PATH`: Write a local evidence manifest (JSON) to this path after a successful run. The manifest records pipeline hash, input/output file fingerprints, run metadata, and row counts/timings/warnings where available (these are omitted for --chunked runs). It does NOT contain raw data values. Use `decoy report verify` to check the manifest against current files. See: decoy explain evidence (when available).
+* `--evidence-out PATH`: Write a local evidence manifest (JSON) to this path after a successful run. The manifest records pipeline hash, input/output file fingerprints, run metadata, and row counts/timings/warnings where available (these are omitted for --chunked runs). It does NOT contain raw data values. Use `decoy report verify` to check the manifest against current files. See: decoy report show.
 * `--notify TEXT`: Notify a channel after the run reaches its terminal state. Repeatable. Spec is &#x27;kind:target&#x27;: webhook:&lt;url&gt;, slack:&lt;url&gt;, email:&lt;address&gt;. Best-effort: a channel failure never changes the run&#x27;s exit code. Webhook signing key from DECOY_NOTIFY_WEBHOOK_SECRET (unsigned if unset); SMTP from DECOY_NOTIFY_SMTP_HOST/_PORT/_USER/_PASS/_FROM. Nothing is persisted to .decoy/workspace.json -- targets and secrets are flags/env only, never written to disk.
 * `--notify-on [success|failure|always]`: Which terminal outcome(s) to notify on: success, failure, or always.  [default: always]
 * `--native`: Require that a compiled native kernel actually executed. Refuses up front (no run) on --chunked or a generate/mixed config, or on an absent/broken decoy-engine-native companion. Refuses AFTER the run, before any output is written, if the job finished without positive compiled-kernel evidence (e.g. an FK table or a table masked only with passthrough/redact/truncate). Mutually exclusive with --no-native. See: decoy explain native.
@@ -230,7 +232,7 @@ config's global_settings.mask_secret_ref) must name the secret the mask
 run used; the vault file is a re-identification map, store it separately from the
 masked output.
 
-See also: decoy run, decoy explain strategies.
+See also: decoy run, decoy explain transforms.
 
 
 ## `decoy tokenize`
@@ -540,8 +542,8 @@ See also: decoy scan, decoy run.
 
 Explain a Decoy concept in plain English.
 
-Built-in topics: modes, transforms, disguises, output, pipeline, yaml,
-storm, keys, vault, chunked, substrate, differential-privacy, security,
+Built-in topics: modes, transforms, generation, disguises, output, pipeline,
+yaml, storm, keys, vault, chunked, substrate, differential-privacy, security,
 completion. Run with no topic to see the full list.
 
 **Usage**:
