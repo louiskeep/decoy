@@ -1,0 +1,247 @@
+"""Generate-column options are checked per type at `decoy validate` (GEN-STRICT C1, row 24k).
+
+The QA record's H3 inputs used to pass `validate` and run at exit 0 with the option ignored or
+replaced; its H4 inputs passed `validate` and then failed `run` at exit 3 with raw library text.
+Both groups now fail `validate` with exit 1 and a code that names the problem, and `run` stops at
+its pre-run gate. Every bad value carries a canary string that must never reach the output.
+"""
+
+from __future__ import annotations
+
+import json
+from pathlib import Path
+from typing import Any
+
+import pytest
+import yaml
+from typer.testing import CliRunner, Result
+
+from decoy.__main__ import app
+from decoy.cli.exit_codes import EXIT_OK, EXIT_USAGE
+
+runner = CliRunner()
+_WIDE = {"COLUMNS": "10000"}
+_CANARY = "canary7731"
+_TABLE = "people"
+
+
+def _config(folder: Path, columns: list[dict[str, Any]]) -> Path:
+    cfg = {
+        "version": 2,
+        "global_settings": {"seed": 42},
+        "tables": [{"name": _TABLE, "row_count": 20, "generate_columns": columns}],
+        "targets": {
+            _TABLE: {"type": "file", "format": "csv", "path": str(folder / "out" / "people.csv")}
+        },
+    }
+    path = folder / "gen.yaml"
+    path.write_text(yaml.safe_dump(cfg, sort_keys=False), encoding="utf-8")
+    return path
+
+
+def _validate(folder: Path, columns: list[dict[str, Any]]) -> tuple[Result, list[dict[str, Any]]]:
+    result = runner.invoke(app, ["validate", str(_config(folder, columns)), "--json"], env=_WIDE)
+    assert "Traceback" not in result.output
+    return result, json.loads(result.stdout)["messages"]
+
+
+def _errors(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    return [m for m in messages if m["severity"] == "error"]
+
+
+def _no_canary(result: Result) -> None:
+    for stream in (result.stdout, _stderr(result)):
+        assert _CANARY not in stream.lower(), "an option value reached the output"
+
+
+def _stderr(result: Result) -> str:
+    try:
+        return result.stderr
+    except ValueError:
+        return ""
+
+
+_SEQ = {"name": "id", "type": "sequence", "start": 1}
+_CATS = [f"{_CANARY}_a", f"{_CANARY}_b"]
+
+
+def _cat(**extra: Any) -> dict[str, Any]:
+    return {"name": "tier", "type": "categorical", "categories": _CATS, **extra}
+
+
+def _faker(**extra: Any) -> dict[str, Any]:
+    return {"name": "who", "type": "faker", "faker_type": "first_name", **extra}
+
+
+def _formula(formula: str, **extra: Any) -> dict[str, Any]:
+    return {"name": "twice", "type": "formula", "formula": formula, **extra}
+
+
+# --- AT-C1: each H3 input, refused by the config parse (located by index) ---------------------
+
+_CONFIG_CELLS = [
+    pytest.param([_cat(weigths=[0.99, 0.01])], "generate_option_unknown", "0.weigths",
+                 id="option-typo"),
+    pytest.param([_cat(weights=[-1, 2])], "generate_weights_invalid", "0.weights.0",
+                 id="negative-weight"),
+    pytest.param([_faker(null_probability=2)], "generate_option_range",
+                 "0.null_probability", id="null-probability-over-1"),
+    pytest.param([{**_SEQ, "step": 0}], "generate_option_range", "0.step", id="step-0"),
+    pytest.param([_SEQ, {**_SEQ, "start": 5}], "generate_column_duplicate", "1.name",
+                 id="duplicate-name"),
+    pytest.param([_SEQ, _formula(f"{_CANARY} +")], "generate_formula_invalid",
+                 "1.formula", id="formula-syntax"),
+]  # fmt: skip
+
+
+@pytest.mark.parametrize(("columns", "code", "where"), _CONFIG_CELLS)
+def test_at_c1_config_refusal_names_the_option(
+    tmp_path: Path, columns: list[dict[str, Any]], code: str, where: str
+) -> None:
+    result, messages = _validate(tmp_path, columns)
+    assert result.exit_code == EXIT_USAGE, result.output
+    found = {(m["code"], m.get("location")) for m in _errors(messages)}
+    assert (code, f"tables.0.generate_columns.{where}") in found, found
+    _no_canary(result)
+
+
+# --- AT-C1: each H3 input that needs the Faker registry or the sibling columns ----------------
+
+_PLAN_CELLS = [
+    pytest.param([_faker(faker_type=f"{_CANARY}_provider")], "generate_faker_type_unknown",
+                 "who", "faker_type", id="faker-type"),
+    pytest.param([_faker(locale=f"{_CANARY}_YY")], "generate_locale_unknown", "who",
+                 "locale", id="locale"),
+    pytest.param([_faker(faker_kwargs={_CANARY: 1})], "generate_faker_kwargs_unknown",
+                 "who", "faker_kwargs", id="faker-kwargs"),
+    pytest.param([{**_SEQ, "name": "a"}, _formula("ghost + 1", references=["ghost"])],
+                 "generate_formula_reference_unknown", "twice", "references.0",
+                 id="formula-reference-unknown"),
+    pytest.param([{**_SEQ, "name": "a"}, _formula("a * 2")],
+                 "generate_formula_reference_missing", "twice", None,
+                 id="formula-no-references"),
+    pytest.param([{**_SEQ, "name": "a"}, _formula("{a} * 2", references=["a"])],
+                 "generate_formula_template_syntax", "twice", None,
+                 id="formula-template-form"),
+]  # fmt: skip
+
+
+@pytest.mark.parametrize(("columns", "code", "column", "key"), _PLAN_CELLS)
+def test_at_c1_plan_refusal_names_table_column_and_option(
+    tmp_path: Path, columns: list[dict[str, Any]], code: str, column: str, key: str | None
+) -> None:
+    result, messages = _validate(tmp_path, columns)
+    assert result.exit_code == EXIT_USAGE, result.output
+    hits = [m for m in _errors(messages) if m["code"] == code]
+    assert hits, [m["code"] for m in _errors(messages)]
+    text = hits[0]["message"]
+    assert f"table '{_TABLE}', column '{column}'" in text, text
+    if key is not None:
+        assert f"option '{key}'" in text, text
+    _no_canary(result)
+
+
+def test_at_c1_human_output_names_the_location(tmp_path: Path) -> None:
+    # The human line carries the engine's fixed text and the location; the code is in --json.
+    result = runner.invoke(
+        app, ["validate", str(_config(tmp_path, [_cat(weigths=[0.99, 0.01])]))], env=_WIDE
+    )
+    assert result.exit_code == EXIT_USAGE
+    text = " ".join(result.output.split())
+    assert "Generate column option is not known for this column type." in text
+    assert "tables.0.generate_columns.0.weigths" in text
+    _no_canary(result)
+
+
+def test_at_c1_boundary_values_still_validate(tmp_path: Path) -> None:
+    columns = [
+        {**_SEQ, "step": -1},
+        _cat(weights=[0, 1], null_probability=1),
+        _faker(locale=["en_US", "fr_FR"], null_probability=0),
+        _formula("id * 2", references=["id"]),
+    ]
+    result, messages = _validate(tmp_path, columns)
+    assert result.exit_code == EXIT_OK, _errors(messages)
+
+
+# --- AT-C2: each H4 input fails validate, and run stops at its gate (never exit 3) ----------
+
+_H4_CELLS = [
+    pytest.param([_cat(weights=[0, 0])], "generate_weights_invalid", id="zero-sum-weights"),
+    pytest.param([{"name": "tier", "type": "categorical", "categories": [_CANARY, 1]}],
+                 "generate_categories_mixed", id="mixed-categories"),
+    pytest.param([{**_SEQ, "name": "order_id"},
+                  {"name": "n", "type": "grouped_series", "group_by": "order_id",
+                   "order_by": "order_id"}],
+                 "grouped_series_group_by_equals_order_by", id="group-by-equals-order-by"),
+    pytest.param([{**_SEQ, "name": "a"},
+                  {"name": "d", "type": "derived", "expression": "b + 1"},
+                  {**_SEQ, "name": "b"}],
+                 "generate_column_forward_reference", id="derived-forward-reference"),
+]  # fmt: skip
+
+
+@pytest.mark.parametrize(("columns", "code"), _H4_CELLS)
+def test_at_c2_validate_refuses_with_the_code(
+    tmp_path: Path, columns: list[dict[str, Any]], code: str
+) -> None:
+    result, messages = _validate(tmp_path, columns)
+    assert result.exit_code == EXIT_USAGE, result.output
+    assert code in {m["code"] for m in _errors(messages)}
+    _no_canary(result)
+
+
+@pytest.mark.parametrize(("columns", "code"), _H4_CELLS)
+def test_at_c2_run_stops_at_the_gate(
+    tmp_path: Path, columns: list[dict[str, Any]], code: str
+) -> None:
+    config = _config(tmp_path, columns)
+    result = runner.invoke(app, ["run", str(config), "--json"], env=_WIDE)
+    assert "Traceback" not in result.output
+    assert result.exit_code == EXIT_USAGE, result.output
+    assert code in result.stdout
+    assert not (tmp_path / "out" / "people.csv").exists()
+    _no_canary(result)
+
+
+# --- AT-C4: `decoy schema` closes each generate type ------------------------------------------
+
+# The plan's 11 types plus `constant` and `distribution`, added to the engine after it was written.
+_GENERATE_TYPES = (
+    "faker", "sequence", "categorical", "formula", "reference", "statistical", "derived",
+    "derived_aggregate", "grouped_series", "windowed_date", "group_key", "constant",
+    "distribution",
+)  # fmt: skip
+
+
+def _generate_column_schema(schema: dict[str, Any]) -> dict[str, Any]:
+    defs = schema.get("$defs") or schema.get("definitions") or {}
+    return defs["GenerateColumnConfig"]
+
+
+def test_at_c4_schema_closes_every_generate_type() -> None:
+    result = runner.invoke(app, ["schema"])
+    assert result.exit_code == EXIT_OK, result.output
+    column = _generate_column_schema(json.loads(result.stdout))
+    closed: dict[str, dict[str, Any]] = {}
+    for branch in column.get("allOf", []):
+        const = branch.get("if", {}).get("properties", {}).get("type", {}).get("const")
+        if const is not None:
+            closed[const] = branch["then"]
+    assert set(closed) == set(_GENERATE_TYPES)
+    for type_name, then in closed.items():
+        assert then.get("additionalProperties") is False, type_name
+        assert {"name", "type", "pooled", "null_probability"} <= set(then["properties"]), type_name
+
+
+def test_at_c4_schema_refuses_the_typo_and_accepts_a_good_column() -> None:
+    jsonschema = pytest.importorskip("jsonschema")
+    result = runner.invoke(app, ["schema"])
+    schema = json.loads(result.stdout)
+    column = {
+        **_generate_column_schema(schema),
+        "$defs": schema.get("$defs", {}),
+    }
+    validator = jsonschema.Draft202012Validator(column)
+    assert validator.is_valid(_cat(weights=[1, 2]))
+    assert not validator.is_valid(_cat(weigths=[1, 2]))
