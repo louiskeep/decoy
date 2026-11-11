@@ -67,7 +67,7 @@ named test, restore). `git status src` was clean after every run.
 
 | Command | Result |
 |---|---|
-| `.venv/bin/pytest tests/unit/library tests/sentry -q -p no:cacheprovider` | 1103 passed, 1 skipped (Windows-only case) on `f1f0901` plus the CODEMAP kind fix; the gate's sentry and test steps below re-ran it on `6704d62` |
+| `.venv/bin/pytest tests/unit/library tests/sentry -q -p no:cacheprovider` | 1105 passed, 1 skipped (the Windows-only case), run on `1b805d5` (this record's commit; the code is the same as `6704d62`) |
 | `.venv/bin/ruff check src tests` | pass |
 | `.venv/bin/ruff format --check src tests` | 64 files would be reformatted on the branch and 64 on `origin/main`. All are pre-existing; no new or touched file is among them, and every new file is formatted. `gates.sh` skips this step because `main` is not format-clean |
 | `.venv/bin/mypy src/decoy` | `.venv` has no mypy (the lock does not carry it; `gates.sh` notes that CI has no mypy gate). Ran `uvx mypy --python-executable .venv/bin/python src/decoy`: 160 errors on the branch and the same 160 on `origin/main` (same set, line numbers ignored). The changed modules alone: no issues |
