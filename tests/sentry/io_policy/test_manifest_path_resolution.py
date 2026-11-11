@@ -11,7 +11,8 @@ assignments and `for` targets:
 
 - group values: `x["input_fingerprints"]`, `x.get("output_fingerprints")`, and names spelled
   like a fingerprint group (`...fingerprints...`, `fps`, `out_fps_a`);
-- entries: a subscript or `.get` of a group;
+- entries: a subscript or `.get` of a group, the value of `for k, v in group.items()`, and every
+  name a `for` unpacks from an iterable that holds an entry;
 - stored paths: `x["pipeline_path"]` / `x.get("pipeline_path")`, and `"path"` of an entry.
 
 A stored path passed to `pathlib.Path`/`PurePath` (direct, aliased or module-qualified),
@@ -180,10 +181,13 @@ class _Taint:
                 and value.func.attr in ("items", "values")
                 else None
             )
-            if it is None or not self.group(it):
-                return False
-            names = target.elts[-1:] if isinstance(target, ast.Tuple) else [target]
-            return self._add(self.entries, names)
+            unpacked = list(target.elts) if isinstance(target, ast.Tuple) else [target]
+            if it is not None and self.group(it):
+                return self._add(self.entries, unpacked[-1:])
+            # `for manifest, entry, where in ((m, entry_a, f), ...)`: any name may be the entry.
+            if self.has(self.entry, value):
+                return self._add(self.entries, unpacked)
+            return False
         names = [target] if isinstance(target, ast.Name) else []
         if isinstance(target, ast.Tuple):
             names = list(target.elts)
@@ -316,6 +320,15 @@ def f(m):
         p = info["path"]
         with open(p) as fh:
             return fh.read()
+""",
+    "tuple_loop": """
+from pathlib import Path
+def f(manifest_a, manifest_b, t):
+    fp_a = manifest_a["output_fingerprints"][t]
+    fp_b = manifest_b["output_fingerprints"][t]
+    for manifest, entry in ((manifest_a, fp_a), (manifest_b, fp_b)):
+        raw = entry["path"]
+        yield Path(raw)
 """,
     "reader": """
 from decoy.cli.io import read_file
