@@ -19,7 +19,7 @@ from pathlib import Path
 
 import typer
 
-from decoy import __version__
+from decoy._version import __version__
 from decoy.cli.exit_codes import EXIT_OK, EXIT_RUNTIME, EXIT_USAGE
 from decoy.distribution import installer, layout, release_key
 from decoy.distribution import version_document as vd

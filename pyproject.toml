@@ -157,6 +157,9 @@ dev = [
     # the first release with `language: unsupported`).
     "jsonschema>=4,<5",
     "pre-commit>=4.4.0",
+    # The import-layer contract in .importlinter (BSD-2-Clause). The layers gate step runs it in
+    # its own .venv-layers; same version as the engine.
+    "import-linter==2.15",
 ]
 # CLI install DX (2026-09-25): pass-through extras so `pip install
 # decoy-cli[...]` actually reaches the engine's matching extra instead of

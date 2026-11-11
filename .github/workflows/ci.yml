@@ -10,6 +10,10 @@
 #                         engine is locked to the commit of its pinned tag), on
 #                         Python 3.10, 3.11 and 3.12. The ruff job uses the same
 #                         environment, so its pin is the lock's.
+#   layers-gate        -- the import-layer contract (.importlinter, LAYOUT C3), run through
+#                         scripts/dev/gates.sh --steps layers, the same isolated
+#                         .venv-layers route as the local gate. The pytest job
+#                         ignores that one test file.
 #   fresh-install-smoke -- S3 (OSS-launch sprint): builds the wheel via
 #                         hatchling and installs it NON-editable into a
 #                         clean venv (no source tree on PYTHONPATH), then
@@ -106,11 +110,29 @@ jobs:
         with:
           python: ${{ matrix.python }}
 
+      # --ignore: the layers-gate job below owns the layer test.
       - name: pytest unit + sentry
-        run: pytest tests/unit tests/sentry --tb=short
+        run: pytest tests/unit tests/sentry --tb=short --ignore=tests/sentry/layout/test_import_layers.py
 
       - name: pytest e2e
         run: pytest tests/e2e --tb=short
+
+  # ---------------------------------------------------------------------------
+  # layers-gate: import-layer contract in its own venv (LAYOUT C3)
+  # ---------------------------------------------------------------------------
+  layers-gate:
+    name: layers-gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Lock environment
+        uses: ./.github/actions/lock-env
+
+      - name: Import layers (isolated venv)
+        run: bash scripts/dev/gates.sh --steps layers
 
   # ---------------------------------------------------------------------------
   # fresh-install-smoke: packaging gate (S3, OSS-launch sprint)

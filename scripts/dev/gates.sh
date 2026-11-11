@@ -28,7 +28,10 @@
 #                 unless HEAD equals origin/main with a clean tree. Needs origin/main. A
 #                 failing id with a memory address in it is refused (it never matches again).
 #                 The exit code is still 1 after a successful write when main has known failures.
-#   --steps LIST  comma list from: env,ruff,format,mypy,sentry,tests (default: all)
+#   --steps LIST  comma list from: env,ruff,format,mypy,sentry,layers,tests (default: all)
+#                 layers bootstraps .venv-layers from requirements-dev.lock and runs only
+#                 $LAYER_TEST there. `--steps layers` alone needs no ordinary .venv and no
+#                 origin/main.
 #   --full        run the whole `tests` directory (same as passing `tests`)
 #   The CLI suite runs serial in collection order; there is no worker or order option.
 #   test paths    default: tests touching files changed against origin/main. That is a
@@ -47,6 +50,10 @@ SENTRY_PATHS=(
   tests/unit/test_surface_docs_consistency.py
   tests/unit/test_no_dead_command_strings.py
 )
+# The one sentry outside the sentry step: the import-layer contract runs in its own venv, in the
+# `layers` step. Every other pytest route ignores it.
+LAYER_TEST=tests/sentry/layout/test_import_layers.py
+LAYER_IGNORE=(--ignore=$LAYER_TEST)
 PYTEST_ARGS=()
 SRC_MATCH='src/*.py'   # changed files that map to a dotted module
 SRC_STRIP='src/'       # prefix removed before turning a path into a module
@@ -66,7 +73,7 @@ DOC_WALK_GUARDS=(${SENTRY_PATHS[@]+"${SENTRY_PATHS[@]}"})
 ROOT=$(git rev-parse --show-toplevel) || exit 2
 VENV=${DECOY_VENV:-$ROOT/.venv}
 BIN=$VENV/bin
-KEEP=0 BASELINE=0 FULL=0 BASEFILE='' WRITEBASE='' STEPS=env,ruff,format,mypy,sentry,tests PATHS=()
+KEEP=0 BASELINE=0 FULL=0 BASEFILE='' WRITEBASE='' STEPS=env,ruff,format,mypy,sentry,layers,tests PATHS=()
 while [ $# -gt 0 ]; do
   case $1 in
     --keep-going) KEEP=1 ;;
@@ -96,6 +103,22 @@ done
 # A baseline verdict compares every step, so a step skipped after an early failure can never
 # read as shared with main.
 if [ $BASELINE = 1 ]; then KEEP=1; fi
+for name in ${STEPS//,/ }; do
+  case $name in env|ruff|format|mypy|sentry|layers|tests) ;; *) echo "gates: unknown step $name" >&2; exit 2 ;; esac
+done
+LAYER_VENV=$ROOT/.venv-layers
+LAYERS_ONLY=0
+# The layer venv is bootstrapped once per run, here; the layers step only runs pytest in it.
+LAYER_BOOT=skip
+case ",$STEPS," in
+  *,layers,*) if DECOY_VENV=$LAYER_VENV bash "$ROOT/scripts/dev/bootstrap.sh" >&2; then LAYER_BOOT=ok; else LAYER_BOOT=fail; fi ;;
+esac
+if [ "$STEPS" = layers ]; then
+  # The layer venv is the only venv this run needs, so it also runs the reporter.
+  LAYERS_ONLY=1
+  [ $LAYER_BOOT = ok ] || { echo "gates: FAIL: could not bootstrap $LAYER_VENV" >&2; exit 2; }
+  VENV=$LAYER_VENV BIN=$LAYER_VENV/bin
+fi
 [ -x "$BIN/python" ] || { echo "gates: no venv at $VENV; run scripts/dev/bootstrap.sh" >&2; exit 2; }
 # Worker count for the tests step, recorded in a stored baseline's run mode. The reporter owns the
 # answer (always 1 here); only its stdout is captured, so its diagnostics reach the terminal.
@@ -131,12 +154,14 @@ changed_tests() {
           mod=${f#"$SRC_STRIP"}; mod=${mod%.py}; mod=${mod%/__init__}; mod=${mod//\//.}
           (cd "$ROOT" && grep -rlE --include='test_*.py' "${mod//./\\.}([^A-Za-z0-9_]|\$)" tests) ;;
       esac
-    done | sort -u
+    done | grep -vxF "$LAYER_TEST" | sort -u
 }
 
 if [ $FULL = 1 ] && [ ${#PATHS[@]} -eq 0 ]; then
   PATHS=(tests)
   SELECTION="full suite (tests)"
+elif [ ${#PATHS[@]} -eq 0 ] && [ $LAYERS_ONLY = 1 ]; then
+  SELECTION="none: the layers step runs only $LAYER_TEST"
 elif [ ${#PATHS[@]} -eq 0 ]; then
   if ! git -C "$ROOT" rev-parse -q --verify origin/main >/dev/null; then
     echo "gates: origin/main missing; run: git fetch origin main" >&2; exit 2
@@ -217,6 +242,12 @@ fi
 
 pypath() { local d out=""; for d in ${PYPATH_DIRS[@]+"${PYPATH_DIRS[@]}"}; do out="$out${out:+:}$1/$d"; done; echo "$out"; }
 
+# The layers step: run only the layer test in the layer venv bootstrapped above (pytest args in $@).
+layer_step() {
+  [ "$LAYER_BOOT" = ok ] || { echo "gates: could not bootstrap $LAYER_VENV"; return 2; }
+  "$LAYER_VENV/bin/python" -m pytest "$@" "$LAYER_TEST"
+}
+
 run_steps() {  # $1 label, $2 tree
   local label=$1 tree=$2 name rc stop=0 p cmd shown tests=() pyt
   : >"$OUT/$label.steps"
@@ -229,7 +260,8 @@ run_steps() {  # $1 label, $2 tree
       mypy) cmd=("$BIN/mypy" ${MYPY_ARGS[@]+"${MYPY_ARGS[@]}"}) ;;
       # ratchet_check first (baselines never grow); skipped in trees that predate it (the baseline worktree)
       sentry)
-        cmd=(bash -c 'if [ -f scripts/dev/ratchet_check.py ]; then "$0" scripts/dev/ratchet_check.py || exit 1; fi; exec "$0" -m pytest "$@"' "$BIN/python" ${junit[@]+"${junit[@]}"} ${SENTRY_PATHS[@]+"${SENTRY_PATHS[@]}"}) ;;
+        cmd=(bash -c 'if [ -f scripts/dev/ratchet_check.py ]; then "$0" scripts/dev/ratchet_check.py || exit 1; fi; exec "$0" -m pytest "$@"' "$BIN/python" ${junit[@]+"${junit[@]}"} ${LAYER_IGNORE[@]+"${LAYER_IGNORE[@]}"} ${SENTRY_PATHS[@]+"${SENTRY_PATHS[@]}"}) ;;
+      layers) cmd=(layer_step ${junit[@]+"${junit[@]}"}) ;;
       tests)
         tests=(); for p in ${PATHS[@]+"${PATHS[@]}"}; do [ -e "$tree/${p%%::*}" ] && tests+=("$p"); done
         pyt=("$BIN/python" -m pytest)
@@ -239,11 +271,12 @@ run_steps() {  # $1 label, $2 tree
         if [ -n "$WRITEBASE$BASEFILE" ]; then
           pyt=(env -u PYTEST_ADDOPTS -u PYTEST_PLUGINS PY_COLORS=0 NO_COLOR=1 "$BIN/python" -m pytest -o addopts= --color=no)
         fi
-        cmd=(${pyt[@]+"${pyt[@]}"} ${junit[@]+"${junit[@]}"} ${tests[@]+"${tests[@]}"}) ;;
+        cmd=(${pyt[@]+"${pyt[@]}"} ${junit[@]+"${junit[@]}"} ${LAYER_IGNORE[@]+"${LAYER_IGNORE[@]}"} ${tests[@]+"${tests[@]}"}) ;;
       *) echo "gates: unknown step $name" >&2; exit 2 ;;
     esac
     if [ $stop = 1 ]; then rc=-2
     elif [ "$name" = tests ] && [ ${#tests[@]} -eq 0 ]; then rc=-1; cmd=("(no test paths present)")
+    elif [ "$name" = layers ] && [ ! -f "$tree/$LAYER_TEST" ]; then rc=-1; cmd=("(not applicable: this tree predates $LAYER_TEST)")
     elif [ "$name" = env ] && [ "$label" = baseline ]; then rc=-1; cmd=("(same venv as branch)")
     elif [ "$name" = mypy ] && [ ${#MYPY_ARGS[@]} -eq 0 ]; then rc=-1; cmd=("(no mypy gate in ci.yml)")
     elif [ "$name" = format ] && [ $FORMAT_GATE = 0 ]; then rc=-1; cmd=("(no format gate in ci.yml)")
