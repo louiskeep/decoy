@@ -244,18 +244,17 @@ def tokenize(
             )
             raise typer.Exit(code=EXIT_USAGE)
 
-    from decoy_engine import PipelineConfig, run_pipeline
     from decoy_engine import __version__ as engine_version
+    from decoy_engine import parse_pipeline_config, run_pipeline
+    from decoy_engine.config import PipelineConfigError
     from decoy_engine.errors import ConfigError
     from decoy_engine.execution import ExecutionError
     from decoy_engine.plan import PlanCompileError
 
     try:
-        from pydantic import ValidationError as _PydanticValidationError
-
-        config_dict = PipelineConfig.model_validate(raw).model_dump()
-    except _PydanticValidationError as exc:
-        _emit_error(str(exc)[:500])
+        config_dict = parse_pipeline_config(raw).model_dump()
+    except PipelineConfigError as exc:
+        _emit_error(str(exc))
         raise typer.Exit(code=EXIT_USAGE)
 
     if mask_secret is not None:
@@ -550,16 +549,15 @@ def detokenize(
         )
         raise typer.Exit(code=EXIT_USAGE)
 
-    from decoy_engine import PipelineConfig
+    from decoy_engine import parse_pipeline_config
+    from decoy_engine.config import PipelineConfigError
     from decoy_engine.errors import ConfigError
     from decoy_engine.plan import PlanCompileError
 
     try:
-        from pydantic import ValidationError as _PydanticValidationError
-
-        config_dict = PipelineConfig.model_validate(raw).model_dump()
-    except _PydanticValidationError as exc:
-        _emit_error(str(exc)[:500])
+        config_dict = parse_pipeline_config(raw).model_dump()
+    except PipelineConfigError as exc:
+        _emit_error(str(exc))
         raise typer.Exit(code=EXIT_USAGE)
     except (PlanCompileError, ConfigError) as exc:
         _emit_error(f"{getattr(exc, 'code', type(exc).__name__)}: {getattr(exc, 'message', exc)}")
