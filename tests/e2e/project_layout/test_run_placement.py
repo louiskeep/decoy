@@ -437,9 +437,19 @@ def _commit_within(layout: RunLayout, latest: Path, seconds: float = 10) -> tupl
     thread.join(seconds)
     if thread.is_alive() and latest.is_fifo():
         # Release a reader stuck on the pipe so the test run itself does not hang.
-        os.close(os.open(latest, os.O_WRONLY | os.O_NONBLOCK))
+        os.close(os.open(latest, os.O_WRONLY | getattr(os, "O_NONBLOCK", 0)))
     assert not thread.is_alive() and result, "commit_latest blocked reading LATEST"
     return result[0]
+
+
+# The flags Windows lacks. Removing them must not open a hole: the reader checks with lstat first.
+_PLATFORM_FLAGS = ("O_NOFOLLOW", "O_NONBLOCK", "O_NOCTTY")
+
+
+def _drop_flags(monkeypatch: pytest.MonkeyPatch, gap: bool) -> None:
+    if gap:
+        for name in _PLATFORM_FLAGS:
+            monkeypatch.delattr(os, name, raising=False)
 
 
 def _plant_latest(kind: str, latest: Path, later_id: str, scratch: Path) -> Path | None:
@@ -458,9 +468,10 @@ def _plant_latest(kind: str, latest: Path, later_id: str, scratch: Path) -> Path
 
 
 @posix_only
+@pytest.mark.parametrize("gap", [False, True], ids=["all flags", "no O_NOFOLLOW"])
 @pytest.mark.parametrize("kind", ["fifo", "link to a later run id", "device link"])
 def test_a_latest_that_is_not_a_regular_file_is_warned_and_replaced(
-    tmp_path: Path, kind: str
+    tmp_path: Path, kind: str, gap: bool, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """A device node needs root to make, so a link to /dev/zero stands in for it."""
     root = _project(tmp_path)
@@ -468,6 +479,7 @@ def test_a_latest_that_is_not_a_regular_file_is_warned_and_replaced(
     assert layout.run is not None and later.run is not None
     latest = root / "out" / "orders" / "LATEST"
     target = _plant_latest(kind, latest, later.run.run_id, tmp_path)
+    _drop_flags(monkeypatch, gap)
     warnings = _commit_within(layout, latest)
     assert [w.code for w in warnings] == ["layout.latest_invalid"]
     assert latest.is_file() and not latest.is_symlink()

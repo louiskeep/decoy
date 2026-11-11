@@ -2,16 +2,15 @@
 
 A project is a folder holding `decoy.yaml` with `kind: decoy-project/v1`. `find_project` is the
 only function that looks for that file (`tests/sentry/io_policy/test_pipeline_argument.py`
-holds the line). The trust rule follows git's `safe.directory`: a marker is opened with
-`O_NOFOLLOW`, judged on the opened descriptor (so a swap between check and read cannot pass),
-and must belong to the effective user.
+holds the line). The trust rule follows git's `safe.directory`: a marker is read through
+`_small_file.read_small_file` (no links, pipes or devices; judged on the opened descriptor, so a
+swap between check and read cannot pass) and must belong to the effective user.
 """
 
 from __future__ import annotations
 
 import errno
 import os
-import stat
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -25,6 +24,7 @@ from decoy.cli.io._layout_errors import (
     PROJECT_NOT_FOUND,
     LayoutWarning,
 )
+from decoy.cli.io._small_file import UnsafeFileError, read_small_file
 
 MARKER_NAME = "decoy.yaml"
 MARKER_KIND = "decoy-project/v1"
@@ -65,39 +65,20 @@ def _home() -> Path | None:
 
 def _read_marker_bytes(marker: Path) -> bytes | None:
     """The marker's bytes, None when there is no file, or a refusal for an unsafe one."""
-    # O_NONBLOCK and O_NOCTTY: opening a FIFO read-only would otherwise block until a writer
-    # appears, and the regular-file check below only runs after the open returns.
-    flags = (
-        os.O_RDONLY
-        | getattr(os, "O_NOFOLLOW", 0)
-        | getattr(os, "O_NONBLOCK", 0)
-        | getattr(os, "O_NOCTTY", 0)
-    )
-    failure: Exception | None = None
-    data: bytes | None = None
+    unsafe = False
+    found = None
     try:
-        fd = os.open(marker, flags)
-    except (FileNotFoundError, NotADirectoryError):
+        found = read_small_file(marker, MAX_MARKER_BYTES + 1)
+    except UnsafeFileError:
+        unsafe = True
+    # Raised outside the handler so no library error is chained onto the refusal.
+    if unsafe or (found is not None and found.size > MAX_MARKER_BYTES):
+        raise PROJECT_MARKER_INVALID.error(path=marker)
+    if found is None:
         return None
-    except OSError:
-        fd = -1
-        failure = PROJECT_MARKER_INVALID.error(path=marker)
-    if fd >= 0:
-        try:
-            info = os.fstat(fd)
-            if not stat.S_ISREG(info.st_mode) or info.st_size > MAX_MARKER_BYTES:
-                failure = PROJECT_MARKER_INVALID.error(path=marker)
-            elif hasattr(os, "geteuid") and info.st_uid != os.geteuid():
-                failure = PROJECT_MARKER_UNTRUSTED.error(path=marker)
-            else:
-                data = os.read(fd, MAX_MARKER_BYTES + 1)
-        except OSError:
-            failure = PROJECT_MARKER_INVALID.error(path=marker)
-        finally:
-            os.close(fd)
-    if failure is not None:
-        raise failure
-    return data
+    if hasattr(os, "geteuid") and found.uid != os.geteuid():
+        raise PROJECT_MARKER_UNTRUSTED.error(path=marker)
+    return found.data
 
 
 def _parse_marker(marker: Path, data: bytes) -> dict[object, object] | None:

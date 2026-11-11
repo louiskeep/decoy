@@ -12,7 +12,6 @@ from __future__ import annotations
 import hashlib
 import os
 import re
-import stat
 import uuid
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -38,6 +37,7 @@ from decoy.cli.io._layout_errors import (
     PIPELINE_NAME_MISMATCH,
     LayoutWarning,
 )
+from decoy.cli.io._small_file import UnsafeFileError, read_small_file
 
 # <UTC start YYYYMMDDTHHMMSSffffffZ>-<8 hex of the invocation id>, plus 4 more hex digits per
 # clash, up to all 32.
@@ -251,26 +251,14 @@ def _derived(root: Path, yaml_rel: str, stem: str) -> str:
 def _read_small(path: Path) -> bytes | None:
     """At most `_CLAIM_MAX_BYTES` of the regular file at `path`, else None.
 
-    None covers a missing or unreadable file and anything that is not a regular file. The open
-    does not follow a final symlink and cannot block on a FIFO, so a planted link or pipe in a
-    run's bookkeeping files is never read through.
+    None covers a missing or unreadable file and anything that is not a plain regular file, so a
+    planted link, pipe or device in a run's bookkeeping files is never read through.
     """
-    flags = (
-        os.O_RDONLY
-        | getattr(os, "O_NOFOLLOW", 0)
-        | getattr(os, "O_NONBLOCK", 0)
-        | getattr(os, "O_NOCTTY", 0)
-    )
     try:
-        fd = os.open(path, flags)
-    except OSError:
+        found = read_small_file(path, _CLAIM_MAX_BYTES)
+    except UnsafeFileError:
         return None
-    try:
-        return os.read(fd, _CLAIM_MAX_BYTES) if stat.S_ISREG(os.fstat(fd).st_mode) else None
-    except OSError:
-        return None
-    finally:
-        os.close(fd)
+    return found.data if found is not None else None
 
 
 def read_claim(out: Path, name: str) -> str | None:
