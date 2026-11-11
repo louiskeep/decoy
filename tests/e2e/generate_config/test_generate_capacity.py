@@ -19,12 +19,12 @@ from unittest import mock
 
 import pytest
 import yaml
+from decoy_engine import DecoyError
+from decoy_engine.reasons.runtime import GENERATION_BUDGET_EXCEEDED
 from typer.testing import CliRunner, Result
 
 from decoy.__main__ import app
 from decoy.cli.exit_codes import EXIT_CAPACITY
-from decoy_engine import DecoyError
-from decoy_engine.reasons.runtime import GENERATION_BUDGET_EXCEEDED
 
 runner = CliRunner()
 _WIDE = {"COLUMNS": "10000"}

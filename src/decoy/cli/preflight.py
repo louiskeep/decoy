@@ -320,6 +320,7 @@ def _check_target_overwrite(raw: dict[str, Any], acc: _PreflightAccumulator) -> 
 # Capacity check (OOM checker v1, docs/plans/2026-07-24-oom-checker-cli-v1.md)
 # ---------------------------------------------------------------------------
 
+
 def _file_sources_missing_on_disk(raw: dict[str, Any], base_dir: Path) -> bool:
     """True if any declared FILE-type source does not resolve to a readable
     regular file, resolved the SAME way `estimate_job_capacity`,
