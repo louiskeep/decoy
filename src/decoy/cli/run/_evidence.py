@@ -4,8 +4,8 @@ import json as _json
 
 import typer
 
-from decoy import __version__ as _cli_version
 from decoy._atomic import AtomicWriteError, WriteMode, describe, write_local_target
+from decoy._version import __version__ as _cli_version
 from decoy.cli.exit_codes import EXIT_RUNTIME
 from decoy.cli.run._context import RunContext
 from decoy.ui.output import OutputMode

@@ -532,7 +532,7 @@ def doctor(
     )
 
     # CLI version -- informational, always passes.
-    from decoy import __version__ as cli_version
+    from decoy._version import __version__ as cli_version
 
     checks.append(
         {

@@ -161,10 +161,6 @@ _EXCEPTION_CONTEXT_WHY = (
     "existing raise-from-None inside an except block at the B2 base; hoist is V2 corrective work"
 )
 _LAYER_WHY = "back import measured when LAYOUT C3 declared the tiers; may only shrink"
-_ROOT_WHY = (
-    "child-to-root import of `__version__` from the root facade; goes when a leaf version "
-    "module exists"
-)
 
 
 def import_layer_reasons(text: str) -> dict[str, str]:
@@ -173,10 +169,7 @@ def import_layer_reasons(text: str) -> dict[str, str]:
     Layer membership is not keyed here: it is the exact snapshot in ``test_import_layers.py``.
     """
     layout = load_module(SENTRY / "layout" / "_layout.py")
-    return {
-        f"layers::{k}": _ROOT_WHY if k.endswith(" -> decoy") else _LAYER_WHY
-        for k in layout.ignore_keys(text)
-    }
+    return {f"layers::{k}": _LAYER_WHY for k in layout.ignore_keys(text)}
 
 
 SOURCES: tuple[Source, ...] = (

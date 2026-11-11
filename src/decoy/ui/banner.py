@@ -11,7 +11,7 @@ from rich.panel import Panel
 from rich.table import Table
 from rich.text import Text
 
-from decoy import __version__
+from decoy._version import __version__
 from decoy.ui.output import OutputState
 from decoy.ui.theme import code
 

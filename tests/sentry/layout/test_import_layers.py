@@ -48,7 +48,7 @@ LAYERS: tuple[str, ...] = (
     "ci | _resources",
     "ui | distribution | notify | telemetry | templates",
     "_mask_secret | _mask_secret_guidance | _native_gate | _atomic | _row_sample",
-    "_private_file",
+    "_private_file | _version",
 )
 
 
@@ -78,6 +78,62 @@ def test_the_layer_contract_is_kept() -> None:
 
 def test_config_layers_equal_the_reviewed_snapshot() -> None:
     assert config_layers(CONFIG.read_text(encoding="utf-8")) == LAYERS
+
+
+def facade_ignores(text: str, src: Path) -> list[str]:
+    """Ignore lines whose importer or imported side is a package rather than a leaf module.
+
+    import-linter exempts a whole module edge, not the symbols that first needed it, so an
+    ignore on a package facade lets any later import through that facade.
+    """
+    return sorted(
+        key
+        for key in ignore_keys(text)
+        if any((src / Path(*side.split("."))).is_dir() for side in key.split(" -> "))
+    )
+
+
+# The facade ignores that stay, each with the only names it may carry. cli.io and cli.gate keep
+# their modules private to outside callers (cli.io: tests/sentry/test_scan_reader.py,
+# io_policy/test_layout_errors.py), so these edges cannot name a leaf; this list is the
+# symbol-level check import-linter lacks.
+FACADE_NAMES: dict[str, frozenset[str]] = {
+    "decoy.ci.adapters -> decoy.cli.gate": frozenset(
+        {"gate_exit_code", "run_config_gate", "run_gate"}
+    ),
+    "decoy.ci.adapters -> decoy.cli.io": frozenset({"load_scan_set", "select_table"}),
+    "decoy.ci.rule_codes -> decoy.cli.io": frozenset({"GATE_CODES"}),
+}
+
+
+def facade_names(src: Path, key: str) -> set[str]:
+    """Every name the importer of ``key`` takes from the imported facade.
+
+    Binding the facade module itself (``import a.b`` or ``from a import b``) counts as ``*``: its
+    attributes cannot be listed.
+    """
+    importer, imported = key.split(" -> ")
+    path = src / Path(*importer.split("."))
+    path = path / "__init__.py" if path.is_dir() else path.with_suffix(".py")
+    names: set[str] = set()
+    for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
+        if isinstance(node, ast.ImportFrom) and node.level == 0 and node.module == imported:
+            names.update(a.name for a in node.names)
+        elif isinstance(node, ast.ImportFrom) and node.level == 0:
+            if any(f"{node.module}.{a.name}" == imported for a in node.names):
+                names.add("*")
+        elif isinstance(node, ast.Import) and any(a.name == imported for a in node.names):
+            names.add("*")
+    return names
+
+
+def test_only_the_listed_facade_ignores_remain() -> None:
+    assert facade_ignores(CONFIG.read_text(encoding="utf-8"), ROOT / "src") == sorted(FACADE_NAMES)
+
+
+@pytest.mark.parametrize("key", sorted(FACADE_NAMES))
+def test_a_facade_ignore_carries_only_its_listed_names(key: str) -> None:
+    assert facade_names(ROOT / "src", key) == FACADE_NAMES[key]
 
 
 # --- meta-tests: the guard fails closed and sees seeded violations -------------------------
@@ -166,6 +222,47 @@ def _snapshot_with(text: str, layers: tuple[str, ...]) -> bool:
     return config_layers(text) == layers
 
 
+def test_the_facade_check_sees_a_package_ignore() -> None:
+    text = "[c]\nignore_imports =\n    decoy.ci.staged -> decoy.cli.gate\n"
+    assert facade_ignores(text, ROOT / "src") == ["decoy.ci.staged -> decoy.cli.gate"]
+
+
+@pytest.mark.parametrize(
+    ("line", "extra"),
+    [
+        ("from decoy.cli.io import RunLayout", {"RunLayout"}),
+        ("import decoy.cli.io", {"*"}),
+        ("from decoy.cli import io as _io", {"*"}),
+    ],
+)
+def test_a_new_name_through_an_exempt_facade_is_red(
+    scratch: Path, tmp_path: Path, line: str, extra: set[str]
+) -> None:
+    """import-linter keeps the edge (it is exempt); the name check is what goes red."""
+    tree = _tree(scratch, tmp_path)
+    _append(tree / "src" / "decoy" / "ci" / "adapters.py", line)
+    key = "decoy.ci.adapters -> decoy.cli.io"
+    assert facade_names(tree / "src", key) == FACADE_NAMES[key] | extra
+
+
+@pytest.mark.parametrize(
+    ("module", "line"),
+    [
+        # ci.runner reaching up into cli through the gate facade; only its exit_codes edge is exempt.
+        ("ci/runner.py", "from decoy.cli.gate import GateResult"),
+        # A child reaching the root facade, which re-exports the whole library API lazily.
+        ("ui/banner.py", "from decoy import __version__ as _root_version"),
+    ],
+)
+def test_an_upward_import_through_a_facade_is_red(
+    scratch: Path, tmp_path: Path, module: str, line: str
+) -> None:
+    """Neither importer has a facade exemption for these edges (banner's root one is gone)."""
+    tree = _tree(scratch, tmp_path)
+    _append(tree / "src" / "decoy" / module, line)
+    assert not lint_scratch(tree)
+
+
 def test_the_pristine_scratch_copy_is_kept(scratch: Path, tmp_path: Path) -> None:
     assert lint_scratch(_tree(scratch, tmp_path))
 
@@ -216,7 +313,7 @@ def test_a_reviewed_new_package_goes_green_only_with_its_snapshot(
     (pkg / "__init__.py").write_text('"""A reviewed bottom-tier leaf."""\n', encoding="utf-8")
     cfg = tree / ".importlinter"
     before = ignore_keys(cfg.read_text(encoding="utf-8"))
-    _edit(cfg, "    _private_file\n", "    _private_file | _probe_leaf\n")
+    _edit(cfg, "    _private_file | _version\n", "    _private_file | _version | _probe_leaf\n")
     assert lint_scratch(tree)
     text = cfg.read_text(encoding="utf-8")
     assert ignore_keys(text) == before

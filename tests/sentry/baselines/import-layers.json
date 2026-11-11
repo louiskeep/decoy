@@ -2,9 +2,6 @@
  "sentry_id": "import-layers",
  "created_in": "LAYOUT-C3",
  "entries": {
-  "layers::decoy._update_check -> decoy": {
-   "reason": "child-to-root import of `__version__` from the root facade; goes when a leaf version module exists"
-  },
   "layers::decoy.ci.adapters -> decoy.cli.evidence": {
    "reason": "back import measured when LAYOUT C3 declared the tiers; may only shrink"
   },
@@ -31,27 +28,6 @@
   },
   "layers::decoy.ci.staged -> decoy.cli.exit_codes": {
    "reason": "back import measured when LAYOUT C3 declared the tiers; may only shrink"
-  },
-  "layers::decoy.cli.ci -> decoy": {
-   "reason": "child-to-root import of `__version__` from the root facade; goes when a leaf version module exists"
-  },
-  "layers::decoy.cli.cockpit -> decoy": {
-   "reason": "child-to-root import of `__version__` from the root facade; goes when a leaf version module exists"
-  },
-  "layers::decoy.cli.info -> decoy": {
-   "reason": "child-to-root import of `__version__` from the root facade; goes when a leaf version module exists"
-  },
-  "layers::decoy.cli.run._evidence -> decoy": {
-   "reason": "child-to-root import of `__version__` from the root facade; goes when a leaf version module exists"
-  },
-  "layers::decoy.cli.upgrade -> decoy": {
-   "reason": "child-to-root import of `__version__` from the root facade; goes when a leaf version module exists"
-  },
-  "layers::decoy.telemetry -> decoy": {
-   "reason": "child-to-root import of `__version__` from the root facade; goes when a leaf version module exists"
-  },
-  "layers::decoy.ui.banner -> decoy": {
-   "reason": "child-to-root import of `__version__` from the root facade; goes when a leaf version module exists"
   },
   "layers::decoy.ui.output -> decoy.cli.exit_codes": {
    "reason": "back import measured when LAYOUT C3 declared the tiers; may only shrink"
