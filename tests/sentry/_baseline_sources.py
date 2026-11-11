@@ -113,10 +113,27 @@ class InCode:
 
 
 @dataclass(frozen=True)
+class FromFile:
+    """Keys a sentry reads from a committed config file instead of a module constant.
+
+    ``read`` maps the file's text to ``{key: reason}``.
+    """
+
+    path: str
+    read: Callable[[str], dict[str, str]]
+
+    def __call__(self) -> set[str]:
+        return set(self.reasons())
+
+    def reasons(self) -> dict[str, str]:
+        return self.read((ROOT / self.path).read_text(encoding="utf-8"))
+
+
+@dataclass(frozen=True)
 class Source:
     sentry_id: str
     where: str  # file the sentry reads
-    keys: InCode
+    keys: InCode | FromFile
     data_file: str = ""  # a committed data file the sentry reads besides its baseline
     numeric: bool = False  # entries are counts, recorded as ``max`` beside the reason
 
@@ -143,6 +160,25 @@ _README_WHY = (
 _EXCEPTION_CONTEXT_WHY = (
     "existing raise-from-None inside an except block at the B2 base; hoist is V2 corrective work"
 )
+_LAYER_WHY = "back import measured when LAYOUT C3 declared the tiers; may only shrink"
+_ROOT_WHY = (
+    "child-to-root import of `__version__` from the root facade; goes when a leaf version "
+    "module exists"
+)
+
+
+def import_layer_reasons(text: str) -> dict[str, str]:
+    """``layers::<importer> -> <imported>`` for each ignore line of ``.importlinter``.
+
+    Layer membership is not keyed here: it is the exact snapshot in ``test_import_layers.py``.
+    """
+    layout = load_module(SENTRY / "layout" / "_layout.py")
+    return {
+        f"layers::{k}": _ROOT_WHY if k.endswith(" -> decoy") else _LAYER_WHY
+        for k in layout.ignore_keys(text)
+    }
+
+
 SOURCES: tuple[Source, ...] = (
     Source(
         "engine-internal-allow",
@@ -277,6 +313,7 @@ SOURCES: tuple[Source, ...] = (
         InCode(_FANOUT, "FANOUT_ALLOWLIST", reason=lambda e: _FANOUT_WHY, literal=True),
         numeric=True,
     ),
+    Source("import-layers", ".importlinter", FromFile(".importlinter", import_layer_reasons)),
 )
 
 # Allowlist-shaped constants a sentry holds that are a closed contract, not a bypass list.

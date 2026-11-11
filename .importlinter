@@ -1,0 +1,44 @@
+# Import-layer contract for the decoy CLI package (LAYOUT C3). Tiers run top to bottom: a module
+# may import from any tier below, never from a tier above. `|` siblings are independent: they may
+# not import each other. `:` siblings may.
+# exhaustive = true: a new top-level package or module is red until it is placed here and in
+# the snapshot in tests/sentry/layout/test_import_layers.py. Each ignore line is a measured
+# back import that exists today; the list may only shrink (baseline import-layers.json).
+# The CLI-to-engine boundary is not a contract here: tests/sentry/test_engine_internal_boundary.py
+# owns it (plan decision D3).
+
+[importlinter]
+root_package = decoy
+
+[importlinter:contract:layers]
+name = decoy tiers
+type = layers
+containers = decoy
+exhaustive = true
+layers =
+    __main__
+    api
+    cli : _update_check
+    ci | _resources
+    ui | distribution | notify | telemetry | templates
+    _mask_secret | _mask_secret_guidance | _native_gate | _atomic | _row_sample
+    _private_file
+ignore_imports =
+    decoy._update_check -> decoy
+    decoy.ci.adapters -> decoy.cli.evidence
+    decoy.ci.adapters -> decoy.cli.exit_codes
+    decoy.ci.adapters -> decoy.cli.gate
+    decoy.ci.adapters -> decoy.cli.io
+    decoy.ci.adapters -> decoy.cli.scan
+    decoy.ci.contracts -> decoy.cli.exit_codes
+    decoy.ci.rule_codes -> decoy.cli.io
+    decoy.ci.runner -> decoy.cli.exit_codes
+    decoy.ci.staged -> decoy.cli.exit_codes
+    decoy.cli.ci -> decoy
+    decoy.cli.cockpit -> decoy
+    decoy.cli.info -> decoy
+    decoy.cli.run._evidence -> decoy
+    decoy.cli.upgrade -> decoy
+    decoy.telemetry -> decoy
+    decoy.ui.banner -> decoy
+    decoy.ui.output -> decoy.cli.exit_codes
