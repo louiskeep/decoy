@@ -121,13 +121,21 @@ def owning_run(path: Path, root: Path, name: str) -> RunFolder | None:
 def placed_path(run: RunFolder, raw: str) -> Path | None:
     """`raw` placed inside `run` and resolved, or None when it does not stay inside.
 
-    Refused: any backslash (a declared path uses "/" only, so it means the same on every
-    OS), an anchor or drive (`/x`, `C:x`, `//host/share/x`), a trailing separator (a
-    directory, not a file), a `..` that climbs above the run at any step (even to come back
-    in), and a result that lands outside the run through an existing symlink. Containment is
-    by file identity, so another spelling of the run folder still counts. The result is
-    resolved, so it compares with a resolved input path. A path that cannot be resolved
-    gives None.
+    The rule is `contained_path` with the run folder as the base.
+    """
+    return contained_path(run.path, raw)
+
+
+def contained_path(base: Path, raw: str) -> Path | None:
+    """`raw`, a relative path written with "/", placed under `base` and resolved; None when
+    it does not stay inside. The one parser of stored and declared relative paths.
+
+    Refused: any backslash (a stored or declared path uses "/" only, so it means the same on
+    every OS), an anchor or drive (`/x`, `C:x`, `//host/share/x`), a trailing separator (a
+    directory, not a file), a `..` that climbs above `base` at any step (even to come back
+    in), and a result that lands outside `base` through an existing symlink. Containment is
+    by file identity, so another spelling of `base` still counts. The result is resolved, so
+    it compares with a resolved input path. A path that cannot be resolved gives None.
     """
     if not raw or "\\" in raw or raw.endswith("/"):
         return None
@@ -146,10 +154,10 @@ def placed_path(run: RunFolder, raw: str) -> Path | None:
     if depth == 0:
         return None
     try:
-        resolved = Path(os.path.normpath(run.path / raw)).resolve()
+        resolved = Path(os.path.normpath(base / raw)).resolve()
     except (OSError, RuntimeError):
         return None
-    if any(_same_dir(ancestor, run.path) for ancestor in resolved.parents):
+    if any(_same_dir(ancestor, base) for ancestor in resolved.parents):
         return resolved
     return None
 

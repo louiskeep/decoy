@@ -281,7 +281,7 @@ def test_evidence_for_an_unwritten_target_names_the_run_folder_not_the_cwd(
     assert result.exit_code == 0, result.output
     (run,) = _runs(root, "orders")
     entry = json.loads(evidence.read_text(encoding="utf-8"))["output_fingerprints"]["a"]
-    assert entry["path"] == str(run / "masked.csv")
+    assert entry["path"] == (run / "masked.csv").relative_to(root).as_posix()
     assert (entry["fingerprint"], entry["size_bytes"]) == (None, None)
     assert not (run / "masked.csv").exists()
 

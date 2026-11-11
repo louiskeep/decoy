@@ -186,7 +186,8 @@ def test_input_format_refuses_an_unreadable_declaration_before_any_open(
     ],
 )
 def test_entry_format(entry: dict, expected: tuple) -> None:
-    assert entry_format(entry) == expected
+    recorded = {k: v for k, v in entry.items() if k != "path"}
+    assert entry_format(Path(entry["path"]), recorded) == expected
 
 
 @pytest.mark.parametrize(
@@ -204,7 +205,7 @@ def test_entry_format(entry: dict, expected: tuple) -> None:
 )
 def test_entry_format_refuses_what_it_cannot_read(entry: dict) -> None:
     with pytest.raises(TargetFormatError) as err:
-        entry_format(entry)
+        entry_format(Path(entry["path"]), {k: v for k, v in entry.items() if k != "path"})
     assert err.value.code == UNREADABLE
     assert "xml" not in str(err.value) and "o.csv" not in str(err.value)
 

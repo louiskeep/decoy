@@ -354,7 +354,16 @@ def test_an_unknown_upstream_code_never_reaches_any_report_format(
 
     repo = make_repo(tmp_path / "repo")
     write_clean_pipeline(repo)
-    write(repo, "build/evidence.json", "{}\n")
+    # The shared reader refuses a malformed manifest before the (patched) verifier runs.
+    manifest = {
+        "schema_version": "cli-local-1",
+        "pipeline_path": "pipeline.yaml",
+        "pipeline_fingerprint": "sha256:0",
+        "input_fingerprints": {},
+        "output_fingerprints": {},
+        "manifest_hash": "sha256:0",
+    }
+    write(repo, "build/evidence.json", json.dumps(manifest))
     ev = "  evidence:\n    - {id: e, manifest: build/evidence.json}\n"
     write(repo, MANIFEST_NAME, ci_manifest(extra_checks=ev))
 
