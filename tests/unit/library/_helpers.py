@@ -44,6 +44,19 @@ def envelope(n: int = 0, links: Iterable[str] = ()) -> records.RecordEnvelope:
     )
 
 
+def job_log() -> bytes:
+    """A valid `decoy-job-log/v1` header line and one event line."""
+    header = records.JobLogHeader(
+        event_schema=1,
+        invocation_id=INVOCATION,
+        command="run",
+        pipeline="p.yaml",
+        started_at="2026-11-11T00:00:00.000000Z",
+        producer=PRODUCER,
+    )
+    return records.header_line(header) + b'{"kind":"phase"}\n'
+
+
 def object_path(library_root: Path, record_id: str) -> Path:
     digest = record_id.removeprefix("sha256:")
     return library_root / "library" / "objects" / digest[:2] / f"{digest[2:]}.json"

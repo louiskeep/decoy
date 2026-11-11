@@ -53,6 +53,14 @@ reason = "COPY writes the unmasked source table into the 0700 spill directory ru
 exit = "WIN-FEAS"
 
 [[row]]
+file = "cli/library/_fsck.py"
+function = "_indexed_ids"
+sink = "sqlite3.connect"
+ordinal = 1
+disposition = "read"
+reason = "fsck opens the library index read-only (mode=ro URI) to compare it with the object files; writes nothing."
+
+[[row]]
 file = "cli/library/_index.py"
 function = "_begin"
 sink = "sqlite3.connect"

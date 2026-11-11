@@ -224,6 +224,16 @@ SOURCES: tuple[Source, ...] = (
         ),
     ),
     Source(
+        "kind-canary-pending",
+        "tests/sentry/defects/test_kind_canary.py",
+        InCode(
+            "tests/sentry/defects/test_kind_canary.py",
+            "PENDING_ALLOWLIST",
+            key=lambda e: e.kind,
+            reason=lambda e: e.reason,
+        ),
+    ),
+    Source(
         "csv-read-allow",
         "tests/sentry/test_csv_read_choke_point.py",
         InCode(
