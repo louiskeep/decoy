@@ -130,6 +130,16 @@ SOURCES: tuple[Source, ...] = (
         ),
     ),
     Source(
+        "engine-reason-code-copies",
+        "tests/sentry/test_engine_reason_code_copies.py",
+        InCode(
+            "tests/sentry/test_engine_reason_code_copies.py",
+            "ALLOWLIST",
+            key=lambda e: f"{e.file}::{e.code}",
+            reason=lambda e: e.reason,
+        ),
+    ),
+    Source(
         "atomic-writer-allow",
         "tests/sentry/test_atomic_writer.py",
         InCode(

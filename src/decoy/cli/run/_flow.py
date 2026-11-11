@@ -29,6 +29,9 @@ def execute(ctx: RunContext) -> None:
     ctx.raw_cfg = ctx.raw if isinstance(ctx.raw, dict) else None
     ctx.yaml_mode = _detect_mode(ctx.raw_cfg) or ctx.mode.value
 
+    if ctx.rows is not None:
+        _prepare.refuse_preview(ctx)
+
     ctx.resolver = _build_resolver(ctx.master_key, ctx.key_label, ctx.raw_cfg, ctx.state)
     if ctx.fidelity and ctx.raw_cfg is not None and not _has_kind(ctx.raw_cfg, "columns"):
         _refuse_fidelity_without_mask(ctx.state, ctx.config_str, ctx.raw_cfg)
@@ -43,8 +46,12 @@ def execute(ctx: RunContext) -> None:
         # flush bind to `_otel` in C1b.
         _otel = _start_telemetry(ctx.otel_endpoint, ctx.state)
         with spinner(ctx.state, f"Running {ctx.yaml_mode}..."), contextlib.ExitStack() as _scopes:
-            _prepare.prepare(ctx, _scopes)
-            _execute.execute(ctx)
+            if ctx.rows is None:
+                _prepare.prepare(ctx, _scopes)
+                _execute.execute(ctx)
+            else:
+                _prepare.prepare_preview(ctx)
+                _execute.execute_preview(ctx)
     except typer.Exit:
         # An inner typer.Exit already set its exit code; keep it out of the catch-all below.
         raise
@@ -61,6 +68,11 @@ def execute(ctx: RunContext) -> None:
             shutil.rmtree(ctx._duckdb_tmpdir, ignore_errors=True)
 
     ctx.elapsed = time.perf_counter() - ctx.started
+
+    if ctx.rows is not None:
+        # A preview writes no evidence and sends no notification.
+        _render.finish_preview(ctx)
+        return
 
     _evidence.write_evidence(ctx)
 
