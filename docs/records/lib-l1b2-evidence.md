@@ -93,7 +93,7 @@ The full suite (out of scope for this slice), the macOS and Windows lanes, and m
 
 ## Deviations from the plan and the re-FRAME
 
-1. **No `Library.get` (stop item).** `tests/sentry/test_scan_reader.py` (G-ONE-SCAN-READER,
+1. **`Library.get` was first left out (stop item); now built, see "Follow-up".** `tests/sentry/test_scan_reader.py` (G-ONE-SCAN-READER,
    SCAN-MULTI) bans a `records.decode` call outside `cli/io/_scan_set.py` and has no allowlist.
    To keep it green I would have to add an exception (weakening a test) or hide the call behind
    an alias (working around it). Neither was done. `put` checks an existing object with the
@@ -140,7 +140,7 @@ The full suite (out of scope for this slice), the macOS and Windows lanes, and m
   gets no `.gitignore`, so a later `scratch/` holding rows could be committed. L1d should decide
   (write a `.gitignore` for any root through an `ensure_decoy_dir` variant in `cli/io`, or refuse
   scratch there).
-- O2: `get` and G-ONE-SCAN-READER (Deviation 1).
+- O2: `get` and G-ONE-SCAN-READER (Deviation 1). Resolved by the owner, see "Follow-up".
 
 ## V2-LOG (noticed, not built)
 
@@ -153,3 +153,49 @@ The full suite (out of scope for this slice), the macOS and Windows lanes, and m
   the touched files until main is formatted.
 - A missing parent of `--library DIR` is a `library_write_failed`. Creating it (0700) would be
   friendlier for container volumes.
+
+## Follow-up: owner decisions and `Library.get` (2026-11-11)
+
+Owner decisions (binding):
+
+- Stop 1: `src/decoy/cli/library/_store.py` is allowed as the second permitted `records.decode`
+  site in `tests/sentry/test_scan_reader.py`. It is one exact path (`_LIBRARY_STORE`), exempt for
+  `records.decode` only; a `scan_schema` key read there is still an offender. Self-tests:
+  `test_the_library_store_exemption_is_live_and_exact` (the store really decodes, so the exemption
+  is in use) and `test_a_decode_in_another_library_module_is_red` (`cli/library/_refs.py`, a
+  `_store_copy.py` and `cli/scan.py` stay red).
+- Stop 2: the private-file census rise from 55 to 58 is accepted as registration of new sites.
+
+Commits:
+
+| Commit | What |
+|---|---|
+| `ae16d20` | red-first `tests/unit/library/test_get.py` |
+| `c1d9e1a` | `Library.get` through `records.decode` only, the `record_not_found` CLI code, the sentry exemption, `docs/library.md`; a fixture fix in `test_get.py` (its project folder was never created) |
+
+Red first (`ae16d20`): `test_get.py` failed to collect (`ImportError: RECORD_NOT_FOUND`), because
+neither `get` nor the code existed.
+
+`get(record_id)` returns the engine's `DecodedRecord` (typed `view` plus verified `raw`), an
+`OpaqueRecord` for an unknown kind, or `RecordNeedsNewer`. A file holding another record, or one
+that fails the id rule, is `record_corrupt`; the engine's `record_invalid` passes through; a
+missing or malformed id is `record_not_found` (a new CLI constant), with no path in the message.
+
+Mutation MB1-raw-bytes (`mutate_get.py`): `get` verifies by hashing the stored bytes (the id
+field's text stripped) instead of the parsed record.
+`test_get.py::test_a_crlf_rewritten_object_still_reads` was red. The control
+`test_get_returns_the_typed_view_and_the_verified_raw_envelope` stayed green, so the mutation
+is faithful on canonical files. Reverted; `src` clean.
+
+Checks on `c1d9e1a`:
+
+| Command | Result |
+|---|---|
+| `.venv/bin/pytest tests/unit/library tests/sentry -q -p no:cacheprovider` | 1112 passed, 1 skipped (the Windows-only case) |
+| `.venv/bin/ruff check src tests` | pass |
+| `ruff format --check` on the touched files (`src/decoy/cli/library`, `tests/unit/library`, `tests/sentry/test_scan_reader.py`) | 13 files already formatted (main stays red on 64 untouched files) |
+| `uvx mypy --python-executable .venv/bin/python src/decoy` | 160 errors, the same set as `origin/main`; none new |
+| `bash scripts/dev/gates.sh --steps layers` | PASS 22/22 |
+| impact selection (same paths as above) | 458 passed; `origin/main` 457 passed earlier, failure sets both empty |
+
+The lanes are unchanged: Linux run; macOS and Windows NOT RUN.
