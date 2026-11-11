@@ -452,6 +452,18 @@ gains the second rule. The reader requires exact `schema_version: "cli-local-1"`
 exact string `"project"` for `path_base`, and tolerates extra keys. Missing or unknown schema versions,
 wrong field types and unknown `path_base` values refuse a malformed manifest.
 
+Added after Codex r1 on P3 (three V1 findings, one DESIGN). Paths are resolved before they are made
+relative, so `sub/../../x` or a symlinked folder is recorded absolute; the reader refuses a project-relative
+path with a `..` part or one that resolves outside the root, before any file is hashed. The marker carries
+no identity, so the manifest records `project_manifest`: where it was written relative to the root, or null
+when written outside the project. The reader refuses the manifest when its file is not at that place under
+the root it reads from (typed `--project` or the marker walk), so evidence for project A stored in project B
+is refused; a null value skips the walk and needs `--project`. Residual: an exact copy at the same relative
+place in B binds to B and its fingerprints report B's files. One schema table in `evidence.py` drives both
+`build_manifest` (it checks its own output) and the one strict reader `read_manifest`, which every `report`
+command and `ci check` use; `ci/adapters.py` no longer checks the object itself. Null required fields, a
+non-object top level and `NaN` are refused, never a crash.
+
 **Reports.** `report integrity` and `report fidelity` print to stdout today and write a file only with
 `--output` or `--report-out`. After: when the masked file argument lies in a run folder (`owning_run` for
 any pipeline in the project) and no output flag is given, the JSON report is also written to
@@ -862,7 +874,9 @@ CLI unit tests in `tests/unit/project_layout/`, e2e in `tests/e2e/project_layout
   using its typed CI manifest and project context; with `DECOY_PROJECT` exported for another project both
   still pass; no marker and no typed hint refuses; an implicit-project run records absolute paths; a
   manifest without `path_base` uses the old current-folder rule; missing or unknown `schema_version`, an
-  unknown `path_base`, or a wrong field type refuses; extra fields are tolerated.
+  unknown `path_base`, or a wrong field type refuses; extra fields are tolerated; a rehashed `../` path or a
+  symlink out of the project refuses; evidence from project A read under project B refuses; a null
+  required field or a top-level list refuses without a crash.
 - **AT-10** Config untouched: the loaded dict deep-equals and keeps the same nested `id`s before and after
   the run; the quarantine file lands in the run folder for normal `run`, `tokenize` and `mask()`, and on
   each engine route (`full_frame`, `sequential`, `out_of_core`, engine cells in E2); an absolute
@@ -1075,7 +1089,7 @@ P9: the parameter type, the `resolve_pipeline` call, and a call to `_layout.repo
 | P1b | CLI | `cli/io/__init__.py`, `cli/io/_project.py`, `cli/io/_layout.py` (extend: P2a created it; reuse `is_run_id`, `RunFolder` and `placed_path`, do not redefine), `cli/io/_layout_errors.py`, `_private_file.py`, `tests/unit/project_layout/__init__.py`, `test_project_root.py`, `test_layout.py`, `tests/unit/private_file/test_private_file.py`, `tests/sentry/io_policy/test_private_files.py`, `tests/sentry/io_policy/file_sinks.toml`, `tests/sentry/baselines/private-file-sinks.json`, `tests/sentry/io_policy/test_pipeline_argument.py` (root guard), `tests/sentry/io_policy/test_layout_errors.py`, `tests/sentry/test_sentry_manifest.py`, `CODEMAP.md` (16) | about 1100 (half tests) | AT-1, AT-2, AT-5, AT-15, AT-17, G-ONE-PROJECT-ROOT and G-ONE-LAYOUT-CODE first; update private-directory seeds and registry with the helper; T1 |
 | P2a | CLI | `cli/io/_layout.py` (new: `is_run_id`, `RunFolder`, `owning_run(path, root, name)`, `placed_path`), `cli/io/_targets.py` (`input_format` calls them; the old compare is at `:203-217`), `tests/e2e/project_layout/__init__.py`, `test_owning_run.py` (4) | about 200 | AT-11 old-path and run-folder cells first; T1 plus `tests/e2e/cli_fmt` |
 | P2b | CLI | `cli/io/_layout.py` (extend: `RunLayout`, `mint_invocation_id`, on top of P1b's project, claim and private-directory helpers), `cli/io/_targets.py`, `cli/run.py`, `cli/demo.py`, `cli/tokenize.py`, `api.py`, `tests/e2e/project_layout/test_run_placement.py`, `tests/unit/test_run_local_io_guard.py`, `tests/e2e/cli_fmt/test_target_format_dispatch.py`, `tests/e2e/test_vault_commit_order.py`, `tests/unit/cli_fmt/test_targets_format.py`, `tests/sentry/io_policy/test_output_placement.py`, `tests/sentry/baselines/output-placement-allow.json`, `tests/sentry/test_sentry_manifest.py`, `CHANGELOG.md` (14) | about 800 | AT-3, AT-5, AT-6, AT-7, AT-10 and initial G-ONE-OUTPUT-PLACE first; the four signature tests move to `RunLayout` in the same commit; full CLI suite |
-| P3 | CLI | `cli/evidence.py`, `ci/adapters.py`, `docs/ci-contracts.md`, `tests/e2e/project_layout/test_evidence_paths.py`, `CHANGELOG.md` (5) | about 300 | AT-9 first; full CLI suite (frozen contract) |
+| P3 | CLI | `cli/evidence.py`, `ci/adapters.py`, `cli/report.py` (`_load_manifest` uses the shared reader), `cli/run/_evidence.py` (passes the evidence path), `docs/ci-contracts.md`, `tests/e2e/project_layout/test_evidence_paths.py`, `CHANGELOG.md` (7) | about 600 | AT-9 first; full CLI suite (frozen contract) |
 | P4 | CLI | `gate/_layers.py`, `ci/rule_codes.py`, `preflight.py`, `cli/run.py` (summary, `--json`, `--out-dir`), `cli/io/_layout.py` (`describe`), `tests/e2e/project_layout/test_layout_gate.py`, `test_run_surfaces.py`, `docs/cli-reference.md`, `CHANGELOG.md` (9) | about 550 | AT-4, AT-8, AT-16, `--out-dir` cells first; full CLI suite (`--json` contract) |
 | P5 | CLI | `cli/io/_pipelines.py`, `cli/io/__init__.py`, `__main__.py` (`--project`), `cli/completers.py`, `cli/run.py`, `cli/validate.py`, `cli/compile_explain.py`, `cli/preflight.py`, `cli/tokenize.py`, `cli/unmask.py`, `cli/subset.py`, `cli/report.py`, `tests/e2e/project_layout/test_pipeline_arg.py`, `tests/unit/project_layout/test_completion.py`, `tests/sentry/io_policy/test_pipeline_argument.py`, `docs/cli-reference.md` (regenerated), `CHANGELOG.md` (17) | about 800 | AT-18, AT-19, AT-20, AT-23, AT-27 and G-ONE-PIPELINE-ARG first; MP16 red; full CLI suite |
 | P6 | CLI | `cli/project/__init__.py`, `_new.py`, `_show.py`, `_list.py`, `__main__.py` (register), `tests/e2e/project_layout/test_project_group.py`, `CODEMAP.md`, `docs/cli-reference.md` (regenerated), `CHANGELOG.md` (9) | about 550 | AT-24, AT-25 first; T1 |
