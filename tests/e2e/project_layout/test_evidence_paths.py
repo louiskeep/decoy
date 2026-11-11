@@ -584,13 +584,14 @@ _PATH_CORPUS = [
 @pytest.mark.parametrize("raw", _PATH_CORPUS)
 def test_the_evidence_reader_and_the_layout_share_one_path_rule(tmp_path: Path, raw: str) -> None:
     """Guard for the one validator: the reader accepts exactly what `contained_path` accepts."""
-    from decoy.cli.io import contained_path
+    from decoy.cli.io import contained_path, find_project
 
-    root = tmp_path / "proj"
+    root = _project(tmp_path / "proj")
     (root / "sub").mkdir(parents=True)
-    expected = contained_path(root, raw)
+    expected = contained_path(find_project(None, root).root, raw)
+    manifest = {"path_base": "project", "project_manifest": None}
     try:
-        got = evidence_module.resolve_manifest_path(raw, root)
+        got = evidence_module.resolve_manifest_path(manifest, raw, manifest_file=None, project=root)
     except ManifestError as exc:
         assert exc.kind == "path_outside_project"
         got = None

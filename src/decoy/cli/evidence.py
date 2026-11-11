@@ -5,48 +5,16 @@ contain fingerprints of the pipeline config, input files, and output files at
 the time of the run. They also include a self-consistency fingerprint
 (`manifest_hash`) that covers the entire manifest body.
 
-S4b (CLI redesign) folded the former `evidence` verbs (show/verify) into
-the `decoy report` noun (`report show` / `report verify`). This module is now a
-HELPER module: it owns the manifest builder/hasher/verifier plus the shared
-manifest-summary card renderer that `decoy report` imports. It registers no
-Typer sub-app of its own.
+It is a helper module for `decoy report` (show, render, verify, diff) and `decoy ci check`:
+the builder, hasher, the one strict reader and verifier, and the `report show` card. It
+registers no Typer app of its own.
 
-What `report show` renders (via `_render_manifest_card`)
---------------------------------------------------------
-Read-only. The manifest in human-readable or JSON form. Does NOT expose raw
-row values (the manifest itself never contains them).
-
-What `report verify` checks (via `verify_manifest`)
----------------------------------------------------
-Re-hashes the current files to detect drift (accidental file changes):
-  - pipeline_fingerprint: sha256:<hex> of pipeline.yaml
-  - input_fingerprints: sha256:<hex> of each source file
-  - output_fingerprints: sha256:<hex> of each target file
-  - manifest_hash: sha256:<hex> of the manifest body itself
-
-What verify does NOT check
---------------------------
-* Platform audit logs, RBAC, schedule history, or secret access records.
-* Whether the output was produced by the declared pipeline (it only checks
-  that the files have not changed since the manifest was recorded).
-* Data correctness or masking quality.
-* Network, vault, or secrets accessibility.
-
-Integrity limit
----------------
-``manifest_hash`` is an UNKEYED SHA-256 integrity check. It detects
-accidental change and drift; it does NOT detect a motivated tamperer who
-can edit the manifest and recompute the hash (no secret key = no
-authenticity). Cryptographic authenticity (keyed signing) is platform R4
-territory. This limit mirrors the note at
-decoy-platform/api/evidence/hashing.py (verify_manifest_hash docstring).
-
-This is explicitly a LOCAL evidence facility. It proves "these files look the
-same as when the run completed." It is not a replacement for platform-managed
-audit history.
-
-Interop note: the producer/schema markers make this manifest routable by a
-future platform importer; no import adapter exists today (that is R4+ work).
+`report verify` re-hashes the pipeline config, each input and output file, and the manifest
+body (`manifest_hash`) to detect drift. It does not check platform audit logs, that the output
+came from the declared pipeline, data correctness, or secret access. `manifest_hash` is an
+UNKEYED SHA-256 check: it catches accidental change, not a tamperer who recomputes it (keyed
+signing is platform R4; same limit as decoy-platform `api/evidence/hashing.py`). The manifest
+never holds row values.
 
 Evidence manifest schema version: "cli-local-1"
 
@@ -64,10 +32,11 @@ Path base (additive to cli-local-1)
 -----------------------------------
 A run in a project with a `decoy.yaml` marker records `path_base: "project"` and writes every
 path inside the project relative to its root (POSIX); paths outside it are absolute. A run with
-no marker records absolute paths and no `path_base`. The verifier reads `path_base` paths from
-the project root: the typed `--project`, else the marker found above the manifest file. It
-never reads `DECOY_PROJECT` or falls back to the working directory, so a manifest verifies the
-same from any folder. A manifest without `path_base` keeps the old rule (paths as recorded,
+no marker records absolute paths and no `path_base`. A stored path becomes a file path only in
+`resolve_manifest_path` (sentry G-ONE-MANIFEST-PATH), which `read_manifest`,
+`verify_manifest_issues` and `report diff`'s `compare_data` call. It reads `path_base` paths
+from the project root: the typed `--project`, else the marker found above the manifest file,
+never `DECOY_PROJECT` or the working directory, so every consumer works from any folder. A manifest without `path_base` keeps the old rule (paths as recorded,
 relative ones from the working directory).
 
 Paths are resolved before they are made relative, so a lexical `..` or a symlinked folder is
@@ -513,12 +482,13 @@ def _no_constant(name: str) -> Any:
     raise ValueError(f"{name} is not JSON")
 
 
-def read_manifest(path: Path) -> dict[str, Any]:
-    """The one way a manifest file is read: parsed, then checked by `check_manifest`.
+def read_manifest(path: Path, project: Path | None = None) -> dict[str, Any]:
+    """The one way a manifest file is read: parsed, checked by `check_manifest`, and every
+    stored file path sent through `resolve_manifest_path` (`project` is the typed `--project`).
 
     Raises `ManifestError` with kind `missing` (no regular file there), `unreadable` (I/O,
     encoding, or not JSON; NaN and Infinity are refused because the hash cannot carry them),
-    or as `check_manifest`. Messages name the file, never its content.
+    as `check_manifest`, or as the resolver. Messages name the file, never its content.
     """
     if not path.is_file():
         raise ManifestError("missing", f"evidence file not found: {path}")
@@ -533,7 +503,24 @@ def read_manifest(path: Path) -> dict[str, Any]:
     # Raised outside the handlers so the parser's error, which can quote the file, is not chained.
     if refusal is not None:
         raise ManifestError("unreadable", refusal)
-    return check_manifest(parsed)
+    manifest = check_manifest(parsed)
+    for _at, _table, field, raw, _recorded_fp in _stored_files(manifest):
+        resolve_manifest_path(manifest, raw, manifest_file=path, project=project, field=field)
+    return manifest
+
+
+def _stored_files(manifest: dict[str, Any]) -> list[tuple[int, str, str, str, str]]:
+    """(0 pipeline / 1 input / 2 output, table, field, recorded path, recorded fingerprint) for
+    every stored path that names a file. An entry with a null fingerprint names no file (a URL
+    source, or a target the run wrote nothing to), so it is metadata only."""
+    found = [(0, "", "pipeline_path", manifest["pipeline_path"], manifest["pipeline_fingerprint"])]
+    for at, group in ((1, "input_fingerprints"), (2, "output_fingerprints")):
+        for table, info in manifest[group].items():
+            if info["fingerprint"] is not None:
+                found.append(
+                    (at, table, f"{group}.{table}.path", info["path"], info["fingerprint"])
+                )
+    return found
 
 
 def _same_file(a: Path, b: Path | None) -> bool:
@@ -579,7 +566,9 @@ def _manifest_root(
             "project_not_found", f"{where} {why}; pass --project with the project folder."
         )
     if written_at is not None:
-        expected = resolve_manifest_path(written_at, root, "project_manifest")
+        expected = contained_path(root, written_at)
+        if expected is None:
+            raise _outside("project_manifest")
         if not _same_file(expected, manifest_file):
             raise ManifestError(
                 "project_mismatch",
@@ -589,23 +578,39 @@ def _manifest_root(
     return root
 
 
-def resolve_manifest_path(text: str, root: Path | None, field: str = "path") -> Path:
-    """A recorded path as a file path: project-relative under `root`, else as recorded.
+def _outside(field: str) -> ManifestError:
+    return ManifestError(
+        "path_outside_project",
+        f"evidence manifest is malformed: `{field}` must name a file inside the project, "
+        'written with "/".',
+    )
 
-    An absolute path (a file outside the project, recorded as such) is read as recorded.
-    Every other path is parsed by `decoy.cli.io.contained_path`, the one rule for stored
-    relative paths: "/" only, no drive or UNC anchor, and it must stay inside the root
-    (no climb above it, no symlink out). Otherwise `ManifestError` names `field`, not the path.
+
+def resolve_manifest_path(
+    manifest: dict[str, Any],
+    raw: str,
+    *,
+    manifest_file: Path | None,
+    project: Path | None = None,
+    field: str = "path",
+) -> Path:
+    """The one way a stored manifest path becomes a file path (sentry G-ONE-MANIFEST-PATH).
+
+    `manifest_file` is where `manifest` was read from and `project` the typed `--project`; with
+    `path_base: "project"` they give the root (`_manifest_root`), never the working directory
+    or `DECOY_PROJECT`. A manifest without `path_base` keeps the old rule: `raw` as recorded,
+    a relative one from the working directory. An absolute path (a file outside the project,
+    recorded as such) is read as recorded. Every other path is parsed by
+    `decoy.cli.io.contained_path`, the one rule for stored relative paths: "/" only, no drive or
+    UNC anchor, and it must stay inside the root (no climb above it, no symlink out).
+    Otherwise `ManifestError` names `field`, not the path.
     """
-    if root is None or posixpath.isabs(text) or os.path.isabs(text):
-        return Path(text)
-    path = contained_path(root, text)
+    root = _manifest_root(manifest, manifest_file, project)
+    if root is None or posixpath.isabs(raw) or os.path.isabs(raw):
+        return Path(raw)
+    path = contained_path(root, raw)
     if path is None:
-        raise ManifestError(
-            "path_outside_project",
-            f"evidence manifest is malformed: `{field}` must name a file inside the project, "
-            'written with "/".',
-        )
+        raise _outside(field)
     return path
 
 
@@ -631,20 +636,19 @@ def verify_manifest_issues(
     is reported as missing instead of being hashed, so it cannot hang the check.
     """
     check_manifest(manifest)
-    root = _manifest_root(manifest, manifest_file, project)
-    # (0 pipeline / 1 input / 2 output, label suffix, recorded path, recorded fingerprint, file),
-    # all resolved before any hashing so a refused path never leaves a partial result.
-    checks: list[tuple[int, str, str, str, Path]] = []
-    pipeline_text = manifest["pipeline_path"]
-    pipeline_file = resolve_manifest_path(pipeline_text, root, "pipeline_path")
-    checks.append((0, "", pipeline_text, manifest["pipeline_fingerprint"], pipeline_file))
-    for at, group in ((1, "input_fingerprints"), (2, "output_fingerprints")):
-        for table_name, info in manifest[group].items():
-            if info["fingerprint"] is None:
-                continue
-            field = f"{group}.{table_name}.path"
-            path = resolve_manifest_path(info["path"], root, field)
-            checks.append((at, f" (table {table_name!r})", info["path"], info["fingerprint"], path))
+    # All resolved before any hashing so a refused path never leaves a partial result.
+    checks = [
+        (
+            at,
+            f" (table {table!r})" if at else "",
+            raw,
+            recorded,
+            resolve_manifest_path(
+                manifest, raw, manifest_file=manifest_file, project=project, field=field
+            ),
+        )
+        for at, table, field, raw, recorded in _stored_files(manifest)
+    ]
 
     issues: list[EvidenceIssue] = []
     recorded_hash = manifest["manifest_hash"]

@@ -48,7 +48,13 @@ from decoy import _mask_secret
 from decoy._atomic import AtomicWriteError, WriteMode, describe, write_local_target
 from decoy.cli._sources import read_file, read_report_source
 from decoy.cli._yaml_errors import sanitize_yaml_error
-from decoy.cli.evidence import ManifestError, _render_manifest_card, read_manifest, verify_manifest
+from decoy.cli.evidence import (
+    ManifestError,
+    _render_manifest_card,
+    read_manifest,
+    resolve_manifest_path,
+    verify_manifest,
+)
 from decoy.cli.exit_codes import EXIT_FINDINGS, EXIT_RUNTIME, EXIT_USAGE
 from decoy.cli.io import entry_format
 from decoy.ui.output import OutputMode, OutputState, emit_json, print_traceback, setup_output
@@ -90,10 +96,12 @@ def _write_out(state: OutputState, path: Path, text: str) -> None:
         raise typer.Exit(code=EXIT_USAGE)
 
 
-def _load_manifest(path: Path, state: OutputState, command: str) -> dict[str, Any]:
+def _load_manifest(
+    path: Path, state: OutputState, command: str, project: Path | None = None
+) -> dict[str, Any]:
     """Read a manifest through the shared strict reader. Exit with EXIT_USAGE on a refusal."""
     try:
-        return read_manifest(path)
+        return read_manifest(path, project)
     except ManifestError as exc:
         msg, missing = exc.message, exc.kind == "missing"
     if state.mode is OutputMode.json:
@@ -845,37 +853,28 @@ def _column_profile(df: "Any") -> dict[str, dict[str, Any]]:
 
 
 def compare_data(
-    output_fps_a: dict[str, Any],
-    output_fps_b: dict[str, Any],
+    manifest_a: dict[str, Any],
+    manifest_b: dict[str, Any],
+    *,
+    manifest_file_a: Path | None,
+    manifest_file_b: Path | None,
 ) -> dict[str, Any]:
     """Compare output data files from two runs at the data level.
 
-    Accepts the `output_fingerprints` dicts from two evidence manifests.
-    Each dict is keyed by table name and has a `path` field pointing to the output file and,
-    since CLI-FMT, a `format` (and fixed-width `layout`) it was written in. Each side is read
-    by its own entry; an entry without `format` takes the legacy suffix rule.
+    Takes two whole evidence manifests and the files they were read from. Each output entry's
+    `path` is resolved by `evidence.resolve_manifest_path` against its own manifest's project,
+    never the working directory; an entry with a null fingerprint (nothing written) counts as
+    missing. Since CLI-FMT an entry records the `format` (and fixed-width `layout`) it was
+    written in; each side is read by its own entry, and one without `format` takes the legacy
+    suffix rule. Raises `ManifestError` when a stored path is refused.
 
-    Returns a structured dict with:
-      any_data_change  bool
-      table_deltas     list of per-table dicts with:
-        table             str
-        row_count_a       int or None
-        row_count_b       int or None
-        row_count_delta   int or None
-        columns_added     list[str] -- columns in B but not A
-        columns_removed   list[str] -- columns in A but not B
-        column_deltas     list of per-column dicts with:
-          column          str
-          null_count_delta  int or None
-          unique_count_delta int or None
-          dtype_kind_a    str or None
-          dtype_kind_b    str or None
-          dtype_changed   bool
-      missing_files      list[str] -- paths that could not be found
+    Returns `any_data_change` (bool), `missing_files` (recorded paths not found or not
+    readable) and `table_deltas`: per table, `row_count_a`/`_b`/`_delta`, `columns_added` and
+    `columns_removed` (B against A), and `column_deltas` with `null_count_delta`,
+    `unique_count_delta`, `dtype_kind_a`/`_b` and `dtype_changed` for each changed column.
 
-    Methodology: pandas.Series.nunique() and .isnull().sum() for column-level
+    Methodology: pandas.Series.nunique() and .isnull().sum() (pandas v2.x) for column-level
     null/cardinality counts. No novel statistical method is used.
-    References: pandas v2.x docs.
 
     EVIDENCE-SAFE: reports aggregate counts only. Raw row/cell values are
     never included in the output.
@@ -888,7 +887,8 @@ def compare_data(
         ) from _err
     from decoy_engine import DecoyError
 
-    # Determine which tables appear in both sets.
+    output_fps_a: dict[str, Any] = manifest_a.get("output_fingerprints") or {}
+    output_fps_b: dict[str, Any] = manifest_b.get("output_fingerprints") or {}
     tables_a = set(output_fps_a)
     tables_b = set(output_fps_b)
     all_tables = sorted(tables_a | tables_b)
@@ -920,33 +920,29 @@ def compare_data(
             )
             continue
 
-        from pathlib import Path as _Path
-
-        path_a = _Path(path_a_str)
-        path_b = _Path(path_b_str)
-
-        if not path_a.exists():
-            missing_files.append(path_a_str)
-        if not path_b.exists() and path_b_str not in missing_files:
-            missing_files.append(path_b_str)
+        sides = ((manifest_a, fp_a, manifest_file_a), (manifest_b, fp_b, manifest_file_b))
+        found: list[Path] = []
+        for manifest, entry, where in sides:
+            raw = entry["path"]
+            path = None
+            if entry.get("fingerprint") is not None:
+                field = f"output_fingerprints.{table}.path"
+                path = resolve_manifest_path(manifest, raw, manifest_file=where, field=field)
+            if path is not None and path.exists():
+                found.append(path)
+            elif raw not in missing_files:
+                missing_files.append(raw)
 
         if missing_files:
-            # Report missing but don't continue loading
             continue
 
         # Each side is read by its own recorded format (an old entry: the legacy suffix rule).
         try:
-            df_a = read_file(path_a, *entry_format(fp_a), table=table)
-            df_b = read_file(path_b, *entry_format(fp_b), table=table)
+            df_a = read_file(found[0], *entry_format(fp_a), table=table)
+            df_b = read_file(found[1], *entry_format(fp_b), table=table)
         except (OSError, ValueError, DecoyError):
-            # The file exists but could not be read (corrupt, truncated, or not the
-            # format its entry records; a parquet reader raises ArrowInvalid/ValueError,
-            # a bad path raises OSError, the engine's CSV reader a DecoyError, an entry
-            # with no usable format a TargetFormatError). Degrade this table to the same
-            # data-unavailable handling as a missing file so one broken output cannot
-            # crash the whole comparison; the caller still reports manifest level and
-            # --require-data still hard-fails. The raw parser message is dropped: it can
-            # echo file bytes or cell values (observability leak rule).
+            # Unreadable (corrupt, truncated, or not its recorded format): treat it as missing so
+            # --require-data still fails. The parser message is dropped: it can echo cell values.
             for p_str in (path_a_str, path_b_str):
                 if p_str not in missing_files:
                     missing_files.append(p_str)
@@ -1225,14 +1221,16 @@ def _diff(
     # --- Manifest/fingerprint-level comparison (always) ---
     manifest_diff = compare_manifests(manifest_a, manifest_b)
 
-    out_fps_a: dict[str, Any] = manifest_a.get("output_fingerprints") or {}
-    out_fps_b: dict[str, Any] = manifest_b.get("output_fingerprints") or {}
-
     # --- Data-level comparison (when the referenced output files exist) ---
     data_result: dict[str, Any] | None = None
     data_dep_error: str | None = None
     try:
-        data_result = compare_data(out_fps_a, out_fps_b)
+        data_result = compare_data(
+            manifest_a,
+            manifest_b,
+            manifest_file_a=evidence_file_a,
+            manifest_file_b=evidence_file_b,
+        )
     except RuntimeError as _dep_err:
         # pandas (or a parquet reader) is not installed. Treat the data level
         # as unavailable rather than failing the whole comparison.
@@ -1467,7 +1465,7 @@ def _verify(
     required for adversarial authenticity guarantees.
     """
     state = setup_output(json_, quiet, verbose)
-    manifest = _load_manifest(evidence_file, state, "report verify")
+    manifest = _load_manifest(evidence_file, state, "report verify", project)
     refusal = None
     try:
         issues = verify_manifest(manifest, manifest_file=evidence_file, project=project)

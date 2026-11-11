@@ -88,7 +88,10 @@ read against this one. A manifest written outside its project records null there
 pass `decoy ci check`. A project-relative path is read by the same rule as a declared target
 path, so it names the same file on every OS: `/` separators only, no backslash, no drive or UNC
 anchor (`C:x`, `//host/x`), no `..` that climbs above the root and no symlink out. Anything else
-is refused the same way before any file is hashed. Every
+is refused the same way before any file is hashed. The reader resolves every stored file path
+(the pipeline and each entry with a fingerprint) this way as it reads, so a refused path
+refuses the manifest in every command, and `report diff` reads each side's outputs from that
+manifest's own project. Every
 reader (`ci check` and the `decoy report` commands) parses the file through one strict reader
 with the schema the writer checks its own output against: the top level must be a JSON object,
 `schema_version` exactly `cli-local-1`, `path_base` absent or `"project"`, `pipeline_path`,
