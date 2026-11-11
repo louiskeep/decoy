@@ -224,6 +224,11 @@ Status last updated 2026-11-11. Merges checked on GitHub with `gh pr list --stat
 Order is the build order within the dependencies. "After" lists what must merge first. Branches are
 on origin unless marked local. Detail for each row is in [roadmap/row-detail.md](roadmap/row-detail.md).
 
+**Windows rows (owner, 2026-11-11).** Windows stays in V1, but its chain is built after the V1
+build, in the QA window before 2027-01-01: rows 6 (WIN-RUNNER), 29 (S3-cli), 30 (SCAN-LIB),
+34 to 42 (LIB L1b-cli to L5b-cli) and 89 (WIN-FEAS). These rows are not on the critical path to
+the build-complete date.
+
 **A. Test, CI and structure foundations**
 
 | # | Item | Repo | State | Branch, plan or handoff | After |
