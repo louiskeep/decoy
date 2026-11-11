@@ -52,7 +52,7 @@ SENTRIES = (
     "tests/sentry/layout/test_codemap_paths.py",
     "tests/sentry/layout/test_run_package_shape.py",
     "tests/sentry/test_profile_raw_value_isolation.py",
-    "tests/sentry/test_pytest_timeout.py",
+    "tests/sentry/tooling/test_pytest_timeout.py",
     "tests/sentry/test_ratchet_check.py",
     "tests/sentry/test_report_raw_value_isolation.py",
     "tests/sentry/test_scan_reader.py",

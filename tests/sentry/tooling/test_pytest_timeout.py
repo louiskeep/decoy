@@ -18,7 +18,7 @@ if sys.version_info >= (3, 11):
 else:
     import tomli as tomllib
 
-ROOT = Path(__file__).resolve().parents[2]
+ROOT = Path(__file__).resolve().parents[3]
 
 
 def configured_timeout(pyproject_text: str) -> float:
