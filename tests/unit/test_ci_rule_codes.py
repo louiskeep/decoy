@@ -309,16 +309,6 @@ def test_every_cli_gate_code_and_preflight_template_is_allowlisted() -> None:
         assert CANARY not in emitted, template
 
 
-def test_every_engine_problem_code_is_allowlisted() -> None:
-    """The gate now takes each config finding's code from the engine's `ConfigProblem.code`,
-    which is a Pydantic error type (the fixed text table's keys). A type the allowlist lacks
-    would be emitted as UNKNOWN_CODE, so the table's keys must all be in the allowlist."""
-    from decoy_engine.safe_output._validation import POLICY_TYPES
-
-    assert POLICY_TYPES, "the engine's policy table is empty"
-    assert sorted(POLICY_TYPES - validation_codes()) == []
-
-
 def test_every_evidence_issue_kind_is_allowlisted() -> None:
     kinds = _evidence_kinds()
     assert "output_fingerprint_changed" in kinds

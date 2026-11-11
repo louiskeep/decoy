@@ -49,15 +49,16 @@ _VALIDATE_METHODS = frozenset(
 _ADAPTER_METHODS = frozenset({"validate_python", "validate_json", "validate_strings"})
 _PYDANTIC_MODULES = frozenset({"pydantic", "pydantic_core"})
 
-# (path relative to src/decoy, enclosing function, violation kind, reason). Shrink-only baseline:
-# tests/sentry/baselines/config-route-allow.json, keyed "path::function::kind". Each entry must
-# still hold exactly that violation (checked below), so a second violation in the same file is
-# not covered by it.
-ALLOWLIST: tuple[tuple[str, str, str, str], ...] = (
+# (path relative to src/decoy, enclosing function, violation kind, occurrence, reason). Shrink-only
+# baseline: tests/sentry/baselines/config-route-allow.json, keyed "path::function::kind#n" where n
+# numbers the same violation in the same function by line (1, 2, ...). Each entry must still hold
+# exactly that violation (checked below), so a second one in the same function is not covered.
+ALLOWLIST: tuple[tuple[str, str, str, int, str], ...] = (
     (
         "cli/io/_scan_set.py",
         "_from_core",
         "validate-engine",
+        1,
         "validates the engine's scan-set read model, catches the error without reading it and "
         "raises a fixed message outside the handler; a scan file is not a pipeline config",
     ),
@@ -65,6 +66,7 @@ ALLOWLIST: tuple[tuple[str, str, str, str], ...] = (
         "ci/manifest.py",
         "load_manifest",
         "errors-call",
+        1,
         "reads only the error type of the CLI-owned CiManifest, never a value or a message "
         "(FU-4 moves it onto validation_problems if its codes ever need a location)",
     ),
@@ -72,6 +74,7 @@ ALLOWLIST: tuple[tuple[str, str, str, str], ...] = (
         "ci/manifest.py",
         "<module>",
         "pydantic-import",
+        1,
         "validates the CLI-owned CiManifest and reads only the error type, never a value or a "
         "message (FU-4 moves it onto validation_problems if its codes ever need a location)",
     ),
@@ -217,17 +220,27 @@ def _walk_src() -> dict[str, list[tuple[int, str, str]]]:
     return out
 
 
-def _allowed() -> set[tuple[str, str, str]]:
-    return {(path, function, kind) for path, function, kind, _ in ALLOWLIST}
+def _allowed() -> set[tuple[str, str, str, int]]:
+    return {(path, function, kind, n) for path, function, kind, n, _ in ALLOWLIST}
+
+
+def numbered(found: list[tuple[int, str, str]]) -> list[tuple[int, str, str, int]]:
+    """Each violation with its occurrence number among the same (function, kind), by line."""
+    seen: dict[tuple[str, str], int] = {}
+    out: list[tuple[int, str, str, int]] = []
+    for line, function, kind in sorted(found):
+        seen[(function, kind)] = seen.get((function, kind), 0) + 1
+        out.append((line, function, kind, seen[(function, kind)]))
+    return out
 
 
 def test_no_raw_validation_error_route_in_src() -> None:
     allowed = _allowed()
     offenders = [
-        f"  {path}:{line} in {function}: {kind}"
+        f"  {path}:{line} in {function}: {kind} (#{n})"
         for path, found in _walk_src().items()
-        for line, function, kind in found
-        if (path, function, kind) not in allowed
+        for line, function, kind, n in numbered(found)
+        if (path, function, kind, n) not in allowed
     ]
     assert not offenders, (
         "These sites validate an engine model or read a Pydantic ValidationError themselves; "
@@ -300,6 +313,21 @@ _ADAPTER = "from pydantic import TypeAdapter\n" + _ENGINE
 def test_walk_sees_each_planted_bypass(label: str, source: str, kind: str) -> None:
     kinds = {k for _, _, k in violations(source)}
     assert kinds == {kind}, f"the walk saw {sorted(kinds)} for the planted {label} bypass"
+
+
+def test_a_second_violation_in_one_function_gets_its_own_number() -> None:
+    source = (
+        "def load(x, y):\n"
+        "    try:\n"
+        "        pass\n"
+        "    except Exception as exc:\n"
+        "        a = exc.errors()\n"
+        "        b = exc.errors()\n"
+    )
+    numbers = [(fn, kind, n) for _, fn, kind, n in numbered(violations(source))]
+    assert numbers == [("load", "errors-call", 1), ("load", "errors-call", 2)]
+    # The allowlist holds only #1 for ci/manifest.py::load_manifest, so a second is an offender.
+    assert ("ci/manifest.py", "load_manifest", "errors-call", 2) not in _allowed()
 
 
 def test_walk_names_the_enclosing_function() -> None:

@@ -84,9 +84,18 @@ def _load_config_dict(config: Any) -> dict:
         return copy.deepcopy(config)
     if isinstance(config, (str, Path)):
         import yaml
+        from decoy_engine.safe_output import yaml_error_text
 
         path = Path(config)
-        raw = yaml.safe_load(path.read_text(encoding="utf-8"))
+        yaml_failure: str | None = None
+        try:
+            raw = yaml.safe_load(path.read_text(encoding="utf-8"))
+        except yaml.YAMLError as exc:
+            yaml_failure = yaml_error_text(exc)
+        if yaml_failure is not None:
+            # Raised outside the handler: the YAML error quotes the offending line, so it must
+            # be neither the cause nor the context.
+            raise ConfigValidationError(f"{path}: {yaml_failure}")
         if not isinstance(raw, dict):
             raise ConfigValidationError(
                 f"{path}: expected a YAML mapping at the top level, got {type(raw).__name__}."

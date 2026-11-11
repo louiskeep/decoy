@@ -186,8 +186,8 @@ SOURCES: tuple[Source, ...] = (
         InCode(
             "tests/sentry/defects/test_config_error_routes.py",
             "ALLOWLIST",
-            key=lambda e: f"{e[0]}::{e[1]}::{e[2]}",
-            reason=lambda e: e[3],
+            key=lambda e: f"{e[0]}::{e[1]}::{e[2]}#{e[3]}",
+            reason=lambda e: e[4],
         ),
     ),
     Source(
