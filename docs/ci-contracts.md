@@ -74,14 +74,37 @@ empty; `-` (the default) writes it to stdout. Like the other `--output` flags, a
 path is the operator's deliberate choice and replaces an existing regular file. The path
 must be inside the root, its directory must already exist, and it may not be a symlink.
 When the report goes to a file, one value-free summary line is printed on stderr.
-Evidence manifests record paths as `decoy run` saw them; they are resolved the way
-`decoy report verify` resolves them (relative to the working directory), so run the check
-from the repository root. A recorded path that exists but is not a regular file is treated
-as missing and never read. An output path that cannot be resolved safely (a symlink loop, an
-over-long name, a filesystem error) is refused with one fixed line and exit 1; the path is
-never echoed. `decoy ci` never writes or touches the engine's `logs/decoy_engine.log`: the
-engine's file logging is contained for the duration of the checks because its advisories name
-user tables.
+Evidence manifests are resolved the way `decoy report verify` resolves them, by one of two
+rules. A manifest with `path_base: "project"` (written by a run in a project with a
+`decoy.yaml` marker) records paths relative to the project root; the check reads them from the
+project whose marker is above the manifest file, so it passes from any folder, and it never
+uses `DECOY_PROJECT` or the working directory. With no marker above it the check is refused
+(`ci.evidence_unreadable`). A manifest without `path_base` keeps the old rule: paths as
+recorded, relative ones from the working directory, so run that check from the repository
+root. Such a manifest also records `project_manifest`, the place it was written in its
+project; the check is refused (`ci.evidence_unreadable`) when the manifest file is not at that
+place under the project found above it, so evidence copied in from another project is never
+read against this one. A manifest written outside its project records null there and cannot
+pass `decoy ci check`. A project-relative path is read by the same rule as a declared target
+path, so it names the same file on every OS: `/` separators only, no backslash, no drive or UNC
+anchor (`C:x`, `//host/x`), no `..` that climbs above the root and no symlink out. Anything else
+is refused the same way before any file is hashed. The reader resolves every stored file path
+(the pipeline and each entry with a fingerprint) this way as it reads, so a refused path
+refuses the manifest in every command, and `report diff` reads each side's outputs from that
+manifest's own project. Every
+reader (`ci check` and the `decoy report` commands) parses the file through one strict reader
+with the schema the writer checks its own output against: the top level must be a JSON object,
+`schema_version` exactly `cli-local-1`, `path_base` absent or `"project"`, `pipeline_path`,
+`pipeline_fingerprint` and `manifest_hash` non-empty strings, both fingerprint groups objects
+of entries with a non-empty `path` and a string or null `fingerprint`, and the other known
+fields of their exact recorded type (`true` is not an integer and `"12"` is not a number, for
+`size_bytes` and every `row_counts` value); anything else, or `NaN`/`Infinity`, is refused
+(`ci.evidence_unreadable`) naming the field, never its value. Unknown extra keys are allowed. A
+recorded path that exists but is not a regular file is treated as missing and never read. An output path that cannot be
+resolved safely (a symlink loop, an over-long name, a filesystem error) is refused with one
+fixed line and exit 1; the path is never echoed. `decoy ci` never writes or touches the
+engine's `logs/decoy_engine.log`: the engine's file logging is contained for the duration of
+the checks because its advisories name user tables.
 
 ## Report: `decoy-ci-report/v1` (`--format json`)
 
