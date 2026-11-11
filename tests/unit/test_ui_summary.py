@@ -137,3 +137,29 @@ def test_joint_cap_line_without_policy_drops_says_nothing_of_policy() -> None:
     line = _joint_cap(cells_kept=25, policy_dropped=0, other_count=366)
     assert "value policy" not in line
     assert "366 rows in all fall outside the kept ones" in line
+
+
+def _parent_unseen(**overrides: object) -> str:
+    detail = {
+        "column": "kid",
+        "condition_on": "parent",
+        "rows": 40,
+        "rows_total": 6000,
+        "rows_null_parent": 0,
+        "parent_values": 3,
+        **overrides,
+    }
+    record = warning_record("generation_condition_parent_unseen", table="t", detail=detail)
+    return str(record["message"])
+
+
+def test_parent_unseen_line_counts_exactly_when_not_capped() -> None:
+    line = _parent_unseen()
+    assert "had one of 3 parent values" in line
+    assert "at least" not in line
+
+
+def test_parent_unseen_line_says_at_least_when_the_count_was_capped() -> None:
+    line = _parent_unseen(parent_values_capped=True)
+    assert "had at least 3 parent values" in line
+    assert "one of" not in line

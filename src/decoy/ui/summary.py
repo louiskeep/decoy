@@ -97,12 +97,17 @@ def _max_cells() -> int:
 
 def _parent_unseen_message(table: object, detail: Mapping[str, Any]) -> str:
     """`generation_condition_parent_unseen`: how many rows fell back, never which parent values."""
+    # The engine caps how many distinct parent values it counts; past it the number is a floor.
+    count = (
+        f"at least {detail.get('parent_values')}"
+        if detail.get("parent_values_capped")
+        else f"one of {detail.get('parent_values')}"
+    )
     return (
         f"table {table}, column {detail.get('column')} (condition_on "
         f"{detail.get('condition_on')}): {detail.get('rows')} of {detail.get('rows_total')} rows "
-        f"({detail.get('rows_null_parent')} of them with an empty parent) had one of "
-        f"{detail.get('parent_values')} parent values with no fitted combination and drew "
-        "from the column's overall counts."
+        f"({detail.get('rows_null_parent')} of them with an empty parent) had {count} "
+        "parent values with no fitted combination and drew from the column's overall counts."
     )
 
 

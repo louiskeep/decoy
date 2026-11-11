@@ -563,10 +563,9 @@ def fit(
     # The engine owns the bound; the CLI only turns the text into a number for it.
     cell_cap = DEFAULT_CONTINGENCY_TOP_K
     if joint_max_cells is not None:
-        try:
-            parsed: object = int(joint_max_cells.strip())
-        except ValueError:
-            parsed = joint_max_cells
+        # ASCII digits only: int() also takes "1_000", "+30" and non-ASCII digits.
+        text = joint_max_cells.strip()
+        parsed: object = int(text) if text.isascii() and text.isdigit() else joint_max_cells
         try:
             check_contingency_top_k(parsed)
         except DistributionSnapshotError as exc:
@@ -575,7 +574,7 @@ def fit(
                 err_code=exc.code,
             )
             raise typer.Exit(code=EXIT_USAGE)
-        cell_cap = int(joint_max_cells.strip())
+        cell_cap = int(text)
 
     def _unreadable() -> None:
         # No str(exc): a pandas parse error can quote a source cell.

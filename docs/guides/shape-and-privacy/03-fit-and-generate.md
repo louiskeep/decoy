@@ -281,7 +281,7 @@ Rules:
   refused (exit 1, `contingency_top_k_kind_unsupported`) when either column
   is a number, date, free text or high-cardinality column. A pair that
   touches a column the profiler flags as sensitive keeps no pairs at any
-  cap, and gets no cap warning.
+  cap without `--include-values`, and gets no cap warning.
 - A parent value that was never in the fit also falls back to the child's
   overall counts, and the run warning counts those rows too.
 - Not allowed with differential privacy.

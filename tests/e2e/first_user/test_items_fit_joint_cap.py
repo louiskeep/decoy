@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import Any
 
 import pandas as pd
+import pytest
 import yaml
 from typer.testing import CliRunner, Result
 
@@ -141,6 +142,13 @@ def test_at10_non_number_cap_is_refused(tmp_path: Path) -> None:
     _refused(tmp_path, "contingency_top_k_invalid", *args)
 
 
+@pytest.mark.parametrize("bad", ["1_000", "+30", "\u0663\u0666"])
+def test_at10_non_ascii_digit_forms_are_refused(tmp_path: Path, bad: str) -> None:
+    _refused(
+        tmp_path, "contingency_top_k_invalid", "--joint", "parent,kid", "--joint-max-cells", bad
+    )
+
+
 def test_at10_cap_needs_joint(tmp_path: Path) -> None:
     _refused(tmp_path, "fit_joint_max_cells_needs_joint", "--joint-max-cells", "36")
 
@@ -160,6 +168,47 @@ def test_at10_human_error_names_the_code(tmp_path: Path) -> None:
     assert result.exit_code == EXIT_USAGE
     assert "contingency_top_k_invalid" in _flat(_stderr(result))
     assert "Traceback" not in result.output
+
+
+# --- AT-10b: a raised cap on a column that is not a plain category -------------------
+
+_NUM_ROWS = 200
+
+
+def _numeric_fit(folder: Path, *extra: str) -> tuple[Result, Path]:
+    src = folder / "numeric.csv"
+    frame = pd.DataFrame(
+        {
+            "amount": [i * 1.37 for i in range(_NUM_ROWS)],
+            "kid": [f"SENTK{i % 3}" for i in range(_NUM_ROWS)],
+        }
+    )
+    frame.to_csv(src, index=False)
+    out = folder / "numeric.snapshot.json"
+    args = ["fit", str(src), "-o", str(out), "--joint", "amount,kid", "--joint-max-cells", "26"]
+    return runner.invoke(app, [*args, *extra], env=_WIDE), out
+
+
+def test_at10_raised_cap_on_a_numeric_column_is_refused_in_json(tmp_path: Path) -> None:
+    result, out = _numeric_fit(tmp_path, "--json")
+    assert result.exit_code == EXIT_USAGE, result.output
+    payload = json.loads(result.stdout)
+    assert payload["status"] == "error" and payload["code"] == "contingency_top_k_kind_unsupported"
+    assert not out.exists()
+
+
+def test_at10_raised_cap_on_a_numeric_column_names_the_code_in_human_mode(tmp_path: Path) -> None:
+    result, out = _numeric_fit(tmp_path)
+    assert result.exit_code == EXIT_USAGE, result.output
+    assert "contingency_top_k_kind_unsupported" in _flat(_stderr(result))
+    assert "Traceback" not in result.output
+    assert not out.exists()
+
+
+def test_at10_include_values_allows_the_raised_cap_on_a_numeric_column(tmp_path: Path) -> None:
+    result, out = _numeric_fit(tmp_path, "--include-values")
+    assert result.exit_code == EXIT_OK, result.output
+    assert out.exists()
 
 
 # --- AT-11: the generation warning in `decoy run` -------------------------------------
