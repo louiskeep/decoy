@@ -395,11 +395,11 @@ def _validate_scaffold(body: str) -> None:
     """
     try:
         import yaml
-        from decoy_engine.config import PipelineConfig
+        from decoy_engine.config import parse_pipeline_config
     except Exception:
         return
     parsed = yaml.safe_load(body)
-    PipelineConfig.model_validate(parsed)
+    parse_pipeline_config(parsed)
 
 
 def _scaffold_from_file(

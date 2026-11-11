@@ -31,6 +31,7 @@ SENTRIES = (
     "tests/sentry/cli_text/test_no_traceback_escape.py",
     "tests/sentry/cli_text/test_json_command_names.py",
     "tests/sentry/cli_text/test_user_text_internal_names.py",
+    "tests/sentry/defects/test_config_error_routes.py",
     "tests/sentry/io_policy/test_csv_frame_choke_point.py",
     "tests/sentry/test_csv_read_choke_point.py",
     "tests/sentry/test_baseline_registry.py",

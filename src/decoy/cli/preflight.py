@@ -438,7 +438,7 @@ def _check_capacity(raw: dict[str, Any], config_path: Path, acc: _PreflightAccum
         )
         return
 
-    from decoy_engine import CapacityVerdict, ExecutionError, PipelineConfig
+    from decoy_engine import CapacityVerdict, ExecutionError, parse_pipeline_config
     from decoy_engine.plan import PlanCompileError
 
     # The ONE narrow catch here (R3): a source that is present but corrupt /
@@ -451,7 +451,7 @@ def _check_capacity(raw: dict[str, Any], config_path: Path, acc: _PreflightAccum
     # raw traceback. Any OTHER exception -- an unexpected estimator defect --
     # still propagates, never degraded into a WARN or a false pass (Codex
     # P1-2 / re-gate MEDIUM).
-    config_dump = PipelineConfig.model_validate(raw).model_dump()
+    config_dump = parse_pipeline_config(raw).model_dump()
     try:
         estimate = _engine_execution.estimate_job_capacity(config_dump, base_dir=config_path.parent)
     except ExecutionError as exc:
@@ -698,12 +698,12 @@ def preflight(
 
     from decoy_engine import (
         ConfigError,
-        PipelineConfig,
         PipelineValidationError,
+        parse_pipeline_config,
         run_config_only_checks,
     )
+    from decoy_engine.config import PipelineConfigError
     from decoy_engine.plan import PlanCompileError
-    from pydantic import ValidationError
 
     # -- Step 1: YAML parse ---------------------------------------------------
     try:
@@ -731,16 +731,14 @@ def preflight(
 
     # -- Step 2: Schema validation --------------------------------------------
     try:
-        PipelineConfig.model_validate(raw)
+        parse_pipeline_config(raw)
         acc.add_pass(name="schema.valid", message="Pipeline schema is valid.")
-    except ValidationError as exc:
-        for e in exc.errors():
-            loc_parts = [str(p) for p in e.get("loc", ())]
-            location = ".".join(loc_parts) if loc_parts else None
+    except PipelineConfigError as exc:
+        for problem in exc.problems:
             acc.add_fail(
                 name="schema.field",
-                message=e.get("msg", str(e)),
-                location=location,
+                message=problem.text,
+                location=problem.location or None,
             )
         _emit_preflight_result(state, acc, config_str, fail_on_warning)
         raise typer.Exit(code=EXIT_USAGE)

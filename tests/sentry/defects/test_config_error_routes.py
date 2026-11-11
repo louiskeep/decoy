@@ -33,7 +33,7 @@ import typer.main
 from typer.testing import CliRunner
 
 from decoy.__main__ import app
-from decoy.cli.exit_codes import EXIT_USAGE
+from decoy.cli.exit_codes import EXIT_RUNTIME, EXIT_USAGE
 
 ROOT = Path(__file__).resolve().parents[3]
 SRC = ROOT / "src" / "decoy"
@@ -49,6 +49,10 @@ _PYDANTIC_MODULES = frozenset({"pydantic", "pydantic_core"})
 
 # path (relative to src/decoy) -> reason. Each entry must still hold a violation (checked below).
 ALLOWLIST: dict[str, str] = {
+    "cli/io/_scan_set.py": (
+        "validates the engine's scan-set read model, catches the error without reading it and "
+        "raises a fixed message outside the handler; a scan file is not a pipeline config"
+    ),
     "ci/manifest.py": (
         "validates the CLI-owned CiManifest and reads only the error type, never a value or a "
         "message (FU-4 moves it onto validation_problems if its codes ever need a location)"
@@ -130,7 +134,10 @@ def test_allowlist_entries_still_hold_a_violation() -> None:
 @pytest.mark.parametrize(
     ("label", "source"),
     [
-        ("from-import", "from decoy_engine import PipelineConfig\nPipelineConfig.model_validate(x)"),
+        (
+            "from-import",
+            "from decoy_engine import PipelineConfig\nPipelineConfig.model_validate(x)",
+        ),
         (
             "engine submodule import",
             "from decoy_engine.config import TableConfig as T\nT.model_validate(x)",
@@ -243,6 +250,8 @@ MARKER_ONLY: dict[str, str] = {
 }
 # Commands that print only the first problem rather than the full list.
 FIRST_ONLY = frozenset({"subset", "subset --json", "run", "run --json", "validate config"})
+# Exit codes that differ from EXIT_USAGE and did before this change (A3 changes text, not codes).
+EXIT_OVERRIDE = {"report integrity --config": EXIT_RUNTIME}
 
 # Commands that take a config parameter but cannot be fed a user config on a marker route.
 EXEMPT: dict[str, str] = {
@@ -314,9 +323,12 @@ def test_config_error_output_is_value_free(label: str, tmp_path: Path) -> None:
         f"config validation:\n{combined}"
     )
     if label not in FIRST_ONLY:
-        assert _EXTRA in combined, f"`decoy {' '.join(argv)}` dropped a structural name:\n{combined}"
-    assert result.exit_code == EXIT_USAGE, (
-        f"`decoy {' '.join(argv)}` exited {result.exit_code}, expected EXIT_USAGE:\n{combined}"
+        assert _EXTRA in combined, (
+            f"`decoy {' '.join(argv)}` dropped a structural name:\n{combined}"
+        )
+    expected = EXIT_OVERRIDE.get(label, EXIT_USAGE)
+    assert result.exit_code == expected, (
+        f"`decoy {' '.join(argv)}` exited {result.exit_code}, expected {expected}:\n{combined}"
     )
     assert result.exception is None or isinstance(result.exception, SystemExit)
 

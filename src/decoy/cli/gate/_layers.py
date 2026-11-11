@@ -123,9 +123,9 @@ def _run_config_base(
     caller short-circuits (compile and preflight both need a valid config).
     """
     import decoy_engine
-    from decoy_engine import ConfigError, PipelineConfig, PipelineValidationError
+    from decoy_engine import ConfigError, PipelineValidationError, parse_pipeline_config
+    from decoy_engine.config import PipelineConfigError
     from decoy_engine.plan import PlanCompileError
-    from pydantic import ValidationError
 
     if raw is None:
         return None, (), [GateFinding("config", "error", "yaml.empty", "Pipeline YAML is empty.")]
@@ -145,21 +145,11 @@ def _run_config_base(
         )
 
     try:
-        validated = PipelineConfig.model_validate(raw).model_dump()
-    except ValidationError as exc:
-        findings: list[GateFinding] = []
-        for e in exc.errors():
-            loc_parts = [str(p) for p in e.get("loc", ())]
-            location = ".".join(loc_parts) if loc_parts else None
-            findings.append(
-                GateFinding(
-                    "config",
-                    "error",
-                    e.get("type", "validation_error"),
-                    e.get("msg", str(e)),
-                    location,
-                )
-            )
+        validated = parse_pipeline_config(raw).model_dump()
+    except PipelineConfigError as exc:
+        findings: list[GateFinding] = [
+            GateFinding("config", "error", p.code, p.text, p.location or None) for p in exc.problems
+        ]
         return None, (), findings
     except (PipelineValidationError, ConfigError) as exc:
         return (

@@ -426,9 +426,9 @@ def mask(
     if config is None:
         raise TypeError("config is required (a pipeline YAML path or a config dict).")
 
-    from decoy_engine import PipelineConfig, run_pipeline
     from decoy_engine import __version__ as engine_version
-    from pydantic import ValidationError as _PydanticValidationError
+    from decoy_engine import parse_pipeline_config, run_pipeline
+    from decoy_engine.config import PipelineConfigError
 
     raw = _load_config_dict(config)
     _validate_mask_secret_ref_shape(raw)
@@ -459,10 +459,15 @@ def mask(
                 "...} (multi-table), or add a targets: block to the config."
             )
 
+        invalid: str | None = None
         try:
-            config_dict = PipelineConfig.model_validate(raw).model_dump()
-        except _PydanticValidationError as exc:
-            raise ConfigValidationError(str(exc)) from exc
+            config_dict = parse_pipeline_config(raw).model_dump()
+        except PipelineConfigError as exc:
+            invalid = str(exc)
+        if invalid is not None:
+            # Raised outside the handler: the message is value-free (names and locations only),
+            # and no chained error may carry the submitted values.
+            raise ConfigValidationError(invalid)
 
         _apply_mask_secret(config_dict, mask_secret)
 
