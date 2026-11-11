@@ -173,21 +173,23 @@ def subset(
         )
         raise typer.Exit(code=EXIT_USAGE)
 
-    from decoy_engine import PipelineConfig
     from decoy_engine import __version__ as engine_version
-    from pydantic import ValidationError
+    from decoy_engine import parse_pipeline_config
+    from decoy_engine.config import PipelineConfigError
 
     try:
-        validated = PipelineConfig.model_validate(raw)
-    except ValidationError as exc:
-        first = exc.errors()[0]
-        loc = ".".join(str(p) for p in first.get("loc", ())) or None
-        msg = first.get("msg", str(exc))
+        validated = parse_pipeline_config(raw)
+    except PipelineConfigError as exc:
+        first = exc.problems[0] if exc.problems else None
         _fail_usage(
             state,
             config_str,
-            code_=first.get("type", "validation_error"),
-            message=f"{msg}" + (f" ({loc})" if loc else ""),
+            code_=first.code if first else "validation_error",
+            message=(
+                f"{first.text}" + (f" ({first.location})" if first.location else "")
+                if first
+                else str(exc)
+            ),
         )
         raise typer.Exit(code=EXIT_USAGE)
 

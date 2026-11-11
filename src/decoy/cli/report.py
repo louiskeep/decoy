@@ -1755,11 +1755,11 @@ def _fidelity(
 
     config_dict: dict[str, Any] = {}
     if pipeline_config is not None:
-        from decoy_engine import PipelineConfig
+        from decoy_engine import parse_pipeline_config
 
         try:
             raw_cfg = _yaml.safe_load(pipeline_config.read_text(encoding="utf-8"))
-            config_dict = PipelineConfig.model_validate(raw_cfg).model_dump()
+            config_dict = parse_pipeline_config(raw_cfg).model_dump()
         except _yaml.YAMLError as exc:
             # YAMLError carries the offending source line verbatim; sanitize it.
             _emit_error(sanitize_yaml_error(exc))
@@ -2011,7 +2011,7 @@ def _integrity(
         table_name: str
         if config is not None:
             import yaml as _yaml
-            from decoy_engine import PipelineConfig
+            from decoy_engine import parse_pipeline_config
 
             try:
                 raw = _yaml.safe_load(config.read_text(encoding="utf-8"))
@@ -2019,7 +2019,7 @@ def _integrity(
                 # The outer handler renders str(exc); a raw YAMLError there would
                 # echo the offending source line. Re-raise a pre-sanitized message.
                 raise ValueError(sanitize_yaml_error(exc)) from None
-            config_dict = PipelineConfig.model_validate(raw).model_dump()
+            config_dict = parse_pipeline_config(raw).model_dump()
             # One source/masked pair: anchor on the first declared table.
             tables = config_dict.get("tables") or []
             table_name = tables[0]["name"] if tables else masked.stem

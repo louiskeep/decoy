@@ -40,6 +40,7 @@ import typer
 import yaml
 
 from decoy._atomic import AtomicWriteError, WriteMode, describe, write_local_target
+from decoy.cli import gen
 from decoy.cli._yaml_errors import sanitize_yaml_error
 from decoy.cli.exit_codes import EXIT_RUNTIME, EXIT_USAGE
 from decoy.ui.output import OutputMode, emit_json, setup_output
@@ -261,6 +262,7 @@ def compile(
     # Extract per-column info from the config (strategies come from the user's
     # explicit declarations; compile_plan verifies them but does not change them).
     tables_info = _extract_tables_info(raw)
+    generation = gen.generation_info(raw)
     checks_passed = list(plan.plan_compile.checks_passed)
     checks_skipped = list(plan.plan_compile.checks_skipped)
     warnings_list = list(plan.plan_compile.warnings)
@@ -285,6 +287,8 @@ def compile(
             payload["ordering"] = [
                 {"table": n.table, "columns": list(n.columns)} for n in plan.ordering
             ]
+            if generation is not None:
+                payload["generation"] = generation
             payload["honesty_note"] = (
                 "Strategies are declared in the pipeline config by the user. "
                 "compile --explain verifies those declarations; it does not "
@@ -302,7 +306,7 @@ def compile(
     state.console.print()
 
     if explain:
-        _render_explain(state, tables_info, plan)
+        _render_explain(state, tables_info, plan, generation)
     else:
         _render_summary(state, checks_passed, checks_skipped, warnings_list)
 
@@ -389,6 +393,8 @@ def _extract_tables_info(raw: dict) -> list[dict]:
     for table in tables:
         if not isinstance(table, dict):
             continue
+        if table.get("generate_columns") and not table.get("columns"):
+            continue  # a generate table is shown by the generation section
         tname = table.get("name", "?")
         columns = table.get("columns") or []
         col_records = []
@@ -413,7 +419,7 @@ def _extract_tables_info(raw: dict) -> list[dict]:
     return result
 
 
-def _render_explain(state, tables_info: list[dict], plan) -> None:
+def _render_explain(state, tables_info: list[dict], plan, generation: dict | None) -> None:
     """Render the per-column explain view."""
     for table_info in tables_info:
         state.console.print(accent(f"Table: {table_info['name']}"))
@@ -430,6 +436,9 @@ def _render_explain(state, tables_info: list[dict], plan) -> None:
         state.console.print(table)
         state.console.print()
 
+    if generation is not None:
+        _render_generation(state, generation)
+
     # Execution ordering (if the planner produced one).
     if plan.ordering:
         state.console.print(accent("Execution order:"))
@@ -438,7 +447,7 @@ def _render_explain(state, tables_info: list[dict], plan) -> None:
             order_table.add_row(str(i), node.table, ", ".join(node.columns))
         state.console.print(order_table)
         state.console.print()
-    else:
+    elif generation is None:
         state.console.print(
             hint("Ordering:"),
             "tables execute in config declaration order (no FK dependencies detected).",
@@ -458,6 +467,29 @@ def _render_explain(state, tables_info: list[dict], plan) -> None:
         code("decoy scan"),
         "to inspect source data first.",
     )
+
+
+def _render_generation(state, generation: dict) -> None:
+    """The generate tables, their references and the order they are built in."""
+    for table_info in generation["tables"]:
+        state.console.print(
+            accent(f"Generate table: {table_info['name']}"), f"({table_info['rows']} rows)"
+        )
+        refs = {
+            (r["table"], r["column"]): f"{r['reference_table']}.{r['reference_column']}"
+            for r in generation["references"]
+        }
+        table = make_table("Column", "Type", "References")
+        for col in table_info["columns"]:
+            table.add_row(col["name"], col["type"], refs.get((table_info["name"], col["name"]), ""))
+        state.console.print(table)
+        state.console.print()
+    state.console.print(accent("Generation order:"), "parents are built first.")
+    order_table = make_table("Step", "Table", "Parents")
+    for i, node in enumerate(generation["order"], 1):
+        order_table.add_row(str(i), node["table"], ", ".join(node["parents"]) or "-")
+    state.console.print(order_table)
+    state.console.print()
 
 
 def _render_summary(

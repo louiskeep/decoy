@@ -22,6 +22,11 @@ git logs).
 
 ## 2026-11-11
 
+- **Engine** (`82d00f4e`, engine #477): GEN-TYPES part E2 (roadmap row 24q). Generate columns take an `output_type`. Not yet in a tagged engine release.
+- **CLI** (`475dfd30`, #192): QA-FK-FANOUT part C1 (roadmap row 24h, now closed). `decoy fit --fanout COLUMN` records per-key child counts in the snapshot, so a `reference` column with `distribution: fitted` keeps the source's fan-out shape. `--fanout` with `--epsilon` is refused before any read; success lines carry counts only.
+- **CLI** (`b13f58bb`, #190): GEN-STRICT part C2 (roadmap row 24k). A generated table too large for memory exits 5 at `decoy validate` and before `decoy run` writes anything. Engine D (#478) is the row's last slice.
+- **CLI** (`ed39bb7d`, #187): VALUE-FREE-ERRORS part A3 (roadmap row 24a). Every command that validates a pipeline config routes its errors through the engine's value-free parse: messages carry names and locations, never submitted values. B1 to B3 remain.
+- **CLI** (`aa05799d`, #189): GEN-CLI part C3 (roadmap row 24o, now closed). Help panels with a sentry, `validate compile --explain` for generate tables, and explain topics `generation`, `transforms`, `pipeline` and `yaml`.
 - **CLI** (`d0e8ba53`, #188): GEN-STRICT part C1 (roadmap row 24k). Tests hold `decoy validate` and `decoy run`'s pre-run gate to the engine's per-type generate-option checks: a typo, a negative or all-zero weight, an unknown faker type or locale, a bad formula and the other QA inputs fail `validate` with exit 1 and a code, and `run` stops at its gate before writing. No option value reaches the output. `decoy schema` closes every generate type.
 - **CLI** (`3800e0ed`, #186): GEN-COND-CAP part C1 (roadmap row 24w, now closed). `decoy fit --joint-max-cells N` (default 25, at most 1000; without `--include-values` a raised cap works only on pairs of plain categorical columns). `fit` prints one `warning:` line per truncated pair on stderr and `--json` gains `warnings`; the run summary names the generation fallback. Names and counts only.
 - **CLI** (`7e29f5fe`, #182): GEN-CLI part C2 (roadmap row 24o). `decoy run --rows N` previews a generate pipeline and writes nothing, `decoy init -o -` writes to stdout, and `decoy init <csv> --preset generate` writes a snapshot and config pair published together.

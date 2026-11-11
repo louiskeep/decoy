@@ -40,6 +40,8 @@ $ decoy [OPTIONS] COMMAND [ARGS]...
 * `--show-completion`: Show completion for the current shell, to copy it or customize the installation.
 * `--help`: Show this message and exit.
 
+Generate synthetic data: decoy fit source.csv, then decoy run pipeline.yaml, then decoy report fidelity <source.csv> <synthetic.csv> --generate. Details: decoy explain generation.
+
 **Commands**:
 
 * `run`: Run a decoy pipeline from a YAML config.
@@ -102,7 +104,7 @@ $ decoy run [OPTIONS] CONFIG
 * `--threads N`: Worker threads for the native and out-of-core routes, or auto. Overrides DECOY_THREADS and settings.json. Default auto: the usable CPUs. Ignored by --chunked.
 * `--vault PATH`: Write the token vault (encrypted source-to-masked map for vault: true columns) to this path. The vault plus the config re-identify every vaulted value: store them separately and never alongside the masked output. Needs the engine&#x27;s vault extra (cryptography). Not supported with --chunked.
 * `--key-label TEXT`: Stable namespace string for the --master-key generation key hierarchy (synthetic generation only, not masking). Required when --master-key is set. Pick something durable (e.g. &#x27;customers_q4&#x27;); changing it produces different generated output. CLI flag only -- PipelineConfig forbids unknown top-level keys, so there is no YAML equivalent.
-* `--evidence-out PATH`: Write a local evidence manifest (JSON) to this path after a successful run. The manifest records pipeline hash, input/output file fingerprints, run metadata, and row counts/timings/warnings where available (these are omitted for --chunked runs). It does NOT contain raw data values. Use `decoy report verify` to check the manifest against current files. See: decoy explain evidence (when available).
+* `--evidence-out PATH`: Write a local evidence manifest (JSON) to this path after a successful run. The manifest records pipeline hash, input/output file fingerprints, run metadata, and row counts/timings/warnings where available (these are omitted for --chunked runs). It does NOT contain raw data values. Use `decoy report verify` to check the manifest against current files. See: decoy report show.
 * `--notify TEXT`: Notify a channel after the run reaches its terminal state. Repeatable. Spec is &#x27;kind:target&#x27;: webhook:&lt;url&gt;, slack:&lt;url&gt;, email:&lt;address&gt;. Best-effort: a channel failure never changes the run&#x27;s exit code. Webhook signing key from DECOY_NOTIFY_WEBHOOK_SECRET (unsigned if unset); SMTP from DECOY_NOTIFY_SMTP_HOST/_PORT/_USER/_PASS/_FROM. Nothing is persisted to .decoy/workspace.json -- targets and secrets are flags/env only, never written to disk.
 * `--notify-on [success|failure|always]`: Which terminal outcome(s) to notify on: success, failure, or always.  [default: always]
 * `--native`: Require that a compiled native kernel actually executed. Refuses up front (no run) on --chunked or a generate/mixed config, or on an absent/broken decoy-engine-native companion. Refuses AFTER the run, before any output is written, if the job finished without positive compiled-kernel evidence (e.g. an FK table or a table masked only with passthrough/redact/truncate). Mutually exclusive with --no-native. See: decoy explain native.
@@ -230,7 +232,7 @@ config's global_settings.mask_secret_ref) must name the secret the mask
 run used; the vault file is a re-identification map, store it separately from the
 masked output.
 
-See also: decoy run, decoy explain strategies.
+See also: decoy run, decoy explain transforms.
 
 
 ## `decoy tokenize`
@@ -401,6 +403,7 @@ $ decoy fit [OPTIONS] SOURCE
 * `--dp-text TEXT`: Declare COL as a DP categorical text carrier (repeatable). Requires --epsilon.
 * `--numeric-bins INTEGER`: Bin count per DP numeric column (engine default if omitted). Requires --epsilon.
 * `--dp-allow-omit`: Allow the DP release to omit source columns nobody declared with --dp-number/--dp-flag/--dp-text (default: omission is a usage error listing the columns). Requires --epsilon.
+* `--fanout COLUMN`: Record how many rows each key of COLUMN has (repeatable): the child-side key of a foreign key. A generate reference column with `distribution: fitted` then gives each generated parent about as many children as the source parents had. Counts only, never a key value. Not supported with --epsilon.
 * `--include-values`: Keep real values of sensitive columns in the snapshot. The file then holds real data. Not supported with --epsilon.
 * `--json`: Emit a structured JSON result on stdout.
 * `-q, --quiet`: Suppress stdout. Exit code carries the result.
@@ -431,6 +434,12 @@ Examples:
     `fit.max_rows` setting in settings.json, default 1,000,000. A file at
     or under the limit uses every row. The summary and --json say how many
     rows were used out of how many.
+
+  decoy fit visits.csv --fanout patient_id
+    Record how many visits each patient_id has (counts only). A reference
+    column with `distribution: fitted` and this snapshot then gives each
+    generated patient a visit count drawn from that shape. Not supported
+    with --epsilon.
 
   decoy fit customers.csv --epsilon 1.0 --delta 1e-6 \
       --dp-number amount:0:500 --dp-text state --dp-flag is_active
@@ -540,8 +549,8 @@ See also: decoy scan, decoy run.
 
 Explain a Decoy concept in plain English.
 
-Built-in topics: modes, transforms, disguises, output, pipeline, yaml,
-storm, keys, vault, chunked, substrate, differential-privacy, security,
+Built-in topics: modes, transforms, generation, disguises, output, pipeline,
+yaml, storm, keys, vault, chunked, substrate, differential-privacy, security,
 completion. Run with no topic to see the full list.
 
 **Usage**:
@@ -1043,16 +1052,16 @@ Checks file existence, file readability, YAML syntax, schema validity,
 and (v1) the engine&#x27;s out-of-core-FK memory feasibility. The build-floor
 estimate is advisory: an over-budget prediction reports a WARNING with a
 recommended size, not a refusal (`--fail-on-warning` makes it exit
-nonzero). Only a fan-in impossibility exits EXIT_CAPACITY (see `decoy
-explain exit-codes`), distinct from a config problem (EXIT_USAGE). Reports
+nonzero). A fan-in impossibility, and generated tables whose output
+cannot fit the machine&#x27;s memory, exit EXIT_CAPACITY (see `decoy explain
+exit-codes`), distinct from a config problem (EXIT_USAGE). Reports
 findings as pass/warn/fail with structured output available via --json.
 
 This is a LOCAL check only. It does NOT check platform server-side
 conditions, most engine run-time constraints, data quality, vault
 access, secrets availability, or network connectivity. The capacity
-check covers the out-of-core-FK route only -- it does not cover the
-ingestion peak `decoy run` pays before the engine&#x27;s gate runs, or the
-generate path. Use `decoy validate` for pure schema-only checks; use
+check does not cover the ingestion peak `decoy run` pays before the
+engine&#x27;s gate runs. Use `decoy validate` for pure schema-only checks; use
 this command when you want to confirm source files are present and check
 the job&#x27;s capacity feasibility before starting a run.
 
@@ -1093,8 +1102,9 @@ What preflight checks:
   - YAML syntax and schema (same as `decoy validate`)
   - Source file existence and readability
   - Target overwrite risk (advisory warning)
-  - Out-of-core-FK memory capacity (v1; build-floor is advisory, only a fan-in
+  - Out-of-core-FK memory capacity (v1; build-floor is advisory, a fan-in
     impossibility exits EXIT_CAPACITY -- see: decoy explain exit-codes)
+  - Generated tables whose output cannot fit memory (exit EXIT_CAPACITY)
   - Native companion health, plus a STATIC (config-shape-only) native
     eligibility possibility -- see: decoy explain native
 
@@ -1102,8 +1112,8 @@ What preflight does NOT check:
   - Platform server-side conditions (secrets, RBAC, schedules, network targets)
   - Engine run-time constraints beyond out-of-core-FK capacity (row counts,
     provider limits)
-  - The ingestion peak `decoy run` pays before the engine's capacity gate runs,
-    or the generate path (both out of the v1 capacity check's scope)
+  - The ingestion peak `decoy run` pays before the engine's capacity gate runs
+    (out of the v1 capacity check's scope)
   - Data validity or masking quality
   - Vault or secrets accessibility
 
@@ -1810,4 +1820,3 @@ Examples:
 Exit codes: 0 clean; 1 invalid input or validation errors; 2 blocking warnings;
 3 runtime failure; 4 findings; 5 capacity refusal. See docs/ci-contracts.md.
 Decoy never uploads or comments; uploads belong to your CI workflow.
-

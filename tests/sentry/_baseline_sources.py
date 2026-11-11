@@ -191,6 +191,16 @@ SOURCES: tuple[Source, ...] = (
         ),
     ),
     Source(
+        "config-route-allow",
+        "tests/sentry/defects/test_config_error_routes.py",
+        InCode(
+            "tests/sentry/defects/test_config_error_routes.py",
+            "ALLOWLIST",
+            key=lambda e: f"{e[0]}::{e[1]}::{e[2]}#{e[3]}",
+            reason=lambda e: e[4],
+        ),
+    ),
+    Source(
         "root-help-omitted",
         _SURFACE,
         InCode(_SURFACE, "_ROOT_HELP_OMITTED", reason=lambda e: _ROOT_HELP_WHY, literal=True),

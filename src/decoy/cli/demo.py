@@ -208,13 +208,13 @@ def _run_v2_mask(pipeline_yaml: Path) -> None:
     """
     import yaml as _yaml
     from decoy_engine import (
-        PipelineConfig,
-        compile_plan,
-        get_default_registry,
-        select_execution_adapter,
+        __version__ as engine_version,
     )
     from decoy_engine import (
-        __version__ as engine_version,
+        compile_plan,
+        get_default_registry,
+        parse_pipeline_config,
+        select_execution_adapter,
     )
     from decoy_engine.profile import profile_source
     from decoy_engine.relationships import (
@@ -226,7 +226,7 @@ def _run_v2_mask(pipeline_yaml: Path) -> None:
 
     text = pipeline_yaml.read_text(encoding="utf-8")
     raw = _yaml.safe_load(text)
-    config_dict = PipelineConfig.model_validate(raw).model_dump()
+    config_dict = parse_pipeline_config(raw).model_dump()
 
     job_seed = (config_dict.get("global_settings") or {}).get("seed")
     profile = profile_source(

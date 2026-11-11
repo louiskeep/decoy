@@ -1,4 +1,4 @@
-"""Generation helpers for the CLI: the shared fit, the `run --rows` preview and the CSV scaffold.
+"""Generation helpers for the CLI: the shared fit, the `run --rows` preview, the CSV scaffold and the `explain generation` text.
 
 Commands import from this package, never from its `_` modules.
 """
@@ -21,6 +21,7 @@ from decoy.cli.gen._preview import (
     scale_row_counts,
 )
 from decoy.cli.gen._scaffold import scaffold_generate
+from decoy.cli.gen._topic import generation_body, generation_info
 
 __all__ = [
     "FIT_SAMPLE_SEED",
@@ -30,6 +31,8 @@ __all__ = [
     "ExactFit",
     "FitSourceError",
     "fit_exact_snapshot",
+    "generation_body",
+    "generation_info",
     "read_fit_csv",
     "refusal",
     "render_preview",
