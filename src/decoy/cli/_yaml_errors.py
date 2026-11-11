@@ -10,6 +10,13 @@ engine's own config loader uses. This name stays for the commands that import it
 
 from __future__ import annotations
 
-from decoy_engine.safe_output import yaml_error_text as sanitize_yaml_error
+
+def sanitize_yaml_error(exc: Exception) -> str:
+    """The leak-safe one-line YAML parse text. Imports the engine on call: the CI modules
+    import this file and must not load the engine."""
+    from decoy_engine.safe_output import yaml_error_text
+
+    return yaml_error_text(exc)
+
 
 __all__ = ["sanitize_yaml_error"]

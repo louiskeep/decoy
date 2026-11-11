@@ -17,8 +17,10 @@ Two layers:
   cell table complete: a command added later with a config parameter must get a cell or a
   reasoned exemption.
 
-Named limits: the AST layer sees the spellings it resolves (``from`` imports, module aliases);
-the route cells are what catches a spelling it does not.
+Named limits: the AST layer sees the spellings it resolves (``from`` imports, module aliases,
+an inline ``TypeAdapter(Model)``, ``Model(**raw)``, ``exc.json()`` on an except-bound name). It does
+not follow a name bound by assignment (``a = TypeAdapter(Model)``; ``a.validate_python(x)``). The
+route cells are what catches a spelling it does not.
 """
 
 from __future__ import annotations
@@ -45,18 +47,27 @@ SRC = ROOT / "src" / "decoy"
 _VALIDATE_METHODS = frozenset(
     {"model_validate", "model_validate_json", "model_validate_strings", "validate_python"}
 )
+_ADAPTER_METHODS = frozenset({"validate_python", "validate_json", "validate_strings"})
 _PYDANTIC_MODULES = frozenset({"pydantic", "pydantic_core"})
 
-# (path relative to src/decoy, reason). Shrink-only baseline: tests/sentry/baselines/config-route-allow.json.
-# Each entry must still hold a violation (checked below).
-ALLOWLIST: tuple[tuple[str, str], ...] = (
+# (path relative to src/decoy, enclosing function, violation kind, reason). Shrink-only baseline:
+# tests/sentry/baselines/config-route-allow.json, keyed "path::function::kind". Each entry must
+# still hold exactly that violation (checked below), so a second violation in the same file is
+# not covered by it.
+ALLOWLIST: tuple[tuple[str, str, str, str], ...] = (
     (
         "cli/io/_scan_set.py",
-        "validates the engine's scan-set read model, catches the error without reading it and raises a fixed message outside the handler; a scan file is not a pipeline config",
+        "_from_core",
+        "validate-engine",
+        "validates the engine's scan-set read model, catches the error without reading it and "
+        "raises a fixed message outside the handler; a scan file is not a pipeline config",
     ),
     (
         "ci/manifest.py",
-        "validates the CLI-owned CiManifest and reads only the error type, never a value or a message (FU-4 moves it onto validation_problems if its codes ever need a location)",
+        "<module>",
+        "pydantic-import",
+        "validates the CLI-owned CiManifest and reads only the error type, never a value or a "
+        "message (FU-4 moves it onto validation_problems if its codes ever need a location)",
     ),
 )
 
@@ -65,51 +76,117 @@ def _is_engine(module: str | None) -> bool:
     return bool(module) and (module == "decoy_engine" or module.startswith("decoy_engine."))
 
 
-def violations(source: str) -> list[tuple[int, str]]:
-    """The raw-ValidationError routes in one module's source, as ``(line, what)``."""
-    tree = ast.parse(source)
-    engine_names: set[str] = set()  # bound by `from decoy_engine... import X [as Y]`
-    engine_modules: set[str] = set()  # bound by `import decoy_engine... [as Z]`
-    pydantic_modules: set[str] = set()
-    found: list[tuple[int, str]] = []
-    for node in ast.walk(tree):
-        if isinstance(node, ast.ImportFrom) and node.level == 0:
+class _Walk(ast.NodeVisitor):
+    """Collects ``(line, enclosing function, kind)`` for each raw-ValidationError route.
+
+    Named limit: a name bound by assignment is not followed, so ``a = TypeAdapter(Model)`` then
+    ``a.validate_python(x)``, or ``m = Model`` then ``m.model_validate(x)``, is not seen here. The
+    route cells below, which run each command, are what catch that spelling.
+    """
+
+    def __init__(self) -> None:
+        self.engine_names: set[str] = set()
+        self.engine_modules: set[str] = set()
+        self.pydantic_modules: set[str] = set()
+        self.adapter_names: set[str] = set()
+        self.handler_names: set[str] = set()
+        self.found: list[tuple[int, str, str]] = []
+        self._stack: list[str] = []
+
+    def _where(self) -> str:
+        return self._stack[-1] if self._stack else "<module>"
+
+    def _hit(self, node: ast.AST, kind: str) -> None:
+        self.found.append((getattr(node, "lineno", 0), self._where(), kind))
+
+    def _function(self, node: ast.AST, name: str) -> None:
+        self._stack.append(name)
+        self.generic_visit(node)
+        self._stack.pop()
+
+    def visit_FunctionDef(self, node: ast.FunctionDef) -> None:
+        self._function(node, node.name)
+
+    visit_AsyncFunctionDef = visit_FunctionDef  # type: ignore[assignment]
+
+    def visit_ImportFrom(self, node: ast.ImportFrom) -> None:
+        if node.level == 0:
             for alias in node.names:
                 bound = alias.asname or alias.name
                 if _is_engine(node.module):
-                    engine_names.add(bound)
+                    self.engine_names.add(bound)
                 if node.module in _PYDANTIC_MODULES and alias.name == "ValidationError":
-                    found.append((node.lineno, f"imports {node.module}.ValidationError"))
-        elif isinstance(node, ast.Import):
-            for alias in node.names:
-                if _is_engine(alias.name):
-                    engine_modules.add(alias.asname or alias.name.split(".")[0])
-                if alias.name in _PYDANTIC_MODULES:
-                    pydantic_modules.add(alias.asname or alias.name)
+                    self._hit(node, "pydantic-import")
+                if node.module in _PYDANTIC_MODULES and alias.name == "TypeAdapter":
+                    self.adapter_names.add(bound)
 
-    def root(expr: ast.expr) -> str | None:
+    def visit_Import(self, node: ast.Import) -> None:
+        for alias in node.names:
+            if _is_engine(alias.name):
+                self.engine_modules.add(alias.asname or alias.name.split(".")[0])
+            if alias.name in _PYDANTIC_MODULES:
+                self.pydantic_modules.add(alias.asname or alias.name)
+
+    def visit_ExceptHandler(self, node: ast.ExceptHandler) -> None:
+        if node.name:
+            self.handler_names.add(node.name)
+        self.generic_visit(node)
+
+    @staticmethod
+    def _root(expr: ast.expr) -> str | None:
         while isinstance(expr, (ast.Attribute, ast.Call, ast.Subscript)):
-            expr = expr.value if not isinstance(expr, ast.Call) else expr.func
+            expr = expr.func if isinstance(expr, ast.Call) else expr.value
         return expr.id if isinstance(expr, ast.Name) else None
 
-    for node in ast.walk(tree):
-        if isinstance(node, ast.Attribute):
-            if node.attr == "ValidationError" and root(node) in pydantic_modules:
-                found.append((node.lineno, "uses pydantic ValidationError"))
-        if not isinstance(node, ast.Call) or not isinstance(node.func, ast.Attribute):
-            continue
-        attr = node.func.attr
-        if attr == "errors":
-            found.append((node.lineno, "calls .errors()"))
-        elif attr in _VALIDATE_METHODS:
-            base = root(node.func.value)
-            if base in engine_names or base in engine_modules:
-                found.append((node.lineno, f"{attr} on an engine model"))
-    return sorted(found)
+    def _engine_root(self, expr: ast.expr) -> bool:
+        base = self._root(expr)
+        return base in self.engine_names or base in self.engine_modules
+
+    def visit_Attribute(self, node: ast.Attribute) -> None:
+        if node.attr == "ValidationError" and self._root(node) in self.pydantic_modules:
+            self._hit(node, "pydantic-attr")
+        self.generic_visit(node)
+
+    def visit_Call(self, node: ast.Call) -> None:
+        func = node.func
+        if isinstance(func, ast.Attribute):
+            if func.attr == "errors":
+                self._hit(node, "errors-call")
+            elif func.attr == "json" and self._root(func.value) in self.handler_names:
+                self._hit(node, "json-call")
+            elif func.attr in _VALIDATE_METHODS and self._engine_root(func.value):
+                self._hit(node, "validate-engine")
+            elif func.attr in _ADAPTER_METHODS and self._adapter_of_engine(func.value):
+                self._hit(node, "adapter-validate")
+        elif (
+            isinstance(func, ast.Name)
+            and func.id in self.engine_names
+            and any(kw.arg is None for kw in node.keywords)
+        ):
+            self._hit(node, "engine-instantiate")
+        self.generic_visit(node)
+
+    def _adapter_of_engine(self, expr: ast.expr) -> bool:
+        """``TypeAdapter(<something from decoy_engine>)`` used inline."""
+        if not (isinstance(expr, ast.Call) and self._root(expr.func) in self.adapter_names):
+            return False
+        return any(
+            self._engine_root(inner)
+            for arg in expr.args
+            for inner in ast.walk(arg)
+            if isinstance(inner, (ast.Name, ast.Attribute))
+        )
 
 
-def _walk_src() -> dict[str, list[tuple[int, str]]]:
-    out: dict[str, list[tuple[int, str]]] = {}
+def violations(source: str) -> list[tuple[int, str, str]]:
+    """The raw-ValidationError routes in one module's source, as ``(line, function, kind)``."""
+    walker = _Walk()
+    walker.visit(ast.parse(source))
+    return sorted(walker.found)
+
+
+def _walk_src() -> dict[str, list[tuple[int, str, str]]]:
+    out: dict[str, list[tuple[int, str, str]]] = {}
     for path in sorted(SRC.rglob("*.py")):
         found = violations(path.read_text(encoding="utf-8"))
         if found:
@@ -117,46 +194,94 @@ def _walk_src() -> dict[str, list[tuple[int, str]]]:
     return out
 
 
+def _allowed() -> set[tuple[str, str, str]]:
+    return {(path, function, kind) for path, function, kind, _ in ALLOWLIST}
+
+
 def test_no_raw_validation_error_route_in_src() -> None:
-    offenders = {p: v for p, v in _walk_src().items() if p not in {a for a, _ in ALLOWLIST}}
+    allowed = _allowed()
+    offenders = [
+        f"  {path}:{line} in {function}: {kind}"
+        for path, found in _walk_src().items()
+        for line, function, kind in found
+        if (path, function, kind) not in allowed
+    ]
     assert not offenders, (
         "These sites validate an engine model or read a Pydantic ValidationError themselves; "
         "call decoy_engine.parse_pipeline_config and render PipelineConfigError.problems:\n"
-        + "\n".join(f"  {p}:{ln} {what}" for p, found in offenders.items() for ln, what in found)
+        + "\n".join(offenders)
     )
 
 
 def test_allowlist_entries_still_hold_a_violation() -> None:
-    walked = _walk_src()
-    stale = [p for p, _ in ALLOWLIST if p not in walked]
+    held = {
+        (path, function, kind) for path, found in _walk_src().items() for _, function, kind in found
+    }
+    stale = sorted(_allowed() - held)
     assert not stale, f"allowlist entries with no violation left, remove them: {stale}"
 
 
+_ENGINE = "from decoy_engine import PipelineConfig\n"
+_ADAPTER = "from pydantic import TypeAdapter\n" + _ENGINE
+
+
 @pytest.mark.parametrize(
-    ("label", "source"),
+    ("label", "source", "kind"),
     [
-        (
-            "from-import",
-            "from decoy_engine import PipelineConfig\nPipelineConfig.model_validate(x)",
-        ),
+        ("from-import", _ENGINE + "PipelineConfig.model_validate(x)", "validate-engine"),
         (
             "engine submodule import",
             "from decoy_engine.config import TableConfig as T\nT.model_validate(x)",
+            "validate-engine",
         ),
-        ("module alias", "import decoy_engine as de\nde.PipelineConfig.model_validate(x)"),
         (
-            "adapter",
-            "from decoy_engine import PipelineConfig\nTypeAdapter(PipelineConfig).validate_python(x)\n"
-            "PipelineConfig.model_validate_json(x)",
+            "module alias",
+            "import decoy_engine as de\nde.PipelineConfig.model_validate(x)",
+            "validate-engine",
         ),
-        ("pydantic import", "from pydantic import ValidationError as V"),
-        ("pydantic_core import", "from pydantic_core import ValidationError"),
-        ("pydantic attribute", "import pydantic\nexcept_ = pydantic.ValidationError"),
-        ("errors loop", "for e in exc.errors():\n    pass"),
+        (
+            "model_validate_json",
+            _ENGINE + "PipelineConfig.model_validate_json(x)",
+            "validate-engine",
+        ),
+        (
+            "adapter validate_python",
+            _ADAPTER + "TypeAdapter(PipelineConfig).validate_python(x)",
+            "adapter-validate",
+        ),
+        (
+            "adapter validate_json",
+            _ADAPTER + "TypeAdapter(PipelineConfig).validate_json(x)",
+            "adapter-validate",
+        ),
+        ("instantiate with **raw", _ENGINE + "PipelineConfig(**raw)", "engine-instantiate"),
+        (
+            "exception json()",
+            "try:\n    pass\nexcept Exception as exc:\n    out = exc.json()",
+            "json-call",
+        ),
+        ("pydantic import", "from pydantic import ValidationError as V", "pydantic-import"),
+        (
+            "pydantic_core import",
+            "from pydantic_core import ValidationError",
+            "pydantic-import",
+        ),
+        (
+            "pydantic attribute",
+            "import pydantic\nexcept_ = pydantic.ValidationError",
+            "pydantic-attr",
+        ),
+        ("errors loop", "for e in exc.errors():\n    pass", "errors-call"),
     ],
 )
-def test_walk_sees_each_planted_bypass(label: str, source: str) -> None:
-    assert violations(textwrap.dedent(source)), f"the walk missed the planted {label} bypass"
+def test_walk_sees_each_planted_bypass(label: str, source: str, kind: str) -> None:
+    kinds = {k for _, _, k in violations(source)}
+    assert kinds == {kind}, f"the walk saw {sorted(kinds)} for the planted {label} bypass"
+
+
+def test_walk_names_the_enclosing_function() -> None:
+    source = _ENGINE + "def f(x):\n    return PipelineConfig.model_validate(x)\n"
+    assert [(fn, kind) for _, fn, kind in violations(source)] == [("f", "validate-engine")]
 
 
 @pytest.mark.parametrize(
@@ -246,18 +371,13 @@ CELLS: dict[str, Callable[[str, str, str], list[str]]] = {
 MARKER_ONLY: dict[str, str] = {
     "validate compile": "runs the compile layer only; schema errors come from `validate config`",
     "validate compile --json": "same",
-    "unmask": "reads the config for column strategies and stops first on the missing mask secret",
-    "report vault --config": "stops first on the missing mask secret",
+    "unmask": "smoke only: reads strategies from the raw YAML and never runs the schema",
+    "report vault --config": "smoke only: reads the seed from the raw YAML and never runs the schema",
 }
 # Commands that print only the first problem rather than the full list.
 FIRST_ONLY = frozenset({"subset", "subset --json", "run", "run --json", "validate config"})
 # Exit codes that differ from EXIT_USAGE and did before this change (A3 changes text, not codes).
 EXIT_OVERRIDE = {"report integrity --config": EXIT_RUNTIME}
-
-# Commands that take a config parameter but cannot be fed a user config on a marker route.
-PACKAGED_CONFIG_ONLY: dict[str, str] = {
-    "demo": "validates the packaged demo pipeline, which takes no user config",
-}
 
 _CONFIG_PARAMS = frozenset({"config", "pipeline_config"})
 
@@ -286,11 +406,10 @@ def _covered(label: str) -> str:
 
 
 def test_every_config_taking_command_has_a_cell_or_an_exemption() -> None:
-    covered = {_covered(label) for label in CELLS} | set(PACKAGED_CONFIG_ONLY)
+    covered = {_covered(label) for label in CELLS}
     missing = sorted(_config_taking_commands() - covered)
     assert not missing, (
-        f"commands with a config parameter and no route cell: {missing}. Add a cell to CELLS, "
-        "or a PACKAGED_CONFIG_ONLY entry with the reason."
+        f"commands with a config parameter and no route cell: {missing}. Add a cell to CELLS."
     )
 
 
