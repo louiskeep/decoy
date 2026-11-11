@@ -40,7 +40,7 @@ Use `--library` with a shorter path.
     LAYOUT              {"layout":1}
     objects/ab/cdef...json   one immutable record per file, named by its id
     refs/<kind>/<name>  one line: a record id
-    index.sqlite        the library lock (the index arrives later); not committed
+    index.sqlite        the index (a rebuildable cache) and the library lock; not committed
     tmp/                temp files for atomic writes
 ```
 
@@ -90,7 +90,24 @@ taken at all (the file cannot be opened), the update fails with `library_lock_un
 Windows, a ref file another program holds open is retried for about a second, then
 `library_busy`. Record writes never take the lock.
 
-The newest record of a kind is computed, not stored as a ref; that arrives with the index.
+The newest record of a kind (`latest`) is computed from the index, not stored as a ref: the
+record with the largest creation time (then id), optionally for one pipeline or table.
+
+## The index
+
+`library/index.sqlite` lists every record's kind, time, pipeline, tables, status and links, so
+listing never opens a record file. It is a cache: the object files are the truth.
+
+- Every open compares the index with the object file names (no file is read) and catches up:
+  records added by hand or by `git pull`, records whose writer crashed before indexing them, and
+  files deleted by hand. A missing, corrupt or older-version index is rebuilt from the files.
+- A record of a kind this Decoy does not know is indexed and listed as unknown; it never stops
+  the listing.
+- If the index cannot be locked, or the library is on a network filesystem (NFS, SMB/CIFS, AFS,
+  9P or FUSE on Linux; `nfs`, `smbfs`, `afpfs` or `webdav` on macOS; a UNC path or network
+  drive on Windows), the library runs in degraded mode: writing records still works, moving a
+  ref fails with `library_lock_unavailable`, and listings read the record files. A synced folder
+  (OneDrive, Dropbox) looks local and is not detected; use it from one machine at a time.
 
 ## Retention policy
 
