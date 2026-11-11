@@ -202,6 +202,8 @@ fingerprint.
 | E1 | engine | the release branch for `N` | XS (one row, one test tuple) | T1: `tests/unit/generation/test_dp_prior_release_rows.py`, `tests/unit/quality/` DP provenance tests | the daily engine release |
 | C1 | CLI | `chore/certified-pin-cves-c1` | S (four pins, header, 15-file repin, one new test file) | T1: `tests/unit/test_certified_pins.py`, `test_pyproject_metadata.py`, `test_sbom_script.py`; CI certified-profile job green on the exact head; M1 to M4. Full suite per the testing.md trigger (dependency lock and version pin) | E1 released as tag `vN` |
 
+**When to build.** Feature group: fit, fidelity and differential privacy (engine QA checklist section 13). Owner rule 2026-11-11: QA and its fixes run only on a V1-complete group, so E1 and C1 are built at that group's QA pass, and before the first release cut (row 93).
+
 `F` cannot be proven before C1's CI job runs: the DP certified row covers only Linux x86-64 CPython
 3.10.20 glibc, so the Mac cannot check it. E1 computes `F` from the exact set with
 `compute_lock_fingerprint`; C1's job proves it with a real install.
