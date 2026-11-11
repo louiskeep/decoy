@@ -240,8 +240,9 @@ def _run_compile_layer(raw: dict[str, Any], config_dir: Path) -> list[GateFindin
         )
         return findings
 
-    profile = empty_profile_for_no_profile(raw, engine_version)
     try:
+        # Inside the try: an unequal composite relationship raises `ValueError` here.
+        profile = empty_profile_for_no_profile(raw, engine_version)
         plan = compile_plan(
             raw,
             profile,
@@ -273,7 +274,10 @@ def _run_compile_layer(raw: dict[str, Any], config_dir: Path) -> list[GateFindin
 
 
 def _run_preflight_layer(
-    raw: dict[str, Any], config: Path, route: GateRoute
+    raw: dict[str, Any],
+    config: Path,
+    route: GateRoute,
+    compile_errors: frozenset[tuple[str, str | None]] = frozenset(),
 ) -> tuple[list[GateFinding], bool]:
     """The preflight layer: source/file readiness, out-of-core-FK capacity, and native
     companion/eligibility -- the check functions `validate preflight` runs, reused as-is
@@ -282,9 +286,14 @@ def _run_preflight_layer(
     Returns `(findings, capacity_insufficient)`. The capacity fan-in impossibility sets
     `capacity_insufficient` (the EXIT_CAPACITY precedence), except on the CHUNKED route,
     which never takes the route that check prices: there it is a warning.
+
+    A `capacity.plan_uncompilable` FAIL whose (code, location) is in `compile_errors` repeats
+    an error the compile layer already reports, so it becomes a not-checked warning. Matching
+    the location too keeps a same-code failure at another config path.
     """
     from decoy.cli.preflight import (
         CAPACITY_CHECK,
+        PLAN_UNCOMPILABLE_CHECK,
         _check_capacity,
         _check_native,
         _check_source_files,
@@ -302,6 +311,15 @@ def _run_preflight_layer(
                 c.status = "warn"
                 c.message = _CHUNKED_CAPACITY_NOTE + c.message.removeprefix("INSUFFICIENT -- ")
         acc.capacity_insufficient = False
+    for c in acc.checks:
+        if (
+            c.name == PLAN_UNCOMPILABLE_CHECK
+            and c.status == "fail"
+            and (c.code, c.location or None) in compile_errors
+        ):
+            c.status = "warn"
+            c.code = None
+            c.message = "Capacity not checked: the plan does not compile (see the compile error)."
     return _findings_from_checks(acc, "preflight"), acc.capacity_insufficient
 
 
@@ -314,7 +332,12 @@ def run_gate_on_config(
     if config is None:
         return GateResult(config_findings, frozenset({"config"}), False)
     compile_findings = _run_compile_layer(raw, config_path.parent)
-    preflight_findings, capacity_insufficient = _run_preflight_layer(raw, config_path, route)
+    compile_errors = frozenset(
+        (f.code, f.location) for f in compile_findings if f.severity == "error"
+    )
+    preflight_findings, capacity_insufficient = _run_preflight_layer(
+        raw, config_path, route, compile_errors
+    )
     return GateResult(
         config_findings + compile_findings + preflight_findings,
         frozenset({"config", "compile", "preflight"}),
