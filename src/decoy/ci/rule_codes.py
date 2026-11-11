@@ -148,6 +148,7 @@ _PYDANTIC_ERROR_TYPES: frozenset[str] = frozenset(
         "set_type",
         "string_not_ascii",
         "string_pattern_mismatch",
+        "string_sub_type",
         "string_too_long",
         "string_too_short",
         "string_type",

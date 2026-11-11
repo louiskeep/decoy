@@ -7,6 +7,9 @@
   },
   "ci/manifest.py::<module>::pydantic-import": {
    "reason": "validates the CLI-owned CiManifest and reads only the error type, never a value or a message (FU-4 moves it onto validation_problems if its codes ever need a location)"
+  },
+  "ci/manifest.py::load_manifest::errors-call": {
+   "reason": "reads only the error type of the CLI-owned CiManifest, never a value or a message (FU-4 moves it onto validation_problems if its codes ever need a location)"
   }
  }
 }

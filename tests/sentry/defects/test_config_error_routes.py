@@ -26,7 +26,6 @@ route cells are what catches a spelling it does not.
 from __future__ import annotations
 
 import ast
-import textwrap
 from collections.abc import Callable
 from pathlib import Path
 
@@ -64,6 +63,13 @@ ALLOWLIST: tuple[tuple[str, str, str, str], ...] = (
     ),
     (
         "ci/manifest.py",
+        "load_manifest",
+        "errors-call",
+        "reads only the error type of the CLI-owned CiManifest, never a value or a message "
+        "(FU-4 moves it onto validation_problems if its codes ever need a location)",
+    ),
+    (
+        "ci/manifest.py",
         "<module>",
         "pydantic-import",
         "validates the CLI-owned CiManifest and reads only the error type, never a value or a "
@@ -76,6 +82,20 @@ def _is_engine(module: str | None) -> bool:
     return bool(module) and (module == "decoy_engine" or module.startswith("decoy_engine."))
 
 
+def _is_model(module: str | None, name: str) -> bool:
+    """Whether ``module.name`` is a Pydantic model (``Model(**raw)`` validates; a plain class
+    called with ``**kwargs`` does not)."""
+    import importlib
+
+    from pydantic import BaseModel
+
+    try:
+        obj = getattr(importlib.import_module(module or ""), name)
+    except (ImportError, AttributeError):
+        return False
+    return isinstance(obj, type) and issubclass(obj, BaseModel)
+
+
 class _Walk(ast.NodeVisitor):
     """Collects ``(line, enclosing function, kind)`` for each raw-ValidationError route.
 
@@ -86,6 +106,7 @@ class _Walk(ast.NodeVisitor):
 
     def __init__(self) -> None:
         self.engine_names: set[str] = set()
+        self.engine_models: set[str] = set()  # the engine names that are Pydantic models
         self.engine_modules: set[str] = set()
         self.pydantic_modules: set[str] = set()
         self.adapter_names: set[str] = set()
@@ -115,6 +136,8 @@ class _Walk(ast.NodeVisitor):
                 bound = alias.asname or alias.name
                 if _is_engine(node.module):
                     self.engine_names.add(bound)
+                    if _is_model(node.module, alias.name):
+                        self.engine_models.add(bound)
                 if node.module in _PYDANTIC_MODULES and alias.name == "ValidationError":
                     self._hit(node, "pydantic-import")
                 if node.module in _PYDANTIC_MODULES and alias.name == "TypeAdapter":
@@ -160,7 +183,7 @@ class _Walk(ast.NodeVisitor):
                 self._hit(node, "adapter-validate")
         elif (
             isinstance(func, ast.Name)
-            and func.id in self.engine_names
+            and func.id in self.engine_models
             and any(kw.arg is None for kw in node.keywords)
         ):
             self._hit(node, "engine-instantiate")
