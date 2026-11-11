@@ -44,6 +44,7 @@ def write_evidence(ctx: RunContext) -> None:
             run_id=ctx.invocation_id,
             place_target=ctx.layout.place_target if ctx.layout is not None else None,
             project_root=_marked_project_root(ctx.config),
+            evidence_path=ctx.evidence_out,
             timings=ctx._ev_timings,
             engine_warnings=ctx._ev_engine_warnings,
         )

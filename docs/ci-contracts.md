@@ -81,10 +81,20 @@ project whose marker is above the manifest file, so it passes from any folder, a
 uses `DECOY_PROJECT` or the working directory. With no marker above it the check is refused
 (`ci.evidence_unreadable`). A manifest without `path_base` keeps the old rule: paths as
 recorded, relative ones from the working directory, so run that check from the repository
-root. A manifest whose `schema_version` is not exactly `cli-local-1`, whose `path_base` is
-anything but absent or `"project"`, or whose paths and fingerprints are not strings is refused
-(`ci.evidence_unreadable`); unknown extra keys are allowed. A recorded path that exists but is
-not a regular file is treated as missing and never read. An output path that cannot be
+root. Such a manifest also records `project_manifest`, the place it was written in its
+project; the check is refused (`ci.evidence_unreadable`) when the manifest file is not at that
+place under the project found above it, so evidence copied in from another project is never
+read against this one. A manifest written outside its project records null there and cannot
+pass `decoy ci check`. A project-relative path with a `..` part, or one that resolves outside
+the project root (a symlink out), is refused the same way before any file is hashed. Every
+reader (`ci check` and the `decoy report` commands) parses the file through one strict reader
+with the schema the writer checks its own output against: the top level must be a JSON object,
+`schema_version` exactly `cli-local-1`, `path_base` absent or `"project"`, `pipeline_path`,
+`pipeline_fingerprint` and `manifest_hash` non-empty strings, both fingerprint groups objects
+of entries with a non-empty `path` and a string or null `fingerprint`, and the other known
+fields of their recorded type; anything else, or `NaN`/`Infinity`, is refused
+(`ci.evidence_unreadable`) naming the field, never its value. Unknown extra keys are allowed. A
+recorded path that exists but is not a regular file is treated as missing and never read. An output path that cannot be
 resolved safely (a symlink loop, an over-long name, a filesystem error) is refused with one
 fixed line and exit 1; the path is never echoed. `decoy ci` never writes or touches the
 engine's `logs/decoy_engine.log`: the engine's file logging is contained for the duration of

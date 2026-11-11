@@ -5,6 +5,10 @@ In a project with a `decoy.yaml` marker the manifest records paths relative to t
 `verify_manifest_issues`, from the typed `--project` or the marker above the manifest file,
 never from the working directory or `DECOY_PROJECT`. A manifest without `path_base` keeps the
 old working-directory rule, and a malformed one is refused.
+
+The reader also refuses a project-relative path that leaves the project, evidence that is not
+where its run wrote it in the project it reads from (`project_manifest`), and any manifest the
+writer's schema does not allow (a null required field, a top-level list), without crashing.
 """
 
 from __future__ import annotations
@@ -19,6 +23,7 @@ import yaml
 from typer.testing import CliRunner
 
 from decoy.__main__ import app
+from decoy.cli import evidence as evidence_module
 from decoy.cli.evidence import (
     ManifestError,
     compute_manifest_hash,
@@ -96,6 +101,7 @@ def test_a_project_run_records_project_relative_paths_of_the_files_it_used(
     manifest = _run(cfg, root / "ev.json", monkeypatch, elsewhere)
     real = root.resolve()
     assert manifest["path_base"] == "project"
+    assert manifest["project_manifest"] == "ev.json"
     assert manifest["pipeline_path"] == "pipelines/orders/pipeline.yaml"
     source = manifest["input_fingerprints"]["a"]
     assert source["path"] == "pipelines/orders/in.csv"
@@ -137,6 +143,7 @@ def test_report_verify_reads_a_manifest_outside_the_project_with_typed_project(
     evidence = tmp_path / "ev.json"
     _run(_pipeline(root), evidence, monkeypatch, root)
     monkeypatch.chdir(elsewhere)
+    assert json.loads(evidence.read_text(encoding="utf-8"))["project_manifest"] is None
     refused = _verify(evidence)
     assert refused.exit_code == 1
     assert "--project" in json.loads(refused.output)["error"]
@@ -295,3 +302,238 @@ def test_ci_check_refuses_a_project_manifest_with_no_marker_above_it(tmp_path: P
     assert proc.returncode == 1, proc.stderr[-2000:]
     (check,) = [c for c in parse_stdout(proc)["checks"] if c["kind"] == "evidence"]
     assert check["reason_code"] == "ci.evidence_unreadable"
+
+
+# --- V1-1: a project-relative path never leaves the project -------------------------------
+
+
+def test_a_source_reached_through_dotdot_is_recorded_absolute(
+    tmp_path: Path, monkeypatch, elsewhere: Path
+) -> None:
+    root = _project(tmp_path / "proj")
+    cfg = _pipeline(root)
+    (cfg.parent / "sub").mkdir()
+    pd.DataFrame({"email": ["c@example.invalid"]}).to_csv(tmp_path / "outside.csv", index=False)
+    raw = yaml.safe_load(cfg.read_text(encoding="utf-8"))
+    raw["sources"]["a"]["path"] = "sub/../../../../outside.csv"
+    cfg.write_text(yaml.safe_dump(raw), encoding="utf-8")
+    manifest = _run(cfg, root / "ev.json", monkeypatch, elsewhere)
+    source = manifest["input_fingerprints"]["a"]
+    assert source["path"] == str((tmp_path / "outside.csv").resolve())
+    assert ".." not in Path(source["path"]).parts
+    assert _verify(root / "ev.json").exit_code == 0
+
+
+def _escape(manifest: dict, evidence: Path, path: str, target: Path) -> None:
+    """Point the input entry at `path`, fingerprinted from `target`, with a valid hash."""
+    target.write_text("outside\n", encoding="utf-8")
+    manifest["input_fingerprints"]["a"]["path"] = path
+    manifest["input_fingerprints"]["a"]["fingerprint"] = hash_file(target)
+    evidence.write_text(json.dumps(_rehash(manifest)), encoding="utf-8")
+
+
+@pytest.mark.parametrize("path", ["../outside.txt", "pipelines/../../outside.txt"])
+def test_a_rehashed_dotdot_path_is_refused(tmp_path: Path, monkeypatch, path: str) -> None:
+    manifest, evidence = _valid(tmp_path, monkeypatch)
+    _escape(manifest, evidence, path, tmp_path / "outside.txt")
+    with pytest.raises(ManifestError) as caught:
+        verify_manifest_issues(manifest, manifest_file=evidence)
+    assert caught.value.kind == "path_outside_project"
+    assert "`input_fingerprints.a.path`" in caught.value.message
+    assert "outside.txt" not in caught.value.message
+    result = _verify(evidence)
+    assert result.exit_code == 1
+    assert "inside the project" in json.loads(result.output)["error"]
+
+
+def test_a_path_through_a_symlink_out_of_the_project_is_refused(
+    tmp_path: Path, monkeypatch
+) -> None:
+    manifest, evidence = _valid(tmp_path, monkeypatch)
+    outside = tmp_path / "outdir"
+    outside.mkdir()
+    (evidence.parent / "link").symlink_to(outside, target_is_directory=True)
+    _escape(manifest, evidence, "link/outside.txt", outside / "outside.txt")
+    with pytest.raises(ManifestError) as caught:
+        verify_manifest_issues(manifest, manifest_file=evidence)
+    assert caught.value.kind == "path_outside_project"
+
+
+# --- V1-2: evidence binds to the project and place it was written -------------------------
+
+
+def test_evidence_for_one_project_is_refused_under_another(
+    tmp_path: Path, monkeypatch, elsewhere: Path
+) -> None:
+    a = _project(tmp_path / "a")
+    b = _project(tmp_path / "b")
+    _pipeline(b)
+    evidence = a / "ev.json"
+    _run(_pipeline(a), evidence, monkeypatch, a)
+    moved = b / "evidence" / "ev.json"
+    moved.parent.mkdir()
+    moved.write_bytes(evidence.read_bytes())
+    monkeypatch.chdir(elsewhere)
+    for args in ((moved,), (moved, "--project", str(b)), (evidence, "--project", str(b))):
+        result = _verify(*map(str, args))
+        assert result.exit_code == 1, result.output
+        assert "where the run wrote it" in json.loads(result.output)["error"]
+    manifest = json.loads(moved.read_text(encoding="utf-8"))
+    with pytest.raises(ManifestError) as caught:
+        verify_manifest_issues(manifest, manifest_file=moved)
+    assert caught.value.kind == "project_mismatch"
+    assert _verify(str(evidence), "--project", str(a)).exit_code == 0
+
+
+def test_evidence_moved_inside_its_project_is_refused(tmp_path: Path, monkeypatch) -> None:
+    manifest, evidence = _valid(tmp_path, monkeypatch)
+    moved = evidence.parent / "pipelines" / "ev.json"
+    moved.write_bytes(evidence.read_bytes())
+    with pytest.raises(ManifestError) as caught:
+        verify_manifest_issues(manifest, manifest_file=moved)
+    assert caught.value.kind == "project_mismatch"
+
+
+def test_a_copy_at_the_same_place_in_another_project_reports_its_files(
+    tmp_path: Path, monkeypatch, elsewhere: Path
+) -> None:
+    """The documented limit: the place matches, so the copy binds to the other project, and
+    its fingerprints then report that project's files instead of passing."""
+    a = _project(tmp_path / "a")
+    b = _project(tmp_path / "b")
+    _pipeline(b)
+    _run(_pipeline(a), a / "ev.json", monkeypatch, a)
+    (b / "ev.json").write_bytes((a / "ev.json").read_bytes())
+    monkeypatch.chdir(elsewhere)
+    result = _verify(str(b / "ev.json"))
+    assert result.exit_code == 4, result.output
+    assert json.loads(result.output)["issue_count"] >= 1
+
+
+def test_evidence_written_outside_its_project_never_binds_by_the_walk(
+    tmp_path: Path, monkeypatch, elsewhere: Path
+) -> None:
+    a = _project(tmp_path / "a")
+    b = _project(tmp_path / "b")
+    _pipeline(b)
+    _run(_pipeline(a), tmp_path / "ev.json", monkeypatch, a)
+    placed = b / "ev.json"
+    placed.write_bytes((tmp_path / "ev.json").read_bytes())
+    monkeypatch.chdir(elsewhere)
+    result = _verify(str(placed))
+    assert result.exit_code == 1, result.output
+    assert "--project" in json.loads(result.output)["error"]
+
+
+def test_ci_check_refuses_evidence_copied_from_another_project(tmp_path: Path) -> None:
+    repo = _ci_repo(tmp_path)
+    other = _project(repo / "other")
+    _pipeline(other)
+    (other / "build").mkdir()
+    copied = other / "build" / "copied.json"
+    copied.write_bytes((repo / "proj/build/evidence.json").read_bytes())
+    evidence = "  evidence:\n    - {id: e, manifest: other/build/copied.json}\n"
+    pipelines = "  - id: primary\n    path: proj/pipelines/orders/pipeline.yaml\n"
+    text = ci_manifest(validation=False, extra_checks=evidence, pipelines=pipelines)
+    write(repo, MANIFEST_NAME, text)
+    proc = ci_check(repo, "--format", "json")
+    assert proc.returncode == 1, proc.stderr[-2000:]
+    (check,) = [c for c in parse_stdout(proc)["checks"] if c["kind"] == "evidence"]
+    assert check["reason_code"] == "ci.evidence_unreadable"
+
+
+# --- V1-3 and DESIGN: one strict schema for the writer and every reader -------------------
+
+
+@pytest.mark.parametrize(
+    "field",
+    ["pipeline_path", "pipeline_fingerprint", "manifest_hash", "input_fingerprints"],
+)
+def test_a_null_required_field_is_refused(tmp_path: Path, monkeypatch, field: str) -> None:
+    manifest, evidence = _valid(tmp_path, monkeypatch)
+    manifest[field] = None
+    with pytest.raises(ManifestError) as caught:
+        verify_manifest_issues(manifest, manifest_file=evidence)
+    assert caught.value.kind == "malformed"
+    assert f"`{field}`" in caught.value.message
+    evidence.write_text(json.dumps(manifest), encoding="utf-8")
+    for command in ("verify", "show"):
+        result = runner.invoke(app, ["report", command, str(evidence), "--json"])
+        assert result.exit_code == 1, result.output
+        assert f"`{field}`" in json.loads(result.output)["error"]
+
+
+@pytest.mark.parametrize(
+    "edit",
+    [
+        lambda m: m.pop("project_manifest"),
+        lambda m: m["input_fingerprints"]["a"].update(path=None),
+        lambda m: m["input_fingerprints"]["a"].update(path=""),
+        lambda m: m["output_fingerprints"]["a"].pop("fingerprint"),
+        lambda m: m["output_fingerprints"]["a"].update(size_bytes="12"),
+        lambda m: m.update(key_label=3),
+        lambda m: m.update(run_id=5),
+    ],
+)
+def test_other_shapes_the_writer_never_makes_are_refused(tmp_path: Path, monkeypatch, edit) -> None:
+    manifest, evidence = _valid(tmp_path, monkeypatch)
+    edit(manifest)
+    with pytest.raises(ManifestError) as caught:
+        verify_manifest_issues(manifest, manifest_file=evidence)
+    assert caught.value.kind == "malformed"
+
+
+@pytest.mark.parametrize("text", ["[]", '["a"]', "3", "null", '{"a": NaN}'])
+def test_a_file_that_is_not_a_manifest_object_is_refused_without_a_crash(
+    tmp_path: Path, text: str
+) -> None:
+    evidence = tmp_path / "ev.json"
+    evidence.write_text(text, encoding="utf-8")
+    with pytest.raises(ManifestError):
+        evidence_module.read_manifest(evidence)
+    for command in (["verify"], ["show"], ["render", "-o", str(tmp_path / "r.html")]):
+        result = runner.invoke(app, ["report", *command, str(evidence), "--json"])
+        assert result.exit_code == 1, (command, result.output)
+        assert isinstance(result.exception, (SystemExit, type(None))), command
+        assert not (tmp_path / "r.html").exists()
+
+
+@pytest.mark.parametrize("parsed", [[], ["a"], 3, None])
+def test_the_verifier_refuses_a_non_object_passed_directly(parsed) -> None:
+    with pytest.raises(ManifestError) as caught:
+        verify_manifest_issues(parsed)
+    assert caught.value.kind == "malformed"
+
+
+def test_ci_check_refuses_a_top_level_list(tmp_path: Path) -> None:
+    repo = _ci_repo(tmp_path)
+    (repo / "proj/build/evidence.json").write_text("[]", encoding="utf-8")
+    proc = ci_check(repo, "--format", "json")
+    assert proc.returncode == 1, proc.stderr[-2000:]
+    (check,) = [c for c in parse_stdout(proc)["checks"] if c["kind"] == "evidence"]
+    assert check["reason_code"] == "ci.evidence_unreadable"
+
+
+def test_the_writer_writes_only_schema_fields_and_checks_its_output(
+    tmp_path: Path, monkeypatch
+) -> None:
+    manifest, _ = _valid(tmp_path, monkeypatch)
+    assert set(manifest) <= set(evidence_module._FIELDS)
+    for group in ("input_fingerprints", "output_fingerprints"):
+        for entry in manifest[group].values():
+            assert set(entry) <= set(evidence_module._ENTRY_FIELDS)
+    assert evidence_module.check_manifest(copy.deepcopy(manifest)) == manifest
+
+
+def test_a_nan_inside_a_well_formed_manifest_is_refused_without_a_crash(
+    tmp_path: Path, monkeypatch
+) -> None:
+    manifest, evidence = _valid(tmp_path, monkeypatch)
+    manifest["row_counts"] = {"a": float("nan")}
+    evidence.write_text(json.dumps(manifest), encoding="utf-8")
+    with pytest.raises(ManifestError) as caught:
+        evidence_module.read_manifest(evidence)
+    assert caught.value.kind == "unreadable"
+    result = _verify(evidence)
+    assert result.exit_code == 1, result.output
+    assert "could not parse" in json.loads(result.output)["error"]

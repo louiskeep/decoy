@@ -48,7 +48,7 @@ from decoy import _mask_secret
 from decoy._atomic import AtomicWriteError, WriteMode, describe, write_local_target
 from decoy.cli._sources import read_file, read_report_source
 from decoy.cli._yaml_errors import sanitize_yaml_error
-from decoy.cli.evidence import ManifestError, _render_manifest_card, verify_manifest
+from decoy.cli.evidence import ManifestError, _render_manifest_card, read_manifest, verify_manifest
 from decoy.cli.exit_codes import EXIT_FINDINGS, EXIT_RUNTIME, EXIT_USAGE
 from decoy.cli.io import entry_format
 from decoy.ui.output import OutputMode, OutputState, emit_json, print_traceback, setup_output
@@ -91,17 +91,11 @@ def _write_out(state: OutputState, path: Path, text: str) -> None:
 
 
 def _load_manifest(path: Path, state: OutputState, command: str) -> dict[str, Any]:
-    """Load and parse a manifest file. Exit with EXIT_USAGE on any error."""
-    missing = not path.exists()
-    if missing:
-        msg = f"evidence file not found: {path}"
-    else:
-        try:
-            return _json.loads(path.read_text(encoding="utf-8"))
-        except _json.JSONDecodeError as exc:
-            msg = f"could not parse {path.name} as JSON: {exc.msg}"
-        except OSError as exc:
-            msg = f"could not read {path}: {exc}"
+    """Read a manifest through the shared strict reader. Exit with EXIT_USAGE on a refusal."""
+    try:
+        return read_manifest(path)
+    except ManifestError as exc:
+        msg, missing = exc.message, exc.kind == "missing"
     if state.mode is OutputMode.json:
         emit_json(state, {"command": command, "status": "error", "error": msg})
     elif state.mode is not OutputMode.quiet:

@@ -69,12 +69,29 @@ the project root: the typed `--project`, else the marker found above the manifes
 never reads `DECOY_PROJECT` or falls back to the working directory, so a manifest verifies the
 same from any folder. A manifest without `path_base` keeps the old rule (paths as recorded,
 relative ones from the working directory).
+
+Paths are resolved before they are made relative, so a lexical `..` or a symlinked folder is
+never recorded as inside the project. The reader refuses a project-relative path with a `..`
+part or one that resolves outside the root.
+
+Project binding: a `path_base` manifest records `project_manifest`, where it was written
+relative to its project root, or null when written outside the project. The reader refuses a
+manifest whose file is not at that place under the root it reads from, so evidence for one
+project copied into another is refused instead of read against the other project's files. A
+manifest written outside its project has nothing to check and needs the typed `--project`.
+Limit: an exact copy at the same relative place in another project still binds there; its
+fingerprints then report the other project's files as changed.
+
+Schema: `_FIELDS` and `_ENTRY_FIELDS` are the one schema. `build_manifest` checks its own output
+against them and `read_manifest` checks every file it reads, so the writer and the readers
+(`report`, `decoy ci check`) cannot disagree.
 """
 
 from __future__ import annotations
 
 import hashlib
 import json as _json
+import os
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -106,6 +123,41 @@ _MANIFEST_HASH_STRIP_FIELDS: frozenset[str] = frozenset(
         "signature_key_id",
     }
 )
+
+# The manifest schema: field -> (accepted types, required, wording). A required string field
+# must also be non-empty. Extra keys are tolerated so an additive field does not break a reader.
+_Rule = tuple[tuple[type, ...], bool, str]
+_STR: _Rule = ((str,), True, "a non-empty string")
+_OPT: _Rule = ((str,), False, "a string")
+_OPT_STR_OR_NULL: _Rule = ((str, type(None)), False, "a string or null")
+_FIELDS: dict[str, _Rule] = {
+    "schema_version": _STR,
+    "producer": _OPT,
+    "path_base": _OPT,
+    "project_manifest": _OPT_STR_OR_NULL,
+    "run_id": _OPT,
+    "run_timestamp": _OPT,
+    "cli_version": _OPT,
+    "engine_version": _OPT,
+    "pipeline_path": _STR,
+    "pipeline_fingerprint": _STR,
+    "input_fingerprints": ((dict,), True, "an object"),
+    "output_fingerprints": ((dict,), True, "an object"),
+    "row_counts": ((dict,), False, "an object"),
+    "key_label": _OPT_STR_OR_NULL,
+    "warnings": ((list,), False, "a list"),
+    "timings": ((list,), False, "a list"),
+    "strategies": ((list,), False, "a list"),
+    "manifest_hash": _STR,
+}
+_ENTRY_FIELDS: dict[str, _Rule] = {
+    "path": _STR,
+    "fingerprint": ((str, type(None)), True, "a non-empty string or null"),
+    "fingerprint_method": _OPT_STR_OR_NULL,
+    "size_bytes": ((int, type(None)), False, "an integer or null"),
+    "format": _OPT,
+    "layout": ((object,), False, "any value"),
+}
 
 # ---------------------------------------------------------------------------
 # Core helpers
@@ -186,14 +238,24 @@ def _placed(place_target: Callable[[str], Path] | None, raw: str, base: Path) ->
         return None
 
 
+def _inside(path: Path, root: Path) -> str | None:
+    """`path` relative to `root` (POSIX) with both resolved first; None when it lies outside.
+
+    Resolving first keeps `sub/../../x` and a symlink out of the project from passing a lexical
+    prefix test.
+    """
+    try:
+        return path.resolve().relative_to(root.resolve()).as_posix()
+    except (ValueError, OSError, RuntimeError):
+        return None
+
+
 def _recorded(path: Path, root: Path | None) -> str:
-    """The manifest text for `path`: relative to `root` (POSIX) when inside it, else absolute."""
-    if root is not None:
-        try:
-            return path.relative_to(root).as_posix()
-        except ValueError:
-            pass
-    return str(path)
+    """The manifest text for `path`: relative to `root` when inside it, else absolute."""
+    if root is None:
+        return str(path)
+    inside = _inside(path, root)
+    return str(path.resolve()) if inside is None else inside
 
 
 def _fingerprint(path: Path | None) -> dict[str, Any]:
@@ -220,6 +282,7 @@ def build_manifest(
     run_id: str | None = None,
     place_target: Callable[[str], Path] | None = None,
     project_root: Path | None = None,
+    evidence_path: Path | None = None,
 ) -> dict[str, Any]:
     """Build an evidence manifest dict for a completed local run.
 
@@ -229,8 +292,9 @@ def build_manifest(
     a target that published nothing gets a null fingerprint instead of matching a same-named
     file in the working directory. Without it, targets resolve against the YAML's folder, as
     sources always do. `project_root` is the root of a project with a marker: paths inside it
-    are recorded relative to it and the manifest gains `path_base: "project"`. Without it every
-    path is recorded absolute.
+    are recorded relative to it and the manifest gains `path_base: "project"` and
+    `project_manifest` (where `evidence_path`, the file the manifest is written to, sits in the
+    project; null when outside it). Without it every path is recorded absolute.
 
     The manifest records:
       - versions, run metadata, pipeline fingerprint
@@ -241,18 +305,8 @@ def build_manifest(
 
     Raw row values, secrets, plaintext key material, and PII samples are
     NEVER included. The spec for this invariant is the `no_raw_values` test.
-
-    Fingerprint form: ``sha256:<hex>`` with a ``fingerprint_method`` field,
-    matching decoy-platform/api/evidence/hashing.py's output_file_hash form.
-
-    Schema: ``cli-local-1`` -- a namespace distinct from the platform's
-    ``r3.x`` series so a manifest reader can route by producer + version.
-    The ``producer`` field is ``"decoy-cli"``. A platform import adapter is
-    future work (R4+); interop is not guaranteed beyond the routing markers.
-
-    Failed-run artifacts are explicitly out of scope for CLI-local manifests;
-    the platform handles error artifacts server-side. This function is only
-    called on the success path.
+    Schema ``cli-local-1``, producer ``"decoy-cli"``, so a reader can route by both. Only the
+    success path calls this; failed runs leave no CLI-local manifest.
     """
     pipeline_fingerprint = hash_file(pipeline_path)
     pipeline_path = pipeline_path.resolve()
@@ -354,10 +408,14 @@ def build_manifest(
                 }
             )
 
+    binding: dict[str, Any] = {}
+    if project_root is not None:
+        written_at = None if evidence_path is None else _inside(evidence_path, project_root)
+        binding = {"path_base": PATH_BASE_PROJECT, "project_manifest": written_at}
     manifest: dict[str, Any] = {
         "schema_version": _SCHEMA_VERSION,
         "producer": "decoy-cli",
-        **({"path_base": PATH_BASE_PROJECT} if project_root is not None else {}),
+        **binding,
         "run_id": run_id if run_id is not None else str(uuid4()),
         "run_timestamp": datetime.now(tz=timezone.utc).isoformat(),
         "cli_version": cli_version,
@@ -374,7 +432,7 @@ def build_manifest(
         "manifest_hash": "",  # placeholder; filled below
     }
     manifest["manifest_hash"] = compute_manifest_hash(manifest)
-    return manifest
+    return check_manifest(manifest)
 
 
 @dataclass(frozen=True)
@@ -400,62 +458,138 @@ def _malformed(field: str, rule: str) -> ManifestError:
     return ManifestError("malformed", f"evidence manifest is malformed: `{field}` {rule}.")
 
 
-def _check_shape(manifest: dict[str, Any]) -> None:
-    """Refuse a manifest whose version, path base or field types the verifier does not know.
+def _check_fields(obj: dict[str, Any], fields: dict[str, _Rule], prefix: str) -> None:
+    for key, (types, required, wording) in fields.items():
+        if key not in obj:
+            if required:
+                raise _malformed(prefix + key, "is required")
+            continue
+        value = obj[key]
+        if not isinstance(value, types) or (required and value == ""):
+            raise _malformed(prefix + key, f"must be {wording}")
 
-    Extra keys are tolerated, so a newer additive field does not break an older reader.
+
+def check_manifest(manifest: Any) -> dict[str, Any]:
+    """Refuse anything but a manifest of the schema above; return it typed as an object.
+
+    `build_manifest` runs this on its own output and every reader on what it reads. Messages
+    name fields and tables, never a recorded value.
     """
-    if manifest.get("schema_version") != _SCHEMA_VERSION:
+    if not isinstance(manifest, dict):
+        raise ManifestError(
+            "malformed", "evidence manifest is malformed: the top level must be a JSON object."
+        )
+    _check_fields(manifest, _FIELDS, "")
+    if manifest["schema_version"] != _SCHEMA_VERSION:
         raise _malformed("schema_version", f"must be {_SCHEMA_VERSION}")
     if manifest.get("path_base", PATH_BASE_PROJECT) != PATH_BASE_PROJECT:
         raise _malformed("path_base", f"must be absent or {PATH_BASE_PROJECT}")
-    for key in ("manifest_hash", "pipeline_path", "pipeline_fingerprint"):
-        if not isinstance(manifest.get(key, ""), (str, type(None))):
-            raise _malformed(key, "must be a string")
+    if "path_base" in manifest and "project_manifest" not in manifest:
+        raise _malformed("project_manifest", "is required with path_base")
     for group in ("input_fingerprints", "output_fingerprints"):
-        entries = manifest.get(group, {})
-        if not isinstance(entries, dict):
-            raise _malformed(group, "must be an object")
-        for table, info in entries.items():
+        for table, info in manifest[group].items():
             if not isinstance(info, dict):
                 raise _malformed(f"{group}.{table}", "must be an object")
-            for key in ("path", "fingerprint"):
-                if not isinstance(info.get(key), (str, type(None))):
-                    raise _malformed(f"{group}.{table}.{key}", "must be a string or null")
+            _check_fields(info, _ENTRY_FIELDS, f"{group}.{table}.")
+    return manifest
+
+
+def _no_constant(name: str) -> Any:
+    raise ValueError(f"{name} is not JSON")
+
+
+def read_manifest(path: Path) -> dict[str, Any]:
+    """The one way a manifest file is read: parsed, then checked by `check_manifest`.
+
+    Raises `ManifestError` with kind `missing` (no regular file there), `unreadable` (I/O,
+    encoding, or not JSON; NaN and Infinity are refused because the hash cannot carry them),
+    or as `check_manifest`. Messages name the file, never its content.
+    """
+    if not path.is_file():
+        raise ManifestError("missing", f"evidence file not found: {path}")
+    refusal = None
+    try:
+        parsed = _json.loads(path.read_text(encoding="utf-8"), parse_constant=_no_constant)
+    except (OSError, UnicodeDecodeError) as exc:
+        refusal = f"could not read {path}: {type(exc).__name__}"
+    except (ValueError, RecursionError) as exc:
+        why = exc.msg if isinstance(exc, _json.JSONDecodeError) else type(exc).__name__
+        refusal = f"could not parse {path.name} as JSON: {why}"
+    # Raised outside the handlers so the parser's error, which can quote the file, is not chained.
+    if refusal is not None:
+        raise ManifestError("unreadable", refusal)
+    return check_manifest(parsed)
+
+
+def _same_file(a: Path, b: Path | None) -> bool:
+    try:
+        return b is not None and os.path.samefile(a, b)
+    except OSError:
+        return False
 
 
 def _manifest_root(
     manifest: dict[str, Any], manifest_file: Path | None, project: Path | None
 ) -> Path | None:
-    """The folder `path_base: "project"` paths are read from; None for the old rule."""
+    """The folder `path_base: "project"` paths are read from; None for the old rule.
+
+    The root is the typed `--project`, else the marker above the manifest file. Either way the
+    manifest file must sit where the run wrote it in that project (`project_manifest`).
+    """
     if manifest.get("path_base") != PATH_BASE_PROJECT:
         return None
     where = "the manifest" if manifest_file is None else manifest_file.name
+    written_at = manifest["project_manifest"]
     failure: LayoutError | None = None
+    root: Path | None = None
     try:
         if project is not None:
-            return find_project(None, project).root
-        if manifest_file is not None:
+            root = find_project(None, project).root
+        elif manifest_file is not None and written_at is not None:
             found = find_project(manifest_file.resolve().parent, None)
-            if not found.implicit:
-                return found.root
+            root = None if found.implicit else found.root
     except LayoutError as exc:
         failure = exc
     # Raised outside the handler so no layout error is chained onto the refusal.
     if failure is not None:
         raise ManifestError(failure.code, failure.message)
-    raise ManifestError(
-        "project_not_found",
-        f"{where} records paths relative to a Decoy project, and no project marker was "
-        "found above it; pass --project with the project folder.",
-    )
+    if root is None:
+        why = (
+            "was written outside its Decoy project"
+            if written_at is None
+            else "records paths relative to a Decoy project, and no project marker was found "
+            "above it"
+        )
+        raise ManifestError(
+            "project_not_found", f"{where} {why}; pass --project with the project folder."
+        )
+    if written_at is not None:
+        expected = resolve_manifest_path(written_at, root, "project_manifest")
+        if not _same_file(expected, manifest_file):
+            raise ManifestError(
+                "project_mismatch",
+                f"{where} is not where its run wrote it in this Decoy project (another project "
+                "or another place); verify it where the run wrote it.",
+            )
+    return root
 
 
-def resolve_manifest_path(text: str, root: Path | None) -> Path:
-    """A recorded path as a file path: project-relative under `root`, else as recorded."""
-    if root is None or Path(text).is_absolute():
+def resolve_manifest_path(text: str, root: Path | None, field: str = "path") -> Path:
+    """A recorded path as a file path: project-relative under `root`, else as recorded.
+
+    A project-relative path must stay in the project: no `..` part, and it must not resolve
+    outside the root (a symlink out). Otherwise `ManifestError` names `field`, not the path.
+    """
+    if root is None or PurePosixPath(text).is_absolute() or Path(text).is_absolute():
         return Path(text)
-    return root.joinpath(*PurePosixPath(text).parts)
+    parts = PurePosixPath(text).parts
+    path = root.joinpath(*parts)
+    if not parts or ".." in parts or _inside(path, root) is None:
+        raise ManifestError(
+            "path_outside_project",
+            f"evidence manifest is malformed: `{field}` must name a file inside the project.",
+        )
+    return path
 
 
 def verify_manifest_issues(
@@ -470,41 +604,33 @@ def verify_manifest_issues(
     The one manifest reader `report verify` and `decoy ci check` share. `manifest_file` is
     where the manifest was read from and `project` the typed `--project`; they locate the
     root for a `path_base: "project"` manifest (see the module docstring). Raises
-    `ManifestError` for a malformed manifest or a project root that cannot be found.
-
-    Returns typed issues. Empty list = clean (all fingerprints match, manifest_hash is
-    valid). Non-empty = fingerprint mismatch or drift detected.
-
-    Integrity limit: manifest_hash is an UNKEYED SHA-256 check. It detects
-    accidental drift; it does NOT detect a motivated tamperer who can edit
-    the manifest and recompute the hash. This function is useful for catching
-    unintended file changes, not adversarial edits.
-
-    What is checked:
-    * manifest_hash: re-computed and compared (detects manifest edits).
-    * pipeline_fingerprint: current hash of pipeline_path vs recorded.
-    * input_fingerprints: current hash of each source file vs recorded.
-    * output_fingerprints: current hash of each target file vs recorded.
-
-    What is NOT checked:
-    * Data correctness or masking quality.
-    * Whether the output was actually produced by the recorded pipeline.
+    `ManifestError` for a malformed manifest, a path outside the project, or a project root
+    that cannot be found or does not hold the manifest. Every path is checked before any file
+    is hashed. Returns typed issues; empty means the manifest_hash (UNKEYED: catches drift, not
+    a tamperer who recomputes it) and every recorded fingerprint match.
 
     `regular_files_only` (used by `decoy ci check`, where the manifest may come from an
     untrusted change): a recorded path that exists but is not a regular file (FIFO, device)
     is reported as missing instead of being hashed, so it cannot hang the check.
     """
-    _check_shape(manifest)
+    check_manifest(manifest)
     root = _manifest_root(manifest, manifest_file, project)
+    # (0 pipeline / 1 input / 2 output, label suffix, recorded path, recorded fingerprint, file),
+    # all resolved before any hashing so a refused path never leaves a partial result.
+    checks: list[tuple[int, str, str, str, Path]] = []
+    pipeline_text = manifest["pipeline_path"]
+    pipeline_file = resolve_manifest_path(pipeline_text, root, "pipeline_path")
+    checks.append((0, "", pipeline_text, manifest["pipeline_fingerprint"], pipeline_file))
+    for at, group in ((1, "input_fingerprints"), (2, "output_fingerprints")):
+        for table_name, info in manifest[group].items():
+            if info["fingerprint"] is None:
+                continue
+            field = f"{group}.{table_name}.path"
+            path = resolve_manifest_path(info["path"], root, field)
+            checks.append((at, f" (table {table_name!r})", info["path"], info["fingerprint"], path))
+
     issues: list[EvidenceIssue] = []
-
-    def _absent(path: Path) -> bool:
-        if not path.exists():
-            return True
-        return regular_files_only and not path.is_file()
-
-    # --- Manifest integrity check ---
-    recorded_hash = manifest.get("manifest_hash", "")
+    recorded_hash = manifest["manifest_hash"]
     computed_hash = compute_manifest_hash(manifest)
     if recorded_hash != computed_hash:
         issues.append(
@@ -515,81 +641,31 @@ def verify_manifest_issues(
                 "manifest file may have been edited",
             )
         )
-        # If the manifest itself changed we still proceed so that all
-        # other issues are surfaced in one pass.
-
-    # --- Pipeline fingerprint ---
-    pipeline_path_str = manifest.get("pipeline_path")
-    recorded_pf = manifest.get("pipeline_fingerprint")
-    if pipeline_path_str and recorded_pf:
-        pipeline_path = resolve_manifest_path(pipeline_path_str, root)
-        if _absent(pipeline_path):
+        # Keep going so every other issue surfaces in the same pass.
+    # Kinds stay literal in each call: `decoy ci` allowlists them by reading this module.
+    for at, label, text, recorded, path in checks:
+        what = ("pipeline", "input", "output")[at]
+        if not path.exists() or (regular_files_only and not path.is_file()):
             issues.append(
                 EvidenceIssue(
-                    "pipeline_missing", f"pipeline missing: {pipeline_path_str} not found"
+                    ("pipeline_missing", "input_missing", "output_missing")[at],
+                    f"{what} missing: {text}{label} not found",
                 )
             )
-        else:
-            current_pf = hash_file(pipeline_path)
-            if current_pf != recorded_pf:
-                issues.append(
-                    EvidenceIssue(
+            continue
+        current = hash_file(path)
+        if current != recorded:
+            issues.append(
+                EvidenceIssue(
+                    (
                         "pipeline_fingerprint_changed",
-                        f"pipeline fingerprint changed: {pipeline_path_str} "
-                        f"(recorded {recorded_pf[:16]}..., current {current_pf[:16]}...)",
-                    )
-                )
-
-    # --- Input fingerprints ---
-    for table_name, info in (manifest.get("input_fingerprints") or {}).items():
-        path_str = info.get("path")
-        recorded_fp = info.get("fingerprint")
-        if not path_str or not recorded_fp:
-            continue
-        p = resolve_manifest_path(path_str, root)
-        if _absent(p):
-            issues.append(
-                EvidenceIssue(
-                    "input_missing",
-                    f"input missing: {path_str} (table {table_name!r}) not found",
+                        "input_fingerprint_changed",
+                        "output_fingerprint_changed",
+                    )[at],
+                    f"{what} fingerprint changed: {text}{label} "
+                    f"(recorded {recorded[:16]}..., current {current[:16]}...)",
                 )
             )
-            continue
-        current_fp = hash_file(p)
-        if current_fp != recorded_fp:
-            issues.append(
-                EvidenceIssue(
-                    "input_fingerprint_changed",
-                    f"input fingerprint changed: {path_str} (table {table_name!r}) "
-                    f"(recorded {recorded_fp[:16]}..., current {current_fp[:16]}...)",
-                )
-            )
-
-    # --- Output fingerprints ---
-    for table_name, info in (manifest.get("output_fingerprints") or {}).items():
-        path_str = info.get("path")
-        recorded_fp = info.get("fingerprint")
-        if not path_str or not recorded_fp:
-            continue
-        p = resolve_manifest_path(path_str, root)
-        if _absent(p):
-            issues.append(
-                EvidenceIssue(
-                    "output_missing",
-                    f"output missing: {path_str} (table {table_name!r}) not found",
-                )
-            )
-            continue
-        current_fp = hash_file(p)
-        if current_fp != recorded_fp:
-            issues.append(
-                EvidenceIssue(
-                    "output_fingerprint_changed",
-                    f"output fingerprint changed: {path_str} (table {table_name!r}) "
-                    f"(recorded {recorded_fp[:16]}..., current {current_fp[:16]}...)",
-                )
-            )
-
     return issues
 
 
@@ -651,38 +727,14 @@ def _render_manifest_card(state: Any, manifest: dict[str, Any], evidence_file: P
         status="ok" if hash_ok else "warn",
     )
 
-    # Input fingerprints table
-    input_fps = manifest.get("input_fingerprints") or {}
-    if input_fps:
+    for group, title in (("input_fingerprints", "Input"), ("output_fingerprints", "Output")):
+        entries = manifest.get(group) or {}
+        if not entries:
+            continue
         t = make_table(
-            "Table",
-            "Path",
-            "Fingerprint (prefix)",
-            "Method",
-            "Size",
-            title="Input fingerprints",
+            "Table", "Path", "Fingerprint (prefix)", "Method", "Size", title=f"{title} fingerprints"
         )
-        for tname, info in input_fps.items():
-            if not isinstance(info, dict):
-                continue
-            fp = (info.get("fingerprint") or "")[:23] + "..."
-            method = info.get("fingerprint_method") or "?"
-            size = str(info.get("size_bytes") or "?")
-            t.add_row(tname, info.get("path", "?"), fp, method, size)
-        state.console.print(t)
-
-    # Output fingerprints table
-    output_fps = manifest.get("output_fingerprints") or {}
-    if output_fps:
-        t = make_table(
-            "Table",
-            "Path",
-            "Fingerprint (prefix)",
-            "Method",
-            "Size",
-            title="Output fingerprints",
-        )
-        for tname, info in output_fps.items():
+        for tname, info in entries.items():
             if not isinstance(info, dict):
                 continue
             fp = (info.get("fingerprint") or "")[:23] + "..."
@@ -714,8 +766,10 @@ def _render_manifest_card(state: Any, manifest: dict[str, Any], evidence_file: P
 __all__ = [
     "ManifestError",
     "build_manifest",
+    "check_manifest",
     "compute_manifest_hash",
     "hash_file",
+    "read_manifest",
     "resolve_manifest_path",
     "verify_manifest",
     "verify_manifest_issues",
