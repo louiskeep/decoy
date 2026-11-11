@@ -521,7 +521,7 @@ def mask(
         # `decoy run pipeline.yaml`.
         sources = _load_sources_from_config(config_dict, base_dir)
 
-        # Library callers get fixed, predictable paths: no run folder, claim or `latest`.
+        # Library callers get fixed, predictable paths: no run folder, claim, `LATEST` or `current`.
         layout = RunLayout.fixed(base_dir)
         resolver = _build_generation_resolver(master_key, key_label)
         instance_locale = (config_dict.get("global_settings") or {}).get("default_locale")

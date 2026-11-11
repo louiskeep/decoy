@@ -108,7 +108,7 @@ LATEST_INVALID = Descriptor(
 )
 LATEST_LINK_FAILED = Descriptor(
     "layout.latest_link_failed",
-    "Could not make the `latest` link in {path}; LATEST still names the last clean run.",
+    "Could not make the `current` link in {path}; LATEST still names the last clean run.",
 )
 LATEST_WRITE_FAILED = Descriptor(
     "layout.latest_write_failed",

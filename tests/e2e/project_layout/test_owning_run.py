@@ -1,7 +1,7 @@
 """AT-11 (P2a): a file in a run folder keeps its declared format, and so does the old place.
 
 `owning_run` finds the run folder `<root>/out/<name>/<run-id>/` that holds a file, following
-`latest`. `input_format` then treats a file at the placed target, or at the old YAML-folder
+`current`. `input_format` then treats a file at the placed target, or at the old YAML-folder
 target, as the declared target. Any other path still takes the suffix rule.
 """
 
@@ -54,12 +54,12 @@ def test_owning_run_finds_a_nested_file(project: tuple[Path, tuple[Path, str], P
     assert owning_run(_touch(run / "sub" / "m.dat"), *ref) is not None
 
 
-@pytest.mark.skipif(sys.platform == "win32", reason="latest is a symlink on POSIX only")
-def test_owning_run_follows_latest(project: tuple[Path, tuple[Path, str], Path]) -> None:
+@pytest.mark.skipif(sys.platform == "win32", reason="current is a symlink on POSIX only")
+def test_owning_run_follows_current(project: tuple[Path, tuple[Path, str], Path]) -> None:
     root, ref, run = project
     _touch(run / "masked.dat")
-    os.symlink(RUN_ID, root / "out" / "orders" / "latest")
-    found = owning_run(root / "out" / "orders" / "latest" / "masked.dat", *ref)
+    os.symlink(RUN_ID, root / "out" / "orders" / "current")
+    found = owning_run(root / "out" / "orders" / "current" / "masked.dat", *ref)
     assert found is not None and found.run_id == RUN_ID
 
 
@@ -120,15 +120,15 @@ def test_nested_declared_path_in_a_run_folder(project: tuple[Path, tuple[Path, s
     )
 
 
-@pytest.mark.skipif(sys.platform == "win32", reason="latest is a symlink on POSIX only")
-def test_latest_path_keeps_the_declared_layout(
+@pytest.mark.skipif(sys.platform == "win32", reason="current is a symlink on POSIX only")
+def test_current_path_keeps_the_declared_layout(
     project: tuple[Path, tuple[Path, str], Path],
 ) -> None:
     root, ref, run = project
     _touch(run / "masked.dat")
-    os.symlink(RUN_ID, root / "out" / "orders" / "latest")
-    via_latest = root / "out" / "orders" / "latest" / "masked.dat"
-    assert input_format(_config(), "t", via_latest, root, pipeline=ref) == ("fixed_width", LAYOUT)
+    os.symlink(RUN_ID, root / "out" / "orders" / "current")
+    via_current = root / "out" / "orders" / "current" / "masked.dat"
+    assert input_format(_config(), "t", via_current, root, pipeline=ref) == ("fixed_width", LAYOUT)
 
 
 def test_other_files_in_a_run_folder_take_the_suffix_rule(
