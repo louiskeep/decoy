@@ -45,8 +45,9 @@ reports a WARNING with a recommended size and the job still proceeds
 capacity refusals exit EXIT_CAPACITY: a fan-in impossibility (more co-live
 DuckDB joiners than the budget can seat), and generate tables whose resident
 output cannot fit the machine's memory (`generation_budget_exceeded`, GEN-STRICT
-row 24k). A config with a non-file or missing source skips the estimate, so a
-generate floor refusal exits 5 only at `decoy run`.
+row 24k). A config with a non-file source skips the estimate, so a generate floor
+refusal exits 5 only at `decoy run`. A missing or unreadable source file
+fails first (exit 1), so the exit 5 needs readable sources.
 
 Do NOT describe the output of this command as "platform parity." Preflight
 here is a local file/source/schema readiness gate. The spec (cli-first-
@@ -63,19 +64,18 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 import typer
 import yaml as _yaml
 from rich.text import Text
 
+from decoy.cli._capacity_text import format_gib as _format_gib
+from decoy.cli._capacity_text import insufficient_text as _insufficient_text
 from decoy.cli._yaml_errors import sanitize_yaml_error
 from decoy.cli.exit_codes import EXIT_CAPACITY, EXIT_USAGE, EXIT_WARNINGS
 from decoy.ui.output import OutputMode, emit_json, setup_output
 from decoy.ui.theme import code, error, hint, success, warn
-
-if TYPE_CHECKING:
-    from decoy_engine import CapacityEstimate
 
 _PREFLIGHT_EPILOG = """\
 Examples:
@@ -132,8 +132,8 @@ class _CheckResult:
     status: str  # "pass" | "warn" | "fail"
     message: str
     location: str | None = None
-    # OOM checker v1: the engine's capacity-refusal code (one of
-    # out_of_core_insufficient_memory / out_of_core_fanin_exceeds_budget),
+    # OOM checker v1: the engine's capacity-refusal code (out_of_core_insufficient_memory,
+    # out_of_core_fanin_exceeds_budget or generation_budget_exceeded),
     # carried as its own field so a --json caller can assert on it directly
     # instead of parsing `message` text (R9).
     code: str | None = None
@@ -320,13 +320,6 @@ def _check_target_overwrite(raw: dict[str, Any], acc: _PreflightAccumulator) -> 
 # Capacity check (OOM checker v1, docs/plans/2026-07-24-oom-checker-cli-v1.md)
 # ---------------------------------------------------------------------------
 
-_GIB = 1024**3
-
-
-def _format_gib(byte_count: int | None) -> str:
-    return f"~{byte_count / _GIB:.1f} GB" if byte_count else "an unknown amount"
-
-
 def _file_sources_missing_on_disk(raw: dict[str, Any], base_dir: Path) -> bool:
     """True if any declared FILE-type source does not resolve to a readable
     regular file, resolved the SAME way `estimate_job_capacity`,
@@ -377,25 +370,6 @@ def _file_sources_missing_on_disk(raw: dict[str, Any], base_dir: Path) -> bool:
         except OSError:
             return True
     return False
-
-
-def _insufficient_text(estimate: CapacityEstimate) -> str:
-    """The INSUFFICIENT finding text for the engine code. The engine's generate message holds
-    byte counts and a table name, never a generated value."""
-    from decoy_engine.reasons.runtime import GENERATION_BUDGET_EXCEEDED
-
-    # The generate floor holds whatever the values are, so no run admits that job; the
-    # out-of-core estimate is conservative and full-frame recovery may still admit it.
-    if estimate.code == GENERATION_BUDGET_EXCEEDED:
-        return (
-            f"INSUFFICIENT -- {estimate.message} Lower the table's row_count or use a host "
-            "with more memory."
-        )
-    return (
-        f"INSUFFICIENT -- needs {_format_gib(estimate.needed_bytes)}, budget "
-        f"{_format_gib(estimate.available_bytes)}; use a larger tier or reduce the job. This "
-        "estimate is conservative: a real run may still admit the job via full-frame recovery."
-    )
 
 
 def _check_capacity(raw: dict[str, Any], config_path: Path, acc: _PreflightAccumulator) -> None:

@@ -23,12 +23,14 @@ from typer.testing import CliRunner, Result
 
 from decoy.__main__ import app
 from decoy.cli.exit_codes import EXIT_CAPACITY
+from decoy_engine import DecoyError
+from decoy_engine.reasons.runtime import GENERATION_BUDGET_EXCEEDED
 
 runner = CliRunner()
 _WIDE = {"COLUMNS": "10000"}
 _CANARY = "canary7731"
 _TABLE = "people"
-_CODE = "generation_budget_exceeded"
+_CODE = GENERATION_BUDGET_EXCEEDED
 _HOST_BYTES = 8 * 1024**3
 _HUGE_ROWS = 5_000_000_000
 
@@ -127,13 +129,14 @@ def test_at_c3_run_stops_at_the_gate(tmp_path: Path, json_flag: bool) -> None:
 
 
 def _budget_exceeded() -> Exception:
-    from decoy_engine.generation._budget_ledger import GenerationBudgetExceeded
-
-    return GenerationBudgetExceeded(
-        code=_CODE,
-        message=f"resident generation needs at least 9 bytes (largest table '{_TABLE}'); "
-        "8 bytes of memory are available.",
+    # The engine's budget exception is private; a public DecoyError carrying the registered
+    # code takes the same exit path (the CLI keys on the code, not the class).
+    err = DecoyError(
+        f"[{_CODE}] resident generation needs at least 9 bytes (largest table '{_TABLE}'); "
+        "8 bytes of memory are available."
     )
+    err.code = _CODE  # type: ignore[attr-defined]
+    return err
 
 
 def test_at_c5_capacity_codes_name_the_generation_refusal() -> None:

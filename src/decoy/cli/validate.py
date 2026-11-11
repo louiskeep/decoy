@@ -288,7 +288,8 @@ def _gate(
     checks); if that fails it reports the error and exits EXIT_USAGE without
     running compile/preflight. Otherwise it runs BOTH the compile layer and the
     preflight layer, aggregates every finding into one report grouped by layer,
-    and exits by precedence: a capacity fan-in refusal -> EXIT_CAPACITY (it
+    and exits by precedence: a capacity refusal (fan-in, out-of-core memory or generated
+    output over the memory budget) -> EXIT_CAPACITY (it
     outranks a co-occurring compile failure); any other failure -> EXIT_USAGE;
     warnings with --fail-on-warning -> EXIT_WARNINGS; otherwise 0.
 
