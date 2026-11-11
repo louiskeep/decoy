@@ -9,23 +9,25 @@ The file is read through `decoy.cli.io.read_small_file` (a regular file only, no
 devices; 64 KiB at most) and parsed with `yaml.safe_load`, as the project marker is. Every
 model is `extra="forbid"` with strict types, so a typo or `"30"` for a number is refused. A bad
 file is `library_policy_invalid` carrying the failing field locations only: the YAML parser's
-message and pydantic's input both hold the file's text, so neither is kept or chained.
+message and pydantic's input both hold the file's text, so neither is kept or chained. The
+locations come from the engine's `safe_output.validation_problems`, the one value-free reading
+of a pydantic error; the error is caught as `ValueError` so the CLI never imports pydantic's
+`ValidationError` (tests/sentry/defects/test_config_error_routes.py).
 """
 
 from __future__ import annotations
 
-import re
 from pathlib import Path
-from typing import Annotated, Any, Literal
+from typing import Annotated, Any, Literal, cast
 
 import yaml
 from decoy_engine import records
+from decoy_engine.safe_output import validation_problems
 from pydantic import (
     BaseModel,
     ConfigDict,
     Field,
     StrictInt,
-    ValidationError,
     field_validator,
     model_validator,
 )
@@ -47,7 +49,6 @@ __all__ = [
 
 MAX_POLICY_BYTES = 64 * 1024
 _Positive = Annotated[StrictInt, Field(ge=1)]
-_SEGMENT = re.compile(r"[A-Za-z0-9_-]{1,64}")
 _MAX_FIELDS = 8
 
 
@@ -112,18 +113,6 @@ class LibraryPolicy(_Strict):
     retention: Retention = Field(default_factory=Retention)
 
 
-def _locations(exc: ValidationError) -> tuple[str, ...]:
-    # Locations only; a key that is not identifier-shaped (user text) becomes `?`.
-    out: list[str] = []
-    for error in exc.errors(include_url=False, include_context=False, include_input=False):
-        parts = (
-            str(p) if isinstance(p, (str, int)) and _SEGMENT.fullmatch(str(p)) else "?"
-            for p in error["loc"]
-        )
-        out.append(".".join(parts))
-    return tuple(dict.fromkeys(out))[:_MAX_FIELDS]
-
-
 def load_policy(root: Path) -> LibraryPolicy:
     """The policy in `<root>/library.yaml`, or the defaults when there is none. Raises
     `LibraryError` (`library_policy_invalid`)."""
@@ -148,6 +137,6 @@ def load_policy(root: Path) -> LibraryPolicy:
     fields: tuple[str, ...] = ()
     try:
         return LibraryPolicy.model_validate(parsed or {})
-    except ValidationError as exc:
-        fields = _locations(exc)
-    raise LibraryError(LIBRARY_POLICY_INVALID, fields=fields)
+    except ValueError as exc:  # pydantic's ValidationError; see the module docstring
+        fields = tuple(dict.fromkeys(p.location for p in validation_problems(cast(Any, exc))))
+    raise LibraryError(LIBRARY_POLICY_INVALID, fields=fields[:_MAX_FIELDS])
