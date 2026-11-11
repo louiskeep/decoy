@@ -31,5 +31,9 @@ id = "target-writes-allow"
 baseline = "tests/sentry/baselines/target-writes-allow.json"
 
 [[sentry]]
+id = "config-route-allow"
+baseline = "tests/sentry/baselines/config-route-allow.json"
+
+[[sentry]]
 id = "private-file-sinks"
 baseline = "tests/sentry/baselines/private-file-sinks.json"

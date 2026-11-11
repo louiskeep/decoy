@@ -47,17 +47,18 @@ _VALIDATE_METHODS = frozenset(
 )
 _PYDANTIC_MODULES = frozenset({"pydantic", "pydantic_core"})
 
-# path (relative to src/decoy) -> reason. Each entry must still hold a violation (checked below).
-ALLOWLIST: dict[str, str] = {
-    "cli/io/_scan_set.py": (
-        "validates the engine's scan-set read model, catches the error without reading it and "
-        "raises a fixed message outside the handler; a scan file is not a pipeline config"
+# (path relative to src/decoy, reason). Shrink-only baseline: tests/sentry/baselines/config-route-allow.json.
+# Each entry must still hold a violation (checked below).
+ALLOWLIST: tuple[tuple[str, str], ...] = (
+    (
+        "cli/io/_scan_set.py",
+        "validates the engine's scan-set read model, catches the error without reading it and raises a fixed message outside the handler; a scan file is not a pipeline config",
     ),
-    "ci/manifest.py": (
-        "validates the CLI-owned CiManifest and reads only the error type, never a value or a "
-        "message (FU-4 moves it onto validation_problems if its codes ever need a location)"
+    (
+        "ci/manifest.py",
+        "validates the CLI-owned CiManifest and reads only the error type, never a value or a message (FU-4 moves it onto validation_problems if its codes ever need a location)",
     ),
-}
+)
 
 
 def _is_engine(module: str | None) -> bool:
@@ -117,7 +118,7 @@ def _walk_src() -> dict[str, list[tuple[int, str]]]:
 
 
 def test_no_raw_validation_error_route_in_src() -> None:
-    offenders = {p: v for p, v in _walk_src().items() if p not in ALLOWLIST}
+    offenders = {p: v for p, v in _walk_src().items() if p not in {a for a, _ in ALLOWLIST}}
     assert not offenders, (
         "These sites validate an engine model or read a Pydantic ValidationError themselves; "
         "call decoy_engine.parse_pipeline_config and render PipelineConfigError.problems:\n"
@@ -127,7 +128,7 @@ def test_no_raw_validation_error_route_in_src() -> None:
 
 def test_allowlist_entries_still_hold_a_violation() -> None:
     walked = _walk_src()
-    stale = [p for p in ALLOWLIST if p not in walked]
+    stale = [p for p, _ in ALLOWLIST if p not in walked]
     assert not stale, f"allowlist entries with no violation left, remove them: {stale}"
 
 
@@ -254,7 +255,7 @@ FIRST_ONLY = frozenset({"subset", "subset --json", "run", "run --json", "validat
 EXIT_OVERRIDE = {"report integrity --config": EXIT_RUNTIME}
 
 # Commands that take a config parameter but cannot be fed a user config on a marker route.
-EXEMPT: dict[str, str] = {
+PACKAGED_CONFIG_ONLY: dict[str, str] = {
     "demo": "validates the packaged demo pipeline, which takes no user config",
 }
 
@@ -285,11 +286,11 @@ def _covered(label: str) -> str:
 
 
 def test_every_config_taking_command_has_a_cell_or_an_exemption() -> None:
-    covered = {_covered(label) for label in CELLS} | set(EXEMPT)
+    covered = {_covered(label) for label in CELLS} | set(PACKAGED_CONFIG_ONLY)
     missing = sorted(_config_taking_commands() - covered)
     assert not missing, (
         f"commands with a config parameter and no route cell: {missing}. Add a cell to CELLS, "
-        "or an EXEMPT entry with the reason."
+        "or a PACKAGED_CONFIG_ONLY entry with the reason."
     )
 
 
