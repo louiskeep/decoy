@@ -889,9 +889,7 @@ def compare_data(
 
     output_fps_a: dict[str, Any] = manifest_a.get("output_fingerprints") or {}
     output_fps_b: dict[str, Any] = manifest_b.get("output_fingerprints") or {}
-    tables_a = set(output_fps_a)
-    tables_b = set(output_fps_b)
-    all_tables = sorted(tables_a | tables_b)
+    all_tables = sorted(set(output_fps_a) | set(output_fps_b))
 
     table_deltas: list[dict[str, Any]] = []
     missing_files: list[str] = []
@@ -937,9 +935,10 @@ def compare_data(
             continue
 
         # Each side is read by its own recorded format (an old entry: the legacy suffix rule).
+        rec_a, rec_b = ({k: fp[k] for k in ("format", "layout") if k in fp} for fp in (fp_a, fp_b))
         try:
-            df_a = read_file(found[0], *entry_format(fp_a), table=table)
-            df_b = read_file(found[1], *entry_format(fp_b), table=table)
+            df_a = read_file(found[0], *entry_format(found[0], rec_a), table=table)
+            df_b = read_file(found[1], *entry_format(found[1], rec_b), table=table)
         except (OSError, ValueError, DecoyError):
             # Unreadable (corrupt, truncated, or not its recorded format): treat it as missing so
             # --require-data still fails. The parser message is dropped: it can echo cell values.
