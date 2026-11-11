@@ -165,10 +165,20 @@ class _GuardedGroup(TyperGroup):
         raise typer.Exit(1)
 
 
+# The generation path in one place: `fit` is in the Generate panel, but `run` and the fidelity
+# report sit in other panels, so a user scanning the panels would not see the three together.
+_ROOT_EPILOG = (
+    "Generate synthetic data: decoy fit source.csv, then decoy run pipeline.yaml, then "
+    "decoy report fidelity <source.csv> <synthetic.csv> --generate. "
+    "Details: decoy explain generation."
+)
+
+
 app = typer.Typer(
     name="decoy",
     cls=_GuardedGroup,
     help=_ROOT_HELP,
+    epilog=_ROOT_EPILOG,
     no_args_is_help=True,
     add_completion=True,
     pretty_exceptions_enable=False,
@@ -241,26 +251,26 @@ def _root(
     )
 
 
-app.command(name="run", epilog=RUN_EPILOG)(run_command)
-app.add_typer(validate_app, name="validate")
-app.command(name="unmask", epilog=UNMASK_EPILOG)(unmask_command)
-app.command(name="tokenize", epilog=TOKENIZE_EPILOG)(tokenize_command)
-app.command(name="detokenize", epilog=DETOKENIZE_EPILOG)(detokenize_command)
-app.command(name="fit", epilog=FIT_EPILOG)(fit_command)
-app.command(name="init", epilog=INIT_EPILOG)(init_command())
-app.command(name="demo", epilog=DEMO_EPILOG)(demo_command)
-app.command(name="explain", epilog=EXPLAIN_EPILOG)(explain_command)
-app.command(name="info", epilog=INFO_EPILOG)(info_command)
-app.command(name="schema", epilog=SCHEMA_EPILOG)(schema_command)
-app.add_typer(scan_app, name="scan")
-app.add_typer(report_app, name="report")
-app.add_typer(ci_app, name="ci")
-app.command(name="list", epilog=LIST_EPILOG)(list_)
-app.command(name="show", epilog=SHOW_EPILOG)(show)
-app.command(name="doctor", epilog=DOCTOR_EPILOG)(doctor)
-app.command(name="setup", epilog=SETUP_EPILOG)(setup_command)
-app.command(name="subset", epilog=SUBSET_EPILOG)(subset_command)
-app.command(name="upgrade", epilog=UPGRADE_EPILOG)(upgrade_command)
+app.command(name="run", rich_help_panel="Run", epilog=RUN_EPILOG)(run_command)
+app.add_typer(validate_app, name="validate", rich_help_panel="Check and report")
+app.command(name="unmask", rich_help_panel="Mask", epilog=UNMASK_EPILOG)(unmask_command)
+app.command(name="tokenize", rich_help_panel="Mask", epilog=TOKENIZE_EPILOG)(tokenize_command)
+app.command(name="detokenize", rich_help_panel="Mask", epilog=DETOKENIZE_EPILOG)(detokenize_command)
+app.command(name="fit", rich_help_panel="Generate", epilog=FIT_EPILOG)(fit_command)
+app.command(name="init", rich_help_panel="Start", epilog=INIT_EPILOG)(init_command())
+app.command(name="demo", rich_help_panel="Start", epilog=DEMO_EPILOG)(demo_command)
+app.command(name="explain", rich_help_panel="Reference", epilog=EXPLAIN_EPILOG)(explain_command)
+app.command(name="info", rich_help_panel="Start", epilog=INFO_EPILOG)(info_command)
+app.command(name="schema", rich_help_panel="Reference", epilog=SCHEMA_EPILOG)(schema_command)
+app.add_typer(scan_app, name="scan", rich_help_panel="Mask")
+app.add_typer(report_app, name="report", rich_help_panel="Check and report")
+app.add_typer(ci_app, name="ci", rich_help_panel="Check and report")
+app.command(name="list", rich_help_panel="Reference", epilog=LIST_EPILOG)(list_)
+app.command(name="show", rich_help_panel="Reference", epilog=SHOW_EPILOG)(show)
+app.command(name="doctor", rich_help_panel="Start", epilog=DOCTOR_EPILOG)(doctor)
+app.command(name="setup", rich_help_panel="Start", epilog=SETUP_EPILOG)(setup_command)
+app.command(name="subset", rich_help_panel="Run", epilog=SUBSET_EPILOG)(subset_command)
+app.command(name="upgrade", rich_help_panel="Start", epilog=UPGRADE_EPILOG)(upgrade_command)
 
 
 if __name__ == "__main__":

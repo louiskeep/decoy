@@ -59,7 +59,7 @@ config's global_settings.mask_secret_ref) must name the secret the mask
 run used; the vault file is a re-identification map, store it separately from the
 masked output.
 
-See also: decoy run, decoy explain strategies.
+See also: decoy run, decoy explain transforms.
 """
 
 

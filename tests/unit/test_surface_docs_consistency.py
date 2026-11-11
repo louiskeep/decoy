@@ -61,7 +61,6 @@ _ROOT_HELP_OMITTED = frozenset(
 _README_TABLE_OMITTED = frozenset(
     {
         "unmask",
-        "fit",
         "info",
         "schema",
         "doctor",
@@ -199,8 +198,7 @@ def test_every_top_level_command_is_in_root_help_or_allowlisted() -> None:
     )
     stale = _ROOT_HELP_OMITTED - TOP_LEVEL
     assert not stale, (
-        f"_ROOT_HELP_OMITTED lists non-existent command(s) {sorted(stale)}; "
-        "prune the allowlist."
+        f"_ROOT_HELP_OMITTED lists non-existent command(s) {sorted(stale)}; prune the allowlist."
     )
     contradiction = _ROOT_HELP_OMITTED & referenced
     assert not contradiction, (
@@ -242,8 +240,7 @@ def test_every_top_level_command_is_in_readme_table_or_allowlisted() -> None:
     )
     stale = _README_TABLE_OMITTED - TOP_LEVEL
     assert not stale, (
-        f"_README_TABLE_OMITTED lists non-existent command(s) {sorted(stale)}; "
-        "prune the allowlist."
+        f"_README_TABLE_OMITTED lists non-existent command(s) {sorted(stale)}; prune the allowlist."
     )
     contradiction = _README_TABLE_OMITTED & referenced
     assert not contradiction, (
