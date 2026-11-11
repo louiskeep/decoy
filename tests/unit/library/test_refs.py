@@ -21,7 +21,7 @@ from tests.unit.library._helpers import envelope, start_child
 
 from decoy import _atomic, _private_file
 from decoy.cli.io import DECOY_DIR
-from decoy.cli.library import LibraryError, _refs, open_library
+from decoy.cli.library import LibraryError, _index, open_library
 from decoy.cli.library._errors import (
     LIBRARY_BUSY,
     LIBRARY_LOCK_UNAVAILABLE,
@@ -81,14 +81,18 @@ def test_set_then_read_a_ref(root: Path) -> None:
     ],
 )
 def test_a_bad_kind_or_name_is_refused_before_anything_is_written(
-    root: Path, kind: str, name: str
+    root: Path, kind: str, name: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     target = _stored(root)
+    library = open_library(root)
+    locks: list[object] = []
+    real = _index.locked
+    monkeypatch.setattr(_index, "locked", lambda *a, **k: locks.append(a) or real(*a, **k))
     with pytest.raises(LibraryError) as caught:
-        open_library(root).set_ref(kind, name, target)
+        library.set_ref(kind, name, target)
     assert caught.value.code == REF_NAME_INVALID
     assert not (root / "library" / "refs").exists()
-    assert not (root / "library" / "index.sqlite").exists()  # refused before the lock
+    assert locks == []  # refused before the lock (put now creates index.sqlite, L1c.1)
 
 
 def test_the_name_grammar_accepts_its_edges(root: Path) -> None:
@@ -146,11 +150,12 @@ def test_the_lock_file_is_0600_before_any_sql_runs(
         open_library(root).set_ref("sample-run", "baseline", target)
     finally:
         os.umask(old)
-    assert seen == [("index.sqlite", 0o600)]  # non-vacuous: one connect, the file existed
+    assert seen and set(seen) == {("index.sqlite", 0o600)}  # every connect found it 0600
 
 
 def test_an_index_that_cannot_be_opened_is_lock_unavailable(root: Path) -> None:
     target = _stored(root)
+    (root / "library" / "index.sqlite").unlink()  # put made it (L1c.1)
     (root / "library" / "index.sqlite").mkdir()  # a folder where the lock file must be
     with pytest.raises(LibraryError) as caught:
         open_library(root).set_ref("sample-run", "baseline", target)
@@ -209,7 +214,7 @@ def test_the_loser_fails_with_library_busy_and_never_overwrites(
     a, b = _stored(root, 0), _stored(root, 1)
     library = open_library(root)
     library.set_ref("sample-run", "baseline", a)
-    monkeypatch.setattr(_refs, "BUSY_TIMEOUT_SECONDS", 0.2)
+    monkeypatch.setattr(_index, "BUSY_TIMEOUT_SECONDS", 0.2)
     release = tmp_path / "release"
     holder = _hold_lock(root, release)
     try:

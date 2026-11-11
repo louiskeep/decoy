@@ -478,7 +478,7 @@ def test_library_files_and_folders_are_owner_only_under_umask_zero(tmp_path: Pat
     got = _run(_LIBRARY_FILES, str(tmp_path)).splitlines()
     files = [line for line in got if line.startswith("file ")]
     dirs = [line for line in got if line.startswith(("dir ", "root "))]
-    assert len(files) == 4  # .gitignore, .gitattributes, LAYOUT, one record; tmp is empty
+    assert len(files) == 5  # .gitignore, .gitattributes, LAYOUT, index.sqlite, one record
     assert set(files) == {"file 0o600"}
     assert len(dirs) == 5  # the root, library, objects, the fan-out folder, tmp
     assert {line.split()[1] for line in dirs} == {"0o700"}
