@@ -127,8 +127,8 @@ def _validate_pair(config_text: str, staged_snapshot: Path) -> list[str]:
     """Run the pre-run gate on the candidate config against the staged snapshot.
 
     Returns the columns that only need the real-categories opt-in (the gate's structured
-    finding: the engine's `STATISTICAL_REAL_CATEGORIES_NOT_ALLOWED`, column from its config path). Any other error raises
-    `ScaffoldInvalid`.
+    finding: the engine's `STATISTICAL_REAL_CATEGORIES_NOT_ALLOWED`, column from its config
+    path). Any other error raises `ScaffoldInvalid`.
 
     The staged file is the sibling layout: it sits beside the destination, owner-only, and
     holds the exact bytes about to be published. The copy of the config the gate reads names
