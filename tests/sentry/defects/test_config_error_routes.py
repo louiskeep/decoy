@@ -493,3 +493,21 @@ def test_api_mask_config_error_is_value_free_and_chainless(tmp_path: Path) -> No
     assert _FIRST in str(exc)
     assert exc.__cause__ is None
     assert exc.__context__ is None
+
+
+def test_api_mask_malformed_yaml_is_value_free_and_chainless(tmp_path: Path) -> None:
+    """A YAML syntax error quotes the broken line; ``mask`` reports only line and column."""
+    import traceback
+
+    from decoy.api import ConfigValidationError, mask
+
+    cfg = tmp_path / "bad.yaml"
+    cfg.write_text(f"version: 2\napi_password: [{_MARKER}_YAML\n", encoding="utf-8")
+    with pytest.raises(ConfigValidationError) as caught:
+        mask(config=cfg)
+    exc = caught.value
+    assert "could not parse YAML" in str(exc)
+    assert _MARKER not in str(exc)
+    assert _MARKER not in "".join(traceback.format_exception(exc))
+    assert exc.__cause__ is None
+    assert exc.__context__ is None
