@@ -14,6 +14,7 @@ consumers = ["pytest", "ruff", "decoy", "scripts/build_docs.py", "scripts/cert_s
 route = [
   { workflow = "ci.yml", job = "ruff", gates = ["lock-env"] },
   { workflow = "ci.yml", job = "pytest", gates = ["lock-env"] },
+  { workflow = "ci.yml", job = "layers-gate", gates = ["lock-env"] },
   { workflow = "ci.yml", job = "fresh-install-smoke", gates = ["lock-env", "constrained-wheel"] },
   { workflow = "ci.yml", job = "ci-template-lint", gates = ["ci-tools", "tool-binary"] },
   { workflow = "ci.yml", job = "certified-profile", gates = ["lock-env", "certified-engine-wheel", "certified-closure"] },

@@ -52,16 +52,9 @@ KINDS = frozenset(
         "Roadmap, plans, records",
     }
 )
-# Paths the map marks `(target)`. A new or misspelled target is red; C3 removes the layer entries
-# when it creates the files.
-TARGETS = frozenset(
-    {
-        ".importlinter",
-        "pyproject.toml",
-        "tests/sentry/baselines/import-layers.json",
-        "tests/sentry/layout/test_import_layers.py",
-    }
-)
+# Paths the map marks `(target)`. A new or misspelled target is red. None is open since C3
+# created the layer files.
+TARGETS: frozenset[str] = frozenset()
 _TARGET = re.compile(r"`([^`]+)` \(target\)")
 
 

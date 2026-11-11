@@ -102,7 +102,9 @@ def unregistered_readers(
 
 
 def _covered() -> tuple[set[tuple[str, str]], set[str]]:
-    consts = {(s.keys.name, s.keys.constant) for s in bs.SOURCES} | set(bs.NOT_A_LIST_CONSTS)
+    consts = {
+        (s.keys.name, s.keys.constant) for s in bs.SOURCES if isinstance(s.keys, bs.InCode)
+    } | set(bs.NOT_A_LIST_CONSTS)
     files = {Path(p).name for p in registry().values()}
     files |= {Path(s.data_file).name for s in bs.SOURCES if s.data_file}
     return consts, files

@@ -15,7 +15,7 @@ bare `import decoy` (e.g. just reading `__version__`) does not eagerly
 pull in typer/pandas/pyarrow/decoy_engine.
 """
 
-__version__ = "0.1.0"
+from decoy._version import __version__ as __version__
 
 _LAZY_API = frozenset(
     {
