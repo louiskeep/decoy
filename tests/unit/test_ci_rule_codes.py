@@ -326,6 +326,8 @@ def test_every_evidence_issue_kind_is_allowlisted() -> None:
         ("missing", "missing"),
         ("target.Customers.would_overwrite", "target.would_overwrite"),
         ("source.a.b.exists", "source.exists"),
+        ("target.Customers.parent_unwritable", "target.parent_unwritable"),
+        ("target.Customers.parent_missing", UNKNOWN_CODE),
         ("Unknown_Provider", UNKNOWN_CODE),
         ("odd code!", UNKNOWN_CODE),
         ("", UNKNOWN_CODE),

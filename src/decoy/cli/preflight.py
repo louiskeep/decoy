@@ -62,6 +62,7 @@ validate command's code path.
 
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -279,41 +280,39 @@ def _check_source_files(raw: dict[str, Any], base_dir: Path, acc: _PreflightAccu
         )
 
 
-def _check_target_overwrite(raw: dict[str, Any], acc: _PreflightAccumulator) -> None:
-    """Advisory: warn when an output target file already exists.
+def _check_target_overwrite(
+    raw: dict[str, Any], acc: _PreflightAccumulator, base_dir: Path
+) -> None:
+    """Advisory: warn when an output target exists or its folder cannot be written.
 
-    This is a warning, not a failure. The run succeeds by overwriting,
-    but this check surfaces the risk in CI so it can be treated as blocking
-    with --fail-on-warning.
+    Warnings, not failures: a run overwrites. Paths resolve against `base_dir` (the YAML's
+    folder) through `RunLayout.place_target`, the one placement choke point. A missing parent
+    is fine (the writer makes it); only an existing ancestor that is not a writable folder warns.
     """
-    targets = raw.get("targets") or {}
-    if not isinstance(targets, dict):
-        return
+    from decoy.cli.io import RunLayout
 
-    for table_name, target in targets.items():
-        if not isinstance(target, dict):
-            continue
-        if target.get("type") not in ("file", None):
+    layout = RunLayout.fixed(base_dir)
+    targets = raw.get("targets")
+    for table_name, target in targets.items() if isinstance(targets, dict) else ():
+        if not isinstance(target, dict) or target.get("type") not in ("file", None):
             continue
         out_path_str = target.get("path")
         if not out_path_str:
             continue
-        out_path = Path(out_path_str)
+        out_path = layout.place_target(out_path_str)
+        location = f"targets.{table_name}.path"
         if out_path.exists():
+            msg = f"Output target already exists and would be overwritten: {out_path_str}"
             acc.add_warn(
-                name=f"target.{table_name}.would_overwrite",
-                message=f"Output target already exists and would be overwritten: {out_path_str}",
-                location=f"targets.{table_name}.path",
+                name=f"target.{table_name}.would_overwrite", message=msg, location=location
             )
-        else:
-            # Check that the parent directory exists or can be created.
-            parent = out_path.parent
-            if not parent.exists():
-                acc.add_warn(
-                    name=f"target.{table_name}.parent_missing",
-                    message=f"Output target directory does not exist: {parent!s}",
-                    location=f"targets.{table_name}.path",
-                )
+            continue
+        ancestor = next(p for p in out_path.parents if p.exists())
+        if not ancestor.is_dir() or not os.access(ancestor, os.W_OK | os.X_OK):
+            msg = f"Output target directory cannot be created or written: {ancestor!s}"
+            acc.add_warn(
+                name=f"target.{table_name}.parent_unwritable", message=msg, location=location
+            )
 
 
 # ---------------------------------------------------------------------------
@@ -760,7 +759,7 @@ def preflight(
     _check_source_files(raw, config.parent, acc)
 
     # -- Step 5: Target overwrite advisory -----------------------------------
-    _check_target_overwrite(raw, acc)
+    _check_target_overwrite(raw, acc, config.parent)
 
     # -- Step 6: Capacity check (OOM checker v1) -----------------------------
     _check_capacity(raw, config, acc)
