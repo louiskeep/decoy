@@ -112,10 +112,14 @@ dependencies = [
     # 0.21.0 bounds `contingency_top_k` to 1..1000 and certifies row aa038ddd
     # for the CLI runtime profile.
     #
+    # 0.22.0 adds the `constant` and `distribution` generate types and checks
+    # generate columns per type at validate; the certified row aa038ddd is kept
+    # and d5898d1f is added for the CLI runtime profile.
+    #
     # Hard-pinned to one engine release. The platform is parked and stays on
     # 0.18.0, so the two pins differ for now. The engine is not on PyPI, so CI
-    # and the smoke docs install the `v0.21.0` git tag.
-    "decoy-engine==0.21.0",
+    # and the smoke docs install the `v0.22.0` git tag.
+    "decoy-engine==0.22.0",
     # Pin the typer minor: `typer utils docs` metavar rendering differs across
     # typer minors (0.26.x emits `TEXT`/`FILE`; 0.27.x emits `<str>`/`<file>`),
     # and docs/cli-reference.md is committed and checked by the test_cli_surface
@@ -146,6 +150,8 @@ dependencies = [
 [project.optional-dependencies]
 dev = [
     "pytest>=7.0.0",
+    # Per-test hang guard (MIT): a hung test fails with a stack dump instead of stalling the suite.
+    "pytest-timeout>=2.4.0",
     # F43 test oracles only, never a runtime dependency: jsonschema validates emitted SARIF
     # against the vendored OASIS schema; pre-commit runs the shipped hook for real (4.4.0 is
     # the first release with `language: unsupported`).
@@ -225,6 +231,11 @@ exclude = ["tests"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["src"]
+# Per-test hang guard (pytest-timeout): a hung test fails with a stack dump instead of stalling
+# the suite. 300 s is the floor; the slowest default-suite test takes about 17 s. A test that
+# needs longer carries its own @pytest.mark.timeout(N) with a reason. No timeout_method: the
+# plugin picks signal on POSIX and thread on Windows only while the method is left unset.
+timeout = 300
 
 # ── Ruff lint + format baseline ─────────────────────────────────────────────
 # Mirrors the engine's config (decoy-engine/pyproject.toml [tool.ruff]) but

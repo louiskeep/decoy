@@ -85,7 +85,7 @@ source dp-env/bin/activate
 Install the engine from its git tag and the CLI wheel, with no dependencies:
 
 ```bash
-uv pip install --no-deps "git+https://github.com/louiskeep/decoy-engine@v0.21.0" dist/*.whl
+uv pip install --no-deps "git+https://github.com/louiskeep/decoy-engine@v0.22.0" dist/*.whl
 ```
 
 Install the pinned set from the lock file at the root of the checkout:
