@@ -2,8 +2,8 @@
 
 Decoy keeps small, value-free records about your pipelines (scan snapshots, run results,
 evidence manifests, sample-run metadata) in one library per project. This page describes what
-exists so far. No command writes to the library yet, and there is no `decoy library` command
-yet; the scan and run commands start using it in later releases.
+exists so far. No command writes records yet (the scan and run commands start using the library
+in later releases); `decoy library path` and `decoy library fsck` read and check it.
 
 Code: `src/decoy/cli/library/`. Plan: `plan/local-record-library:docs/plans/2026-11-05-local-record-library.md`.
 
@@ -42,6 +42,7 @@ Use `--library` with a shorter path.
     refs/<kind>/<name>  one line: a record id
     index.sqlite        the index (a rebuildable cache) and the library lock; not committed
     tmp/                temp files for atomic writes
+    quarantine/         records `fsck --repair` found corrupt (moved here, never deleted)
 ```
 
 Decoy never edits an existing `.gitignore` or `.gitattributes`. A library root not named
@@ -125,6 +126,32 @@ retention:
 Keys you leave out keep their defaults. An unknown key, a kind Decoy does not know, a number
 written as text, or a count below 1 makes the file invalid (`library_policy_invalid`, naming the
 field, never its value). Nothing applies the policy yet: prune and log rotation arrive later.
+
+## Commands
+
+`decoy library path [--library DIR]` prints the library root, where it came from (`--library`,
+`DECOY_LIBRARY` or the project), whether records are on, and whether the library runs in
+degraded mode and why. It creates nothing.
+
+`decoy library fsck [--repair] [--library DIR]` checks, without changing anything:
+
+- every record's id (the file is parsed first, so a CRLF or re-indented copy passes), its
+  envelope and its payload; a record of a kind this Decoy does not know is checked by id only;
+- every ref points at a stored record; links to missing records are warnings;
+- the index matches the record files;
+- no temp file in `library/tmp/` is older than an hour;
+- on Linux and macOS, the index, `tmp/`, `scratch/` and `logs/` are private (a finding);
+  records and refs that git checked out 0644 get a note only;
+- job log lines parse (a truncated last line is a warning).
+
+Each problem prints one line: `finding`, `warning` or `note`, a code (`object_corrupt`,
+`payload_invalid`, `ref_dangling`, `index_stale`, `temp_stale`, `mode_open`, ...) and the path
+inside the library. Exit 0 when there are no findings, 4 when there are.
+
+`--repair` copies each corrupt record into `library/quarantine/` and then removes it, deletes
+stale temp files, removes refs to missing records (printing each) and rebuilds the index. It
+never deletes a valid record, and it changes nothing in a library whose `LAYOUT` is newer than
+this Decoy.
 
 ## File modes
 

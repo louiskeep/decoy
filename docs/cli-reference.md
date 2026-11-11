@@ -23,6 +23,7 @@ Try one of:
   decoy report verify evidence.json  Re-hash the recorded files and report fingerprint drift.
   decoy report diff a.json b.json  Compare two manifests: fingerprints always, data when the output files exist.
   decoy ci check                   Run CI checks from .decoy-ci.yaml; JSON, SARIF, or Markdown report (see docs/ci-contracts.md).
+  decoy library fsck               Check the project&#x27;s record library (.decoy/library); `library path` shows where it is.
 
 Run `decoy --install-completion` to enable shell tab completion.
 
@@ -64,6 +65,7 @@ Generate synthetic data: decoy fit source.csv, then decoy run pipeline.yaml, the
 * `scan`: Profile a dataset for PII and...
 * `report`: The post-run surface: show / render /...
 * `ci`: CI integration: portable checks, SARIF,...
+* `library`: The project&#x27;s local record library: where...
 
 ## `decoy run`
 
@@ -1821,3 +1823,56 @@ Examples:
 Exit codes: 0 clean; 1 invalid input or validation errors; 2 blocking warnings;
 3 runtime failure; 4 findings; 5 capacity refusal. See docs/ci-contracts.md.
 Decoy never uploads or comments; uploads belong to your CI workflow.
+
+
+## `decoy library`
+
+The project&#x27;s local record library: where it lives, and whether it is sound.
+
+**Usage**:
+
+```console
+$ decoy library [OPTIONS] COMMAND [ARGS]...
+```
+
+**Options**:
+
+* `--help`: Show this message and exit.
+
+**Commands**:
+
+* `path`: Print the library root, where it came...
+* `fsck`: Check every record, ref, link, the index,...
+
+### `decoy library path`
+
+Print the library root, where it came from, and whether it runs in degraded mode.
+
+**Usage**:
+
+```console
+$ decoy library path [OPTIONS]
+```
+
+**Options**:
+
+* `--library DIR`: Use DIR as the library (else DECOY_LIBRARY, else the project&#x27;s .decoy/ folder).
+* `--help`: Show this message and exit.
+
+### `decoy library fsck`
+
+Check every record, ref, link, the index, temp files, modes and job logs.
+
+Exit 0 when clean, 4 when there are findings (warnings and notes do not count).
+
+**Usage**:
+
+```console
+$ decoy library fsck [OPTIONS]
+```
+
+**Options**:
+
+* `--repair`: Quarantine corrupt records, delete stale temp files, remove refs to missing records and rebuild the index. Never deletes a valid record.
+* `--library DIR`: Use DIR as the library (else DECOY_LIBRARY, else the project&#x27;s .decoy/ folder).
+* `--help`: Show this message and exit.

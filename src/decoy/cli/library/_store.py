@@ -147,6 +147,19 @@ class Library:
         except LibraryError:
             self.stale = True  # the object is stored; the next locked open inserts the row
 
+    def has(self, record_id: str) -> bool:
+        """Whether an object file exists for this full id (no read)."""
+        digest = record_digest(record_id)
+        return digest is not None and self._object(digest).is_file()
+
+    def rebuild_index(self) -> None:
+        """Drop the index and rebuild it from the object files, under the lock (fsck --repair).
+        Raises `LibraryError` when the lock cannot be taken."""
+        with _index.locked(self._library, tmp_dir=self._tmp) as conn:
+            _index.rebuild(conn)
+            _index.sync(conn, _index.object_ids(self._objects), self._index_row)
+        self.stale = False
+
     def rows(
         self, *, kind: str | None = None, pipeline: str | None = None, table: str | None = None
     ) -> list[IndexRow]:

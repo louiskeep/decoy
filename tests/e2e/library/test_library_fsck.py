@@ -128,3 +128,18 @@ def test_a_newer_layout_is_a_finding_and_repair_refuses(root: Path) -> None:
     result = _fsck("--repair")
     assert result.exit_code == EXIT_FINDINGS, result.output
     assert "layout_newer" in result.output
+
+
+def test_registering_the_group_keeps_the_engine_out_of_startup() -> None:
+    """`decoy --help` imports the `library` group, never the record engine behind it."""
+    import subprocess
+    import sys
+
+    code = (
+        "import sys, decoy.__main__\n"
+        "print('decoy_engine' in sys.modules)\n"
+        "from decoy.cli.library import open_library\n"
+        "print('decoy_engine' in sys.modules)\n"
+    )
+    done = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, check=True)
+    assert done.stdout.split() == ["False", "True"]  # non-vacuous: first use loads it

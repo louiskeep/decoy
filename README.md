@@ -117,6 +117,7 @@ declared under `targets:` in the YAML.
 | `decoy scan <path>...`           | Profile source files, one table each: distributions, PII candidates, cardinality hints. A CSV needs `--has-header` or `--no-header`. |
 | `decoy report show <evidence.json>` | The post-run surface: show / verify / fidelity / integrity / diff / vault over run artifacts. |
 | `decoy ci check [manifest]`      | Run the checks in a `decoy-ci/v1` manifest and emit one value-free JSON, SARIF 2.1.0, or Markdown report. See [CI integration](#ci-integration). |
+| `decoy library fsck`             | Check the project's local record library (`.decoy/library`); `decoy library path` shows where it lives. |
 | `decoy list templates`           | List the bundled pipeline templates.                                         |
 | `decoy show template <name>`     | Dump one bundled template to stdout (e.g. `decoy show template hipaa`).      |
 | `decoy explain <topic>`          | In-CLI reference (exit codes, providers, strategies).                         |
