@@ -1,0 +1,118 @@
+{
+ "sentry_id": "engine-reason-code-copies",
+ "created_in": "GEN-CLI-C2",
+ "entries": {
+  "_mask_secret.py::secret_file_permissions_unsafe": {
+   "reason": "Legacy copy of an engine reason code; import the engine constant, then delete this entry.",
+   "count": 1
+  },
+  "_mask_secret_guidance.py::bad_secret_ref": {
+   "reason": "Legacy copy of an engine reason code; import the engine constant, then delete this entry.",
+   "count": 1
+  },
+  "_mask_secret_guidance.py::keyed_strategy_requires_secret": {
+   "reason": "Legacy copy of an engine reason code; import the engine constant, then delete this entry.",
+   "count": 1
+  },
+  "_mask_secret_guidance.py::missing_mask_secret": {
+   "reason": "Legacy copy of an engine reason code; import the engine constant, then delete this entry.",
+   "count": 1
+  },
+  "_mask_secret_guidance.py::secret_file_permissions_unsafe": {
+   "reason": "Legacy copy of an engine reason code; import the engine constant, then delete this entry.",
+   "count": 1
+  },
+  "_mask_secret_guidance.py::secret_provider_unknown": {
+   "reason": "Legacy copy of an engine reason code; import the engine constant, then delete this entry.",
+   "count": 1
+  },
+  "_mask_secret_guidance.py::weak_mask_secret": {
+   "reason": "Legacy copy of an engine reason code; import the engine constant, then delete this entry.",
+   "count": 1
+  },
+  "cli/extras.py::ner_spacy_not_installed": {
+   "reason": "Legacy copy of an engine reason code; import the engine constant, then delete this entry.",
+   "count": 1
+  },
+  "cli/fit.py::dp_numeric_domain_invalid": {
+   "reason": "Legacy copy of an engine reason code; import the engine constant, then delete this entry.",
+   "count": 2
+  },
+  "cli/fit.py::dp_schedule_mismatch": {
+   "reason": "Legacy copy of an engine reason code; import the engine constant, then delete this entry.",
+   "count": 2
+  },
+  "cli/fit.py::row_count": {
+   "reason": "Dict key or section name that equals an engine code, not a code the CLI matches; rename or delete this entry once the scan can tell them apart.",
+   "count": 2
+  },
+  "cli/gen/_preview.py::row_count": {
+   "reason": "Dict key or section name that equals an engine code, not a code the CLI matches; rename or delete this entry once the scan can tell them apart.",
+   "count": 2
+  },
+  "cli/gen/_scaffold.py::row_count": {
+   "reason": "Dict key or section name that equals an engine code, not a code the CLI matches; rename or delete this entry once the scan can tell them apart.",
+   "count": 2
+  },
+  "cli/io/_scan_set.py::row_count": {
+   "reason": "Dict key or section name that equals an engine code, not a code the CLI matches; rename or delete this entry once the scan can tell them apart.",
+   "count": 3
+  },
+  "cli/preflight.py::capacity_source_unprofilable": {
+   "reason": "Legacy copy of an engine reason code; import the engine constant, then delete this entry.",
+   "count": 1
+  },
+  "cli/preflight.py::out_of_core_fanin_exceeds_budget": {
+   "reason": "Legacy copy of an engine reason code; import the engine constant, then delete this entry.",
+   "count": 1
+  },
+  "cli/report.py::vault_protocol_version_mismatch": {
+   "reason": "Legacy copy of an engine reason code; import the engine constant, then delete this entry.",
+   "count": 1
+  },
+  "cli/run/_errors.py::uniqueness_impossible": {
+   "reason": "Legacy copy of an engine reason code; import the engine constant, then delete this entry.",
+   "count": 1
+  },
+  "cli/run/_execute.py::fidelity_report": {
+   "reason": "Dict key or section name that equals an engine code, not a code the CLI matches; rename or delete this entry once the scan can tell them apart.",
+   "count": 1
+  },
+  "cli/run/_execute.py::post_validation": {
+   "reason": "Dict key or section name that equals an engine code, not a code the CLI matches; rename or delete this entry once the scan can tell them apart.",
+   "count": 1
+  },
+  "cli/scanning/_multi.py::row_count": {
+   "reason": "Dict key or section name that equals an engine code, not a code the CLI matches; rename or delete this entry once the scan can tell them apart.",
+   "count": 6
+  },
+  "cli/scanning/_multi.py::scan_header_suspect": {
+   "reason": "Legacy copy of an engine reason code; import the engine constant, then delete this entry.",
+   "count": 1
+  },
+  "cli/scanning/_multi.py::scan_key_type_mismatch": {
+   "reason": "Legacy copy of an engine reason code; import the engine constant, then delete this entry.",
+   "count": 1
+  },
+  "cli/subset.py::subset_config_missing": {
+   "reason": "Legacy copy of an engine reason code; import the engine constant, then delete this entry.",
+   "count": 1
+  },
+  "cli/unmask.py::vault_protocol_version_mismatch": {
+   "reason": "Legacy copy of an engine reason code; import the engine constant, then delete this entry.",
+   "count": 1
+  },
+  "notify.py::row_count": {
+   "reason": "Dict key or section name that equals an engine code, not a code the CLI matches; rename or delete this entry once the scan can tell them apart.",
+   "count": 3
+  },
+  "ui/summary.py::kind_drift": {
+   "reason": "Legacy copy of an engine reason code; import the engine constant, then delete this entry.",
+   "count": 1
+  },
+  "ui/summary.py::null_drift": {
+   "reason": "Legacy copy of an engine reason code; import the engine constant, then delete this entry.",
+   "count": 1
+  }
+ }
+}
