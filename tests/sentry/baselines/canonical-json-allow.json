@@ -1,0 +1,26 @@
+{
+ "sentry_id": "canonical-json-allow",
+ "created_in": "L1b.2",
+ "entries": {
+  "ci/manifest.py": {
+   "sites": 1,
+   "reason": "Pretty-printed committed JSON Schema (indent=2) drift-tested against its file; a stable display form, never hashed."
+  },
+  "cli/report.py": {
+   "sites": 1,
+   "reason": "Set-diff key for evidence warnings in report diff; compared in memory only, never stored or hashed. Move to records.canonical_bytes when report.py is next split."
+  },
+  "distribution/installer.py": {
+   "sites": 1,
+   "reason": "Trust-state file that install.sh reads with a shell pattern; part of the install contract, not a content hash (plan 3.1)."
+  },
+  "distribution/signing.py": {
+   "sites": 1,
+   "reason": "Frozen release-signature input shared with openssl and the build host; rewiring it would tie release verification to an engine version (plan 3.1)."
+  },
+  "notify.py": {
+   "sites": 1,
+   "reason": "Webhook body signed with HMAC; different bytes on the wire by design (ASCII-escaped, platform webhook contract), not a content hash (plan 3.1)."
+  }
+ }
+}

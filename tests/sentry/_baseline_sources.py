@@ -204,6 +204,26 @@ SOURCES: tuple[Source, ...] = (
         ),
     ),
     Source(
+        "canonical-json-allow",
+        "tests/sentry/io_policy/test_canonical_json.py",
+        InCode(
+            "tests/sentry/io_policy/test_canonical_json.py",
+            "ALLOWLIST",
+            key=lambda e: e.file,
+            reason=lambda e: e.reason,
+        ),
+    ),
+    Source(
+        "library-writer-allow",
+        "tests/sentry/io_policy/test_library_writer.py",
+        InCode(
+            "tests/sentry/io_policy/test_library_writer.py",
+            "LITERAL_ALLOWLIST",
+            key=lambda e: e.file,
+            reason=lambda e: e.reason,
+        ),
+    ),
+    Source(
         "csv-read-allow",
         "tests/sentry/test_csv_read_choke_point.py",
         InCode(

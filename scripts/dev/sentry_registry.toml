@@ -65,3 +65,11 @@ baseline = "tests/sentry/baselines/package-fanout.json"
 [[sentry]]
 id = "import-layers"
 baseline = "tests/sentry/baselines/import-layers.json"
+
+[[sentry]]
+id = "canonical-json-allow"
+baseline = "tests/sentry/baselines/canonical-json-allow.json"
+
+[[sentry]]
+id = "library-writer-allow"
+baseline = "tests/sentry/baselines/library-writer-allow.json"

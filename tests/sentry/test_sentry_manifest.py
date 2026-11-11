@@ -35,6 +35,8 @@ SENTRIES = (
     "tests/sentry/io_policy/test_engine_base_dir.py",
     "tests/sentry/io_policy/test_private_files_aliases.py",
     "tests/sentry/io_policy/test_scaffold_publish.py",
+    "tests/sentry/io_policy/test_canonical_json.py",
+    "tests/sentry/io_policy/test_library_writer.py",
     "tests/sentry/cli_text/test_help_panels.py",
     "tests/sentry/cli_text/test_no_traceback_escape.py",
     "tests/sentry/cli_text/test_json_command_names.py",

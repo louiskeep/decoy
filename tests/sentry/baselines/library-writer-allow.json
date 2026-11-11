@@ -1,0 +1,14 @@
+{
+ "sentry_id": "library-writer-allow",
+ "created_in": "L1b.2",
+ "entries": {
+  "cli/io/_project.py": {
+   "sites": 1,
+   "reason": "DECOY_DIR, the one home of the project folder name; the library imports it from decoy.cli.io (re-FRAME placement map)."
+  },
+  "distribution/layout.py": {
+   "sites": 1,
+   "reason": "The managed runtime home ~/.decoy (versions, current, cache); swapped on upgrade and never a record library (plan 4.1)."
+  }
+ }
+}
