@@ -214,20 +214,12 @@ disposition = "public"
 reason = "Chunked masked output keeps the old file's mode bits (OQ3)."
 
 [[row]]
-file = "cli/io/_layout.py"
-function = "read_claim"
+file = "cli/io/_small_file.py"
+function = "read_small_file"
 sink = "os.open"
 ordinal = 1
 disposition = "read"
-reason = "Opens a pipeline claim file read-only, non-blocking and without following links; writes nothing."
-
-[[row]]
-file = "cli/io/_project.py"
-function = "_read_marker_bytes"
-sink = "os.open"
-ordinal = 1
-disposition = "read"
-reason = "Opens the project marker read-only with O_NOFOLLOW to check its owner on the descriptor; writes nothing."
+reason = "Opens a project marker, claim or LATEST read-only after an lstat check, without following links or blocking; writes nothing."
 
 [[row]]
 file = "cli/run/_prepare.py"

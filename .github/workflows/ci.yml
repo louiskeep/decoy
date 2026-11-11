@@ -175,7 +175,7 @@ jobs:
           .smoke/bin/decoy show template minimal > smoke_run/pipeline.yaml
           cd smoke_run
           ../.smoke/bin/decoy run pipeline.yaml
-          test -s output.csv
+          test -s "out/pipeline/$(cat out/pipeline/LATEST)/output.csv"
 
       - name: decoy ci check against the installed wheel (smoke 4)
         # F43: the CI wrapper from the INSTALLED package, config-only validation

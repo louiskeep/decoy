@@ -14,6 +14,7 @@ from typing import Any
 
 from decoy import _native_gate, _resources
 from decoy.cli.gate import GateFinding
+from decoy.cli.io import RunLayout
 from decoy.ui.output import OutputState
 
 # Rows per chunk when `--chunk-size` is not given. The option has no default of its own so a
@@ -82,6 +83,10 @@ class RunContext:
     _report_flags: bool = field(init=False)
     _run_started_at: datetime = field(init=False)
     started: float = field(init=False)
+    # One id per command: the run folder name, the evidence `run_id` and later records share it.
+    invocation_id: str = field(init=False)
+    # Where this run writes; opened by `_execute` once the gate has passed.
+    layout: RunLayout | None = field(init=False, default=None)
 
     # Temp dir holding Parquet snapshots acquired from --duckdb-source inputs;
     # created only when the flag is used, torn down in the run's finally.

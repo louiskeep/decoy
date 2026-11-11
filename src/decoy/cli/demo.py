@@ -24,6 +24,7 @@ import typer
 
 from decoy.cli._sources import csv_file_source, read_source, resolved_source_config
 from decoy.cli.exit_codes import EXIT_RUNTIME, EXIT_USAGE
+from decoy.cli.io import RunLayout
 from decoy.cli.io._targets import check_target_formats, write_targets
 from decoy.ui.card import render_card
 from decoy.ui.output import OutputMode, OutputState, emit_json, print_traceback, setup_output
@@ -259,7 +260,7 @@ def _run_v2_mask(pipeline_yaml: Path) -> None:
         relationship_graph=graph,
         namespace_registry=ns_registry,
     )
-    _write_mask_outputs(config_dict, result, pipeline_yaml.parent)
+    _write_mask_outputs(config_dict, result, RunLayout.fixed(pipeline_yaml.parent))
 
 
 def _load_sources_from_config(config_dict: dict, base_dir: Path) -> dict:
@@ -276,7 +277,7 @@ def _load_sources_from_config(config_dict: dict, base_dir: Path) -> dict:
     return out
 
 
-def _write_mask_outputs(config_dict: dict, result, base_dir: Path) -> None:
+def _write_mask_outputs(config_dict: dict, result, layout: RunLayout) -> None:
     """Write each declared target by its declared format, through the shared writer.
     The engine `ExecutionResult` carries masked tables on `outputs`
     (dict[table_name -> pa.Table]); not `tables`."""
@@ -284,7 +285,7 @@ def _write_mask_outputs(config_dict: dict, result, base_dir: Path) -> None:
     outputs = getattr(result, "outputs", None)
     if not isinstance(outputs, dict):
         return
-    write_targets(config_dict, outputs, base_dir)
+    write_targets(config_dict, outputs, layout)
 
 
 # ---------------------------------------------------------------------------

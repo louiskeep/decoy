@@ -26,6 +26,8 @@ def write_evidence(ctx: RunContext) -> None:
             cli_version=_cli_version,
             engine_version=ctx._ev_engine_version or "unknown",
             key_label=ctx.key_label,
+            run_id=ctx.invocation_id,
+            place_target=ctx.layout.place_target if ctx.layout is not None else None,
             timings=ctx._ev_timings,
             engine_warnings=ctx._ev_engine_warnings,
         )

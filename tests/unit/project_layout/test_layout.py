@@ -439,3 +439,33 @@ def test_a_fifo_at_the_claim_path_is_no_claim_and_does_not_block(root: Path) -> 
     thread.join(10)
     assert not thread.is_alive(), "reading the claim blocked on a FIFO"
     assert result == [None]
+
+
+@posix_only
+@pytest.mark.parametrize("gap", [False, True], ids=["all flags", "no O_NOFOLLOW"])
+@pytest.mark.parametrize("target", ["/dev/zero", "file"])
+def test_a_symlinked_claim_is_no_claim_and_is_not_read_through(
+    root: Path, tmp_path: Path, target: str, gap: bool, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import threading
+
+    out, _ = prepare_out(root)
+    folder = name_dir(out, "orders")
+    if target == "file":
+        real = tmp_path / "elsewhere.txt"
+        real.write_text("pipelines/other.yaml\n", encoding="utf-8")
+        target = str(real)
+    os.symlink(target, folder / "PIPELINE")
+    if gap:
+        for name in ("O_NOFOLLOW", "O_NONBLOCK", "O_NOCTTY"):
+            monkeypatch.delattr(os, name, raising=False)
+    result: list[str | None] = ["unset"]
+
+    def probe() -> None:
+        result[0] = read_claim(out, "orders")
+
+    thread = threading.Thread(target=probe, daemon=True)
+    thread.start()
+    thread.join(10)
+    assert not thread.is_alive(), "reading the claim followed the link"
+    assert result == [None]

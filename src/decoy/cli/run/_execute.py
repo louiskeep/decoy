@@ -7,8 +7,10 @@ from decoy import _native_gate, _resources
 from decoy.cli import gen
 from decoy.cli.extras import check_cloud_endpoints, check_cloud_endpoints_supported
 from decoy.cli.io import (
+    RunLayout,
     check_target_formats,
     iter_source_chunks,
+    open_run_layout,
     parquet_schema,
     read_source,
     resolve_target_format,
@@ -47,6 +49,7 @@ def _run_chunked_mask(
     config_dict: dict,
     base_dir: Path,
     chunk_size: int,
+    layout: RunLayout,
     key_provider=None,
 ) -> dict[str, Path | None]:
     """WS4 chunked mask path: stream each mask table's source through
@@ -91,7 +94,6 @@ def _run_chunked_mask(
         src_path = _resolve_path(src_spec["path"], base_dir)
         if not isinstance(tgt_spec, dict) or not isinstance(tgt_spec.get("path"), str):
             continue
-        out_path = _resolve_path(tgt_spec["path"], base_dir)
 
         masked_iter = run_mask_pipeline_chunked(
             config_dict,
@@ -103,7 +105,8 @@ def _run_chunked_mask(
         published[name] = write_chunked_output(
             masked_iter,
             resolve_target_format(name, tgt_spec),
-            out_path,
+            tgt_spec["path"],
+            layout,
             empty_schema=(
                 partial(parquet_schema, src_path) if src_spec.get("format") == "parquet" else None
             ),
@@ -176,7 +179,7 @@ def _load_sources_from_config(config_dict: dict, base_dir: Path) -> dict:
     return out
 
 
-def _write_mask_outputs(config_dict: dict, result, base_dir: Path) -> dict[str, Path]:
+def _write_mask_outputs(config_dict: dict, result, layout: RunLayout) -> dict[str, Path]:
     """Write each declared target from the V2 ExecutionResult.
 
     The engine result exposes masked tables on `outputs` (dict[table_name -> pa.Table]);
@@ -193,16 +196,19 @@ def _write_mask_outputs(config_dict: dict, result, base_dir: Path) -> dict[str, 
     outputs = getattr(result, "outputs", None)
     if not isinstance(outputs, dict):
         return {}
-    return write_targets(config_dict, outputs, base_dir)
+    return write_targets(config_dict, outputs, layout)
 
 
 def execute(ctx: RunContext) -> None:
     """Run the pipeline on the chunked or plain branch and record what the tail reports."""
+    # After the gate and before the first write: the run folder, claim and `out/`.
+    layout = ctx.layout = open_run_layout(ctx.config, ctx.config_dict, ctx.invocation_id)
     if ctx.chunked:
         _chunk_paths = _run_chunked_mask(
             ctx.config_dict,
             ctx.config.parent,
             ctx.chunk_size or DEFAULT_CHUNK_SIZE,
+            layout,
             ctx.key_provider,
         )
         ctx._table_records = table_records(dict.fromkeys(_chunk_paths), _chunk_paths)
@@ -229,6 +235,9 @@ def execute(ctx: RunContext) -> None:
             if ctx._report_flags
             else {}
         )
+        # Sent only when set, so an engine without the keyword still runs a config without it.
+        quarantine_path = layout.place_quarantine(ctx.config_dict)
+        quarantine_kwargs = {"quarantine_path": quarantine_path} if quarantine_path else {}
         result = run_pipeline(
             resolved_source_config(ctx.config_dict, ctx.config.parent),
             ctx.sources,
@@ -237,6 +246,7 @@ def execute(ctx: RunContext) -> None:
             instance_default_locale=instance_locale,
             vault_writer=ctx.vault_writer,
             base_dir=ctx.config.parent,
+            **quarantine_kwargs,
             **_key_kwargs,
             **_report_kwargs,
             **_native_gate.run_pipeline_kwargs(ctx.gate_result),
@@ -255,7 +265,7 @@ def execute(ctx: RunContext) -> None:
         # vault was lost can never be reversed.
         if ctx.vault_writer is not None:
             _commit_vault(ctx.vault_writer, ctx.vault)
-        _written = _write_mask_outputs(ctx.config_dict, result, ctx.config.parent)
+        _written = _write_mask_outputs(ctx.config_dict, result, layout)
         ctx._table_records = table_records(
             {name: len(tbl) for name, tbl in result.outputs.items()}, _written
         )

@@ -65,13 +65,14 @@ from __future__ import annotations
 
 import hashlib
 import json as _json
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
-from decoy.cli.io import TargetFormatError, resolve_target_format
+from decoy.cli.io import LayoutError, TargetFormatError, resolve_target_format
 from decoy.ui.theme import warn
 
 _SCHEMA_VERSION = "cli-local-1"
@@ -157,6 +158,16 @@ def _format_keys(table: str, tgt: dict[str, Any]) -> dict[str, Any]:
     return keys
 
 
+def _placed(place_target: Callable[[str], Path] | None, raw: str) -> Path | None:
+    """Where the run put `raw`; None when the layout refuses it (nothing was written there)."""
+    if place_target is None:
+        return Path(raw)
+    try:
+        return place_target(raw)
+    except LayoutError:
+        return None
+
+
 def build_manifest(
     *,
     pipeline_path: Path,
@@ -168,8 +179,16 @@ def build_manifest(
     warnings: list[str] | None = None,
     timings: Any = None,
     engine_warnings: Any = None,
+    run_id: str | None = None,
+    place_target: Callable[[str], Path] | None = None,
 ) -> dict[str, Any]:
     """Build an evidence manifest dict for a completed local run.
+
+    `run_id` is the command's invocation id (it names the run folder); a new one is made when
+    absent. `place_target` maps a declared target path to the file the run writes there (the
+    run's `RunLayout.place_target`). Every target is recorded at that path, written or not, so
+    a target that published nothing gets a null fingerprint instead of matching a same-named
+    file in the working directory. Without it, paths are recorded as typed.
 
     The manifest records:
       - versions, run metadata, pipeline fingerprint
@@ -229,10 +248,10 @@ def build_manifest(
         tgt_path_str = tgt.get("path")
         if not tgt_path_str:
             continue
-        tgt_path = Path(tgt_path_str)
-        entry: dict[str, Any] = {"path": str(tgt_path)}
+        tgt_path = _placed(place_target, str(tgt_path_str))
+        entry: dict[str, Any] = {"path": str(tgt_path or tgt_path_str)}
         entry.update(_format_keys(table_name, tgt))
-        if tgt_path.exists():
+        if tgt_path is not None and tgt_path.exists():
             entry.update(
                 fingerprint=hash_file(tgt_path),
                 fingerprint_method="full",
@@ -306,7 +325,7 @@ def build_manifest(
     manifest: dict[str, Any] = {
         "schema_version": _SCHEMA_VERSION,
         "producer": "decoy-cli",
-        "run_id": str(uuid4()),
+        "run_id": run_id if run_id is not None else str(uuid4()),
         "run_timestamp": datetime.now(tz=timezone.utc).isoformat(),
         "cli_version": cli_version,
         "engine_version": engine_version,
