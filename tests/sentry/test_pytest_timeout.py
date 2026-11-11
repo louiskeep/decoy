@@ -39,6 +39,12 @@ def test_default_timeout_is_configured_and_positive(pytestconfig: pytest.Config)
     assert float(pytestconfig.getini("timeout")) > 0, "the effective pytest timeout is zero"
 
 
+def test_timeout_method_is_left_to_the_plugin(pytestconfig: pytest.Config) -> None:
+    # An explicit method turns off the plugin's per-platform choice; "signal" errors every test on
+    # Windows, which has no SIGALRM.
+    assert not pytestconfig.getini("timeout_method"), "do not set timeout_method in pyproject.toml"
+
+
 def test_missing_setting_is_detected() -> None:
     text = (ROOT / "pyproject.toml").read_text(encoding="utf-8")
     stripped = "\n".join(ln for ln in text.splitlines() if not ln.startswith("timeout = "))

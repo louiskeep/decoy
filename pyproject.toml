@@ -229,10 +229,9 @@ testpaths = ["tests"]
 pythonpath = ["src"]
 # Per-test hang guard (pytest-timeout): a hung test fails with a stack dump instead of stalling
 # the suite. 300 s is the floor; the slowest default-suite test takes about 17 s. A test that
-# needs longer carries its own @pytest.mark.timeout(N) with a reason. The signal method works on
-# POSIX; pytest-timeout falls back to the thread method by itself on Windows.
+# needs longer carries its own @pytest.mark.timeout(N) with a reason. No timeout_method: the
+# plugin picks signal on POSIX and thread on Windows only while the method is left unset.
 timeout = 300
-timeout_method = "signal"
 
 # ── Ruff lint + format baseline ─────────────────────────────────────────────
 # Mirrors the engine's config (decoy-engine/pyproject.toml [tool.ruff]) but
