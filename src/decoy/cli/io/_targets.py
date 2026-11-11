@@ -246,20 +246,21 @@ def input_format(
     return format_for_path(path), None
 
 
-def entry_format(entry: Mapping[str, Any]) -> tuple[str, Mapping[str, Any] | None]:
-    """The format and layout to read one evidence-manifest output entry in.
+def entry_format(path: Path, recorded: Mapping[str, Any]) -> tuple[str, Mapping[str, Any] | None]:
+    """The format and layout to read one evidence-manifest output in.
 
-    An entry without `format` comes from a manifest written before CLI-FMT and takes the
-    legacy rule. An entry whose format is unknown, or fixed_width without a layout, is refused.
+    `path` is the output already resolved from the manifest (`resolve_manifest_path`), never
+    the stored text. `recorded` holds the entry's `format` and `layout` keys, without its path.
+    No `format` means a manifest written before CLI-FMT: the legacy suffix rule. An unknown
+    format, or fixed_width without a layout, is refused.
     """
-    path = Path(str(entry.get("path", "")))
-    if "format" not in entry:
+    if "format" not in recorded:
         return _legacy_format_for_path(path), None
-    layout = entry.get("layout")
-    error = _unreadable(entry["format"], layout)
+    layout = recorded.get("layout")
+    error = _unreadable(recorded["format"], layout)
     if error is not None:
         raise error
-    fmt = str(entry["format"])
+    fmt = str(recorded["format"])
     return fmt, layout if fmt == "fixed_width" else None
 
 

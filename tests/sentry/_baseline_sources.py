@@ -244,6 +244,16 @@ SOURCES: tuple[Source, ...] = (
         ),
     ),
     Source(
+        "manifest-path-forward-allow",
+        "tests/sentry/io_policy/test_manifest_path_resolution.py",
+        InCode(
+            "tests/sentry/io_policy/test_manifest_path_resolution.py",
+            "ALLOWLIST",
+            key=lambda e: f"{e.file}::{e.function}::{e.callee}",
+            reason=lambda e: e.reason,
+        ),
+    ),
+    Source(
         "output-placement-allow",
         "tests/sentry/io_policy/test_output_placement.py",
         InCode(

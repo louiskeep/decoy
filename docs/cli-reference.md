@@ -1466,6 +1466,7 @@ $ decoy report verify [OPTIONS] EVIDENCE_FILE
 * `--json`: Emit a structured JSON result instead of human-readable output.
 * `-q, --quiet`: Suppress stdout. Exit code carries the result.
 * `-v, --verbose`: Enable debug-level CLI logs on stderr.
+* `--project PATH`: Project root for a manifest&#x27;s project-relative paths.
 * `--help`: Show this message and exit.
 
 Examples:
