@@ -69,10 +69,16 @@ def fit_exact_snapshot(
     parse_dates: Sequence[str] = (),
     joint_pairs: Sequence[tuple[str, str]] | None = None,
     include_values: bool = False,
+    contingency_top_k: int | None = None,
 ) -> ExactFit:
     """Fit the exact (non-DP) snapshot of `source`. Raises `FitSourceError`."""
     import numpy as np
     from decoy_engine import distribution_snapshot_document
+    from decoy_engine.quality.snapshot import DEFAULT_CONTINGENCY_TOP_K, DistributionSnapshotError
+    from decoy_engine.reasons.quality import (
+        CONTINGENCY_TOP_K_INVALID,
+        CONTINGENCY_TOP_K_KIND_UNSUPPORTED,
+    )
 
     def unreadable() -> FitSourceError:
         # No str(exc): a pandas parse error can quote a source cell.
@@ -152,10 +158,17 @@ def fit_exact_snapshot(
 
     # Detection and the snapshot see exactly the rows read above.
     # No profile_row_cap: it profiles head rows only, and a sensitive column can start late.
-    snapshot = distribution_snapshot_document(
-        df,
-        source_label=source.name,
-        include_values=include_values,
-        joint_columns=list(joint_pairs) if joint_pairs else None,
-    )
+    try:
+        snapshot = distribution_snapshot_document(
+            df,
+            source_label=source.name,
+            include_values=include_values,
+            joint_columns=list(joint_pairs) if joint_pairs else None,
+            contingency_top_k=contingency_top_k or DEFAULT_CONTINGENCY_TOP_K,
+        )
+    except DistributionSnapshotError as exc:
+        # Only the cap refusals are the caller's to fix; anything else is a real failure.
+        if exc.code not in (CONTINGENCY_TOP_K_INVALID, CONTINGENCY_TOP_K_KIND_UNSUPPORTED):
+            raise
+        raise FitSourceError(exc.message, exc.code) from None
     return ExactFit(snapshot, rows_used=len(df), rows_total=rows_total or len(df))
