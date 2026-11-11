@@ -34,7 +34,7 @@ and the first-user QA record (`docs/records/2026-11-08-cli-qa-first-user.md` ite
 | Item | Disposition |
 |---|---|
 | Dennis H1 `mask()` | `mask()` places through `RunLayout.fixed(...)`: `out=` relative to the current folder, like a typed `--output`; without `out=`, today's base (the config folder, or the current folder for a dict). No claim, no `latest`, no `out/.gitignore`, no name for a dict. AT-3 cells added. Owner question Q9 |
-| H2 evidence | Placed and in-project paths are recorded project-relative (POSIX) with a new manifest field `path_base: project`; one resolver `resolve_manifest_path` used by `report verify` (`evidence.py:433-460`) and `ci check` (`ci/adapters.py:243`). Old manifests keep the current-folder rule of `docs/ci-contracts.md`. AT-9 round trip through both |
+| H2 evidence | Placed and in-project paths are recorded project-relative (POSIX) with a new manifest field `path_base: project`; one manifest-aware `resolve_manifest_path` is used by `read_manifest`, `report show`, `report render`, `report verify`, `report diff` and `ci check`, and a sentry rejects direct path construction by any consumer. Old manifests keep the current-folder rule of `docs/ci-contracts.md`. AT-9 runs every consumer from outside the project. |
 | H3 name rule | Only an invalid declared `name:` is refused. An undeclared name is a safe slug of the stem, plus a short path hash when the slug had to change or its claim is taken. `pipelines/<dir>/pipeline.yaml` takes `<dir>` (T0247). Name and claim checks run only when the config has a placed output |
 | H4 trust | Mode check dropped. Owner check kept, made with `fstat` on the marker opened with `O_NOFOLLOW` |
 | H5 claim | Superseded by Codex r1. `_private_file.create_exclusive` only makes random staging names. Claims and the marker use `_atomic.write_atomic(..., CREATE_ONCE)`. Hidden `.gitignore` files use `write_local_target(..., CREATE_ONCE)`. On a mount without hard links the run exits 3 naming the mount. |
@@ -440,12 +440,23 @@ keep fixed, predictable paths (Q9).
 **Evidence.** Output and input fingerprints hash the files the run used (placed targets; sources resolved
 against the YAML folder). Paths inside the project are recorded relative to the root, POSIX, and the
 manifest gains `path_base: "project"`. This applies only to a project with a marker; an implicit project
-(no marker) and paths outside the project are recorded absolute. The existing caller-facing choke point
-`verify_manifest_issues` accepts `manifest_file` and an optional explicit project hint. Its private
-`resolve_manifest_path` applies to the pipeline path and every input and output fingerprint. `report
-verify` and `ci check` call this one reader. With `path_base: "project"`, the root is the typed `--project`,
-else `find_project` from the manifest's folder. No marker means refusal with the `--project` hint. It never
-falls back to the current folder. `DECOY_PROJECT` is not used here:
+(no marker) and paths outside the project are recorded absolute. The existing resolver is strengthened:
+`resolve_manifest_path(manifest, raw, *, manifest_file, project=None, field="path")` is the named
+caller-facing choke point for every filesystem use of a stored manifest path. It resolves the manifest's
+root and then delegates relative-path validation to `decoy.cli.io.contained_path`; it is not a second
+parser. After schema validation, `read_manifest(path, project=None)` sends the pipeline path and every
+input and output entry through it, using the manifest file and optional typed project, before returning
+the raw manifest for metadata rendering. `verify_manifest_issues` uses it again for every path it hashes.
+`compare_data` takes each full manifest and its manifest file, not detached `output_fingerprints` dicts,
+and passes that context to the resolver before checking or reading either output. `report show` and
+`report render` therefore validate every stored path through their shared
+`_load_manifest`, even though they do not dereference the output files. `report verify` and `ci check`
+reach stored files only through `verify_manifest_issues`. No current or future consumer may pass a
+manifest entry to
+`Path`, `PurePath`, `os.path`, a `/` path join, `.resolve()`, `.exists()`, `.is_file()`, `open`, or a data
+reader directly. With `path_base: "project"`, the root is the typed `--project`, else `find_project` from
+the manifest's folder. No marker means refusal with the `--project` hint. It never falls back to the
+current folder. `DECOY_PROJECT` is not used here:
 it is ambient, and a verify of one client's manifest in a shell exported for another would report false
 missing outputs. Without the field, today's current-folder rule (`docs/ci-contracts.md`). The contract doc
 gains the second rule. The reader requires exact `schema_version: "cli-local-1"`, accepts only absent or
@@ -463,6 +474,15 @@ place in B binds to B and its fingerprints report B's files. One schema table in
 `build_manifest` (it checks its own output) and the one strict reader `read_manifest`, which every `report`
 command and `ci check` use; `ci/adapters.py` no longer checks the object itself. Null required fields, a
 non-object top level and `NaN` are refused, never a crash.
+
+P3 review-round disposition: r2 removed the private POSIX parser from `evidence.py`, leaving
+`decoy.cli.io.contained_path` as the sole stored-relative-path validator and
+`evidence.resolve_manifest_path` as its manifest-aware wrapper. R3 at CLI `7400ea4a` found
+`report.py:923-926` constructing `Path(raw)` for `report diff`, which made project-relative outputs depend
+on the current folder. The choke point, G-ONE-MANIFEST-PATH and the AT-9 consumer matrix close that V1
+class by construction. **V2-LOG, V1-1 provenance residual:** an exact manifest copy at the same relative
+place in another project still binds to that project's files because the marker has no project identity.
+Adding a project id to the marker is V2 work and is not a P3 merge blocker.
 
 **Reports.** `report integrity` and `report fidelity` print to stdout today and write a file only with
 `--output` or `--report-out`. After: when the masked file argument lies in a run folder (`owning_run` for
@@ -686,7 +706,7 @@ tree and exit codes, not report numbers.
 | `decoy report fidelity SRC OUT --config C --report-out F` | config path; report to stdout or `F` | config path or name; with no `--report-out` and `OUT` in a run folder, also `<run>/reports/fidelity.json` |
 | `decoy report integrity MASKED --config C --output F` | config path; stdout or `F` | config path or name; with no `--output` and `MASKED` in a run folder, also `<run>/reports/integrity.json` |
 | `decoy report vault --config C` | config path | path or name |
-| `decoy report show/render/verify/diff` | manifest path; `--output` as typed | unchanged; `verify` resolves `path_base: project` manifests (3.9) |
+| `decoy report show/render/verify/diff` | manifest path; `--output` as typed | unchanged; every stored path validates through the manifest-aware resolver, and `verify` and `diff` use its resolved files (3.9) |
 | `decoy run --evidence-out F`, `--vault F` | as typed | unchanged (typed); manifest paths project-relative |
 | `decoy init [FILE] -o F` | `./pipeline.yaml`; paths copied as typed | `decoy init NAME [--source FILE]` writes `pipelines/NAME/pipeline.yaml` in the project; outside a project refused unless `-o`; `-o` paths relative to the YAML |
 | `decoy project new DIR` | n/a | creates a project |
@@ -725,6 +745,7 @@ tree and exit codes, not report numbers.
 | `decoy scan data.csv`, `decoy run p.yaml` | `logs/decoy_engine.log` in the current folder | no `logs/` |
 | evidence for a relative target | wrong file or `None` | the placed file, recorded project-relative with `path_base: project` |
 | `decoy report verify ev.json` from another folder | resolves against the current folder | resolves against the project root |
+| `decoy report diff a.json b.json --require-data --json` from another folder | existing outputs reported missing | exit 0 after each output resolves against its manifest's project root |
 
 ## 7. Enumerations (from the code at CLI `ed5de4ed`, engine `44d6afe2`)
 
@@ -811,7 +832,7 @@ only.
 | 2 | Cleanup missing on an exit path | an empty run folder after an early failure; a temp link after a failed swap; a temp file after a failed claim | `abandon()` removes an empty folder; `replace_symlink` removes its temp name on failure; the claim's temp is removed by `_atomic` as for every write | AT-6 failure cells, AT-7 no-temp-left cell, `tests/unit/test_atomic.py` link cells | MP12: skip `abandon()` |
 | 3 | State and ordering | `latest` moved before the outcome is known, or moved back by an older run; the folder made before the gate | microsecond run ids; strict shared parser; `commit_latest` only on exit 0 and only forward; `open` after the gate | AT-5, AT-6 | MP4: `commit_latest` in a `finally`; MP15: drop the run id comparison |
 | 4 | Route parity and silent fallback | `run`, `tokenize`, `demo`, `mask()`, chunked writes placing differently; `validate` passing what `run` refuses; one command taking a name and another not | one `RunLayout` for both table writers; one gate; one token callback | AT-3 per route, AT-4 per command, AT-18 per command, G-ONE-OUTPUT-PLACE (c), G-ONE-PIPELINE-ARG | MP1, MP5, MP16: `subset` loses the callback |
-| 5 | Referential integrity | the claim naming its YAML; listed names resolving to members; `LATEST` naming a run folder; `owning_run` matching a target; manifest paths naming files | claim by exclusive create; list only validated pipeline folders; strict `LATEST`; `owning_run`; one manifest reader | AT-7, AT-9, AT-11, AT-25 | MP7, MP9, MP3 |
+| 5 | Referential integrity | the claim naming its YAML; listed names resolving to members; `LATEST` naming a run folder; `owning_run` matching a target; manifest paths naming files | claim by exclusive create; list only validated pipeline folders; strict `LATEST`; `owning_run`; one manifest-aware path resolver guarded by G-ONE-MANIFEST-PATH | AT-7, AT-9, AT-11, AT-25 | MP7, MP9, MP3, MP21 |
 | 6 | Untrusted producer | a marker in a parent folder written by another user; a hand-written marker; a pipeline name from a stem or folder; a name token on the command line | owner check on the opened descriptor; `kind` check; one strict name rule; name lookup remains physically under `pipelines/` | AT-1, AT-2 property, AT-19 | MP10: skip the owner check; MP18: join a name without the rule check |
 | 7 | Check then use on a path (TOCTOU) | claim checked at the gate, written at `open`; run folder clash; marker checked then read | claim re-checked at `open` and made by hard-link `CREATE_ONCE`; private-directory exclusive create; `fstat` on the descriptor read; physical containment | AT-4, AT-5 clash cell, AT-7 race cell, AT-1 swap cell | MP13: non-exclusive directory create |
 | 8 | Weak tests and overclaimed evidence | a sweep that checks only the current folder; a placement test that only checks a file exists | AT-12 snapshots the project, the current folder and `$HOME` stand-in and asserts the full set of new paths; AT-3 asserts the exact path and no other copy | AT-3, AT-12, AT-26 | MP1 |
@@ -869,14 +890,27 @@ CLI unit tests in `tests/unit/project_layout/`, e2e in `tests/e2e/project_layout
   folder exists has `output_dir`; a gate refusal has none; human paths are relative under the current folder
   and absolute otherwise.
 - **AT-9** Evidence: output fingerprints are the placed files (non-null, equal to a re-hash); input
-  fingerprints resolve sources against the YAML folder; the config fingerprint is equal across two runs;
-  `report verify` passes from another folder with typed `--project`; `ci check` passes from another folder
-  using its typed CI manifest and project context; with `DECOY_PROJECT` exported for another project both
-  still pass; no marker and no typed hint refuses; an implicit-project run records absolute paths; a
-  manifest without `path_base` uses the old current-folder rule; missing or unknown `schema_version`, an
-  unknown `path_base`, or a wrong field type refuses; extra fields are tolerated; a rehashed `../` path or a
-  symlink out of the project refuses; evidence from project A read under project B refuses; a null
-  required field or a top-level list refuses without a crash.
+  fingerprints resolve sources against the YAML folder; the config fingerprint is equal across two runs.
+  Every row below starts with `cwd != project root`, keeps the output files present only at their recorded
+  project-relative locations, and exports `DECOY_PROJECT` for another project. This proves that no current
+  consumer falls back to the current folder or the ambient project. Each command test spies on
+  `resolve_manifest_path`, asserts that every stored output reaches it, and asserts that each returned path
+  is the existing file below the correct project root.
+
+  | Consumer | Outside-project acceptance |
+  |---|---|
+  | `evidence.verify_manifest_issues` | Pass the evidence file and explicit project hint; it returns no missing-output issue and every output fingerprint re-hashes the placed file. |
+  | `decoy report show --json` | Exit 0 after `read_manifest` accepts every stored path through the resolver, and return every recorded output entry unchanged. It renders metadata and does not dereference an output file. |
+  | `decoy report render` | Exit 0 after the same resolved-path validation and write the requested metadata-only report outside the project. |
+  | `decoy report verify --project <root> --json` | Exit 0 with status `ok` and no missing pipeline, input or output issue. |
+  | `decoy ci check` evidence adapter | Exit 0 from its typed CI manifest and project context, with the evidence check passing and no missing-output finding. |
+  | `decoy report diff A B --require-data --json` | Exit 0 with status `ok`, data comparison present, and an empty `missing_files`; each side resolves against its own manifest's project root. |
+
+  The remaining AT-9 cells hold: no marker and no typed hint refuses; an implicit-project run records
+  absolute paths; a manifest without `path_base` uses the old current-folder rule; missing or unknown
+  `schema_version`, an unknown `path_base`, or a wrong field type refuses; extra fields are tolerated; a
+  rehashed `../` path or a symlink out of the project refuses; evidence from project A read under project B
+  refuses; a null required field or a top-level list refuses without a crash.
 - **AT-10** Config untouched: the loaded dict deep-equals and keeps the same nested `id`s before and after
   the run; the quarantine file lands in the run folder for normal `run`, `tokenize` and `mask()`, and on
   each engine route (`full_frame`, `sequential`, `out_of_core`, engine cells in E2); an absolute
@@ -953,6 +987,23 @@ CLI unit tests in `tests/unit/project_layout/`, e2e in `tests/e2e/project_layout
   `.detokenized`, `.snapshot.json`, `.masked`) or the `out` folder literal appear only in
   `cli/io/_layout.py` and `cli/project/_scaffold.py`; (c) `write_targets` and `write_chunked_output`
   annotate their placement parameter as `RunLayout`.
+- **G-ONE-MANIFEST-PATH** (`tests/sentry/io_policy/test_manifest_path_resolution.py`, registered in
+  `tests/sentry/test_sentry_manifest.py`): an AST walk over `src/decoy/cli` follows direct, imported-as and
+  module-qualified `pathlib.Path`/`PurePath` and `os.path` calls, `/` joins, and filesystem or data-reader
+  calls through one-hop assignments. It marks `pipeline_path` and each `path` below
+  `input_fingerprints` or `output_fingerprints` as stored manifest paths. The only path-building allowlist
+  entry is exact identity
+  `(src/decoy/cli/evidence.py, resolve_manifest_path)`. The only resolver-call allowlist entries are exact
+  identities `(src/decoy/cli/evidence.py, read_manifest)`,
+  `(src/decoy/cli/evidence.py, verify_manifest_issues)` and
+  `(src/decoy/cli/report.py, compare_data)`. `report show` and `report render` are listed as metadata-only
+  consumers with no filesystem call and no resolver exemption. Any other module or function that turns a
+  marked value into a filesystem path fails, so a future consumer cannot silently bypass the choke point.
+  Self-tests seed `Path(entry["path"])`, aliased `Path`, `pathlib.Path`, `os.path.join`, a `/` join and a
+  one-hop alias in a scratch tree; every realistic spelling turns the sentry red. A seeded direct path in
+  `report.py:compare_data` also turns AT-9 `report diff --require-data --json` red from outside the project.
+  Removing any real resolver caller makes the exact allowed-call set fail, so the allowlist cannot hide
+  an unchecked forwarding helper.
 - **G-ONE-PIPELINE-ARG** (`tests/sentry/io_policy/test_pipeline_argument.py`, in the manifest): walk the
   Typer app; every parameter named `config`, `pipeline_config` or `pipeline`, or whose help text says
   "pipeline YAML", has the same `parse_pipeline_token` callback, and the command function calls
@@ -974,7 +1025,8 @@ MP13 `mkdir(exist_ok=True)` (AT-5); MP14 `name: null` in dumps (E1 identity); MP
 comparison in `commit_latest` (AT-6); MP16 `subset` declares `config: Path` (G-ONE-PIPELINE-ARG, AT-18);
 MP17 `run --all` runs children in-process (AT-22 process spy); MP18 join a name under `pipelines/` without
 the rule check (AT-19); MP19 `pipelines/` runs skip the claim (AT-7 both-orders cells); MP20 add a
-`layout.*` literal outside the registry (G-ONE-LAYOUT-CODE).
+`layout.*` literal outside the registry (G-ONE-LAYOUT-CODE); MP21 restore `Path(entry["path"])` in
+`report.py:compare_data` (G-ONE-MANIFEST-PATH and the outside-project AT-9 diff row).
 
 ## 10. Owner questions (recommended option taken)
 
@@ -1037,11 +1089,12 @@ Owner answers (Cam, 2026-11-09): "go with recommended". Every question below tak
 | `decoy project` group | `src/decoy/cli/project/` (new): `__init__.py` (Typer app), `_new.py`, `_show.py`, `_list.py`, `_scaffold.py`, `_run_all.py` | about 650 | CODEMAP is amended in the same slice; a subpackage avoids adding to the 32-module flat `cli/` package |
 | link swap | `src/decoy/_atomic.py` | about +35 (482 to 517) | the one atomic module (CODEMAP `:48`) |
 | manifest path resolver | `src/decoy/cli/evidence.py` | about +40 | beside the verify code it serves |
+| manifest-path sentry | `tests/sentry/io_policy/test_manifest_path_resolution.py`; register in `tests/sentry/test_sentry_manifest.py` | about 120 | CODEMAP "Where Things Go" sentry rows `:53-54,67`; filesystem I/O policy sentries live in `tests/sentry/io_policy/`, and every sentry is registered in the merge-gate manifest |
 | engine name field and rule | engine `config/_pipeline.py`, export in `decoy_engine/__init__.py` | about +25 | engine CODEMAP "Config schema"; the model owns its fields |
 | engine quarantine keyword, log default | engine `execution/_pipeline.py:115`, `internal/logging.py` | about +30 | engine CODEMAP execution facade and internal support rows |
 | unit tests | `tests/unit/project_layout/` (new) | about 700 | named folder (CODEMAP `:59-60`) |
 | e2e tests | `tests/e2e/project_layout/` (new) | about 1300 | named folder |
-| sentries | `tests/sentry/io_policy/test_output_placement.py`, `test_pipeline_argument.py`, `test_layout_errors.py` | about 350 | CODEMAP test policy row; I/O policy sentries live together |
+| other I/O sentries | `tests/sentry/io_policy/test_output_placement.py`, `test_pipeline_argument.py`, `test_layout_errors.py` | about 350 | CODEMAP test policy row; I/O policy sentries live together |
 | docs | `docs/project-layout.md` (new), `docs/cli-reference.md`, `docs/ci-contracts.md` | about 200 | user reference, frozen contract |
 | CODEMAP rows | CLI `CODEMAP.md` | 8 rows | four `cli/io` modules, its public API, `cli/project/`, and two test folders |
 
@@ -1089,7 +1142,7 @@ P9: the parameter type, the `resolve_pipeline` call, and a call to `_layout.repo
 | P1b | CLI | `cli/io/__init__.py`, `cli/io/_project.py`, `cli/io/_layout.py` (extend: P2a created it; reuse `is_run_id`, `RunFolder` and `placed_path`, do not redefine), `cli/io/_layout_errors.py`, `_private_file.py`, `tests/unit/project_layout/__init__.py`, `test_project_root.py`, `test_layout.py`, `tests/unit/private_file/test_private_file.py`, `tests/sentry/io_policy/test_private_files.py`, `tests/sentry/io_policy/file_sinks.toml`, `tests/sentry/baselines/private-file-sinks.json`, `tests/sentry/io_policy/test_pipeline_argument.py` (root guard), `tests/sentry/io_policy/test_layout_errors.py`, `tests/sentry/test_sentry_manifest.py`, `CODEMAP.md` (16) | about 1100 (half tests) | AT-1, AT-2, AT-5, AT-15, AT-17, G-ONE-PROJECT-ROOT and G-ONE-LAYOUT-CODE first; update private-directory seeds and registry with the helper; T1 |
 | P2a | CLI | `cli/io/_layout.py` (new: `is_run_id`, `RunFolder`, `owning_run(path, root, name)`, `placed_path`), `cli/io/_targets.py` (`input_format` calls them; the old compare is at `:203-217`), `tests/e2e/project_layout/__init__.py`, `test_owning_run.py` (4) | about 200 | AT-11 old-path and run-folder cells first; T1 plus `tests/e2e/cli_fmt` |
 | P2b | CLI | `cli/io/_layout.py` (extend: `RunLayout`, `mint_invocation_id`, on top of P1b's project, claim and private-directory helpers), `cli/io/_targets.py`, `cli/run.py`, `cli/demo.py`, `cli/tokenize.py`, `api.py`, `tests/e2e/project_layout/test_run_placement.py`, `tests/unit/test_run_local_io_guard.py`, `tests/e2e/cli_fmt/test_target_format_dispatch.py`, `tests/e2e/test_vault_commit_order.py`, `tests/unit/cli_fmt/test_targets_format.py`, `tests/sentry/io_policy/test_output_placement.py`, `tests/sentry/baselines/output-placement-allow.json`, `tests/sentry/test_sentry_manifest.py`, `CHANGELOG.md` (14) | about 800 | AT-3, AT-5, AT-6, AT-7, AT-10 and initial G-ONE-OUTPUT-PLACE first; the four signature tests move to `RunLayout` in the same commit; full CLI suite |
-| P3 | CLI | `cli/evidence.py`, `ci/adapters.py`, `cli/report.py` (`_load_manifest` uses the shared reader), `cli/run/_evidence.py` (passes the evidence path), `docs/ci-contracts.md`, `tests/e2e/project_layout/test_evidence_paths.py`, `CHANGELOG.md` (7) | about 600 | AT-9 first; full CLI suite (frozen contract) |
+| P3 | CLI | `cli/evidence.py`, `ci/adapters.py`, `cli/report.py` (`_load_manifest` uses the shared reader; `compare_data` resolves both manifests through the shared resolver), `cli/run/_evidence.py` (passes the evidence path), `docs/ci-contracts.md`, `tests/e2e/project_layout/test_evidence_paths.py`, `tests/sentry/io_policy/test_manifest_path_resolution.py`, `tests/sentry/test_sentry_manifest.py`, `CHANGELOG.md` (9) | about 720 | AT-9 consumer matrix and G-ONE-MANIFEST-PATH first; run the sentry's seeded spellings and the outside-project `report diff --require-data --json` mutation on the final head; full CLI suite (frozen contract) |
 | P4 | CLI | `gate/_layers.py`, `ci/rule_codes.py`, `preflight.py`, `cli/run.py` (summary, `--json`, `--out-dir`), `cli/io/_layout.py` (`describe`), `tests/e2e/project_layout/test_layout_gate.py`, `test_run_surfaces.py`, `docs/cli-reference.md`, `CHANGELOG.md` (9) | about 550 | AT-4, AT-8, AT-16, `--out-dir` cells first; full CLI suite (`--json` contract) |
 | P5 | CLI | `cli/io/_pipelines.py`, `cli/io/__init__.py`, `__main__.py` (`--project`), `cli/completers.py`, `cli/run.py`, `cli/validate.py`, `cli/compile_explain.py`, `cli/preflight.py`, `cli/tokenize.py`, `cli/unmask.py`, `cli/subset.py`, `cli/report.py`, `tests/e2e/project_layout/test_pipeline_arg.py`, `tests/unit/project_layout/test_completion.py`, `tests/sentry/io_policy/test_pipeline_argument.py`, `docs/cli-reference.md` (regenerated), `CHANGELOG.md` (17) | about 800 | AT-18, AT-19, AT-20, AT-23, AT-27 and G-ONE-PIPELINE-ARG first; MP16 red; full CLI suite |
 | P6 | CLI | `cli/project/__init__.py`, `_new.py`, `_show.py`, `_list.py`, `__main__.py` (register), `tests/e2e/project_layout/test_project_group.py`, `CODEMAP.md`, `docs/cli-reference.md` (regenerated), `CHANGELOG.md` (9) | about 550 | AT-24, AT-25 first; T1 |
