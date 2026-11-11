@@ -70,10 +70,10 @@ import typer
 import yaml as _yaml
 from rich.text import Text
 
-from decoy.cli._capacity_text import format_gib as _format_gib
-from decoy.cli._capacity_text import insufficient_text as _insufficient_text
 from decoy.cli._yaml_errors import sanitize_yaml_error
 from decoy.cli.exit_codes import EXIT_CAPACITY, EXIT_USAGE, EXIT_WARNINGS
+from decoy.cli.gate._capacity_text import format_gib as _format_gib
+from decoy.cli.gate._capacity_text import insufficient_text as _insufficient_text
 from decoy.ui.output import OutputMode, emit_json, setup_output
 from decoy.ui.theme import code, error, hint, success, warn
 
