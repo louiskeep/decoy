@@ -2015,7 +2015,7 @@ $ decoy library export [OPTIONS]
 
 **Options**:
 
-* `--out FILE`: Write the export here (0600).  [required]
+* `-o, --output FILE`: Write the export here (0600).  [required]
 * `--kind K`: Only records of this kind.
 * `--since D`: Only records made at or after D (YYYY-MM-DD or ISO time).
 * `--ref R`: Only R (a ref, id or KIND/latest) and every record it links to.

@@ -163,7 +163,7 @@ deleted, and the command exits 4; run it again once the file is closed.
 
 ## Exporting
 
-`decoy library export --out FILE [--kind K] [--since D] [--ref R] [--include-logs] [--keep-paths]`
+`decoy library export --output FILE [--kind K] [--since D] [--ref R] [--include-logs] [--keep-paths]`
 writes one self-verifying JSON Lines file (`decoy-library-export/v1`) that the platform can
 import. The file is 0600. `--ref R` exports R (a ref, an id or `KIND/latest`) and every record it
 links to; `--kind` and `--since` narrow the selection. Nothing under `scratch/` is ever exported.

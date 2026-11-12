@@ -91,7 +91,7 @@ def write_dotfile_once(path: Path, data: bytes) -> bool:
 
 
 def write_user_file(path: Path, data: bytes) -> None:
-    """Write a file at a path the user named (`export --out`), replacing it in one step, 0600."""
+    """Write a file at a path the user named (`export --output`), replacing it in one step, 0600."""
     _write_local(path, data, WriteMode.REPLACE)
 
 

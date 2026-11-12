@@ -151,7 +151,9 @@ def _notice(state: OutputState, *parts: object) -> None:
 
 
 def export_command(
-    out: Path = typer.Option(..., "--out", metavar="FILE", help="Write the export here (0600)."),
+    out: Path = typer.Option(
+        ..., "--output", "-o", metavar="FILE", help="Write the export here (0600)."
+    ),
     kind: str | None = typer.Option(None, "--kind", metavar="K", help="Only records of this kind."),
     since: str | None = typer.Option(
         None,

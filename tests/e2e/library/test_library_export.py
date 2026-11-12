@@ -42,7 +42,7 @@ def root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
 
 def _export(root: Path, out: Path, *args: str) -> Any:
     result = runner.invoke(
-        app, ["library", "export", "--out", str(out), *args, "--library", str(root)]
+        app, ["library", "export", "--output", str(out), *args, "--library", str(root)]
     )
     return result
 
