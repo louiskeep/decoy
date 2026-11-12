@@ -13,8 +13,8 @@ version = "0.1.0"
 description = "Source-available CLI for data masking and synthetic generation. Wraps the decoy-engine library; runs masking + generate jobs from the terminal or a notebook."
 readme = "README.md"
 requires-python = ">=3.10"
-# FSL-1.1-ALv2 (owner decision 2026-11-10, replacing BUSL-1.1): the CLI
-# and engine share it. Any use except a Competing Use; each release
+# FSL-1.1-ALv2 (owner decision, replacing BUSL-1.1) for the CLI; the engine
+# takes it from its first FSL release (0.22.0 and earlier stay Apache-2.0). Any use except a Competing Use; each release
 # becomes Apache-2.0 two years after it ships. Counsel confirms in R1-c.
 # FSL has no Trove classifier, hence Other/Proprietary below.
 license = "FSL-1.1-ALv2"
