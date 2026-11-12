@@ -325,6 +325,7 @@ def test_every_evidence_issue_kind_is_allowlisted() -> None:
         ("yaml.parse_error", "yaml.parse_error"),
         ("missing", "missing"),
         ("target.Customers.would_overwrite", "target.would_overwrite"),
+        ("target.Customers.path_invalid", "target.path_invalid"),
         ("source.a.b.exists", "source.exists"),
         ("target.Customers.parent_unwritable", "target.parent_unwritable"),
         ("target.Customers.parent_missing", UNKNOWN_CODE),

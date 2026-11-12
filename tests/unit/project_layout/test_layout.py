@@ -33,6 +33,7 @@ from decoy.cli.io import (
     pipeline_name_for,
     prepare_out,
     read_claim,
+    target_parent_writable,
     write_claim,
 )
 
@@ -420,6 +421,13 @@ def test_the_same_path_passes_on_posix(root: Path, monkeypatch: pytest.MonkeyPat
     folder = root / "out" / "orders"
     monkeypatch.setattr(_layout, "_on_windows", lambda: False)
     check_path_budget(folder, _rel_for(folder, 400))
+
+
+def test_target_with_no_existing_ancestor_is_not_writable(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(Path, "exists", lambda _path: False)
+    assert not target_parent_writable(Path("missing/target.csv"))
 
 
 @posix_only

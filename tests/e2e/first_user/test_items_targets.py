@@ -9,6 +9,7 @@ routes: `validate preflight` and the gate's config layer.
 from __future__ import annotations
 
 import json
+import os
 import shutil
 from pathlib import Path
 
@@ -48,6 +49,14 @@ def _gate_codes(config: Path) -> set[str]:
 
 def _target_codes(codes: set[str]) -> set[str]:
     return {c for c in codes if c.startswith("target.")}
+
+
+def _set_patient_target(config: Path, target: str) -> None:
+    import yaml
+
+    raw = yaml.safe_load(config.read_text(encoding="utf-8"))
+    raw["targets"]["patients"]["path"] = target
+    config.write_text(yaml.safe_dump(raw), encoding="utf-8")
 
 
 def test_missing_out_folder_gives_no_warning_on_both_routes(
@@ -91,3 +100,34 @@ def test_a_stray_out_file_in_the_cwd_does_not_count(
     (Path.cwd() / "out" / "patients.csv").write_text("x\n", encoding="utf-8")
     assert _target_codes(_preflight_names(config)) == set()
     assert _target_codes(_gate_codes(config)) == set()
+
+
+@pytest.mark.parametrize("route", [["validate", "preflight"], ["validate"]])
+def test_invalid_target_path_is_a_value_free_json_warning(tmp_path: Path, route: list[str]) -> None:
+    config = _stage(tmp_path)
+    _set_patient_target(config, "missing/a\0b.csv")
+
+    result = runner.invoke(app, [*route, str(config), "--json"])
+
+    assert result.exit_code == 0
+    payload = json.loads(result.stdout)
+    rows = payload["checks"] if "checks" in payload else payload["messages"]
+    warning = next(row for row in rows if row.get("code", row.get("name")).endswith("path_invalid"))
+    assert warning["message"] == "Output target path for table patients is invalid."
+    assert "missing/a" not in result.stdout
+
+
+@pytest.mark.skipif(os.name == "nt" or os.geteuid() == 0, reason="POSIX non-root permissions")
+def test_non_writable_target_directory_warns_on_both_routes(tmp_path: Path) -> None:
+    config = _stage(tmp_path)
+    locked = config.parent / "locked"
+    locked.mkdir()
+    locked.chmod(0o500)
+    try:
+        assert not os.access(locked, os.W_OK | os.X_OK)
+        _set_patient_target(config, "locked/patients.csv")
+        expected = {"target.patients.parent_unwritable"}
+        assert _target_codes(_preflight_names(config)) == expected
+        assert _target_codes(_gate_codes(config)) == expected
+    finally:
+        locked.chmod(0o700)

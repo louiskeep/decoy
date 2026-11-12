@@ -62,7 +62,6 @@ validate command's code path.
 
 from __future__ import annotations
 
-import os
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -283,13 +282,12 @@ def _check_source_files(raw: dict[str, Any], base_dir: Path, acc: _PreflightAccu
 def _check_target_overwrite(
     raw: dict[str, Any], acc: _PreflightAccumulator, base_dir: Path
 ) -> None:
-    """Advisory: warn when an output target exists or its folder cannot be written.
+    """Warn when a target exists, is invalid, or has no writable directory ancestor.
 
-    Warnings, not failures: a run overwrites. Paths resolve against `base_dir` (the YAML's
-    folder) through `RunLayout.place_target`, the one placement choke point. A missing parent
-    is fine (the writer makes it); only an existing ancestor that is not a writable folder warns.
+    Placement goes through `RunLayout.place_target`; a missing parent is fine when an existing,
+    writable directory ancestor can hold the folders the writer creates.
     """
-    from decoy.cli.io import RunLayout
+    from decoy.cli.io import LayoutError, RunLayout, target_parent_writable
 
     layout = RunLayout.fixed(base_dir)
     targets = raw.get("targets")
@@ -299,20 +297,22 @@ def _check_target_overwrite(
         out_path_str = target.get("path")
         if not out_path_str:
             continue
-        out_path = layout.place_target(out_path_str)
         location = f"targets.{table_name}.path"
+        try:
+            out_path = layout.place_target(out_path_str)
+        except (ValueError, OSError, LayoutError):
+            msg = f"Output target path for table {table_name} is invalid."
+            acc.add_warn(f"target.{table_name}.path_invalid", msg, location)
+            continue
         if out_path.exists():
             msg = f"Output target already exists and would be overwritten: {out_path_str}"
             acc.add_warn(
                 name=f"target.{table_name}.would_overwrite", message=msg, location=location
             )
             continue
-        ancestor = next(p for p in out_path.parents if p.exists())
-        if not ancestor.is_dir() or not os.access(ancestor, os.W_OK | os.X_OK):
-            msg = f"Output target directory cannot be created or written: {ancestor!s}"
-            acc.add_warn(
-                name=f"target.{table_name}.parent_unwritable", message=msg, location=location
-            )
+        if not target_parent_writable(out_path):
+            msg = f"Output target directory for table {table_name} cannot be created or written."
+            acc.add_warn(f"target.{table_name}.parent_unwritable", msg, location)
 
 
 # ---------------------------------------------------------------------------

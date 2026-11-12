@@ -26,7 +26,8 @@ UNKNOWN_CODE = "unknown_code"
 # data, so only the fixed family token is emitted.
 _TEMPLATED = re.compile(
     r"^(?P<family>source|target)\..+\."
-    r"(?P<check>type|path|exists|is_file|readable|would_overwrite|parent_unwritable)\Z",
+    r"(?P<check>type|path|exists|is_file|readable|would_overwrite|"
+    r"path_invalid|parent_unwritable)\Z",
     re.DOTALL,
 )
 _TEMPLATED_CODES = frozenset(
@@ -37,6 +38,7 @@ _TEMPLATED_CODES = frozenset(
         "source.is_file",
         "source.readable",
         "target.would_overwrite",
+        "target.path_invalid",
         "target.parent_unwritable",
     }
 )

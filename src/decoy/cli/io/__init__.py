@@ -36,6 +36,7 @@ from decoy.cli.io._layout import (
     pipeline_name_for,
     prepare_out,
     read_claim,
+    target_parent_writable,
     write_claim,
 )
 from decoy.cli.io._layout_errors import (
@@ -117,6 +118,7 @@ __all__ = [
     "select_table",
     "table_records",
     "target_format_issues",
+    "target_parent_writable",
     "write_chunked_output",
     "write_claim",
     "write_private_table",

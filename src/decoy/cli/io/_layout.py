@@ -395,6 +395,16 @@ def mint_invocation_id() -> str:
     return str(uuid.uuid4())
 
 
+def target_parent_writable(path: Path) -> bool:
+    """True when `path` has an existing, writable directory ancestor.
+
+    `os.access` checks the process's effective access. On Windows it does not evaluate ACLs,
+    so this remains an advisory preflight check rather than a write guarantee.
+    """
+    ancestor = next((parent for parent in path.parents if parent.exists()), None)
+    return ancestor is not None and ancestor.is_dir() and os.access(ancestor, os.W_OK | os.X_OK)
+
+
 class RunLayout:
     """Where one command writes its files: a run folder, or a fixed base folder.
 
