@@ -6,6 +6,9 @@ Purpose: a candidate list for V2 remediation. It answers the roadmap's review qu
 4.3): "is this doing something that every other class does differently? could it be rolled into a
 central location?" Nothing here is scheduled; none of it is a roadmap row yet.
 
+The working list, with every finding sorted into V1 or V1+ and its locations, is
+[REMEDIATION.md](REMEDIATION.md).
+
 ## Method
 
 Five mechanical passes over `src/` (tests and the Rust crate were not scanned), then a read of
