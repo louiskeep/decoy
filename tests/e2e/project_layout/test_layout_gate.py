@@ -768,13 +768,16 @@ def test_a_dangling_symlink_collides_with_a_quarantine_file(
 
 @posix_only
 @pytest.mark.parametrize("flag", ["--vault", "--evidence-out"])
-def test_a_dangling_symlink_collides_with_a_typed_side_file(
+def test_a_dangling_symlink_uses_the_typed_writer_final_entry(
     tmp_path: Path, read_spy: list[str], flag: str
 ) -> None:
     root = _project(tmp_path)
     alias, real = _dangling(tmp_path)
     cfg = _write(root, "pipelines/orders/pipeline.yaml", _config(root, str(real)))
     result = runner.invoke(app, ["run", str(cfg), "--json", flag, str(alias)])
+    if flag == "--vault":  # the vault writer replaces the link itself, so nothing is shared
+        assert COLLISION not in _codes(result.output)
+        return
     assert result.exit_code == EXIT_USAGE, result.output
     assert COLLISION in _codes(result.output)
     assert read_spy == []

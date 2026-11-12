@@ -14,6 +14,7 @@ import unicodedata
 from dataclasses import dataclass
 from pathlib import Path
 
+from decoy._atomic import destination_entry
 from decoy.cli.io._layout import (
     _same_dir,
     check_path_budget,
@@ -62,7 +63,7 @@ def _folds_case(folder: Path) -> bool:
     return False
 
 
-def _destination_key(path: Path) -> tuple:
+def _destination_key(path: Path, *, replaces_final: bool = False) -> tuple:
     """Return one key for every spelling that the filesystem treats as one destination.
 
     The same key covers a symlink anywhere in the path; a dangling final symlink and its
@@ -74,11 +75,18 @@ def _destination_key(path: Path) -> tuple:
     share are outside this contract.
     """
     try:
-        real = Path(os.path.realpath(path))
+        real = destination_entry(path, follow_final=not replaces_final)
     except (OSError, ValueError):
-        real = path
+        # The read-only gate stays lenient where a writer must fail strict parent resolution.
+        try:
+            absolute = path.absolute()
+            parent = Path(os.path.realpath(absolute.parent))
+            real = parent / absolute.name if replaces_final else Path(os.path.realpath(path))
+        except (OSError, ValueError):
+            real = path
     try:
-        found = os.stat(real)
+        entry = os.lstat(real) if replaces_final else None
+        found = None if entry is not None and stat.S_ISLNK(entry.st_mode) else os.stat(real)
     except (OSError, ValueError):
         found = None
     if found is not None:
@@ -118,17 +126,17 @@ def resolved_output_collisions(
     targets do not take part. Labels are config locations or flag names, never path values.
     """
     seen: dict[tuple, str] = {}
-    destinations: list[tuple[str, Path]] = []
+    destinations: list[tuple[str, Path, bool]] = []
     for location, raw in relative_outputs(config_dict):
         if Path(raw).is_absolute():
             # As written, like the writer opens it: collapsing ".." as text first would name
             # the wrong folder when the part before it is a symlink.
-            destinations.append((location, Path(raw)))
+            destinations.append((location, Path(raw), False))
         elif is_placed_relative(raw) and base is not None and names_a_file_inside(raw):
-            destinations.append((location, Path(os.path.normpath(base / raw))))
-    destinations.extend((flag, Path(path).absolute()) for flag, path in typed)
-    for label, path in destinations:
-        key = _destination_key(path)
+            destinations.append((location, Path(os.path.normpath(base / raw)), False))
+    destinations.extend((flag, Path(path).absolute(), flag == "--vault") for flag, path in typed)
+    for label, path, replaces_final in destinations:
+        key = _destination_key(path, replaces_final=replaces_final)
         if key in seen:
             return seen[key], label
         seen[key] = label

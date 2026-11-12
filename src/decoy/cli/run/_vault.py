@@ -4,7 +4,7 @@ import contextlib
 import os
 from pathlib import Path
 
-from decoy._atomic import fsync_directory
+from decoy._atomic import destination_entry, fsync_directory
 
 
 class _VaultUsageError(Exception):
@@ -52,16 +52,16 @@ def _commit_vault(vault_writer, vault: Path) -> None:
 
     from decoy_engine import VaultError
 
-    # The folder the kernel resolves, then the name: the entry the collision gate keyed. A text
-    # collapse of `..` names another folder behind a symlink, and `mkstemp` collapses its `dir`
-    # that way, so the temp file, the backup and the rename all take the resolved folder.
-    directory = Path(os.path.realpath(Path(vault).absolute().parent))
-    vault = directory / Path(vault).name
     tmp: Path | None = None
     backup: Path | None = None
+    directory: Path | None = None
     renamed = False
+    preserve_backup = False
     failed: BaseException | None = None
     try:
+        # The temp, backup and rename must all use the entry selected by kernel parent lookup.
+        vault = destination_entry(vault)
+        directory = vault.parent
         fd, name = tempfile.mkstemp(prefix=f".{vault.name}.", suffix=".tmp", dir=directory)
         tmp = Path(name)
         os.close(fd)  # mkstemp made it 0600; the engine writer reopens it by path
@@ -87,15 +87,18 @@ def _commit_vault(vault_writer, vault: Path) -> None:
         failed = exc
     finally:
         if failed is not None and renamed:
-            with contextlib.suppress(OSError):
+            assert directory is not None
+            try:
                 if backup is not None:
                     os.replace(backup, vault)
                     backup = None
                 else:
                     os.unlink(vault)
                 fsync_directory(directory)
+            except OSError:
+                preserve_backup = backup is not None
         for leftover in (tmp, backup):
-            if leftover is not None:
+            if leftover is not None and not (preserve_backup and leftover == backup):
                 with contextlib.suppress(OSError):
                     os.unlink(leftover)
     if isinstance(failed, VaultError):

@@ -16,7 +16,14 @@ import pytest
 from typer.testing import CliRunner
 
 from decoy.__main__ import app
-from decoy.cli.exit_codes import EXIT_OK, EXIT_USAGE
+from decoy._atomic import (
+    ATOMIC_WRITE_FAILED,
+    AtomicWriteError,
+    WriteMode,
+    staged_local_target,
+    write_local_target,
+)
+from decoy.cli.exit_codes import EXIT_OK, EXIT_RUNTIME, EXIT_USAGE
 from decoy.cli.io import resolved_output_collisions
 from tests.e2e.project_layout.test_layout_gate import (
     COLLISION,
@@ -143,6 +150,79 @@ def test_the_vault_temp_file_is_made_in_the_folder_the_kernel_resolves(
     assert seen == [os.path.realpath(kernel.parent)]
     assert sorted(p.name for p in kernel.parent.iterdir()) == ["deep", "vault.bin"]
     assert not list(tmp_path.glob(".vault.bin.*"))
+
+
+@posix_only
+def test_an_unresolvable_vault_parent_is_a_mapped_write_failure(tmp_path: Path) -> None:
+    """Changing strict parent resolution to non-strict makes this run succeed at another entry."""
+    root = _project(tmp_path)
+    cfg = _vaulting(root, "m.csv")
+    vault = tmp_path / "missing" / ".." / "vault.bin"
+    result = runner.invoke(app, ["run", str(cfg), "--json", "--vault", str(vault)])
+    assert result.exit_code == EXIT_RUNTIME, result.output
+    assert not (tmp_path / "vault.bin").exists()
+
+
+@posix_only
+def test_an_unresolvable_evidence_parent_is_an_atomic_write_failure(tmp_path: Path) -> None:
+    """Changing strict parent resolution to non-strict writes evidence.json in tmp_path."""
+    path = tmp_path / "missing" / ".." / "evidence.json"
+    with pytest.raises(AtomicWriteError) as raised:
+        write_local_target(path, b"{}", WriteMode.REPLACE)
+    assert raised.value.code == ATOMIC_WRITE_FAILED
+    assert raised.value.__cause__ is None and raised.value.__context__ is None
+    assert not (tmp_path / "evidence.json").exists()
+
+
+@posix_only
+def test_a_failed_vault_restore_keeps_the_backup(tmp_path: Path, monkeypatch) -> None:
+    """Unconditionally unlinking backup in the cleanup removes the only old-vault copy."""
+    vault = tmp_path / "vault.bin"
+    (tmp_path / "first").mkdir()
+    first_root = _project(tmp_path / "first")
+    first = runner.invoke(app, ["run", str(_vaulting(first_root, "m.csv")), "--vault", str(vault)])
+    assert first.exit_code == EXIT_OK, first.output
+    old = vault.read_bytes()
+    real_fsync, real_replace = os.fsync, os.replace
+    folder = os.stat(tmp_path)
+
+    def fail_directory_fsync(fd: int) -> None:
+        # Only the vault's folder: the project markers are synced earlier in the run.
+        if os.path.samestat(os.fstat(fd), folder):
+            raise OSError(5, "directory fsync failed")
+        real_fsync(fd)
+
+    def fail_restore(src, dst, *args, **kwargs):
+        if Path(src).suffix == ".bak" and Path(dst) == vault:
+            raise OSError(5, "restore failed")
+        return real_replace(src, dst, *args, **kwargs)
+
+    monkeypatch.setattr(os, "fsync", fail_directory_fsync)
+    monkeypatch.setattr(os, "replace", fail_restore)
+    (tmp_path / "second").mkdir()
+    second = _vaulting(_project(tmp_path / "second"), "m.csv")
+    result = runner.invoke(app, ["run", str(second), "--vault", str(vault)])
+    backups = list(tmp_path.glob(".vault.bin.*.bak"))
+    assert result.exit_code == EXIT_RUNTIME, result.output
+    assert len(backups) == 1 and backups[0].read_bytes() == old, result.output
+
+
+@posix_only
+def test_fd_alias_classification_uses_the_kernel_resolved_entry(tmp_path: Path) -> None:
+    """Classifying os.path.abspath(spelling) as /dev/stdout bypasses atomic staging."""
+    steps = len(tmp_path.parts)
+    target = tmp_path.joinpath(*(f"deep-{index}" for index in range(steps)))
+    target.mkdir(parents=True)
+    link = tmp_path / "link"
+    link.symlink_to(target, target_is_directory=True)
+    ordinary = tmp_path / "dev" / "stdout"
+    ordinary.parent.mkdir()
+    spelling = link.joinpath(*([".."] * steps), "dev", "stdout")
+    assert os.path.abspath(spelling) == "/dev/stdout"
+    with staged_local_target(spelling) as staged:
+        assert staged.name != "stdout" and staged.parent.samefile(ordinary.parent)
+        staged.write_bytes(b"ordinary file")
+    assert ordinary.read_bytes() == b"ordinary file"
 
 
 # --- characterization -----------------------------------------------------------------------
