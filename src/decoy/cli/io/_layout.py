@@ -51,6 +51,15 @@ _RUN_ID = re.compile(r"[0-9]{8}T[0-9]{12}Z-[0-9a-f]{8}(?:[0-9a-f]{4}){0,6}")
 MAX_RUN_ID_LENGTH = 55
 WINDOWS_PATH_LIMIT = 259
 _CLAIM_NAME = "PIPELINE"
+PIPELINES_DIR = "pipelines"
+PIPELINE_YAML = "pipeline.yaml"
+
+
+def member_yaml(root: Path, name: str) -> Path:
+    """Where the member `name` lives: the one spelling of `pipelines/<name>/pipeline.yaml`."""
+    return root / PIPELINES_DIR / name / PIPELINE_YAML
+
+
 _CLAIM_MAX_BYTES = 4096
 _SLUG_MAX = 56
 _SLUG_BAD = re.compile(r"[^A-Za-z0-9_.-]+")
@@ -58,7 +67,7 @@ _DASH_RUNS = re.compile(r"-{2,}")
 _URL_PATH = re.compile(r"[A-Za-z][A-Za-z0-9+.-]*://")
 
 
-def _valid_name(name: str) -> bool:
+def is_valid_name(name: str) -> bool:
     """The engine's pipeline name rule, imported on use: this package loads on every CLI start."""
     from decoy_engine import is_valid_pipeline_name
 
@@ -266,7 +275,7 @@ def _derived(root: Path, yaml_rel: str, stem: str) -> str:
     slug = _slug(stem)
     for base in (slug or "pipeline", "pipeline"):
         candidate = f"{base}-{digest}"
-        if _valid_name(candidate):
+        if is_valid_name(candidate):
             return candidate
     return f"pipeline-{digest}"
 
@@ -296,8 +305,8 @@ def _taken(root: Path, name: str, yaml_rel: str) -> str | None:
     claimed = read_claim(root / "out", name)
     if claimed is not None and claimed != yaml_rel:
         return claimed
-    member = f"pipelines/{name}/pipeline.yaml"
-    if (root / "pipelines" / name).exists() and member != yaml_rel:
+    member = f"{PIPELINES_DIR}/{name}/{PIPELINE_YAML}"
+    if member_yaml(root, name).parent.exists() and member != yaml_rel:
         return member
     return None
 
@@ -315,15 +324,15 @@ def pipeline_name_for(root: Path, yaml: Path, declared: object) -> PipelineName:
     """
     yaml_rel = _rel_posix(root, yaml)
     parts = yaml_rel.split("/")
-    if len(parts) == 3 and parts[0] == "pipelines" and parts[2] == "pipeline.yaml":
+    if len(parts) == 3 and parts[0] == PIPELINES_DIR and parts[2] == PIPELINE_YAML:
         folder = parts[1]
-        if not _valid_name(folder):
+        if not is_valid_name(folder):
             raise PIPELINE_NAME_INVALID.error(name=folder)
         if declared is not None and declared != folder:
             raise PIPELINE_NAME_MISMATCH.error(path=yaml_rel, declared=declared, folder=folder)
         return PipelineName(folder, True, yaml_rel)
     if declared is not None:
-        if not _valid_name(declared):
+        if not is_valid_name(declared):
             raise PIPELINE_NAME_INVALID.error(name=declared)
         assert isinstance(declared, str)
         other = _taken(root, declared, yaml_rel)
@@ -334,7 +343,7 @@ def pipeline_name_for(root: Path, yaml: Path, declared: object) -> PipelineName:
         return PipelineName(declared, True, yaml_rel)
     stem = yaml.name.rsplit(".", 1)[0] if "." in yaml.name else yaml.name
     slug = _slug(stem)
-    if slug == stem and _valid_name(slug) and _taken(root, slug, yaml_rel) is None:
+    if slug == stem and is_valid_name(slug) and _taken(root, slug, yaml_rel) is None:
         return PipelineName(slug, False, yaml_rel)
     return PipelineName(_derived(root, yaml_rel, stem), False, yaml_rel)
 
@@ -602,13 +611,13 @@ class RunLayout:
         folder = self.base
         return folder.resolve() if folder.is_dir() else None
 
-    def describe(self) -> dict[str, object]:
+    def describe(self, given_as: str = "path") -> dict[str, object]:
         """The run `--json` members of plan 7.6 that come from the layout, every path absolute.
 
         `output_dir` is not one of them: it follows the publication ledger (plan 3.6.1 C).
         `project` is `{root, implicit, skipped}` and `pipeline` is `{name, yaml, given_as}`;
         both are None when no run folder was opened (only absolute targets, or `--out-dir`).
-        A pipeline is always given as a path until names arrive with `decoy run <name>`.
+        `given_as` is "name" when the run was started with a pipeline name, else "path".
         """
         project = pipeline = None
         if self._project is not None:
@@ -622,7 +631,7 @@ class RunLayout:
             pipeline = {
                 "name": self._pipeline.name,
                 "yaml": str((yaml / self._pipeline.yaml_rel).resolve()),
-                "given_as": "path",
+                "given_as": given_as,
             }
         return {"project": project, "pipeline": pipeline}
 

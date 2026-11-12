@@ -63,7 +63,9 @@ def commit_latest(ctx: RunContext) -> None:
 def _where_written(ctx: RunContext) -> dict:
     """The plan 7.6 `--json` members: the ledger's files and folder, project and pipeline."""
     described = (
-        ctx.layout.describe() if ctx.layout is not None else {"project": None, "pipeline": None}
+        ctx.layout.describe(ctx.given_as)
+        if ctx.layout is not None
+        else {"project": None, "pipeline": None}
     )
     return {**ctx.published_members(), **described}
 

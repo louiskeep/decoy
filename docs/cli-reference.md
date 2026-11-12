@@ -36,6 +36,7 @@ $ decoy [OPTIONS] COMMAND [ARGS]...
 
 * `--version`: Show the decoy CLI version and exit.
 * `--no-update-check`: Suppress the &#x27;new version available&#x27; startup notice.
+* `--project PATH`: Project folder for pipeline names (default: DECOY_PROJECT, else the nearest decoy.yaml above the current folder).
 * `--install-completion`: Install completion for the current shell.
 * `--show-completion`: Show completion for the current shell, to copy it or customize the installation.
 * `--help`: Show this message and exit.
@@ -88,7 +89,7 @@ $ decoy run [OPTIONS] CONFIG
 
 **Arguments**:
 
-* `CONFIG`: Path to the YAML pipeline config.  [required]
+* `CONFIG`: Path or name of the YAML pipeline config (a name is looked up in the project).  [required]
 
 **Options**:
 
@@ -256,7 +257,7 @@ $ decoy tokenize [OPTIONS] CONFIG
 
 **Arguments**:
 
-* `CONFIG`: Path to the YAML pipeline config (with `strategy: tokenize` columns).  [required]
+* `CONFIG`: Path or name of the YAML pipeline config (with `strategy: tokenize` columns).  [required]
 
 **Options**:
 
@@ -821,7 +822,7 @@ $ decoy subset [OPTIONS] CONFIG
 
 **Arguments**:
 
-* `CONFIG`: Path to the YAML pipeline config (must declare a subset: block).  [required]
+* `CONFIG`: Path or name of the YAML pipeline config (must declare a subset: block).  [required]
 
 **Options**:
 
@@ -957,7 +958,7 @@ $ decoy validate config [OPTIONS] CONFIG
 
 **Arguments**:
 
-* `CONFIG`: Path to the YAML pipeline config to validate.  [required]
+* `CONFIG`: Path or name of the YAML pipeline config to validate.  [required]
 
 **Options**:
 
@@ -1004,7 +1005,7 @@ $ decoy validate compile [OPTIONS] CONFIG
 
 **Arguments**:
 
-* `CONFIG`: Path to the pipeline YAML config to compile.  [required]
+* `CONFIG`: Path or name of the pipeline YAML config to compile.  [required]
 
 **Options**:
 
@@ -1074,7 +1075,7 @@ $ decoy validate preflight [OPTIONS] CONFIG
 
 **Arguments**:
 
-* `CONFIG`: Path to the YAML pipeline config to check.  [required]
+* `CONFIG`: Path or name of the YAML pipeline config to check.  [required]
 
 **Options**:
 
@@ -1534,7 +1535,7 @@ $ decoy report fidelity [OPTIONS] SOURCE OUTPUT
 
 * `--joint TEXT`: Column pair &#x27;a,b&#x27; to also score jointly (repeatable).
 * `--generate`: Output is synthetic generation, not masking: row counts may legitimately differ (sets expect_row_parity=False). Default assumes masking (row parity expected).
-* `--config FILE`: Pipeline YAML naming each column&#x27;s strategy, so intentional loss (hash, bucketize, faker, ...) is not flagged as accidental drift. Without it, per-column policy checks run on defaults only.
+* `--config TEXT`: Pipeline YAML naming each column&#x27;s strategy, so intentional loss (hash, bucketize, faker, ...) is not flagged as accidental drift. Without it, per-column policy checks run on defaults only.
 * `--policy FILE`: A quality-policy config (YAML or JSON: mode / thresholds / strategy_expectations) overriding --mode / --min-grade / --min-score.
 * `--mode TEXT`: report (record only, verdict always pass) | warn (violations promote verdict to warn) | fail (violations promote verdict to fail). Ignored when --policy sets its own mode.  [default: report]
 * `--min-grade TEXT`: Shorthand: minimum letter grade (A/B/C/D) the overall score must reach.
@@ -1606,7 +1607,7 @@ $ decoy report integrity [OPTIONS] MASKED
 **Options**:
 
 * `--source FILE`: Pre-mask source CSV (ground truth for the integrity check).  [required]
-* `--config FILE`: Optional pipeline.yaml. When passed, policy_validation can compare against the configured masks. Without it the runner still produces residual_pii + fk_preservation findings.
+* `--config TEXT`: Optional pipeline.yaml, or a pipeline name. When passed, policy_validation can compare against the configured masks. Without it the runner still produces residual_pii + fk_preservation findings.
 * `-o, --output PATH`: Write the JobStormReport JSON to this path. The Rich table still renders to stderr.
 * `--allow-source-mismatch`: Suppress the stderr warning when --source does not match the pipeline&#x27;s declared sources block.
 * `--json`: Emit the full JobStormReport JSON to stdout. No card.
@@ -1734,7 +1735,7 @@ $ decoy report vault [OPTIONS] VAULT
 
 **Options**:
 
-* `--config FILE`: The pipeline config the mask run used. The vault opens only under the mask secret that run used (--mask-secret or global_settings.mask_secret_ref).  [required]
+* `--config TEXT`: The pipeline config the mask run used. The vault opens only under the mask secret that run used (--mask-secret or global_settings.mask_secret_ref).  [required]
 * `--mask-secret TEXT`: Reference to the mask secret the run used: &#x27;env:NAME&#x27; or &#x27;file:/PATH&#x27; (a &gt;=32-byte secret; an owner-only file, never the raw value). Sets global_settings.mask_secret_ref for this command; an error if the YAML also sets it. See: decoy explain keys.
 * `--json`: Emit a structured JSON result on stdout. Errors still go to stderr.
 * `-q, --quiet`: Suppress stdout. Errors still go to stderr; exit code carries the result.

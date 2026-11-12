@@ -19,6 +19,7 @@ from pathlib import Path
 import typer
 
 from decoy import _resources
+from decoy.cli.io import pipeline_argument, resolve_pipeline
 from decoy.cli.io import resolve_path as _resolve_path
 from decoy.cli.run import _flow
 from decoy.cli.run._context import DEFAULT_CHUNK_SIZE, Mode, NotifyOn, RunContext
@@ -100,12 +101,8 @@ See also: decoy validate compile --explain, decoy report fidelity, decoy validat
 
 
 def run(
-    config: Path = typer.Argument(
-        ...,
-        exists=True,
-        dir_okay=False,
-        readable=True,
-        help="Path to the YAML pipeline config.",
+    config: str = pipeline_argument(
+        help="Path or name of the YAML pipeline config (a name is looked up in the project).",
     ),
     mode: Mode = typer.Option(
         Mode.mask,
@@ -377,10 +374,12 @@ def run(
     counted on stderr and never stop it. There is no flag to skip the check.
     """
     state = setup_output(json_, quiet, verbose)
+    ref = resolve_pipeline(config, state, "run")
     _flow.execute(
         RunContext(
             state=state,
-            config=config,
+            config=ref.yaml,
+            given_as=ref.given_as,
             mode=mode,
             json_=json_,
             quiet=quiet,

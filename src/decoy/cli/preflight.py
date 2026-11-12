@@ -61,6 +61,7 @@ from decoy.cli._yaml_errors import sanitize_yaml_error
 from decoy.cli.exit_codes import EXIT_CAPACITY, EXIT_USAGE, EXIT_WARNINGS
 from decoy.cli.gate._capacity_text import format_gib as _format_gib
 from decoy.cli.gate._capacity_text import insufficient_text as _insufficient_text
+from decoy.cli.io import pipeline_argument, resolve_pipeline
 from decoy.ui.output import OutputMode, emit_json, setup_output
 from decoy.ui.theme import code, error, hint, success, warn
 
@@ -615,13 +616,7 @@ def _check_native(raw: dict[str, Any], acc: _PreflightAccumulator) -> None:
 
 
 def preflight(
-    config: Path = typer.Argument(
-        ...,
-        exists=True,
-        dir_okay=False,
-        readable=True,
-        help="Path to the YAML pipeline config to check.",
-    ),
+    config: str = pipeline_argument(help="Path or name of the YAML pipeline config to check."),
     local: bool = typer.Option(
         False,
         "--local",
@@ -673,6 +668,7 @@ def preflight(
     the job's capacity feasibility before starting a run.
     """
     state = setup_output(json_, quiet, verbose)
+    config_path = resolve_pipeline(config, state, "validate preflight").yaml
     config_str = str(config)
     acc = _PreflightAccumulator()
 
@@ -687,7 +683,7 @@ def preflight(
 
     # -- Step 1: YAML parse ---------------------------------------------------
     try:
-        raw = _yaml.safe_load(config.read_text(encoding="utf-8"))
+        raw = _yaml.safe_load(config_path.read_text(encoding="utf-8"))
     except _yaml.YAMLError as exc:
         acc.add_fail(name="yaml.parse_error", message=sanitize_yaml_error(exc))
         _emit_preflight_result(state, acc, config_str, fail_on_warning)
@@ -729,7 +725,7 @@ def preflight(
 
     # -- Step 3: Profile-free plan-compile checks ----------------------------
     try:
-        run_config_only_checks(raw, base_dir=config.parent)
+        run_config_only_checks(raw, base_dir=config_path.parent)
         acc.add_pass(name="config.plan_checks", message="Profile-free plan-compile checks passed.")
     except PlanCompileError as exc:
         # Rewrite ner_spacy_not_installed to decoy-cli's own [ner] extra;
@@ -745,20 +741,20 @@ def preflight(
     # -- Step 3b: Project-layout checks --------------------------------------
     from decoy.cli.io import layout_failures
 
-    for code, message, location in layout_failures(config, raw):
+    for code, message, location in layout_failures(config_path, raw):
         acc.add_fail(name=code, message=message, location=location, code=code)
     if acc.has_failures:
         _emit_preflight_result(state, acc, config_str, fail_on_warning)
         raise typer.Exit(code=EXIT_USAGE)
 
     # -- Step 4: Source file checks ------------------------------------------
-    _check_source_files(raw, config.parent, acc)
+    _check_source_files(raw, config_path.parent, acc)
 
     # -- Step 5: Target overwrite advisory -----------------------------------
-    _check_target_overwrite(raw, acc, config.parent)
+    _check_target_overwrite(raw, acc, config_path.parent)
 
     # -- Step 6: Capacity check (OOM checker v1) -----------------------------
-    _check_capacity(raw, config, acc)
+    _check_capacity(raw, config_path, acc)
 
     # -- Step 7: Native companion health + static eligibility (Phase 3.1) ----
     _check_native(raw, acc)
