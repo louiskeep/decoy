@@ -101,6 +101,6 @@ def test_findings_and_success_read_the_map(tmp_path: Path) -> None:
 def test_explain_lists_exit_6() -> None:
     out = runner.invoke(app, ["explain", "exit-codes"]).output
     assert "six exit codes" not in out
-    assert "partially delivered" in out.lower()
+    assert "  6   Partially delivered" in out
     readme = (Path(__file__).resolve().parents[2] / "README.md").read_text(encoding="utf-8")
     assert "| 6    | `EXIT_PARTIAL`" in readme
