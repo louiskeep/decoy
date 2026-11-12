@@ -211,6 +211,21 @@ def test_other_exclusions_must_run_in_another_job(extra: str) -> None:
     assert has(lanes.findings(t), "runs in no other job"), extra
 
 
+@pytest.mark.parametrize("extra", ["-k smoke", "-ksmoke"])
+def test_name_filter_fails_closed(extra: str) -> None:
+    t = seeded()
+    (step,) = [s for s in job(t, "ci.yml", "pytest")["steps"] if "tests/e2e" in s.get("run", "")]
+    step["run"] = step["run"].replace("tests/e2e", f"tests/e2e {extra}")
+    assert has(lanes.findings(t), "P1 ci.yml:pytest: -k smoke narrows"), extra
+
+
+def test_deselected_node_counts_as_its_file() -> None:
+    t = seeded()
+    (step,) = [s for s in job(t, "ci.yml", "pytest")["steps"] if "--ignore=" in s.get("run", "")]
+    step["run"] += " --deselect tests/sentry/layout/test_import_layers.py::test_x"
+    assert lanes.findings(t) == []
+
+
 def test_yaml_workflows_are_read(tmp_path: Path) -> None:
     for d in (".github", "ci", "scripts"):
         shutil.copytree(lanes.ROOT / d, tmp_path / d)
