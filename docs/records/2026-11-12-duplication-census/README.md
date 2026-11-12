@@ -7,7 +7,8 @@ Purpose: a candidate list for V2 remediation. It answers the roadmap's review qu
 central location?" Nothing here is scheduled; none of it is a roadmap row yet.
 
 The working list, with every finding sorted into V1 or V1+ and its locations, is
-[REMEDIATION.md](REMEDIATION.md).
+[REMEDIATION.md](REMEDIATION.md). The reachability pass on its packages A and B is
+[REACHABILITY-A-B.md](REACHABILITY-A-B.md).
 
 ## Method
 
