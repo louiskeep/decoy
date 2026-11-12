@@ -9,7 +9,7 @@ data values); this module only caps their length for the run envelope.
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from decoy.cli.exit_codes import EXIT_CAPACITY
 from decoy.cli.gate._layers import (
@@ -19,6 +19,9 @@ from decoy.cli.gate._layers import (
     gate_exit_code,
     run_gate_on_config,
 )
+
+if TYPE_CHECKING:
+    from decoy.cli.io import OutputPlacement
 
 # `decoy run` caps every error text it emits (CLI QA F8): an engine exception can quote
 # source-row content verbatim, so the cap bounds what reaches a log aggregator.
@@ -124,13 +127,19 @@ def _message(f: GateFinding) -> dict[str, Any]:
     }
 
 
-def check_before_run(raw: Any, config_path: Path, route: GateRoute, state: Any) -> dict[str, Any]:
+def check_before_run(
+    raw: Any,
+    config_path: Path,
+    route: GateRoute,
+    state: Any,
+    placement: OutputPlacement | None = None,
+) -> dict[str, Any]:
     """Run the gate on the parsed YAML; return the validated config or raise.
 
     Warnings never stop a run. In human mode one stderr line gives their count and the
     command that lists them; `--quiet` and `--json` print nothing extra.
     """
-    result = run_gate_on_config(raw, config_path, route)
+    result = run_gate_on_config(raw, config_path, route, placement)
     if gate_exit_code(result, fail_on_warning=False) != 0:
         raise PreRunCheckError.from_result(result)
     warnings = sum(1 for f in result.findings if f.severity == "warning")

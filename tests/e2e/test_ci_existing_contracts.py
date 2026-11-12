@@ -58,6 +58,10 @@ def test_validate_gate_config_error_keeps_null_location_and_exit(tmp_path: Path)
 
 def test_validate_fail_on_warning_exit_is_unchanged(tmp_path: Path) -> None:
     repo = _repo(tmp_path)
+    # An existing absolute target draws the overwrite warning; a relative one lands in a new
+    # run folder and draws none (PROJECT-LAYOUT P4, AT-16).
+    target = repo / "out" / "out.csv"
+    write(repo, "pipeline.yaml", CLEAN_PIPELINE.replace("path: out/out.csv", f"path: {target}"))
     write(repo, "out/out.csv", "exists\n")
     assert run_decoy(["validate", "pipeline.yaml"], repo).returncode == EXIT_OK
     proc = run_decoy(["validate", "pipeline.yaml", "--fail-on-warning", "--json"], repo)

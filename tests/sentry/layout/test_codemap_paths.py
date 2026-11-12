@@ -50,6 +50,7 @@ KINDS = frozenset(
         "CI install, vendor and lane policy",
         "Composite CI actions",
         "Task-oriented user guides (one folder per topic, with a `README.md` index)",
+        "Root legal files (license text, notice, licensing FAQ, trademark policy)",
         "Roadmap, plans, records",
     }
 )
