@@ -27,12 +27,14 @@ import ipaddress
 import logging
 import re
 import threading
+import time
 from collections.abc import Mapping, Sequence
 from contextlib import suppress
 from dataclasses import dataclass
 from urllib.parse import urlsplit
 
 import requests
+from opentelemetry.context import Context
 from opentelemetry.exporter.otlp.proto.common.trace_encoder import encode_spans
 from opentelemetry.metrics import NoOpMeterProvider
 from opentelemetry.sdk.resources import Resource
@@ -43,6 +45,7 @@ from opentelemetry.sdk.trace.export import (
     SpanExportResult,
 )
 from opentelemetry.sdk.trace.sampling import ParentBased, TraceIdRatioBased
+from opentelemetry.trace import StatusCode, set_span_in_context
 from requests.adapters import HTTPAdapter
 
 from decoy._version import __version__ as _cli_version
@@ -168,6 +171,25 @@ def _quiet_otel_logger() -> None:
     logger.propagate = False
 
 
+def _resource_attributes(service_version: str) -> dict[str, str]:
+    from decoy_engine.telemetry import RESOURCE_KEYS
+
+    attributes = {"service.name": "decoy-cli", "service.version": service_version}
+    if set(attributes) != RESOURCE_KEYS:
+        raise ValueError("resource key is not in RESOURCE_KEYS")
+    return attributes
+
+
+def _root_record(
+    start_ns: int, end_ns: int, ok: bool, attributes: Sequence[tuple[str, str | int | float]]
+):
+    """The root as the engine's validated `SpanRecord`: name, keys and string values are
+    checked by the same vocabulary the phase spans pass, before anything reaches the SDK."""
+    from decoy_engine.telemetry import SpanRecord
+
+    return SpanRecord("decoy.run", start_ns, end_ns, ok, tuple(attributes))
+
+
 def build_provider(
     endpoint: str, headers: Mapping[str, str], *, service_version: str = _cli_version
 ) -> CliTelemetry:
@@ -176,7 +198,7 @@ def build_provider(
     exporter = _DecoySpanExporter(endpoint, headers)
     provider = TracerProvider(
         sampler=ParentBased(TraceIdRatioBased(1.0)),
-        resource=Resource({"service.name": "decoy-cli", "service.version": service_version}),
+        resource=Resource(_resource_attributes(service_version)),
         span_limits=SpanLimits(
             max_attributes=16,
             max_events=0,
@@ -230,3 +252,75 @@ def flush_bounded(telemetry: CliTelemetry, budget_ms: int = FLUSH_BUDGET_MS) -> 
     telemetry.exporter.shutdown()
     logging.getLogger("opentelemetry").setLevel(logging.CRITICAL + 1)
     return not worker.is_alive()
+
+
+class RunTrace:
+    """One `decoy.run` root span with the engine's phase spans under it.
+
+    The engine's `SpanRecorder` pairs phase events into closed `SpanRecord`s; `_adopt`
+    turns each into a span parented to the root explicitly, never to the ambient context.
+    Every span call passes both exception keywords False and status is set by code only, so
+    an engine error text (which can quote a cell value) never reaches the wire.
+    """
+
+    def __init__(self, telemetry: CliTelemetry) -> None:
+        from decoy_engine import __version__ as engine_version
+        from decoy_engine.telemetry import SpanRecorder
+
+        self._tracer = telemetry.provider.get_tracer("decoy.cli")
+        self._engine_version = engine_version
+        self._start_ns = time.time_ns()
+        opening = _root_record(
+            self._start_ns, self._start_ns, True, [("decoy.engine.version", engine_version)]
+        )
+        # An explicit empty Context: an ambient span from another library is never the parent.
+        self._root = self._tracer.start_span(
+            opening.name,
+            context=Context(),
+            start_time=self._start_ns,
+            attributes=dict(opening.attributes),
+            record_exception=False,
+            set_status_on_exception=False,
+        )
+        self._parent = set_span_in_context(self._root)
+        self.recorder = SpanRecorder(self._adopt)
+        self._finished = False
+
+    def _adopt(self, record) -> None:
+        span = self._tracer.start_span(
+            record.name,
+            context=self._parent,
+            start_time=record.start_ns,
+            attributes=dict(record.attributes),
+            record_exception=False,
+            set_status_on_exception=False,
+        )
+        if not record.ok:
+            span.set_status(StatusCode.ERROR)
+        span.end(record.end_ns)
+
+    def finish(self, *, ok: bool, error_class: str | None = None) -> None:
+        """Close open phases, then end the root. Idempotent."""
+        if self._finished:
+            return
+        self._finished = True
+        self.recorder.close()
+        attributes: list[tuple[str, str | int | float]] = [
+            ("decoy.engine.version", self._engine_version),
+            ("decoy.spans_dropped", self.recorder.dropped),
+        ]
+        if ok:
+            attributes.append(("decoy.outcome", "success"))
+        else:
+            from decoy_engine.progress import safe_error_class
+
+            attributes.append(("decoy.outcome", "failed"))
+            attributes.append(("error.type", safe_error_class(error_class) or "Exception"))
+        record = _root_record(self._start_ns, max(time.time_ns(), self._start_ns), ok, attributes)
+        for key, value in record.attributes:
+            self._root.set_attribute(key, value)
+        if record.ok:
+            self._root.set_status(StatusCode.OK)
+        else:
+            self._root.set_status(StatusCode.ERROR)
+        self._root.end(record.end_ns)
