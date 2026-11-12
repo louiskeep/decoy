@@ -6,7 +6,9 @@ Records are built directly with `records.build` (run-result included) and stored
 
 from __future__ import annotations
 
+import contextlib
 import json
+from collections.abc import Iterator
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -20,7 +22,7 @@ from decoy.__main__ import app
 from decoy.cli import evidence as evidence_module
 from decoy.cli.exit_codes import EXIT_OK, EXIT_RUNTIME, EXIT_USAGE
 from decoy.cli.io import DECOY_DIR
-from decoy.cli.library import _index, open_library
+from decoy.cli.library import _index, _refs, open_library
 from tests.unit.library._helpers import INVOCATION, PRODUCER, envelope, object_path
 
 runner = CliRunner()
@@ -233,14 +235,32 @@ def test_show_an_opaque_or_newer_record_prints_the_envelope_only(root: Path) -> 
 
 
 def test_ref_sets_under_the_lock_and_prints(root: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """ML4-ref-nolock: writing the ref file without the library lock turns this red."""
+    """ML4-ref-nolock: writing the ref file without the library lock turns this red. The spy
+    records whether the lock is held at the moment the ref file is written (opening the
+    library also takes the lock, so a bare call count would not tell)."""
     rid = _put(root, _sample(1, 11))[0]
-    locks: list[object] = []
-    real = _index.locked
-    monkeypatch.setattr(_index, "locked", lambda *a, **k: locks.append(a) or real(*a, **k))
+    held: list[bool] = []
+    writes: list[bool] = []
+    real_locked, real_write = _index.locked, _refs.replace_file
+
+    @contextlib.contextmanager
+    def locked(*args: Any, **kwargs: Any) -> Iterator[Any]:
+        with real_locked(*args, **kwargs) as conn:
+            held.append(True)
+            try:
+                yield conn
+            finally:
+                held.pop()
+
+    def write(*args: Any, **kwargs: Any) -> None:
+        writes.append(bool(held))
+        real_write(*args, **kwargs)
+
+    monkeypatch.setattr(_index, "locked", locked)
+    monkeypatch.setattr(_refs, "replace_file", write)
     result = _cli(root, "ref", "sample-run/baseline", rid.removeprefix("sha256:")[:10])
     assert result.exit_code == EXIT_OK, result.output
-    assert locks  # the set ran under the library lock
+    assert writes == [True]  # one ref write, made while the library lock was held
     shown = _cli(root, "ref", "sample-run/baseline")
     assert shown.exit_code == EXIT_OK and rid in shown.output
     scoped = _cli(root, "ref", "sample-run/claims/baseline", rid)
