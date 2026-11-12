@@ -394,7 +394,7 @@ def test_a_partial_or_refused_report_never_exits_zero() -> None:
 
 
 def test_exit_codes_must_be_the_public_taxonomy() -> None:
-    for bad in (6, -1, 99):
+    for bad in (7, -1, 99):
         with pytest.raises(ValueError):
             _o("a", "ok", bad)
 

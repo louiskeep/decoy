@@ -134,6 +134,8 @@ PRIVATE_CASES: dict[str, str] = {
     + "test_installer_trust_state_is_owner_only_under_umask_zero",
     "cli/io/_layout.py::create_run_folder::create_private_directory::1": _UNIT
     + "test_create_private_directory_is_0700_under_umask_000",
+    "cli/io/_layout.py::RunLayout.out_dir::create_private_directory::1": "e2e:"
+    + "test_run_surfaces.py::test_a_missing_out_dir_is_made_owner_only",
     "cli/io/_layout.py::prepare_out::write_local_target::1": _UNIT
     + "test_layout_files_are_owner_only_under_umask_zero",
     "cli/io/_layout.py::write_claim::write_atomic::1": _UNIT
@@ -151,6 +153,7 @@ PRIVATE_CASES: dict[str, str] = {
 _CASE_MODULES = {
     "e2e:test_private_surfaces.py": ROOT / "tests/e2e/private_file/test_private_surfaces.py",
     "unit:test_private_file.py": ROOT / "tests/unit/private_file/test_private_file.py",
+    "e2e:test_run_surfaces.py": ROOT / "tests/e2e/project_layout/test_run_surfaces.py",
 }
 
 
@@ -594,10 +597,10 @@ def test_the_live_tree_is_clean(files: dict[str, str]) -> None:
     assert run(files) == []
 
 
-def test_the_census_is_60_watched_sinks(files: dict[str, str]) -> None:
+def test_the_census_is_61_watched_sinks(files: dict[str, str]) -> None:
     sinks = watched(collect(files))
-    assert len(sinks) == 60
-    assert len([s for s in sinks if is_entry(s)]) == 23
+    assert len(sinks) == 61
+    assert len([s for s in sinks if is_entry(s)]) == 24
     counts: dict[str, int] = {}
     for r in ROWS:
         counts[r.disposition] = counts.get(r.disposition, 0) + 1

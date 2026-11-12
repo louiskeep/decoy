@@ -6,11 +6,11 @@ it at a YAML pipeline that describes your sources, your tables, and the
 strategy for each column, and it produces a masked or synthesized copy of
 your data with deterministic, repeatable output.
 
-The CLI is source-available under the Business Source License 1.1 (BUSL-1.1):
-source is readable, non-commercial and internal-business use is permitted by
-the Additional Use Grant, and commercial competing-service use is restricted.
-The license auto-converts to Apache-2.0 on the Change Date (2030-05-10). See
-`LICENSE.md` for the full terms. The CLI runs locally: there is no server,
+The CLI is source-available under the Functional Source License
+(FSL-1.1-ALv2): use it for anything, including production at your company,
+except building a competing product. Each release becomes Apache-2.0 two
+years after it ships. See `LICENSE.md` for the full terms and
+[`LICENSING.md`](LICENSING.md) for a plain-English FAQ. The CLI runs locally: there is no server,
 no account, no telemetry phone-home. Input data and output data stay on your
 machine.
 
@@ -164,17 +164,18 @@ decoy ci check .decoy-ci.yaml --format sarif --output decoy.sarif
 
 ## Exit codes
 
-`decoy` returns one of these six codes. Scripts, Make recipes, and CI
+`decoy` returns one of these seven codes. Scripts, Make recipes, and CI
 pipelines can switch on the integer; the contract is stable across releases.
 
 | Code | Name                   | Meaning                                                                                    |
 |------|------------------------|--------------------------------------------------------------------------------------------|
 | 0    | `EXIT_OK`              | Success.                                                                                   |
 | 1    | `EXIT_USAGE`           | Usage error: config did not validate, path did not exist, flag combination was invalid, or a `unique` generate column the data cannot satisfy (`uniqueness_impossible`). |
-| 2    | `EXIT_WARNINGS`        | The command ran clean except for advisory warnings, and `--fail-on-warning` was set. Returned by `decoy validate config` / `validate preflight` (and the `validate` aggregate). Without `--fail-on-warning` the same run exits 0. |
+| 2    | `EXIT_WARNINGS`        | The command ran clean except for advisory warnings, and `--fail-on-warning` was set. Also the code for a Click usage error and a bad `--master-key` or `--key-label` on `decoy run`. Returned by `decoy validate config` / `validate preflight` (and the `validate` aggregate). Without `--fail-on-warning` the same run exits 0. |
 | 3    | `EXIT_RUNTIME`         | The CLI itself failed mid-run (engine error, output write failure, transient I/O problem). |
 | 4    | `EXIT_FINDINGS`        | The CLI ran cleanly but found data issues (e.g. `decoy report integrity` flagged residual PII or FK preservation failures). The fix is in the data being checked, not in the CLI invocation. |
 | 5    | `EXIT_CAPACITY`        | `decoy run` or `decoy validate preflight` refused the job: it needs more memory than the host/budget has (the engine's out-of-core-FK memory gate). The fix is a bigger host/cgroup ceiling or a smaller job. `decoy validate preflight`'s v1 check does not cover the ingestion peak. Generated tables whose output cannot fit the machine's memory (`generation_budget_exceeded`) exit 5 at `decoy validate` and before `decoy run` writes anything; a missing or unreadable source file exits 1 first, so this needs readable sources; a run that runs out of memory exits 5 as well. |
+| 6    | `EXIT_PARTIAL`         | `decoy run` delivered some tables and withheld the rest. Reserved for best-effort delivery; no run exits 6 yet. |
 
 Constants live in `decoy.cli.exit_codes`. `decoy explain exit-codes` prints
 the same table from the CLI.
@@ -185,6 +186,8 @@ the same table from the CLI.
 - `docs/guides/shape-and-privacy/` -- user guide: check what shape masking
   kept, fit and generate look-alike data, read fidelity reports, and use the
   differential-privacy fit.
+- `docs/guides/telemetry/README.md` -- opt-in trace export to your collector: what is
+  sent, the closed attribute set and the limits (DP fits, lost spans).
 - `src/decoy/templates/` -- the starter templates `decoy init` ships.
 - `CHANGELOG.md` -- release notes and the versioning policy.
 - `SECURITY.md` -- how to report a vulnerability privately.
@@ -195,9 +198,14 @@ the same table from the CLI.
 
 ## License
 
-Business Source License 1.1 (BUSL-1.1). The source is readable, internal and
-non-commercial use is permitted, and competing-service use is restricted by
-the Additional Use Grant. The license auto-converts to Apache License 2.0
-on the Change Date (2030-05-10). BUSL-1.1 is source-available, not OSI
-open-source. See `LICENSE.md` for the full terms and `TRADEMARKS.md` for
-the trademark policy.
+Functional Source License, Version 1.1, Apache 2.0 Future License
+(FSL-1.1-ALv2). `decoy-engine` moves to the same license from its first FSL
+release onward; earlier engine releases, including the 0.22.0 this CLI pins
+today, stay Apache-2.0. You may use, modify and
+redistribute Decoy for any purpose except a Competing Use: offering it, or
+something substantially similar built from it, to others as a commercial
+product or service. Internal production use is allowed. Each release
+converts to the Apache License 2.0 on the second anniversary of its
+release. FSL is source-available, not OSI open source. See `LICENSE.md` for
+the full terms, [`LICENSING.md`](LICENSING.md) for a plain-English FAQ, and
+`TRADEMARKS.md` for the trademark policy.

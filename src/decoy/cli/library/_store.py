@@ -32,6 +32,7 @@ from decoy_engine import records
 from decoy.cli.io import LayoutWarning, ensure_decoy_dir
 from decoy.cli.library import _index
 from decoy.cli.library._errors import (
+    LIBRARY_FILE_TOO_LARGE,
     LIBRARY_LAYOUT_NEWER,
     LIBRARY_LOCK_UNAVAILABLE,
     LIBRARY_READ_FAILED,
@@ -43,11 +44,12 @@ from decoy.cli.library._errors import (
     LibraryError,
     library_error,
 )
-from decoy.cli.library._fs import ensure_private_dir, read_file, write_dotfile_once, write_once
+from decoy.cli.library._fs import ensure_private_dir, read_capped, write_dotfile_once, write_once
 from decoy.cli.library._index import IndexRow
 from decoy.cli.library._paths import (
     GITATTRIBUTES,
     GITATTRIBUTES_TEXT,
+    ID_PREFIX,
     LAYOUT_FILE,
     LAYOUT_VERSION,
     LIBRARY,
@@ -56,17 +58,18 @@ from decoy.cli.library._paths import (
     check_root_budget,
     is_project_folder,
     record_digest,
+    record_prefix,
 )
 from decoy.cli.library._refs import read_ref, set_ref
 from decoy.cli.library._remote import remote_filesystem
 
 __all__ = ["Library", "PutResult", "open_library"]
 
-_PREFIX = "sha256:"
-_HEX = frozenset("0123456789abcdef")
-_DIGEST_CHARS = 64  # a full id; `record_digest` checks one
-_MIN_PREFIX = 8  # as git allows abbreviated object names
 _SUFFIX = ".json"
+# Records hold names, counts and digests only; 16 MiB is far above any real one and keeps a
+# planted file from being read whole. `put` refuses a record it could not read back.
+MAX_RECORD_BYTES = 16 * 1024 * 1024
+_MAX_LAYOUT_BYTES = 4096
 
 Decoded = records.DecodedRecord | records.OpaqueRecord | records.RecordNeedsNewer
 Probe = Callable[[Path], "str | None"]
@@ -192,6 +195,8 @@ class Library:
                 raise LibraryError(RECORD_LINK_MISSING)
         warnings = self.prepare()
         data = records.encode(envelope)
+        if len(data) > MAX_RECORD_BYTES:
+            raise LibraryError(LIBRARY_FILE_TOO_LARGE)
         folder = self._objects / digest[:2]
         ensure_private_dir(folder)
         created = write_once(folder, f"{digest[2:]}{_SUFFIX}", data, tmp_dir=self._tmp)
@@ -210,7 +215,7 @@ class Library:
         `RecordNeedsNewer`. This is the one library read (G-ONE-SCAN-READER exempts this file).
         """
         digest = record_digest(record_id)
-        data = None if digest is None else read_file(self._object(digest))
+        data = None if digest is None else read_capped(self._object(digest), MAX_RECORD_BYTES)
         if data is None:
             raise LibraryError(RECORD_NOT_FOUND)
         failure: records.RecordError | None = None
@@ -230,8 +235,8 @@ class Library:
 
         Empty for no match or for text that is not a prefix; more than one means ambiguous.
         """
-        digest = text.removeprefix(_PREFIX)
-        if not (_MIN_PREFIX <= len(digest) <= _DIGEST_CHARS and set(digest) <= _HEX):
+        digest = record_prefix(text)
+        if digest is None:
             return ()
         failure: OSError | None = None
         names: list[str] = []
@@ -244,13 +249,14 @@ class Library:
         if failure is not None:
             raise library_error(LIBRARY_READ_FAILED, failure)
         rest = digest[2:]
+        found = (f"{ID_PREFIX}{digest[:2]}{name.removesuffix(_SUFFIX)}" for name in names)
         return tuple(
             sorted(
-                f"{_PREFIX}{digest[:2]}{name.removesuffix(_SUFFIX)}"
-                for name in names
+                record_id
+                for record_id, name in zip(found, names)
                 if name.endswith(_SUFFIX)
                 and name.startswith(rest)
-                and record_digest(f"{_PREFIX}{digest[:2]}{name.removesuffix(_SUFFIX)}") is not None
+                and record_digest(record_id) is not None
             )
         )
 
@@ -299,7 +305,9 @@ class Library:
             return
         found: object = None
         try:
-            found = json.loads(read_file(self._library / LAYOUT_FILE) or b"null")
+            found = json.loads(
+                read_capped(self._library / LAYOUT_FILE, _MAX_LAYOUT_BYTES) or b"null"
+            )
         except ValueError:
             found = None
         version = found.get("layout") if isinstance(found, dict) else None
@@ -313,7 +321,7 @@ class Library:
         Parsing first means a CRLF or re-indented copy keeps its id. Only the id is checked: a
         record of a kind or major this version cannot read is still the same bytes.
         """
-        data = read_file(path)
+        data = read_capped(path, MAX_RECORD_BYTES)
         parsed: object = None
         try:
             parsed = json.loads(data) if data is not None else None

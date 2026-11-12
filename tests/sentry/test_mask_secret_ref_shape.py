@@ -268,7 +268,14 @@ def test_vault_ref_is_refused_without_echo(tmp_path: Path, surface: str) -> None
         assert result.exit_code == EXIT_USAGE, f"{surface}/{mode}: {result.output}"
         _assert_no_vault_ref_literal(result.stdout, result.stderr, repr(result.exception))
         if mode == "json":
-            assert result.stdout == _expected_json(surface, cfg, vault, remedy)
+            if surface == "run":
+                # The engine raised this refusal, so the run envelope also carries its reason.
+                envelope = json.loads(result.stdout)
+                assert envelope.pop("reason")["namespace"] == "runtime"
+                result_stdout = json.dumps(envelope) + "\n"
+            else:
+                result_stdout = result.stdout
+            assert result_stdout == _expected_json(surface, cfg, vault, remedy)
             assert result.stderr == ""
         else:
             assert result.stdout == ""

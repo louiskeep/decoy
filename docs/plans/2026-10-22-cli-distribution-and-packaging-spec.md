@@ -1,5 +1,7 @@
 # Decoy CLI Distribution and Packaging Spec
 
+License superseded 2026-11-12: FSL-1.1-ALv2 (owner decision); the BUSL-1.1 text below is the earlier decision.
+
 **Status:** draft, pre-gate. Needs a Codex plan-gate before any build (per the
 cross-model gate rule). Authored early so the `§CLI-LAUNCH` pre-release lane is
 build-ready; the build itself runs after the V1 completion point.

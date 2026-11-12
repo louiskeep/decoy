@@ -266,7 +266,7 @@ def test_an_unlockable_index_degrades_put_works_and_refs_refuse(root: Path) -> N
     second = library.put(envelope(1)).id  # the object file is the truth
     assert object_path(root, second).is_file()
     with pytest.raises(LibraryError) as caught:
-        library.set_ref("sample-run", "baseline", first)
+        library.set_ref("sample-run", "main", first)
     assert caught.value.code == LIBRARY_LOCK_UNAVAILABLE
     assert not (root / "library" / "refs").exists()
     assert {r.id for r in library.rows()} == {first, second}  # listed from the files
@@ -289,12 +289,12 @@ def test_a_remote_root_is_degraded_and_refs_refuse(root: Path) -> None:
     assert (library.degraded, library.filesystem) == ("remote_filesystem", "nfs")
     assert library.put(envelope(1)).created is True
     with pytest.raises(LibraryError) as caught:
-        library.set_ref("sample-run", "baseline", first)
+        library.set_ref("sample-run", "main", first)
     assert caught.value.code == LIBRARY_LOCK_UNAVAILABLE
     local = open_library(root, probe=lambda _p: None)
     assert local.degraded is None
-    local.set_ref("sample-run", "baseline", first)
-    assert local.read_ref("sample-run", "baseline") == first
+    local.set_ref("sample-run", "main", first)
+    assert local.read_ref("sample-run", "main") == first
 
 
 # -- C1-list-no-parse --------------------------------------------------------------------------

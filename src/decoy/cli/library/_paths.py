@@ -119,13 +119,21 @@ def is_project_folder(root: Path) -> bool:
     return root.name == DECOY_DIR
 
 
-_ID_PREFIX = "sha256:"
+ID_PREFIX = "sha256:"
 _HEX = frozenset("0123456789abcdef")
 _DIGEST_CHARS = 64
+_MIN_PREFIX = 8  # as git allows abbreviated object names
 
 
 def record_digest(record_id: str) -> str | None:
     """The 64 hex digits of a full record id, or None when it is not one (so no path is built
     from it). Object files are named from these digits."""
-    digest = record_id.removeprefix(_ID_PREFIX) if record_id.startswith(_ID_PREFIX) else ""
+    digest = record_id.removeprefix(ID_PREFIX) if record_id.startswith(ID_PREFIX) else ""
     return digest if len(digest) == _DIGEST_CHARS and set(digest) <= _HEX else None
+
+
+def record_prefix(text: str) -> str | None:
+    """The hex digits of an id or an abbreviation of one (8 to 64 lowercase hex digits, with or
+    without `sha256:`), or None when `text` is neither. The one rule beside `record_digest`."""
+    digits = text.removeprefix(ID_PREFIX)
+    return digits if _MIN_PREFIX <= len(digits) <= _DIGEST_CHARS and set(digits) <= _HEX else None
