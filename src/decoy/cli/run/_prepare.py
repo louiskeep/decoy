@@ -25,6 +25,7 @@ from decoy.cli.run._execute import (
     _check_chunked_tables,
     _ChunkedFixedWidthError,
     _ChunkedGenerateError,
+    _ChunkedIntegrityError,
     _ChunkedReportFlagError,
     _load_sources_from_config,
     _note_chunked_key_check_skipped,
@@ -265,6 +266,39 @@ def prepare_preview(ctx: RunContext) -> None:
     ctx._res = _resources.resolve(max_memory=ctx.max_memory, threads=ctx.threads)
 
 
+def _refuse_chunked_integrity(ctx: RunContext) -> None:
+    """Refuse `--chunked` with post-scan integrity before any source is opened or staged.
+
+    The model is validated first so a malformed config still gets its normal validation
+    error from the gate. `--duckdb-source` tables get a placeholder file source for this
+    check only, because staging has not run and the model requires a source per mask table.
+    """
+    from decoy_engine import ConfigError, PipelineValidationError, parse_pipeline_config
+    from decoy_engine.config import PipelineConfigError, post_scan_integrity_requested
+
+    if not isinstance(ctx.raw, dict) or not isinstance(ctx.raw.get("sources", {}), dict):
+        return
+    probe = {**ctx.raw, "sources": dict(ctx.raw.get("sources") or {})}
+    for spec in ctx.duckdb_source:
+        try:
+            probe["sources"][parse_flag(spec)[0]] = {
+                "type": "file",
+                "format": "parquet",
+                "path": "staged.parquet",
+            }
+        except DuckDBSourceError:
+            return
+    try:
+        validated = parse_pipeline_config(probe).model_dump()
+    except (PipelineConfigError, PipelineValidationError, ConfigError):
+        return
+    if post_scan_integrity_requested(validated):
+        raise _ChunkedIntegrityError(
+            "--chunked does not support post-scan integrity (post_scan.integrity is true). "
+            "Run without --chunked, or turn post_scan.integrity off."
+        )
+
+
 def prepare(ctx: RunContext, _scopes: contextlib.ExitStack) -> None:
     """Everything between the config read and the first row: the engine import, the config
     guards, `--duckdb-source` staging, the gate, admission and the source load."""
@@ -281,6 +315,8 @@ def prepare(ctx: RunContext, _scopes: contextlib.ExitStack) -> None:
         raise PreRunCheckError.from_findings(ctx.saved_findings)
 
     _guard_mask_secret_ref(ctx.raw)
+    if ctx.chunked:
+        _refuse_chunked_integrity(ctx)
 
     # DuckDB-in sources: acquire each flagged relation read-only to a
     # temp Parquet and rewrite the in-memory source to that Parquet

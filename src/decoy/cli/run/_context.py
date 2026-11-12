@@ -21,6 +21,10 @@ from decoy.ui.output import OutputState
 # preview can tell whether it was passed.
 DEFAULT_CHUNK_SIZE = 100_000
 
+# The machine-readable `code` of each warning the CLI raises itself. Closed: a new code is
+# added here, so the `--json` `warnings` vocabulary has one list.
+CLI_WARNING_CODES: frozenset[str] = frozenset({"chunked_key_check_not_run"})
+
 
 class Mode(str, Enum):
     mask = "mask"
@@ -133,6 +137,12 @@ class RunContext:
     # Set by the success tail.
     elapsed: float = field(init=False)
     notify_results: list[dict] = field(init=False)
+
+    def add_cli_warning(self, code: str, message: str) -> None:
+        """Record a CLI warning for the run summary, the only place it is printed."""
+        if code not in CLI_WARNING_CODES:
+            raise ValueError(f"unknown CLI warning code: {code!r}")
+        self._cli_warnings.append({"code": code, "message": message})
 
     def published_members(self) -> dict:
         """The `--json` `outputs` and `output_dir` members (plan 3.6.1 C), from the publication

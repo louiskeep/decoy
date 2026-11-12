@@ -94,8 +94,8 @@ def test_relationships_only_runs_with_a_warning_and_a_record(tmp_path: Path) -> 
     cfg = _pipeline(tmp_path, relationships=True, integrity=False)
     result = runner.invoke(app, ["run", str(cfg), "--chunked", "--json"])
     assert result.exit_code == EXIT_OK, result.output
-    assert _WARNING in " ".join(result.stderr.split())
-    assert _CODE in _codes(result.stdout)
+    warnings = json.loads(result.stdout)["warnings"]
+    assert [w["message"] for w in warnings if w["code"] == _CODE] == [_WARNING]
     assert str(tmp_path) not in result.stderr
 
 
@@ -105,3 +105,43 @@ def test_neither_behaves_as_before(tmp_path: Path) -> None:
     assert result.exit_code == EXIT_OK, result.output
     assert "key check" not in result.stderr
     assert _CODE not in _codes(result.stdout)
+
+
+def test_refusal_comes_before_any_source_is_opened(tmp_path: Path) -> None:
+    cfg = _pipeline(tmp_path, relationships=True, integrity=True)
+    (tmp_path / "parent.csv").unlink()
+    result = runner.invoke(app, ["run", str(cfg), "--chunked"])
+    assert result.exit_code == EXIT_USAGE, result.output
+    assert _REFUSAL in " ".join(result.output.split())
+    assert "not found" not in result.output.lower()
+
+
+def test_refusal_comes_before_duckdb_staging(tmp_path: Path) -> None:
+    cfg = _pipeline(tmp_path, relationships=True, integrity=True)
+    doc = yaml.safe_load(cfg.read_text(encoding="utf-8"))
+    del doc["sources"]["parent"]
+    cfg.write_text(yaml.safe_dump(doc), encoding="utf-8")
+    missing = tmp_path / "no-such.duckdb"
+    result = runner.invoke(
+        app, ["run", str(cfg), "--chunked", "--duckdb-source", f"parent={missing}"]
+    )
+    assert result.exit_code == EXIT_USAGE, result.output
+    assert _REFUSAL in " ".join(result.output.split())
+
+
+def test_malformed_config_still_gets_its_validation_error(tmp_path: Path) -> None:
+    cfg = _pipeline(tmp_path, relationships=True, integrity=True)
+    doc = yaml.safe_load(cfg.read_text(encoding="utf-8"))
+    del doc["sources"]
+    cfg.write_text(yaml.safe_dump(doc), encoding="utf-8")
+    result = runner.invoke(app, ["run", str(cfg), "--chunked"])
+    assert result.exit_code != EXIT_OK, result.output
+    assert _REFUSAL not in " ".join(result.output.split())
+
+
+def test_warning_prints_once_in_human_mode(tmp_path: Path) -> None:
+    cfg = _pipeline(tmp_path, relationships=True, integrity=False)
+    result = runner.invoke(app, ["run", str(cfg), "--chunked"])
+    assert result.exit_code == EXIT_OK, result.output
+    text = " ".join((result.stdout + result.stderr).split())
+    assert text.count(_WARNING) == 1
