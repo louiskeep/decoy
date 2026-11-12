@@ -349,7 +349,7 @@ def run(
             "scaled by the same ratio, so parent and child sizes keep their proportions. "
             "Refused with a mask table, --chunked, --chunk-size, --evidence-out, --notify, "
             "--vault, --fidelity, --explain-plan, --post-validate, --post-validate-enforce, "
-            "--native and --duckdb-source."
+            "--native, --duckdb-source and --out-dir."
         ),
     ),
     otel_endpoint: str = typer.Option(
