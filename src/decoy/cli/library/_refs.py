@@ -36,13 +36,15 @@ from decoy.cli.library._errors import (
     LibraryError,
     library_error,
 )
-from decoy.cli.library._fs import ensure_private_dir, read_file, replace_file
+from decoy.cli.library._fs import ensure_private_dir, read_capped, replace_file
 from decoy.cli.library._paths import INDEX_FILE, REFS, record_digest
 
 if TYPE_CHECKING:
     from decoy.cli.library._store import Library
 
 __all__ = ["BUSY_TIMEOUT_SECONDS", "library_lock", "read_ref", "set_ref"]
+
+_MAX_REF_BYTES = 16 * 1024 * 1024  # the record cap, until refs get their own
 
 BUSY_TIMEOUT_SECONDS = 5.0  # read at call time, so a test can shorten it
 # One name segment (plan 4.5); a name may hold two, `<scope>/<name>`, for a pipeline scope.
@@ -124,7 +126,7 @@ def read_ref(library: Library, kind: str, name: str) -> str | None:
     path = library.library_dir / REFS
     for part in _ref_parts(kind, name):
         path = path / part
-    data = read_file(path)
+    data = read_capped(path, _MAX_REF_BYTES)
     if data is None:
         return None
     text = data.decode("utf-8", errors="replace").strip()

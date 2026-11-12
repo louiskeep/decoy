@@ -25,11 +25,12 @@ def test_exit_table_matches_the_public_constants() -> None:
         "EXIT_RUNTIME",
         "EXIT_FINDINGS",
         "EXIT_CAPACITY",
+        "EXIT_PARTIAL",
     ):
         value = getattr(exit_codes, name)
         assert f"| {value} | `{name}` |" in DOC, name
-    assert "**5 > 3 > 1 > 4 > 2 > 0**" in DOC
-    assert contracts.EXIT_PRECEDENCE == (5, 3, 1, 4, 2, 0)
+    assert "**5 > 3 > 1 > 6 > 4 > 2 > 0**" in DOC
+    assert contracts.EXIT_PRECEDENCE == (5, 3, 1, 6, 4, 2, 0)
 
 
 def test_documented_limits_equal_the_enforced_maxima() -> None:

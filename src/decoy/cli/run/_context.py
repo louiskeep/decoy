@@ -21,6 +21,10 @@ from decoy.ui.output import OutputState
 # preview can tell whether it was passed.
 DEFAULT_CHUNK_SIZE = 100_000
 
+# The machine-readable `code` of each warning the CLI raises itself. Closed: a new code is
+# added here, so the `--json` `warnings` vocabulary has one list.
+CLI_WARNING_CODES: frozenset[str] = frozenset({"chunked_key_check_not_run"})
+
 
 class Mode(str, Enum):
     mask = "mask"
@@ -37,7 +41,7 @@ class NotifyOn(str, Enum):
 class RunContext:
     """Options, then the state each phase sets for the next; see the module docstring."""
 
-    # The 25 options of `decoy run`, as `run()` receives them.
+    # The 26 options of `decoy run`, as `run()` receives them.
     config: Path
     mode: Mode
     json_: bool
@@ -52,6 +56,7 @@ class RunContext:
     vault: Path
     key_label: str
     evidence_out: Path
+    out_dir: Path | None
     notify: list[str]
     notify_on: NotifyOn
     native: bool
@@ -64,6 +69,7 @@ class RunContext:
     otel_endpoint: str
     rows: int | None
     state: OutputState
+    given_as: str = "path"  # "name" when the pipeline was given as a project name
 
     # Set before the try block.
     config_str: str = field(init=False)
@@ -102,12 +108,17 @@ class RunContext:
     # which only fills for --evidence-out). None for --chunked runs (no
     # ExecutionResult to count).
     _notify_row_count: int | None = field(init=False, default=None)
+    # The publication ledger: table to the file a writer has finished publishing. `--json`
+    # `outputs` and `output_dir` come only from it.
+    _published: dict[str, Path] = field(init=False, default_factory=dict)
     # Per-table {name, rows, path} for the summary; rows is None on a chunked run.
     _table_records: list[dict] = field(init=False, default_factory=list)
     # Native route classification (Phase 3.1), set on a successful run for
     # the run-summary line and JSON record.
     _native_route: _native_gate.RouteClassification | None = field(init=False, default=None)
     _resources_record: dict | None = field(init=False, default=None)
+    # Warnings the CLI raises itself (`code`, `message`); they join the engine's in the summary.
+    _cli_warnings: list[dict] = field(init=False, default_factory=list)
     _report_quality_metrics: dict | None = field(init=False, default=None)
     # `--rows` preview: the sampled tables, set by `_execute.execute_preview`.
     _preview_tables: list[dict] = field(init=False, default_factory=list)
@@ -127,3 +138,27 @@ class RunContext:
     # Set by the success tail.
     elapsed: float = field(init=False)
     notify_results: list[dict] = field(init=False)
+
+    def add_cli_warning(self, code: str, message: str) -> None:
+        """Record a CLI warning for the run summary, the only place it is printed."""
+        if code not in CLI_WARNING_CODES:
+            raise ValueError(f"unknown CLI warning code: {code!r}")
+        self._cli_warnings.append({"code": code, "message": message})
+
+    def published_members(self) -> dict:
+        """The `--json` `outputs` and `output_dir` members (plan 3.6.1 C), from the publication
+        ledger only: an opened folder is not evidence that a file exists.
+
+        Nothing published gives no member. `output_dir` appears only when a listed file is
+        below the run folder or `--out-dir`; absolute paths are listed without it.
+        """
+        if not self._published:
+            return {}
+        files = [Path(path).resolve() for path in self._published.values()]
+        members: dict = {
+            "outputs": [{"table": t, "path": str(f)} for t, f in zip(self._published, files)]
+        }
+        folder = self.layout.output_dir() if self.layout is not None else None
+        if folder is not None and any(folder in f.parents for f in files):
+            members["output_dir"] = str(folder)
+        return members

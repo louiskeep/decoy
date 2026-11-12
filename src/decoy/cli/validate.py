@@ -42,7 +42,6 @@ fidelity check relocated to `decoy report fidelity`
 
 from __future__ import annotations
 
-from pathlib import Path
 from typing import Any
 
 import typer
@@ -50,6 +49,7 @@ import typer
 from decoy.cli._default_group import make_default_group
 from decoy.cli.exit_codes import EXIT_OK
 from decoy.cli.gate import GateFinding, gate_exit_code, run_config_gate, run_gate
+from decoy.cli.io import pipeline_argument, resolve_pipeline
 from decoy.ui.output import OutputMode, emit_json, setup_output
 from decoy.ui.theme import accent, code, error, hint, success, warn
 
@@ -111,13 +111,7 @@ See also: decoy run, decoy report fidelity.
 
 
 def config(
-    config: Path = typer.Argument(
-        ...,
-        exists=True,
-        dir_okay=False,
-        readable=True,
-        help="Path to the YAML pipeline config to validate.",
-    ),
+    config: str = pipeline_argument(help="Path or name of the YAML pipeline config to validate."),
     json_: bool = typer.Option(
         False,
         "--json",
@@ -155,8 +149,9 @@ def config(
     (e.g. an output file already exists and would be overwritten on run).
     """
     state = setup_output(json_, quiet, verbose)
+    config_path = resolve_pipeline(config, state, "validate").yaml
 
-    result = run_config_gate(config)
+    result = run_config_gate(config_path)
     _emit_result(state, result.findings, str(config), result.checks_run)
     code = gate_exit_code(result, fail_on_warning)
     if code != EXIT_OK:
@@ -252,12 +247,8 @@ _GATE_LAYERS: tuple[tuple[str, str], ...] = (
 
 
 def _gate(
-    config: Path = typer.Argument(
-        ...,
-        exists=True,
-        dir_okay=False,
-        readable=True,
-        help="Path to the YAML pipeline config to run the whole pre-run gate against.",
+    config: str = pipeline_argument(
+        help="Path or name of the YAML pipeline config to run the whole pre-run gate against.",
     ),
     json_: bool = typer.Option(
         False,
@@ -298,9 +289,10 @@ def _gate(
     each and keep their own output and exit semantics.
     """
     state = setup_output(json_, quiet, verbose)
+    config_path = resolve_pipeline(config, state, "validate").yaml
     config_str = str(config)
 
-    result = run_gate(config)
+    result = run_gate(config_path)
     _emit_gate(
         state,
         result.findings,

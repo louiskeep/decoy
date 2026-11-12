@@ -1,0 +1,9 @@
+# Markers and workflows with no automatic CI lane, and workflows allowed a path filter, each with
+# the reason. The lane sentry (tests/sentry/tooling/test_ci_lanes.py) fails on a stale entry, so
+# this list can only shrink. Same format as the engine's ci/unlaned.toml, plus [[path_filter]].
+# Today every marker and workflow has an automatic lane, so [[marker]] and [[workflow]] are empty.
+schema = 1
+
+[[path_filter]]
+file = "regen-diagrams.yml"
+reason = "commits regenerated SVGs to main and runs no tests; it should run only when a diagram source changes"
