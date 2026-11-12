@@ -9,6 +9,8 @@ it, so no route has a second collision loop. Path rules come from `_layout.py`, 
 from __future__ import annotations
 
 import os
+import stat
+import unicodedata
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -61,12 +63,15 @@ def _folds_case(folder: Path) -> bool:
 
 
 def _destination_key(path: Path) -> tuple:
-    """What two spellings of one destination share: file identity if it exists, else the
-    nearest existing folder plus the remaining suffix (case-folded on a folding filesystem).
+    """Return one key for every spelling that the filesystem treats as one destination.
 
-    The path is first spelled the way the writer publishes it (`os.path.realpath`, which
-    follows a final symlink even when its target is missing), so an alias and its target
-    key alike. That is the one resolver; the steps after it only read the result.
+    The same key covers a symlink anywhere in the path; a dangling final symlink and its
+    missing target; dot segments and repeated or trailing separators; hard links to an existing
+    file; and case variants of an existing ancestor or missing suffix on a folding filesystem.
+    NFC and NFD variants of a missing suffix also share a key where names fold, as on APFS and
+    HFS+. Existing files use device and inode identity. Missing files use that identity for the
+    nearest existing directory plus its filesystem-normalized suffix. Two mounts of one remote
+    share are outside this contract.
     """
     try:
         real = Path(os.path.realpath(path))
@@ -78,11 +83,28 @@ def _destination_key(path: Path) -> tuple:
         found = None
     if found is not None:
         return ("file", found.st_dev, found.st_ino)
-    ancestor = next((p for p in real.parents if p.is_dir()), Path(real.anchor))
-    suffix = real.relative_to(ancestor).parts
-    if _folds_case(ancestor):
-        suffix = tuple(part.casefold() for part in suffix)
-    return ("path", str(ancestor), suffix)
+    for ancestor in real.parents:
+        try:
+            identity = os.stat(ancestor)
+        except (OSError, ValueError):
+            continue
+        if not stat.S_ISDIR(identity.st_mode):
+            continue
+        suffix = real.relative_to(ancestor).parts
+        try:
+            folds = _folds_case(ancestor)
+        except (OSError, ValueError):
+            folds = False
+        if folds:
+            suffix = tuple(
+                unicodedata.normalize("NFC", unicodedata.normalize("NFC", part).casefold())
+                for part in suffix
+            )
+        return ("path", identity.st_dev, identity.st_ino, suffix)
+    try:
+        return ("unresolved", os.path.normpath(os.fspath(real)))
+    except (OSError, TypeError, ValueError):
+        return ("unresolved",)
 
 
 def resolved_output_collisions(

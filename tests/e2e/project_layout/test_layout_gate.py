@@ -577,6 +577,27 @@ def test_resolved_output_collisions_two_spellings_through_a_symlink(
     _assert_collision(result, "targets.a.path", "targets.b.path", read_spy)
 
 
+def test_resolved_output_collisions_dot_and_separator_spellings(
+    tmp_path: Path, read_spy: list[str]
+) -> None:
+    root = _project(tmp_path)
+    first = f"{tmp_path}/out.csv"
+    second = f"{tmp_path}//missing/../out.csv/"
+    cfg = _write(root, "pipelines/orders/pipeline.yaml", _two_tables(root, first, second))
+    result = runner.invoke(app, ["validate", "preflight", str(cfg), "--json"])
+    _assert_collision(result, "targets.a.path", "targets.b.path", read_spy)
+
+
+def test_resolved_output_collisions_hard_links(tmp_path: Path, read_spy: list[str]) -> None:
+    root = _project(tmp_path)
+    first, second = tmp_path / "first.csv", tmp_path / "second.csv"
+    first.touch()
+    os.link(first, second)
+    cfg = _write(root, "pipelines/orders/pipeline.yaml", _two_tables(root, str(first), str(second)))
+    result = runner.invoke(app, ["validate", "preflight", str(cfg), "--json"])
+    _assert_collision(result, "targets.a.path", "targets.b.path", read_spy)
+
+
 def test_resolved_output_collisions_case_only_names_on_a_folding_parent(
     tmp_path: Path, read_spy: list[str], monkeypatch
 ) -> None:
@@ -589,14 +610,82 @@ def test_resolved_output_collisions_case_only_names_on_a_folding_parent(
     _assert_collision(result, "targets.a.path", "targets.b.path", read_spy)
 
 
-def test_resolved_output_collisions_case_only_names_on_a_sensitive_parent_pass(
-    tmp_path: Path, monkeypatch
+@pytest.mark.parametrize("with_dangling_alias", [False, True])
+def test_destination_keys_use_case_varied_ancestor_identity(
+    tmp_path: Path, monkeypatch, with_dangling_alias: bool
+) -> None:
+    from decoy.cli.io import _placement
+
+    parent = tmp_path / "parent"
+    parent.mkdir()
+    varied = tmp_path / "PARENT"
+    real_stat = os.stat
+
+    def folding_stat(path, *args, **kwargs):
+        if os.fspath(path) == os.fspath(varied):
+            return real_stat(parent, *args, **kwargs)
+        return real_stat(path, *args, **kwargs)
+
+    monkeypatch.setattr(_placement.os, "stat", folding_stat)
+    monkeypatch.setattr(_placement, "_folds_case", lambda _folder: True)
+    first = varied / "Out.csv"
+    if with_dangling_alias:
+        alias = parent / "alias.csv"
+        alias.symlink_to(first)
+        first = alias
+    assert _placement._destination_key(first) == _placement._destination_key(parent / "out.csv")
+
+
+@pytest.mark.parametrize("with_dangling_alias", [False, True])
+def test_case_varied_existing_ancestor_collides_on_a_folding_filesystem(
+    tmp_path: Path, read_spy: list[str], with_dangling_alias: bool
+) -> None:
+    from decoy.cli.io import _placement
+
+    if not _placement._folds_case(tmp_path):
+        pytest.skip("temporary filesystem is case-sensitive")
+    root = _project(tmp_path)
+    parent = tmp_path / "parent"
+    parent.mkdir()
+    varied = tmp_path / "PARENT"
+    first = varied / "Out.csv"
+    if with_dangling_alias:
+        alias = parent / "alias.csv"
+        alias.symlink_to(first)
+        first = alias
+    cfg = _write(
+        root,
+        "pipelines/orders/pipeline.yaml",
+        _two_tables(root, str(first), str(parent / "out.csv")),
+    )
+    result = runner.invoke(app, ["validate", "preflight", str(cfg), "--json"])
+    _assert_collision(result, "targets.a.path", "targets.b.path", read_spy)
+
+
+def test_resolved_output_collisions_normalization_variants_on_a_folding_parent(
+    tmp_path: Path, read_spy: list[str], monkeypatch
+) -> None:
+    from decoy.cli.io import _placement
+
+    monkeypatch.setattr(_placement, "_folds_case", lambda _folder: True)
+    root = _project(tmp_path)
+    first, second = tmp_path / "caf\u00e9.csv", tmp_path / "cafe\u0301.csv"
+    cfg = _write(root, "pipelines/orders/pipeline.yaml", _two_tables(root, str(first), str(second)))
+    result = runner.invoke(app, ["validate", "preflight", str(cfg), "--json"])
+    _assert_collision(result, "targets.a.path", "targets.b.path", read_spy)
+
+
+@pytest.mark.parametrize(
+    ("first", "second"), [("Out.csv", "out.csv"), ("caf\u00e9.csv", "cafe\u0301.csv")]
+)
+def test_name_variants_on_a_sensitive_parent_do_not_collide(
+    tmp_path: Path, monkeypatch, first: str, second: str
 ) -> None:
     from decoy.cli.io import _placement
 
     monkeypatch.setattr(_placement, "_folds_case", lambda _folder: False)
     root = _project(tmp_path)
-    cfg = _write(root, "pipelines/orders/pipeline.yaml", _two_tables(root, "Out.csv", "out.csv"))
+    cfg = _write(root, "pipelines/orders/pipeline.yaml", _two_tables(root, first, second))
     assert runner.invoke(app, ["validate", "preflight", str(cfg)]).exit_code == EXIT_OK
 
 
