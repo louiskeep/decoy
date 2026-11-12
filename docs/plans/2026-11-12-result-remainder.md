@@ -98,10 +98,14 @@ blocks. Everything else goes to V2-LOG (section 13).
   `DeliveryFacts.not_applicable()` for a preview). The per-table entry is the model's own
   `run_result.TableDelivery` (`_model.py:282`: state, format, output, reason, dropped_because),
   so no third delivery type exists beside it and DELIV's `delivery.TableDelivery`
-  (`src/decoy_engine/delivery/_plan.py:24`). AT-P5 pins that every DELIV `DeliveryState` value
-  is a `TableDeliveryState` value. The adapter from DELIV's `DeliveryDecision` plus
-  `DeliveryReceipt` to `DeliveryFacts` is DELIV's (its C2a; DELIV picks the module). The rule
-  RESULT needs from it: a table reads `delivered` only when the decision says `delivered` and
+  (`src/decoy_engine/delivery/_plan.py:24`). E2a exports `TableDelivery` from
+  `decoy_engine.run_result`, so the CLI builds the entries without importing `_model`. AT-P5
+  pins only that `DeliveryFacts.tables` values are `run_result.TableDelivery` instances; the
+  agreement of DELIV's `DeliveryState` with `TableDeliveryState` stays with the existing
+  `tests/unit/delivery/test_vocabulary.py:17`. The adapter from DELIV's `DeliveryDecision` plus
+  `DeliveryReceipt` to `DeliveryFacts` is DELIV's: DELIV C2a writes it as the body of the one
+  CLI provider `_result.delivery_facts(ctx)` (3.3), in the `_result.py` lane slot section 10
+  gives it, and picks where any engine helper lives. The rule RESULT needs from it: a table reads `delivered` only when the decision says `delivered` and
   the receipt is `delivered` or `uncertain` (the pointer moved, DELIV AT-12); on a `nothing`
   receipt every such table reads `none`, so `delivery.outcome` can never say delivered for a
   run whose pointer did not move. `ProjectedTables` and
@@ -168,7 +172,8 @@ blocks. Everything else goes to V2-LOG (section 13).
   builder's `blocking_failed` input. DELIV C5 extends that one function for a post-scan block
   (DELIV 6.2 rows 6 and 7, exit 4); it adds no second input.
 - `run/_result.py` (C-DOC1, new): reads the run's facts off `RunContext`, builds `DeliveryFacts`
-  from the ledger, calls `project_tables` and the one `build_run_result(`, and returns the
+  in one function `delivery_facts(ctx)`, the only `DeliveryFacts` construction in `src/decoy/`
+  (the `not_applicable()` constructor included; AT-D10), calls `project_tables` and the one `build_run_result(`, and returns the
   payload and `result_status` (`{"document": "built"|"failed", "file": "written"|"failed"|
   "not_requested", "code": <CLI warning code or null>}`). A build failure falls back to
   `derive_outcome` directly with the same inputs and the code `run_result_build_failed`.
@@ -177,13 +182,31 @@ blocks. Everything else goes to V2-LOG (section 13).
   the prebuilt legacy payload (`_seed_warnings` and `_where_written` stay in `_render`), the
   category and the reason. `_notify` and `_vault`, which come before it, raise typed refusals
   and never call `finish`.
+- `delivery_facts(ctx)` before DELIV reads the ledger: a table in `ctx._published` is
+  `delivered` with its format and run-relative output; every other configured table is `none`
+  with no reason. DELIV C2a replaces that body with the decision-plus-receipt rule of 3.2 and
+  fills `failed`, `withheld` and `dropped` with their reason and `dropped_because`; no other
+  module builds delivery facts, and the projection (AT-P7) already renders every state.
 - C-DOC2 moves every `emit_json(` and `raise typer.Exit(` of `decoy run` into one
   `_result.finish(ctx, outcome)` so the early refusals, the evidence failure and Ctrl-C produce
   the document. Exit integers stay as today. Each new typed refusal is raised after its `except`
   block closes, so it carries no `__context__`. AT-O6 proves it; the existing
   `tests/sentry/defects/test_exception_context.py` only ratchets `raise ... from None` inside an
   `except` block and does not see a plain raise there.
-- C-DOC3 adds `--result PATH`, written through `write_local_target` (`REPLACE`).
+- C-DOC2 moves `ctx._run_started_at` and `ctx.started` to the first lines of `execute`
+  (`src/decoy/cli/run/_flow.py:30`), before `parse_channels`, so X3 to X5 have timings. A path
+  that stops before the config is read or the run starts takes value-free defaults: `config`
+  and `pipeline_kind` null; `route` with `execution_mode`, `route_reason` and `native` null and
+  `chunked` from the flag; `delivery` from `DeliveryFacts` with no tables; no tables, checks,
+  warnings or phases; every `links` member null. AT-O1 asserts them on X3 to X5.
+- C-DOC3 adds `--result PATH`, written through `write_local_target` (`REPLACE`). The path joins
+  the one collision rule: C-DOC3 adds `("--result", ctx.result)` to the typed side files in
+  `_prepare._placement` (`src/decoy/cli/run/_prepare.py:246` to `:256`), so
+  `resolved_output_collisions` (`src/decoy/cli/io/_placement.py:118`) refuses a result path
+  equal to a target, a quarantine file, `--evidence-out` or `--vault` before any row is read,
+  symlink and hard-link aliases included (AT-F4). Whether it counts as a `replaces_final` writer
+  like `--vault` follows how `write_local_target` `REPLACE` treats a final link; C-DOC3 STEP
+  ZERO reads that and the `OutputPlacement` docstring (`_placement.py:36`) gains the flag.
 - Legacy `--json` members keep their values; `result` and `result_status` are added.
 
 ## 4. Behaviour
@@ -312,10 +335,11 @@ mutation is reverted. Markers: cells `zz_marker_a` and `zz_marker_b`, a `tmp_pat
 | AT-P2 | E2a | `test_outcomes`: aggregate error marks unfinished tables `failed`; start-only is `failed` on a failed run and `succeeded` otherwise; no events is `not_run`; no facts and no result gives every table `not_run` | treat the aggregate error as `not_run` |
 | AT-P3 | E2a | `test_delivery_facts`: a `failed` delivery fact overrides execution success with its reason; a table without a fact gets `none`; `delivery.outcome` delivered, partial, nothing and `not_applicable` cells | let execution success win over a delivery failure |
 | AT-P4 | E2a | `test_names`: a name `approve_name` refuses gives `name: null` with its `index` | pass the raw name |
-| AT-P5 | E2a | `test_delivery_states_agree`: every value of DELIV's `delivery._plan.DeliveryState` (`get_args`) is a value of `run_result` `TableDeliveryState`; `DeliveryFacts.tables` values are `run_result.TableDelivery` instances | add a DELIV state the run result cannot hold (red) |
-| AT-P6 | E2a | `tests/unit/run_result/test_exports.py::test_package_exports`: `decoy_engine.run_result.__all__` lists the new names (E2a's, then E2b and E3a each extend it); the top-level `decoy_engine.__all__` is unchanged | export from the top-level `__init__.py` |
+| AT-P5 | E2a | `test_delivery_states_agree`: `DeliveryFacts.tables` values are `decoy_engine.run_result.TableDelivery` instances, and a `DeliveryFacts` built with any other entry type is refused; state agreement with DELIV stays in `tests/unit/delivery/test_vocabulary.py` | type `tables` as `Mapping[str, object]` |
+| AT-P7 | E2a | `test_delivery_states_project`: `DeliveryFacts` with one table each `delivered`, `failed` (a reason), `withheld` and `dropped` (`dropped_because` a sibling name): each entry's state, reason and `dropped_because` pass through unchanged; `delivery.outcome` `partial`; `derive_outcome` with the best-effort mode gives `partially_delivered` | map `withheld` to `none`; drop `dropped_because` |
+| AT-P6 | E2a | `tests/unit/run_result/test_exports.py::test_package_exports`: `decoy_engine.run_result.__all__` lists the new names (E2a's, `TableDelivery` among them, then E2b and E3a each extend it); the top-level `decoy_engine.__all__` is unchanged | export from the top-level `__init__.py` |
 | AT-B1 | E2b | `tests/unit/run_result/test_build.py::test_success_two_tables`: `run_pipeline` on a two-table FK fixture (one mask, one generate): the document validates with `RunResultRead`, two entries in config order, `rows_out == len(outputs[t])`, `kind` from `table_kinds`, `status` `succeeded` | skip the generate table |
-| AT-B2 | E2b | `test_failure_input`: a `ReasonRecord` from `reason_from_exception(ExecutionError(message="zz_marker_exc"))` comes back equal in `failure.reason`; marker absent from `json.dumps(payload)`; `status` follows `category` | pass `category=None` to `derive_outcome` |
+| AT-B2 | E2b | `test_failure_input`: a `ReasonRecord` from `reason_from_exception(ExecutionError(code="out_of_core_insufficient_memory", message="zz_marker_exc"))` comes back equal in `failure.reason`; marker absent from `json.dumps(payload)`; `status` follows `category` | pass `category=None` to `derive_outcome` |
 | AT-B3 | E2b | `test_checks_value_free`: `failed_checks` messages and `quality_summary.sampled_values` with markers give codes and counts only; `blocking` equals the `blocking_failed` input and `status` is `findings` only when it is true | copy `message` into `codes`; recompute blocking from the checks inside the builder |
 | AT-B4 | E2b | `test_paths_and_native`: an absolute target gives its file name; `../x.csv` gives `x.csv`; `out/a.csv` stays; `native` has no label | keep the absolute path |
 | AT-B5 | E2b | existing `tests/sentry/test_run_result_constructor.py` green with `_build.py` present; its seeded `model_copy` case in `_project.py` red | `model_copy(update=...)` in `_project.py` |
@@ -356,16 +380,19 @@ mutation is reverted. Markers: cells `zz_marker_a` and `zz_marker_b`, a `tmp_pat
 | AT-D6 | C-DOC1 | `test_in_place_delivery`: success gives `in_place` `delivered`; the second target's write fails: exit 3, `delivery.outcome` `partial`, table 1 `delivered`, table 2 `none` | mark tables delivered from `targets:` |
 | AT-D7 | C-DOC1 | `test_preview_document`: `--rows 5 --json`: `result` present, `delivery.outcome` `not_applicable`, nothing written | derive `nothing` for a preview |
 | AT-D8 | C-DOC1 | `test_collector_registered`: a sequential run whose second table raises: document tables `succeeded`, `failed`, `not_run` | skip `ctx.progress.add(collector.on_event)` in `_flow.py` |
+| AT-D10 | C-DOC1 | `tests/sentry/run/test_one_result_builder.py::test_one_delivery_facts_provider`: every `DeliveryFacts(` call and `DeliveryFacts.not_applicable(` call in `src/decoy/` is inside `_result.delivery_facts`; seeded self-test | build `DeliveryFacts(` in `_render.py` |
 | AT-D9 | C-DOC1 | `test_one_blocking_decision`: enforce with failed checks: exit 4, `result.status` `findings`, `LATEST` not moved; enforce off with the same checks: exit 0, `succeeded`, `LATEST` moved | keep the `commit_latest` copy of the enforce test and invert it there only |
-| AT-O1 | C-DOC2 | `tests/e2e/run_result/test_run_exit_paths.py::test_every_path_has_one_document` (X3 to X11): `result.exit_code` equals the process exit and the base integer; legacy key set equals the base set recorded before coding, plus `result` and `result_status` (X5, X8, X11 had no JSON on base: their pinned sets are new and the changelog says so); X5 keeps Click's message on stderr; X8 has no `reason` and `failure.category` `runtime` | emit the X3 envelope before `finish`; attach `unexpected_error` to the evidence failure |
-| AT-O2 | C-DOC2 | `tests/sentry/run/test_one_run_exit.py` (G-RUN-ONE-EXIT): under `src/decoy/cli/run/`, `emit_json(` and every exit raise appear only in `_result.py`. Covered shapes, listed in the docstring: `typer.Exit`, `click.exceptions.Exit`, `SystemExit`, `sys.exit(`, `typer.Abort`, and the same names bound through `from typer import Exit` or an `as` alias; `getattr` and `importlib` are a named limit; seeded self-test per shape | re-add `raise typer.Exit(code=EXIT_USAGE)` in `_notify.py`; `sys.exit(1)` in `_prepare.py` |
+| AT-O1 | C-DOC2 | `tests/e2e/run_result/test_run_exit_paths.py::test_every_path_has_one_document` (X3 to X11): `result.exit_code` equals the process exit and the base integer; X3 to X5 carry `timings.started_at <= finished_at` and the 3.3 defaults; legacy key set equals the base set recorded before coding, plus `result` and `result_status` (X5, X8, X11 had no JSON on base: their pinned sets are new and the changelog says so); X5 keeps Click's message on stderr; X8 has no `reason` and `failure.category` `runtime` | emit the X3 envelope before `finish`; attach `unexpected_error` to the evidence failure |
+| AT-O2 | C-DOC2 | `tests/sentry/run/test_one_run_exit.py` (G-RUN-ONE-EXIT): under `src/decoy/cli/run/`, `emit_json(` and every exit raise appear only in `_result.py`. Covered shapes, listed in the docstring: `typer.Exit`, `click.exceptions.Exit`, `SystemExit`, `sys.exit(`, `typer.Abort`, and the same names bound through `from typer import Exit`, an `as` alias, or a module alias (`import sys as s; s.exit(1)`, `import typer as t; raise t.Exit()`); `getattr` and `importlib` are a named limit; seeded self-test per shape | re-add `raise typer.Exit(code=EXIT_USAGE)` in `_notify.py`; `sys.exit(1)` in `_prepare.py`; `import sys as s` then `s.exit(1)` in `_flow.py` |
 | AT-O3 | C-DOC2 | `test_ctrl_c`: `KeyboardInterrupt` from a patched `run_pipeline`: `status` `cancelled`, `failure.reason.code` `run_cancelled`, exit and stderr line equal to the STEP ZERO measurement | catch only `Exception` in the wrapper |
 | AT-O4 | C-DOC2 | `test_one_json_object`: stdout parses as exactly one JSON object on every AT-O1 path | emit twice on the build fallback |
 | AT-O5 | C-DOC2 | `test_post_try_crash_is_a_named_limit` (X14): `build_manifest` patched to raise `OSError("zz_marker_exc")` with `--evidence-out --json`: exit 1, `internal error (OSError)` on stderr, no partial JSON on stdout, marker absent from both | emit a half-built envelope before the root guard |
+| AT-O7 | C-DOC2 | `test_no_document_limits[X1,X2,X13]`: a Click parse error (exit 2), a `setup_output` conflict (exit 1) and the managed-runtime refusal (exit 3) with `--json`: exits as today and no JSON object on stdout; X12 (SIGTERM, SIGKILL, kernel OOM) is an untested process-termination limit | emit a `result` envelope from the `setup_output` refusal |
 | AT-O6 | C-DOC2 | `test_typed_refusals_carry_no_context[...]`: for every typed refusal C-DOC2 adds (cases derived from `_usage_types()` and `_cli_refusal_types()` members defined in `cli/run/`), the refusal caught at `finish` has `__context__ is None` and `__cause__ is None` | move one typed refusal's raise inside its `except` block |
-| AT-F1 | C-DOC3 | `tests/e2e/run_result/test_result_file.py::test_file_equals_member`: `--json --result out.json`: the file equals the envelope `result`; `result_status.file` `written`; human mode prints `Result: out.json` | write `json.dumps(model_dump(), default=str)` |
+| AT-F1 | C-DOC3 | `tests/e2e/run_result/test_result_file.py::test_file_equals_member`: `--json --result out.json`: the file equals the envelope `result`; `result_status.file` `written`; human mode prints `Result: out.json` | write the whole envelope to the file instead of its `result` member |
 | AT-F2 | C-DOC3 | `test_write_failure_keeps_exit`: a missing directory on success and on a runtime failure: exits 0 and 3, one stderr line with `run_result_write_failed` and no path, `result_status.file` `failed` | raise `EXIT_RUNTIME` on the write failure |
 | AT-F3 | C-DOC3 | existing `tests/sentry/test_atomic_writer.py` green with the new call | `Path.write_text` in `_result.py` |
+| AT-F4 | C-DOC3 | `test_result_path_collides[target,quarantine,evidence,vault,symlink,hardlink]`: `--result` equal to a table target, an enabled quarantine file, `--evidence-out`, `--vault`, a symlink to a target and a hard link to an existing target: the existing `output_path_collision` refusal with its exit, flag and config-location labels only, no source row read, no file written or replaced | drop the `--result` entry from `_placement`'s `typed` |
 | AT-C1 | C-CAP | `tests/e2e/test_run_capacity_widening.py::test_each_capacity_code_exits_5`: each exception-family member of `CAPACITY_REASON_CODES` raised as its engine class with its code (and `MemoryError()`) from a patched `run_pipeline`: exit 5, `error_kind` `capacity`; `isolated_worker_out_of_memory` (no exception class in `decoy run`) covered by a unit call of the category rule. `failure.category` is not asserted here: C-CAP may land before C-DOC1, and AT-D2 covers the capacity category | the CLI keeps a local three-code set |
 | AT-C2 | C-CAP | `test_excluded_codes_keep_their_exit`: one code per exclusion family (`storage_capacity_exhausted`, `out_of_core_budget_invalid`, `subset_budget_exceeded`, `dp_budget_exceeded`, `pool_capacity_pre_flight_unique`, `fk_full_frame_oom_risk_rejected`) keeps today's exit | widen by substring `budget` in the CLI |
 | AT-C3 | C-CAP | `tests/e2e/test_run_preflight_capacity_parity.py` gains `test_widened_codes_agree`: each member of `CAPACITY_REASON_CODES` raised from a patched `estimate_job_capacity` gives the same capacity verdict and exit in `decoy validate` and in the `decoy run` gate | keep the fan-in literal at `cli/preflight.py:446` |
@@ -411,7 +438,7 @@ at `c38f17cd` and 685 at `ad63ba1b`, ceiling 689 (net 0 in E3b), `errors.py` 548
 - Reason registry: one identity `since=UNRELEASED` (E-OOM, after #506); consumer contract
   regenerated.
 - Engine public API: `project_tables`, `ProjectedTables`, `CollectedFacts`, `DeliveryFacts`,
-  `build_run_result`, `FailureInput`, `RunResultCollector` in `decoy_engine.run_result.__all__`,
+  `TableDelivery`, `build_run_result`, `FailureInput`, `RunResultCollector` in `decoy_engine.run_result.__all__`,
   pinned by `tests/unit/run_result/test_exports.py` (AT-P6); `CAPACITY_EXCLUSIONS` in
   `decoy_engine.errors`, pinned by AT-CAP2. The top-level `decoy_engine.__all__` and
   `tests/unit/test_public_api.py` are unchanged.
@@ -421,9 +448,10 @@ at `c38f17cd` and 685 at `ad63ba1b`, ceiling 689 (net 0 in E3b), `errors.py` 548
 
 One fixed writer order per shared `cli/run/` module. Every lane is a strict sequence: a writer
 starts on the merged head of the one before it, never in parallel and never out of order. The
-DELIV plan's own order (deliv.md section 10) has no RESULT slice in the `_execute.py` lane and
-names "F29 C1" as the RESULT writer of `_render.py`; the orchestrator posts this table on the
-DELIV plan so both plans read the same order (pre-mortem).
+DELIV plan's own order (deliv.md section 10) has no RESULT slice in the `_execute.py` lane,
+names "F29 C1" as the RESULT writer of `_render.py`, gives DELIV C3 the exit-map work and has no
+`_result.py` slot; the orchestrator amends the DELIV plan with this table, the `_result.py`
+slot and the OQ-3 correction before C-DOC1 or DELIV C2a starts (pre-mortem, stop line).
 
 | Module | Writers, in order (merged ones struck from the head of the lane as they land) |
 |---|---|
@@ -432,7 +460,8 @@ DELIV plan so both plans read the same order (pre-mortem).
 | `run/_errors.py` | C-EXIT, C-REASON, C-DOC1, C-DOC2 (no DELIV writer) |
 | `run/_render.py` | C-EXIT, C-DOC1, C-DOC2, DELIV C2a, DELIV C5 (extends `_blocking_failed`) |
 | `run/_context.py` | L5a (#216), C-DOC1, C-DOC3, DELIV C2a (`sink` field) |
-| `run/_prepare.py` | SUB-RUN C1, C-DOC2 |
+| `run/_prepare.py` | SUB-RUN C1, C-DOC2, C-DOC3 (the `--result` entry in `_placement`) |
+| `run/_result.py` | C-DOC1, C-DOC2, C-DOC3, DELIV C2a (the `delivery_facts` body) |
 | `run/_evidence.py` | C-DOC2 (the X8 typed refusal); DELIV C2a then calls it from the sink unchanged |
 | `run/_notify.py` | C-DOC2 |
 | `run/__init__.py` | C-DOC3 |
@@ -452,11 +481,11 @@ So DELIV C2a starts after C-DOC2 and C-DOC3 have merged; C-DOC3 waits on nothing
 | E-OOM | engine | `reasons/decoy/_core.py`, `reason_adapter.py`, `errors.py`, registry snapshot and consumer contract, `docs/reasons.md`, `CHANGELOG.md`, test | ~30 / ~80 | R1 | engine #506 merged; E-CAP | no: #506 |
 | REL | engine, CLI | engine release with E2a, E2b, E3a, E-CAP (and E3b, E-OOM when merged); CLI repin per the repin checklist | small | R1 | the slices it carries | no |
 | C-CAP | CLI | `cli/exit_codes.py` (docstring), `cli/explain.py`, `cli/preflight.py` (the `:446` literal), `tests/sentry/test_engine_reason_code_copies.py` (allowlist entry `:73` removed), `README.md`, `CHANGELOG.md` (breaking line), `tests/e2e/test_run_capacity_widening.py`, `tests/e2e/test_run_preflight_capacity_parity.py` | ~40 / ~140 | R2 | the repin carrying E-CAP; lands with that repin or the same day | no: release |
-| C-DOC1 | CLI | `run/_result.py`, `run/_errors.py`, `run/_render.py`, `run/_flow.py` (one line), `run/_execute.py` (two lines), `run/_context.py`, `tests/sentry/layout/test_run_package_shape.py` (`ORDER`), `tests/sentry/run/test_one_result_builder.py`, `SENTRIES` row, `CODEMAP.md`, `CHANGELOG.md`, AT-D1 to AT-D9 tests | ~250 / ~300 | R2 | REL with E2a, E2b, E3a; C-REASON; L5a (#216) and SUB-RUN C1 merged (the `_execute.py` lane) | no: release and #216 |
-| C-DOC2 | CLI | `run/_result.py`, `run/_flow.py`, `run/_notify.py`, `run/_prepare.py`, `run/_evidence.py`, `run/_errors.py`, `run/_render.py`, `tests/sentry/run/test_one_run_exit.py`, `SENTRIES` row, `CHANGELOG.md`, AT-O1 to AT-O6 tests, AT-R7 pin update | ~200 / ~280 | R2 | C-DOC1; SUB-RUN C1 merged (`_prepare.py`) | no: C-DOC1 |
-| C-DOC3 | CLI | `run/__init__.py` (one option hunk), `run/_context.py`, `run/_result.py`, `docs/cli-reference.md` (generated), `CHANGELOG.md`, AT-F1 to AT-F3 tests | ~80 / ~120 | R2 (new public option and a frozen artifact written at a user path) | C-DOC2 | no: C-DOC2 |
+| C-DOC1 | CLI | `run/_result.py`, `run/_errors.py`, `run/_render.py`, `run/_flow.py` (one line), `run/_execute.py` (two lines), `run/_context.py`, `tests/sentry/layout/test_run_package_shape.py` (`ORDER`), `tests/sentry/run/test_one_result_builder.py`, `SENTRIES` row, `CODEMAP.md`, `CHANGELOG.md`, AT-D1 to AT-D10 tests | ~260 / ~320 | R2 | REL with E2a, E2b, E3a; C-REASON; L5a (#216) and SUB-RUN C1 merged (the `_execute.py` lane) | no: release and #216 |
+| C-DOC2 | CLI | `run/_result.py`, `run/_flow.py`, `run/_notify.py`, `run/_prepare.py`, `run/_evidence.py`, `run/_errors.py`, `run/_render.py`, `tests/sentry/run/test_one_run_exit.py`, `SENTRIES` row, `CHANGELOG.md`, AT-O1 to AT-O7 tests, AT-R7 pin update | ~210 / ~310 | R2 | C-DOC1; SUB-RUN C1 merged (`_prepare.py`) | no: C-DOC1 |
+| C-DOC3 | CLI | `run/__init__.py` (one option hunk), `run/_context.py`, `run/_result.py`, `run/_prepare.py` (the `typed` entry), `cli/io/_placement.py` (docstring), `docs/cli-reference.md` (generated), `CHANGELOG.md`, AT-F1 to AT-F4 tests | ~90 / ~170 | R2 (new public option and a frozen artifact written at a user path) | C-DOC2 | no: C-DOC2 |
 
-C-DOC2 is the largest (about 480 lines with tests) and stays one slice: its exit paths share one
+C-DOC2 is the largest (about 520 lines with tests) and stays one slice: its exit paths share one
 `finish` and one sentry, and splitting them would leave the sentry red between the halves.
 
 Can start today without waiting on DELIV, engine #506 or the `_execute.py` order: **C-EXIT**
@@ -512,7 +541,7 @@ and released. Exit 6 is reachable after DELIV C3; that is row 61's acceptance, n
    `except`).
 4. Versioned read models: AT-D1 reads `result` with `RunResultRead`; no new format.
 5. Normalized guard scanners: AT-R9, AT-D5 and AT-O2 match calls through `ast` (attribute and
-   name forms, `from x import y as z` aliases); covered shapes are listed in each sentry's
+   name forms, `from x import y as z` aliases, module aliases such as `import sys as s`); covered shapes are listed in each sentry's
    docstring, and AT-O2 names every exit form (`typer.Exit`, `click.exceptions.Exit`,
    `SystemExit`, `sys.exit(`, `typer.Abort`) with a seeded case per shape; `getattr` and
    `importlib` are a named limit.
@@ -558,8 +587,11 @@ and released. Exit 6 is reachable after DELIV C3; that is row 61's acceptance, n
   correction on the DELIV plan before C3 starts.
 - The two plans keep different writer orders and a builder takes the wrong slot. The
   orchestrator posts the section 10 lane table on the DELIV plan (C-DOC1 in the `_execute.py`
-  lane before C2a; C-DOC1 and C-DOC2 as the RESULT `_render.py` writers; C2a after C-DOC2), and
-  the DELIV receipt-to-`DeliveryFacts` rule (3.2), before C2a starts.
+  lane before C2a; C-DOC1 and C-DOC2 as the RESULT `_render.py` writers; C2a after C-DOC2; the
+  `_result.py` lane with C2a's `delivery_facts` slot), and the DELIV receipt-to-`DeliveryFacts`
+  rule (3.2), before C-DOC1 or C2a starts. DELIV C2a's own tests then cover `nothing`,
+  `uncertain`, `failed`, `withheld` and `dropped` receipts end to end (reason,
+  `dropped_because`, `delivery.outcome`, exit 6).
 - The widened set changes a platform consumer. The platform is parked; C-CAP's builder greps the
   platform checkout for `CAPACITY_REASON_CODES` and reports any hit.
 
@@ -575,6 +607,8 @@ and released. Exit 6 is reachable after DELIV C3; that is row 61's acceptance, n
   would grow.
 - Stop if a slice needs a DELIV-owned file (`io/_targets.py`, `io/_delivery.py`, `io/_layout.py`,
   `run/_vault.py`) or a writer slot that section 10 does not give it.
+- Stop before C-DOC1 or DELIV C2a starts if the DELIV plan does not yet carry the section 10
+  lane table and the `_result.py` slot.
 - Stop if a legacy `--json` key would be added, removed or change value; only `result`,
   `result_status` and `reason` are new.
 - Stop if `run/_result.py` would pass 300 lines, or a second CLI-owned refusal list appears
@@ -598,6 +632,8 @@ and released. Exit 6 is reachable after DELIV C3; that is row 61's acceptance, n
 - CLI PR #216 as it will merge (read from its open diff: it adds `ctx.progress` and
   `run/_progress.py`).
 - Whether the DELIV plan's second review already changed its exit map text.
+- Whether `write_local_target` `REPLACE` replaces a final link, which sets the `--result` entry's
+  `replaces_final` value (C-DOC3 STEP ZERO), and how the collision key treats a hard link.
 - Whether `estimate_job_capacity` can raise any of the four widened codes (C-CAP's AT-C3 patches
   the raise, so it holds either way).
 - Platform consumers of `CAPACITY_REASON_CODES` (the platform is parked; C-CAP greps for them).
