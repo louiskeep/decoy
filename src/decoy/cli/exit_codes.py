@@ -97,11 +97,16 @@ FKs into one table at a small budget), not the everyday "job too big for the
 host" the build-floor estimate used to raise -- that estimate is now advisory.
 v1 checks the out-of-core-FK route only; see `decoy explain exit-codes`."""
 
+EXIT_PARTIAL: int = 6
+RUN_EXIT_MAP: dict[tuple[str, str | None], int] = {}
+
 __all__ = [
     "EXIT_CAPACITY",
     "EXIT_FINDINGS",
     "EXIT_OK",
+    "EXIT_PARTIAL",
     "EXIT_RUNTIME",
     "EXIT_USAGE",
     "EXIT_WARNINGS",
+    "RUN_EXIT_MAP",
 ]
