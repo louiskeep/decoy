@@ -51,6 +51,18 @@ class OutDirUsageError(LayoutError):
         super().__init__(OUTPUT_DIR_UNUSABLE.code, OUTPUT_DIR_UNUSABLE.message())
 
 
+def _usage_types() -> tuple[type, ...]:
+    return ()
+
+
+def _cli_refusal_types() -> tuple[type, ...]:
+    return ()
+
+
+def _failure_reason(exc: Exception, engine_exc: Exception) -> dict | None:
+    return None
+
+
 def fail(ctx: RunContext, exc: Exception) -> NoReturn:
     """Map `exc` to an exit code, notify, print the error and exit. Called inside the
     `except` block so the exit keeps the exception as its context."""
