@@ -121,10 +121,12 @@ def resolved_output_collisions(
     destinations: list[tuple[str, Path]] = []
     for location, raw in relative_outputs(config_dict):
         if Path(raw).is_absolute():
-            destinations.append((location, Path(os.path.abspath(raw))))
+            # As written, like the writer opens it: collapsing ".." as text first would name
+            # the wrong folder when the part before it is a symlink.
+            destinations.append((location, Path(raw)))
         elif is_placed_relative(raw) and base is not None and names_a_file_inside(raw):
             destinations.append((location, Path(os.path.normpath(base / raw))))
-    destinations.extend((flag, Path(os.path.abspath(path))) for flag, path in typed)
+    destinations.extend((flag, Path(path).absolute()) for flag, path in typed)
     for label, path in destinations:
         key = _destination_key(path)
         if key in seen:

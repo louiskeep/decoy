@@ -564,14 +564,19 @@ def test_resolved_output_collisions_equal_absolute_targets(
 
 
 @posix_only
+@pytest.mark.parametrize(
+    ("direct", "through_link"),
+    # The second pair climbs out of the linked folder: the file lands in `real`, not in the
+    # folder that holds the link.
+    [("real/sub/o.csv", "alias/o.csv"), ("real/o.csv", "alias/../o.csv")],
+)
 def test_resolved_output_collisions_two_spellings_through_a_symlink(
-    tmp_path: Path, read_spy: list[str]
+    tmp_path: Path, read_spy: list[str], direct: str, through_link: str
 ) -> None:
     root = _project(tmp_path)
-    real = tmp_path / "real"
-    real.mkdir()
-    (tmp_path / "alias").symlink_to(real, target_is_directory=True)
-    cfg_dict = _two_tables(root, str(real / "o.csv"), str(tmp_path / "alias" / "o.csv"))
+    (tmp_path / "real" / "sub").mkdir(parents=True)
+    (tmp_path / "alias").symlink_to(tmp_path / "real" / "sub", target_is_directory=True)
+    cfg_dict = _two_tables(root, f"{tmp_path}/{direct}", f"{tmp_path}/{through_link}")
     cfg = _write(root, "pipelines/orders/pipeline.yaml", cfg_dict)
     result = runner.invoke(app, ["validate", "preflight", str(cfg), "--json"])
     _assert_collision(result, "targets.a.path", "targets.b.path", read_spy)
