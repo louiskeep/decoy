@@ -468,9 +468,9 @@ def write_targets(
 
     Callers run `check_target_formats` first so a contradiction is refused before the
     first table is written; `layout` places each entry as it iterates. Returns table name to
-    path for the files actually published: a path is added only after its write returns.
-    `published` is the caller's publication ledger; it is filled as each write returns, so a
-    later failure keeps the earlier entries, and it is the mapping that comes back.
+    path for the files actually published: `_publication` adds a path once its file is in place.
+    `published` is the caller's publication ledger; it is filled as each file is published, so
+    a later failure keeps the earlier entries, and it is the mapping that comes back.
     """
     published = {} if published is None else published
     targets = config_dict.get("targets") or {}
