@@ -8,7 +8,7 @@ import typer
 from decoy import _mask_secret_guidance, _native_gate, _resources
 from decoy._atomic import AtomicWriteError, describe
 from decoy.cli import gen
-from decoy.cli.exit_codes import EXIT_CAPACITY, run_exit_code
+from decoy.cli.exit_codes import EXIT_CAPACITY, EXIT_USAGE, run_exit_code
 from decoy.cli.extras import (
     MissingExtraError,
     UnsupportedCloudEndpointError,
@@ -141,7 +141,12 @@ def fail(ctx: RunContext, exc: Exception) -> NoReturn:
 
     # The category names the failure; the exit integer comes from `RUN_EXIT_MAP`.
     if isinstance(exc, PreRunCheckError):
-        _category = "capacity" if exc.exit_code == EXIT_CAPACITY else "usage"
+        if exc.exit_code == EXIT_CAPACITY:
+            _category = "capacity"
+        elif exc.exit_code == EXIT_USAGE:
+            _category = "usage"
+        else:
+            raise RuntimeError("pre-run check carried an exit code with no category")
     elif capacity_code is not None or out_of_memory:
         _category = "capacity"
     elif isinstance(exc, GenerationError) and exc.code == UNIQUENESS_IMPOSSIBLE_CODE:

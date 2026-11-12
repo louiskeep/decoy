@@ -14,8 +14,9 @@ EXIT_WARNINGS: a command ran clean except for advisory warnings and
 `--fail-on-warning` was set (the warning-blocking CI gate). Previously the
 integer belonged to the `forge` deprecation shim (removed pre-GA) and S1 docs
 mislabeled it "reserved/unused"; in fact `validate`/`preflight` already
-returned 2 under `--fail-on-warning`, so S2 promotes it to this public name
-with one meaning across every path.
+returned 2 under `--fail-on-warning`, so S2 promotes it to this public name.
+The integer 2 is also what Click exits on a usage error; `decoy run` maps its parameter
+failures to that same integer, not the same meaning (see the `RUN_EXIT_MAP` comment).
 
 OSS.4b (2026-06-02) added EXIT_FINDINGS=4 to support `decoy report integrity`
 (which began under the now-retired `storm` group, relocated in S4b), which has
@@ -37,6 +38,8 @@ Reference: README "Exit codes" section + `decoy explain exit-codes`.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
+from types import MappingProxyType
 from typing import Any, cast
 
 EXIT_OK: int = 0
@@ -105,21 +108,27 @@ Reserved: no path reaches it until best-effort delivery ships. Distinct from EXI
 script can tell a partial delivery from a crash. Ranks between EXIT_USAGE and EXIT_FINDINGS in
 `decoy ci` precedence."""
 
-# The one place `decoy run` turns an outcome into an exit integer. The key is the engine's
-# `(status, failure category)`. A dict, not a frozen mapping, so a test can patch one cell.
+# Status Typer returns for Ctrl-C (128 plus SIGINT). Private: a public `EXIT_` name in `__all__`
+# would join the `decoy ci` taxonomy, and 130 must not.
+_EXIT_INTERRUPTED = 130
+
+# Where `decoy run` turns an outcome into an exit integer. The error handler and the
+# `--post-validate-enforce` exits read it now; the remaining early refusals move to it later. The
+# key is the engine's `(status, failure category)`. Read-only; a test patches the module name.
 # `(failed, parameter)` is 2 because Click exits 2 on a usage error; the value is the same
-# integer as EXIT_WARNINGS, not the same meaning. A Ctrl-C keeps the status Click's `Abort`
-# gives today.
-RUN_EXIT_MAP: dict[tuple[str, str | None], int] = {
-    ("succeeded", None): EXIT_OK,
-    ("findings", None): EXIT_FINDINGS,
-    ("partially_delivered", None): EXIT_PARTIAL,
-    ("failed", "usage"): EXIT_USAGE,
-    ("failed", "parameter"): EXIT_WARNINGS,
-    ("failed", "runtime"): EXIT_RUNTIME,
-    ("failed", "capacity"): EXIT_CAPACITY,
-    ("cancelled", "cancelled"): EXIT_USAGE,
-}
+# integer as EXIT_WARNINGS, not the same meaning. Ctrl-C is 130, the status Typer returns today.
+RUN_EXIT_MAP: Mapping[tuple[str, str | None], int] = MappingProxyType(
+    {
+        ("succeeded", None): EXIT_OK,
+        ("findings", None): EXIT_FINDINGS,
+        ("partially_delivered", None): EXIT_PARTIAL,
+        ("failed", "usage"): EXIT_USAGE,
+        ("failed", "parameter"): EXIT_WARNINGS,
+        ("failed", "runtime"): EXIT_RUNTIME,
+        ("failed", "capacity"): EXIT_CAPACITY,
+        ("cancelled", "cancelled"): _EXIT_INTERRUPTED,
+    }
+)
 
 
 def run_exit_code(category: str | None = None, *, blocking_failed: bool = False) -> int:

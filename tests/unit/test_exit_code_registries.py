@@ -44,3 +44,18 @@ def test_run_exit_map_total() -> None:
     }
     # 130 is a run-only status; it must not join the `decoy ci` taxonomy.
     assert 130 not in contracts.EXIT_CODES
+
+
+def test_unknown_gate_exit_is_refused() -> None:
+    import pytest
+
+    from decoy.cli.gate import PreRunCheckError
+    from decoy.cli.run._context import RunContext
+    from decoy.cli.run._errors import fail
+
+    exc = PreRunCheckError(
+        "refused", exit_code=2, error_kind="validation", code=None, extra=None, messages=[]
+    )
+    # A gate exit with no category must stop the run, not fold into exit 1.
+    with pytest.raises(RuntimeError, match="no category"):
+        fail(object.__new__(RunContext), exc)

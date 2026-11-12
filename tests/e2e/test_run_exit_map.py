@@ -43,11 +43,6 @@ def _config(tmp_path: Path, *, leaky: bool = False) -> Path:
     return p
 
 
-def _sub(root: Path, name: str) -> Path:
-    (root / name).mkdir()
-    return root / name
-
-
 def _engine_raises(exc: BaseException):
     return mock.patch("decoy_engine.run_pipeline", side_effect=exc)
 
@@ -60,7 +55,12 @@ def _gate_refusal(exit_code: int, kind: str):
     )
 
 
-def _cases(tmp_path: Path):
+def _patched_cell(key, code: int):
+    table = {**exit_codes.RUN_EXIT_MAP, key: code}
+    return mock.patch.object(exit_codes, "RUN_EXIT_MAP", table)
+
+
+def _cases():
     from decoy_engine import ConfigError
     from decoy_engine.execution import ExecutionError
 
@@ -78,24 +78,30 @@ def _cases(tmp_path: Path):
     ]
 
 
-@pytest.mark.parametrize("index", range(5))
-def test_exits_read_the_map(tmp_path: Path, index: int) -> None:
-    _, exc, expected, key = _cases(tmp_path)[index]
+@pytest.mark.parametrize(
+    ("exc", "expected", "key"),
+    [pytest.param(*case[1:], id=case[0]) for case in _cases()],
+)
+def test_exits_read_the_map(tmp_path: Path, exc: BaseException, expected: int, key) -> None:
     cfg = _config(tmp_path)
     with _engine_raises(exc):
         assert runner.invoke(app, ["run", str(cfg)]).exit_code == expected
     # The same case follows the map, so no second table can hold the integer.
-    with mock.patch.dict(exit_codes.RUN_EXIT_MAP, {key: 9}), _engine_raises(exc):
+    with _patched_cell(key, 9), _engine_raises(exc):
         assert runner.invoke(app, ["run", str(cfg)]).exit_code == 9
 
 
-def test_findings_and_success_read_the_map(tmp_path: Path) -> None:
-    leaky = _config(_sub(tmp_path, "a"), leaky=True)
-    assert runner.invoke(app, ["run", str(leaky), "--post-validate-enforce"]).exit_code == 4
-    with mock.patch.dict(exit_codes.RUN_EXIT_MAP, {("findings", None): 9}):
-        assert runner.invoke(app, ["run", str(leaky), "--post-validate-enforce"]).exit_code == 9
-    clean = _config(_sub(tmp_path, "b"))
-    assert runner.invoke(app, ["run", str(clean)]).exit_code == 0
+@pytest.mark.parametrize("flags", [[], ["--json"], ["--quiet"]], ids=["human", "json", "quiet"])
+def test_findings_read_the_map(tmp_path: Path, flags: list[str]) -> None:
+    leaky = _config(tmp_path, leaky=True)
+    args = ["run", str(leaky), "--post-validate-enforce", *flags]
+    assert runner.invoke(app, args).exit_code == 4
+    with _patched_cell(("findings", None), 9):
+        assert runner.invoke(app, args).exit_code == 9
+
+
+def test_success_exits_zero(tmp_path: Path) -> None:
+    assert runner.invoke(app, ["run", str(_config(tmp_path))]).exit_code == 0
 
 
 def test_explain_lists_exit_6() -> None:
