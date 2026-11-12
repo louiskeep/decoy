@@ -6,8 +6,9 @@ counted, never retried, and never stops the others), on real engine event object
 
 from __future__ import annotations
 
-from decoy.cli.run._progress import ProgressFanout, build
 from decoy_engine import PhaseEvent, ProgressSink, TerminalEvent
+
+from decoy.cli.run._progress import ProgressFanout, build
 
 
 def _events(n: int) -> list[object]:
