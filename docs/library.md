@@ -140,6 +140,29 @@ Wherever a record is named you can give:
 - `KIND/latest`, the newest record of that kind, or `KIND/latest~N`, the N-th before it. `latest`
   is computed, so it cannot be the name of a stored ref.
 
+## Pruning records and cleaning scratch
+
+Both commands show exactly what they would delete and delete nothing until you add `--yes`. All
+take `--library DIR`.
+
+- `decoy library prune [--kind K] [--keep-last N] [--older-than D] [--yes]` deletes records you
+  no longer keep: beyond the newest `N` of each kind, and/or older than `D` (`90d`, `12h`, `30m`).
+  With no options it applies the `keep_last` rules in `.decoy/library.yaml`; the default policy
+  keeps every record. It never deletes:
+  - a record a ref points at, or any record a kept record links to (directly or through others);
+  - a record younger than one hour (one a running command may still be linking to);
+  - a record of a kind this Decoy does not know, or one written by a newer Decoy; their links
+    still protect what they point at.
+- `decoy library clean [--yes]` deletes everything in `.decoy/scratch/` (sample output and
+  staging). It never touches records, logs, or anything outside the library: vault files, keys,
+  targets and `out/` run folders stay.
+
+Both work under the library lock and refuse in degraded mode (`library_lock_unavailable`, exit
+3). A file another program holds open (on Windows) is listed as left behind, the rest is
+deleted, and the command exits 4; run it again once the file is closed.
+
+`decoy library export` is not available yet.
+
 ## Retention policy
 
 `.decoy/library.yaml` is optional. Without it, these defaults apply:
@@ -155,7 +178,8 @@ retention:
 
 Keys you leave out keep their defaults. An unknown key, a kind Decoy does not know, a number
 written as text, or a count below 1 makes the file invalid (`library_policy_invalid`, naming the
-field, never its value). Nothing applies the policy yet: prune and log rotation arrive later.
+field, never its value). `decoy library prune` with no options applies the record rules; log rotation and the scratch
+time limit arrive with job logs and `decoy run --sample`.
 
 ## Commands
 

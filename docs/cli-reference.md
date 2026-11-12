@@ -1847,6 +1847,8 @@ $ decoy library [OPTIONS] COMMAND [ARGS]...
 * `show`: Show one record: its envelope and, when...
 * `diff`: Compare two records of the same kind...
 * `ref`: Show a stored ref, or set it to a record...
+* `prune`: Delete records you no longer keep.
+* `clean`: Delete everything in `.decoy/scratch/`...
 
 ### `decoy library path`
 
@@ -1959,5 +1961,43 @@ $ decoy library ref [OPTIONS] NAME [ID]
 
 **Options**:
 
+* `--library DIR`: Use DIR as the library (else DECOY_LIBRARY, else the project&#x27;s .decoy/ folder).
+* `--help`: Show this message and exit.
+
+### `decoy library prune`
+
+Delete records you no longer keep. Never one a ref or a kept record links to, one younger
+than an hour, or one of a kind this Decoy does not know. With no options, applies the
+`keep_last` rules in `.decoy/library.yaml`.
+
+**Usage**:
+
+```console
+$ decoy library prune [OPTIONS]
+```
+
+**Options**:
+
+* `--kind K`: Only records of this kind.
+* `--keep-last N`: Keep the newest N records of each kind.
+* `--older-than D`: Only records older than D (90d, 12h, 30m).
+* `--yes`: Delete. Without it, prune only shows what it would delete.
+* `--library DIR`: Use DIR as the library (else DECOY_LIBRARY, else the project&#x27;s .decoy/ folder).
+* `--help`: Show this message and exit.
+
+### `decoy library clean`
+
+Delete everything in `.decoy/scratch/` (sample output and staging). Records, logs and
+anything outside the library are never touched.
+
+**Usage**:
+
+```console
+$ decoy library clean [OPTIONS]
+```
+
+**Options**:
+
+* `--yes`: Delete. Without it, clean only shows what it would delete.
 * `--library DIR`: Use DIR as the library (else DECOY_LIBRARY, else the project&#x27;s .decoy/ folder).
 * `--help`: Show this message and exit.

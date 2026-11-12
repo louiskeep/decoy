@@ -45,6 +45,7 @@ __all__ = [
     "SCHEMA_VERSION",
     "IndexRow",
     "all_rows",
+    "delete_row",
     "ensure_schema",
     "insert",
     "latest",
@@ -237,7 +238,8 @@ def insert(conn: sqlite3.Connection, row: IndexRow) -> None:
     conn.executemany("INSERT INTO tables VALUES (?, ?)", [(row.id, t) for t in row.tables])
 
 
-def _delete(conn: sqlite3.Connection, record_id: str) -> None:
+def delete_row(conn: sqlite3.Connection, record_id: str) -> None:
+    """Drop a record's rows (prune calls this only after its object file is gone)."""
     for table, column in (("records", "id"), ("links", "src"), ("tables", "id")):
         conn.execute(f"DELETE FROM {table} WHERE {column} = ?", (record_id,))
 
@@ -248,7 +250,7 @@ def sync(
     """Make the index match the object names: insert what is missing, drop what is gone."""
     indexed = {r[0] for r in conn.execute("SELECT id FROM records")}
     for gone in sorted(indexed - on_disk):
-        _delete(conn, gone)
+        delete_row(conn, gone)
     for new in sorted(on_disk - indexed):
         row = load(new)
         if row is not None:

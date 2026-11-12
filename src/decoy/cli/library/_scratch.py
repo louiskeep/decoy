@@ -39,7 +39,7 @@ from decoy.cli.library._paths import SCRATCH
 if TYPE_CHECKING:
     from decoy.cli.library._store import Library
 
-__all__ = ["DeleteReport", "ScratchAllocation", "allocate", "delete_tree"]
+__all__ = ["DeleteReport", "ScratchAllocation", "allocate", "clean_all", "delete_tree"]
 
 _OWNER = re.compile(r"[a-z0-9][a-z0-9-]{0,31}")
 _ENGINE_CODES = frozenset({runtime.SCRATCH_ACL_FAILED, runtime.SCRATCH_UNSAFE})
@@ -80,6 +80,14 @@ def delete_tree(folder: Path) -> DeleteReport:
     file that is held open."""
     removed = 0
     skipped: list[str] = []
+    if folder.is_symlink() or folder.is_file():
+        try:
+            os.unlink(folder)
+        except FileNotFoundError:
+            return DeleteReport(0, ())
+        except PermissionError:
+            return DeleteReport(0, (folder.name,))
+        return DeleteReport(1, ())
     if not folder.exists():
         return DeleteReport(0, ())
     for current, dirs, files in os.walk(folder, topdown=False):
@@ -152,3 +160,22 @@ def allocate(
     finally:
         alloc.report = delete_tree(path)  # reports what is held open, then the engine removes
         fresh.__exit__(None, None, None)
+
+
+def clean_all(library: Library) -> list[tuple[str, DeleteReport]]:
+    """Remove everything under `scratch/`, entry by entry, under the library lock
+    (`decoy library clean --yes`). Returns each entry's name and what was left behind. Raises
+    `LibraryError` (`library_lock_unavailable`, `library_busy`)."""
+    from decoy.cli.library import _index
+    from decoy.cli.library._errors import LIBRARY_LOCK_UNAVAILABLE
+
+    if library.degraded is not None:
+        raise LibraryError(LIBRARY_LOCK_UNAVAILABLE)
+    scratch = library.root / SCRATCH
+    if not scratch.is_dir():
+        return []
+    results: list[tuple[str, DeleteReport]] = []
+    with _index.locked(library.library_dir, tmp_dir=library.tmp_dir):
+        for entry in sorted(scratch.iterdir()):
+            results.append((entry.name, library.delete_scratch(entry)))
+    return results

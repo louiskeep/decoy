@@ -128,6 +128,15 @@ class Library:
         elif code is not None:
             self.stale = True
 
+    def object_path(self, record_id: str) -> Path | None:
+        """Where the object file for this full id lives (whether or not it exists)."""
+        digest = record_digest(record_id)
+        return None if digest is None else self._object(digest)
+
+    def index_row(self, record_id: str) -> IndexRow | None:
+        """The index row for a stored object, read from its file (see `_index_row`)."""
+        return self._index_row(record_id)
+
     def _index_row(self, record_id: str) -> IndexRow | None:
         """The row for a stored object, or None when it is corrupt or of an unreadable major
         (fsck reports those)."""
