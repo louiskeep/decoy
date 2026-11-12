@@ -38,7 +38,7 @@ from decoy_engine import records
 
 from decoy.cli.library import _index, _refs
 from decoy.cli.library._errors import RECORD_INVALID, LibraryError
-from decoy.cli.library._fs import ensure_private_dir, read_file, write_once
+from decoy.cli.library._fs import ensure_private_dir, read_capped, write_once
 from decoy.cli.library._paths import (
     INDEX_FILE,
     LAYOUT_FILE,
@@ -52,12 +52,19 @@ from decoy.cli.library._paths import (
     TMP,
     record_digest,
 )
-from decoy.cli.library._store import Library, open_library
+from decoy.cli.library._store import (
+    MAX_LAYOUT_BYTES,
+    MAX_RECORD_BYTES,
+    Library,
+    open_library,
+)
 
 __all__ = ["Action", "Finding", "FsckReport", "check", "repair"]
 
 Level = Literal["finding", "warning", "note"]
 STALE_TEMP_SECONDS = 3600  # the git `gc.pruneExpire` idea, scaled to a write's lifetime
+# Job logs are read through the one small-file reader too; a log is one run's value-free events.
+_MAX_LOG_BYTES = 64 * 1024 * 1024
 _SUFFIX = ".json"
 _POSIX = sys.platform != "win32"
 _CORRUPT_CODES = frozenset({"object_corrupt", "object_name_invalid"})
@@ -107,7 +114,7 @@ class _Walk:
         return path.relative_to(self.root).as_posix()
 
     def layout_newer(self) -> bool:
-        data = read_file(self.lib / LAYOUT_FILE)
+        data = read_capped(self.lib / LAYOUT_FILE, MAX_LAYOUT_BYTES)
         if data is None:
             return False
         found: object = None
@@ -187,7 +194,7 @@ class _Walk:
 
     def logs(self) -> None:
         for path in sorted((self.root / LOGS).glob("*.jsonl")):
-            data = read_file(path) or b""
+            data = read_capped(path, _MAX_LOG_BYTES) or b""
             log = None
             with contextlib.suppress(records.RecordError):
                 log = records.read_job_log(data)
@@ -279,7 +286,7 @@ def check(
 
 def _quarantine(lib: Path, source: Path) -> None:
     """Copy `source` into `quarantine/` (atomic, create-once), then remove it."""
-    data = read_file(source)
+    data = read_capped(source, MAX_RECORD_BYTES)
     if data is None:
         return
     folder = lib / QUARANTINE
@@ -289,7 +296,10 @@ def _quarantine(lib: Path, source: Path) -> None:
         base = "stray"
     for n in range(1000):
         name = base if n == 0 else f"{base}.{n}"
-        if write_once(folder, name, data, tmp_dir=lib / TMP) or read_file(folder / name) == data:
+        if (
+            write_once(folder, name, data, tmp_dir=lib / TMP)
+            or read_capped(folder / name, MAX_RECORD_BYTES) == data
+        ):
             source.unlink()
             return
 

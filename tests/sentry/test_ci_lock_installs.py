@@ -504,7 +504,7 @@ def test_vendor_ledger_matches_the_copies(tmp_path: Path) -> None:
         "tests/sentry/layout/_layout.py",
         "tests/sentry/layout/_ratchet_cases.py",
     }, "only setup-uv, the defect scanner and the layout helpers besides"
-    assert len(ledger["mirror"]) == 3
+    assert len(ledger["mirror"]) == 4
     assert _vendor_findings(ledger) == []
     wrong = copy.deepcopy(ledger)
     wrong["vendored"][0]["blob_sha256"] = "0" * 64

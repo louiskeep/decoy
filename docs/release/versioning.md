@@ -38,7 +38,7 @@ Pre-1.0 (currently `0.X.Y`) the surface is settling. We try to follow MAJOR-equi
 
 The first `1.0.0` release is gated on:
 
-- OSS.2 license flip to Apache-2.0.
+- The license confirmed by counsel (FSL-1.1-ALv2, release gate R1-c).
 - OSS.7 publish pipeline + first real-PyPI green push.
 - The release-smoke gate having at least one recorded green run (README §8 R2).
 - All Tier-A OSS sprints (OSS.3 through OSS.7) shipped.

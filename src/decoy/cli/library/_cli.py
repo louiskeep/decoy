@@ -42,10 +42,11 @@ def fail_library(state: OutputState, exc: Exception) -> NoReturn:
         LIBRARY_PATH_TOO_LONG,
         LIBRARY_POLICY_INVALID,
         REF_NAME_INVALID,
+        REF_NAME_RESERVED,
     )
 
     # Codes that describe what the user typed; anything else is the library's own state.
-    usage = {REF_NAME_INVALID, LIBRARY_PATH_TOO_LONG, LIBRARY_POLICY_INVALID}
+    usage = {REF_NAME_INVALID, REF_NAME_RESERVED, LIBRARY_PATH_TOO_LONG, LIBRARY_POLICY_INVALID}
     code = getattr(exc, "code", "")
     fail(state, str(exc), EXIT_USAGE if code in usage else EXIT_RUNTIME)
 

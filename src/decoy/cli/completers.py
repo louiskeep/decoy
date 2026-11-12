@@ -15,7 +15,10 @@ doesn't break the shell. Prefer narrow lists over deep introspection.
 
 from __future__ import annotations
 
+import os
 from functools import lru_cache
+
+import typer
 
 # Transform IDs are static -- one entry per mask strategy shipped by the engine.
 # Keep this list in sync with `decoy_engine.execution._strategies.SCALAR_HANDLERS`
@@ -111,3 +114,42 @@ def template_names() -> list[str]:
 def init_presets() -> list[str]:
     """Tab-complete `decoy init --preset` values. Mirrors templates."""
     return template_names()
+
+
+def _yaml_paths(incomplete: str) -> list[str]:
+    """Folders and YAML files at the typed location, so a path still completes."""
+    head, sep, stem = incomplete.rpartition("/")
+    try:
+        entries = sorted(os.scandir(head or ("/" if sep else ".")), key=lambda e: e.name)
+        found = []
+        for entry in entries:
+            if not entry.name.startswith(stem) or (entry.name[0] == "." and stem[:1] != "."):
+                continue
+            if entry.is_dir():
+                found.append(f"{head}{sep}{entry.name}/")
+            elif entry.name.lower().endswith((".yaml", ".yml")):
+                found.append(f"{head}{sep}{entry.name}")
+    except OSError:
+        return []
+    return found
+
+
+def pipeline_names(ctx: typer.Context, incomplete: str) -> list[str]:
+    """Tab-complete a pipeline parameter: project pipeline names, then folders and YAML files.
+
+    The project is `--project` already on the line, else `DECOY_PROJECT`, else the walk from the
+    current folder. Typer 0.26 turns every `autocompletion` entry into a plain item (its
+    `compat_autocompletion` rejects `CompletionItem`), so the shell's own file completion is not
+    available here and the path candidates come from `_yaml_paths`. A failed project lookup
+    leaves the paths alone: it never breaks Tab.
+    """
+    names: list[str] = []
+    try:
+        from decoy.cli.io import explicit_project, find_project, list_pipelines
+
+        project = find_project(None, explicit_project(ctx))
+        if not project.implicit:
+            names = [e.name for e in list_pipelines(project) if e.name.startswith(incomplete)]
+    except Exception:
+        names = []
+    return names + _yaml_paths(incomplete)

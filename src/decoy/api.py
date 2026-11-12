@@ -541,9 +541,6 @@ def mask(
             # None keeps run_pipeline's call shape for an unkeyed config.
             with _mask_secret.admitted_key_provider(config_dict) as key_provider:
                 key_kwargs = {} if key_provider is None else {"key_provider": key_provider}
-                # Sent only when set, so an engine without the keyword still runs a config without it.
-                quarantine_path = layout.place_quarantine(config_dict)
-                quarantine_kwargs = {"quarantine_path": quarantine_path} if quarantine_path else {}
                 result = run_pipeline(
                     resolved_source_config(config_dict, base_dir),
                     sources,
@@ -551,7 +548,7 @@ def mask(
                     derive_key=resolver,
                     instance_default_locale=instance_locale,
                     base_dir=base_dir,
-                    **quarantine_kwargs,
+                    quarantine_path=layout.place_quarantine(config_dict),
                     **key_kwargs,
                     **extra_run_pipeline_kwargs,
                 )
