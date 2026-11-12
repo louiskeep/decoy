@@ -90,8 +90,9 @@ def test_a_write_failure_names_the_code_and_class_not_the_path(tmp_path: Path) -
 
 
 def test_a_read_failure_whose_os_text_names_the_path_keeps_it_out(tmp_path: Path) -> None:
-    """The OS error here (`IsADirectoryError`) carries the path in its text; the library's does
-    not. MB1-exc turns this red."""
+    """A folder where the record file must be: the one reader refuses it (`UnsafeFileError`,
+    raised from an OS error whose text names the path); the library's error keeps neither the
+    path nor the chain."""
     root = tmp_path / "secret-folder-name" / DECOY_DIR
     root.parent.mkdir()
     env = envelope()
@@ -100,7 +101,24 @@ def test_a_read_failure_whose_os_text_names_the_path_keeps_it_out(tmp_path: Path
     with pytest.raises(LibraryError) as caught:
         open_library(root).put(env)
     err = caught.value
-    assert (err.code, err.error_class) == (LIBRARY_READ_FAILED, "IsADirectoryError")
+    assert (err.code, err.error_class) == (LIBRARY_READ_FAILED, "UnsafeFileError")
+    assert "secret-folder-name" not in str(err) and "secret-folder-name" not in repr(err)
+    assert err.__cause__ is None and err.__context__ is None
+
+
+def test_a_listing_failure_whose_os_text_names_the_path_keeps_it_out(tmp_path: Path) -> None:
+    """`resolve` lists a fan-out folder; a file in its place gives `NotADirectoryError`, whose
+    text names the path. MB1-exc (`library_error` adds `str(exc)`) turns this red."""
+    root = tmp_path / "secret-folder-name" / DECOY_DIR
+    root.parent.mkdir()
+    library = open_library(root)
+    library.put(envelope())
+    fan_out = root / "library" / "objects" / "ab"
+    fan_out.write_bytes(b"")  # a file where a fan-out folder would be
+    with pytest.raises(LibraryError) as caught:
+        library.resolve("sha256:ab" + "0" * 8)
+    err = caught.value
+    assert (err.code, err.error_class) == (LIBRARY_READ_FAILED, "NotADirectoryError")
     assert "secret-folder-name" not in str(err) and "secret-folder-name" not in repr(err)
     assert err.__cause__ is None and err.__context__ is None
 

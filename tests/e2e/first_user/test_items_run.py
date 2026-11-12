@@ -170,9 +170,9 @@ def test_a_target_with_no_output_table_is_not_reported(tmp_path: Path) -> None:
     assert not out.exists()
 
 
-def test_a_path_is_recorded_only_after_its_write_returns(tmp_path: Path) -> None:
-    # The second write fails. Only the first table may be recorded, and only because its write
-    # returned. A path recorded before its write, or from config alone, would show up here.
+def test_a_path_is_recorded_only_after_its_file_is_published(tmp_path: Path) -> None:
+    # The second write fails before publication, so only the first file is recorded; a path
+    # taken from config alone would show up here.
     import pyarrow as pa
 
     first, second = tmp_path / "a.csv", tmp_path / "b.csv"

@@ -15,7 +15,7 @@
 engine_path = ".github/actions/setup-uv/action.yml"
 local_path = ".github/actions/setup-uv/action.yml"
 blob_sha256 = "91b5aa05410a96702c57818a966cf29c45ef1c2b204d929ffc36694b84de86ec"
-commit = "d9e18fa60b09beda88c86673806ca28ac698f28a"
+commit = "426e6d057e6c087c902d814bd580a4976d789f77"
 
 # The shared sentry package tests/sentry/ci_scan: the shell-parsing core, the cross-repository
 # identity helper, and its tests. It originated here; the engine holds the same bytes at `commit`
@@ -24,25 +24,25 @@ commit = "d9e18fa60b09beda88c86673806ca28ac698f28a"
 engine_path = "tests/sentry/ci_scan/__init__.py"
 local_path = "tests/sentry/ci_scan/__init__.py"
 blob_sha256 = "957ed128539114a8d15c4e03ac77f486f9abee53294fb6b1aadbba536f76ca21"
-commit = "d9e18fa60b09beda88c86673806ca28ac698f28a"
+commit = "426e6d057e6c087c902d814bd580a4976d789f77"
 
 [[vendored]]
 engine_path = "tests/sentry/ci_scan/_shell_tokens.py"
 local_path = "tests/sentry/ci_scan/_shell_tokens.py"
 blob_sha256 = "38e9fddea1c22fdc56017b492193f38649fa448aa04461557645a5921e701b78"
-commit = "d9e18fa60b09beda88c86673806ca28ac698f28a"
+commit = "426e6d057e6c087c902d814bd580a4976d789f77"
 
 [[vendored]]
 engine_path = "tests/sentry/ci_scan/_identity.py"
 local_path = "tests/sentry/ci_scan/_identity.py"
 blob_sha256 = "82e09cfd65539afb6289750017a79dbcb5663116010309e821bc699e2f48b096"
-commit = "d9e18fa60b09beda88c86673806ca28ac698f28a"
+commit = "426e6d057e6c087c902d814bd580a4976d789f77"
 
 [[vendored]]
 engine_path = "tests/sentry/ci_scan/test_identity.py"
 local_path = "tests/sentry/ci_scan/test_identity.py"
 blob_sha256 = "ea864e19cd4ea0804f792520e23dec5fd181ebaae1bee8681e5cb80be97fea30"
-commit = "d9e18fa60b09beda88c86673806ca28ac698f28a"
+commit = "426e6d057e6c087c902d814bd580a4976d789f77"
 
 # The layout sentry helpers (LAYOUT E2). They originated in the engine; tests/sentry/layout/
 # test_vendored_files.py pins the same digests.
@@ -50,13 +50,13 @@ commit = "d9e18fa60b09beda88c86673806ca28ac698f28a"
 engine_path = "tests/sentry/layout/_layout.py"
 local_path = "tests/sentry/layout/_layout.py"
 blob_sha256 = "090676684a73bc90bb73240b1a3909434cd15ed8348c15bc365b7d764d94e96c"
-commit = "66d0f879174c6d3e54282645dc3bbc8da2f33b7f"
+commit = "426e6d057e6c087c902d814bd580a4976d789f77"
 
 [[vendored]]
 engine_path = "tests/sentry/layout/_ratchet_cases.py"
 local_path = "tests/sentry/layout/_ratchet_cases.py"
 blob_sha256 = "038d0dff5e370a8238712c365db283b9befefc40135956dc61f05930946bab00"
-commit = "66d0f879174c6d3e54282645dc3bbc8da2f33b7f"
+commit = "426e6d057e6c087c902d814bd580a4976d789f77"
 
 # The engine's recurring-defect AST index and class scanners (VALUE-FREE-ERRORS B1). The CLI's
 # class 1 and class 3 sentries in tests/sentry/defects/ run it over src/decoy.
@@ -64,22 +64,30 @@ commit = "66d0f879174c6d3e54282645dc3bbc8da2f33b7f"
 engine_path = "tests/sentry/defects/_defect_scan.py"
 local_path = "tests/sentry/defects/_defect_scan.py"
 blob_sha256 = "4175ae214380bc9e8907a0abb62a388d773c8a6d9b95d2ca082e9b3098e0d7e5"
-commit = "38517493ab399f6d7ea321d116599c3725f046e9"
+commit = "426e6d057e6c087c902d814bd580a4976d789f77"
 
 [[mirror]]
 engine_path = ".github/actions/lock-env/action.yml"
 local_path = ".github/actions/lock-env/action.yml"
 blob_sha256 = "af3006d2dc48407112037059d799d53266c1ef266c532a78087c5d4466980908"
-commit = "d9e18fa60b09beda88c86673806ca28ac698f28a"
+commit = "426e6d057e6c087c902d814bd580a4976d789f77"
 
 [[mirror]]
 engine_path = "scripts/dev/lock_version.sh"
 local_path = "scripts/dev/lock_version.sh"
 blob_sha256 = "8f0f32ec3efbfff7a499537ecdf2ed32ea472d9c8211bc13ac16b22529e5efd8"
-commit = "d9e18fa60b09beda88c86673806ca28ac698f28a"
+commit = "426e6d057e6c087c902d814bd580a4976d789f77"
 
 [[mirror]]
 engine_path = "tests/sentry/_ci_lock_scan.py"
 local_path = "tests/sentry/_ci_lock_scan.py"
 blob_sha256 = "64f99cea9120f7a4cdb01b12d93da664f3459a82f3ab77084db9683af358d65f"
-commit = "b4c6915d95ed26b536fec3957d584adebea19075"
+commit = "426e6d057e6c087c902d814bd580a4976d789f77"
+
+# The CI lane rules (CI-L1b), adapted from the engine's CI-E2a helper; its header lists the
+# differences.
+[[mirror]]
+engine_path = "tests/sentry/tooling/_ci_lanes.py"
+local_path = "tests/sentry/tooling/_ci_lanes.py"
+blob_sha256 = "595ee8301f9c831b1fd164cbbbe6fbeddfff612b4b392434c09b1956c68b0d93"
+commit = "426e6d057e6c087c902d814bd580a4976d789f77"

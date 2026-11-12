@@ -81,12 +81,14 @@ __all__ = [
     "ATOMIC_NOCLOBBER_UNSUPPORTED",
     "ATOMIC_ROLLBACK_INCOMPLETE",
     "ATOMIC_SYNC_FAILED",
+    "ATOMIC_TARGET_BUSY",
     "ATOMIC_TARGET_EXISTS",
     "ATOMIC_WRITE_FAILED",
     "AtomicWriteError",
     "LocalTarget",
     "WriteMode",
     "describe",
+    "destination_entry",
     "fsync_directory",
     "publish_local_targets",
     "replace_symlink",
@@ -100,6 +102,9 @@ ATOMIC_WRITE_FAILED = "atomic_write_failed"
 # The new bytes are in place but the directory entry may not be durable yet.
 ATOMIC_SYNC_FAILED = "atomic_sync_failed"
 ATOMIC_BAD_NAME = "atomic_name_invalid"
+# Windows only: the target was still held open by another program after the bounded retry.
+# The writer says so itself, so a caller never infers "busy" from errno and the platform.
+ATOMIC_TARGET_BUSY = "atomic_target_busy"
 # CREATE_ONCE on a mount with no atomic no-clobber move (no hard links).
 ATOMIC_NOCLOBBER_UNSUPPORTED = "atomic_noclobber_unsupported"
 # `publish_local_targets`: another publisher holds the folder; a create-only target exists;
@@ -220,6 +225,18 @@ _OWNER_RW = 0o600
 _FD_ALIAS = re.compile(r"/dev/(?:stdin|stdout|stderr|fd/[0-9]+)|/proc/self/fd/[0-9]+")
 
 
+def destination_entry(path: Path, *, follow_final: bool = False) -> Path:
+    """Return the strictly resolved parent and the entry an output writer uses."""
+    absolute = Path(path).absolute()
+    parent = Path(os.path.realpath(absolute.parent, strict=True))
+    entry = parent / absolute.name
+    if not follow_final:
+        return entry
+    followed = Path(os.path.realpath(entry))
+    followed_parent = Path(os.path.realpath(followed.parent, strict=True))
+    return followed_parent / followed.name
+
+
 def _final_bits(tmp: str, existing: os.stat_result | None, private: bool, created: int) -> int:
     """Mode for the published file: 0600 if private, else the old file's bits, else a new file's.
 
@@ -281,6 +298,7 @@ def _staged(
     created = 0
     failed = False
     failed_errno: int | None = None
+    failed_code = ATOMIC_WRITE_FAILED
     try:
         # Owner-only while written: create_exclusive narrows the temp before returning it.
         tmp, created = create_exclusive(tmp_dir or real.parent, real.name, private=private)
@@ -299,6 +317,8 @@ def _staged(
             made = _publish(tmp, real, _final_bits(tmp, existing, private, created), mode)
         except OSError as exc:
             failed, failed_errno = True, exc.errno
+            if isinstance(exc, _TargetHeld):
+                failed_code = ATOMIC_TARGET_BUSY
         else:
             alive = not made or (mode is WriteMode.CREATE_ONCE and not _private_file._WINDOWS)
             if made and alive:
@@ -319,7 +339,7 @@ def _staged(
     # Raised outside the except block so the OSError (its text names the path) is not kept as
     # `__context__`.
     if failed:
-        raise AtomicWriteError(ATOMIC_WRITE_FAILED, failed_errno)
+        raise AtomicWriteError(failed_code, failed_errno)
     if made:
         _sync_directories(real.parent, tmp_dir)
     if outcome is not None:
@@ -389,8 +409,18 @@ def _refuse_foreign_symlink(path: Path) -> None:
 @contextlib.contextmanager
 def _staged_target(path: Path, private: bool) -> Iterator[Path]:
     _require_component(path.name)
-    # POSIX keeps a leading "//" in abspath; collapse it so //dev/stdout is still an alias.
-    alias = re.sub(r"^/+", "/", os.path.abspath(path))
+    failed = False
+    failed_errno: int | None = None
+    try:
+        entry = destination_entry(path)
+    except OSError as exc:
+        failed, failed_errno = True, exc.errno
+    if failed:
+        raise AtomicWriteError(ATOMIC_WRITE_FAILED, failed_errno)
+    # Keep direct /proc/self and //dev aliases without text-collapsing a path that contains `..`.
+    written = re.sub(r"^/+", "/", os.fspath(path.absolute()))
+    resolved = re.sub(r"^/+", "/", os.fspath(entry))
+    alias = written if _FD_ALIAS.fullmatch(written) else resolved
     if not _private_file._WINDOWS and _FD_ALIAS.fullmatch(alias):
         if private:
             _restrict_fd_target(alias)
@@ -398,7 +428,6 @@ def _staged_target(path: Path, private: bool) -> Iterator[Path]:
         return
     _refuse_foreign_symlink(path)
     existing: os.stat_result | None = None
-    failed_errno: int | None = None
     failed = False
     try:
         existing = os.stat(path)
@@ -411,7 +440,13 @@ def _staged_target(path: Path, private: bool) -> Iterator[Path]:
     if existing is not None and any(kind(existing.st_mode) for kind in _SPECIAL_KINDS):
         yield path  # classified before realpath: /dev/stdout resolves to an unopenable name
         return
-    with _staged(Path(os.path.realpath(path)), private=private, existing=existing) as tmp:
+    try:
+        entry = destination_entry(path, follow_final=True)
+    except OSError as exc:
+        failed, failed_errno = True, exc.errno
+    if failed:
+        raise AtomicWriteError(ATOMIC_WRITE_FAILED, failed_errno)
+    with _staged(entry, private=private, existing=existing) as tmp:
         yield tmp
 
 
@@ -485,18 +520,32 @@ def _create_once(tmp: str, target: Path) -> bool:
     raise AtomicWriteError(ATOMIC_NOCLOBBER_UNSUPPORTED, no_hard_links)
 
 
+class _TargetHeld(PermissionError):
+    """The Windows retry ran out with the target still held open (`ATOMIC_TARGET_BUSY`)."""
+
+
 def _retry_on_windows(move: Callable[[], None]) -> None:
-    """Run `move`, retrying a PermissionError (target briefly held open) on Windows only."""
+    """Run `move`, retrying a PermissionError (target briefly held open) on Windows only.
+
+    Off Windows the error propagates at once. On Windows, still refused after the last try, it
+    becomes `_TargetHeld` so the writer can report `ATOMIC_TARGET_BUSY`.
+    """
     delay = _RETRY_FIRST_SECONDS
+    held_errno: int | None = None
     for attempt in range(_RETRY_ATTEMPTS):
         try:
             move()
             return
-        except PermissionError:
-            if not _private_file._WINDOWS or attempt == _RETRY_ATTEMPTS - 1:
+        except PermissionError as exc:
+            if not _private_file._WINDOWS:
                 raise
-            _sleep(delay)
-            delay = min(delay * 2, _RETRY_CAP_SECONDS)
+            held_errno = exc.errno
+            if attempt == _RETRY_ATTEMPTS - 1:
+                break
+        _sleep(delay)
+        delay = min(delay * 2, _RETRY_CAP_SECONDS)
+    # Raised after the loop so the OSError (its text names the path) is not chained.
+    raise _TargetHeld(held_errno, "target held open")
 
 
 def replace_symlink(link: Path, target: str) -> None:
@@ -662,7 +711,14 @@ def publish_local_targets(
         raise AtomicWriteError(ATOMIC_BATCH_INVALID)
     for target in targets:
         _require_component(target.path.name)
-    reals = [Path(os.path.realpath(t.path)) for t in targets]
+    resolve_failed = False
+    resolve_errno: int | None = None
+    try:
+        reals = [destination_entry(t.path, follow_final=True) for t in targets]
+    except OSError as exc:
+        resolve_failed, resolve_errno = True, exc.errno
+    if resolve_failed:
+        raise AtomicWriteError(ATOMIC_WRITE_FAILED, resolve_errno)
     directory = reals[0].parent
     if any(r.parent != directory for r in reals) or len({r.name for r in reals}) != len(reals):
         raise AtomicWriteError(ATOMIC_BATCH_INVALID)
