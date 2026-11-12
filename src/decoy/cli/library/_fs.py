@@ -3,23 +3,31 @@
 Folders come from `decoy._private_file.create_private_directory` (0700 at creation; an existing
 folder is never re-permissioned, the token-vault rule). Files come from `decoy._atomic`:
 `write_atomic(..., tmp_dir=library/tmp)` for records and `LAYOUT` (temp 0600 on the same volume,
-fsync, no-clobber link, directory fsync; plan 4.9), and `write_local_target` for the dot-named
-git file, whose leading `.` the record-name allowlist refuses. Nothing here calls `os.replace`,
-`mkstemp` or `chmod` itself (G-ONE-ATOMIC-WRITER, G-ONE-PRIVATE-FILE). Reads go through the CLI's
-one small-file reader, `decoy.cli.io.read_small_file`, with a cap per file kind.
+fsync, no-clobber link, directory fsync; plan 4.9) and for refs (`REPLACE`, with `_atomic`'s
+Windows retry), and `write_local_target` for the dot-named git file, whose leading `.` the
+record-name allowlist refuses. Nothing here calls `os.replace`, `mkstemp` or `chmod` itself
+(G-ONE-ATOMIC-WRITER, G-ONE-PRIVATE-FILE). Reads go through the CLI's one small-file reader,
+`decoy.cli.io.read_small_file`, with a cap per file kind.
 
-Every failure leaves as `LibraryError` with `library_write_failed` or `library_read_failed`
-and the error class, raised after the `except` block so no path text is chained.
+Every failure leaves as `LibraryError` with `library_write_failed`, `library_read_failed` or
+`library_busy` and the error class, raised after the `except` block so no path text is chained.
 """
 
 from __future__ import annotations
 
 from pathlib import Path
 
-from decoy._atomic import AtomicWriteError, WriteMode, write_atomic, write_local_target
+from decoy._atomic import (
+    ATOMIC_TARGET_BUSY,
+    AtomicWriteError,
+    WriteMode,
+    write_atomic,
+    write_local_target,
+)
 from decoy._private_file import PRIVATE_EXISTS, PrivateFileError, create_private_directory
 from decoy.cli.io import UnsafeFileError, read_small_file
 from decoy.cli.library._errors import (
+    LIBRARY_BUSY,
     LIBRARY_FILE_TOO_LARGE,
     LIBRARY_READ_FAILED,
     LIBRARY_WRITE_FAILED,
@@ -27,7 +35,7 @@ from decoy.cli.library._errors import (
     library_error,
 )
 
-__all__ = ["ensure_private_dir", "read_capped", "write_dotfile_once", "write_once"]
+__all__ = ["ensure_private_dir", "read_capped", "replace_file", "write_dotfile_once", "write_once"]
 
 
 def ensure_private_dir(path: Path) -> None:
@@ -50,15 +58,30 @@ def write_once(directory: Path, name: str, data: bytes, *, tmp_dir: Path) -> boo
 
     False means a file was already there; the caller verifies it.
     """
+    return _write(directory, name, data, WriteMode.CREATE_ONCE, tmp_dir=tmp_dir)
+
+
+def replace_file(directory: Path, name: str, data: bytes, *, tmp_dir: Path) -> None:
+    """Replace `directory/name` with `data` in one step (refs, plan 4.9 `REPLACE`).
+
+    On Windows a target another program holds open is retried by `_atomic` (bounded backoff,
+    about one second); still held after that, the writer says `atomic_target_busy` and this is
+    `library_busy`. Every other failure, an ACL deny included, is `library_write_failed`.
+    """
+    _write(directory, name, data, WriteMode.REPLACE, tmp_dir=tmp_dir)
+
+
+def _write(directory: Path, name: str, data: bytes, mode: WriteMode, *, tmp_dir: Path) -> bool:
     failure: AtomicWriteError | None = None
     created = False
     try:
-        created = write_atomic(directory, name, data, WriteMode.CREATE_ONCE, tmp_dir=tmp_dir)
+        created = write_atomic(directory, name, data, mode, tmp_dir=tmp_dir)
     except AtomicWriteError as exc:
         failure = exc
-    if failure is not None:
-        raise library_error(LIBRARY_WRITE_FAILED, failure)
-    return created
+    if failure is None:
+        return created
+    code = LIBRARY_BUSY if failure.code == ATOMIC_TARGET_BUSY else LIBRARY_WRITE_FAILED
+    raise library_error(code, failure)
 
 
 def write_dotfile_once(path: Path, data: bytes) -> bool:

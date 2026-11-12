@@ -5,6 +5,7 @@ only function that looks for that file (`tests/sentry/io_policy/test_pipeline_ar
 holds the line). The trust rule follows git's `safe.directory`: a marker is read through
 `_small_file.read_small_file` (no links, pipes or devices; judged on the opened descriptor, so a
 swap between check and read cannot pass) and must belong to the effective user.
+`read_owned_yaml` is that trusted read, shared with the library's `library.yaml` policy.
 """
 
 from __future__ import annotations
@@ -63,33 +64,74 @@ def _home() -> Path | None:
         return None
 
 
-def _read_marker_bytes(marker: Path) -> bytes | None:
-    """The marker's bytes, None when there is no file, or a refusal for an unsafe one."""
+class OwnedYamlError(Exception):
+    """A small YAML file that cannot be trusted. `reason` is `"unsafe"` (not a plain regular
+    file, over the cap, unreadable or not YAML) or `"untrusted"` (another user owns it). The
+    text is the reason alone: the file's path and contents never reach it."""
+
+    def __init__(self, reason: str) -> None:
+        super().__init__(reason)
+        self.reason = reason
+
+
+@dataclass(frozen=True)
+class OwnedYaml:
+    """The parsed content of a trusted small YAML file (`None` for an empty one)."""
+
+    parsed: object
+
+
+def read_owned_yaml(path: Path, max_bytes: int) -> OwnedYaml | None:
+    """Read and parse a small YAML file the current user owns; None when nothing is there.
+
+    The one reader for Decoy's own YAML bookkeeping files (the project marker and the library
+    policy): `read_small_file` (no links, pipes or devices), a size cap, the owner rule (git's
+    `safe.directory`: a file another user owns is not trusted) and `yaml.safe_load`. Raises
+    `OwnedYamlError`, never chained to the OS or parser error (their text holds the path or the
+    file's contents).
+    """
     unsafe = False
     found = None
     try:
-        found = read_small_file(marker, MAX_MARKER_BYTES + 1)
+        found = read_small_file(path, max_bytes + 1)
     except UnsafeFileError:
         unsafe = True
-    # Raised outside the handler so no library error is chained onto the refusal.
-    if unsafe or (found is not None and found.size > MAX_MARKER_BYTES):
-        raise PROJECT_MARKER_INVALID.error(path=marker)
+    if unsafe or (found is not None and found.size > max_bytes):
+        raise OwnedYamlError("unsafe")
     if found is None:
         return None
     if hasattr(os, "geteuid") and found.uid != os.geteuid():
-        raise PROJECT_MARKER_UNTRUSTED.error(path=marker)
-    return found.data
-
-
-def _parse_marker(marker: Path, data: bytes) -> dict[object, object] | None:
-    """The marker mapping, None for a YAML mapping with no `kind` (not a marker)."""
+        raise OwnedYamlError("untrusted")
     parsed: object = None
     broken = False
     try:
-        parsed = yaml.safe_load(data)
+        parsed = yaml.safe_load(found.data)
     except (yaml.YAMLError, UnicodeDecodeError, RecursionError):
         broken = True
-    if broken or not isinstance(parsed, dict):
+    if broken:
+        raise OwnedYamlError("unsafe")
+    return OwnedYaml(parsed)
+
+
+def _read_marker(marker: Path) -> OwnedYaml | None:
+    """The marker's parsed YAML, None when there is no file, or a layout refusal."""
+    reason: str | None = None
+    found = None
+    try:
+        found = read_owned_yaml(marker, MAX_MARKER_BYTES)
+    except OwnedYamlError as exc:
+        reason = exc.reason
+    # Raised outside the handler so no error is chained onto the refusal.
+    if reason == "untrusted":
+        raise PROJECT_MARKER_UNTRUSTED.error(path=marker)
+    if reason is not None:
+        raise PROJECT_MARKER_INVALID.error(path=marker)
+    return found
+
+
+def _parse_marker(marker: Path, parsed: object) -> dict[object, object] | None:
+    """The marker mapping, None for a YAML mapping with no `kind` (not a marker)."""
+    if not isinstance(parsed, dict):
         raise PROJECT_MARKER_INVALID.error(path=marker)
     if "kind" not in parsed:
         return None
@@ -105,9 +147,9 @@ def _extra(parsed: dict[object, object]) -> tuple[str, ...]:
 def _explicit_project(explicit: Path) -> Project:
     root = explicit.resolve()
     marker = root / MARKER_NAME
-    data = _read_marker_bytes(marker)
-    parsed = None if data is None else _parse_marker(marker, data)
-    if data is None:
+    found = _read_marker(marker)
+    parsed = None if found is None else _parse_marker(marker, found.parsed)
+    if found is None:
         raise PROJECT_NOT_FOUND.error(where=root)
     if parsed is None:
         raise PROJECT_MARKER_INVALID.error(path=marker)
@@ -133,9 +175,9 @@ def find_project(start: Path | None, explicit: Path | None) -> Project:
         if under_home and folder == home:
             break
         marker = folder / MARKER_NAME
-        data = _read_marker_bytes(marker)
-        if data is not None:
-            parsed = _parse_marker(marker, data)
+        found = _read_marker(marker)
+        if found is not None:
+            parsed = _parse_marker(marker, found.parsed)
             if parsed is not None:
                 return Project(root=folder, skipped=tuple(skipped), extra_keys=_extra(parsed))
             skipped.append(marker)

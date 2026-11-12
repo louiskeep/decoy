@@ -482,3 +482,21 @@ def test_library_files_and_folders_are_owner_only_under_umask_zero(tmp_path: Pat
     assert set(files) == {"file 0o600"}
     assert len(dirs) == 5  # the root, library, objects, the fan-out folder, tmp
     assert {line.split()[1] for line in dirs} == {"0o700"}
+
+
+_LIBRARY_LOCK = _LIBRARY_FILES.replace(
+    "open_library(root).put(env)\n",
+    "library = open_library(root)\nlibrary.put(env)\nlibrary.set_ref('sample-run', 'scope/base', env.id)\n",
+).replace(
+    "for p in sorted(root.rglob('*')):\n",
+    "for p in [root / 'library' / 'index.sqlite', root / 'library' / 'refs' / 'sample-run' / 'scope' / 'base']:\n",
+)
+
+
+@posix_only
+def test_library_lock_and_ref_files_are_owner_only_under_umask_zero(tmp_path: Path) -> None:
+    """The lock file is pre-created by `open_private` before SQLite opens it; refs come from the
+    atomic writer."""
+    assert "set_ref" in _LIBRARY_LOCK and "index.sqlite" in _LIBRARY_LOCK
+    got = _run(_LIBRARY_LOCK, str(tmp_path)).splitlines()
+    assert got == ["file 0o600", "file 0o600", "root 0o700"]

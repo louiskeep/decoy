@@ -20,12 +20,16 @@ __all__ = [
     "LIBRARY_LAYOUT_NEWER",
     "LIBRARY_LOCK_UNAVAILABLE",
     "LIBRARY_PATH_TOO_LONG",
+    "LIBRARY_POLICY_INVALID",
+    "LIBRARY_POLICY_UNTRUSTED",
     "LIBRARY_READ_FAILED",
     "LIBRARY_WRITE_FAILED",
     "RECORD_CORRUPT",
     "RECORD_INVALID",
     "RECORD_LINK_MISSING",
     "RECORD_NOT_FOUND",
+    "REF_NAME_INVALID",
+    "REF_NAME_RESERVED",
     "LibraryError",
     "library_error",
 ]
@@ -40,6 +44,14 @@ LIBRARY_PATH_TOO_LONG = "library_path_too_long"
 LIBRARY_LAYOUT_NEWER = "library_layout_newer"
 RECORD_LINK_MISSING = "record_link_missing"
 RECORD_NOT_FOUND = "record_not_found"
+# A ref kind that is not a registered kind, or a name outside the ref grammar (plan 4.5).
+REF_NAME_INVALID = "ref_name_invalid"
+# A one-part ref name that is a scope other refs live under (`scan-set/baseline/<slug>`).
+REF_NAME_RESERVED = "ref_name_reserved"
+# `.decoy/library.yaml` is unreadable, not YAML, or fails the policy model (field names only).
+LIBRARY_POLICY_INVALID = "library_policy_invalid"
+# `library.yaml` owned by another user (the project marker rule, git `safe.directory`).
+LIBRARY_POLICY_UNTRUSTED = "library_policy_untrusted"
 # An object file exists but cannot be read (permissions, I/O error); not corruption.
 LIBRARY_READ_FAILED = "library_read_failed"
 # A library file larger than its cap: refused unread, so a planted huge file cannot exhaust memory.
@@ -48,12 +60,15 @@ LIBRARY_FILE_TOO_LARGE = "library_file_too_large"
 
 class LibraryError(Exception):
     """A library operation failed. `code` is one of the constants above; `error_class` names the
-    underlying exception's class, or is empty when there was none."""
+    underlying exception's class, or is empty when there was none. `fields` are dotted field
+    locations (a policy file's keys), never values."""
 
-    def __init__(self, code: str, error_class: str = "") -> None:
-        super().__init__(f"{code} ({error_class})" if error_class else code)
+    def __init__(self, code: str, error_class: str = "", fields: tuple[str, ...] = ()) -> None:
+        text = f"{code} ({error_class})" if error_class else code
+        super().__init__(f"{text} fields={','.join(fields)}" if fields else text)
         self.code = code
         self.error_class = error_class
+        self.fields = fields
 
 
 def library_error(code: str, exc: BaseException | None = None) -> LibraryError:
