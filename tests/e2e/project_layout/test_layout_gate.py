@@ -626,3 +626,81 @@ def test_resolved_output_collisions_distinct_outputs_pass(tmp_path: Path) -> Non
     root = _project(tmp_path)
     cfg = _write(root, "pipelines/orders/pipeline.yaml", _two_tables(root, "a.csv", "b.csv"))
     assert runner.invoke(app, ["validate", "preflight", str(cfg)]).exit_code == EXIT_OK
+
+
+# --- AT-31 a dangling final symlink is the destination the writer publishes onto ---------------
+
+
+def _dangling(tmp_path: Path) -> tuple[Path, Path]:
+    """`alias.csv -> real.csv` where `real.csv` does not exist yet: `(alias, real)`."""
+    real = tmp_path / "real.csv"
+    alias = tmp_path / "alias.csv"
+    alias.symlink_to(real)
+    return alias, real
+
+
+@posix_only
+@pytest.mark.parametrize("command", [["run"], ["validate", "preflight"]])
+@pytest.mark.parametrize("order", ["alias_first", "target_first"])
+def test_a_dangling_symlink_collides_with_its_target_for_two_tables(
+    tmp_path: Path, read_spy: list[str], command: list[str], order: str
+) -> None:
+    root = _project(tmp_path)
+    alias, real = _dangling(tmp_path)
+    first, second = (alias, real) if order == "alias_first" else (real, alias)
+    cfg = _write(root, "pipelines/orders/pipeline.yaml", _two_tables(root, str(first), str(second)))
+    result = runner.invoke(app, [*command, str(cfg), "--json"])
+    assert result.exit_code == EXIT_USAGE, result.output
+    assert COLLISION in _codes(result.output)
+    assert read_spy == []
+    assert not real.exists()
+
+
+@posix_only
+@pytest.mark.parametrize("command", [["run"], ["validate", "preflight"]])
+def test_a_dangling_symlink_collides_with_a_quarantine_file(
+    tmp_path: Path, read_spy: list[str], command: list[str]
+) -> None:
+    root = _project(tmp_path)
+    alias, real = _dangling(tmp_path)
+    cfg_dict = _config(root, str(real), **_quarantine(str(alias)))
+    cfg = _write(root, "pipelines/orders/pipeline.yaml", cfg_dict)
+    result = runner.invoke(app, [*command, str(cfg), "--json"])
+    assert result.exit_code == EXIT_USAGE, result.output
+    assert COLLISION in _codes(result.output)
+    assert read_spy == []
+    assert not real.exists()
+
+
+@posix_only
+@pytest.mark.parametrize("flag", ["--vault", "--evidence-out"])
+def test_a_dangling_symlink_collides_with_a_typed_side_file(
+    tmp_path: Path, read_spy: list[str], flag: str
+) -> None:
+    root = _project(tmp_path)
+    alias, real = _dangling(tmp_path)
+    cfg = _write(root, "pipelines/orders/pipeline.yaml", _config(root, str(real)))
+    result = runner.invoke(app, ["run", str(cfg), "--json", flag, str(alias)])
+    assert result.exit_code == EXIT_USAGE, result.output
+    assert COLLISION in _codes(result.output)
+    assert read_spy == []
+    assert not real.exists()
+
+
+# --- AT-4 a NUL byte in an absolute destination -------------------------------------------------
+
+
+@pytest.mark.parametrize("command", [["validate"], ["validate", "preflight"], ["run"]])
+@pytest.mark.parametrize("where", ["target", "quarantine"])
+def test_a_nul_in_an_absolute_destination_is_refused_before_a_source_read(
+    tmp_path: Path, read_spy: list[str], command: list[str], where: str
+) -> None:
+    root = _project(tmp_path)
+    bad = str(tmp_path / "a\x00b.csv")
+    cfg_dict = _config(root, bad) if where == "target" else _config(root, **_quarantine(bad))
+    cfg = _write(root, "pipelines/orders/pipeline.yaml", cfg_dict)
+    result = runner.invoke(app, [*command, str(cfg), "--json"])
+    assert result.exit_code == EXIT_USAGE, result.output
+    assert ESCAPES in _codes(result.output)
+    assert read_spy == []
+    assert "a\\u0000b" not in result.output

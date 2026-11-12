@@ -62,23 +62,27 @@ def _folds_case(folder: Path) -> bool:
 
 def _destination_key(path: Path) -> tuple:
     """What two spellings of one destination share: file identity if it exists, else the
-    resolved nearest existing folder plus the unresolved suffix (case-folded on a folding
-    filesystem)."""
+    nearest existing folder plus the remaining suffix (case-folded on a folding filesystem).
+
+    The path is first spelled the way the writer publishes it (`os.path.realpath`, which
+    follows a final symlink even when its target is missing), so an alias and its target
+    key alike. That is the one resolver; the steps after it only read the result.
+    """
     try:
-        found = os.stat(path)
+        real = Path(os.path.realpath(path))
+    except (OSError, ValueError):
+        real = path
+    try:
+        found = os.stat(real)
     except (OSError, ValueError):
         found = None
     if found is not None:
         return ("file", found.st_dev, found.st_ino)
-    ancestor = next((p for p in path.parents if p.is_dir()), Path(path.anchor))
-    try:
-        resolved = ancestor.resolve()
-    except (OSError, RuntimeError):
-        resolved = ancestor
-    suffix = path.relative_to(ancestor).parts
-    if _folds_case(resolved):
+    ancestor = next((p for p in real.parents if p.is_dir()), Path(real.anchor))
+    suffix = real.relative_to(ancestor).parts
+    if _folds_case(ancestor):
         suffix = tuple(part.casefold() for part in suffix)
-    return ("path", str(resolved), suffix)
+    return ("path", str(ancestor), suffix)
 
 
 def resolved_output_collisions(
@@ -166,6 +170,16 @@ def layout_issues(
                 check_path_budget(folder, raw, run_folder=fixed is None)
             except LayoutError as exc:
                 issues.append((location, exc))
+    issues.extend(
+        (location, OUTPUT_PATH_ESCAPES.error(path="a path with a NUL byte", base=base))
+        for location, raw in outputs
+        if Path(raw).is_absolute() and "\x00" in raw
+    )
+    issues.extend(
+        (None, OUTPUT_PATH_ESCAPES.error(path=f"the {flag} path (it has a NUL byte)", base=base))
+        for flag, typed in placement.typed
+        if "\x00" in os.fspath(typed)
+    )
     if not issues:
         where = folder if fixed is not None else folder and folder / "<run-id>"
         clash = resolved_output_collisions(config_dict, where, placement.typed)
