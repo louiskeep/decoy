@@ -53,7 +53,7 @@
 #                         red CI, never a pass.
 #
 # Triggers: every push to main, every pull request targeting main, and a
-# weekly schedule. The schedule exists for certified-profile: an engine-side or
+# daily schedule. The schedule exists for certified-profile: an engine-side or
 # index-side change can decertify the CLI profile with no CLI commit to trigger
 # a run.
 # The gate must be green before a PR can merge.
@@ -66,12 +66,17 @@ on:
   pull_request:
     branches: [main]
   schedule:
-    # Monday 07:00 UTC, an hour after release-smoke.yml's weekly run.
-    - cron: '0 7 * * 1'
+    # Daily 07:00 UTC, so main drifts red within a day (an hour after the Monday release smoke).
+    - cron: '0 7 * * *'
   workflow_dispatch:
 
 permissions:
   contents: read
+
+# A newer push to the same pull request cancels its stale run; main and scheduled runs finish.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
 
@@ -81,6 +86,7 @@ jobs:
   ruff:
     name: ruff (lint)
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - name: Checkout
         uses: actions/checkout@v7
@@ -97,6 +103,7 @@ jobs:
   pytest:
     name: pytest (py${{ matrix.python }})
     runs-on: ubuntu-latest
+    timeout-minutes: 45
     strategy:
       fail-fast: false
       matrix:
@@ -140,6 +147,7 @@ jobs:
   fresh-install-smoke:
     name: fresh-install-smoke
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - name: Checkout
         uses: actions/checkout@v7
@@ -219,6 +227,7 @@ jobs:
   ci-template-lint:
     name: ci-template-lint
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - name: Checkout
         uses: actions/checkout@v7
@@ -255,6 +264,7 @@ jobs:
   certified-profile:
     name: certified-profile (cpython 3.10.20)
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - name: Checkout
         uses: actions/checkout@v7
