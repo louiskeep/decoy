@@ -43,6 +43,9 @@ from decoy.cli.io._layout import (
     target_parent_writable,
     write_claim,
 )
+from decoy.cli.io._layout import (
+    quarantine_enabled as quarantine_enabled,
+)
 from decoy.cli.io._layout_errors import (
     GATE_CODES,
     GATE_DESCRIPTORS,
@@ -94,6 +97,9 @@ from decoy.cli.io._targets import (
     write_targets,
 )
 
+# `quarantine_enabled` is re-exported by alias and kept out of `__all__`: the engine has a
+# reason code spelled the same, and the reason-code copy sentry reads any such string constant
+# as a copy.
 __all__ = [
     "GATE_CODES",
     "GATE_DESCRIPTORS",

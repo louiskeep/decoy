@@ -18,7 +18,13 @@ from decoy.cli.gate import (
     check_before_run,
     parse_pipeline_yaml,
 )
-from decoy.cli.io import DuckDBSourceError, OutputPlacement, acquire_relation, parse_flag
+from decoy.cli.io import (
+    DuckDBSourceError,
+    OutputPlacement,
+    acquire_relation,
+    parse_flag,
+    quarantine_enabled,
+)
 from decoy.cli.io import resolve_path as _resolve_path
 from decoy.cli.run._context import RunContext
 from decoy.cli.run._execute import (
@@ -150,6 +156,12 @@ _FIDELITY_NEEDS_MASK = (
 )
 
 
+_PREVIEW_QUARANTINE = (
+    "--rows previews write nothing, so they cannot run with quarantine enabled. "
+    "Turn quarantine off in the config to preview."
+)
+
+
 def _refuse_usage(state, config_str: str, text: str) -> None:
     """Print a usage refusal in the active output mode and exit 1, before any engine call."""
     if state.mode is OutputMode.json:
@@ -197,6 +209,8 @@ def refuse_preview(ctx: RunContext) -> None:
     text = gen.refusal(ctx.rows, flags, _has_kind(ctx.raw_cfg, "columns"))
     if text is not None:
         _refuse_usage(ctx.state, ctx.config_str, text)
+    if quarantine_enabled(ctx.raw_cfg):
+        _refuse_usage(ctx.state, ctx.config_str, _PREVIEW_QUARANTINE)
 
 
 def _guard_mask_secret_ref(raw: object) -> None:

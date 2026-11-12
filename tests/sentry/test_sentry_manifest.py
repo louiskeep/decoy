@@ -45,6 +45,7 @@ SENTRIES = (
     "tests/sentry/defects/test_config_error_routes.py",
     "tests/sentry/defects/test_exception_context.py",
     "tests/sentry/io_policy/test_csv_frame_choke_point.py",
+    "tests/sentry/io_policy/test_quarantine_enabled_choke_point.py",
     "tests/sentry/io_policy/test_small_file_reader.py",
     "tests/sentry/test_csv_read_choke_point.py",
     "tests/sentry/test_baseline_registry.py",
