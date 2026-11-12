@@ -565,7 +565,7 @@ def test_a_symlinked_claim_is_no_claim_and_is_not_read_through(
 @pytest.mark.parametrize(
     ("raw", "absolute"),
     [
-        ("/data/out.csv", True),
+        (str(Path("/data/out.csv").resolve()), True),
         ("out.csv", False),
         ("sub/out.csv", False),
         ("~/out.csv", False),
