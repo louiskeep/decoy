@@ -29,6 +29,7 @@ import ast
 import inspect
 import re
 import sys
+import typing
 from collections.abc import Callable, Iterator
 from pathlib import Path
 from typing import Annotated
@@ -169,6 +170,20 @@ _HELP_RULE = re.compile(
     r"|^optional pipeline\.yaml|^path or name of the (yaml )?pipeline",
     re.IGNORECASE,
 )
+# Any option declaration that names the config or the pipeline (`--pipeline-config`).
+_DECL_RULE = re.compile(r"config|pipeline", re.IGNORECASE)
+# A first sentence that names a pipeline or YAML together with file, path or config, in either
+# order. Later sentences describe behavior and mention these words in passing.
+_HELP_WIDE = (
+    re.compile(r"\b(pipeline|ya?ml)\b.*\b(file|path|config)\b", re.IGNORECASE),
+    re.compile(r"\b(file|path|config)\b.*\b(pipeline|ya?ml)\b", re.IGNORECASE),
+)
+# Parameters the wide rules match that are not a pipeline parameter, by exact `command:param`.
+NOT_A_PIPELINE = {
+    "run:duckdb_source": "TABLE=DB_PATH specs for DuckDB inputs, not the pipeline",
+    "report fidelity:policy": "a quality-policy YAML, not a pipeline config",
+    "ci check:manifest": "a decoy-ci manifest, not a pipeline config",
+}
 EXPECTED = {
     "run:config",
     "validate config:config",
@@ -198,13 +213,33 @@ def typer_commands(
         yield from typer_commands(group.typer_instance, (*prefix, group.name))
 
 
-def pipeline_parameters(callback: Callable) -> Iterator[tuple[str, ArgumentInfo | OptionInfo]]:
+def _infos(callback: Callable) -> Iterator[tuple[str, object]]:
+    """Each parameter with its Typer info: from the default, else from `Annotated` metadata."""
+    hints = typing.get_type_hints(callback, include_extras=True)
     for pname, param in inspect.signature(callback).parameters.items():
-        info = param.default
-        if not isinstance(info, (ArgumentInfo, OptionInfo)):
+        yield pname, param.default
+        yield from ((pname, m) for m in getattr(hints.get(pname), "__metadata__", ()))
+
+
+def pipeline_parameters(
+    callback: Callable, command: str = ""
+) -> Iterator[tuple[str, ArgumentInfo | OptionInfo]]:
+    for pname, info in _infos(callback):
+        if (
+            not isinstance(info, (ArgumentInfo, OptionInfo))
+            or f"{command}:{pname}" in NOT_A_PIPELINE
+        ):
             continue
         decls = getattr(info, "param_decls", None) or ()
-        if pname in _NAMES or "--config" in decls or _HELP_RULE.match(str(info.help or "")):
+        help_text = str(info.help or "")
+        first = re.split(r"(?<=[.!?])\s", help_text, maxsplit=1)[0]
+        if (
+            pname in _NAMES
+            or "--config" in decls
+            or any(_DECL_RULE.search(d) for d in decls)
+            or _HELP_RULE.match(help_text)
+            or any(r.search(first) for r in _HELP_WIDE)
+        ):
             yield pname, info
 
 
@@ -213,7 +248,7 @@ def parameter_findings(instance: typer.Typer) -> tuple[set[str], list[str]]:
     matched: set[str] = set()
     findings: list[str] = []
     for path, callback in typer_commands(instance):
-        for pname, info in pipeline_parameters(callback):
+        for pname, info in pipeline_parameters(callback, path):
             key = f"{path}:{pname}"
             matched.add(key)
             if info.callback is not parse_pipeline_token:
@@ -302,7 +337,7 @@ def test_every_command_body_resolves_its_pipeline_after_output_setup() -> None:
 
     problems: list[str] = []
     for path, callback in typer_commands(app):
-        names = [n for n, _ in pipeline_parameters(callback)]
+        names = [n for n, _ in pipeline_parameters(callback, path)]
         source = inspect.getsource(sys.modules[callback.__module__])
         problems.extend(
             f"{path}: {problem}"

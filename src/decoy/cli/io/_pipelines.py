@@ -153,20 +153,15 @@ def pipeline_option(default: Any, *names: str, help: str) -> Any:
 
 
 def _member(root: Path, name: str) -> Path | None:
-    """`<root>/pipelines/<name>/pipeline.yaml` when a file that stays inside the project.
+    """`<root>/pipelines/<name>/pipeline.yaml` when a regular file, with no link on the way.
 
-    Both the folder and the YAML may be links, but where they land must be inside the physical
-    `pipelines/` folder, itself inside the project. Anything else counts as not there.
+    A linked folder or YAML would run under the name of its target (run folder, claim, LATEST),
+    so a link is not a member. `is_symlink` does not follow the link, so a loop cannot raise.
     """
     yaml = member_yaml(root, name)
-    try:
-        base = (root / PIPELINES_DIR).resolve()
-        real = yaml.resolve()
-        top = root.resolve()
-    except (OSError, RuntimeError):  # a link loop raises RuntimeError before Python 3.13
+    if any(p.is_symlink() for p in (root / PIPELINES_DIR, yaml.parent, yaml)):
         return None
-    inside = base.is_relative_to(top) and real.is_relative_to(base)
-    return yaml if inside and real.is_file() else None
+    return yaml if yaml.is_file() else None
 
 
 def list_pipelines(project: Project) -> list[PipelineEntry]:
