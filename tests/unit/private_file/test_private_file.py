@@ -127,6 +127,27 @@ def test_open_private_leaves_an_existing_parent_alone(tmp_path: Path) -> None:
     assert _mode(tmp_path) == 0o755
 
 
+@posix_only
+def test_open_private_truncate_empties_in_place_and_keeps_the_inode(tmp_path: Path) -> None:
+    """The library index reset: one inode, so a lock on it stays one lock."""
+    path = tmp_path / "index.sqlite"
+    path.write_bytes(b"not a database")
+    before = os.stat(path).st_ino
+    open_private(path, new_parent=False, truncate=True)
+    assert path.read_bytes() == b"" and os.stat(path).st_ino == before and _mode(path) == 0o600
+
+
+@posix_only
+def test_open_private_truncate_never_follows_a_symlink(tmp_path: Path) -> None:
+    victim = tmp_path / "victim.txt"
+    victim.write_bytes(b"mine")
+    link = tmp_path / "index.sqlite"
+    link.symlink_to(victim)
+    with pytest.raises(PrivateFileError) as caught:
+        open_private(link, new_parent=False, truncate=True)
+    assert caught.value.errno == errno.ELOOP and victim.read_bytes() == b"mine"
+
+
 # -- AT-P1c: planted names ------------------------------------------------------------------
 
 
@@ -478,7 +499,7 @@ def test_library_files_and_folders_are_owner_only_under_umask_zero(tmp_path: Pat
     got = _run(_LIBRARY_FILES, str(tmp_path)).splitlines()
     files = [line for line in got if line.startswith("file ")]
     dirs = [line for line in got if line.startswith(("dir ", "root "))]
-    assert len(files) == 4  # .gitignore, .gitattributes, LAYOUT, one record; tmp is empty
+    assert len(files) == 5  # .gitignore, .gitattributes, LAYOUT, index.sqlite, one record
     assert set(files) == {"file 0o600"}
     assert len(dirs) == 5  # the root, library, objects, the fan-out folder, tmp
     assert {line.split()[1] for line in dirs} == {"0o700"}

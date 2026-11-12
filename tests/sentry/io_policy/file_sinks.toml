@@ -53,12 +53,12 @@ reason = "COPY writes the unmasked source table into the 0700 spill directory ru
 exit = "WIN-FEAS"
 
 [[row]]
-file = "cli/library/_refs.py"
-function = "library_lock"
+file = "cli/library/_index.py"
+function = "_begin"
 sink = "sqlite3.connect"
 ordinal = 1
 disposition = "private"
-reason = "SQLite opens the library lock file open_private just created 0600; it holds no rows, only the lock."
+reason = "SQLite opens the library index (and lock) file open_private just created 0600; it holds value-free index rows."
 via = "open_private"
 
 [[row]]

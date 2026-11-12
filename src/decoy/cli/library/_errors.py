@@ -17,6 +17,8 @@ from decoy_engine.reasons import runtime, warning
 __all__ = [
     "LIBRARY_BUSY",
     "LIBRARY_FILE_TOO_LARGE",
+    "LIBRARY_INDEX_CORRUPT",
+    "LIBRARY_INDEX_FAILED",
     "LIBRARY_LAYOUT_NEWER",
     "LIBRARY_LOCK_UNAVAILABLE",
     "LIBRARY_PATH_TOO_LONG",
@@ -40,6 +42,10 @@ LIBRARY_WRITE_FAILED = warning.LIBRARY_WRITE_FAILED
 
 LIBRARY_BUSY = "library_busy"
 LIBRARY_LOCK_UNAVAILABLE = "library_lock_unavailable"
+# The index (a cache) failed after the lock was taken: corrupt pages, or any other SQLite error
+# such as a full disk. Callers treat the index as stale and read the object files.
+LIBRARY_INDEX_CORRUPT = "library_index_corrupt"
+LIBRARY_INDEX_FAILED = "library_index_failed"
 LIBRARY_PATH_TOO_LONG = "library_path_too_long"
 LIBRARY_LAYOUT_NEWER = "library_layout_newer"
 RECORD_LINK_MISSING = "record_link_missing"
