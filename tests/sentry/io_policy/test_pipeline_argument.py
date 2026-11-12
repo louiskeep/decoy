@@ -423,6 +423,15 @@ def test_another_spelling_of_the_config_option_is_found_and_flagged() -> None:
     assert len(findings) == 2
 
 
+def test_the_option_declaration_alone_is_enough_to_be_found() -> None:
+    def cmd(cfg: Path = typer.Option(..., "--pipeline-config", help="What to run")) -> None:
+        """Scratch command."""
+
+    matched, findings = parameter_findings(_command(cmd))
+    assert matched == {"cmd:cfg"}
+    assert len(findings) == 2
+
+
 def test_another_spelling_with_the_shared_hook_passes() -> None:
     def cmd(cfg: Path = pipeline_option(..., "--pipeline-config", help="YAML file to run")) -> None:
         """Scratch command."""
