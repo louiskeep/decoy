@@ -449,7 +449,7 @@ _TOPICS: dict[str, _Topic] = {
         name="exit-codes",
         summary="The process exit codes every `decoy` command returns.",
         body=(
-            "Every `decoy` subcommand returns one of six exit codes. Scripts,\n"
+            "Every `decoy` subcommand returns one of seven exit codes. Scripts,\n"
             "Make recipes, and CI pipelines can switch on the integer value.\n\n"
             "  0   Success. The command did what it said. POSIX convention.\n"
             "  1   Usage error. The caller's request was wrong: config did not\n"
@@ -480,10 +480,14 @@ _TOPICS: dict[str, _Topic] = {
             "      engine gate runs. Generated tables whose output cannot fit\n"
             "      the machine's memory (`generation_budget_exceeded`) exit 5\n"
             "      at `decoy validate` and before `decoy run` writes anything;\n"
-            "      a run that runs out of memory exits 5 as well.\n\n"
+            "      a run that runs out of memory exits 5 as well.\n"
+            "  6   Partially delivered. `decoy run` wrote some tables and withheld\n"
+            "      the rest. Reserved for best-effort delivery; no run exits 6 yet.\n\n"
+            "Exit 2 also means a command-line usage error that Click rejects before\n"
+            "the command runs, and a bad `--master-key` or `--key-label` on `decoy run`.\n\n"
             "Integer values are stable across releases.\n"
             "The named constants (EXIT_OK / EXIT_USAGE / EXIT_WARNINGS /\n"
-            "EXIT_RUNTIME / EXIT_FINDINGS / EXIT_CAPACITY) live in\n"
+            "EXIT_RUNTIME / EXIT_FINDINGS / EXIT_CAPACITY / EXIT_PARTIAL) live in\n"
             "`decoy.cli.exit_codes` for callers that import them in Python."
         ),
         see_also=("decoy --help", "decoy run --help", "decoy validate preflight --help"),

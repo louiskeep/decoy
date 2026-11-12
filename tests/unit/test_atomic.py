@@ -491,3 +491,39 @@ def test_replace_symlink_lstat_failure_keeps_no_path_context(
         _atomic.replace_symlink(tmp_path / "latest", "run-1")
     assert caught.value.errno == errno.EACCES
     assert caught.value.__context__ is None
+
+
+def _held_open(monkeypatch: pytest.MonkeyPatch, *, windows: bool) -> list[str]:
+    calls: list[str] = []
+
+    def replace(src: str, dst: str, **_k: object) -> None:
+        calls.append(dst)
+        raise PermissionError(errno.EACCES, "held open", str(dst))
+
+    monkeypatch.setattr(_atomic.os, "replace", replace)
+    monkeypatch.setattr(_atomic, "_sleep", lambda _s: None)
+    monkeypatch.setattr(_private_file, "_WINDOWS", windows)
+    return calls
+
+
+def test_a_target_still_held_after_the_windows_retries_has_its_own_code(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The writer says "busy" itself, so a caller never infers it from errno and the platform."""
+    calls = _held_open(monkeypatch, windows=True)
+    with pytest.raises(AtomicWriteError) as caught:
+        write_atomic(tmp_path, "ref", b"x", WriteMode.REPLACE)
+    assert len(calls) == _atomic._RETRY_ATTEMPTS  # non-vacuous: the bounded retry ran out
+    assert caught.value.code == _atomic.ATOMIC_TARGET_BUSY
+    assert caught.value.errno == errno.EACCES and caught.value.__context__ is None
+    assert _names(tmp_path) == []
+
+
+def test_a_refused_replace_off_windows_is_a_plain_write_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    calls = _held_open(monkeypatch, windows=False)
+    with pytest.raises(AtomicWriteError) as caught:
+        write_atomic(tmp_path, "ref", b"x", WriteMode.REPLACE)
+    assert len(calls) == 1  # no retry off Windows
+    assert caught.value.code == _atomic.ATOMIC_WRITE_FAILED

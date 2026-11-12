@@ -1,13 +1,13 @@
 # Trademarks
 
-"Decoy", the Decoy wordmark, and any Decoy logos (collectively, the "Decoy Marks") are common-law trademarks of Decoy Labs, Inc.
+"Decoy", the Decoy wordmark, and any Decoy logos (collectively, the "Decoy Marks") are common-law trademarks of Decoy Labs LLC.
 
-TODO(licensor): Replace "Decoy Labs, Inc." with the final registered entity name once incorporation is complete.
+TODO(licensor): Replace "Decoy Labs LLC" with the final registered entity name once the LLC is formed.
 TODO(legal): Update this file once any USPTO or international trademark filings are in progress or registered.
 
 ## What the source license does and does not grant
 
-The Business Source License 1.1 governs the source code in this repository. Per Section 7 of that license, it **does not** grant any rights to use the Decoy Marks beyond what is required to accurately describe the origin of the software (nominative fair use).
+The Functional Source License 1.1 (FSL-1.1-ALv2) governs the source code in this repository. Per its Trademarks clause, it **does not** grant any rights to use the Decoy Marks beyond what is required to accurately describe the origin of the software (nominative fair use).
 
 ## Permitted uses (nominative fair use)
 
@@ -19,7 +19,7 @@ You may use the Decoy Marks in plain text — without alteration, in normal sent
 
 ## Uses that require permission
 
-You must obtain prior written permission from Decoy Labs, Inc. to:
+You must obtain prior written permission from Decoy Labs LLC to:
 
 - Use the Decoy Marks (including logos) in or on a product name, company name, domain name, or any branding.
 - Use the Decoy Marks in a way that suggests sponsorship, endorsement, or affiliation that does not exist.

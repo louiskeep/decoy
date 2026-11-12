@@ -15,10 +15,27 @@ Moved here from `decoy-platform/docs/backlog/RECENTLY-SHIPPED.md` on 2026-11-05 
 ([ROADMAP.md](ROADMAP.md)). The platform copy is frozen at that date. Entries below 2026-11-05 are
 copied unchanged; paths in them are relative to the repo they name.
 
-Last updated: 2026-11-11 (entries for 2026-10-27 to 2026-10-30 are not filled in here; see the repos'
+Last updated: 2026-11-12 (entries for 2026-10-27 to 2026-10-30 are not filled in here; see the repos'
 git logs).
 
 ---
+
+## 2026-11-12
+
+- **CLI** (`52a2399b`, #226): PROJECT-LAYOUT part P5 (roadmap row 24t, still open). Every command takes a pipeline name in place of its config path. P6 to P10 remain.
+- **CLI** (`ae58f682`, #225): SAMPLE part SC0 (roadmap row 63). `decoy run --rows` refuses a run with quarantine on, and the quarantine path is passed to the engine explicitly.
+- **CLI** (`62798427`, #224): CLI-QA1 part C3b (roadmap row 24e). `decoy validate` checks output targets. This is the last slice of `plan/cli-qa1`; the row stays open for its distribution-integrity QA items.
+- **CLI** (`cf20450a`, #223): DELIV part CR (roadmap row 61). `decoy run --chunked` refuses `post_scan.integrity: true` with exit 1 instead of skipping the check.
+- **CLI** (`8144c9e6`, #213): PROJECT-LAYOUT part P4 (roadmap row 24t). `validate`, `ci check` and `run` refuse an escaping or invalid output location before any source row is read; `--out-dir` is added.
+- **Engine** (`c38f17cd`, engine #525): POSTSCAN-STREAM part PS-5 (roadmap row 60). Exact per-column facts for the post-scan column suite, computed over batches.
+- **Engine** (`a8c6af73`, engine #519): DELIV part E1a (roadmap row 61). The delivery config and the pure `plan_delivery` decision.
+- **Engine** (`105291d8`, engine #517): POSTSCAN-STREAM part PS-1 (roadmap row 60). Key facts and batch inputs for the streamed post-scan.
+- **Engine** (`12bd94bf`, engine #515): SUB-RUN part E1 (roadmap row 57). Typed subset requests and one input seam.
+- **Engine** (`426e6d05`, engine #491): CI-E2a (roadmap row 3). PR and nightly triggers are back for the lanes the self-hosted gate does not cover: certified-profile, DP and determinism on every PR; the full hosted suite, testflight and security nightly on main. `ci/required-jobs.toml` and `ci/unlaned.toml` say which job owns each test marker, and a lane sentry fails on a marker with no lane, a missing required job, or a PR workflow that cannot cancel its stale runs. One JUnit totals reader and one "the suite really ran" guard (`scripts/dev/junit_ran.py`). The substrate-matrix workflow is gone. Record: `E:docs/records/2026-11-12-ci-e2a-build.md`. Left: E2b, the merge-tier verifier.
+- **Roadmap closures** (checked 2026-11-12 on engine main `426e6d05` and CLI main `e642d69`; every commit below is an ancestor of that main):
+  - Row 24a VALUE-FREE-ERRORS, V1 slices: A1 and A2 engine #412 `bf15cd99` (2026-11-08), B1 engine #417 `38517493` (2026-11-09), A3 CLI #187 `ed39bb7d` (2026-11-11), B2 CLI #195 `68f90d0d` (2026-11-11). Both engine commits are in engine v0.22.0, which the CLI pins. B3 is V2 corrective.
+  - Row 33 L1a-engine: L0.1 engine #403 `45553d7e` (2026-11-08), L0.2 engine #411 `942dae2d` (2026-11-08), L1a engine #444 `35370165` (2026-11-10); all in engine v0.20.0 and later. The CLI halves are row 34.
+  - Row 5c CLI-MAC-TESTS: S1 CLI #110 `ec209ec6`, S2 CLI #112 `91d191b9`, bash 3.2 `gates.sh` CLI #115 `834ab996` (sentry `tests/sentry/test_bash32_compat.py`, no `mapfile` left in `scripts/`), last Mac failure CLI #118 `12fc2e62`, all 2026-11-08; engine mypy on macOS engine #404 `09376f24`. The last Mac full run (3108 passed, 0 failed) was on `12fc2e6`; none since.
 
 ## 2026-11-11
 

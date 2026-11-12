@@ -16,10 +16,14 @@ from decoy_engine.reasons import runtime, warning
 
 __all__ = [
     "LIBRARY_BUSY",
+    "LIBRARY_FILE_TOO_LARGE",
+    "LIBRARY_INDEX_CORRUPT",
+    "LIBRARY_INDEX_FAILED",
     "LIBRARY_LAYOUT_NEWER",
     "LIBRARY_LOCK_UNAVAILABLE",
     "LIBRARY_PATH_TOO_LONG",
     "LIBRARY_POLICY_INVALID",
+    "LIBRARY_POLICY_UNTRUSTED",
     "LIBRARY_READ_FAILED",
     "LIBRARY_WRITE_FAILED",
     "RECORD_CORRUPT",
@@ -27,6 +31,7 @@ __all__ = [
     "RECORD_LINK_MISSING",
     "RECORD_NOT_FOUND",
     "REF_NAME_INVALID",
+    "REF_NAME_RESERVED",
     "LibraryError",
     "library_error",
 ]
@@ -37,16 +42,26 @@ LIBRARY_WRITE_FAILED = warning.LIBRARY_WRITE_FAILED
 
 LIBRARY_BUSY = "library_busy"
 LIBRARY_LOCK_UNAVAILABLE = "library_lock_unavailable"
+# The index (a cache) failed after the lock was taken: corrupt pages, or any other SQLite error
+# such as a full disk. Callers treat the index as stale and read the object files.
+LIBRARY_INDEX_CORRUPT = "library_index_corrupt"
+LIBRARY_INDEX_FAILED = "library_index_failed"
 LIBRARY_PATH_TOO_LONG = "library_path_too_long"
 LIBRARY_LAYOUT_NEWER = "library_layout_newer"
 RECORD_LINK_MISSING = "record_link_missing"
 RECORD_NOT_FOUND = "record_not_found"
 # A ref kind that is not a registered kind, or a name outside the ref grammar (plan 4.5).
 REF_NAME_INVALID = "ref_name_invalid"
+# A one-part ref name that is a scope other refs live under (`scan-set/baseline/<slug>`).
+REF_NAME_RESERVED = "ref_name_reserved"
 # `.decoy/library.yaml` is unreadable, not YAML, or fails the policy model (field names only).
 LIBRARY_POLICY_INVALID = "library_policy_invalid"
+# `library.yaml` owned by another user (the project marker rule, git `safe.directory`).
+LIBRARY_POLICY_UNTRUSTED = "library_policy_untrusted"
 # An object file exists but cannot be read (permissions, I/O error); not corruption.
 LIBRARY_READ_FAILED = "library_read_failed"
+# A library file larger than its cap: refused unread, so a planted huge file cannot exhaust memory.
+LIBRARY_FILE_TOO_LARGE = "library_file_too_large"
 
 
 class LibraryError(Exception):

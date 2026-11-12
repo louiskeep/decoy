@@ -146,14 +146,18 @@ def create_exclusive(parent: Path, base: str, *, private: bool) -> tuple[str, in
     return tmp, bits
 
 
-def open_private(path: Path, *, new_parent: bool) -> None:
+def open_private(path: Path, *, new_parent: bool, truncate: bool = False) -> None:
     """Create `path` if missing and leave it owner-only, for a writer that opens it itself.
 
     Opens with `O_NOFOLLOW`, so a symlink at `path` is refused (`ELOOP`). An existing file
     that an earlier build left wider is repaired. A parent directory this call's caller just
-    created is narrowed to 0700 through its own descriptor. Raises `PrivateFileError`.
+    created is narrowed to 0700 through its own descriptor. `truncate` empties an existing file
+    in place (`O_TRUNC`): the same inode, so a lock other processes take on it stays one lock.
+    Raises `PrivateFileError`.
     """
     flags = os.O_RDWR | os.O_CREAT | getattr(os, "O_NOFOLLOW", 0)
+    if truncate:
+        flags |= os.O_TRUNC
     code: str | None = None
     failed_errno: int | None = None
     try:

@@ -1,0 +1,9 @@
+# Jobs that must be green on a pull request head before it merges. The lane sentry
+# (tests/sentry/tooling/test_ci_lanes.py) checks every entry against the workflows. Same format as
+# the engine's ci/required-jobs.toml. The reported tier is not listed: it is every scheduled job
+# outside the merge tier, derived from the workflows (today the release-smoke drift canary).
+schema = 1
+
+[[merge]]
+workflow = "ci.yml"
+jobs = ["ruff", "pytest", "layers-gate", "fresh-install-smoke", "ci-template-lint", "certified-profile"]

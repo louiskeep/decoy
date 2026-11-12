@@ -8,6 +8,7 @@ through `if __name__ == "__main__":`.
 import copy
 import errno
 import os
+from pathlib import Path
 from typing import Any
 
 import typer
@@ -222,6 +223,14 @@ def _root(
         False,
         "--no-update-check",
         help="Suppress the 'new version available' startup notice.",
+    ),
+    project: Path | None = typer.Option(
+        None,
+        "--project",
+        help=(
+            "Project folder for pipeline names (default: DECOY_PROJECT, else the nearest "
+            "decoy.yaml above the current folder)."
+        ),
     ),
 ) -> None:
     """Decoy CLI."""

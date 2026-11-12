@@ -5,8 +5,10 @@ retention yet: L4b's prune and L5b's log rotation read it. The file is per machi
 project, so it is not part of the pipeline YAML (which the platform compiles) and is YAML, not
 TOML, because Python 3.10 has no `tomllib`.
 
-The file is read through `decoy.cli.io.read_small_file` (a regular file only, no links, pipes or
-devices; 64 KiB at most) and parsed with `yaml.safe_load`, as the project marker is. Every
+The file is read through `decoy.cli.io.read_owned_yaml`, the project marker's own reader (a
+regular file only, no links, pipes or devices; 64 KiB at most; owned by the current user, the git
+`safe.directory` rule; `yaml.safe_load`). A file another user owns is `library_policy_untrusted`.
+Every
 model is `extra="forbid"` with strict types, so a typo or `"30"` for a number is refused. A bad
 file is `library_policy_invalid` carrying the failing field locations only: the YAML parser's
 message and pydantic's input both hold the file's text, so neither is kept or chained. The
@@ -20,7 +22,6 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Annotated, Any, Literal, cast
 
-import yaml
 from decoy_engine import records
 from decoy_engine.safe_output import validation_problems
 from pydantic import (
@@ -32,8 +33,12 @@ from pydantic import (
     model_validator,
 )
 
-from decoy.cli.io import UnsafeFileError, read_small_file
-from decoy.cli.library._errors import LIBRARY_POLICY_INVALID, LibraryError
+from decoy.cli.io import OwnedYamlError, read_owned_yaml
+from decoy.cli.library._errors import (
+    LIBRARY_POLICY_INVALID,
+    LIBRARY_POLICY_UNTRUSTED,
+    LibraryError,
+)
 from decoy.cli.library._paths import POLICY_FILE
 
 __all__ = [
@@ -115,24 +120,22 @@ class LibraryPolicy(_Strict):
 
 def load_policy(root: Path) -> LibraryPolicy:
     """The policy in `<root>/library.yaml`, or the defaults when there is none. Raises
-    `LibraryError` (`library_policy_invalid`)."""
-    unsafe = False
+    `LibraryError` (`library_policy_invalid`, or `library_policy_untrusted` for a file another
+    user owns)."""
+    reason: str | None = None
     found = None
     try:
-        found = read_small_file(root / POLICY_FILE, MAX_POLICY_BYTES + 1)
-    except UnsafeFileError:
-        unsafe = True
-    if unsafe or (found is not None and found.size > MAX_POLICY_BYTES):
+        found = read_owned_yaml(root / POLICY_FILE, MAX_POLICY_BYTES)
+    except OwnedYamlError as exc:
+        reason = exc.reason
+    if reason == "untrusted":
+        raise LibraryError(LIBRARY_POLICY_UNTRUSTED)
+    if reason is not None:
         raise LibraryError(LIBRARY_POLICY_INVALID)
     if found is None:
         return LibraryPolicy()
-    parsed: object = None
-    broken = False
-    try:
-        parsed = yaml.safe_load(found.data)
-    except (yaml.YAMLError, UnicodeDecodeError, RecursionError):
-        broken = True
-    if broken or not (parsed is None or isinstance(parsed, dict)):
+    parsed = found.parsed
+    if not (parsed is None or isinstance(parsed, dict)):
         raise LibraryError(LIBRARY_POLICY_INVALID)
     fields: tuple[str, ...] = ()
     try:
