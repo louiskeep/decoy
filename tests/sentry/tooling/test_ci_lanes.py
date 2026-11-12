@@ -127,6 +127,8 @@ def test_unreadable_expression_is_no_lane() -> None:
     [
         "pytest -m x tests/unit",
         "python -m pytest -mx tests/unit",
+        "pytest -qm x tests/unit",
+        "pytest -xvmx tests/unit",
         "uv run --frozen pytest -m y -m x tests/unit",
         'bash -c "pytest -m x tests/unit"',
         "FOO=1 pytest tests/unit \\\n  -m x --tb=short",
@@ -211,7 +213,7 @@ def test_other_exclusions_must_run_in_another_job(extra: str) -> None:
     assert has(lanes.findings(t), "runs in no other job"), extra
 
 
-@pytest.mark.parametrize("extra", ["-k smoke", "-ksmoke"])
+@pytest.mark.parametrize("extra", ["-k smoke", "-ksmoke", "-qk smoke", "-qksmoke", "-xvk smoke"])
 def test_name_filter_fails_closed(extra: str) -> None:
     t = seeded()
     (step,) = [s for s in job(t, "ci.yml", "pytest")["steps"] if "tests/e2e" in s.get("run", "")]
