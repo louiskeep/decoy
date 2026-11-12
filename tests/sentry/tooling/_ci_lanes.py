@@ -11,10 +11,14 @@ Deliberate differences from the engine copy, for engine CI-E2b to fold back:
 - R2 allows one templated job name: a matrix over exactly `python`, equal to
   `SUPPORTED_MINORS` in scripts/dev/lock_version.sh (`Tree.minors`), and named
   `<key> (py${{ matrix.python }})`.
-- T2 skips a workflow listed in `[[path_filter]]` of ci/unlaned.toml (file plus reason).
+- T2 skips a workflow listed in `[[path_filter]]` of ci/unlaned.toml (file plus reason), and an
+  entry whose workflow has no path filter left is a finding.
+- `load` reads `*.yaml` workflows as well as `*.yml`.
 - P1 (CLI only): the paths of the automatic pytest lanes cover every folder under `testpaths`
-  that holds tests, and each `--ignore` names a file that another automatic job runs, either as
-  a pytest path or inside a repository script that job calls.
+  that holds tests, and each `--ignore`, `--ignore-glob` or `--deselect` names a path that
+  another automatic job runs, either as a pytest path or inside a repository script that job
+  calls (a script clears only a `.py` file). A glob is compared as plain text, so a wildcard
+  exclusion is a finding (fails closed).
 - C1 (CLI only): each install-policy drift canary is a scheduled job that is not in the merge
   tier, listed exactly once in the reported view, with a reason.
 - No registered markers is allowed (`markers` and `addopts` may be absent from pyproject).
@@ -57,6 +61,7 @@ _VALUE_OPTS = {
     "-k", "-p", "-n", "-c", "-W", "--tb", "--junitxml", "--durations", "--ignore", "--ignore-glob",
     "--deselect", "--maxfail", "--rootdir", "--basetemp", "--timeout", "--cov",
 }  # fmt: skip
+_EXCLUDE = {"--ignore", "--ignore-glob", "--deselect"}
 _ENV_ASSIGN = re.compile(r"[A-Za-z_][A-Za-z0-9_]*=.*", re.S)
 _PYTHON = re.compile(r"python[0-9.]*")
 _MINORS = re.compile(r'^SUPPORTED_MINORS="([^"]*)"', re.M)
@@ -89,7 +94,8 @@ class Lane(NamedTuple):
     whole_suite: bool
     bad: bool  # the expression is outside the grammar
     paths: tuple[str, ...]  # positional test paths; empty means the default testpaths
-    ignores: tuple[str, ...]  # --ignore values
+    # (option, value) of each --ignore, --ignore-glob and --deselect
+    ignores: tuple[tuple[str, str], ...]
 
 
 def _test_dirs(root: Path, testpaths: list[str]) -> list[str]:
@@ -104,7 +110,8 @@ def _test_dirs(root: Path, testpaths: list[str]) -> list[str]:
 def load(root: Path = ROOT) -> Tree:
     flows = {
         p.name: yaml.safe_load(p.read_text())
-        for p in sorted((root / ".github/workflows").glob("*.yml"))
+        for p in sorted((root / ".github/workflows").iterdir())
+        if p.suffix in (".yml", ".yaml")
     }
     named = {
         tok
@@ -212,9 +219,14 @@ def _pytest_args(cmd: list[str]) -> list[str] | None:
 
 def _read_args(
     args: list[str], default: str | None
-) -> tuple[str | None, bool, bool, tuple[str, ...], tuple[str, ...]]:
-    """(expression, whole_suite, bad, paths, ignores) of one pytest command; the last -m wins."""
-    expr, has_m, bad, paths, ignores, i = default, False, False, [], [], 0
+) -> tuple[str | None, bool, bool, tuple[str, ...], tuple[tuple[str, str], ...]]:
+    """(expression, whole_suite, bad, paths, exclusions) of one pytest command; the last -m wins.
+
+    Every exclusion option counts, globs included: P1 fails closed on one no other job runs.
+    """
+    expr, has_m, bad, i = default, False, False, 0
+    paths: list[str] = []
+    ignores: list[tuple[str, str]] = []
     while i < len(args):
         tok = args[i]
         if tok == "-m":
@@ -226,12 +238,13 @@ def _read_args(
                 rest = args[i + 1].removeprefix("addopts=").strip("\"'")
                 expr, bad = (None, bad) if not rest else (rest, True)
             i += 2
-        elif tok.startswith("--ignore="):
-            ignores.append(tok.split("=", 1)[1])
+        elif tok.split("=", 1)[0] in _EXCLUDE and "=" in tok:
+            opt, value = tok.split("=", 1)
+            ignores.append((opt, value))
             i += 1
         elif tok in _VALUE_OPTS:
-            if tok == "--ignore" and i + 1 < len(args):
-                ignores.append(args[i + 1])
+            if tok in _EXCLUDE and i + 1 < len(args):
+                ignores.append((tok, args[i + 1]))
             i += 2
         elif tok.startswith("-"):
             i += 1
@@ -300,7 +313,7 @@ def _covered(path: str, roots: list[str]) -> bool:
 
 
 def path_findings(tree: Tree) -> list[str]:
-    """P1: the automatic pytest lanes reach every test folder; each --ignore runs elsewhere."""
+    """P1: the automatic pytest lanes reach every test folder; each exclusion runs elsewhere."""
     auto = [ln for ln in lanes(tree) if ln.events and not ln.bad]
     roots = [p for ln in auto for p in (ln.paths or ("tests",))]
     out = [
@@ -310,10 +323,12 @@ def path_findings(tree: Tree) -> list[str]:
     ]
     for ln in auto:
         others = [o for o in auto if o[:2] != ln[:2]]
-        for ign in ln.ignores:
+        for opt, ign in ln.ignores:
             as_path = any(_covered(ign, list(o.paths)) for o in others)
-            if not (as_path or _script_runs(tree, ln, ign)):
-                out.append(f"P1 {ln.workflow}:{ln.job}: --ignore {ign} runs in no other job")
+            # A script names its test files; a folder in its text is no proof that it runs there.
+            by_script = ign.split("::")[0].endswith(".py") and _script_runs(tree, ln, ign)
+            if not (as_path or by_script):
+                out.append(f"P1 {ln.workflow}:{ln.job}: {opt} {ign} runs in no other job")
     return out
 
 
@@ -474,10 +489,14 @@ def trigger_findings(tree: Tree) -> list[str]:
         if auto and name in unlaned:
             out.append(f"T1 {name}: has an automatic trigger but is still in ci/unlaned.toml")
         on = _on(doc)
+        has_filter = False
         for event, spec in on.items() if isinstance(on, dict) else []:
             if isinstance(spec, dict) and {"paths", "paths-ignore"} & set(spec):
+                has_filter = True
                 if name not in filtered:
                     out.append(f"T2 {name}: path filter on {event}")
+        if name in filtered and not has_filter:
+            out.append(f"T2 path_filter workflow {name!r} has no path filter")
         out += [
             f"T3 {name}:{k}: no timeout-minutes"
             for k, j in doc["jobs"].items()
