@@ -43,6 +43,59 @@ _PATH_CLASSES = {"Path", "PosixPath", "WindowsPath"}
 _PATH_ALWAYS = {"rename", "hardlink_to", "link_to"}
 
 
+def realpath_sites(source: str) -> list[tuple[str, int]]:
+    """Return the enclosing function and line for normalized os.path.realpath calls."""
+    tree = ast.parse(source)
+    parents = {child: node for node in ast.walk(tree) for child in ast.iter_child_nodes(node)}
+    os_modules: set[str] = set()
+    path_modules: set[str] = set()
+    members: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                if alias.name == "os":
+                    os_modules.add(alias.asname or "os")
+                elif alias.name == "os.path":
+                    (path_modules if alias.asname else os_modules).add(alias.asname or "os")
+        elif isinstance(node, ast.ImportFrom) and node.module == "os":
+            path_modules |= {
+                alias.asname or alias.name for alias in node.names if alias.name == "path"
+            }
+        elif isinstance(node, ast.ImportFrom) and node.module == "os.path":
+            members |= {
+                alias.asname or alias.name for alias in node.names if alias.name == "realpath"
+            }
+    found: list[tuple[str, int]] = []
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        func = node.func
+        direct = isinstance(func, ast.Name) and func.id in members
+        path_alias = (
+            isinstance(func, ast.Attribute)
+            and func.attr == "realpath"
+            and isinstance(func.value, ast.Name)
+            and func.value.id in path_modules
+        )
+        os_path = (
+            isinstance(func, ast.Attribute)
+            and func.attr == "realpath"
+            and isinstance(func.value, ast.Attribute)
+            and func.value.attr == "path"
+            and isinstance(func.value.value, ast.Name)
+            and func.value.value.id in os_modules
+        )
+        if not (direct or path_alias or os_path):
+            continue
+        parent = parents.get(node)
+        while parent is not None and not isinstance(
+            parent, (ast.FunctionDef, ast.AsyncFunctionDef)
+        ):
+            parent = parents.get(parent)
+        found.append((parent.name if parent is not None else "<module>", node.lineno))
+    return found
+
+
 @dataclass(frozen=True)
 class AllowedInline:
     file: str  # relative to src/decoy
@@ -184,6 +237,31 @@ def test_baseline_json_records_the_same_sites_and_reasons() -> None:
 def test_choke_point_exists_and_is_excluded() -> None:
     assert (SRC / CHOKE_POINT).is_file()
     assert CHOKE_POINT not in scan(SRC)
+
+
+def test_output_realpath_calls_stay_in_the_destination_identity_choke_point() -> None:
+    seeded = (
+        "import os as operating\nimport os.path as osp\n"
+        "from os import path as pathmod\nfrom os.path import realpath as resolve\n"
+        "def sites(p):\n return (operating.path.realpath(p), osp.realpath(p), "
+        "pathmod.realpath(p), resolve(p))\n"
+    )
+    assert [name for name, _line in realpath_sites(seeded)] == ["sites"] * 4
+    allowed = {
+        ("_atomic.py", "destination_entry"),
+        ("cli/io/_placement.py", "_destination_key"),
+    }
+    found: set[tuple[str, str]] = set()
+    roots = (SRC / "_atomic.py", SRC / "cli" / "io", SRC / "cli" / "run")
+    for root in roots:
+        paths = [root] if root.is_file() else sorted(root.rglob("*.py"))
+        for path in paths:
+            rel = path.relative_to(SRC).as_posix()
+            found |= {
+                (rel, function)
+                for function, _line in realpath_sites(path.read_text(encoding="utf-8"))
+            }
+    assert found == allowed
 
 
 def test_seeded_inline_copy_is_red(tmp_path: Path) -> None:

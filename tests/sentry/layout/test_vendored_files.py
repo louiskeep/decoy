@@ -1,7 +1,7 @@
 """Sentry: the two layout helpers vendored from the engine are pinned by digest.
 
 ``_layout.py`` and ``_ratchet_cases.py`` are byte-for-byte copies of the engine's files at
-LAYOUT E2 commit ``66d0f879174c6d3e54282645dc3bbc8da2f33b7f``. ``PINS`` holds the same digests
+engine main commit ``426e6d057e6c087c902d814bd580a4976d789f77`` (first vendored at LAYOUT E2). ``PINS`` holds the same digests
 as the engine's own ``test_vendored_files.py``, and the ``ci/vendored.toml`` rows for both files
 must agree with them, so the cross-repository byte check in ``test_ci_lock_installs.py`` covers
 them too. Changing a helper means landing it in the engine first, then re-vendoring here and
@@ -21,7 +21,7 @@ else:
 
 LAYOUT = Path(__file__).resolve().parent
 ROOT = LAYOUT.parents[2]
-ENGINE_COMMIT = "66d0f879174c6d3e54282645dc3bbc8da2f33b7f"
+ENGINE_COMMIT = "426e6d057e6c087c902d814bd580a4976d789f77"
 
 PINS: dict[str, str] = {
     "_layout.py": "090676684a73bc90bb73240b1a3909434cd15ed8348c15bc365b7d764d94e96c",

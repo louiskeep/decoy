@@ -33,10 +33,12 @@ from pydantic import (
 from pydantic_core import PydanticCustomError
 
 from decoy.ci import CI_MANIFEST_VERSION, CI_REPORT_VERSION
+from decoy.cli import exit_codes
 from decoy.cli.exit_codes import (
     EXIT_CAPACITY,
     EXIT_FINDINGS,
     EXIT_OK,
+    EXIT_PARTIAL,
     EXIT_RUNTIME,
     EXIT_USAGE,
     EXIT_WARNINGS,
@@ -116,14 +118,17 @@ CHECK_STATUSES: frozenset[str] = frozenset(
     {"ok", "noop", "findings", "partial", "refused", "failed"}
 )
 LEVELS: frozenset[str] = frozenset({"error", "warning", "note"})
+# Derived from the public constants, so a new exit code cannot be left out here.
 EXIT_CODES: frozenset[int] = frozenset(
-    {EXIT_OK, EXIT_USAGE, EXIT_WARNINGS, EXIT_RUNTIME, EXIT_FINDINGS, EXIT_CAPACITY}
+    getattr(exit_codes, name) for name in exit_codes.__all__ if name.startswith("EXIT_")
 )
-# Highest precedence first: capacity > runtime > invalid/refused > findings > warnings > ok.
+# Highest precedence first: capacity > runtime > invalid/refused > partial > findings >
+# warnings > ok.
 EXIT_PRECEDENCE: tuple[int, ...] = (
     EXIT_CAPACITY,
     EXIT_RUNTIME,
     EXIT_USAGE,
+    EXIT_PARTIAL,
     EXIT_FINDINGS,
     EXIT_WARNINGS,
     EXIT_OK,

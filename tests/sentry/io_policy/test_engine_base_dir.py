@@ -11,6 +11,11 @@ scanner resolves (direct import, module alias, `from` alias, an imported submodu
 fails on one that lacks a `base_dir=` keyword. A positional `base_dir` does not count, so a
 positional argument can never hide a missing keyword. Named limits are the shared scanner's: a
 call through a runtime-bound name, an alias by assignment, `from x import *`.
+
+The same walk also guards the quarantine path. A `run_pipeline` call that omits `quarantine_path=`,
+or hides it in `**kwargs`, can write a quarantine file at a place the run layout never saw. Each call
+passes it as a direct `place_quarantine(...)` call; the one preview call, which has no layout and
+writes nothing, passes the literal `None`.
 """
 
 from __future__ import annotations
@@ -169,3 +174,98 @@ def test_a_raw_config_to_a_source_reader_is_seen() -> None:
     )
     assert len(raw_config_calls(raw)) == 1
     assert raw_config_calls(ok) == []
+
+
+# The one call that has no layout: the `--rows` preview. `refuse_preview` rejects an enabled
+# quarantine before it, so it passes the literal `None`.
+QUARANTINE_NONE_SITES = frozenset({("cli/run/_execute.py", "execute_preview")})
+
+
+def _is_engine_run_pipeline(package: str, name: str) -> bool:
+    return package.split(".")[0] == "decoy_engine" and name == "run_pipeline"
+
+
+def quarantine_issues(source: str, rel: str) -> list[tuple[int, str, str]]:
+    """Return (line, scope, problem) for each `run_pipeline` call whose `quarantine_path=` is wrong."""
+    issues = []
+    for call, scope, _names in call_contexts(
+        source, qualified_match=_is_engine_run_pipeline, with_calls=frozenset()
+    ):
+        values = [kw.value for kw in call.keywords if kw.arg == "quarantine_path"]
+        if not values:
+            issues.append((call.lineno, scope, "no quarantine_path= keyword"))
+            continue
+        value = values[0]
+        if (rel, scope) in QUARANTINE_NONE_SITES:
+            if not (isinstance(value, ast.Constant) and value.value is None):
+                issues.append((call.lineno, scope, "the preview call must pass literal None"))
+        elif not (
+            isinstance(value, ast.Call)
+            and isinstance(value.func, ast.Attribute)
+            and value.func.attr == "place_quarantine"
+        ):
+            issues.append((call.lineno, scope, "not a direct place_quarantine(...) call"))
+    return issues
+
+
+def test_every_run_pipeline_call_passes_an_explicit_quarantine_path() -> None:
+    bad = []
+    for path in sorted(SRC.rglob("*.py")):
+        rel = path.relative_to(SRC).as_posix()
+        bad += [(rel, *i) for i in quarantine_issues(path.read_text(encoding="utf-8"), rel)]
+    assert not bad, f"run_pipeline quarantine_path= is not explicit: {bad}"
+
+
+def test_the_quarantine_rule_covers_the_four_calls() -> None:
+    sites = set()
+    for path in sorted(SRC.rglob("*.py")):
+        rel = path.relative_to(SRC).as_posix()
+        for _call, scope, _names in call_contexts(
+            path.read_text(encoding="utf-8"),
+            qualified_match=_is_engine_run_pipeline,
+            with_calls=frozenset(),
+        ):
+            sites.add((rel, scope))
+    assert sites == {
+        ("api.py", "mask"),
+        ("cli/run/_execute.py", "execute"),
+        ("cli/run/_execute.py", "execute_preview"),
+        ("cli/tokenize.py", "tokenize"),
+    }
+    assert QUARANTINE_NONE_SITES <= sites
+
+
+_QP = "from decoy_engine import run_pipeline\ndef {scope}(layout, c, s, kw, q):\n    return run_pipeline(c, s, {args})\n"
+_PREVIEW = ("cli/run/_execute.py", "execute_preview")
+_WRITER = ("cli/tokenize.py", "tokenize")
+
+QUARANTINE_CASES = {
+    "direct call": (_WRITER, "quarantine_path=layout.place_quarantine(c)", True),
+    "kwargs only": (_WRITER, "**kw", False),
+    "no keyword": (_WRITER, "engine_version='1'", False),
+    "forwarded local": (_WRITER, "quarantine_path=q", False),
+    "none in a writing route": (_WRITER, "quarantine_path=None", False),
+    "literal none at the preview": (_PREVIEW, "quarantine_path=None", True),
+    "placed value at the preview": (_PREVIEW, "quarantine_path=layout.place_quarantine(c)", False),
+    "kwargs only at the preview": (_PREVIEW, "**kw", False),
+    "none in another scope of the preview file": (
+        ("cli/run/_execute.py", "execute"),
+        "quarantine_path=None",
+        False,
+    ),
+}
+
+
+@pytest.mark.parametrize("name", sorted(QUARANTINE_CASES))
+def test_the_quarantine_rule_accepts_and_rejects_each_spelling(name: str) -> None:
+    (rel, scope), args, ok = QUARANTINE_CASES[name]
+    src = _QP.format(scope=scope, args=args)
+    assert (quarantine_issues(src, rel) == []) is ok
+
+
+def test_the_quarantine_rule_sees_an_aliased_run_pipeline() -> None:
+    src = (
+        "import decoy_engine as de\n"
+        "def tokenize(c, s):\n    return de.run_pipeline(c, s, engine_version='1')\n"
+    )
+    assert len(quarantine_issues(src, "cli/tokenize.py")) == 1

@@ -5,8 +5,9 @@ folder is never re-permissioned, the token-vault rule). Files come from `decoy._
 `write_atomic(..., tmp_dir=library/tmp)` for records and `LAYOUT` (temp 0600 on the same volume,
 fsync, no-clobber link, directory fsync; plan 4.9) and for refs (`REPLACE`, with `_atomic`'s
 Windows retry), and `write_local_target` for the dot-named git file, whose leading `.` the
-record-name allowlist refuses. Nothing here calls `os.replace`,
-`mkstemp` or `chmod` itself (G-ONE-ATOMIC-WRITER, G-ONE-PRIVATE-FILE).
+record-name allowlist refuses. Nothing here calls `os.replace`, `mkstemp` or `chmod` itself
+(G-ONE-ATOMIC-WRITER, G-ONE-PRIVATE-FILE). Reads go through the CLI's one small-file reader,
+`decoy.cli.io.read_small_file`, with a cap per file kind.
 
 Every failure leaves as `LibraryError` with `library_write_failed`, `library_read_failed` or
 `library_busy` and the error class, raised after the `except` block so no path text is chained.
@@ -14,20 +15,27 @@ Every failure leaves as `LibraryError` with `library_write_failed`, `library_rea
 
 from __future__ import annotations
 
-import errno
 from pathlib import Path
 
-from decoy import _private_file
-from decoy._atomic import AtomicWriteError, WriteMode, write_atomic, write_local_target
+from decoy._atomic import (
+    ATOMIC_TARGET_BUSY,
+    AtomicWriteError,
+    WriteMode,
+    write_atomic,
+    write_local_target,
+)
 from decoy._private_file import PRIVATE_EXISTS, PrivateFileError, create_private_directory
+from decoy.cli.io import UnsafeFileError, read_small_file
 from decoy.cli.library._errors import (
     LIBRARY_BUSY,
+    LIBRARY_FILE_TOO_LARGE,
     LIBRARY_READ_FAILED,
     LIBRARY_WRITE_FAILED,
+    LibraryError,
     library_error,
 )
 
-__all__ = ["ensure_private_dir", "read_file", "replace_file", "write_dotfile_once", "write_once"]
+__all__ = ["ensure_private_dir", "read_capped", "replace_file", "write_dotfile_once", "write_once"]
 
 
 def ensure_private_dir(path: Path) -> None:
@@ -57,7 +65,8 @@ def replace_file(directory: Path, name: str, data: bytes, *, tmp_dir: Path) -> N
     """Replace `directory/name` with `data` in one step (refs, plan 4.9 `REPLACE`).
 
     On Windows a target another program holds open is retried by `_atomic` (bounded backoff,
-    about one second); still held after that, it is `library_busy`.
+    about one second); still held after that, the writer says `atomic_target_busy` and this is
+    `library_busy`. Every other failure, an ACL deny included, is `library_write_failed`.
     """
     _write(directory, name, data, WriteMode.REPLACE, tmp_dir=tmp_dir)
 
@@ -71,11 +80,8 @@ def _write(directory: Path, name: str, data: bytes, mode: WriteMode, *, tmp_dir:
         failure = exc
     if failure is None:
         return created
-    # `_atomic` retried a held-open target on Windows only; what is left is a busy target.
-    held = _private_file._WINDOWS and failure.errno in (errno.EACCES, errno.EPERM)
-    if mode is WriteMode.REPLACE and held:
-        raise library_error(LIBRARY_BUSY, failure)
-    raise library_error(LIBRARY_WRITE_FAILED, failure)
+    code = LIBRARY_BUSY if failure.code == ATOMIC_TARGET_BUSY else LIBRARY_WRITE_FAILED
+    raise library_error(code, failure)
 
 
 def write_dotfile_once(path: Path, data: bytes) -> bool:
@@ -91,16 +97,26 @@ def write_dotfile_once(path: Path, data: bytes) -> bool:
     return created
 
 
-def read_file(path: Path) -> bytes | None:
-    """The bytes of `path`, or None when it does not exist."""
-    failure: OSError | None = None
-    data: bytes | None = None
+def read_capped(path: Path, max_bytes: int) -> bytes | None:
+    """The bytes of the plain regular file at `path`, or None when nothing is there.
+
+    The read goes through the CLI's one small-file reader (`decoy.cli.io.read_small_file`), so a
+    symlink, FIFO, device or a file swapped between check and open is refused and never followed
+    or waited on (`library_read_failed`). A file over `max_bytes` is refused unread past the cap
+    (`library_file_too_large`); a file whose length changed during the read is refused too.
+    """
+    failure: UnsafeFileError | None = None
+    found = None
     try:
-        data = path.read_bytes()
-    except FileNotFoundError:
-        return None
-    except OSError as exc:
+        found = read_small_file(path, max_bytes + 1)
+    except UnsafeFileError as exc:
         failure = exc
     if failure is not None:
         raise library_error(LIBRARY_READ_FAILED, failure)
-    return data
+    if found is None:
+        return None
+    if found.size > max_bytes or len(found.data) > max_bytes:
+        raise LibraryError(LIBRARY_FILE_TOO_LARGE)
+    if len(found.data) != found.size:
+        raise LibraryError(LIBRARY_READ_FAILED)
+    return found.data

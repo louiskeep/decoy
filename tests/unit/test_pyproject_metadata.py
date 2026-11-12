@@ -113,3 +113,18 @@ def test_engine_dependency_pinned() -> None:
         f"decoy-engine must be pinned exactly ==0.22.0 (engine release 0.22.0); "
         f"got specifier {str(req.specifier)!r}"
     )
+
+
+ROOT = PYPROJECT.parent
+
+
+def test_license_contract_is_fsl_with_both_files_shipped() -> None:
+    """One guard for the license contract: SPDX id, the two files the wheel and sdist carry,
+    and the license text naming the same id. A drift in any one breaks the legal metadata."""
+    project = _load()["project"]
+    assert project["license"] == "FSL-1.1-ALv2"
+    assert project["license-files"] == ["LICENSE.md", "NOTICE"]
+    for name in project["license-files"]:
+        assert (ROOT / name).is_file(), f"{name} is listed in license-files but missing"
+    first_lines = (ROOT / "LICENSE.md").read_text(encoding="utf-8").splitlines()[:8]
+    assert any("FSL-1.1-ALv2" in line for line in first_lines)

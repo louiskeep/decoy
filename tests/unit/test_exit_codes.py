@@ -35,7 +35,8 @@ def test_named_constants_have_pinned_integer_values() -> None:
     assert exit_codes.EXIT_RUNTIME == 3
     assert exit_codes.EXIT_FINDINGS == 4
     assert exit_codes.EXIT_CAPACITY == 5
-    # __all__ covers exactly the six public names; any rename of an
+    assert exit_codes.EXIT_PARTIAL == 6
+    # __all__ covers exactly the public names; any rename of an
     # existing constant or addition of a new public symbol must update
     # __all__ deliberately rather than slip through.
     assert set(exit_codes.__all__) == {
@@ -45,6 +46,8 @@ def test_named_constants_have_pinned_integer_values() -> None:
         "EXIT_RUNTIME",
         "EXIT_FINDINGS",
         "EXIT_CAPACITY",
+        "EXIT_PARTIAL",
+        "RUN_EXIT_MAP",
     }
 
 

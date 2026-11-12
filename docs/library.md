@@ -74,6 +74,11 @@ of a kind this Decoy does not know is returned as an opaque record (kind, id, ti
 links, payload unread); one written under a newer payload or envelope version is reported as
 needing a newer Decoy.
 
+Every library file is read through the CLI's one small-file reader (`decoy.cli.io.read_small_file`).
+A symlink, FIFO, device or a file swapped between the check and the open is refused with
+`library_read_failed` and never followed or waited on. A record file over 16 MiB is refused with
+`library_file_too_large`, and a record that large is never written.
+
 Errors name a code and an error class, never a path.
 
 ## Refs
@@ -81,15 +86,18 @@ Errors name a code and an error class, never a path.
 A ref is a name for a record: `library/refs/<kind>/<name>` holds one record id. The kind is a
 record kind Decoy knows (`scan-set`, `evidence`, ...). A name is 1 to 64 characters of lower-case
 letters, digits, `.`, `_` and `-`, starting with a letter or digit; one `/` is allowed for a
-pipeline scope (`claims/baseline`). Anything else is refused with `ref_name_invalid`. A ref can
-only point at a stored record (`record_not_found` otherwise).
+pipeline scope (`claims/baseline`). Anything else is refused with `ref_name_invalid`. The one-part
+name `baseline` is refused with `ref_name_reserved`: it is the scope of `scan-set/baseline/<slug>`.
+A ref can only point at a stored record (`record_not_found` otherwise). A ref file is read through
+the same safe reader as records, capped at 128 bytes.
 
 Moving a ref takes the library lock, a SQLite lock on `library/index.sqlite`, which works the
 same on Linux, macOS and Windows. A second process that wants to move a ref waits up to 5
 seconds and then fails with `library_busy`; it never overwrites silently. If the lock cannot be
 taken at all (the file cannot be opened), the update fails with `library_lock_unavailable`. On
 Windows, a ref file another program holds open is retried for about a second, then
-`library_busy`. Record writes never take the lock.
+`library_busy`; any other write failure, a permission denial included, is `library_write_failed`.
+Record writes never take the lock.
 
 The newest record of a kind (`latest`) is computed from the index, not stored as a ref: the
 record with the largest creation time (then id), optionally for one pipeline or table.
@@ -101,7 +109,11 @@ listing never opens a record file. It is a cache: the object files are the truth
 
 - Every open compares the index with the object file names (no file is read) and catches up:
   records added by hand or by `git pull`, records whose writer crashed before indexing them, and
-  files deleted by hand. A missing, corrupt or older-version index is rebuilt from the files.
+  files deleted by hand. A missing, corrupt or older-version index, or one with a table
+  missing, is rebuilt from the files. A corrupt index is emptied in place, never replaced, so
+  the library lock (held on that file) stays one lock for every process.
+- If the index fails while it is being updated (a full disk, a corrupt page), writing the record
+  still succeeds and listings read the record files; the next open catches the index up.
 - A record of a kind this Decoy does not know is indexed and listed as unknown; it never stops
   the listing.
 - If the index cannot be locked, or the library is on a network filesystem (NFS, SMB/CIFS, AFS,
@@ -125,7 +137,9 @@ retention:
 
 Keys you leave out keep their defaults. An unknown key, a kind Decoy does not know, a number
 written as text, or a count below 1 makes the file invalid (`library_policy_invalid`, naming the
-field, never its value). Nothing applies the policy yet: prune and log rotation arrive later.
+field, never its value). The file is read like the project marker: a regular file of at most
+64 KiB, owned by you; one another user owns is refused with `library_policy_untrusted`. Nothing
+applies the policy yet: prune and log rotation arrive later.
 
 ## Commands
 

@@ -540,7 +540,8 @@ def test_a_second_yaml_declaring_a_claimed_name_exits_1_before_any_write(tmp_pat
     second = _write(root, "old/b.yaml", _config(root, name="orders"))
     assert _run(first).exit_code == 0
     before = _runs(root, "orders")
-    result = _run(second)
+    # The gate finds the claim (read only) before the run opens a folder (P4).
+    result = _run(second, "--json")
     assert result.exit_code == 1, result.output
     assert "layout.pipeline_name_collision" in result.output
     assert _runs(root, "orders") == before
@@ -563,7 +564,7 @@ def test_a_pipelines_folder_name_is_taken_even_before_its_first_run(tmp_path: Pa
     assert not (root / "out" / "orders").exists()
     assert any(p.name.startswith("orders-") for p in (root / "out").iterdir())
     declared = _write(root, "jobs/other.yaml", _config(root, name="orders"))
-    result = _run(declared)
+    result = _run(declared, "--json")
     assert result.exit_code == 1 and "layout.pipeline_name_collision" in result.output
 
 
@@ -673,12 +674,14 @@ def test_an_absolute_quarantine_path_is_honored(tmp_path: Path, monkeypatch) -> 
     assert seen[0]["quarantine_path"] == str(tmp_path / "abs-q.jsonl")
 
 
-def test_a_config_without_quarantine_passes_no_quarantine_path(tmp_path: Path, monkeypatch) -> None:
+def test_a_config_without_quarantine_passes_a_none_quarantine_path(
+    tmp_path: Path, monkeypatch
+) -> None:
     root = _project(tmp_path)
     cfg = _write(root, "pipelines/orders/pipeline.yaml", _config(root))
     seen = _spy_run_pipeline(monkeypatch)
     assert _run(cfg).exit_code == 0
-    assert "quarantine_path" not in seen[0]
+    assert seen[0]["quarantine_path"] is None
 
 
 def test_the_yaml_file_is_untouched_by_a_run(tmp_path: Path) -> None:
