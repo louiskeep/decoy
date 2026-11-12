@@ -28,6 +28,7 @@ from decoy.cli.io._layout import (
     contained_path,
     create_run_folder,
     has_placed_output,
+    is_absolute_local,
     is_placed_relative,
     is_run_id,
     mint_invocation_id,
@@ -39,6 +40,7 @@ from decoy.cli.io._layout import (
     read_claim,
     relative_outputs,
     shown_path,
+    target_parent_writable,
     write_claim,
 )
 from decoy.cli.io._layout_errors import (
@@ -111,6 +113,7 @@ __all__ = [
     "format_for_path",
     "has_placed_output",
     "input_format",
+    "is_absolute_local",
     "is_placed_relative",
     "is_run_id",
     "iter_source_chunks",
@@ -137,6 +140,7 @@ __all__ = [
     "shown_path",
     "table_records",
     "target_format_issues",
+    "target_parent_writable",
     "write_chunked_output",
     "write_claim",
     "write_private_table",

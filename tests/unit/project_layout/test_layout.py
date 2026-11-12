@@ -30,6 +30,7 @@ from decoy.cli.io import (
     contained_path,
     create_run_folder,
     has_placed_output,
+    is_absolute_local,
     is_placed_relative,
     is_run_id,
     layout_issues,
@@ -39,6 +40,7 @@ from decoy.cli.io import (
     prepare_out,
     read_claim,
     relative_outputs,
+    target_parent_writable,
     write_claim,
     write_targets,
 )
@@ -110,7 +112,7 @@ def test_every_output_consumer_agrees_with_the_one_enumerator(
     assert bool(layout_issues(config_path, config)) is issue
 
     acc = preflight._PreflightAccumulator()
-    preflight._check_target_overwrite(config, acc)
+    preflight._check_target_overwrite(config, acc, root)
     # Only the absolute row is advisory-checked; relative rows land in a new run folder.
     assert bool(acc.checks) is (entry.get("path") == absolute)
 
@@ -504,6 +506,13 @@ def test_the_same_path_passes_on_posix(root: Path, monkeypatch: pytest.MonkeyPat
     check_path_budget(folder, _rel_for(folder, 400))
 
 
+def test_target_with_no_existing_ancestor_is_not_writable(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(Path, "exists", lambda _path: False)
+    assert not target_parent_writable(Path("missing/target.csv"))
+
+
 @posix_only
 def test_a_fifo_at_the_claim_path_is_no_claim_and_does_not_block(root: Path) -> None:
     import threading
@@ -551,3 +560,23 @@ def test_a_symlinked_claim_is_no_claim_and_is_not_read_through(
     thread.join(10)
     assert not thread.is_alive(), "reading the claim followed the link"
     assert result == [None]
+
+
+@pytest.mark.parametrize(
+    ("raw", "absolute"),
+    [
+        (str(Path("/data/out.csv").resolve()), True),
+        ("out.csv", False),
+        ("sub/out.csv", False),
+        ("~/out.csv", False),
+        ("", False),
+        ("s3://bucket/out.csv", False),
+        (None, False),
+        (Path("/data/out.csv"), False),
+    ],
+)
+def test_is_absolute_local_follows_pathlib(raw: object, absolute: bool) -> None:
+    assert is_absolute_local(raw) is absolute
+    if isinstance(raw, str):
+        assert is_absolute_local(raw) is Path(raw).is_absolute()
+        assert not (is_absolute_local(raw) and is_placed_relative(raw))
