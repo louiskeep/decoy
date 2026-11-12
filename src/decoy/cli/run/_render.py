@@ -61,26 +61,11 @@ def commit_latest(ctx: RunContext) -> None:
 
 
 def _where_written(ctx: RunContext) -> dict:
-    """The plan 7.6 `--json` members: the run folder, the files written, project and pipeline.
-
-    `outputs` lists only files this run published, absolute; a table with no file is left out.
-    """
+    """The plan 7.6 `--json` members: the ledger's files and folder, project and pipeline."""
     described = (
-        ctx.layout.describe()
-        if ctx.layout is not None
-        else {"output_dir": None, "project": None, "pipeline": None}
+        ctx.layout.describe() if ctx.layout is not None else {"project": None, "pipeline": None}
     )
-    outputs = [
-        {"table": r["name"], "path": str(Path(r["path"]).resolve())}
-        for r in ctx._table_records
-        if r["path"] is not None
-    ]
-    return {
-        "output_dir": described["output_dir"],
-        "outputs": outputs,
-        "project": described["project"],
-        "pipeline": described["pipeline"],
-    }
+    return {**ctx.published_members(), **described}
 
 
 def finish(ctx: RunContext) -> None:

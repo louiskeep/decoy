@@ -16,7 +16,7 @@ from decoy.cli.extras import (
     translate_ner_unavailable,
 )
 from decoy.cli.gate import PreRunCheckError, cap_error_text, capacity_codes
-from decoy.cli.io import DuckDBSourceError, LayoutError, TargetFormatError
+from decoy.cli.io import OUTPUT_DIR_UNUSABLE, DuckDBSourceError, LayoutError, TargetFormatError
 from decoy.cli.run._context import RunContext
 from decoy.cli.run._execute import (
     _ChunkedFixedWidthError,
@@ -39,8 +39,15 @@ UNIQUENESS_IMPOSSIBLE_CODE = "uniqueness_impossible"
 _OUT_OF_MEMORY_TEXT = "the run ran out of memory."
 
 
-class OutDirUsageError(Exception):
-    """A fixable failure to create or validate the directory named by `--out-dir`."""
+class OutDirUsageError(LayoutError):
+    """`--out-dir` names something that cannot be a run's output directory.
+
+    Always the registry's fixed `layout.output_dir_unusable` text: the caller's wording and
+    the path are dropped, so nothing about the directory reaches the message.
+    """
+
+    def __init__(self, _detail: str = "") -> None:
+        super().__init__(OUTPUT_DIR_UNUSABLE.code, OUTPUT_DIR_UNUSABLE.message())
 
 
 def fail(ctx: RunContext, exc: Exception) -> NoReturn:
@@ -253,13 +260,10 @@ def fail(ctx: RunContext, exc: Exception) -> NoReturn:
             "mode": ctx.yaml_mode,
             "error": error_text,
         }
-        # Named when a fixed --out-dir was opened, or when a run folder still holds a file.
-        # An empty run folder is removed first and therefore contributes no output_dir.
+        # Only what the publication ledger holds: files a writer finished, and their folder.
         if ctx.layout is not None:
             ctx.layout.abandon()
-            output_dir = ctx.layout.describe()["output_dir"]
-            if output_dir is not None:
-                payload["output_dir"] = output_dir
+        payload.update(ctx.published_members())
         if raise_rows_hint:
             payload["hint"] = gen.RAISE_ROWS_HINT
         if isinstance(exc, PreRunCheckError):

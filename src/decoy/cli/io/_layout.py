@@ -31,6 +31,7 @@ from decoy.cli.io._layout_errors import (
     LATEST_INVALID,
     LATEST_LINK_FAILED,
     LATEST_WRITE_FAILED,
+    OUTPUT_PATH_COLLISION,
     OUTPUT_PATH_ESCAPES,
     PATH_TOO_LONG,
     PIPELINE_NAME_COLLISION,
@@ -189,16 +190,18 @@ def _utf16_units(text: str) -> int:
     return len(text.encode("utf-16-le", "surrogatepass")) // 2
 
 
-def check_path_budget(name_dir: Path, rel: str) -> None:
+def check_path_budget(name_dir: Path, rel: str, *, run_folder: bool = True) -> None:
     """Refuse on Windows a placed path that can pass 259 characters with the longest run id.
 
     `name_dir` is `<root>/out/<name>`; the run id is counted at its maximum length so a path
     that fits today does not fail on a run-id clash later. POSIX has no such limit here.
+    `run_folder=False` is a fixed `--out-dir`: `name_dir` is that folder and no run id follows.
     Raises `LayoutError`.
     """
     if not _on_windows():
         return
-    length = _utf16_units(str(name_dir)) + 1 + MAX_RUN_ID_LENGTH + 1 + _utf16_units(rel)
+    run_id = MAX_RUN_ID_LENGTH + 1 if run_folder else 0
+    length = _utf16_units(str(name_dir)) + 1 + run_id + _utf16_units(rel)
     if length > WINDOWS_PATH_LIMIT:
         raise PATH_TOO_LONG.error(length=length, limit=WINDOWS_PATH_LIMIT)
 
@@ -444,19 +447,22 @@ class RunLayout:
         return cls(base)
 
     @classmethod
-    def out_dir(cls, folder: Path) -> RunLayout:
+    def out_dir(cls, folder: Path, *, create: bool = False) -> RunLayout:
         """`--out-dir DIR` (plan 3.6): `DIR` stands in for the run folder.
 
-        A relative `DIR` is taken from the current folder. A missing `DIR` is made owner-only
-        (its parent must exist); an existing one is used as it is and its files are
-        overwritten. No claim, run id, `LATEST` or `.gitignore`. A relative target must stay
-        inside `DIR`, through existing links too. Raises `PrivateFileError`.
+        A relative `DIR` is taken from the current folder. Only its shape is checked here: it
+        must be a directory (or a link to one), or be missing with an existing parent. A missing
+        `DIR` is made owner-only by `place_target`, after the gate, for the first relative
+        output; an existing one is used as it is and its files are overwritten. No claim, run
+        id, `LATEST` or `.gitignore`. A relative target must stay inside `DIR`, through
+        existing links too. `create=True` (the first relative placement) makes a missing `DIR`.
+        Raises `NotADirectoryError` for an unusable shape, or `PrivateFileError`.
         """
         base = Path(os.path.abspath(folder))
-        if not os.path.lexists(base):
-            create_private_directory(base)
-        elif not base.is_dir():
+        if not (base.is_dir() if os.path.lexists(base) else base.parent.is_dir()):
             raise NotADirectoryError
+        if create and not base.exists():
+            create_private_directory(base)
         return cls(base, contained=True)
 
     @classmethod
@@ -518,6 +524,8 @@ class RunLayout:
 
         if Path(raw).is_absolute() or (self._run is None and not self._contained):
             return resolve_path(raw, self._base)
+        if self._run is None and not self._base.exists():
+            RunLayout.out_dir(self._base, create=True)
         if self._pipeline_dir is not None:
             check_path_budget(self._pipeline_dir, raw)
         placed = (
@@ -583,13 +591,13 @@ class RunLayout:
         return folder.resolve() if folder.is_dir() else None
 
     def describe(self) -> dict[str, object]:
-        """The run `--json` members of plan 7.6, every path absolute.
+        """The run `--json` members of plan 7.6 that come from the layout, every path absolute.
 
+        `output_dir` is not one of them: it follows the publication ledger (plan 3.6.1 C).
         `project` is `{root, implicit, skipped}` and `pipeline` is `{name, yaml, given_as}`;
         both are None when no run folder was opened (only absolute targets, or `--out-dir`).
         A pipeline is always given as a path until names arrive with `decoy run <name>`.
         """
-        folder = self.output_dir()
         project = pipeline = None
         if self._project is not None:
             project = {
@@ -604,11 +612,7 @@ class RunLayout:
                 "yaml": str((yaml / self._pipeline.yaml_rel).resolve()),
                 "given_as": "path",
             }
-        return {
-            "output_dir": str(folder) if folder is not None else None,
-            "project": project,
-            "pipeline": pipeline,
-        }
+        return {"project": project, "pipeline": pipeline}
 
     def summary_facts(self) -> list[tuple[str, str]]:
         """The summary lines: project, run folder and the latest pointer.
@@ -700,15 +704,114 @@ def has_placed_output(config_dict: dict) -> bool:
     return any(raw and is_placed_relative(raw) for _location, raw in relative_outputs(config_dict))
 
 
-def layout_issues(config: Path, config_dict: dict) -> list[tuple[str | None, LayoutError]]:
+@dataclass(frozen=True)
+class OutputPlacement:
+    """Where relative outputs land for one gate call (plan 3.6.1): the one route decision.
+
+    `project` is normal placement under `<root>/out/<name>/<run-id>/`; `fixed` is a typed
+    `--out-dir` (`directory`); `preview` is a `--rows` run that writes nothing. `typed` holds
+    the `(flag, path)` side files (`--evidence-out`, `--vault`) that join the collision rule.
+    """
+
+    kind: str = "project"
+    directory: Path | None = None
+    typed: tuple[tuple[str, Path], ...] = ()
+
+    @classmethod
+    def fixed(cls, directory: Path, typed: tuple[tuple[str, Path], ...] = ()) -> OutputPlacement:
+        return cls("fixed", Path(os.path.abspath(directory)), typed)
+
+    @classmethod
+    def preview(cls) -> OutputPlacement:
+        return cls("preview")
+
+
+def _folds_case(folder: Path) -> bool:
+    """True when the existing `folder` sits on a case-insensitive filesystem.
+
+    Probed without writing: swap the case of the nearest alphabetic path component and ask
+    whether that spelling is the same directory.
+    """
+    for part in (folder, *folder.parents):
+        swapped = part.name.swapcase()
+        if swapped != part.name:
+            return _same_dir(part.with_name(swapped), part)
+    return False
+
+
+def _destination_key(path: Path) -> tuple:
+    """What two spellings of one destination share: file identity if it exists, else the
+    resolved nearest existing folder plus the unresolved suffix (case-folded on a folding
+    filesystem)."""
+    try:
+        found = os.stat(path)
+    except (OSError, ValueError):
+        found = None
+    if found is not None:
+        return ("file", found.st_dev, found.st_ino)
+    ancestor = next((p for p in path.parents if p.is_dir()), Path(path.anchor))
+    try:
+        resolved = ancestor.resolve()
+    except (OSError, RuntimeError):
+        resolved = ancestor
+    suffix = path.relative_to(ancestor).parts
+    if _folds_case(resolved):
+        suffix = tuple(part.casefold() for part in suffix)
+    return ("path", str(resolved), suffix)
+
+
+def resolved_output_collisions(
+    config_dict: dict, base: Path | None, typed: tuple[tuple[str, Path], ...] = ()
+) -> tuple[str, str] | None:
+    """The first two outputs that resolve to one destination, as `(first, second)` labels.
+
+    The one collision rule (plan 3.6.1 B). It walks `relative_outputs`, so every local file
+    target and enabled quarantine takes part; `base` is the folder relative paths land in
+    (None when it is unknown), and `typed` adds the side files by flag name. URLs and remote
+    targets do not take part. Labels are config locations or flag names, never path values.
+    """
+    seen: dict[tuple, str] = {}
+    destinations: list[tuple[str, Path]] = []
+    for location, raw in relative_outputs(config_dict):
+        if Path(raw).is_absolute():
+            destinations.append((location, Path(os.path.abspath(raw))))
+        elif is_placed_relative(raw) and base is not None and names_a_file_inside(raw):
+            destinations.append((location, Path(os.path.normpath(base / raw))))
+    destinations.extend((flag, Path(os.path.abspath(path))) for flag, path in typed)
+    for label, path in destinations:
+        key = _destination_key(path)
+        if key in seen:
+            return seen[key], label
+        seen[key] = label
+    return None
+
+
+def fixed_target_overwrites(config_dict: dict, directory: Path) -> list[tuple[str, str]]:
+    """`(table, location)` for each relative file target that already exists in `directory`."""
+    found: list[tuple[str, str]] = []
+    for location, raw in relative_outputs(config_dict):
+        if location.startswith("targets.") and is_placed_relative(raw):
+            placed = contained_path(directory, raw)
+            if placed is not None and placed.exists():
+                found.append((location.removeprefix("targets.").removesuffix(".path"), location))
+    return found
+
+
+def layout_issues(
+    config: Path, config_dict: dict, placement: OutputPlacement = OutputPlacement()
+) -> list[tuple[str | None, LayoutError]]:
     """The layout refusals the gate can find without writing (plan 3.14), with locations.
 
     Escape is judged on the text alone. With a relative output the project marker is read
     and the pipeline name and any claim are checked read-only, then each placed path is
-    held to the Windows path budget. A config with only absolute targets touches no project.
+    held to the Windows path budget. A fixed `--out-dir` skips the project checks and holds
+    each path to the physical directory instead; a preview checks nothing. Last, no two
+    outputs may resolve to one destination.
     """
     from decoy.cli.io._project import find_project
 
+    if placement.kind == "preview":
+        return []
     outputs = relative_outputs(config_dict)
     placed = [(location, raw) for location, raw in outputs if is_placed_relative(raw)]
     urls = [
@@ -716,28 +819,40 @@ def layout_issues(config: Path, config_dict: dict) -> list[tuple[str | None, Lay
         for location, raw in outputs
         if not is_placed_relative(raw) and not Path(raw).is_absolute()
     ]
-    if not placed and not urls:
-        return []
-    yaml = config.resolve()
     issues: list[tuple[str | None, LayoutError]] = []
+    fixed = placement.directory if placement.kind == "fixed" else None
     folder: Path | None = None
-    base = "its run folder"
-    try:
-        root = find_project(yaml.parent, None).root
-        name = pipeline_name_for(root, yaml, config_dict.get("name")).name
-        folder, base = root / "out" / name, f"out/{name}/<run-id>"
-    except LayoutError as exc:
-        issues.append((None, exc))
+    base = "--out-dir" if fixed is not None else "its run folder"
+    if fixed is not None:
+        folder = fixed.resolve() if fixed.exists() else fixed
+    elif placed or urls:
+        yaml = config.resolve()
+        try:
+            root = find_project(yaml.parent, None).root
+            name = pipeline_name_for(root, yaml, config_dict.get("name")).name
+            folder, base = root / "out" / name, f"out/{name}/<run-id>"
+        except LayoutError as exc:
+            issues.append((None, exc))
     for location, _raw in urls:
         issues.append((location, OUTPUT_PATH_ESCAPES.error(path="a URL", base=base)))
     for location, raw in placed:
-        if not names_a_file_inside(raw):
+        if not names_a_file_inside(raw) or (
+            fixed is not None and fixed.exists() and contained_path(folder or fixed, raw) is None
+        ):
             issues.append((location, OUTPUT_PATH_ESCAPES.error(path=raw or '""', base=base)))
         elif folder is not None:
             try:
-                check_path_budget(folder, raw)
+                check_path_budget(folder, raw, run_folder=fixed is None)
             except LayoutError as exc:
                 issues.append((location, exc))
+    if not issues:
+        where = folder if fixed is not None else folder and folder / "<run-id>"
+        clash = resolved_output_collisions(config_dict, where, placement.typed)
+        if clash is not None:
+            first_location = next((c for c in clash if not c.startswith("--")), None)
+            issues.append(
+                (first_location, OUTPUT_PATH_COLLISION.error(first=clash[0], second=clash[1]))
+            )
     return issues
 
 

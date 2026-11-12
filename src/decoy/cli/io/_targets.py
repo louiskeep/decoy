@@ -434,15 +434,20 @@ def write_private_table(
 
 
 def write_targets(
-    config_dict: dict, outputs: Mapping[str, pa.Table], layout: RunLayout
+    config_dict: dict,
+    outputs: Mapping[str, pa.Table],
+    layout: RunLayout,
+    published: dict[str, Path] | None = None,
 ) -> dict[str, Path]:
     """Write each declared file target from `outputs`, by its declared format.
 
     Callers run `check_target_formats` first so a contradiction is refused before the
     first table is written; `layout` places each entry as it iterates. Returns table name to
     path for the files actually published: a path is added only after its write returns.
+    `published` is the caller's publication ledger; it is filled as each write returns, so a
+    later failure keeps the earlier entries, and it is the mapping that comes back.
     """
-    published: dict[str, Path] = {}
+    published = {} if published is None else published
     targets = config_dict.get("targets") or {}
     if not isinstance(targets, dict):
         return published

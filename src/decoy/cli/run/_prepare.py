@@ -18,7 +18,7 @@ from decoy.cli.gate import (
     check_before_run,
     parse_pipeline_yaml,
 )
-from decoy.cli.io import DuckDBSourceError, acquire_relation, parse_flag
+from decoy.cli.io import DuckDBSourceError, OutputPlacement, acquire_relation, parse_flag
 from decoy.cli.io import resolve_path as _resolve_path
 from decoy.cli.run._context import RunContext
 from decoy.cli.run._execute import (
@@ -227,6 +227,19 @@ def _guard_mask_secret_ref(raw: object) -> None:
         )
 
 
+def _placement(ctx: RunContext) -> OutputPlacement:
+    """Where this run's relative outputs land, for the gate: the typed `--out-dir`, else the
+    project run folder; the typed side files join the collision rule either way."""
+    typed = tuple(
+        (flag, path)
+        for flag, path in (("--evidence-out", ctx.evidence_out), ("--vault", ctx.vault))
+        if path is not None
+    )
+    if ctx.out_dir is not None:
+        return OutputPlacement.fixed(ctx.out_dir, typed)
+    return OutputPlacement(typed=typed)
+
+
 def prepare_preview(ctx: RunContext) -> None:
     """The `--rows` counterpart of `prepare`: the config guards and the gate on the scaled
     config. No source is read and no vault or key provider is opened, because a preview has
@@ -241,7 +254,11 @@ def prepare_preview(ctx: RunContext) -> None:
         raise PreRunCheckError.from_findings(ctx.saved_findings)
     _guard_mask_secret_ref(ctx.raw)
     ctx.config_dict = check_before_run(
-        gen.scale_row_counts(ctx.raw, ctx.rows), ctx.config, GateRoute.PLAIN, ctx.state
+        gen.scale_row_counts(ctx.raw, ctx.rows),
+        ctx.config,
+        GateRoute.PLAIN,
+        ctx.state,
+        OutputPlacement.preview(),
     )
     ctx.any_generate = True
     ctx._res = _resources.resolve(max_memory=ctx.max_memory, threads=ctx.threads)
@@ -320,7 +337,11 @@ def prepare(ctx: RunContext, _scopes: contextlib.ExitStack) -> None:
     # validated config, so the run validates once. The DE-02 guard above keeps a
     # mask_secret_ref value out of every schema diagnostic.
     ctx.config_dict = check_before_run(
-        ctx.raw, ctx.config, GateRoute.CHUNKED if ctx.chunked else GateRoute.PLAIN, ctx.state
+        ctx.raw,
+        ctx.config,
+        GateRoute.CHUNKED if ctx.chunked else GateRoute.PLAIN,
+        ctx.state,
+        _placement(ctx),
     )
 
     # Cloud (s3/gcs) sources/targets are refused inside the shared

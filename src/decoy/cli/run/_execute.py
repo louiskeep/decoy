@@ -60,6 +60,7 @@ def _run_chunked_mask(
     chunk_size: int,
     layout: RunLayout,
     key_provider=None,
+    ledger: dict[str, Path] | None = None,
 ) -> dict[str, Path | None]:
     """WS4 chunked mask path: stream each mask table's source through
     `decoy_engine.run_mask_pipeline_chunked`, writing output per chunk, on
@@ -81,7 +82,8 @@ def _run_chunked_mask(
     produces an all-string schema.
 
     Returns table name to the path actually published, or None for a table whose empty CSV
-    source published nothing."""
+    source published nothing. `ledger` gets each published path right after its writer
+    returns, so a later table's failure keeps the earlier entries."""
     _require_local_io_endpoints(config_dict)
     check_target_formats(config_dict, chunked=True)
 
@@ -111,7 +113,7 @@ def _run_chunked_mask(
             engine_version=engine_version,
             key_provider=key_provider,
         )
-        published[name] = write_chunked_output(
+        written = published[name] = write_chunked_output(
             masked_iter,
             resolve_target_format(name, tgt_spec),
             tgt_spec["path"],
@@ -120,6 +122,8 @@ def _run_chunked_mask(
                 partial(parquet_schema, src_path) if src_spec.get("format") == "parquet" else None
             ),
         )
+        if ledger is not None and written is not None:
+            ledger[name] = written
     return published
 
 
@@ -195,7 +199,9 @@ def _load_sources_from_config(config_dict: dict, base_dir: Path) -> dict:
     return out
 
 
-def _write_mask_outputs(config_dict: dict, result, layout: RunLayout) -> dict[str, Path]:
+def _write_mask_outputs(
+    config_dict: dict, result, layout: RunLayout, published: dict[str, Path] | None = None
+) -> dict[str, Path]:
     """Write each declared target from the V2 ExecutionResult.
 
     The engine result exposes masked tables on `outputs` (dict[table_name -> pa.Table]);
@@ -212,7 +218,7 @@ def _write_mask_outputs(config_dict: dict, result, layout: RunLayout) -> dict[st
     outputs = getattr(result, "outputs", None)
     if not isinstance(outputs, dict):
         return {}
-    return write_targets(config_dict, outputs, layout)
+    return write_targets(config_dict, outputs, layout, published)
 
 
 def execute(ctx: RunContext) -> None:
@@ -229,6 +235,7 @@ def execute(ctx: RunContext) -> None:
             ctx.chunk_size or DEFAULT_CHUNK_SIZE,
             layout,
             ctx.key_provider,
+            ctx._published,
         )
         ctx._table_records = table_records(dict.fromkeys(_chunk_paths), _chunk_paths)
         ctx._native_route = _native_gate.classify_route(
@@ -284,7 +291,7 @@ def execute(ctx: RunContext) -> None:
         # vault was lost can never be reversed.
         if ctx.vault_writer is not None:
             _commit_vault(ctx.vault_writer, ctx.vault)
-        _written = _write_mask_outputs(ctx.config_dict, result, layout)
+        _written = _write_mask_outputs(ctx.config_dict, result, layout, ctx._published)
         ctx._table_records = table_records(
             {name: len(tbl) for name, tbl in result.outputs.items()}, _written
         )
