@@ -7,7 +7,7 @@ from datetime import datetime, timezone
 import typer
 
 from decoy.cli.io import mint_invocation_id
-from decoy.cli.run import _errors, _evidence, _execute, _prepare, _render
+from decoy.cli.run import _errors, _evidence, _execute, _prepare, _progress, _render
 from decoy.cli.run._context import RunContext
 from decoy.cli.run._notify import _dispatch_run_notifications, _start_telemetry, parse_channels
 from decoy.cli.run._prepare import (
@@ -17,7 +17,7 @@ from decoy.cli.run._prepare import (
     _load_raw_config,
     _refuse_fidelity_without_mask,
 )
-from decoy.ui.progress import spinner
+from decoy.ui.progress import run_progress
 
 
 def execute(ctx: RunContext) -> None:
@@ -48,7 +48,13 @@ def execute(ctx: RunContext) -> None:
         # F30: refuse a bad telemetry setting before any work. Spans and the exit
         # flush bind to `_otel` in C1b.
         _otel = _start_telemetry(ctx.otel_endpoint, ctx.state)
-        with spinner(ctx.state, f"Running {ctx.yaml_mode}..."), contextlib.ExitStack() as _scopes:
+        # One sink for the engine; the display is one consumer of it (a job log joins in L5b).
+        ctx.progress = _progress.build()
+        with (
+            run_progress(ctx.state, f"Running {ctx.yaml_mode}...") as display,
+            contextlib.ExitStack() as _scopes,
+        ):
+            ctx.progress.add(display.on_event)
             if ctx.rows is None:
                 _prepare.prepare(ctx, _scopes)
                 _execute.execute(ctx)

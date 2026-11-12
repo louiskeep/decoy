@@ -87,6 +87,8 @@ class RunContext:
     invocation_id: str = field(init=False)
     # Where this run writes; opened by `_execute` once the gate has passed.
     layout: RunLayout | None = field(init=False, default=None)
+    # The one engine progress sink (`_progress.ProgressFanout`), built by `_flow`.
+    progress: Any = field(init=False, default=None)
 
     # Temp dir holding Parquet snapshots acquired from --duckdb-source inputs;
     # created only when the flag is used, torn down in the run's finally.
