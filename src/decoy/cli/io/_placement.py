@@ -126,6 +126,7 @@ def resolved_output_collisions(
     targets do not take part. Labels are config locations or flag names, never path values.
     """
     seen: dict[tuple, str] = {}
+    entries: dict[tuple, str] = {}
     destinations: list[tuple[str, Path, bool]] = []
     for location, raw in relative_outputs(config_dict):
         if Path(raw).is_absolute():
@@ -137,9 +138,15 @@ def resolved_output_collisions(
     destinations.extend((flag, Path(path).absolute(), flag == "--vault") for flag, path in typed)
     for label, path, replaces_final in destinations:
         key = _destination_key(path, replaces_final=replaces_final)
-        if key in seen:
-            return seen[key], label
+        # A writer that replaces a final link turns it into a file, and a later writer that
+        # follows the same name would then replace that file, so one name is one destination
+        # whichever way each writer treats the link.
+        entry = key if replaces_final else _destination_key(path, replaces_final=True)
+        first = seen.get(key) or entries.get(entry)
+        if first is not None:
+            return first, label
         seen[key] = label
+        entries[entry] = label
     return None
 
 

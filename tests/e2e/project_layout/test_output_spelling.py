@@ -107,6 +107,30 @@ def test_a_vault_that_climbs_elsewhere_is_not_refused_and_lands_where_the_kernel
 
 
 @posix_only
+@pytest.mark.parametrize("other", ["target", "--evidence-out"])
+@pytest.mark.parametrize("link", ["live", "dangling"])
+def test_a_vault_and_another_output_at_one_symlink_name_are_refused(
+    tmp_path: Path, other: str, link: str
+) -> None:
+    """The vault replaces the link with a file; a writer that follows the name would replace it."""
+    pointed = tmp_path / "pointed.bin"
+    if link == "live":
+        pointed.write_bytes(b"old")
+    name = tmp_path / "name.bin"
+    name.symlink_to(pointed)
+    root = _project(tmp_path)
+    cfg = _vaulting(root, str(name) if other == "target" else "m.csv")
+    args = ["run", str(cfg), "--json", "--vault", str(name)]
+    if other != "target":
+        args += [other, str(name)]
+    result = runner.invoke(app, args)
+    assert result.exit_code == EXIT_USAGE, result.output
+    assert COLLISION in _codes(result.output)
+    assert name.is_symlink()
+    assert pointed.read_bytes() == b"old" if link == "live" else not pointed.exists()
+
+
+@posix_only
 @pytest.mark.parametrize("kind", ["target", "--evidence-out", "--vault"])
 def test_every_writer_opens_the_spelling_the_gate_keyed(tmp_path: Path, kind: str) -> None:
     """Class guard: a spelling that climbs through a symlink lands where the kernel puts it."""
