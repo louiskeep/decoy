@@ -1,6 +1,6 @@
-"""F30 C1a: `decoy run --otel-endpoint` settings, the `[otel]` extra and env isolation.
+"""F30 C1: `decoy run --otel-endpoint` settings, the `[otel]` extra, env isolation and spans.
 
-C-T1 `env`, C-T5 and C-T6 through `typer.testing.CliRunner`; the exporter cells live in
+C-T1 `env`, C-T2 to C-T7 through `typer.testing.CliRunner`; the exporter cells live in
 tests/unit/test_telemetry_exporter.py, whose `Listener` these reuse.
 """
 
@@ -209,3 +209,328 @@ def test_missing_extra_message_names_the_flag(tmp_path, monkeypatch) -> None:
     message = json.loads(result.stdout)["error"]
     assert "pip install decoy-cli[otel]" in message
     assert "--otel-endpoint" in message and "this pipeline" not in message
+
+
+# ---- C1b: spans, leak corpus, dead collector, DP limit ----------------------------------
+
+GUIDE = Path(__file__).resolve().parents[2] / "docs" / "guides" / "telemetry" / "README.md"
+
+
+def _spans(listener) -> list:
+    """Every span the listener received, decoded from the OTLP protobuf bodies."""
+    from opentelemetry.proto.collector.trace.v1.trace_service_pb2 import (
+        ExportTraceServiceRequest,
+    )
+
+    found = []
+    for raw in listener.requests:
+        msg = ExportTraceServiceRequest()
+        msg.ParseFromString(raw.split(b"\r\n\r\n", 1)[1])
+        for resource in msg.resource_spans:
+            for scope in resource.scope_spans:
+                found.extend(scope.spans)
+    return found
+
+
+def _wait_for_spans(listener, timeout: float = 5.0) -> None:
+    deadline = time.monotonic() + timeout
+    while not listener.requests and time.monotonic() < deadline:
+        time.sleep(0.05)
+
+
+def _exported(tmp_path, listener, *args) -> tuple[list, list, list]:
+    """Run the pipeline with export on; return the root spans, the phase spans and all spans."""
+    result = _run(_pipeline(tmp_path), "--json", "--otel-endpoint", listener.url, *args)
+    assert result.exit_code == 0, result.output
+    _wait_for_spans(listener)
+    spans = _spans(listener)
+    roots = [s for s in spans if s.name == "decoy.run"]
+    phases = [s for s in spans if s.name.startswith("decoy.phase.")]
+    return roots, phases, spans
+
+
+# The engine's chunked route emits no phase events, so its trace is the root span alone.
+# Strict, so the cell fails the day the engine emits them and the mark has to go.
+_NO_CHUNKED_PHASES = pytest.mark.xfail(
+    strict=True, reason="the engine's chunked route emits no phase events"
+)
+
+
+@pytest.mark.parametrize(
+    "args",
+    [(), pytest.param(("--chunked",), marks=_NO_CHUNKED_PHASES)],
+    ids=["full_frame", "chunked"],
+)
+def test_flag_exports_one_trace_with_phase_spans(tmp_path, listener, args) -> None:
+    roots, phases, spans = _exported(tmp_path, listener, *args)
+    assert len(roots) == 1 and not roots[0].parent_span_id
+    assert phases, "no phase span reached the collector"
+    assert {s.trace_id for s in spans} == {roots[0].trace_id}
+    assert {s.parent_span_id for s in phases} == {roots[0].span_id}
+    assert roots[0].status.code == 1  # OK
+
+
+def test_chunked_run_exports_one_ended_root_span(tmp_path, listener) -> None:
+    roots, _phases, spans = _exported(tmp_path, listener, "--chunked")
+    assert len(roots) == 1 and not roots[0].parent_span_id
+    assert {s.trace_id for s in spans} == {roots[0].trace_id}
+    assert roots[0].end_time_unix_nano >= roots[0].start_time_unix_nano > 0
+    assert roots[0].status.code == 1  # OK
+
+
+MARKER = "MARKERf30c1b"
+
+
+def _marker_pipeline(tmp_path: Path) -> Path:
+    base = tmp_path / MARKER
+    base.mkdir()
+    src = base / f"{MARKER}_accounts.csv"
+    src.write_text(f"{MARKER}_col\n{MARKER}_cell1\n{MARKER}_cell2\n", encoding="utf-8")
+    cfg = {
+        "version": 2,
+        "global_settings": {"seed": 42},
+        "sources": {f"{MARKER}_table": csv_source(src)},
+        "tables": [
+            {
+                "name": f"{MARKER}_table",
+                "columns": [{"name": f"{MARKER}_col", "strategy": "redact"}],
+            }
+        ],
+        "targets": {
+            f"{MARKER}_table": {
+                "type": "file",
+                "format": "csv",
+                "path": str(base / f"{MARKER}_out.csv"),
+            }
+        },
+    }
+    path = base / "pipeline.yaml"
+    path.write_text(yaml.safe_dump(cfg), encoding="utf-8")
+    return path
+
+
+def _boom(exc: Exception):
+    """An engine entry that opens one phase, then fails with `exc` (text carries the marker)."""
+
+    def run_pipeline(*_args, **_kwargs):
+        from decoy_engine.progress import get_active_channel
+
+        with get_active_channel().phase("resolve"):
+            raise exc
+
+    return run_pipeline
+
+
+@pytest.mark.parametrize("cell", ["success", "engine_error", "os_error"])
+def test_marker_corpus_absent_from_wire(tmp_path, monkeypatch, listener, cell) -> None:
+    import decoy_engine
+    from decoy_engine.execution import ExecutionError
+
+    cfg = _marker_pipeline(tmp_path)
+    if cell == "engine_error":
+        monkeypatch.setattr(
+            decoy_engine, "run_pipeline", _boom(ExecutionError(code="boom", message=MARKER))
+        )
+    elif cell == "os_error":
+        monkeypatch.setattr(decoy_engine, "run_pipeline", _boom(OSError(MARKER)))
+    args = [
+        "--json",
+        "--otel-endpoint",
+        listener.url,
+        "--key-label",
+        f"postgresql://{MARKER}:{MARKER}@{MARKER}.example/{MARKER}",
+        "--evidence-out",
+        str(cfg.parent / f"{MARKER}_evidence.json"),
+    ]
+    result = _run(cfg, *args)
+    if cell == "success":
+        assert result.exit_code == 0, result.output
+    else:
+        assert result.exit_code != 0
+        # Non-vacuity: the failure text did carry the marker locally.
+        assert MARKER in result.stdout
+    _wait_for_spans(listener)
+    assert listener.requests, "nothing was exported"
+    wire = b"".join(listener.requests)
+    assert MARKER.encode() not in wire
+    spans = _spans(listener)
+    root = next(s for s in spans if s.name == "decoy.run")
+    if cell == "success":
+        return
+    assert root.status.code == 2  # ERROR
+    assert root.status.message == ""
+    assert len(root.events) == 0
+    for span in spans:
+        assert span.status.message == "" and len(span.events) == 0
+
+
+def _take_outputs(tmp_path: Path) -> dict[str, bytes]:
+    """Every `out.csv` the last run wrote, by relative path; removed so the next run starts clean."""
+    found = {str(p.relative_to(tmp_path)): p.read_bytes() for p in tmp_path.rglob("out.csv")}
+    for p in tmp_path.rglob("out.csv"):
+        p.unlink()
+    return found
+
+
+def _quiet_run(cfg: Path, *args: str):
+    started = time.monotonic()
+    result = _run(cfg, "--json", *args)
+    return result, time.monotonic() - started
+
+
+@pytest.mark.parametrize(
+    "behavior",
+    ["black_hole", "huge_200", "trickle_200"],
+    ids=["black_hole", "huge_body", "trickle"],
+)
+def test_dead_collector_keeps_exit_code_and_bounds_exit(tmp_path, behavior) -> None:
+    from tests.unit.test_telemetry_exporter import Listener
+
+    cfg = _pipeline(tmp_path)
+    off, off_wall = _quiet_run(cfg)
+    assert off.exit_code == 0, off.output
+    off_bytes = _take_outputs(tmp_path)
+    assert off_bytes
+    lst = Listener(behavior)
+    try:
+        on, on_wall = _quiet_run(cfg, "--otel-endpoint", lst.url)
+        # Non-vacuity: the export worker reached the dead collector with a span queued.
+        assert lst.accepted.is_set() and lst.connections >= 1
+    finally:
+        lst.close()
+    on_bytes = _take_outputs(tmp_path)
+    assert on.exit_code == off.exit_code
+    assert _envelope(on) == _envelope(off)
+    assert on.stderr == off.stderr
+    # Same file set and bytes per run with telemetry on (deterministic seed).
+    assert on_bytes == off_bytes
+    assert on_wall - off_wall <= 2.0 + 0.5
+
+
+def test_otel_extra_documents_dp_refusal() -> None:
+    import importlib.metadata as md
+
+    from decoy_engine.quality import dp_provenance
+
+    text = GUIDE.read_text(encoding="utf-8")
+    assert "dp_stack_uncertified" in text and "decoy-cli[otel]" in text
+    # Non-vacuity: this environment has the extra installed.
+    assert md.version("opentelemetry-sdk")
+    if dp_provenance.current_platform() != dp_provenance.CERTIFIED_PLATFORM:
+        pytest.skip("the stack check runs only on the certified platform (Linux x86-64)")
+    with pytest.raises(dp_provenance.ProvenanceError) as caught:
+        dp_provenance.check_fit_environment()
+    assert caught.value.code == "dp_stack_uncertified"
+
+
+def test_open_phase_is_closed_on_exit(tmp_path, monkeypatch, listener) -> None:
+    """A route that never finishes a phase still exports it, ended as a failed span."""
+    import decoy_engine
+
+    def run_pipeline(*_args, **_kwargs):
+        from decoy_engine.progress import get_active_channel
+
+        get_active_channel().phase_start("resolve")
+        raise OSError(MARKER)
+
+    monkeypatch.setattr(decoy_engine, "run_pipeline", run_pipeline)
+    result = _run(_pipeline(tmp_path), "--json", "--otel-endpoint", listener.url)
+    assert result.exit_code != 0
+    _wait_for_spans(listener)
+    phases = [s for s in _spans(listener) if s.name == "decoy.phase.resolve"]
+    assert len(phases) == 1 and phases[0].status.code == 2
+    assert MARKER.encode() not in b"".join(listener.requests)
+
+
+def test_sdk_failure_log_never_reaches_stderr(tmp_path, monkeypatch, listener) -> None:
+    """An exporter that raises makes the SDK log a traceback with the endpoint; the run's
+    stderr must still equal the run without telemetry. `flush_bounded` also raises the
+    logger's level; that is switched off here so the quiet handler is what is tested."""
+    import logging
+
+    from decoy.telemetry import _DecoySpanExporter
+
+    cfg = _pipeline(tmp_path)
+    off = _run(cfg, "--json")
+
+    def raising(self, spans):
+        raise RuntimeError(f"export failed for {MARKER}")
+
+    monkeypatch.setattr(_DecoySpanExporter, "export", raising)
+    # Under pytest the root logger holds capture handlers; a real CLI has none, so the
+    # last-resort handler would print to stderr.
+    monkeypatch.setattr(logging.getLogger(), "handlers", [])
+    monkeypatch.setattr(logging.getLogger("opentelemetry"), "handlers", [])
+    monkeypatch.setattr(logging.getLogger("opentelemetry"), "setLevel", lambda level: None)
+    # An earlier cell's `flush_bounded` may have raised the level; the test must not depend on it.
+    monkeypatch.setattr(logging.getLogger("opentelemetry"), "level", logging.NOTSET)
+    on = _run(cfg, "--json", "--otel-endpoint", listener.url)
+    assert on.exit_code == off.exit_code == 0
+    assert on.stderr == off.stderr and MARKER not in on.stderr + on.stdout
+
+
+def test_interrupt_in_flush_still_cleans_up(tmp_path, monkeypatch, listener) -> None:
+    """A Ctrl-C during the bounded flush must not skip the run's own cleanup: the staged
+    DuckDB temp dir is removed and the empty run folder is abandoned."""
+    import tempfile
+
+    import decoy_engine
+
+    import decoy.telemetry
+    from decoy.cli.io._layout import RunLayout
+    from decoy.cli.run import _prepare
+
+    staged: list[Path] = []
+    abandoned: list[bool] = []
+    real_prepare = _prepare.prepare
+    real_abandon = RunLayout.abandon
+
+    def prepare(ctx, scopes):
+        real_prepare(ctx, scopes)
+        ctx._duckdb_tmpdir = Path(tempfile.mkdtemp(prefix="decoy-duckdb-"))
+        staged.append(ctx._duckdb_tmpdir)
+
+    def abandon(self):
+        abandoned.append(True)
+        real_abandon(self)
+
+    def fail(*_args, **_kwargs):
+        raise OSError("boom")
+
+    interrupts: list[bool] = []
+
+    def interrupted(_otel):
+        interrupts.append(True)
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(_prepare, "prepare", prepare)
+    monkeypatch.setattr(RunLayout, "abandon", abandon)
+    monkeypatch.setattr(decoy_engine, "run_pipeline", fail)
+    monkeypatch.setattr(decoy.telemetry, "flush_bounded", interrupted)
+    try:
+        # Click turns the interrupt into an Abort (exit 1); the cleanup is what is under test.
+        result = _run(_pipeline(tmp_path), "--json", "--otel-endpoint", listener.url)
+        assert interrupts == [True] and result.exit_code != 0
+        assert len(staged) == 1 and not staged[0].exists()
+        assert abandoned == [True]
+    finally:
+        import shutil
+
+        for path in staged:
+            shutil.rmtree(path, ignore_errors=True)
+
+
+def test_end_trace_flushes_even_when_finish_raises(monkeypatch) -> None:
+    """A recorder that fails to close must not skip the flush, and nothing escapes."""
+    import decoy.telemetry
+    from decoy.cli.run._notify import _end_trace
+
+    calls: list[str] = []
+
+    class Trace:
+        def finish(self, **_kwargs):
+            raise RuntimeError("finish failed")
+
+    monkeypatch.setattr(decoy.telemetry, "flush_bounded", lambda _otel: calls.append("flush"))
+    _end_trace(object(), Trace(), ok=True)
+    assert calls == ["flush"]
