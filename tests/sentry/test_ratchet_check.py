@@ -13,6 +13,7 @@ import sys
 from pathlib import Path
 
 import pytest
+from tests.sentry.layout import MAX_VALUE_CASES
 
 ROOT = Path(__file__).resolve().parents[2]
 SCRIPT = ROOT / "scripts" / "dev" / "ratchet_check.py"
@@ -238,3 +239,159 @@ def test_no_merge_base_exits_2(repo: Path) -> None:
     res = _run(repo, base=False)
     assert res.returncode == 2, res.stdout + res.stderr
     assert "run: git fetch origin main" in res.stderr
+
+
+# --- moved_from: exact one-to-one key moves (RUN-SPLIT) ---------------------------------------
+
+
+def _moved(
+    entries: dict[str, object], moved: object, sentry_id: str = "a", created_in: str = "S0"
+) -> str:
+    doc: dict[str, object] = {"sentry_id": sentry_id, "created_in": created_in, "entries": entries}
+    doc["moved_from"] = moved
+    return json.dumps(doc)
+
+
+def _entry(**extra: object) -> dict[str, object]:
+    return {"reason": REASON, **extra}
+
+
+def test_one_exact_move_passes_with_counts_unchanged(repo: Path) -> None:
+    _write(repo, A, _moved({"m::f": _entry(), "n::g": _entry()}, {"n::g": "m::g"}))
+    res = _run(repo)
+    assert res.returncode == 0, res.stdout + res.stderr
+    assert "a: 2 key(s)" in res.stdout
+
+
+def test_several_exact_moves_pass(repo: Path) -> None:
+    _write(repo, A, _moved({"n::f": _entry(), "n::g": _entry()}, {"n::f": "m::f", "n::g": "m::g"}))
+    res = _run(repo)
+    assert res.returncode == 0, res.stdout + res.stderr
+
+
+def test_move_does_not_admit_a_second_new_key(repo: Path) -> None:
+    entries = {"n::f": _entry(), "m::g": _entry(), "n::extra": _entry()}
+    _write(repo, A, _moved(entries, {"n::f": "m::f"}))
+    _assert_red(repo, "gained key(s) not in the merge base: n::extra")
+
+
+def test_move_with_old_key_still_present_fails(repo: Path) -> None:
+    entries = {"m::f": _entry(), "m::g": _entry(), "n::g": _entry()}
+    _write(repo, A, _moved(entries, {"n::g": "m::g"}))
+    _assert_red(repo, "old key m::g is still in the head")
+
+
+def test_two_new_keys_naming_one_old_key_fail(repo: Path) -> None:
+    entries = {"m::f": _entry(), "n::g": _entry(), "o::g": _entry()}
+    _write(repo, A, _moved(entries, {"n::g": "m::g", "o::g": "m::g"}))
+    _assert_red(repo, "moved_from names m::g for both")
+
+
+def test_move_from_a_key_not_in_the_base_fails(repo: Path) -> None:
+    _write(repo, A, _moved({"m::f": _entry(), "n::g": _entry()}, {"n::g": "m::ghost"}))
+    _assert_red(repo, "old key m::ghost was not in the merge base")
+
+
+def test_move_to_a_key_absent_from_the_head_fails(repo: Path) -> None:
+    _write(repo, A, _moved({"m::f": _entry()}, {"n::g": "m::g"}))
+    _assert_red(repo, "moved_from key n::g is not an entry in the head")
+
+
+def test_move_with_a_changed_reason_fails(repo: Path) -> None:
+    new = {"reason": "a different reviewed reason text"}
+    _write(repo, A, _moved({"m::f": _entry(), "n::g": new}, {"n::g": "m::g"}))
+    _assert_red(repo, "moved entry n::g differs from m::g")
+
+
+def test_move_with_a_raised_sites_value_fails(repo: Path) -> None:
+    _write(repo, A, _baseline("a", ["m::f", "m::g"]).replace('"m::g": {', '"m::g": {"sites": 4, '))
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-q", "-m", "base with sites")
+    _write(repo, A, _moved({"m::f": _entry(), "n::g": _entry(sites=5)}, {"n::g": "m::g"}))
+    _assert_red(repo, "moved entry n::g differs from m::g")
+
+
+@pytest.mark.parametrize("moved", [["n::g"], "n::g", 7, True])
+def test_non_object_moved_from_fails(repo: Path, moved: object) -> None:
+    _write(repo, A, _moved({"m::f": _entry(), "n::g": _entry()}, moved))
+    _assert_red(repo, "moved_from is not an object")
+
+
+@pytest.mark.parametrize(
+    "mapping",
+    [
+        {"": "m::g"},
+        {"   ": "m::g"},
+        {"n::g": ""},
+        {"n::g": "  "},
+        {"n::g": 7},
+        {"n::g": None},
+        {"n::g": ["m::g"]},
+        {"n::g": True},
+    ],
+)
+def test_malformed_moved_from_entries_fail_without_crashing(
+    repo: Path, mapping: dict[str, object]
+) -> None:
+    _write(repo, A, _moved({"m::f": _entry(), "n::g": _entry()}, mapping))
+    res = _run(repo)
+    assert res.returncode == 1, res.stdout + res.stderr
+    assert "Traceback" not in res.stderr
+    assert "moved_from needs non-empty string keys and values" in res.stderr
+
+
+def test_a_merged_move_left_in_the_map_is_ignored(repo: Path) -> None:
+    # The base already holds n::g (the move merged); the map entry admits nothing and is harmless.
+    _write(repo, A, _moved({"m::f": _entry(), "n::g": _entry()}, {}))
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-q", "-m", "moved")
+    _write(repo, A, _moved({"m::f": _entry(), "n::g": _entry()}, {"n::g": "m::g"}))
+    res = _run(repo)
+    assert res.returncode == 0, res.stdout + res.stderr
+
+
+# --- numeric ``max`` entries: a head value above its base value is growth --------------------
+
+_CASES = pytest.mark.parametrize(
+    ("base_max", "head_max", "red"),
+    [c[1:] for c in MAX_VALUE_CASES],
+    ids=[c[0] for c in MAX_VALUE_CASES],
+)
+
+
+def _max_baseline(sid: str, max_value: int | None) -> str:
+    entry: dict[str, object] = {"reason": REASON}
+    if max_value is not None:
+        entry["max"] = max_value
+    return json.dumps({"sentry_id": sid, "created_in": "S0", "entries": {"m::f": entry}})
+
+
+@_CASES
+def test_numeric_max_may_not_rise(
+    repo: Path, base_max: int | None, head_max: int | None, red: bool
+) -> None:
+    _write(repo, A, _max_baseline("a", base_max))
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-q", "-m", "max")
+    _write(repo, A, _max_baseline("a", head_max))
+    res = _run(repo)
+    assert (res.returncode == 1) is red, res.stdout + res.stderr
+    if red:
+        assert "a: max raised or dropped for key(s): m::f" in res.stderr
+
+
+@_CASES
+def test_a_rename_may_not_raise_a_numeric_max(
+    repo: Path, base_max: int | None, head_max: int | None, red: bool
+) -> None:
+    _write(repo, A, _max_baseline("a", base_max))
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-q", "-m", "max")
+    renamed = "tests/sentry/baselines/r.json"
+    (repo / A).unlink()
+    _write(repo, renamed, _max_baseline("r", head_max))
+    _write(repo, REG, _registry({"r": renamed}))
+    res = _run(repo)
+    assert (res.returncode == 1) is red, res.stdout + res.stderr
+    if red:
+        assert "replacement or split of a raised or dropped max for key(s): m::f" in res.stderr

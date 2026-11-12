@@ -20,6 +20,7 @@ import yaml
 from typer.testing import CliRunner
 
 from decoy.__main__ import app
+from tests.csv_sources import csv_source
 
 runner = CliRunner()
 
@@ -44,7 +45,7 @@ def mask_config(tmp_path: Path) -> Path:
         "version": 2,
         "global_settings": {"seed": 42},
         "sources": {
-            "customers": {"type": "file", "format": "csv", "path": str(src)},
+            "customers": csv_source(src),
         },
         "tables": [
             {

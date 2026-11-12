@@ -29,15 +29,19 @@ import typer
 
 from decoy import _mask_secret, _mask_secret_guidance
 from decoy._atomic import AtomicWriteError, describe
-from decoy.cli._sources import read_file
+from decoy.cli._sources import read_file, resolved_source_config
 from decoy.cli._token_vault import LocalTokenVault, TokenVaultError, iter_tokenize_columns
 from decoy.cli._yaml_errors import sanitize_yaml_error
 from decoy.cli.exit_codes import EXIT_RUNTIME, EXIT_USAGE
 from decoy.cli.io import (
+    LayoutError,
+    RunLayout,
     TargetFormatError,
     check_output_path,
     format_for_path,
     input_format,
+    mint_invocation_id,
+    open_run_layout,
     write_private_table,
 )
 from decoy.ui.output import OutputMode, emit_json, setup_output
@@ -244,18 +248,17 @@ def tokenize(
             )
             raise typer.Exit(code=EXIT_USAGE)
 
-    from decoy_engine import PipelineConfig, run_pipeline
     from decoy_engine import __version__ as engine_version
+    from decoy_engine import parse_pipeline_config, run_pipeline
+    from decoy_engine.config import PipelineConfigError
     from decoy_engine.errors import ConfigError
     from decoy_engine.execution import ExecutionError
     from decoy_engine.plan import PlanCompileError
 
     try:
-        from pydantic import ValidationError as _PydanticValidationError
-
-        config_dict = PipelineConfig.model_validate(raw).model_dump()
-    except _PydanticValidationError as exc:
-        _emit_error(str(exc)[:500])
+        config_dict = parse_pipeline_config(raw).model_dump()
+    except PipelineConfigError as exc:
+        _emit_error(str(exc))
         raise typer.Exit(code=EXIT_USAGE)
 
     if mask_secret is not None:
@@ -321,11 +324,7 @@ def tokenize(
         # clean coded usage error instead of the catch-all.
         from decoy_engine.keyprovider import MaskSecretError
     except ImportError as exc:
-        _emit_error(
-            "a mask secret is configured but the installed decoy-engine is too old "
-            "to honor it (no DE-02 keyprovider); it would silently emit UNKEYED "
-            "(forgeable) tokens. Upgrade decoy-engine."
-        )
+        _emit_error(_mask_secret_guidance.OLD_ENGINE_TOKENIZE)
         raise typer.Exit(code=EXIT_USAGE) from exc
 
     from decoy.cli.run import _load_sources_from_config, _write_mask_outputs
@@ -335,8 +334,12 @@ def tokenize(
     vault_preexisted = vault.exists()
     token_vault: LocalTokenVault | None = None
     committed = False
+    layout: RunLayout | None = None
+    ok = False
     try:
         with spinner(state, "Tokenizing..."):
+            # The claim is checked before any source is read.
+            layout = open_run_layout(config, config_dict, mint_invocation_id())
             sources = _load_sources_from_config(config_dict, config.parent)
             instance_locale = (config_dict.get("global_settings") or {}).get("default_locale")
             # The CLI admits the secret (an owner-only `file:` is checked on its open
@@ -344,13 +347,18 @@ def tokenize(
             # ref itself.
             with _mask_secret.admitted_key_provider(config_dict) as key_provider:
                 token_vault = LocalTokenVault(vault, create=True)
+                # Sent only when set, so an engine without the keyword still runs a config without it.
+                quarantine_path = layout.place_quarantine(config_dict)
+                quarantine_kwargs = {"quarantine_path": quarantine_path} if quarantine_path else {}
                 result = run_pipeline(
-                    config_dict,
+                    resolved_source_config(config_dict, config.parent),
                     sources,
                     engine_version=engine_version,
                     instance_default_locale=instance_locale,
                     token_vault_writer=token_vault,
                     key_provider=key_provider,
+                    base_dir=config.parent,
+                    **quarantine_kwargs,
                 )
             vault_count = token_vault.count()
             row_count = sum(len(tbl) for tbl in result.outputs.values())
@@ -360,7 +368,8 @@ def tokenize(
             # for the finally's cleanup.
             token_vault.commit()
             committed = True
-            _write_mask_outputs(config_dict, result, config.parent)
+            _write_mask_outputs(config_dict, result, layout)
+            ok = True
     except TokenVaultError as exc:
         _emit_error(f"{exc.code}: {exc.message}")
         raise typer.Exit(code=EXIT_USAGE)
@@ -368,7 +377,7 @@ def tokenize(
         # A fixable operator problem; dispatched on the code before the classes below.
         _emit_error(_mask_secret_guidance.secret_error_text(exc, _mask_secret_guidance.TOKENIZE))
         raise typer.Exit(code=EXIT_USAGE)
-    except (PlanCompileError, ExecutionError, ConfigError, TargetFormatError) as exc:
+    except (PlanCompileError, ExecutionError, ConfigError, TargetFormatError, LayoutError) as exc:
         _emit_error(f"{getattr(exc, 'code', type(exc).__name__)}: {getattr(exc, 'message', exc)}")
         raise typer.Exit(code=EXIT_USAGE)
     except AtomicWriteError as exc:
@@ -395,6 +404,8 @@ def tokenize(
             )
         raise typer.Exit(code=EXIT_RUNTIME) from exc
     finally:
+        if layout is not None and not ok:
+            layout.abandon()
         if token_vault is not None:
             token_vault.close()
         # LocalTokenVault(create=True) writes the file + schema up front, so a
@@ -406,6 +417,12 @@ def tokenize(
         if not committed and not vault_preexisted and vault.exists():
             vault.unlink(missing_ok=True)
 
+    if layout is not None:
+        for item in layout.commit_latest():
+            if state.mode is not OutputMode.quiet:
+                state.err_console.print(
+                    warn("warning:"), f"{item.code}: {item.message}", markup=False
+                )
     columns = [{"table": t, "column": c, "namespace": ns} for (t, c, ns) in tok_cols]
     if state.mode is OutputMode.json:
         emit_json(
@@ -553,16 +570,15 @@ def detokenize(
         )
         raise typer.Exit(code=EXIT_USAGE)
 
-    from decoy_engine import PipelineConfig
+    from decoy_engine import parse_pipeline_config
+    from decoy_engine.config import PipelineConfigError
     from decoy_engine.errors import ConfigError
     from decoy_engine.plan import PlanCompileError
 
     try:
-        from pydantic import ValidationError as _PydanticValidationError
-
-        config_dict = PipelineConfig.model_validate(raw).model_dump()
-    except _PydanticValidationError as exc:
-        _emit_error(str(exc)[:500])
+        config_dict = parse_pipeline_config(raw).model_dump()
+    except PipelineConfigError as exc:
+        _emit_error(str(exc))
         raise typer.Exit(code=EXIT_USAGE)
     except (PlanCompileError, ConfigError) as exc:
         _emit_error(f"{getattr(exc, 'code', type(exc).__name__)}: {getattr(exc, 'message', exc)}")

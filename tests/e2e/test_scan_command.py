@@ -49,12 +49,12 @@ def large_csv(tmp_path: Path) -> Path:
 
 
 def test_scan_exits_0(sample_csv: Path) -> None:
-    result = runner.invoke(app, ["scan", str(sample_csv)])
+    result = runner.invoke(app, ["scan", str(sample_csv), "--has-header"])
     assert result.exit_code == 0, result.output
 
 
 def test_scan_human_frames_pii_as_suggestions(sample_csv: Path) -> None:
-    result = runner.invoke(app, ["scan", str(sample_csv)])
+    result = runner.invoke(app, ["scan", str(sample_csv), "--has-header"])
     assert result.exit_code == 0, result.output
     lower = result.output.lower()
     # Positive: candidates are framed as suggestions / review.
@@ -65,7 +65,7 @@ def test_scan_human_frames_pii_as_suggestions(sample_csv: Path) -> None:
 
 
 def test_scan_json_carries_pii_note_and_counts(sample_csv: Path) -> None:
-    result = runner.invoke(app, ["scan", str(sample_csv), "--json"])
+    result = runner.invoke(app, ["scan", str(sample_csv), "--has-header", "--json"])
     assert result.exit_code == 0, result.output
     payload = _json.loads(result.stdout)
     assert payload["command"] == "scan"
@@ -84,10 +84,13 @@ def test_scan_json_carries_pii_note_and_counts(sample_csv: Path) -> None:
 
 def test_scan_output_writes_json_file(sample_csv: Path, tmp_path: Path) -> None:
     out = tmp_path / "scan.json"
-    result = runner.invoke(app, ["scan", str(sample_csv), "--output", str(out)])
+    result = runner.invoke(app, ["scan", str(sample_csv), "--has-header", "--output", str(out)])
     assert result.exit_code == 0, result.output
     assert out.exists()
-    payload = _json.loads(out.read_text())
+    # --output holds the value-free scan-set/v1 core, not the rich profile.
+    doc = _json.loads(out.read_text())
+    assert doc["scan_schema"] == "scan-set/v1"
+    payload = doc["tables"][0]
     assert payload["row_count"] == 5
     assert payload["fields"]
 
@@ -95,35 +98,35 @@ def test_scan_output_writes_json_file(sample_csv: Path, tmp_path: Path) -> None:
 def test_scan_without_output_writes_no_file(sample_csv: Path, tmp_path: Path) -> None:
     """No auto scan_<ts>.json: nothing may appear next to the source or in cwd."""
     before = set(sample_csv.parent.iterdir())
-    result = runner.invoke(app, ["scan", str(sample_csv)])
+    result = runner.invoke(app, ["scan", str(sample_csv), "--has-header"])
     assert result.exit_code == 0, result.output
     after = set(sample_csv.parent.iterdir())
     assert after == before, f"scan wrote an unrequested file: {after - before}"
 
 
 def test_scan_output_dash_streams_to_stdout(sample_csv: Path) -> None:
-    result = runner.invoke(app, ["scan", str(sample_csv), "--output", "-"])
+    result = runner.invoke(app, ["scan", str(sample_csv), "--has-header", "--output", "-"])
     assert result.exit_code == 0, result.output
     payload = _json.loads(result.stdout)
-    # The streamed artifact is the engine's richer profile dict.
-    assert payload["row_count"] == 5
-    assert payload["source_label"] == "sample.csv"
+    # The streamed artifact is the same value-free core that --output writes.
+    assert payload["scan_schema"] == "scan-set/v1"
+    assert payload["tables"][0]["row_count"] == 5
+    assert payload["tables"][0]["name"] == "sample"
+    assert "source_label" not in result.stdout
 
 
 # ---------------------------------------------------------------------------
-# `--output -` conflicts with the privacy-safe stdout contracts.
+# `--output -` conflicts with the --json and --quiet stdout contracts.
 #
-# Regression for the final-gate finding: `--output -` streams the rich,
-# raw-value-bearing profile to stdout, and the stream path used to win
-# unconditionally -- so `--output - -q` leaked the full profile despite quiet,
-# and `--output - --json` emitted that raw artifact instead of the
-# privacy-safe envelope. The combination is now rejected up front (EXIT_USAGE)
-# before the scan runs, so neither mode can leak.
+# Both modes own stdout (the JSON envelope, or nothing), so the stream cannot
+# share it. The combination is rejected up front (EXIT_USAGE) before the scan
+# runs. Since S1c the streamed artifact is value-free, so this is a contract
+# clash, not a leak.
 # ---------------------------------------------------------------------------
 
 
 def test_scan_output_dash_with_json_is_rejected(sample_csv: Path) -> None:
-    result = runner.invoke(app, ["scan", str(sample_csv), "--output", "-", "--json"])
+    result = runner.invoke(app, ["scan", str(sample_csv), "--has-header", "--output", "-", "--json"])
     assert result.exit_code == 1  # EXIT_USAGE: invalid flag combination
     payload = _json.loads(result.stdout)
     assert payload["status"] == "error"
@@ -134,7 +137,7 @@ def test_scan_output_dash_with_json_is_rejected(sample_csv: Path) -> None:
 
 
 def test_scan_output_dash_with_quiet_is_rejected(sample_csv: Path) -> None:
-    result = runner.invoke(app, ["scan", str(sample_csv), "--output", "-", "-q"])
+    result = runner.invoke(app, ["scan", str(sample_csv), "--has-header", "--output", "-", "-q"])
     assert result.exit_code == 1  # EXIT_USAGE
     # Quiet's contract holds: nothing on stdout (the rich profile never streamed).
     assert result.stdout == ""
@@ -146,7 +149,7 @@ def test_scan_output_dash_with_quiet_is_rejected(sample_csv: Path) -> None:
 
 
 def test_scan_show_fields_json_has_no_raw_aggregates(sample_csv: Path) -> None:
-    result = runner.invoke(app, ["scan", str(sample_csv), "--show-fields", "--json"])
+    result = runner.invoke(app, ["scan", str(sample_csv), "--has-header", "--show-fields", "--json"])
     assert result.exit_code == 0, result.output
     payload = _json.loads(result.stdout)
     for f in payload["fields"]:
@@ -166,14 +169,14 @@ def test_scan_show_fields_json_has_no_raw_aggregates(sample_csv: Path) -> None:
 
 def test_scan_rows_default_bounds_sample(large_csv: Path) -> None:
     """A huge-file guard: --rows bounds the sample; --rows 50 caps at 50."""
-    result = runner.invoke(app, ["scan", str(large_csv), "--rows", "50", "--json"])
+    result = runner.invoke(app, ["scan", str(large_csv), "--has-header", "--rows", "50", "--json"])
     assert result.exit_code == 0, result.output
     payload = _json.loads(result.stdout)
     assert payload["row_count"] <= 50
 
 
 def test_scan_rows_zero_full_scan(large_csv: Path) -> None:
-    result = runner.invoke(app, ["scan", str(large_csv), "--rows", "0", "--json"])
+    result = runner.invoke(app, ["scan", str(large_csv), "--has-header", "--rows", "0", "--json"])
     assert result.exit_code == 0, result.output
     payload = _json.loads(result.stdout)
     assert payload["row_count"] == 200

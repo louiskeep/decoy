@@ -1,0 +1,22 @@
+{
+ "sentry_id": "module-size",
+ "created_in": "LAYOUT-C2",
+ "entries": {
+  "src/decoy/cli/fit.py": {
+   "reason": "legacy module over the 800-line cap when LAYOUT C2 recorded it; may only shrink",
+   "max": 831
+  },
+  "src/decoy/cli/preflight.py": {
+   "reason": "legacy module over the 800-line cap when LAYOUT C2 recorded it; may only shrink",
+   "max": 891
+  },
+  "src/decoy/cli/report.py": {
+   "reason": "legacy module over the 800-line cap when LAYOUT C2 recorded it; may only shrink",
+   "max": 2340
+  },
+  "src/decoy/cli/scan.py": {
+   "reason": "legacy module over the 800-line cap when LAYOUT C2 recorded it; may only shrink",
+   "max": 1157
+  }
+ }
+}

@@ -6,6 +6,7 @@ ext4 documentation on rename and fsync; `os.replace` as the successor to the dep
 `atomicwrites` package (https://github.com/untitaker/python-atomicwrites), whose
 `atomic_write` context manager is the shape of `staged_local_target`; the engine's
 `fileaccess.write_private` recipe, mirrored without its file-access policy so it runs on Windows.
+Creation and every mode change live in `_private_file`, the one module Windows ACLs will change.
 Local plan: `plan/local-record-library:docs/plans/2026-11-05-local-record-library.md` section 4.9.
 
 Rules this module owns (tests/sentry/test_atomic_writer.py fails when `os.replace`,
@@ -29,8 +30,21 @@ allowlist):
 * `CREATE_ONCE` never replaces a file. Where the mount offers no atomic no-clobber
   move, it fails with `atomic_noclobber_unsupported` instead of checking then replacing.
 
-Not covered: the vault commit in `cli/run.py`, which needs a hard-link backup and rollback,
-and the install-directory swaps in `distribution/`. Both are allowlisted with reasons.
+* `replace_symlink` is the one link swap: a temp link beside the target, then `os.replace`.
+  It replaces only a symlink (or nothing), never a regular file or directory.
+
+* `publish_local_targets` publishes a few files of one folder as one unit (a snapshot and the
+  config that names it). It stages and fsyncs every file first, keeps a hard-link backup of
+  each file it replaces, and restores or removes every file if any replace fails. A
+  non-blocking `flock` on the folder keeps a second publisher out until the first is done.
+  The lock is POSIX only (Windows has no `fcntl`, so no lock there). A rollback covers every
+  exception, an interrupt included; a rollback step that fails keeps its backup and raises
+  `ATOMIC_ROLLBACK_INCOMPLETE` with the backup names, or with the names of new files it could
+  not remove. A SIGKILL between two replaces cannot
+  be rolled back and can leave a half pair plus a hidden `.<name>.decoy-*.bak`.
+
+Not covered: the vault commit in `cli/run/_vault.py`, which needs a hard-link backup and rollback,
+and the install-directory moves in `distribution/`. Both are allowlisted with reasons.
 """
 
 from __future__ import annotations
@@ -42,22 +56,40 @@ import os
 import re
 import secrets
 import stat
-import sys
 import time
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Iterator, Sequence
 from contextlib import AbstractContextManager
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath, PureWindowsPath
 
+from decoy import _private_file
+
+try:
+    import fcntl
+except ImportError:  # Windows: no directory lock
+    fcntl = None  # type: ignore[assignment]
+from decoy._private_file import (
+    apply_mode,
+    create_exclusive,
+    restrict_owner_only,
+)
+
 __all__ = [
     "ATOMIC_BAD_NAME",
+    "ATOMIC_BATCH_BUSY",
+    "ATOMIC_BATCH_INVALID",
     "ATOMIC_NOCLOBBER_UNSUPPORTED",
+    "ATOMIC_ROLLBACK_INCOMPLETE",
     "ATOMIC_SYNC_FAILED",
+    "ATOMIC_TARGET_EXISTS",
     "ATOMIC_WRITE_FAILED",
     "AtomicWriteError",
+    "LocalTarget",
     "WriteMode",
     "describe",
     "fsync_directory",
+    "publish_local_targets",
+    "replace_symlink",
     "staged_local_target",
     "staged_private_target",
     "write_atomic",
@@ -70,6 +102,15 @@ ATOMIC_SYNC_FAILED = "atomic_sync_failed"
 ATOMIC_BAD_NAME = "atomic_name_invalid"
 # CREATE_ONCE on a mount with no atomic no-clobber move (no hard links).
 ATOMIC_NOCLOBBER_UNSUPPORTED = "atomic_noclobber_unsupported"
+# `publish_local_targets`: another publisher holds the folder; a create-only target exists;
+# the batch is malformed (empty, two folders, a repeated name).
+ATOMIC_BATCH_BUSY = "atomic_batch_busy"
+ATOMIC_TARGET_EXISTS = "atomic_target_exists"
+ATOMIC_BATCH_INVALID = "atomic_batch_invalid"
+# `publish_local_targets` failed and could not undo every target; the error's `kept` holds
+# the hidden backup names (each one the old bytes of a file that was not put back) and its
+# `left` the names of new files that could not be removed.
+ATOMIC_ROLLBACK_INCOMPLETE = "atomic_rollback_incomplete"
 
 # One allowlist for every OS, so a name that is safe here is safe on Windows too. Windows
 # also treats a device stem (CON, NUL, ...) as the device with or without an extension.
@@ -82,7 +123,6 @@ _DEVICE_STEMS = frozenset(
     | {f"LPT{c}" for c in "123456789\u00b9\u00b2\u00b3"}
 )
 
-_WINDOWS = sys.platform == "win32"
 _sleep = time.sleep  # a module attribute so tests can replace it
 
 # 10 attempts, 9 sleeps: 10 ms doubling, capped at 160 ms, 950 ms in total.
@@ -113,12 +153,22 @@ class AtomicWriteError(Exception):
     """A failed atomic write. `code` is one of the ATOMIC_* constants; `errno` may be None.
 
     The text is the code alone. It never holds the directory, the name or the OS message.
+    `kept` names (file names, no folder) the backups a failed rollback left on disk; `left`
+    names the new files it could not remove.
     """
 
-    def __init__(self, code: str, os_errno: int | None = None) -> None:
+    def __init__(
+        self,
+        code: str,
+        os_errno: int | None = None,
+        kept: tuple[str, ...] = (),
+        left: tuple[str, ...] = (),
+    ) -> None:
         super().__init__(code)
         self.code = code
         self.errno = os_errno
+        self.kept = kept
+        self.left = left
 
 
 def write_atomic(
@@ -168,35 +218,6 @@ _OWNER_RW = 0o600
 # The fd aliases, matched on the user-given path before any symlink is resolved. Not all of
 # /dev or /proc: /dev/shm is a real tmpfs and must be staged.
 _FD_ALIAS = re.compile(r"/dev/(?:stdin|stdout|stderr|fd/[0-9]+)|/proc/self/fd/[0-9]+")
-_FALLBACK_NAME_MAX = 255
-
-
-def _temp_name(base: str, parent: Path) -> str:
-    """`.<base>.decoy-<hex>.tmp`, with `base` cut by whole characters to fit the filesystem."""
-    try:
-        limit = os.pathconf(parent, "PC_NAME_MAX")
-    except (AttributeError, ValueError, OSError):
-        limit = _FALLBACK_NAME_MAX
-    suffix = f".decoy-{secrets.token_hex(8)}.tmp"
-    while len(os.fsencode(f".{base}{suffix}")) > limit and base:
-        base = base[:-1]
-    return f".{base}{suffix}"
-
-
-def _create_temp(parent: Path, base: str, private: bool) -> tuple[str, int]:
-    """Create the staging file exclusively. Returns its path and the mode bits it was given."""
-    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0)
-    while True:
-        tmp = str(parent / _temp_name(base, parent))
-        try:
-            fd = os.open(tmp, flags, 0o600 if private else 0o666)
-        except FileExistsError:
-            continue
-        try:
-            bits = stat.S_IMODE(os.fstat(fd).st_mode) & 0o777
-        finally:
-            os.close(fd)
-        return tmp, bits
 
 
 def _final_bits(tmp: str, existing: os.stat_result | None, private: bool, created: int) -> int:
@@ -210,7 +231,7 @@ def _final_bits(tmp: str, existing: os.stat_result | None, private: bool, create
     if existing is None or not stat.S_ISREG(existing.st_mode):
         return created
     copied = stat.S_IMODE(existing.st_mode) & 0o777
-    if not _WINDOWS and existing.st_gid != os.stat(tmp).st_gid:
+    if not _private_file._WINDOWS and existing.st_gid != os.stat(tmp).st_gid:
         try:
             os.chown(tmp, -1, existing.st_gid)
         except OSError:
@@ -225,10 +246,7 @@ def _publish(tmp: str, real: Path, bits: int, mode: WriteMode) -> bool:
     """
     fd = os.open(tmp, os.O_RDWR)  # Windows FlushFileBuffers needs write access
     try:
-        if _WINDOWS:
-            os.chmod(tmp, bits)
-        else:
-            os.fchmod(fd, bits)
+        apply_mode(fd, tmp, bits)
         os.fsync(fd)
     finally:
         os.close(fd)
@@ -264,9 +282,8 @@ def _staged(
     failed = False
     failed_errno: int | None = None
     try:
-        tmp, created = _create_temp(tmp_dir or real.parent, real.name, private)
-        # Owner-only while written, and a restrictive umask must not lock the writer out.
-        os.chmod(tmp, _OWNER_RW)
+        # Owner-only while written: create_exclusive narrows the temp before returning it.
+        tmp, created = create_exclusive(tmp_dir or real.parent, real.name, private=private)
     except OSError as exc:
         failed, failed_errno = True, exc.errno
     if failed:
@@ -283,7 +300,7 @@ def _staged(
         except OSError as exc:
             failed, failed_errno = True, exc.errno
         else:
-            alive = not made or (mode is WriteMode.CREATE_ONCE and not _WINDOWS)
+            alive = not made or (mode is WriteMode.CREATE_ONCE and not _private_file._WINDOWS)
             if made and alive:
                 # The hard-link move leaves the temp name as a second link; drop it before the
                 # directory sync so a crash cannot leave a stray hidden entry.
@@ -345,12 +362,28 @@ def _restrict_fd_target(alias: str) -> None:
     try:
         info = os.fstat(fd)
         if stat.S_ISREG(info.st_mode) and stat.S_IMODE(info.st_mode) & 0o077:
-            os.fchmod(fd, _OWNER_RW)
-            narrowed = not stat.S_IMODE(os.fstat(fd).st_mode) & 0o077
+            restrict_owner_only(fd, alias)
     except OSError as exc:
         narrowed, failed_errno = False, exc.errno
     if not narrowed:
         raise AtomicWriteError(ATOMIC_WRITE_FAILED, failed_errno)
+
+
+def _refuse_foreign_symlink(path: Path) -> None:
+    """Refuse a final-component symlink that another user owns.
+
+    The write follows a symlink, so a local user could point one at a file of the victim's own
+    and have the replacement land there (lost data, not a leak: the bytes are 0600). This
+    mirrors Linux `fs.protected_symlinks`, which macOS lacks. A link the user owns is followed.
+    """
+    if _private_file._WINDOWS:
+        return
+    try:
+        info = os.lstat(path)
+    except OSError:
+        return  # missing or unreadable: the stat that follows reports it
+    if stat.S_ISLNK(info.st_mode) and info.st_uid != os.geteuid():
+        raise AtomicWriteError(ATOMIC_WRITE_FAILED, errno.EPERM)
 
 
 @contextlib.contextmanager
@@ -358,11 +391,12 @@ def _staged_target(path: Path, private: bool) -> Iterator[Path]:
     _require_component(path.name)
     # POSIX keeps a leading "//" in abspath; collapse it so //dev/stdout is still an alias.
     alias = re.sub(r"^/+", "/", os.path.abspath(path))
-    if not _WINDOWS and _FD_ALIAS.fullmatch(alias):
+    if not _private_file._WINDOWS and _FD_ALIAS.fullmatch(alias):
         if private:
             _restrict_fd_target(alias)
         yield path  # /dev/stdout, /dev/fd/N, /proc/self/fd/N: a redirect is written through
         return
+    _refuse_foreign_symlink(path)
     existing: os.stat_result | None = None
     failed_errno: int | None = None
     failed = False
@@ -412,7 +446,7 @@ def _require_component(name: str) -> None:
         or name in {".", ".."}
         or "\0" in name
         or any(sep in name for sep in seps)
-        or (_WINDOWS and (stem in _DEVICE_STEMS or "\\" in name or ":" in name))
+        or (_private_file._WINDOWS and (stem in _DEVICE_STEMS or "\\" in name or ":" in name))
     ):
         raise AtomicWriteError(ATOMIC_BAD_NAME)
 
@@ -433,7 +467,7 @@ def _create_once(tmp: str, target: Path) -> bool:
     """Move `tmp` to `target` only if `target` does not exist; no check-then-act window."""
     no_hard_links: int | None = None
     try:
-        if _WINDOWS:
+        if _private_file._WINDOWS:
             # os.rename fails on Windows when the target exists, which is the no-clobber move.
             _retry_on_windows(lambda: os.rename(tmp, target))
         else:
@@ -441,7 +475,7 @@ def _create_once(tmp: str, target: Path) -> bool:
     except FileExistsError:
         return False
     except OSError as exc:
-        if _WINDOWS or exc.errno not in _NO_HARD_LINKS:
+        if _private_file._WINDOWS or exc.errno not in _NO_HARD_LINKS:
             raise
         no_hard_links = exc.errno
     else:
@@ -459,10 +493,44 @@ def _retry_on_windows(move: Callable[[], None]) -> None:
             move()
             return
         except PermissionError:
-            if not _WINDOWS or attempt == _RETRY_ATTEMPTS - 1:
+            if not _private_file._WINDOWS or attempt == _RETRY_ATTEMPTS - 1:
                 raise
             _sleep(delay)
             delay = min(delay * 2, _RETRY_CAP_SECONDS)
+
+
+def replace_symlink(link: Path, target: str) -> None:
+    """Point `link` at `target` (stored as given, so pass a relative one) in one step.
+
+    A symlink cannot be retargeted in place, so the new link is made under a temporary name
+    in the same folder and `os.replace`d over the old one: a reader sees the old target or
+    the new one, never a missing link. Only a symlink (or nothing) is replaced; a regular
+    file or folder in the way is refused so a pointer swap cannot clobber user data. Raises
+    `AtomicWriteError` (no path, no cause) and leaves no temp link behind.
+    """
+    failed = False
+    failed_errno: int | None = None
+    try:
+        if not stat.S_ISLNK(os.lstat(link).st_mode):
+            failed = True
+    except FileNotFoundError:
+        pass
+    except OSError as exc:
+        failed, failed_errno = True, exc.errno
+    # Raised outside the except blocks so an OSError (its text names the path) is not kept as
+    # `__context__`.
+    if failed:
+        raise AtomicWriteError(ATOMIC_WRITE_FAILED, failed_errno)
+    tmp = link.with_name(f".{link.name}.decoy-{secrets.token_hex(6)}.tmp")
+    try:
+        os.symlink(target, tmp)
+        _retry_on_windows(lambda: os.replace(tmp, link))
+    except OSError as exc:
+        failed, failed_errno = True, exc.errno
+        with contextlib.suppress(OSError):
+            os.unlink(tmp)
+    if failed:
+        raise AtomicWriteError(ATOMIC_WRITE_FAILED, failed_errno)
 
 
 def fsync_directory(directory: Path) -> None:
@@ -470,7 +538,7 @@ def fsync_directory(directory: Path) -> None:
 
     Windows cannot open a directory and NTFS journals the rename, so it does nothing there.
     """
-    if _WINDOWS:
+    if _private_file._WINDOWS:
         return
     fd = os.open(directory, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))
     try:
@@ -491,3 +559,175 @@ def _sync_directories(directory: Path, tmp_dir: Path | None) -> None:
         failed, failed_errno = True, exc.errno
     if failed:
         raise AtomicWriteError(ATOMIC_SYNC_FAILED, failed_errno)
+
+
+@dataclass(frozen=True)
+class LocalTarget:
+    """One file of a `publish_local_targets` batch. `private` publishes it 0600."""
+
+    path: Path
+    data: bytes
+    mode: WriteMode = WriteMode.REPLACE
+    private: bool = False
+
+
+def _stage_bytes(real: Path, data: bytes, private: bool) -> tuple[str, int]:
+    """Write `data` to a fsynced temp beside `real`; return its name and the create-time bits."""
+    tmp, created = create_exclusive(real.parent, real.name, private=private)
+    try:
+        with open(tmp, "r+b") as handle:  # r+ so Windows FlushFileBuffers has write access
+            handle.write(data)
+            handle.flush()
+            os.fsync(handle.fileno())
+    except OSError:
+        with contextlib.suppress(OSError):
+            os.unlink(tmp)
+        raise
+    return tmp, created
+
+
+def _unlink_quietly(path: str | Path) -> None:
+    with contextlib.suppress(OSError):
+        os.unlink(path)
+
+
+@contextlib.contextmanager
+def _folder_lock(directory: Path) -> Iterator[None]:
+    """Hold a non-blocking exclusive lock on the folder itself, so no loose lock file exists.
+
+    POSIX only: without `fcntl` (Windows) there is no lock and two publishers can interleave.
+    """
+    if fcntl is None:
+        yield
+        return
+    failed = False
+    failed_errno: int | None = None
+    fd = -1
+    try:
+        fd = os.open(directory, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError as exc:
+        failed, failed_errno = True, exc.errno
+        if fd >= 0:
+            os.close(fd)
+    if failed:
+        busy = failed_errno in (errno.EWOULDBLOCK, errno.EAGAIN)
+        raise AtomicWriteError(ATOMIC_BATCH_BUSY if busy else ATOMIC_WRITE_FAILED, failed_errno)
+    try:
+        yield
+    finally:
+        os.close(fd)  # closing releases the lock
+
+
+def _rollback(done: list[tuple[Path, str | None]]) -> tuple[list[str], list[str]]:
+    """Undo published targets, newest first: put the old file back, or remove a new one.
+
+    Returns the backups it could not restore (the caller keeps those on disk) and the file
+    names of new targets it could not remove.
+    """
+    stuck: list[str] = []
+    left: list[str] = []
+    for real, backup in reversed(done):
+        try:
+            if backup is None:
+                os.unlink(real)
+            else:
+                os.replace(backup, real)
+        except OSError:
+            if backup is None:
+                left.append(real.name)
+            else:
+                stuck.append(backup)
+    return stuck, left
+
+
+def publish_local_targets(
+    targets: Sequence[LocalTarget], *, check: Callable[[list[Path]], None] | None = None
+) -> None:
+    """Publish every target in order, or none: on any failure the old files come back.
+
+    All targets sit in one folder, which this holds locked until it is done. Every file is
+    staged and fsynced before the first replace. A file that already exists keeps a hard-link
+    backup (the old inode, so its bytes and mode return exactly). If a replace fails, the
+    published files are restored or removed and `AtomicWriteError` is raised; so are they on
+    any other exception, `KeyboardInterrupt` included, which then propagates. A restore that
+    fails keeps its backup and raises `ATOMIC_ROLLBACK_INCOMPLETE` instead. A `CREATE_ONCE`
+    target that exists once the lock is held is refused before anything changes. Lock, backup
+    or staging failures also refuse before the first replace. `check`, when given, receives the
+    staged temp paths (in target order) once everything is staged and before the first replace;
+    whatever it raises propagates and nothing has changed. The directory sync after the
+    last replace can fail with `ATOMIC_SYNC_FAILED`: the new files are then in place.
+    """
+    if not targets:
+        raise AtomicWriteError(ATOMIC_BATCH_INVALID)
+    for target in targets:
+        _require_component(target.path.name)
+    reals = [Path(os.path.realpath(t.path)) for t in targets]
+    directory = reals[0].parent
+    if any(r.parent != directory for r in reals) or len({r.name for r in reals}) != len(reals):
+        raise AtomicWriteError(ATOMIC_BATCH_INVALID)
+
+    staged: list[tuple[str, int]] = []
+    backups: list[str | None] = []
+    done: list[tuple[Path, str | None]] = []
+    stuck: list[str] = []
+    left: list[str] = []
+    failed = False
+    failed_errno: int | None = None
+    try:
+        with _folder_lock(directory):
+            try:
+                existing = [_existing(real) for real in reals]
+                for target, old in zip(targets, existing, strict=True):
+                    if target.mode is WriteMode.CREATE_ONCE and old is not None:
+                        raise AtomicWriteError(ATOMIC_TARGET_EXISTS)
+                for target, real in zip(targets, reals, strict=True):
+                    staged.append(_stage_bytes(real, target.data, target.private))
+                for real, old in zip(reals, existing, strict=True):
+                    backups.append(None if old is None else _backup(real))
+                if check is not None:
+                    check([Path(tmp) for tmp, _created in staged])
+                for target, real, old, (tmp, created) in zip(
+                    targets, reals, existing, staged, strict=True
+                ):
+                    bits = _final_bits(tmp, old, target.private, created)
+                    if not _publish(tmp, real, bits, target.mode):
+                        raise AtomicWriteError(ATOMIC_TARGET_EXISTS)
+                    done.append((real, backups[len(done)]))
+            except BaseException as exc:
+                stuck, left = _rollback(done)
+                if stuck or left:
+                    pass  # reported below, after the backups are left in place
+                elif isinstance(exc, OSError):
+                    failed, failed_errno = True, exc.errno
+                else:
+                    raise
+    finally:
+        for tmp, _created in staged:
+            _unlink_quietly(tmp)
+        for backup in backups:
+            if backup is not None and backup not in stuck:
+                _unlink_quietly(backup)
+    if stuck or left:
+        raise AtomicWriteError(
+            ATOMIC_ROLLBACK_INCOMPLETE,
+            kept=tuple(Path(name).name for name in stuck),
+            left=tuple(left),
+        )
+    if failed:
+        raise AtomicWriteError(ATOMIC_WRITE_FAILED, failed_errno)
+    _sync_directories(directory, None)
+
+
+def _existing(real: Path) -> os.stat_result | None:
+    try:
+        return os.stat(real)
+    except FileNotFoundError:
+        return None
+
+
+def _backup(real: Path) -> str:
+    """A same-folder hard link to the file about to be replaced."""
+    name = real.parent / f".{real.name}.decoy-{secrets.token_hex(6)}.bak"
+    os.link(real, name)
+    return str(name)

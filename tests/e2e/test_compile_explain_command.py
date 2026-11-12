@@ -20,6 +20,7 @@ import yaml
 from typer.testing import CliRunner
 
 from decoy.__main__ import app
+from tests.csv_sources import csv_source
 
 runner = CliRunner()
 
@@ -33,9 +34,7 @@ def _minimal_config() -> dict:
     return {
         "version": 2,
         "global_settings": {"seed": 42},
-        "sources": {
-            "customers": {"type": "file", "format": "csv", "path": "/tmp/x.csv"}
-        },
+        "sources": {"customers": csv_source("/tmp/x.csv")},
         "tables": [
             {
                 "name": "customers",
@@ -166,7 +165,7 @@ def test_compile_explain_json_structure(tmp_path: Path) -> None:
     result = runner.invoke(app, ["validate", "compile", str(config_path), "--explain", "--json"])
     assert result.exit_code == 0, result.output
     payload = _json.loads(result.stdout)
-    assert payload["command"] == "compile explain"
+    assert payload["command"] == "validate compile"
     assert payload["status"] == "ok"
     assert "tables" in payload
     assert len(payload["tables"]) == 1
@@ -278,9 +277,7 @@ def _config_with_undeclared_column() -> dict:
     return {
         "version": 2,
         "global_settings": {"seed": 42},
-        "sources": {
-            "customers": {"type": "file", "format": "csv", "path": "/tmp/x.csv"}
-        },
+        "sources": {"customers": csv_source("/tmp/x.csv")},
         "tables": [
             {
                 "name": "customers",

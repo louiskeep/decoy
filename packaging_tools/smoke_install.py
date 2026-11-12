@@ -73,14 +73,14 @@ def _build_cli_wheel(version: str, wheels: Path) -> None:
     """Build a decoy-cli wheel at ``version`` into ``wheels`` (used for the 0.2.0 leg).
 
     Bumps BOTH version sources the CLI carries today: the pyproject dist version and
-    the ``__version__`` literal in src/decoy/__init__.py (what ``decoy --version`` and
+    the ``__version__`` literal in src/decoy/_version.py (what ``decoy --version`` and
     the update check read). A real release bumps both; this mirrors that."""
     import re
 
     import tomllib
 
     pyproject = REPO_ROOT / "pyproject.toml"
-    init_py = REPO_ROOT / "src" / "decoy" / "__init__.py"
+    init_py = REPO_ROOT / "src" / "decoy" / "_version.py"
     pp_orig = pyproject.read_text(encoding="utf-8")
     init_orig = init_py.read_text(encoding="utf-8")
     cur = tomllib.loads(pp_orig)["project"]["version"]

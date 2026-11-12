@@ -61,6 +61,12 @@ from decoy.cli.report import compare_data, render_html, render_markdown
 _SENTINEL = "SENTRY_RAW_VALUE_ZZZZZ_" + "X" * 20
 
 
+def _outputs(path: Path) -> dict[str, Any]:
+    """A manifest (old path rule: paths as recorded) whose one output is `path`."""
+    entry = {"path": str(path), "fingerprint": "sha256:" + "0" * 64}
+    return {"output_fingerprints": {"data": entry}}
+
+
 def _make_manifest_with_file_paths(tmp_path: Path) -> dict[str, Any]:
     """Make a manifest whose file paths point into tmp_path (sentinel lives there too)."""
     return {
@@ -203,10 +209,9 @@ def test_compare_data_does_not_leak_raw_string_values(tmp_path: Path) -> None:
         encoding="utf-8",
     )
 
-    output_fps_a = {"data": {"path": str(csv_a)}}
-    output_fps_b = {"data": {"path": str(csv_b)}}
-
-    result = compare_data(output_fps_a, output_fps_b)
+    result = compare_data(
+        _outputs(csv_a), _outputs(csv_b), manifest_file_a=None, manifest_file_b=None
+    )
     serialised = _json.dumps(result)
 
     assert _STRING_SENTINEL not in serialised, (
@@ -258,10 +263,9 @@ def test_compare_data_does_not_leak_raw_numeric_values(tmp_path: Path) -> None:
     pq.write_table(pa.Table.from_pandas(df_a), str(parquet_a))
     pq.write_table(pa.Table.from_pandas(df_b), str(parquet_b))
 
-    output_fps_a = {"data": {"path": str(parquet_a)}}
-    output_fps_b = {"data": {"path": str(parquet_b)}}
-
-    result = compare_data(output_fps_a, output_fps_b)
+    result = compare_data(
+        _outputs(parquet_a), _outputs(parquet_b), manifest_file_a=None, manifest_file_b=None
+    )
     serialised = _json.dumps(result)
 
     assert str(_NUMERIC_SENTINEL) not in serialised, (
@@ -285,3 +289,38 @@ def test_compare_data_sentry_setup_negative_control(tmp_path: Path) -> None:
     )
     content = csv_a.read_text(encoding="utf-8")
     assert _STRING_SENTINEL in content, "Setup error: string sentinel not written to test file."
+
+
+# ---------------------------------------------------------------------------
+# report integrity human output: findings name columns, never cell values
+# ---------------------------------------------------------------------------
+
+_INTEGRITY_SENTINEL = "SENTRYINTEGRITYRAWPII" + "Q" * 20
+
+
+def test_report_integrity_human_findings_do_not_leak_cell_values(tmp_path: Path) -> None:
+    """The residual-PII table must render with a wide console and no cell value.
+
+    COLUMNS=10000 stops Rich from clipping cells, so a leaked sentinel would
+    appear whole rather than as an ellipsis-cut prefix.
+    """
+    import pandas as pd
+    from typer.testing import CliRunner
+
+    from decoy.__main__ import app
+
+    rows = {"email": [f"{_INTEGRITY_SENTINEL}{i}@example.com" for i in range(30)]}
+    src = tmp_path / "src.csv"
+    masked = tmp_path / "masked.csv"
+    pd.DataFrame(rows).to_csv(src, index=False)
+    pd.DataFrame(rows).to_csv(masked, index=False)
+    assert _INTEGRITY_SENTINEL in masked.read_text(encoding="utf-8")
+
+    result = CliRunner().invoke(
+        app,
+        ["report", "integrity", str(masked), "--source", str(src)],
+        env={"COLUMNS": "10000"},
+    )
+
+    assert "email" in result.output, "the findings table did not render"
+    assert _INTEGRITY_SENTINEL not in result.output

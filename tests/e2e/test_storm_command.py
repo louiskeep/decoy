@@ -58,21 +58,24 @@ def test_storm_fields_non_utf8_scan_prints_clean_error(tmp_path: Path):
 def test_storm_analyze_writes_profile_and_succeeds(sample_csv: Path, tmp_path: Path):
     out_path = tmp_path / "scan.json"
     result = runner.invoke(
-        app, ["scan", str(sample_csv), "--output", str(out_path)]
+        app, ["scan", str(sample_csv), "--has-header", "--output", str(out_path)]
     )
     assert result.exit_code == 0, result.stdout
     assert out_path.exists()
-    payload = _json.loads(out_path.read_text())
+    # --output writes the value-free scan-set/v1 core: one table, named from the file stem.
+    doc = _json.loads(out_path.read_text())
+    assert doc["scan_schema"] == "scan-set/v1"
+    payload = doc["tables"][0]
     assert payload["row_count"] == 5
     assert payload["fields"]
-    assert payload["source_label"] == "sample.csv"
+    assert payload["name"] == "sample"
 
 
 def test_storm_analyze_json_emits_envelope(sample_csv: Path, tmp_path: Path):
     out_path = tmp_path / "scan.json"
     result = runner.invoke(
         app,
-        ["scan", str(sample_csv), "--output", str(out_path), "--json"],
+        ["scan", str(sample_csv), "--has-header", "--output", str(out_path), "--json"],
     )
     assert result.exit_code == 0
     payload = _json.loads(result.stdout)
@@ -85,7 +88,7 @@ def test_storm_analyze_quiet_produces_empty_stdout(sample_csv: Path, tmp_path: P
     out_path = tmp_path / "scan.json"
     result = runner.invoke(
         app,
-        ["scan", str(sample_csv), "--output", str(out_path), "--quiet"],
+        ["scan", str(sample_csv), "--has-header", "--output", str(out_path), "--quiet"],
     )
     assert result.exit_code == 0
     assert result.stdout == ""
@@ -99,6 +102,7 @@ def test_storm_analyze_strategy_random_caps_rows(sample_csv: Path, tmp_path: Pat
         [
             "scan",
             str(sample_csv),
+            "--has-header",
             "--output",
             str(out_path),
             "--rows",
@@ -108,5 +112,7 @@ def test_storm_analyze_strategy_random_caps_rows(sample_csv: Path, tmp_path: Pat
         ],
     )
     assert result.exit_code == 0
-    payload = _json.loads(out_path.read_text())
-    assert payload["row_count"] == 3
+    # The core holds the table total; the sample size is the recorded row cap.
+    payload = _json.loads(out_path.read_text())["tables"][0]
+    assert payload["sample_row_cap"] == 3
+    assert payload["sample_strategy"] == "random"

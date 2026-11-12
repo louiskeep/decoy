@@ -1,0 +1,237 @@
+== fit c1
+OK c1.snapshot.json
+  2000 rows; columns: a (numeric), b (numeric), cat1 (categorical), cat2
+(categorical)
+== run c1
+╭─ v decoy run ────────────────────────────────────────────────────────────────╮
+│ Pipeline  c1_ident.yaml                                                      │
+│ Mode      generate                                                           │
+│ Elapsed   0.55s                                                              │
+│ Tables    1                                                                  │
+│ Rows      2000                                                               │
+│ Files     1                                                                  │
+│ Route     full_frame                                                         │
+╰──────────────────────────────────────────────────────────────────────────────╯
+╭─ v decoy run ────────────────────────────────────────────────────────────────╮
+│ Pipeline  c1_indep.yaml                                                      │
+│ Mode      generate                                                           │
+│ Elapsed   0.40s                                                              │
+│ Tables    1                                                                  │
+│ Rows      2000                                                               │
+│ Files     1                                                                  │
+│ Route     full_frame                                                         │
+╰──────────────────────────────────────────────────────────────────────────────╯
+== fit types
+OK types.snapshot.json
+  20000 rows; columns: null10 (numeric), null90 (categorical), age (numeric),
+skew (numeric), bimodal (numeric), outlier (numeric), price (numeric), day
+(datetime), bit (numeric), zip (numeric)
+== run types
+╭─ v decoy run ────────────────────────────────────────────────────────────────╮
+│ Pipeline  types_gen.yaml                                                     │
+│ Mode      generate                                                           │
+│ Elapsed   1.93s                                                              │
+│ Tables    2                                                                  │
+│ Rows      40000                                                              │
+│ Files     2                                                                  │
+│ Route     full_frame                                                         │
+╰──────────────────────────────────────────────────────────────────────────────╯
+== report
+report rc=1
+== H5 threshold 1.0
+h5 rc=0
+out/h5_stdout.json:0
+out/h5_stderr.txt:0
+== fit cond
+OK cond.snapshot.json
+  6000 rows; columns: parent (categorical), kid (categorical)
+  joints captured: kidxparent
+== run cond
+cond rc=0
+╭─ v decoy run ────────────────────────────────────────────────────────────────╮
+│ Pipeline  cond_gen.yaml                                                      │
+│ Mode      generate                                                           │
+│ Elapsed   0.42s                                                              │
+│ Tables    1                                                                  │
+│ Rows      6000                                                               │
+│ Files     1                                                                  │
+│ Route     full_frame                                                         │
+╰──────────────────────────────────────────────────────────────────────────────╯
+== fit leak
+leak fit rc=0
+OK leak.snapshot.json
+  1000 rows; columns: id (numeric), state (categorical), diagnosis
+(categorical), salary (numeric), note (categorical)
+== run leak
+leak rc=0
+╭─ v decoy run ────────────────────────────────────────────────────────────────╮
+│ Pipeline  leak_gen.yaml                                                      │
+│ Mode      generate                                                           │
+│ Elapsed   0.47s                                                              │
+│ Tables    1                                                                  │
+│ Rows      5000                                                               │
+│ Files     1                                                                  │
+│ Route     full_frame                                                         │
+╰──────────────────────────────────────────────────────────────────────────────╯
+== engine-level snapshots: cell_format and redaction
+leak value_policy: flagged-redacted/v1 redacted: ['id', 'diagnosis', 'salary']
+doc types rc=0
+│ Files     2                                                                  │
+│ Route     full_frame                                                         │
+╰──────────────────────────────────────────────────────────────────────────────╯
+doc leak rc=1
+error: 1 error(s) found before the run; first: statistical column 'diagnosis': the snapshot withheld the real values of source column 'diagnosis' (a sensitive column), so there are no categories to sample. Use a faker or pattern generator for this column, or re-fit with `--include-values` and set `allow_real_categories: true` (the snapshot then holds real values).. Run `decoy validate CONFIG` for the full report.
+== H5 with engine logging on
+generation_fidelity_below_threshold: table=types_out snapshot_index=0 overall_score=0.860679 threshold=1.0 worst_columns=[null90:0.096237,bimodal:0.797411,null10:0.892624]
+generation_fidelity_below_threshold: table=np_check snapshot_index=0 overall_score=0.592095 threshold=1.0 worst_columns=[null10:0.592095]
+== engine fidelity
+== fidelity out/types_out.csv: overall 0.860679
+  age: {'similarity': 0.993789, 'method': 'quantile_rmse', 'comparable': True, 'value_similarity': 0.993789, 'missing_value_similarity': 1.0, 'snapshot_null_fraction': None}
+  bimodal: {'similarity': 0.797411, 'method': 'quantile_rmse', 'comparable': True, 'value_similarity': 0.797411, 'missing_value_similarity': 1.0, 'snapshot_null_fraction': None}
+  bit: {'similarity': 1.0, 'method': 'quantile_rmse', 'comparable': True, 'value_similarity': 1.0, 'missing_value_similarity': 1.0, 'snapshot_null_fraction': None}
+  day: {'similarity': 0.9944, 'method': 'tvd', 'comparable': True, 'value_similarity': 0.9944, 'missing_value_similarity': 1.0, 'snapshot_null_fraction': None}
+  null10: {'similarity': 0.892624, 'method': 'quantile_rmse', 'comparable': True, 'value_similarity': 0.992245, 'missing_value_similarity': 0.8996, 'snapshot_null_fraction': None}
+  null90: {'similarity': 0.096237, 'method': 'tvd', 'comparable': True, 'value_similarity': 0.996245, 'missing_value_similarity': 0.0966, 'snapshot_null_fraction': None}
+  outlier: {'similarity': 0.94038, 'method': 'quantile_rmse', 'comparable': True, 'value_similarity': 0.94038, 'missing_value_similarity': 1.0, 'snapshot_null_fraction': None}
+  price: {'similarity': 0.925696, 'method': 'quantile_rmse', 'comparable': True, 'value_similarity': 0.925696, 'missing_value_similarity': 1.0, 'snapshot_null_fraction': None}
+  skew: {'similarity': 0.96861, 'method': 'quantile_rmse', 'comparable': True, 'value_similarity': 0.96861, 'missing_value_similarity': 1.0, 'snapshot_null_fraction': None}
+  zip: {'similarity': 0.997646, 'method': 'quantile_rmse', 'comparable': True, 'value_similarity': 0.997646, 'missing_value_similarity': 1.0, 'snapshot_null_fraction': None}
+== fidelity out/doc_types_out.csv: overall 0.977497
+  age: {'similarity': 0.991216, 'method': 'quantile_rmse', 'comparable': True, 'value_similarity': 0.991216, 'missing_value_similarity': 1.0, 'snapshot_null_fraction': None}
+  bimodal: {'similarity': 0.977113, 'method': 'quantile_rmse', 'comparable': True, 'value_similarity': 0.977113, 'missing_value_similarity': 1.0, 'snapshot_null_fraction': None}
+  bit: {'similarity': 1.0, 'method': 'quantile_rmse', 'comparable': True, 'value_similarity': 1.0, 'missing_value_similarity': 1.0, 'snapshot_null_fraction': None}
+  day: {'similarity': 0.99615, 'method': 'tvd', 'comparable': True, 'value_similarity': 0.99615, 'missing_value_similarity': 1.0, 'snapshot_null_fraction': None}
+  null10: {'similarity': 0.987349, 'method': 'quantile_rmse', 'comparable': True, 'value_similarity': 0.991115, 'missing_value_similarity': 0.9962, 'snapshot_null_fraction': None}
+  null90: {'similarity': 0.99151, 'method': 'tvd', 'comparable': True, 'value_similarity': 0.992999, 'missing_value_similarity': 0.9985, 'snapshot_null_fraction': None}
+  outlier: {'similarity': 0.940306, 'method': 'quantile_rmse', 'comparable': True, 'value_similarity': 0.940306, 'missing_value_similarity': 1.0, 'snapshot_null_fraction': None}
+  price: {'similarity': 0.924684, 'method': 'quantile_rmse', 'comparable': True, 'value_similarity': 0.924684, 'missing_value_similarity': 1.0, 'snapshot_null_fraction': None}
+  skew: {'similarity': 0.968197, 'method': 'quantile_rmse', 'comparable': True, 'value_similarity': 0.968197, 'missing_value_similarity': 1.0, 'snapshot_null_fraction': None}
+  zip: {'similarity': 0.998446, 'method': 'quantile_rmse', 'comparable': True, 'value_similarity': 0.998446, 'missing_value_similarity': 1.0, 'snapshot_null_fraction': None}
+== measure
+C1 identical stat equal-row share: 0.0
+C1 identical fn equal-row share: 0.004
+C1 identical cat equal-row share: 0.395
+C1 identical int equal-row share: 0.0
+C1 identical date equal-row share: 0.002
+C1 indep corr(a,b): -0.01
+C1 indep cat1==cat2 index share: 0.281
+C1 source corr(a,b): -0.013
+=== types section, prefix ''
+H2 null10 null rate source/gen: (0.1004, 0.0)
+H2 null90 null rate source/gen: (0.9034, 0.0)
+outlier mean source/gen: (149.8, 50084.45)
+outlier median source/gen: (99.79, 49817.68)
+outlier distinct source/gen: (16749, 20000)
+skew mean source/gen: (42.44, 98.55)
+skew median source/gen: (20.46, 92.08)
+skew distinct source/gen: (17201, 20000)
+bimodal mean source/gen: (49.9, 49.92)
+bimodal median source/gen: (28.32, 66.59)
+bimodal distinct source/gen: (13187, 20000)
+price mean source/gen: (45.14, 46.0)
+price median source/gen: (19.99, 27.82)
+price distinct source/gen: (4, 20000)
+age mean source/gen: (54.0, 53.92)
+age median source/gen: (54.0, 54.0)
+age distinct source/gen: (73, 73)
+C2 outlier share >200 source/gen: (5e-05, 0.998)
+H3 price share on a real price: 0.0
+H3 price decimals in gen (max): 15
+H3 bimodal gap (35..65) share source: 0.0
+H3 bimodal gap (35..65) share gen: 0.0
+M3 day sample gen: ['2021-05-19 16:35:42.710337', '2021-08-13 07:14:56.942913', '2021-01-17 16:17:51.924100']
+M3 January share source/gen: (0.665, 0.084)
+M3 gen values with a time part: 1.0
+M3 year mix source: [('2021', 6745), ('2022', 6727), ('2023', 6528)]
+M3 year mix gen: [('2021', 6696), ('2022', 6839), ('2023', 6465)]
+M4 zip shorter than 5 chars (gen): 0.1085
+M4 zip sample gen: ['89035', '36830', '72902', '36310', '93237']
+bit values gen: [('0', 10039), ('1', 9961)]
+null_probability check fitted null rate: 0.0
+null_probability check np_0 null rate: 0.0
+null_probability check np_10 null rate: 0.101
+null_probability check np_50 null rate: 0.5028
+C3 fidelity json top-level keys: ['command', 'status', 'source', 'output', 'error']
+{
+ "command": "report fidelity",
+ "status": "error",
+ "source": "types.csv",
+ "output": "out/types_out.csv",
+ "error": "could not read types.csv: resolve_csv_dialect: has_header must be true or false; validate the descriptor with PipelineConfig first"
+}
+H1 source pairs: 36
+H1 generated rows with an unseen pair: (43, 0.0072)
+H1 joint cells stored / distinct pairs / other_count: (25, 36, 380)
+H1 parents with no stored cell: ['P11']
+H1 unseen-pair rows by parent: [('P11', 43)]
+=== leak section leak value_policy None redacted None
+H6/H7 snapshot diagnosis: {"dtype": "object", "kind": "categorical", "null_count": 0, "non_null_count": 1000, "distinct_count": 9, "stats": {"top_values": [{"value": "K21.9", "count": 140}, {"value": "F41.1", "count": 134}, {"value": "N39.0", "count": 131}, {"value": "M54.5", "count": 124}, {"value": "E78.5", "count": 121}, {"value": "E11.9", "count": 120}, {"value": "J45.909", "count": 115}, {"value": "I10", "count": 114}, {"value": "RARE-HIV-B20", "count": 1}], "other_count": 0}}
+H6/H7 snapshot salary: {"dtype": "int64", "kind": "numeric", "null_count": 0, "non_null_count": 1000, "distinct_count": 990, "stats": {"min": 18539.0, "max": 987654.0, "mean": 60524.263, "std": 31817.831236846534, "quantiles": {"p05": 39975.15, "p25": 51662.0, "p50": 59139.0, "p75": 67774.75, "p95": 80273.0}, "bin_edges": [18539.0, 115450.5, 212362.0, 309273.5, 406185.0, 503096.5, 600008.0, 696919.5, 793831.0, 890742.5, 987654.0], "bin_counts": [999, 0, 0, 0, 0, 0, 0, 0, 0, 1]}}
+H6/H7 snapshot note: {"dtype": "object", "kind": "categorical", "null_count": 0, "non_null_count": 1000, "distinct_count": 30, "stats": {"top_values": [{"value": "note: patient Surname26 called", "count": 45}, {"value": "note: patient Surname24 called", "count": 42}, {"value": "note: patient Surname20 called", "count": 40}, {"value": "note: patient Surname0 called", "count": 38}, {"value": "note: patient Surname17 called", "count": 38}, {"value": "note: patient Surname13 called", "count": 37}, {"value": "note: patient Surname23 called", "count": 37}, {"value": "note: patient Surname28 called", "count": 37}, {"value": "note: patient Surname18 called", "count": 36}, {"value": "note: patient Surname25 called", "count": 36}, {"value": "note: patient Surname10 called", "count": 35}, {"value": "note: patient Surname11 called", "count": 35}, {"value": "note: patient Surname15 called", "count": 35}, {"value": "note:
+H6/H7 snapshot state: {"dtype": "object", "kind": "categorical", "null_count": 0, "non_null_count": 1000, "distinct_count": 5, "stats": {"top_values": [{"value": "CA", "count": 212}, {"value": "FL", "count": 212}, {"value": "WA", "count": 202}, {"value": "NY", "count": 194}, {"value": "TX", "count": 180}], "other_count": 0}}
+H6 RARE-HIV-B20 rows in gen: 7
+H6 salary max gen: 917569.0
+H7 gen notes that are real source strings: 1.0
+H7 gen note sample: ['note: patient Surname1 called', 'note: patient Surname6 called', 'note: patient Surname23 called']
+C1 identical stat equal-row share: 0.0
+C1 identical fn equal-row share: 0.004
+C1 identical cat equal-row share: 0.395
+C1 identical int equal-row share: 0.0
+C1 identical date equal-row share: 0.002
+C1 indep corr(a,b): -0.01
+C1 indep cat1==cat2 index share: 0.281
+C1 source corr(a,b): -0.013
+=== types section, prefix 'doc_'
+H2 null10 null rate source/gen: (0.1004, 0.0966)
+H2 null90 null rate source/gen: (0.9034, 0.9019)
+outlier mean source/gen: (149.8, 50187.21)
+outlier median source/gen: (99.79, 49813.9)
+outlier distinct source/gen: (16749, 19999)
+skew mean source/gen: (42.44, 99.49)
+skew median source/gen: (20.46, 93.91)
+skew distinct source/gen: (17201, 19012)
+bimodal mean source/gen: (49.9, 49.81)
+bimodal median source/gen: (28.32, 32.3)
+bimodal distinct source/gen: (13187, 13817)
+price mean source/gen: (45.14, 46.11)
+price median source/gen: (19.99, 27.95)
+price distinct source/gen: (4, 3585)
+age mean source/gen: (54.0, 54.04)
+age median source/gen: (54.0, 55.0)
+age distinct source/gen: (73, 73)
+C2 outlier share >200 source/gen: (5e-05, 0.9987)
+H3 price share on a real price: 0.0008
+H3 price decimals in gen (max): 2
+H3 bimodal gap (35..65) share source: 0.0
+H3 bimodal gap (35..65) share gen: 0.0
+M3 day sample gen: ['2023-12-05', '2023-04-20', '2022-11-18']
+M3 January share source/gen: (0.665, 0.088)
+M3 gen values with a time part: 0.0
+M3 year mix source: [('2021', 6745), ('2022', 6727), ('2023', 6528)]
+M3 year mix gen: [('2021', 6737), ('2022', 6804), ('2023', 6459)]
+M4 zip shorter than 5 chars (gen): 0.1036
+M4 zip sample gen: ['13989', '15840', '26899', '29606', '76580']
+bit values gen: [('0', 10031), ('1', 9969)]
+null_probability check fitted null rate: 0.0987
+null_probability check np_0 null rate: 0.0
+null_probability check np_10 null rate: 0.1018
+null_probability check np_50 null rate: 0.5016
+C3 fidelity json top-level keys: ['command', 'status', 'source', 'output', 'error']
+{
+ "command": "report fidelity",
+ "status": "error",
+ "source": "types.csv",
+ "output": "out/types_out.csv",
+ "error": "could not read types.csv: resolve_csv_dialect: has_header must be true or false; validate the descriptor with PipelineConfig first"
+}
+H1 source pairs: 36
+H1 generated rows with an unseen pair: (43, 0.0072)
+H1 joint cells stored / distinct pairs / other_count: (25, 36, 380)
+H1 parents with no stored cell: ['P11']
+H1 unseen-pair rows by parent: [('P11', 43)]
+=== leak section leak_doc value_policy flagged-redacted/v1 redacted ['id', 'diagnosis', 'salary']
+H6/H7 snapshot diagnosis: {"dtype": "object", "kind": "categorical", "null_count": 0, "non_null_count": 1000, "distinct_count": 9, "stats": {"top_values": [], "other_count": 1000}, "cell_format": {}}
+H6/H7 snapshot salary: {"dtype": "int64", "kind": "numeric", "null_count": 0, "non_null_count": 1000, "distinct_count": 990, "stats": {"min": -1000000.0, "max": 2000000.0, "mean": null, "std": null, "quantiles": {}, "bin_edges": [-1000000.0, 2000000.0], "bin_counts": [1000]}, "cell_format": {"decimal_places": 0}}
+H6/H7 snapshot note: {"dtype": "object", "kind": "categorical", "null_count": 0, "non_null_count": 1000, "distinct_count": 30, "stats": {"top_values": [{"value": "note: patient Surname26 called", "count": 45}, {"value": "note: patient Surname24 called", "count": 42}, {"value": "note: patient Surname20 called", "count": 40}, {"value": "note: patient Surname0 called", "count": 38}, {"value": "note: patient Surname17 called", "count": 38}, {"value": "note: patient Surname13 called", "count": 37}, {"value": "note: patient Surname23 called", "count": 37}, {"value": "note: patient Surname28 called", "count": 37}, {"value": "note: patient Surname18 called", "count": 36}, {"value": "note: patient Surname25 called", "count": 36}, {"value": "note: patient Surname10 called", "count": 35}, {"value": "note: patient Surname11 called", "count": 35}, {"value": "note: patient Surname15 called", "count": 35}, {"value": "note:
+H6/H7 snapshot state: {"dtype": "object", "kind": "categorical", "null_count": 0, "non_null_count": 1000, "distinct_count": 5, "stats": {"top_values": [{"value": "CA", "count": 212}, {"value": "FL", "count": 212}, {"value": "WA", "count": 202}, {"value": "NY", "count": 194}, {"value": "TX", "count": 180}], "other_count": 0}, "cell_format": {}}
+H6/H7 generation: no output file (see leak_run.txt)

@@ -69,8 +69,8 @@ def test_real_engine_finding_maps_to_the_exact_key_and_moves_with_it(tmp_path: P
     assert res["ruleId"] == "validate.unknown_provider"
     loc = res["locations"][0]["physicalLocation"]
     assert loc["artifactLocation"]["uri"] == "pipeline.yaml"
-    # CLEAN_PIPELINE line 14 is `        provider: ...` (8-space indent)
-    assert loc["region"]["startLine"] == 14
+    # CLEAN_PIPELINE line 15 is `        provider: ...` (8-space indent)
+    assert loc["region"]["startLine"] == 15
     assert loc["region"]["startColumn"] == 9
     assert "snippet" not in json.dumps(doc)
     rule_ids = [r["id"] for r in doc["runs"][0]["tool"]["driver"]["rules"]]
@@ -83,7 +83,7 @@ def test_real_engine_finding_maps_to_the_exact_key_and_moves_with_it(tmp_path: P
     assert proc.returncode == EXIT_USAGE
     res = _only_result(doc)
     region = res["locations"][0]["physicalLocation"]["region"]
-    assert (region["startLine"], region["startColumn"]) == (16, 9)
+    assert (region["startLine"], region["startColumn"]) == (17, 9)
     assert res["partialFingerprints"]["primary/v1"] == first_fp
 
 
@@ -134,5 +134,5 @@ def test_same_command_json_and_markdown_describe_the_same_report(tmp_path: Path)
     assert report["schema_version"] == "decoy-ci-report/v1"
     assert report["status"] == "findings" and report["exit_code"] == EXIT_USAGE
     assert report["findings"][0]["rule_id"] == "validate.unknown_provider"
-    assert "validate.unknown_provider" in md.stdout and "pipeline.yaml:14:9" in md.stdout
+    assert "validate.unknown_provider" in md.stdout and "pipeline.yaml:15:9" in md.stdout
     assert "```" not in md.stdout

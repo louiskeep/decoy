@@ -11,6 +11,7 @@ import yaml
 from typer.testing import CliRunner
 
 from decoy.__main__ import app
+from decoy.cli.init import _PATHED_PRESETS
 
 runner = CliRunner()
 
@@ -299,6 +300,7 @@ sources:
   data:
     type: file
     format: csv
+    has_header: true
     path: {input_path.as_posix()!r}
 
 tables:
@@ -318,3 +320,113 @@ targets:
     parsed = yaml.safe_load(phantom_body)
     with pytest.raises(pydantic.ValidationError):
         PipelineConfig.model_validate(parsed)
+
+
+# --- The paths typed into the wizard reach the written pipeline ---
+
+
+def test_every_template_with_a_source_is_path_edited():
+    from decoy.templates import get_template, template_names
+
+    with_sources = {
+        name for name in template_names() if yaml.safe_load(get_template(name).body).get("sources")
+    }
+    assert with_sources == set(_PATHED_PRESETS)
+
+
+@pytest.mark.parametrize("preset", _PATHED_PRESETS)
+def test_typed_paths_reach_the_written_pipeline(tmp_path: Path, preset: str):
+    from decoy_engine import PipelineConfig
+
+    out = tmp_path / "pipeline.yaml"
+    typed_in = "in #1/o'brien: x.csv"
+    typed_out = "out dir/masked.csv"
+    result = runner.invoke(
+        app,
+        ["init", "--preset", preset, "--output", str(out)],
+        input=f"{typed_in}\n{typed_out}\n",
+    )
+    assert result.exit_code == 0, result.output
+    data = yaml.safe_load(out.read_text())
+    (source,) = data["sources"].values()
+    (target,) = data["targets"].values()
+    assert source["path"] == typed_in
+    assert target["path"] == typed_out
+    PipelineConfig.model_validate(data)
+
+
+@pytest.mark.parametrize("preset", _PATHED_PRESETS)
+def test_accepting_the_default_paths_writes_what_quiet_writes(tmp_path: Path, preset: str):
+    prompted = tmp_path / "prompted.yaml"
+    quiet = tmp_path / "quiet.yaml"
+    first = runner.invoke(
+        app, ["init", "--preset", preset, "--output", str(prompted)], input="\n\n"
+    )
+    second = runner.invoke(app, ["init", "--preset", preset, "--output", str(quiet), "--quiet"])
+    assert first.exit_code == 0, first.output
+    assert second.exit_code == 0, second.output
+    assert yaml.safe_load(prompted.read_text()) == yaml.safe_load(quiet.read_text())
+
+
+def test_a_template_without_the_path_is_refused():
+    from decoy.cli.init import _replace_yaml_path
+
+    with pytest.raises(ValueError, match="no path under sources"):
+        _replace_yaml_path("version: 2\n", "sources", "x.csv")
+
+
+_NESTED = """\
+sources:
+  people:
+    type: file
+    layout:
+      path: nested.csv
+    path: ./own.csv  # the entry's own path
+  other:
+    path: ./other.csv
+targets:
+  people:
+    path: ./out.csv
+"""
+
+
+def test_only_the_first_entry_s_own_path_is_replaced():
+    from decoy.cli.init import _replace_yaml_path, _template_path
+
+    assert _template_path(_NESTED, "sources") == "./own.csv"
+    data = yaml.safe_load(_replace_yaml_path(_NESTED, "sources", "typed.csv"))
+    assert data["sources"]["people"]["path"] == "typed.csv"
+    assert data["sources"]["people"]["layout"]["path"] == "nested.csv"
+    assert data["sources"]["other"]["path"] == "./other.csv"
+    assert data["targets"]["people"]["path"] == "./out.csv"
+
+
+def test_the_replaced_path_keeps_its_trailing_comment():
+    from decoy.cli.init import _replace_yaml_path
+
+    edited = _replace_yaml_path(_NESTED, "sources", "typed.csv")
+    assert "    path: 'typed.csv'  # the entry's own path\n" in edited
+
+
+def test_a_path_only_in_a_nested_mapping_or_a_later_entry_is_refused():
+    from decoy.cli.init import _replace_yaml_path
+
+    body = "sources:\n  people:\n    layout:\n      path: x\n  other:\n    path: y\n"
+    with pytest.raises(ValueError, match="no path under sources"):
+        _replace_yaml_path(body, "sources", "typed.csv")
+
+
+def test_a_template_that_no_longer_matches_is_a_clean_runtime_error(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+
+    import decoy.cli.init as init_mod
+    from decoy.cli.exit_codes import EXIT_RUNTIME
+
+    broken = SimpleNamespace(body="version: 2\nsources:\n  people:\n    type: file\n")
+    monkeypatch.setattr(init_mod, "get_template", lambda name: broken)
+    out = tmp_path / "pipeline.yaml"
+    result = runner.invoke(app, ["init", "--preset", "minimal", "--output", str(out)], input="\n\n")
+    assert result.exit_code == EXIT_RUNTIME
+    assert "error: preset template has no path under sources:" in result.stderr
+    assert "Traceback" not in result.output
+    assert not out.exists()

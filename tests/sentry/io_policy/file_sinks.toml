@@ -1,0 +1,297 @@
+# G-ONE-PRIVATE-FILE sink registry (see test_private_files.py). One row per watched sink and
+# one-based call ordinal. Private entry-point calls need no row. `exit` marks a baselined row.
+
+[[row]]
+file = "_mask_secret.py"
+function = "_open_checked"
+sink = "os.open"
+ordinal = 1
+disposition = "read"
+reason = "Opens the mask secret file read-only to check its mode on the descriptor; writes nothing."
+
+[[row]]
+file = "_update_check.py"
+function = "_write_cache"
+sink = "write_text"
+ordinal = 1
+disposition = "public"
+reason = "Update-check cache holds a check time and a version string, no user data."
+
+[[row]]
+file = "api.py"
+function = "_stage_source_entry"
+sink = "write_table"
+ordinal = 1
+disposition = "private"
+reason = "Parquet bytes of the caller's DataFrame go into the spool that create_private_temp made 0600."
+via = "create_private_temp"
+
+[[row]]
+file = "ci/engine_logging.py"
+function = "engine_logging_silenced"
+sink = "tempfile.TemporaryDirectory"
+ordinal = 1
+disposition = "temp"
+reason = "Scratch directory for engine log files; the stdlib makes it 0700 on POSIX."
+exit = "WIN-FEAS"
+
+[[row]]
+file = "cli/_duckdb_source.py"
+function = "acquire_relation"
+sink = "duckdb.connect"
+ordinal = 1
+disposition = "read"
+reason = "Opens the user's DuckDB source database with read_only=True."
+
+[[row]]
+file = "cli/_duckdb_source.py"
+function = "acquire_relation"
+sink = "execute.copy_to"
+ordinal = 1
+disposition = "temp"
+reason = "COPY writes the unmasked source table into the 0700 spill directory run.py makes; the file takes the umask mode inside it."
+exit = "WIN-FEAS"
+
+[[row]]
+file = "cli/_token_vault.py"
+function = "LocalTokenVault.__init__"
+sink = "sqlite3.connect"
+ordinal = 1
+disposition = "private"
+reason = "SQLite opens the file open_private just created 0600, and its journal copies that mode."
+via = "open_private"
+
+[[row]]
+file = "cli/demo.py"
+function = "_write_sample_csv"
+sink = "write_text"
+ordinal = 1
+disposition = "public"
+reason = "Synthetic demo data, shareable by design."
+
+[[row]]
+file = "cli/demo.py"
+function = "_run_single_demo"
+sink = "write_text"
+ordinal = 1
+disposition = "public"
+reason = "Synthetic demo config and data, shareable by design."
+
+[[row]]
+file = "cli/demo.py"
+function = "_run_single_demo"
+sink = "write_text"
+ordinal = 2
+disposition = "public"
+reason = "Synthetic demo config and data, shareable by design."
+
+[[row]]
+file = "cli/demo.py"
+function = "_generate_ref_datasets"
+sink = "open"
+ordinal = 1
+disposition = "public"
+reason = "Synthetic demo reference data, shareable by design."
+
+[[row]]
+file = "cli/demo.py"
+function = "_generate_ref_datasets"
+sink = "open"
+ordinal = 2
+disposition = "public"
+reason = "Synthetic demo reference data, shareable by design."
+
+[[row]]
+file = "cli/demo.py"
+function = "_generate_ref_datasets"
+sink = "open"
+ordinal = 3
+disposition = "public"
+reason = "Synthetic demo reference data, shareable by design."
+
+[[row]]
+file = "cli/init.py"
+function = "_init"
+sink = "write_text"
+ordinal = 1
+disposition = "public"
+reason = "Scaffolded pipeline.yaml: column names, types, paths and secret references, never a value (OQ2)."
+
+[[row]]
+file = "cli/init.py"
+function = "_init"
+sink = "write_text"
+ordinal = 2
+disposition = "public"
+reason = "Scaffolded pipeline.yaml: column names, types, paths and secret references, never a value (OQ2)."
+
+[[row]]
+file = "cli/init.py"
+function = "_init"
+sink = "write_text"
+ordinal = 3
+disposition = "public"
+reason = "Scaffolded pipeline.yaml: column names, types, paths and secret references, never a value (OQ2)."
+
+[[row]]
+file = "cli/init.py"
+function = "_init"
+sink = "write_text"
+ordinal = 4
+disposition = "public"
+reason = "Scaffolded pipeline.yaml: column names, types, paths and secret references, never a value (OQ2)."
+
+[[row]]
+file = "cli/io/_targets.py"
+function = "_write_fixed_width"
+sink = "write_fixed_width"
+ordinal = 1
+disposition = "public"
+reason = "Masked fixed-width output keeps the old file's mode bits (OQ3); the engine stages it itself."
+
+[[row]]
+file = "cli/io/_targets.py"
+function = "_write_table"
+sink = "to_csv"
+ordinal = 1
+disposition = "staged"
+reason = "Writes into the stager the caller passes; G-ONE-TARGET-WRITE checks the stager."
+
+[[row]]
+file = "cli/io/_targets.py"
+function = "_write_table"
+sink = "to_parquet"
+ordinal = 1
+disposition = "staged"
+reason = "Writes into the stager the caller passes; G-ONE-TARGET-WRITE checks the stager."
+
+[[row]]
+file = "cli/io/_targets.py"
+function = "_write_table"
+sink = "write_table"
+ordinal = 1
+disposition = "staged"
+reason = "Writes into the stager the caller passes; G-ONE-TARGET-WRITE checks the stager."
+
+[[row]]
+file = "cli/io/_targets.py"
+function = "write_targets"
+sink = "write_table"
+ordinal = 1
+disposition = "public"
+reason = "Masked whole-table output keeps the old file's mode bits (OQ3); masked data is the shareable product."
+
+[[row]]
+file = "cli/io/_targets.py"
+function = "write_chunked_output"
+sink = "staged_local_target"
+ordinal = 1
+disposition = "public"
+reason = "Chunked masked output keeps the old file's mode bits (OQ3)."
+
+[[row]]
+file = "cli/io/_targets.py"
+function = "write_chunked_output"
+sink = "ParquetWriter"
+ordinal = 1
+disposition = "public"
+reason = "Chunked masked output keeps the old file's mode bits (OQ3)."
+
+[[row]]
+file = "cli/io/_targets.py"
+function = "write_chunked_output"
+sink = "write_table"
+ordinal = 1
+disposition = "public"
+reason = "Chunked masked output keeps the old file's mode bits (OQ3)."
+
+[[row]]
+file = "cli/io/_targets.py"
+function = "write_chunked_output"
+sink = "to_csv"
+ordinal = 1
+disposition = "public"
+reason = "Chunked masked output keeps the old file's mode bits (OQ3)."
+
+[[row]]
+file = "cli/io/_small_file.py"
+function = "read_small_file"
+sink = "os.open"
+ordinal = 1
+disposition = "read"
+reason = "Opens a project marker, claim or LATEST read-only after an lstat check, without following links or blocking; writes nothing."
+
+[[row]]
+file = "cli/run/_prepare.py"
+function = "prepare"
+sink = "tempfile.mkdtemp"
+ordinal = 1
+disposition = "temp"
+reason = "DuckDB spill directory; mkdtemp makes it 0700 on POSIX."
+exit = "WIN-FEAS"
+
+[[row]]
+file = "cli/run/_vault.py"
+function = "_commit_vault"
+sink = "tempfile.mkstemp"
+ordinal = 1
+disposition = "private"
+reason = "Vault staging file; mkstemp makes it 0600 and the engine writer reopens it by path."
+exit = "L5a (_vault_commit.py)"
+
+[[row]]
+file = "cli/run/_vault.py"
+function = "_commit_vault"
+sink = "os.open"
+ordinal = 1
+disposition = "private"
+reason = "Reopens the vault staging file to fsync it."
+exit = "L5a (_vault_commit.py)"
+
+[[row]]
+file = "cli/schema.py"
+function = "schema"
+sink = "write_text"
+ordinal = 1
+disposition = "public"
+reason = "The PipelineConfig JSON schema, published as is."
+
+[[row]]
+file = "distribution/installer.py"
+function = "_extract_bundle"
+sink = "extractall"
+ordinal = 1
+disposition = "public"
+reason = "Verified runtime bundle files extracted into the install staging directory; no user data."
+
+[[row]]
+file = "distribution/installer.py"
+function = "_write_launcher_shim"
+sink = "tempfile.mkstemp"
+ordinal = 1
+disposition = "public"
+reason = "Launcher shim script others run; holds no data."
+
+[[row]]
+file = "distribution/installer.py"
+function = "_write_launcher_shim"
+sink = "os.fdopen"
+ordinal = 1
+disposition = "public"
+reason = "Launcher shim script others run; holds no data."
+
+[[row]]
+file = "distribution/installer.py"
+function = "_write_launcher_shim"
+sink = "os.chmod"
+ordinal = 1
+disposition = "public"
+reason = "Launcher shim must be executable (0755); the one mode call P4 allows outside the helper."
+
+[[row]]
+file = "distribution/lock.py"
+function = "exclusive"
+sink = "os.open"
+ordinal = 1
+disposition = "public"
+reason = "Empty install lock file; holds no data."

@@ -21,6 +21,7 @@ from typer.testing import CliRunner
 from decoy.__main__ import app
 from decoy.cli.exit_codes import EXIT_USAGE
 from decoy.templates import get_template, list_templates
+from tests.csv_sources import csv_source
 from tests.keyed_secret import TEST_MASK_SECRET, TEST_MASK_SECRET_REF, with_mask_secret
 
 runner = CliRunner()
@@ -38,7 +39,7 @@ def _keyed_pipeline(tmp_path: Path, *, strategy: str = "fpe", secret: bool = Fal
     cfg: dict = {
         "version": 2,
         "global_settings": {"seed": 42},
-        "sources": {"accounts": {"type": "file", "format": "csv", "path": str(src)}},
+        "sources": {"accounts": csv_source(src)},
         "tables": [{"name": "accounts", "columns": [column]}],
         "targets": {
             "accounts": {"type": "file", "format": "csv", "path": str(tmp_path / "out.csv")}

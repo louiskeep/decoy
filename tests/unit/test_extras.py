@@ -9,6 +9,7 @@ CLI-level behavior (exit codes, message shape) this logic feeds.
 from __future__ import annotations
 
 import pytest
+from tests.csv_sources import csv_source
 
 from decoy.cli.extras import (
     MissingExtraError,
@@ -190,7 +191,7 @@ class TestCheckCloudEndpoints:
     def test_local_file_sources_and_targets_are_a_no_op(self) -> None:
         check_cloud_endpoints(
             {
-                "sources": {"accounts": {"type": "file", "format": "csv", "path": "x.csv"}},
+                "sources": {"accounts": csv_source("x.csv")},
                 "targets": {"accounts": {"type": "file", "format": "csv", "path": "y.csv"}},
             }
         )
@@ -242,7 +243,7 @@ class TestCheckCloudEndpointsSupported:
     def test_local_file_sources_and_targets_are_a_no_op(self) -> None:
         check_cloud_endpoints_supported(
             {
-                "sources": {"accounts": {"type": "file", "format": "csv", "path": "x.csv"}},
+                "sources": {"accounts": csv_source("x.csv")},
                 "targets": {"accounts": {"type": "file", "format": "csv", "path": "y.csv"}},
             }
         )

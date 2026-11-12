@@ -37,10 +37,15 @@ the at-rest mitigation.
 
 from __future__ import annotations
 
-import os
 import sqlite3
 from collections.abc import Iterator
 from pathlib import Path
+
+from decoy._private_file import (
+    PRIVATE_MODE_FAILED,
+    PrivateFileError,
+    open_private,
+)
 
 
 class TokenVaultError(Exception):
@@ -97,22 +102,25 @@ class LocalTokenVault:
             # may be a shared user directory we must not re-permission.
             parent_is_new = not parent.exists()
             parent.mkdir(parents=True, exist_ok=True)
-            if parent_is_new:
-                self._restrict(parent, 0o700)
-            # Create the file 0600 up front so it is never briefly world-readable
-            # under the process umask, then chmod on every create-path open to
-            # repair a vault an earlier build left 0644. An empty file is a valid
-            # new SQLite database. This precedes ALL schema/data writes: SQLite can
+            # open_private creates the file 0600 before any schema write (SQLite can
             # spill dirty pages mid-transaction, so protection cannot wait for
-            # commit().
+            # commit()), repairs a vault an earlier build left 0644, and narrows a
+            # parent this call created to 0700. An empty file is a valid new database.
             try:
-                os.close(os.open(path, os.O_RDWR | os.O_CREAT, 0o600))
-            except OSError as exc:
+                open_private(path, new_parent=parent_is_new)
+            except PrivateFileError as exc:
+                if exc.code == PRIVATE_MODE_FAILED:
+                    raise TokenVaultError(
+                        code="vault_permission_error",
+                        message=(
+                            "could not restrict permissions on the token vault: "
+                            f"{exc.code}; refusing to write the token vault."
+                        ),
+                    ) from None
                 raise TokenVaultError(
                     code="vault_open_error",
-                    message=f"could not create token vault {path!s}: {type(exc).__name__}.",
-                ) from exc
-            self._restrict(path, 0o600)
+                    message=f"could not create token vault {path!s}: {exc.code}.",
+                ) from None
         try:
             # isolation_level="" keeps Python's implicit-transaction behavior:
             # the first write opens a transaction that stays open until an
@@ -126,24 +134,6 @@ class LocalTokenVault:
                 message=f"could not open token vault {path!s}: {type(exc).__name__}.",
             ) from exc
         self._ensure_schema(create=create)
-
-    def _restrict(self, target: Path, mode: int) -> None:
-        """chmod `target`, aborting the open if the restriction cannot be applied.
-
-        The vault holds a cleartext re-identification map; proceeding with
-        unrestricted perms would silently defeat its only at-rest protection.
-        """
-        try:
-            os.chmod(target, mode)
-        except OSError as exc:
-            raise TokenVaultError(
-                code="vault_permission_error",
-                message=(
-                    f"could not restrict permissions on {target!s} to "
-                    f"{mode:04o}: {type(exc).__name__}; refusing to write the "
-                    "token vault."
-                ),
-            ) from exc
 
     def _ensure_schema(self, *, create: bool) -> None:
         cur = self._conn.cursor()

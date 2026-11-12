@@ -1,0 +1,21 @@
+{
+ "sentry_id": "output-name-allow",
+ "created_in": "PROJECT-LAYOUT-P2b",
+ "entries": {
+  "cli/fit.py::fit": {
+   "reason": "Default snapshot name beside the source; moves in P9."
+  },
+  "cli/gen/_scaffold.py::layout_for": {
+   "reason": "Snapshot name in the generate scaffold; moves with the scaffold in P7."
+  },
+  "cli/init.py::_scaffold_from_file": {
+   "reason": "Default masked target name in the mask scaffold; moves in P7."
+  },
+  "cli/tokenize.py::detokenize": {
+   "reason": "Default detokenized name beside the input; moves in P9."
+  },
+  "cli/unmask.py::unmask": {
+   "reason": "Default unmasked name beside the input; moves in P9."
+  }
+ }
+}

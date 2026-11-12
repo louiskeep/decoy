@@ -13,6 +13,7 @@ from typing import Any
 import pandas as pd
 import pytest
 import yaml
+from tests.csv_sources import csv_source
 
 from decoy.cli.exit_codes import EXIT_CAPACITY, EXIT_OK, EXIT_USAGE
 from decoy.cli.gate import (
@@ -38,7 +39,7 @@ def _config(tmp_path: Path, *, target_exists: bool = False, parent: str | None =
     cfg = {
         "version": 2,
         "global_settings": {"seed": 42},
-        "sources": {"customers": {"type": "file", "format": "csv", "path": str(src)}},
+        "sources": {"customers": csv_source(src)},
         "tables": [
             {
                 "name": "customers",
@@ -138,7 +139,7 @@ def test_missing_ner_extra_keeps_the_extra_name(
     import decoy_engine
     from decoy_engine.plan import PlanCompileError
 
-    def _no_spacy(_raw: Any) -> Any:
+    def _no_spacy(_raw: Any, **_kwargs: Any) -> Any:
         raise PlanCompileError("ner_spacy_not_installed", "tables.t.columns.c", "spacy absent")
 
     monkeypatch.setattr(decoy_engine, "run_config_only_checks", _no_spacy)

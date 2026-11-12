@@ -302,9 +302,29 @@ class TestUnexpectedEstimatorExceptionPropagates:
             raise RuntimeError("unexpected estimator defect (test double)")
 
         monkeypatch.setattr(engine_exec, "estimate_job_capacity", _boom)
+        # DECOY_DEBUG=1 (set suite-wide by tests/conftest.py, restated here) makes the root
+        # crash guard re-raise, so the defect reaches the test with its real traceback.
+        monkeypatch.setenv("DECOY_DEBUG", "1")
         config_path = _write_config(tmp_path)
         with pytest.raises(RuntimeError, match="unexpected estimator defect"):
             runner.invoke(app, ["validate", "preflight", str(config_path)], catch_exceptions=False)
+
+    def test_unexpected_exception_without_debug_is_a_crash_exit_not_a_pass(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        import decoy_engine.execution as engine_exec
+
+        def _boom(*_a: Any, **_k: Any) -> Any:
+            raise RuntimeError("unexpected estimator defect (test double)")
+
+        monkeypatch.setattr(engine_exec, "estimate_job_capacity", _boom)
+        monkeypatch.delenv("DECOY_DEBUG", raising=False)
+        config_path = _write_config(tmp_path)
+        result = runner.invoke(app, ["validate", "preflight", str(config_path)])
+        assert result.exit_code == 1
+        assert "internal error (RuntimeError)" in result.output
+        assert "Traceback" not in result.output
+        assert "unexpected estimator defect" not in result.output
 
 
 class TestJsonEnvelope:

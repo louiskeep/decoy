@@ -8,7 +8,7 @@ from pathlib import Path
 
 import pytest
 
-from decoy import _atomic
+from decoy import _atomic, _private_file
 from decoy._atomic import AtomicWriteError, WriteMode, write_atomic
 
 
@@ -222,7 +222,7 @@ def test_local_target_refuses_a_bad_component(name: str) -> None:
 def test_local_target_refuses_windows_devices_on_windows(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, name: str
 ) -> None:
-    monkeypatch.setattr(_atomic, "_WINDOWS", True)
+    monkeypatch.setattr(_private_file, "_WINDOWS", True)
     with pytest.raises(AtomicWriteError) as info:
         _atomic.write_local_target(tmp_path / name, b"x", WriteMode.REPLACE)
     assert info.value.code == _atomic.ATOMIC_BAD_NAME
@@ -233,7 +233,7 @@ def test_local_target_accepts_cpython_non_devices_on_windows(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, name: str
 ) -> None:
     # Parity with CPython os.path.isreserved: COM0 and LPT0 are ordinary names on Windows.
-    monkeypatch.setattr(_atomic, "_WINDOWS", True)
+    monkeypatch.setattr(_private_file, "_WINDOWS", True)
     assert _atomic.write_local_target(tmp_path / name, b"x", WriteMode.REPLACE) is True
 
 
@@ -262,7 +262,7 @@ def test_windows_create_once_uses_rename_and_keeps_a_competitor(
     def forbidden(*_a: object, **_k: object) -> None:
         raise AssertionError("no link or replace on the Windows no-clobber path")
 
-    monkeypatch.setattr(_atomic, "_WINDOWS", True)
+    monkeypatch.setattr(_private_file, "_WINDOWS", True)
     monkeypatch.setattr(os, "rename", rename_refuses)
     monkeypatch.setattr(os, "link", forbidden)
     monkeypatch.setattr(os, "replace", forbidden)
@@ -341,7 +341,7 @@ def test_windows_retries_permission_error_with_bounded_backoff(
             raise PermissionError(errno.EACCES, "held open")
         real(a, b)
 
-    monkeypatch.setattr(_atomic, "_WINDOWS", True)
+    monkeypatch.setattr(_private_file, "_WINDOWS", True)
     monkeypatch.setattr(_atomic, "_sleep", sleeps.append)
     monkeypatch.setattr(os, "replace", flaky)
     assert write_atomic(tmp_path, "t", b"x", WriteMode.REPLACE) is True
@@ -355,7 +355,7 @@ def test_windows_gives_up_after_the_bound(tmp_path: Path, monkeypatch: pytest.Mo
     def held(*_a: object) -> None:
         raise PermissionError(errno.EACCES, "held open")
 
-    monkeypatch.setattr(_atomic, "_WINDOWS", True)
+    monkeypatch.setattr(_private_file, "_WINDOWS", True)
     monkeypatch.setattr(_atomic, "_sleep", sleeps.append)
     monkeypatch.setattr(os, "replace", held)
     with pytest.raises(AtomicWriteError):
@@ -372,7 +372,7 @@ def test_posix_does_not_retry_permission_error(
     def held(*_a: object) -> None:
         raise PermissionError(errno.EACCES, "denied")
 
-    monkeypatch.setattr(_atomic, "_WINDOWS", False)
+    monkeypatch.setattr(_private_file, "_WINDOWS", False)
     monkeypatch.setattr(_atomic, "_sleep", sleeps.append)
     monkeypatch.setattr(os, "replace", held)
     with pytest.raises(AtomicWriteError):
@@ -396,3 +396,98 @@ def test_failed_temp_unlink_after_link_is_retried_by_cleanup(
     monkeypatch.setattr(_atomic.os, "unlink", flaky_unlink)
     assert write_atomic(tmp_path, "r", b"x", WriteMode.CREATE_ONCE) is True
     assert _names(tmp_path) == ["r"]
+
+
+# --- replace_symlink (PROJECT-LAYOUT P1a) ---
+
+_posix_only = pytest.mark.skipif(os.name == "nt", reason="needs symlinks")
+
+
+@_posix_only
+def test_replace_symlink_creates_a_relative_link(tmp_path: Path) -> None:
+    _atomic.replace_symlink(tmp_path / "latest", "run-1")
+    assert os.readlink(tmp_path / "latest") == "run-1"
+    assert _names(tmp_path) == ["latest"]
+
+
+@_posix_only
+def test_replace_symlink_retargets_without_a_missing_moment(tmp_path: Path) -> None:
+    link = tmp_path / "current"
+    _atomic.replace_symlink(link, "versions/a")
+    seen: list[str] = []
+    real = os.replace
+
+    def spy(src: object, dst: object) -> None:
+        seen.append(os.readlink(link))  # the old link is still whole at the swap
+        real(src, dst)  # type: ignore[arg-type]
+
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(_atomic.os, "replace", spy)
+        _atomic.replace_symlink(link, "versions/b")
+    assert seen == ["versions/a"]
+    assert os.readlink(link) == "versions/b"
+    assert _names(tmp_path) == ["current"]
+
+
+@_posix_only
+def test_replace_symlink_replaces_a_planted_link_not_its_target(tmp_path: Path) -> None:
+    victim = tmp_path / "victim.txt"
+    victim.write_bytes(b"keep")
+    link = tmp_path / "latest"
+    link.symlink_to(victim)
+    _atomic.replace_symlink(link, "run-2")
+    assert os.readlink(link) == "run-2"
+    assert victim.read_bytes() == b"keep"
+
+
+@_posix_only
+def test_replace_symlink_refuses_a_regular_file_in_the_way(tmp_path: Path) -> None:
+    (tmp_path / "latest").write_bytes(b"mine")
+    with pytest.raises(AtomicWriteError) as caught:
+        _atomic.replace_symlink(tmp_path / "latest", "run-3")
+    assert caught.value.code == _atomic.ATOMIC_WRITE_FAILED
+    assert caught.value.__context__ is None
+    assert (tmp_path / "latest").read_bytes() == b"mine"
+    assert _names(tmp_path) == ["latest"]
+
+
+@_posix_only
+def test_replace_symlink_failure_removes_its_temp_and_keeps_the_old_link(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    link = tmp_path / "latest"
+    _atomic.replace_symlink(link, "run-1")
+    monkeypatch.setattr(_atomic.os, "replace", _boom)
+    with pytest.raises(AtomicWriteError) as caught:
+        _atomic.replace_symlink(link, "run-2")
+    assert caught.value.code == _atomic.ATOMIC_WRITE_FAILED
+    assert caught.value.errno == errno.EIO
+    assert "secret" not in str(caught.value) and caught.value.__cause__ is None
+    assert caught.value.__context__ is None
+    assert os.readlink(link) == "run-1"
+    assert _names(tmp_path) == ["latest"]
+
+
+@_posix_only
+def test_replace_symlink_symlink_failure_leaves_nothing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(_atomic.os, "symlink", _boom)
+    with pytest.raises(AtomicWriteError) as caught:
+        _atomic.replace_symlink(tmp_path / "latest", "run-1")
+    assert caught.value.__context__ is None
+    assert _names(tmp_path) == []
+
+
+@_posix_only
+def test_replace_symlink_lstat_failure_keeps_no_path_context(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def deny(*_a: object, **_k: object) -> None:
+        raise OSError(errno.EACCES, "x", "/secret/path")
+
+    monkeypatch.setattr(_atomic.os, "lstat", deny)
+    with pytest.raises(AtomicWriteError) as caught:
+        _atomic.replace_symlink(tmp_path / "latest", "run-1")
+    assert caught.value.errno == errno.EACCES
+    assert caught.value.__context__ is None

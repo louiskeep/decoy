@@ -64,6 +64,12 @@ def _registry_codes() -> set[str]:
     return {entry["code"] for entry in reasons.manifest()["entries"]}  # type: ignore[index, union-attr]
 
 
+# Engine errors whose first positional argument is not a code, so the scan skips it.
+# `ScanSourceError(table, cause_class)` names the table (`"relationships"` for the declared
+# relationships scan, engine #422); its wire code is the class's own.
+_FIRST_ARG_NOT_A_CODE = frozenset({"ScanSourceError"})
+
+
 def _engine_literal_codes() -> set[str]:
     """Literal codes the engine raises or reports outside the registry."""
     import decoy_engine
@@ -76,7 +82,8 @@ def _engine_literal_codes() -> set[str]:
             if isinstance(node, ast.Call):
                 values += [kw.value for kw in node.keywords if kw.arg in ("code", "reason")]
                 name = _call_name(node)
-                if node.args and (name.endswith("Error") or name.endswith("Exception")):
+                is_error = name.endswith("Error") or name.endswith("Exception")
+                if node.args and is_error and name not in _FIRST_ARG_NOT_A_CODE:
                     values.append(node.args[0])
             elif isinstance(node, (ast.Assign, ast.AnnAssign)) and node.value is not None:
                 targets = node.targets if isinstance(node, ast.Assign) else [node.target]
@@ -149,11 +156,12 @@ def _cli_gate_codes() -> tuple[set[str], set[str]]:
         if isinstance(node, ast.Call) and _call_name(node) == "GateFinding":
             if len(node.args) > 2 and isinstance(node.args[2], ast.Constant):
                 codes.add(node.args[2].value)
-        # The pydantic fallback: `e.get("type", "validation_error")`.
-        if isinstance(node, ast.Call) and _call_name(node) == "get" and len(node.args) == 2:
-            if isinstance(node.args[0], ast.Constant) and node.args[0].value == "type":
-                codes.update(_literals(node.args[1]))
-    gate_checks = {"_check_source_files", "_check_target_overwrite", "_check_capacity", "_check_native"}
+    gate_checks = {
+        "_check_source_files",
+        "_check_target_overwrite",
+        "_check_capacity",
+        "_check_native",
+    }
     for fn in ast.walk(_module_tree(cli_preflight)):
         if not (isinstance(fn, ast.FunctionDef) and fn.name in gate_checks):
             continue
@@ -247,7 +255,9 @@ def test_a_seeded_computed_code_site_is_reported(tmp_path: Path, shape: str) -> 
         "def g():\n    raise ExecutionError(code='literal_code', message='m')\n",
         encoding="utf-8",
     )
-    (pkg / "_seeded.py").write_text(f"def f(value):\n    {_SEEDED_SITES[shape]}\n", encoding="utf-8")
+    (pkg / "_seeded.py").write_text(
+        f"def f(value):\n    {_SEEDED_SITES[shape]}\n", encoding="utf-8"
+    )
     assert _unapproved_dynamic_sites(tmp_path / "fake_engine") == ["execution/_seeded.py"]
 
 
@@ -290,7 +300,7 @@ def test_every_pydantic_error_type_is_allowlisted() -> None:
 
 def test_every_cli_gate_code_and_preflight_template_is_allowlisted() -> None:
     codes, templates = _cli_gate_codes()
-    assert {"yaml.parse_error", "missing_extra", "validation_error", "compile.needs_profile"} <= codes
+    assert {"yaml.parse_error", "missing_extra", "compile.needs_profile"} <= codes
     assert sorted(codes - validation_codes()) == []
     assert templates, "the preflight scan found no templated check names"
     for template in templates:
@@ -344,7 +354,16 @@ def test_an_unknown_upstream_code_never_reaches_any_report_format(
 
     repo = make_repo(tmp_path / "repo")
     write_clean_pipeline(repo)
-    write(repo, "build/evidence.json", "{}\n")
+    # The shared reader refuses a malformed manifest before the (patched) verifier runs.
+    manifest = {
+        "schema_version": "cli-local-1",
+        "pipeline_path": "pipeline.yaml",
+        "pipeline_fingerprint": "sha256:0",
+        "input_fingerprints": {},
+        "output_fingerprints": {},
+        "manifest_hash": "sha256:0",
+    }
+    write(repo, "build/evidence.json", json.dumps(manifest))
     ev = "  evidence:\n    - {id: e, manifest: build/evidence.json}\n"
     write(repo, MANIFEST_NAME, ci_manifest(extra_checks=ev))
 
@@ -357,8 +376,7 @@ def test_an_unknown_upstream_code_never_reaches_any_report_format(
 
     def _gate(*_a: object, **_k: object) -> cli_gate.GateResult:
         findings = [
-            cli_gate.GateFinding("config", "error", code, f"msg {CANARY}")
-            for code in gate_codes
+            cli_gate.GateFinding("config", "error", code, f"msg {CANARY}") for code in gate_codes
         ]
         return cli_gate.GateResult(findings, frozenset({"config"}), False)
 
@@ -392,7 +410,8 @@ def test_importing_the_ci_modules_does_not_import_the_engine() -> None:
     import sys
 
     probe = (
-        "import sys; import decoy.ci.rule_codes, decoy.ci.adapters, decoy.cli.ci; "
+        "import sys; import decoy.ci.rule_codes, decoy.ci.adapters, decoy.cli.ci, "
+        "decoy.__main__; "
         "print('decoy_engine' in sys.modules)"
     )
     out = subprocess.run(

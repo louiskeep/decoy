@@ -21,6 +21,7 @@ from typer.testing import CliRunner
 
 from decoy.__main__ import app
 from decoy.cli.exit_codes import EXIT_RUNTIME
+from tests.csv_sources import csv_source
 from tests.keyed_secret import TEST_MASK_SECRET_REF
 
 pytest.importorskip("cryptography")
@@ -49,7 +50,7 @@ def _pipeline(root: Path, *, strategy: str = "hash") -> Path:
     cfg = {
         "version": 2,
         "global_settings": {"seed": 3, "mask_secret_ref": TEST_MASK_SECRET_REF},
-        "sources": {"a": {"type": "file", "format": "csv", "path": str(src)}},
+        "sources": {"a": csv_source(src)},
         "tables": [{"name": "a", "columns": [column]}],
         "targets": {"a": {"type": "file", "format": "csv", "path": str(root / "out.csv")}},
     }
@@ -90,7 +91,7 @@ def _fail_directory_fsync(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def _assert_failed_clean(result, root: Path, vault: Path) -> None:
-    assert not (root / "out.csv").exists(), "masked output was published without its vault"
+    assert not list(root.rglob("out.csv")), "masked output was published without its vault"
     assert result.exit_code == EXIT_RUNTIME, result.output
     flat = " ".join(result.output.split())
     assert " ".join(_vault_failed_text().split()) in flat
@@ -132,10 +133,10 @@ def test_run_writes_the_vault_durably_before_any_output(
     """Temp write, data fsync, rename, directory fsync, and only then the outputs."""
     from decoy_engine.vault import VaultWriter
 
-    from decoy.cli import run as run_mod
+    from decoy.cli.run import _execute as run_execute
 
     events: list[str] = []
-    real_outputs, real_write = run_mod._write_mask_outputs, VaultWriter.write
+    real_outputs, real_write = run_execute._write_mask_outputs, VaultWriter.write
     real_replace, real_fsync = os.replace, os.fsync
     vault = tmp_path / "vault.bin"
 
@@ -156,7 +157,7 @@ def test_run_writes_the_vault_durably_before_any_output(
         events.append("fsync_dir" if stat.S_ISDIR(os.fstat(fd).st_mode) else "fsync_file")
         real_fsync(fd)
 
-    monkeypatch.setattr(run_mod, "_write_mask_outputs", _outputs)
+    monkeypatch.setattr(run_execute, "_write_mask_outputs", _outputs)
     monkeypatch.setattr(VaultWriter, "write", _write)
     monkeypatch.setattr(os, "replace", _replace)
     monkeypatch.setattr(os, "fsync", _fsync)

@@ -33,7 +33,10 @@ import pyarrow as pa
 
 from decoy import _mask_secret, _mask_secret_guidance, _native_gate
 from decoy._mask_secret import is_valid_mask_secret_ref as _is_valid_mask_secret_ref
+from decoy._row_sample import sample_frame
+from decoy.cli._sources import CSV_DIALECT_KEYS, csv_file_source, resolved_source_config
 from decoy.cli.extras import UnsupportedCloudEndpointError
+from decoy.cli.io import RunLayout
 from decoy.cli.io._targets import claimed_format, format_for_path
 from decoy.cli.run import (
     _load_sources_from_config,
@@ -54,7 +57,7 @@ __all__ = [
 class MaskSecretConfigError(ValueError):
     """A mask_secret / mask_secret_ref value was missing, malformed, or
     conflicting. Public-library equivalent of the CLI's
-    `decoy.cli.run._MaskSecretUsageError` (`--mask-secret`) usage-error
+    `decoy.cli.run._prepare._MaskSecretUsageError` (`--mask-secret`) usage-error
     contract -- same checks, same fail-closed guarantees, library-shaped
     exception type."""
 
@@ -82,9 +85,18 @@ def _load_config_dict(config: Any) -> dict:
         return copy.deepcopy(config)
     if isinstance(config, (str, Path)):
         import yaml
+        from decoy_engine.safe_output import yaml_error_text
 
         path = Path(config)
-        raw = yaml.safe_load(path.read_text(encoding="utf-8"))
+        yaml_failure: str | None = None
+        try:
+            raw = yaml.safe_load(path.read_text(encoding="utf-8"))
+        except yaml.YAMLError as exc:
+            yaml_failure = yaml_error_text(exc)
+        if yaml_failure is not None:
+            # Raised outside the handler: the YAML error quotes the offending line, so it must
+            # be neither the cause nor the context.
+            raise ConfigValidationError(f"{path}: {yaml_failure}")
         if not isinstance(raw, dict):
             raise ConfigValidationError(
                 f"{path}: expected a YAML mapping at the top level, got {type(raw).__name__}."
@@ -139,13 +151,7 @@ def _apply_mask_secret(config_dict: dict, mask_secret: str | None) -> None:
         try:
             import decoy_engine.keyprovider  # noqa: F401
         except ImportError as exc:
-            raise MaskSecretConfigError(
-                "a mask secret is configured (mask_secret_ref / "
-                "mask_secret=) but the installed decoy-engine is too old "
-                "to honor it -- it has no DE-02 keyprovider, so it would "
-                "silently emit UNKEYED output. Upgrade to "
-                "decoy-engine>=0.4.0."
-            ) from exc
+            raise MaskSecretConfigError(_mask_secret_guidance.OLD_ENGINE_API) from exc
 
 
 def _build_generation_resolver(master_key: str | bytes | None, key_label: str | None):
@@ -225,8 +231,7 @@ def _stage_source_entry(name: str, value: Any, tmp_paths: list[Path], declared: 
     `declared` is the config's own `sources[name]` entry, if any. A path
     `value` replaces the source with a local file. When the declaration
     is a file source with a `format`, that format (and `layout`, for
-    fixed_width) and any CSV dialect keys (`has_header`, `column_names`,
-    `delimiter`) are the user's statement of how the bytes are laid out
+    fixed_width) and any CSV dialect keys (`CSV_DIALECT_KEYS`) are the user's statement of how the bytes are laid out
     and win over the file suffix; a file declaration without a valid
     format is left for schema validation to reject. A cloud (s3/gcs)
     declaration, or none at all, falls back to inferring the format from
@@ -245,23 +250,24 @@ def _stage_source_entry(name: str, value: Any, tmp_paths: list[Path], declared: 
                 entry["layout"] = declared["layout"]
             # Carried whatever the format: schema validation rejects a dialect key on a
             # non-csv source instead of the override dropping it silently.
-            for key in ("has_header", "column_names", "delimiter"):
+            for key in CSV_DIALECT_KEYS:
                 if key in declared:
                     entry[key] = declared[key]
             return entry
-        return {"type": "file", "format": format_for_path(path), "path": str(path)}
+        fmt = format_for_path(path)
+        if fmt == "csv":
+            return csv_file_source(path)
+        return {"type": "file", "format": fmt, "path": str(path)}
 
     table = _to_pa_table(value)
-    import os
-    import tempfile
+    from decoy._private_file import create_private_temp
 
-    fd, tmp_name = tempfile.mkstemp(prefix=f"decoy-mask-{name}-", suffix=".parquet")
-    os.close(fd)
-    tmp_path = Path(tmp_name)
+    tmp_path = create_private_temp(prefix=f"decoy-mask-{name}-")
+    # Registered before the write so the caller's finalizer removes it if the write fails.
+    tmp_paths.append(tmp_path)
     import pyarrow.parquet as pq
 
     pq.write_table(table, str(tmp_path))
-    tmp_paths.append(tmp_path)
     return {"type": "file", "format": "parquet", "path": str(tmp_path)}
 
 
@@ -319,7 +325,9 @@ def _file_target_entry(existing: Any, path: Any) -> dict:
     that claims nothing keeps the declared format and `layout`. This is the opposite of
     `data=` paths, where the declared source format wins (`_stage_source_entry`)."""
     entry = dict(existing) if isinstance(existing, dict) else {}
-    entry["path"] = str(path)
+    # A relative `out=` is relative to the current folder, like a typed flag (plan 3.8).
+    text = str(path)
+    entry["path"] = text if "://" in text else str(Path(text).absolute())
     entry.setdefault("type", "file")
     if "format" not in entry:
         entry["format"] = format_for_path(Path(str(path)))
@@ -430,9 +438,9 @@ def mask(
     if config is None:
         raise TypeError("config is required (a pipeline YAML path or a config dict).")
 
-    from decoy_engine import PipelineConfig, run_pipeline
     from decoy_engine import __version__ as engine_version
-    from pydantic import ValidationError as _PydanticValidationError
+    from decoy_engine import parse_pipeline_config, run_pipeline
+    from decoy_engine.config import PipelineConfigError
 
     raw = _load_config_dict(config)
     _validate_mask_secret_ref_shape(raw)
@@ -463,10 +471,15 @@ def mask(
                 "...} (multi-table), or add a targets: block to the config."
             )
 
+        invalid: str | None = None
         try:
-            config_dict = PipelineConfig.model_validate(raw).model_dump()
-        except _PydanticValidationError as exc:
-            raise ConfigValidationError(str(exc)) from exc
+            config_dict = parse_pipeline_config(raw).model_dump()
+        except PipelineConfigError as exc:
+            invalid = str(exc)
+        if invalid is not None:
+            # Raised outside the handler: the message is value-free (names and locations only),
+            # and no chained error may carry the submitted values.
+            raise ConfigValidationError(invalid)
 
         _apply_mask_secret(config_dict, mask_secret)
 
@@ -508,6 +521,8 @@ def mask(
         # `decoy run pipeline.yaml`.
         sources = _load_sources_from_config(config_dict, base_dir)
 
+        # Library callers get fixed, predictable paths: no run folder, claim, `LATEST` or `current`.
+        layout = RunLayout.fixed(base_dir)
         resolver = _build_generation_resolver(master_key, key_label)
         instance_locale = (config_dict.get("global_settings") or {}).get("default_locale")
 
@@ -526,12 +541,17 @@ def mask(
             # None keeps run_pipeline's call shape for an unkeyed config.
             with _mask_secret.admitted_key_provider(config_dict) as key_provider:
                 key_kwargs = {} if key_provider is None else {"key_provider": key_provider}
+                # Sent only when set, so an engine without the keyword still runs a config without it.
+                quarantine_path = layout.place_quarantine(config_dict)
+                quarantine_kwargs = {"quarantine_path": quarantine_path} if quarantine_path else {}
                 result = run_pipeline(
-                    config_dict,
+                    resolved_source_config(config_dict, base_dir),
                     sources,
                     engine_version=engine_version,
                     derive_key=resolver,
                     instance_default_locale=instance_locale,
+                    base_dir=base_dir,
+                    **quarantine_kwargs,
                     **key_kwargs,
                     **extra_run_pipeline_kwargs,
                 )
@@ -555,12 +575,21 @@ def mask(
         # library's own write/return point).
         _native_gate.post_run_verify(intent=native_intent, route=route)
 
-        _write_mask_outputs(config_dict, result, base_dir)
+        _write_mask_outputs(config_dict, result, layout)
     finally:
         for tmp_path in tmp_paths:
             tmp_path.unlink(missing_ok=True)
 
-    outputs = {name: table.to_pandas() for name, table in result.outputs.items()}
+    from decoy_engine import generated_table_to_pandas
+
+    # Plain to_pandas() widens a generated int column holding a null to float64 (1 becomes 1.0).
+    generated = {
+        t.get("name") for t in tables_list if isinstance(t, dict) and t.get("generate_columns")
+    }
+    outputs = {
+        name: generated_table_to_pandas(table) if name in generated else table.to_pandas()
+        for name, table in result.outputs.items()
+    }
     if len(outputs) == 1:
         return next(iter(outputs.values()))
     return outputs
@@ -597,9 +626,11 @@ def scan(
             list (`[{"name": ..., "start": ..., "width": ...}, ...]`).
 
     Returns:
-        A `decoy_engine.ColumnProfile` -- the same object `decoy scan
-        --output scan.json` serializes. Call `.to_dict()` for the
-        JSON-ready shape.
+        The in-memory `decoy_engine.ColumnProfile`, which holds cell values
+        (top values, modes, ranges). `decoy scan --output` writes only the
+        value-free `scan-set/v1` core. To save the profile, write
+        `decoy_engine.profile_document(profile)`, which redacts the
+        sensitive columns.
     """
     from decoy_engine import profile_columns
 
@@ -615,7 +646,7 @@ def scan(
             if strategy_enum is SampleStrategy.head:
                 df = df.head(rows)
             elif strategy_enum is SampleStrategy.random and len(df) > rows:
-                df = df.sample(n=rows, random_state=42).reset_index(drop=True)
+                df = sample_frame(df, rows, 42)
         label = source_label or "<dataframe>"
     elif isinstance(data, (str, Path)):
         path = Path(data)

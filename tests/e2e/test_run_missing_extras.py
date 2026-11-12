@@ -28,6 +28,7 @@ from typer.testing import CliRunner
 
 from decoy.__main__ import app
 from decoy.cli.exit_codes import EXIT_USAGE
+from tests.csv_sources import csv_source
 
 runner = CliRunner()
 
@@ -77,7 +78,7 @@ def _gcs_target_pipeline(tmp_path: Path) -> Path:
         "version": 2,
         "global_settings": {"seed": 42},
         "sources": {
-            "accounts": {"type": "file", "format": "csv", "path": str(src)},
+            "accounts": csv_source(src),
         },
         "tables": [
             {

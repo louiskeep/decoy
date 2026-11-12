@@ -3,11 +3,19 @@
 A baseline is a JSON file ``{"sentry_id", "created_in", "entries": {key: {"reason"}}}``
 under ``tests/sentry/baselines/``. ``scripts/dev/sentry_registry.toml`` binds each sentry id to
 exactly one baseline path. ``check`` compares the working tree with a base commit and returns
-findings; an empty list means the ratchet holds. Messages carry ids, paths and keys only.
+findings; an empty list means the ratchet holds. An entry that carries a numeric ``max`` may keep
+or lower it, never raise or drop it (see ``max_raised``). Messages carry ids, paths and keys only.
 
 Ported from decoy-engine ``tests/sentry/_ratchet.py`` (X0a), plus the platform's
 ``created_in`` rules: every baseline names a non-empty ``created_in``, and a first inventory
 must name the slice passed as ``slice_name`` when one is given.
+
+A code move renames baseline keys without adding anything. A baseline may carry a top-level
+``"moved_from": {new_key: old_key}`` map. A gained key is admitted only when the map names an
+old key that was in the merge base, is gone from the head, is named once, and whose base entry
+equals the new head entry exactly. An entry whose new key is already in the base is a leftover
+of a merged move and is ignored. The map is top-level, not inside an entry, because other
+sentries compare entries exactly.
 """
 
 from __future__ import annotations
@@ -35,6 +43,7 @@ class Baseline:
     created_in: str  # as written; "" when missing or not a string
     keys: frozenset[str]
     reasons: dict[str, object]
+    moved_from: object = None  # raw top-level map; validated in ``move_findings``
 
 
 def parse_registry(text: str) -> tuple[dict[str, str], list[str]]:
@@ -65,6 +74,7 @@ def parse_baseline(text: str) -> Baseline:
         created_in if isinstance(created_in, str) else "",
         frozenset(entries),
         entries,
+        data.get("moved_from"),
     )
 
 
@@ -90,9 +100,67 @@ def _git_show(root: Path, ref: str, rel: str) -> str | None:
     return res.stdout if res.returncode == 0 else None
 
 
-def _base_keys(root: Path, ref: str, path: str) -> frozenset[str]:
+def _base_entries(root: Path, ref: str, path: str) -> dict[str, object]:
     text = _git_show(root, ref, path)
-    return parse_baseline(text).keys if text is not None else frozenset()
+    return dict(parse_baseline(text).reasons) if text is not None else {}
+
+
+def _max_of(entry: object) -> int | None:
+    value = entry.get("max") if isinstance(entry, dict) else None
+    return value if isinstance(value, int) else None
+
+
+def max_raised(head: object, base: object) -> bool:
+    """True when a numeric ``max`` rose, or was dropped, against the base entry."""
+    old, new = _max_of(base), _max_of(head)
+    return old is not None and (new is None or new > old)
+
+
+def _base_baseline(root: Path, ref: str, path: str) -> Baseline | None:
+    text = _git_show(root, ref, path)
+    return parse_baseline(text) if text is not None else None
+
+
+def move_findings(
+    path: str, head: Baseline, base: Baseline | None, gained: frozenset[str]
+) -> tuple[list[str], frozenset[str]]:
+    """Validate ``moved_from`` against the base; return findings and the admitted new keys."""
+    raw = head.moved_from
+    if raw is None:
+        return [], frozenset()
+    if not isinstance(raw, dict):
+        return [f"{path}: moved_from is not an object"], frozenset()
+    findings: list[str] = []
+    admitted: set[str] = set()
+    base_keys = base.keys if base is not None else frozenset()
+    base_entries = base.reasons if base is not None else {}
+    named_olds: dict[str, str] = {}
+    for new, old in sorted(raw.items(), key=lambda kv: str(kv[0])):
+        if (
+            not isinstance(new, str)
+            or not isinstance(old, str)
+            or not new.strip()
+            or not old.strip()
+        ):
+            findings.append(f"{path}: moved_from needs non-empty string keys and values")
+            continue
+        if old in named_olds:
+            findings.append(f"{path}: moved_from names {old} for both {named_olds[old]} and {new}")
+            continue
+        named_olds[old] = new
+        if new not in head.keys:
+            findings.append(f"{path}: moved_from key {new} is not an entry in the head")
+        elif new not in gained:
+            continue  # the move already merged: the key is in the base, so it admits nothing
+        elif old not in base_keys:
+            findings.append(f"{path}: moved_from old key {old} was not in the merge base")
+        elif old in head.keys:
+            findings.append(f"{path}: moved_from old key {old} is still in the head")
+        elif base_entries[old] != head.reasons[new]:
+            findings.append(f"{path}: moved entry {new} differs from {old} in the merge base")
+        else:
+            admitted.add(new)
+    return findings, frozenset(admitted)
 
 
 def _fmt(keys: frozenset[str]) -> str:
@@ -129,10 +197,14 @@ def check(root: Path, base_ref: str, slice_name: str | None = None) -> tuple[lis
         findings += reason_findings(path, base)
 
     removed = set(base_reg) - set(head)
-    old_union: frozenset[str] = frozenset().union(
-        *(_base_keys(root, base_ref, base_reg[s]) for s in removed)
-    )
+    # A key a replacement keeps must keep its max too, or a rename would launder a raised max.
+    old_entries: dict[str, list[object]] = {}
+    for s in removed:
+        for key, entry in _base_entries(root, base_ref, base_reg[s]).items():
+            old_entries.setdefault(key, []).append(entry)
+    old_union = frozenset(old_entries)
     new_union: frozenset[str] = frozenset()
+    replaced_raised: set[str] = set()
     for sid, base in sorted(loaded.items()):
         path = head[sid]
         report.append(f"{sid}: {len(base.keys)} key(s) in {path}")
@@ -140,13 +212,28 @@ def check(root: Path, base_ref: str, slice_name: str | None = None) -> tuple[lis
             if base_reg[sid] != path:
                 findings.append(f"{sid}: baseline moved from {base_reg[sid]} to {path}")
                 continue
-            grown = base.keys - _base_keys(root, base_ref, path)
+            base_doc = _base_baseline(root, base_ref, path)
+            grown = base.keys - (base_doc.keys if base_doc is not None else frozenset())
+            moved_f, admitted = move_findings(path, base, base_doc, grown)
+            findings += moved_f
+            grown -= admitted
             if grown:
                 findings.append(
                     f"{sid}: baseline gained key(s) not in the merge base: {_fmt(grown)}"
                 )
+            old = base_doc.reasons if base_doc is not None else {}
+            raised = sorted(
+                k for k in base.keys & old.keys() if max_raised(base.reasons[k], old[k])
+            )
+            if raised:
+                findings.append(f"{sid}: max raised or dropped for key(s): {', '.join(raised)}")
         elif removed:
             new_union |= base.keys
+            replaced_raised |= {
+                k
+                for k in base.keys & old_union
+                if any(max_raised(base.reasons[k], old) for old in old_entries[k])
+            }
         else:
             # Newly registered in this diff: the one way a first inventory is admitted.
             report.append(f"{sid}: first inventory, {len(base.keys)} key(s), review required")
@@ -158,5 +245,10 @@ def check(root: Path, base_ref: str, slice_name: str | None = None) -> tuple[lis
     if removed and grown:
         findings.append(
             f"replacement or split of {_fmt(frozenset(removed))} adds key(s): {_fmt(grown)}"
+        )
+    if replaced_raised:
+        findings.append(
+            f"replacement or split of {_fmt(frozenset(removed))} raised or dropped max for"
+            f" key(s): {_fmt(frozenset(replaced_raised))}"
         )
     return findings, report

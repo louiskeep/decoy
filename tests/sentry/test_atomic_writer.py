@@ -12,8 +12,9 @@ so a new copy inside an allowlisted file is also red.
 Named limits, all invisible to a syntax walk: a call through a runtime-bound name
 (`getattr(os, "replace")`), alias by assignment (`mv = os.replace; mv(a, b)`), a starred
 argument list on `.replace(*args)`, and `from os import *`.
-Size 5 is today's baseline (L1b.1, after `cli/ci.py` and `ci/debug.py` moved onto
-`_atomic.write_atomic`). Entries leave this list when their file moves onto the writer;
+Size 3 is today's baseline. L1b.1 left 5 entries, after `cli/ci.py` and `ci/debug.py` moved
+onto `_atomic.write_atomic`; X7c S2 then moved `api.py` onto `_private_file`; PROJECT-LAYOUT P1a
+moved the distribution link swap onto `_atomic.replace_symlink`. Entries leave this list when their file moves onto the writer;
 none may be added without a reviewed change (shrink-only ratchet,
 tests/sentry/baselines/atomic-writer-allow.json, which also records each entry's site count).
 """
@@ -51,17 +52,11 @@ class AllowedInline:
 
 ALLOWLIST: tuple[AllowedInline, ...] = (
     AllowedInline(
-        "cli/run.py",
+        "cli/run/_vault.py",
         4,
         "_commit_vault keeps a hard-link backup and restores or removes the vault when the "
         "directory fsync fails (tests/e2e/test_vault_commit_order.py); a transaction, not a "
         "plain atomic write. L5a moves it to _vault_commit.py and renames this entry.",
-    ),
-    AllowedInline(
-        "api.py",
-        1,
-        "Spools a DataFrame to a throwaway parquet temp file for the engine to read; "
-        "never replaced onto a target, so the atomic-write rules do not apply.",
     ),
     AllowedInline(
         "distribution/installer.py",
@@ -69,11 +64,6 @@ ALLOWLIST: tuple[AllowedInline, ...] = (
         "Moves a staged runtime directory into versions/ and writes the 0755 launcher shim "
         "(temp file, chmod, replace); a directory move and an executable-mode write, not a "
         "0600 data write.",
-    ),
-    AllowedInline(
-        "distribution/layout.py",
-        1,
-        "Flips the current-version symlink under the install lock; not a file write.",
     ),
     AllowedInline(
         "distribution/first_install.py",
@@ -178,9 +168,9 @@ def test_no_inline_atomic_write_outside_the_choke_point() -> None:
     assert findings(scan(SRC)) == []
 
 
-def test_allowlist_baseline_is_five_with_reasons() -> None:
-    assert len(ALLOWLIST) == 5
-    assert len({e.file for e in ALLOWLIST}) == 5
+def test_allowlist_baseline_is_three_with_reasons() -> None:
+    assert len(ALLOWLIST) == 3
+    assert len({e.file for e in ALLOWLIST}) == 3
     assert all(len(e.reason.strip()) >= 15 and e.sites > 0 for e in ALLOWLIST)
 
 
@@ -212,11 +202,11 @@ def test_seeded_inline_copy_is_red(tmp_path: Path) -> None:
 
 def test_seeded_copy_in_an_allowlisted_file_is_red() -> None:
     real = {k: v for k, v in scan(SRC).items() if k in {e.file for e in ALLOWLIST}}
-    seeded = {**real, "cli/run.py": [*real["cli/run.py"], (999, "os.replace")]}
-    lines = ", ".join(str(n) for n, _ in seeded["cli/run.py"])
-    recorded = next(e.sites for e in ALLOWLIST if e.file == "cli/run.py")
+    seeded = {**real, "cli/run/_vault.py": [*real["cli/run/_vault.py"], (999, "os.replace")]}
+    lines = ", ".join(str(n) for n, _ in seeded["cli/run/_vault.py"])
+    recorded = next(e.sites for e in ALLOWLIST if e.file == "cli/run/_vault.py")
     assert findings(seeded) == [
-        f"cli/run.py: {recorded + 1} site(s), allowlist records {recorded} ({lines})"
+        f"cli/run/_vault.py: {recorded + 1} site(s), allowlist records {recorded} ({lines})"
     ]
 
 

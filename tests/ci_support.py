@@ -30,6 +30,7 @@ sources:
   customers:
     type: file
     format: csv
+    has_header: true
     path: data/in.csv
 tables:
   - name: customers

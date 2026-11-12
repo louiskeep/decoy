@@ -31,6 +31,7 @@ from typer.testing import CliRunner
 
 from decoy.__main__ import app
 from decoy.cli.exit_codes import EXIT_FINDINGS, EXIT_USAGE
+from tests.csv_sources import csv_source
 
 runner = CliRunner()
 
@@ -58,7 +59,7 @@ def clean_config(tmp_path: Path) -> Path:
     cfg = {
         "version": 2,
         "global_settings": {"seed": 42},
-        "sources": {"customers": {"type": "file", "format": "csv", "path": str(src)}},
+        "sources": {"customers": csv_source(src)},
         "tables": [
             {
                 "name": "customers",
@@ -91,7 +92,7 @@ def leaky_config(tmp_path: Path) -> Path:
     cfg = {
         "version": 2,
         "global_settings": {"seed": 7},
-        "sources": {"t": {"type": "file", "format": "csv", "path": str(src)}},
+        "sources": {"t": csv_source(src)},
         "tables": [
             {
                 "name": "t",

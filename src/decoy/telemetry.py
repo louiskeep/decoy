@@ -45,7 +45,7 @@ from opentelemetry.sdk.trace.export import (
 from opentelemetry.sdk.trace.sampling import ParentBased, TraceIdRatioBased
 from requests.adapters import HTTPAdapter
 
-from decoy import __version__ as _cli_version
+from decoy._version import __version__ as _cli_version
 
 FLUSH_BUDGET_MS = 2000
 HEADERS_SETTING = "DECOY_OTEL_HEADERS"

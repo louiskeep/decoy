@@ -16,6 +16,7 @@ from pathlib import Path
 import pandas as pd
 import pytest
 import yaml
+from tests.csv_sources import csv_source
 from tests.keyed_secret import TEST_MASK_SECRET, TEST_MASK_SECRET_REF
 from typer.testing import CliRunner
 
@@ -48,7 +49,7 @@ def _pipeline(tmp_path: Path, ref: str, *, tokenize: bool = False) -> Path:
     cfg = {
         "version": 2,
         "global_settings": {"seed": 3, "mask_secret_ref": ref},
-        "sources": {"a": {"type": "file", "format": "csv", "path": str(src)}},
+        "sources": {"a": csv_source(src)},
         "tables": [{"name": "a", "columns": [column]}],
         "targets": {"a": {"type": "file", "format": "csv", "path": str(tmp_path / "out.csv")}},
     }

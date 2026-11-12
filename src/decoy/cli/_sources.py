@@ -27,10 +27,59 @@ import pyarrow as pa
 def resolve_path(raw_path: str, base_dir: Path) -> Path:
     """Resolve a YAML path against the config's directory; absolute paths pass through.
 
-    The one YAML path resolver: `run`, `demo` and the target writers share it.
+    The one YAML path resolver: `run`, `demo` and the target writers share it. The choice of
+    base and the join belong to the engine (`fileaccess.config_relative`); this wrapper keeps
+    the CLI's `Path` type and its canonical form for a relative path.
     """
-    p = Path(raw_path)
-    return p if p.is_absolute() else (base_dir / p).resolve()
+    from decoy_engine.fileaccess import config_relative
+
+    joined = config_relative(raw_path, base_dir)
+    return Path(joined) if Path(raw_path).is_absolute() else Path(joined).resolve()
+
+
+def resolved_source_config(config_dict: dict[str, Any], base_dir: Path) -> dict[str, Any]:
+    """A shallow copy of a config whose file sources name their files by absolute path.
+
+    The engine profiles a run from the declared source descriptors and opens `path` and
+    `column_names_file` as written, so a relative one reads from the working directory. The
+    CLI hands the engine this copy instead (the engine's capacity estimate does the same).
+    Sources are not part of the config hash, so the copy leaves the run's identity unchanged.
+    """
+    from decoy_engine import FILE_SOURCE_PATH_FIELDS
+
+    sources = config_dict.get("sources")
+    if not isinstance(sources, dict) or not sources:
+        return config_dict
+    resolved: dict[str, Any] = {}
+    for name, descriptor in sources.items():
+        if isinstance(descriptor, dict) and descriptor.get("type") == "file":
+            descriptor = dict(descriptor)
+            for field in FILE_SOURCE_PATH_FIELDS:
+                value = descriptor.get(field)
+                if isinstance(value, str) and value:
+                    descriptor[field] = str(resolve_path(value, base_dir))
+        resolved[name] = descriptor
+    return {**config_dict, "sources": resolved}
+
+
+# The CSV dialect keys of a file-source descriptor, the engine's `CsvDialect` fields plus
+# `column_names_file`. The one list: `csv_file_source` accepts exactly these, and the `data=`
+# override in `decoy.api` carries exactly these over from a declared source.
+CSV_DIALECT_KEYS: tuple[str, ...] = ("has_header", "column_names", "column_names_file", "delimiter")
+
+
+def csv_file_source(path: str | Path, **dialect: Any) -> dict[str, Any]:
+    """A `format: csv` file-source descriptor for a file the CLI names itself.
+
+    The engine requires `has_header` on every csv descriptor (`resolve_csv_dialect` refuses
+    one without it, and so does `FileSource`), so a descriptor built here states it. A file
+    with no declaration is read the way it always was, with a header row. `dialect` keys
+    (`CSV_DIALECT_KEYS`) override that; any other key is a TypeError.
+    """
+    unknown = sorted(set(dialect) - set(CSV_DIALECT_KEYS))
+    if unknown:
+        raise TypeError(f"csv_file_source: unknown dialect key(s) {unknown}")
+    return {"type": "file", "format": "csv", "path": str(path), "has_header": True, **dialect}
 
 
 def _unknown_format(table_name: str, fmt: object, kind: str = "source") -> ValueError:
@@ -60,6 +109,11 @@ def read_csv_frame(
     """
     from decoy_engine import read_csv_source, resolve_csv_dialect
 
+    # The names file sits beside the data file in the YAML, so it resolves like `path`. The
+    # descriptor copy keeps the caller's dict (and the config hash, which excludes sources) intact.
+    names_file = src.get("column_names_file")
+    if names_file:
+        src = {**src, "column_names_file": str(resolve_path(names_file, base_dir))}
     return read_csv_source(
         resolve_path(src["path"], base_dir),
         resolve_csv_dialect(src),
@@ -87,7 +141,7 @@ def read_report_source(path: Path, config_dict: dict[str, Any], config_dir: Path
         ):
             return read_csv_frame(name, src, config_dir, dtype=None)
     # The user's own path is relative to the current folder, never to the config directory.
-    return read_csv_frame(path.stem, {"path": str(target)}, config_dir, dtype=None)
+    return read_csv_frame(path.stem, csv_file_source(target), config_dir, dtype=None)
 
 
 def read_file(path: Path, fmt: str, layout: Mapping[str, Any] | None, *, table: str) -> Any:
@@ -99,7 +153,7 @@ def read_file(path: Path, fmt: str, layout: Mapping[str, Any] | None, *, table: 
     """
     if fmt == "csv":
         # Absolute, so `resolve_path` does not join a relative path onto its own folder.
-        return read_csv_frame(table, {"path": str(path.resolve())}, path.parent, dtype=str)
+        return read_csv_frame(table, csv_file_source(path.resolve()), path.parent, dtype=str)
     if fmt == "parquet":
         import pandas as pd
 

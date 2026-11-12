@@ -14,10 +14,10 @@ from pathlib import Path
 
 import typer
 
-from decoy import __version__
 from decoy._atomic import AtomicWriteError, WriteMode, write_local_target
+from decoy._version import __version__
 from decoy.ci import reporting
-from decoy.ci.contracts import NOTE_TEXTS, SafeCiReport
+from decoy.ci.contracts import MANIFEST_UNREADABLE_HINT, NOTE_TEXTS, SafeCiReport
 from decoy.ci.debug import DebugSink
 from decoy.ci.engine_logging import engine_logging_silenced
 from decoy.ci.manifest import ManifestError, load_manifest
@@ -108,8 +108,8 @@ def _safe_target(raw: str, root: Path) -> Path:
 
 @ci_app.command(name="check", epilog=CHECK_EPILOG)
 def check(
-    manifest: Path = typer.Argument(
-        Path(DEFAULT_MANIFEST),
+    manifest: str = typer.Argument(
+        DEFAULT_MANIFEST,
         help="Path to the decoy-ci/v1 manifest (YAML or JSON). No manifest search is done.",
     ),
     format_: ReportFormat = typer.Option(
@@ -150,10 +150,12 @@ def check(
 
     deferred: list[str] = []
     loaded = None
+    manifest_unreadable = False
     try:
-        loaded = load_manifest(manifest)
+        loaded = load_manifest(Path(manifest))
     except ManifestError as err:
         report = manifest_refusal(err)
+        manifest_unreadable = err.reason_code == "ci.manifest_unreadable"
     except Exception:
         # Nothing may escape as a traceback (Typer prints locals): the report is the output.
         report = unexpected_failure_report()
@@ -209,6 +211,8 @@ def check(
             )
 
     if not quiet:
+        if manifest_unreadable:
+            typer.echo(MANIFEST_UNREADABLE_HINT.format(path=manifest), err=True)
         machine_on_stdout = to_stdout and format_ in (ReportFormat.json, ReportFormat.sarif)
         if PRECOMMIT_NOTE in report.notes and not machine_on_stdout:
             typer.echo(NOTE_TEXTS[PRECOMMIT_NOTE], err=True)

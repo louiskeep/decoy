@@ -1,0 +1,36 @@
+{
+ "sentry_id": "import-layers",
+ "created_in": "LAYOUT-C3",
+ "entries": {
+  "layers::decoy.ci.adapters -> decoy.cli.evidence": {
+   "reason": "back import measured when LAYOUT C3 declared the tiers; may only shrink"
+  },
+  "layers::decoy.ci.adapters -> decoy.cli.exit_codes": {
+   "reason": "back import measured when LAYOUT C3 declared the tiers; may only shrink"
+  },
+  "layers::decoy.ci.adapters -> decoy.cli.gate": {
+   "reason": "back import measured when LAYOUT C3 declared the tiers; may only shrink"
+  },
+  "layers::decoy.ci.adapters -> decoy.cli.io": {
+   "reason": "back import measured when LAYOUT C3 declared the tiers; may only shrink"
+  },
+  "layers::decoy.ci.adapters -> decoy.cli.scan": {
+   "reason": "back import measured when LAYOUT C3 declared the tiers; may only shrink"
+  },
+  "layers::decoy.ci.contracts -> decoy.cli.exit_codes": {
+   "reason": "back import measured when LAYOUT C3 declared the tiers; may only shrink"
+  },
+  "layers::decoy.ci.rule_codes -> decoy.cli.io": {
+   "reason": "back import measured when LAYOUT C3 declared the tiers; may only shrink"
+  },
+  "layers::decoy.ci.runner -> decoy.cli.exit_codes": {
+   "reason": "back import measured when LAYOUT C3 declared the tiers; may only shrink"
+  },
+  "layers::decoy.ci.staged -> decoy.cli.exit_codes": {
+   "reason": "back import measured when LAYOUT C3 declared the tiers; may only shrink"
+  },
+  "layers::decoy.ui.output -> decoy.cli.exit_codes": {
+   "reason": "back import measured when LAYOUT C3 declared the tiers; may only shrink"
+  }
+ }
+}

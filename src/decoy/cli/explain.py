@@ -10,6 +10,7 @@ topics produce a `did you mean?` hint.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
 from difflib import get_close_matches
 
@@ -18,6 +19,7 @@ from rich.console import Group
 from rich.panel import Panel
 from rich.text import Text
 
+from decoy.cli import gen
 from decoy.cli.exit_codes import EXIT_USAGE
 from decoy.ui.output import OutputMode, emit_json, setup_output
 from decoy.ui.table import make_table
@@ -28,8 +30,13 @@ from decoy.ui.theme import accent, code, error, hint, info
 class _Topic:
     name: str
     summary: str
-    body: str
+    body: str = ""
     see_also: tuple[str, ...] = ()
+    # Builds the body on demand when part of it comes from an engine registry; `body` is then "".
+    render: Callable[[], str] | None = None
+
+    def text(self) -> str:
+        return self.render() if self.render is not None else self.body
 
 
 _TOPICS: dict[str, _Topic] = {
@@ -43,42 +50,27 @@ _TOPICS: dict[str, _Topic] = {
             "  generate   Build a synthetic dataset from scratch.\n"
             "             Pick when you don't have real data and need realistic-looking rows for testing.\n\n"
             "Mode is inferred per-table from the YAML: a table with `columns:` is a\n"
-            "mask table, one with `generate_columns:` is a generate table (FC-1,\n"
-            "2026-06-02; the old top-level `mode:` key was removed). The --mode flag is\n"
+            "mask table, one with `generate_columns:` is a generate table (the old\n"
+            "top-level `mode:` key was removed). The --mode flag is\n"
             "now only a label for progress/JSON output; it does not override what the\n"
             "tables declare.\n\n"
-            "V1 had two additional modes (graph + convert) that were removed under storm-reframe-C\n"
-            "and S22-CL-V1GRAPHRUNNER (2026-05-30). YAML with `mode: graph` or `mode: convert`\n"
+            "V1 had two additional modes (graph + convert) that were removed.\n"
+            "YAML with `mode: graph` or `mode: convert`\n"
             "is rejected by the V2 PipelineConfig validator with a typed error."
         ),
         see_also=("decoy run --help", "decoy explain pipeline"),
     ),
     "transforms": _Topic(
         name="transforms",
-        summary="The most common masking transforms (full set in the strategies reference).",
-        body=(
-            "Each masking_rule in the YAML names a `type:` from this set:\n\n"
-            "  faker        Replace with a realistic fake value of a chosen `faker_type`\n"
-            "               (name, email, phone_number, ssn, address, ...). The most common pick.\n"
-            "  hash         Replace with a deterministic hash. Same input -> same output.\n"
-            "               Use when downstream needs to join on the value but not see it.\n"
-            "  redact       Replace with literal text (e.g. 'XXX-XX-XXXX'). Use for fields you\n"
-            "               must blank out entirely, or when format is more important than realism.\n"
-            "  categorical  Select from an explicit list of categories, optionally weighted.\n"
-            "               In mask mode, the same input and policy choose the same category.\n"
-            "  shuffle      Randomly reorder a column's values across rows. Preserves the\n"
-            "               column's distribution while breaking the link to a specific row.\n"
-            "  passthrough  Leave the column unchanged. Useful as documentation of intent.\n"
-            "  date_shift   Add or subtract a random number of days. Preserves date proximity\n"
-            "               for analytics while breaking the exact value.\n"
-            "  formula      Compute the value from a Python-like expression and other columns.\n"
-            "               Power-user knob; can reference {col1}, {col2}, randint(), etc.\n\n"
-            "Five more advanced strategies exist: bucketize, fpe, text_redact, truncate, nested.\n"
-            "The engine ships 13 mask strategies in total; see the strategies reference.\n\n"
-            "Tab completion: `decoy run --help` shows --mode; the engine's transform factory key\n"
-            "set is what completes when a future --mask flag is added."
-        ),
-        see_also=("decoy explain disguises", "decoy explain pipeline"),
+        summary="Every masking strategy the engine registers, with the common ones described.",
+        render=lambda: _transforms_body(),
+        see_also=("decoy explain generation", "decoy explain pipeline", "decoy list strategies"),
+    ),
+    "generation": _Topic(
+        name="generation",
+        summary="Generate synthetic data: the workflow, paths, seed versus key, and every column type.",
+        render=lambda: gen.generation_body(),
+        see_also=("decoy explain unique", "decoy explain keys", "decoy run --help"),
     ),
     "disguises": _Topic(
         name="disguises",
@@ -90,7 +82,7 @@ _TOPICS: dict[str, _Topic] = {
             "Pick a Disguise by hand via `decoy show template hipaa` (gets the pipeline shape\n"
             "you'd start from) or by browsing the engine source under decoy_engine.disguises.\n\n"
             "The V1 FORECAST recommender (which scored Disguises against a STORM scan and drafted\n"
-            "a pipeline) was retired under storm-reframe-C (2026-05-30); pick the Disguise by\n"
+            "a pipeline) was retired; pick the Disguise by\n"
             "hand from the templates set for now."
         ),
         see_also=("decoy show template hipaa", "decoy explain transforms"),
@@ -119,7 +111,7 @@ _TOPICS: dict[str, _Topic] = {
         summary="The shape of a decoy pipeline YAML.",
         body=(
             "V2 PipelineConfig shape (current; `decoy validate` accepts these):\n\n"
-            "  version            1 (integer, not '1.0').\n"
+            "  version            2 (integer, not '2.0').\n"
             "  global_settings    seed, default_locale.\n"
             "  sources            dict[name -> {type, format, path}].\n"
             "  tables             list of {name, columns: [{name, strategy, ...}]}\n"
@@ -133,12 +125,17 @@ _TOPICS: dict[str, _Topic] = {
             "  Pass it as `--key-label` on `decoy run` instead. See `decoy\n"
             "  explain keys`.\n\n"
             "Mode is inferred per-table from `columns` (mask) vs `generate_columns`\n"
-            "(generate); a single pipeline can mix both kinds (FC-1, 2026-06-02).\n\n"
+            "(generate); a single pipeline can mix both kinds.\n\n"
+            "A generate column is {name, type, ...options}; `type: reference` with\n"
+            "`reference_table` and `reference_column` copies keys from another generate\n"
+            "table, and the parent is built first. For a mask pair, `relationships:` lists\n"
+            "parent and child columns that share a namespace.\n\n"
+            "A relative path in the YAML is read from the folder that holds the YAML file, not\n"
+            "the working directory. Generate types and options: `decoy explain generation`.\n\n"
             "Pick a template to start from: `decoy show template minimal`.\n\n"
-            "Legacy V1 shape (REJECTED by `decoy validate` since storm-reframe-C,\n"
-            "2026-05-30): `version: '1.0'`, `input:`, `output:`, `masking_rules:`.\n"
-            "Old YAML on disk must be re-authored to the V2 shape above; the\n"
-            "graph builder in decoy-platform's web UI emits V2 directly.\n\n"
+            "Legacy V1 shape (REJECTED by `decoy validate`): `version: '1.0'`,\n"
+            "`input:`, `output:`, `masking_rules:`. Old YAML on disk must be\n"
+            "re-authored to the V2 shape above.\n\n"
             "Validate any pipeline before running it: `decoy validate config pipeline.yaml`."
         ),
         see_also=("decoy validate config --help", "decoy list templates"),
@@ -155,6 +152,14 @@ _TOPICS: dict[str, _Topic] = {
             "Pick one top-level mode:\n"
             "  mask      sources + tables + targets (V2 PipelineConfig shape).\n"
             "  generate  tables with generate_columns + targets.\n\n"
+            "Common V2 column shape (generate):\n\n"
+            "  - name: parent_id\n"
+            "    type: reference\n"
+            "    reference_table: parents\n"
+            "    reference_column: id\n\n"
+            "A relative path in the YAML (sources, targets, snapshot_file) is read from the\n"
+            "folder that holds the YAML file, whatever the working directory. Every generate\n"
+            "type and option: `decoy explain generation`.\n\n"
             "Common V2 column shape (mask):\n\n"
             "  - name: email\n"
             "    strategy: faker\n"
@@ -165,9 +170,7 @@ _TOPICS: dict[str, _Topic] = {
             "For portable keyed MASKING, set `global_settings.mask_secret_ref` instead --\n"
             "see `decoy explain keys`.\n"
             "Treat STORM scan JSON, reference files, and real input/output files as\n"
-            "sensitive artifacts.\n\n"
-            "Full guide in the docs hub:\n"
-            "  decoy-platform/docs/guides/cli-yaml-workflows.md"
+            "sensitive artifacts."
         ),
         see_also=("decoy explain pipeline", "decoy list templates", "decoy validate config --help"),
     ),
@@ -256,9 +259,16 @@ _TOPICS: dict[str, _Topic] = {
             "from the masked output and treat it as sensitive -- together they\n"
             "re-identify every vaulted value. Needs the engine's vault extra\n"
             "(cryptography). FPE columns are reversible on their own and do not use\n"
-            "the vault."
+            "the vault.\n\n"
+            "This is not the token vault that `decoy tokenize` writes; that one is a\n"
+            "plaintext SQLite file (see `decoy explain tokenize`)."
         ),
-        see_also=("decoy run --help", "decoy unmask --help", "decoy explain keys"),
+        see_also=(
+            "decoy run --help",
+            "decoy unmask --help",
+            "decoy explain keys",
+            "decoy explain tokenize",
+        ),
     ),
     "tokenize": _Topic(
         name="tokenize",
@@ -292,7 +302,10 @@ _TOPICS: dict[str, _Topic] = {
             "the column's namespace fails closed -- detokenize writes nothing rather than\n"
             "emit a value it cannot vouch for. The vault is the one place the\n"
             "value-to-token mapping lives: store it separately from the output and\n"
-            "treat it as sensitive."
+            "treat it as sensitive.\n\n"
+            "The token vault is a plaintext SQLite file created 0600; it is not the\n"
+            "encrypted `run --vault` file. Anyone who can read it can reverse every\n"
+            "token in it, so file permissions are its only protection."
         ),
         see_also=("decoy tokenize --help", "decoy detokenize --help", "decoy explain vault"),
     ),
@@ -382,8 +395,12 @@ _TOPICS: dict[str, _Topic] = {
     ),
     "differential-privacy": _Topic(
         name="differential-privacy",
-        summary="Fit a dps-marginal/v3 release with `decoy fit --epsilon`.",
+        summary="Fit a DP release with `decoy fit --epsilon` (certified installs only).",
         body=(
+            "DP fit is gated: it runs only on a certified platform and package set.\n"
+            "On any other install `decoy fit --epsilon` exits 3 before reading a data\n"
+            "row. Without --epsilon, `decoy fit` still works and withholds sensitive\n"
+            "column values by default; add --include-values to keep them.\n\n"
             "`decoy fit` captures a distribution snapshot that `type: statistical`\n"
             "generate columns sample from. --epsilon selects a second, disjoint mode\n"
             "that fits a dps-marginal/v3 release through the engine's OpenDP-backed\n"
@@ -398,10 +415,10 @@ _TOPICS: dict[str, _Topic] = {
             "and the omission is printed). --delta is required alongside --epsilon\n"
             "(no default: it sets a real privacy parameter). --epsilon is\n"
             "incompatible with --joint and --parse-dates.\n\n"
-            "The fit also requires a certified DP proof stack (a pinned lock the\n"
-            "engine has been validated against). On an uncertified host it refuses\n"
-            "with dp_stack_uncertified rather than release under an unverified\n"
-            "guarantee."
+            "The certified stack is a pinned lock the engine has been validated\n"
+            "against. On an uncertified host the fit refuses (the code is\n"
+            "dp_stack_uncertified or dp_platform_uncertified, shown with --verbose\n"
+            "and in --json) rather than release under an unverified guarantee."
         ),
         see_also=("decoy fit --help", "decoy run --help"),
     ),
@@ -414,7 +431,10 @@ _TOPICS: dict[str, _Topic] = {
             "or evidence packages.\n\n"
             "Keep these artifacts private:\n"
             "  - Raw input files and masked/generated outputs.\n"
-            "  - STORM scan JSON, because it can contain sensitive aggregates and top values.\n"
+            "  - `decoy scan --output` files. They hold counts, rates, types and detector\n"
+            "    ids, never cell values, but column names and rates still describe your data.\n"
+            "  - Fit snapshots from `decoy fit`. A plain run withholds the values of sensitive\n"
+            "    columns; `--include-values` keeps every column's values.\n"
             "  - Master keys and key labels (generation) and mask_secret_ref secrets\n"
             "    (masking) -- see `decoy explain keys`.\n"
             "  - Reference files and categorical policy values.\n\n"
@@ -434,7 +454,9 @@ _TOPICS: dict[str, _Topic] = {
             "  0   Success. The command did what it said. POSIX convention.\n"
             "  1   Usage error. The caller's request was wrong: config did not\n"
             "      validate, a path did not exist, an incompatible flag\n"
-            "      combination was passed. The fix is in the user's input.\n"
+            "      combination was passed, or a `unique` generate column that\n"
+            "      the data cannot satisfy (`uniqueness_impossible`). The fix is\n"
+            "      in the user's input.\n"
             "  2   Warnings. The command ran clean except for advisory\n"
             "      warnings, and --fail-on-warning was set (the warning-\n"
             "      blocking CI gate). Without --fail-on-warning the same run\n"
@@ -453,15 +475,49 @@ _TOPICS: dict[str, _Topic] = {
             "      budget) has -- the engine's out-of-core-FK memory gate,\n"
             "      either hit mid-run or predicted up front. The fix is a\n"
             "      bigger host/cgroup ceiling or a smaller job. `decoy validate\n"
-            "      preflight` v1 checks this for the out-of-core-FK route only; it does\n"
+            "      preflight` v1 checks this for the out-of-core-FK route; it does\n"
             "      not cover the ingestion peak `decoy run` pays before the\n"
-            "      engine gate runs, or the generate path.\n\n"
+            "      engine gate runs. Generated tables whose output cannot fit\n"
+            "      the machine's memory (`generation_budget_exceeded`) exit 5\n"
+            "      at `decoy validate` and before `decoy run` writes anything;\n"
+            "      a run that runs out of memory exits 5 as well.\n\n"
             "Integer values are stable across releases.\n"
             "The named constants (EXIT_OK / EXIT_USAGE / EXIT_WARNINGS /\n"
             "EXIT_RUNTIME / EXIT_FINDINGS / EXIT_CAPACITY) live in\n"
             "`decoy.cli.exit_codes` for callers that import them in Python."
         ),
         see_also=("decoy --help", "decoy run --help", "decoy validate preflight --help"),
+    ),
+    "unique": _Topic(
+        name="unique",
+        summary="Unique generated values: `unique`, `unique_together` and `pooled`.",
+        body=(
+            "A generate column draws each row on its own, so repeats are normal. Two options\n"
+            "promise distinct values:\n\n"
+            "  unique: true      On a generate column. Takes `sequence` (always distinct),\n"
+            "                    `categorical`, `faker` and `reference`. Other types refuse it.\n"
+            "                    A null never counts as a repeat.\n"
+            "  unique_together   On a table: a list of column pairs, e.g. [[item_id, shelf_id]].\n"
+            "                    Both columns are `reference`; each pair of parent keys occurs\n"
+            "                    once. Use it for a junction table.\n\n"
+            "Refusals:\n\n"
+            "  `decoy validate` and `decoy run` refuse a domain that is plainly too small (a\n"
+            "  `categorical` with fewer categories than rows, a pair whose parents hold fewer\n"
+            "  pairs than the row count) with a `generate_unique_*` code, exit 1.\n"
+            "  When the size is known only at run time (a parent with repeated or null keys, a\n"
+            "  `faker` type that runs out of values), `decoy run` stops with\n"
+            "  `uniqueness_impossible`, exit 1, before any output is written. The message names\n"
+            "  the table and column, with the counts or the row where values ran out, never a\n"
+            "  generated or source value.\n"
+            "  A unique column that cannot fit in memory exits 5 (see `decoy explain exit-codes`).\n"
+            "  Unique columns run whole-table, so very large unique runs hit memory sooner.\n\n"
+            "pooled (`faker` columns only):\n\n"
+            "  Draws come from a pool of about 10,000 values. It turns on by itself at 50,000\n"
+            "  rows and up for the types that support it, so a pooled column repeats values.\n"
+            "  `pooled: false` opts out. `pooled: true` changes nothing at those sizes, and is\n"
+            "  refused together with `unique: true`; `unique: true` turns pooling off."
+        ),
+        see_also=("decoy explain exit-codes", "decoy schema", "decoy validate --help"),
     ),
     "completion": _Topic(
         name="completion",
@@ -514,6 +570,39 @@ _TOPICS: dict[str, _Topic] = {
 }
 
 
+# What the common strategies do. A name the engine no longer registers is never printed, and a
+# registered name with no entry here is still listed, so the list itself is the engine's.
+_STRATEGY_NOTES = {
+    "faker": "A realistic fake value of a chosen `provider` (person_email, ...). The most common pick.",
+    "hash": "A deterministic hash: the same input gives the same output. Joins survive.",
+    "redact": "Literal text in place of the value, e.g. 'XXX-XX-XXXX'.",
+    "categorical": "A pick from an explicit category list, optionally weighted.",
+    "shuffle": "Reorder the column across rows. Keeps the distribution, breaks the row link.",
+    "passthrough": "Leave the column unchanged. Documents intent.",
+    "date_shift": "Move dates by a random number of days. Keeps proximity, hides the exact date.",
+    "formula": "Compute the value from an expression over other columns.",
+}
+
+
+def _transforms_body() -> str:
+    from decoy.cli.cockpit import registered_strategies
+
+    rows = [
+        f"  {e['name']:<14}{_STRATEGY_NOTES.get(e['name'], '')}".rstrip()
+        for e in registered_strategies()
+    ]
+    return (
+        "Each masked column in a mask table names a `strategy:` from this set:\n\n"
+        "  - name: email\n"
+        "    strategy: faker\n"
+        "    provider: person_email\n\n"
+        "Mask strategies in this engine:\n" + "\n".join(rows) + "\n\n"
+        "Inspect one with `decoy show strategy <name>`.\n"
+        "Generate columns use `type:` instead, not `strategy:`. Their types are listed by\n"
+        "`decoy explain generation`."
+    )
+
+
 def topic_names() -> list[str]:
     """Returned to Typer's `autocompletion=` for the topic argument."""
     return list(_TOPICS.keys())
@@ -537,7 +626,7 @@ See also: decoy --help, decoy list templates.
 
 def _render_topic(state, topic: _Topic) -> None:
     """Print one topic as a Rich Panel."""
-    body_text = Text(topic.body, style="info")
+    body_text = Text(topic.text(), style="info")
     children = [body_text]
     if topic.see_also:
         children.append(Text(""))
@@ -597,8 +686,8 @@ def explain(
 ) -> None:
     """Explain a Decoy concept in plain English.
 
-    Built-in topics: modes, transforms, disguises, output, pipeline, yaml,
-    storm, keys, vault, chunked, substrate, differential-privacy, security,
+    Built-in topics: modes, transforms, generation, disguises, output, pipeline,
+    yaml, storm, keys, vault, chunked, substrate, differential-privacy, security,
     completion. Run with no topic to see the full list.
     """
     state = setup_output(json_, quiet, verbose)
@@ -655,7 +744,7 @@ def explain(
                 "status": "ok",
                 "topic": found.name,
                 "summary": found.summary,
-                "body": found.body,
+                "body": found.text(),
                 "see_also": list(found.see_also),
             },
         )

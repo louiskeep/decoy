@@ -1,0 +1,35 @@
+# C2, C3, H2, H3, M3, M4: one statistical column per source column.
+version: 2
+global_settings:
+  seed: 21
+sources: {}
+tables:
+  - name: types_out
+    row_count: 20000
+    generate_columns:
+      - {name: null10, type: statistical, snapshot_file: types.snapshot.json, source_column: null10}
+      - {name: null90, type: statistical, snapshot_file: types.snapshot.json, source_column: null90, allow_real_categories: true}
+      - {name: age, type: statistical, snapshot_file: types.snapshot.json, source_column: age}
+      - {name: skew, type: statistical, snapshot_file: types.snapshot.json, source_column: skew}
+      - {name: bimodal, type: statistical, snapshot_file: types.snapshot.json, source_column: bimodal}
+      - {name: outlier, type: statistical, snapshot_file: types.snapshot.json, source_column: outlier}
+      - {name: price, type: statistical, snapshot_file: types.snapshot.json, source_column: price}
+      - {name: day, type: statistical, snapshot_file: types.snapshot.json, source_column: day}
+      - {name: bit, type: statistical, snapshot_file: types.snapshot.json, source_column: bit, allow_real_categories: true}
+      - {name: zip, type: statistical, snapshot_file: types.snapshot.json, source_column: zip, allow_real_categories: true}
+  - name: np_check
+    row_count: 20000
+    generate_columns:
+      - {name: fitted, type: statistical, snapshot_file: types.snapshot.json, source_column: null10}
+      - {name: np_0, type: statistical, snapshot_file: types.snapshot.json, source_column: null10, null_probability: 0.0}
+      - {name: np_10, type: statistical, snapshot_file: types.snapshot.json, source_column: null10, null_probability: 0.1}
+      - {name: np_50, type: statistical, snapshot_file: types.snapshot.json, source_column: null10, null_probability: 0.5}
+targets:
+  types_out:
+    type: file
+    format: csv
+    path: ./out/types_out.csv
+  np_check:
+    type: file
+    format: csv
+    path: ./out/np_check.csv

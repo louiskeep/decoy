@@ -41,6 +41,7 @@ from typer.testing import CliRunner
 
 from decoy.__main__ import app
 from decoy.cli.exit_codes import EXIT_CAPACITY, EXIT_OK, EXIT_USAGE, EXIT_WARNINGS
+from tests.csv_sources import csv_source
 
 runner = CliRunner()
 
@@ -59,7 +60,7 @@ def _clean_config(tmp_path: Path) -> Path:
     cfg = {
         "version": 2,
         "global_settings": {"seed": 42},
-        "sources": {"customers": {"type": "file", "format": "csv", "path": str(src)}},
+        "sources": {"customers": csv_source(src)},
         "tables": [
             {
                 "name": "customers",
@@ -88,13 +89,7 @@ def _missing_source_config(tmp_path: Path) -> Path:
     cfg = {
         "version": 2,
         "global_settings": {"seed": 42},
-        "sources": {
-            "customers": {
-                "type": "file",
-                "format": "csv",
-                "path": str(tmp_path / "DOES_NOT_EXIST.csv"),
-            }
-        },
+        "sources": {"customers": csv_source(tmp_path / "DOES_NOT_EXIST.csv")},
         "tables": [
             {
                 "name": "customers",
@@ -145,7 +140,7 @@ def _unique_column_config(tmp_path: Path, *, with_source: bool = True) -> Path:
     cfg = {
         "version": 2,
         "global_settings": {"seed": 42},
-        "sources": {"customers": {"type": "file", "format": "csv", "path": path}},
+        "sources": {"customers": csv_source(path)},
         "tables": [
             {
                 "name": "customers",
@@ -188,7 +183,11 @@ def _fk_config(tmp_path: Path) -> Path:
         "version": 2,
         "global_settings": {"seed": 7},
         "sources": {
-            "parent": {"type": "file", "path": str(tmp_path / "parent.parquet"), "format": "parquet"},
+            "parent": {
+                "type": "file",
+                "path": str(tmp_path / "parent.parquet"),
+                "format": "parquet",
+            },
             "child": {"type": "file", "path": str(tmp_path / "child.parquet"), "format": "parquet"},
         },
         "targets": {
@@ -258,9 +257,9 @@ def test_gate_runs_config_only_checks_exactly_once(
     real = decoy_engine.run_config_only_checks
     calls = {"n": 0}
 
-    def _spy(raw: Any) -> Any:
+    def _spy(raw: Any, **kwargs: Any) -> Any:
         calls["n"] += 1
-        return real(raw)
+        return real(raw, **kwargs)
 
     monkeypatch.setattr(decoy_engine, "run_config_only_checks", _spy)
     result = _gate(_clean_config(tmp_path))

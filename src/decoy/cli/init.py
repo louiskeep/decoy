@@ -19,12 +19,16 @@ binding choice.
 from __future__ import annotations
 
 import json as _json
+import re
 from pathlib import Path
+from typing import Any
 
 import typer
+import yaml
 
 from decoy import _mask_secret_guidance
 from decoy.cli._init_inference import Inference, _infer_strategy_for_column
+from decoy.cli._sources import CSV_DIALECT_KEYS, csv_file_source
 from decoy.cli.completers import init_presets
 from decoy.cli.exit_codes import EXIT_RUNTIME, EXIT_USAGE
 from decoy.templates import get_template
@@ -42,10 +46,17 @@ Examples:
     Skip the wizard; scaffold from the HIPAA template.
 
   decoy init customers.csv --output pipeline.yaml
-    Column-aware scaffolding (OSS.4c, 2026-06-02). Runs STORM against
+    Column-aware scaffolding. Runs STORM against
     the file, picks a starter strategy per column from the inference
     table, writes the YAML with `# REVIEW:` comments above every
     inferred entry. The user must read + edit before running.
+
+  decoy init --preset generate -o -
+    Print the generate template on stdout and nothing else there.
+
+  decoy init people.csv --preset generate -o gen/pipeline.yaml
+    Fit people.csv, then write gen/people.snapshot.json and a generate config
+    that names it. Both files are written together or not at all.
 
   decoy init --yes
     Skip confirmation when overwriting an existing file.
@@ -54,44 +65,81 @@ See also: decoy validate config, decoy run, decoy scan, decoy list templates.
 """
 
 
-# Templates used by the wizard. Anything in `decoy.templates` is fair game --
-# but only flat masking templates make sense to path-edit. `generate` and
-# `graph` need different question sets, so they're routed through unchanged.
+# Templates used by the wizard. Only the flat masking templates hold one file
+# source and one file target to path-edit; `generate` has no source, so it is
+# written unchanged.
 _PATHED_PRESETS: tuple[str, ...] = ("minimal", "hipaa", "pci", "gdpr")
 
 
 def _render(preset: str, input_path: str | None, output_path: str | None) -> str:
-    """Build the YAML body for a preset, optionally rewriting input/output paths.
+    """Build the YAML body for a preset, optionally rewriting its source and target paths.
 
     For flat masking presets (minimal/hipaa/pci/gdpr), substitute the wizard's
-    chosen paths into the bundled template. For generate/graph, return the
-    template as-is -- their YAML shapes don't have a single input.path key.
+    chosen paths into the bundled template's first `sources:` and `targets:`
+    entries. Every other preset is returned as-is.
     """
     template = get_template(preset)
     if template is None:
         raise ValueError(f"unknown preset: {preset!r}")
     body = template.body
     if preset in _PATHED_PRESETS and input_path and output_path:
-        # Replace only the first input.path / output.path string; the bundled
-        # templates put each on a single line with single quotes.
-        body = _replace_yaml_path(body, "input", input_path)
-        body = _replace_yaml_path(body, "output", output_path)
+        body = _replace_yaml_path(body, "sources", input_path)
+        body = _replace_yaml_path(body, "targets", output_path)
     return body
 
 
-def _replace_yaml_path(body: str, key: str, new_path: str) -> str:
-    """Surgical edit: rewrite the first `path: '...'` under `key:`.
+# A plain-scalar value and an optional trailing comment; quoted values are replaced whole.
+_PLAIN_VALUE_WITH_COMMENT = re.compile(r"(?P<value>[^'\"#][^#]*?)(?P<comment>[ \t]+#.*)?\Z")
 
-    Avoids pulling in a YAML round-tripper just to update two paths; the
-    bundled templates have a known, narrow shape that this regex matches.
+
+def _entry_path_line(lines: list[str], key: str) -> int:
+    """Index of the `path:` key directly under the first entry of the top-level `key:` block.
+
+    A deeper `path:` (inside a nested mapping) and the next entry's `path:` are not it.
     """
-    import re
+    head = next((i for i, line in enumerate(lines) if line.rstrip() == f"{key}:"), None)
+    entry_indent = child_indent = None
+    for i in range(len(lines) if head is None else head + 1, len(lines)):
+        text = lines[i].rstrip("\n")
+        stripped = text.lstrip()
+        if not stripped or stripped.startswith("#"):
+            continue
+        indent = len(text) - len(stripped)
+        if indent == 0 or (entry_indent is not None and indent <= entry_indent):
+            break
+        if entry_indent is None:
+            entry_indent = indent
+            continue
+        if child_indent is None:
+            child_indent = indent
+        if indent == child_indent and stripped.startswith("path:"):
+            return i
+    raise ValueError(f"preset template has no path under {key}:")
 
-    pattern = re.compile(
-        rf"(^{key}:\s*\n(?:[^\S\n]+[^\n]*\n)*?[^\S\n]+path:\s*)'[^']*'",
-        re.MULTILINE,
-    )
-    return pattern.sub(rf"\1'{new_path}'", body, count=1)
+
+def _template_path(body: str, key: str) -> str:
+    """The path of the first entry under a template's top-level `key:` block."""
+    lines = body.splitlines(keepends=True)
+    line = lines[_entry_path_line(lines, key)]
+    return str(yaml.safe_load(line.split("path:", 1)[1]))
+
+
+def _replace_yaml_path(body: str, key: str, new_path: str) -> str:
+    """Rewrite the path of the first entry under the top-level `key:` block.
+
+    Avoids a YAML round-tripper for two paths. A trailing comment on a plain value is
+    kept. A template whose shape no longer matches raises instead of silently keeping
+    its own path.
+    """
+    lines = body.splitlines(keepends=True)
+    i = _entry_path_line(lines, key)
+    prefix, rest = lines[i].split("path:", 1)
+    ending = "\n" if rest.endswith("\n") else ""
+    rest = rest.rstrip("\n").strip()
+    match = _PLAIN_VALUE_WITH_COMMENT.match(rest)
+    comment = (match.group("comment") or "") if match else ""
+    lines[i] = f"{prefix}path: {_yaml_quote(new_path)}{comment}{ending}"
+    return "".join(lines)
 
 
 def _rule_count(body: str) -> int:
@@ -121,7 +169,7 @@ multiple init runs.
 """
 
 
-def _scaffold_source(input_file: Path) -> dict[str, str]:
+def _scaffold_source(input_file: Path) -> dict[str, Any]:
     """The source descriptor the scaffold declares for `input_file`, from its suffix.
 
     The one suffix rule for both the inference read and the YAML: `.parquet` and `.pq` are
@@ -133,9 +181,13 @@ def _scaffold_source(input_file: Path) -> dict[str, str]:
     if suffix in (".parquet", ".pq"):
         return {"type": "file", "format": "parquet", "path": path}
     if suffix == ".tsv":
-        return {"type": "file", "format": "csv", "path": path, "delimiter": "\t"}
+        from decoy.cli._sources import csv_file_source
+
+        return csv_file_source(path, delimiter="\t")
     if suffix == ".csv":
-        return {"type": "file", "format": "csv", "path": path}
+        from decoy.cli._sources import csv_file_source
+
+        return csv_file_source(path)
     raise ValueError(f"unsupported file extension {suffix!r}; expected .csv, .tsv, or .parquet")
 
 
@@ -154,6 +206,11 @@ def _load_dataframe(input_file: Path):
     from decoy.cli._sources import read_file
 
     return read_file(input_file, "parquet", None, table=_TABLE_NAME)
+
+
+def _yaml_scalar(value: object) -> str:
+    """A dialect value as a YAML scalar: bools as true/false, text as a JSON-quoted string."""
+    return str(value).lower() if isinstance(value, bool) else _json.dumps(value)
 
 
 def _yaml_quote(value: str) -> str:
@@ -259,8 +316,8 @@ def _build_scaffold_yaml(
 ) -> str:
     """Compose the full scaffold YAML body from the per-column inferences.
 
-    The header line cites OSS.4c and the input file so the user has the
-    provenance pinned at the top of the file. Path values are quoted so
+    The header names the input file so the user has the provenance pinned
+    at the top of the file. Path values are quoted so
     Windows paths with backslashes round-trip cleanly through YAML 1.1.
     """
     input_quoted = _yaml_quote(str(input_path))
@@ -273,17 +330,30 @@ def _build_scaffold_yaml(
         "# When you are satisfied with the choices, delete the REVIEW comments\n"
         "# and run `decoy validate config <this-file>` followed by `decoy run`.\n"
         "#\n"
-        "# V2 PipelineConfig shape per decoy-engine `decoy_engine.config._pipeline`.\n"
+        "# Run `decoy explain pipeline` for the V2 pipeline shape.\n"
     )
 
-    delimiter_line = f"    delimiter: {_json.dumps(delimiter)}\n" if delimiter else ""
+    # The csv dialect lines come from the one csv descriptor builder, not a second copy of its
+    # defaults; the descriptor's own type/format/path lines are written below.
+    dialect = (
+        {
+            k: v
+            for k, v in csv_file_source(
+                input_path, **({"delimiter": delimiter} if delimiter else {})
+            ).items()
+            if k in CSV_DIALECT_KEYS
+        }
+        if file_format == "csv"
+        else {}
+    )
+    dialect_lines = "".join(f"    {k}: {_yaml_scalar(v)}\n" for k, v in dialect.items())
     sources_block = (
         "sources:\n"
         f"  {_TABLE_NAME}:\n"
         "    type: file\n"
         f"    format: {file_format}\n"
         f"    path: {input_quoted}\n"
-        f"{delimiter_line}"
+        f"{dialect_lines}"
     )
     targets_block = (
         "targets:\n"
@@ -332,11 +402,11 @@ def _validate_scaffold(body: str) -> None:
     """
     try:
         import yaml
-        from decoy_engine.config import PipelineConfig
+        from decoy_engine.config import parse_pipeline_config
     except Exception:
         return
     parsed = yaml.safe_load(body)
-    PipelineConfig.model_validate(parsed)
+    parse_pipeline_config(parsed)
 
 
 def _scaffold_from_file(
@@ -464,6 +534,13 @@ def _init(
     """
     state = setup_output(json_, quiet, verbose)
 
+    # A CSV with the generate preset fits a snapshot and writes it with the config.
+    if input_file is not None and preset == "generate":
+        from decoy.cli.gen import scaffold_generate
+
+        scaffold_generate(state, input_file, out, yes=yes)
+        return
+
     # Column-aware scaffolding (OSS.4c): an input file without --preset
     # routes through STORM-driven inference instead of the template path.
     # If both are given, --preset wins (explicit user override).
@@ -559,6 +636,10 @@ def _init(
                 )
         raise typer.Exit(code=EXIT_USAGE)
 
+    if str(out) == "-":
+        _template_to_stdout(state, preset)
+        return
+
     if out.exists() and not yes:
         if state.mode is not OutputMode.default:
             state.err_console.print(error("error:"), f"{out} already exists.")
@@ -575,7 +656,7 @@ def _init(
     if state.mode is OutputMode.json:
         # Non-interactive: produce a scaffold with the chosen (or default) preset.
         chosen = preset or "minimal"
-        rendered = _render(chosen, "data/input.csv", "data/masked.csv")
+        rendered = _render(chosen, None, None)
         out.write_text(rendered, encoding="utf-8")
         emit_json(
             state,
@@ -591,7 +672,7 @@ def _init(
 
     if state.mode is OutputMode.quiet:
         chosen = preset or "minimal"
-        rendered = _render(chosen, "data/input.csv", "data/masked.csv")
+        rendered = _render(chosen, None, None)
         out.write_text(rendered, encoding="utf-8")
         return
 
@@ -615,13 +696,18 @@ def _init(
     else:
         chosen = preset
 
-    if chosen in _PATHED_PRESETS:
-        input_path = typer.prompt("Input CSV path", default="data/input.csv")
-        output_path = typer.prompt("Output CSV path", default="data/masked.csv")
-        rendered = _render(chosen, input_path, output_path)
-    else:
-        # generate / graph: their YAMLs use different keys; ship as-is.
-        rendered = _render(chosen, None, None)
+    try:
+        if chosen in _PATHED_PRESETS:
+            # Defaults are the template's own paths, so Enter writes what --quiet writes.
+            body = _render(chosen, None, None)
+            input_path = typer.prompt("Input CSV path", default=_template_path(body, "sources"))
+            output_path = typer.prompt("Output CSV path", default=_template_path(body, "targets"))
+            rendered = _render(chosen, input_path, output_path)
+        else:
+            rendered = _render(chosen, None, None)
+    except ValueError as exc:
+        state.err_console.print(error("error:"), str(exc), markup=False)
+        raise typer.Exit(code=EXIT_RUNTIME) from None
 
     out.write_text(rendered, encoding="utf-8")
 
@@ -631,11 +717,39 @@ def _init(
     _print_keyed_hint(state, rendered)
 
 
-def _print_keyed_hint(state: OutputState, body: str) -> None:
+def _template_to_stdout(state: OutputState, preset: str | None) -> None:
+    """`-o -` with a template: the YAML alone on stdout, every other line on stderr.
+
+    No wizard: its prompts would land on stdout beside the YAML. `--json` also wants stdout,
+    so the two are refused.
+    """
+    import sys
+
+    if state.mode is OutputMode.json:
+        emit_json(
+            state,
+            {
+                "command": "init",
+                "status": "error",
+                "error": "-o - prints the YAML on stdout, which --json also uses.",
+            },
+        )
+        raise typer.Exit(code=EXIT_USAGE)
+    chosen = preset or "minimal"
+    rendered = _render(chosen, None, None)
+    sys.stdout.write(rendered)
+    sys.stdout.flush()
+    if state.mode is not OutputMode.quiet:
+        state.err_console.print(success("OK"), "printed preset", code(chosen))
+        _print_keyed_hint(state, rendered, to_stderr=True)
+
+
+def _print_keyed_hint(state: OutputState, body: str, *, to_stderr: bool = False) -> None:
     import yaml as _yaml
 
     if _mask_secret_guidance.config_is_keyed(_yaml.safe_load(body)):
-        state.console.print(hint("Keyed:"), _mask_secret_guidance.INIT_HINT, markup=False)
+        console = state.err_console if to_stderr else state.console
+        console.print(hint("Keyed:"), _mask_secret_guidance.INIT_HINT, markup=False)
 
 
 _init.__doc__ = _init.__doc__

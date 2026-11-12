@@ -90,11 +90,11 @@ def test_storm_analyze_reads_parquet_fixture(parquet_fixture: Path, tmp_path: Pa
     )
     assert result.exit_code == 0, f"exit={result.exit_code}\n{result.output}"
     assert out.exists(), "Expected scan output file to be written"
-    payload = _json.loads(out.read_text())
+    payload = _json.loads(out.read_text())["tables"][0]
     assert payload["row_count"] == 3
     field_names = [f["name"] for f in payload["fields"]]
     assert "email" in field_names, f"Expected 'email' in fields. Got: {field_names}"
-    assert payload["source_label"] == "members.parquet"
+    assert payload["name"] == "members"
 
 
 def test_storm_analyze_parquet_json_output(parquet_fixture: Path):
@@ -130,7 +130,7 @@ def test_storm_analyze_reads_fixed_width_with_layout(fwf_fixture: tuple[Path, Pa
     )
     assert result.exit_code == 0, f"exit={result.exit_code}\n{result.output}"
     assert out.exists()
-    payload = _json.loads(out.read_text())
+    payload = _json.loads(out.read_text())["tables"][0]
     assert payload["row_count"] == 3
     field_names = [f["name"] for f in payload["fields"]]
     assert "member_id" in field_names, f"Got field names: {field_names}"
@@ -220,7 +220,7 @@ def test_storm_analyze_explicit_format_parquet(parquet_fixture: Path, tmp_path: 
         ],
     )
     assert result.exit_code == 0, f"exit={result.exit_code}\n{result.output}"
-    payload = _json.loads(out.read_text())
+    payload = _json.loads(out.read_text())["tables"][0]
     assert payload["row_count"] == 3
 
 
@@ -240,12 +240,13 @@ def test_storm_analyze_explicit_format_delimited(tmp_path: Path):
         [
             "scan",
             str(csv_path),
+            "--has-header",
             "--format", "delimited",
             "--output", str(out),
         ],
     )
     assert result.exit_code == 0, f"exit={result.exit_code}\n{result.output}"
-    payload = _json.loads(out.read_text())
+    payload = _json.loads(out.read_text())["tables"][0]
     assert payload["row_count"] == 3
 
 
@@ -263,7 +264,7 @@ def test_storm_analyze_parquet_extension_auto_detects(parquet_fixture: Path, tmp
         ["scan", str(parquet_fixture), "--output", str(out)],
     )
     assert result.exit_code == 0, f"exit={result.exit_code}\n{result.output}"
-    payload = _json.loads(out.read_text())
+    payload = _json.loads(out.read_text())["tables"][0]
     assert payload["row_count"] == 3
 
 

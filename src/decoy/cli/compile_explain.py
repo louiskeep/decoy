@@ -39,8 +39,10 @@ from pathlib import Path
 import typer
 import yaml
 
+from decoy._atomic import AtomicWriteError, WriteMode, describe, write_local_target
+from decoy.cli import gen
 from decoy.cli._yaml_errors import sanitize_yaml_error
-from decoy.cli.exit_codes import EXIT_USAGE
+from decoy.cli.exit_codes import EXIT_RUNTIME, EXIT_USAGE
 from decoy.ui.output import OutputMode, emit_json, setup_output
 from decoy.ui.table import make_table
 from decoy.ui.theme import accent, code, error, hint, success, warn
@@ -222,7 +224,7 @@ def compile(
                 "--profile <profile.json>, or remove the unique cardinality_mode.",
             )
             raise typer.Exit(code=EXIT_USAGE)
-        profile = empty_profile_for_no_profile(raw, engine_version)
+        profile = None
 
     # Compile: validate config, run plan-compile checks. no_profile=True in the
     # no-profile branch makes the ENGINE emit its own honest checks_skipped set
@@ -231,8 +233,15 @@ def compile(
     # keep structural checks like fk_plan_ordering in checks_passed. We do not
     # hand-maintain a parallel skip list (it drifts from the engine's contract).
     try:
+        if profile is None:
+            # Inside the try: an unequal composite relationship raises here.
+            profile = empty_profile_for_no_profile(raw, engine_version)
         plan = compile_plan(
-            raw, profile, decoy_engine_version=engine_version, no_profile=not use_profile
+            raw,
+            profile,
+            decoy_engine_version=engine_version,
+            no_profile=not use_profile,
+            base_dir=config.parent,
         )
     except Exception as exc:
         _compile_error(state, config, exc)
@@ -240,18 +249,27 @@ def compile(
 
     # --output: also write the frozen plan artifact (absorbs the old `plan` command).
     if out is not None:
-        out.write_text(render_plan_artifact(plan, out_format), encoding="utf-8")
+        try:
+            write_local_target(
+                out,
+                render_plan_artifact(plan, out_format).encode("utf-8"),
+                WriteMode.REPLACE,
+            )
+        except AtomicWriteError as exc:
+            _simple_error(state, config, f"could not write the plan artifact: {describe(exc)}")
+            raise typer.Exit(code=EXIT_RUNTIME)
 
     # Extract per-column info from the config (strategies come from the user's
     # explicit declarations; compile_plan verifies them but does not change them).
     tables_info = _extract_tables_info(raw)
+    generation = gen.generation_info(raw)
     checks_passed = list(plan.plan_compile.checks_passed)
     checks_skipped = list(plan.plan_compile.checks_skipped)
     warnings_list = list(plan.plan_compile.warnings)
 
     if state.mode is OutputMode.json:
         payload: dict = {
-            "command": "compile explain",
+            "command": "validate compile",
             "status": "ok",
             "config": str(config),
             "engine_version": plan.engine_version,
@@ -267,9 +285,10 @@ def compile(
         if explain:
             payload["tables"] = tables_info
             payload["ordering"] = [
-                {"table": n.table, "columns": list(n.columns)}
-                for n in plan.ordering
+                {"table": n.table, "columns": list(n.columns)} for n in plan.ordering
             ]
+            if generation is not None:
+                payload["generation"] = generation
             payload["honesty_note"] = (
                 "Strategies are declared in the pipeline config by the user. "
                 "compile --explain verifies those declarations; it does not "
@@ -287,7 +306,7 @@ def compile(
     state.console.print()
 
     if explain:
-        _render_explain(state, tables_info, plan)
+        _render_explain(state, tables_info, plan, generation)
     else:
         _render_summary(state, checks_passed, checks_skipped, warnings_list)
 
@@ -301,7 +320,7 @@ def _simple_error(state, config: Path, msg: str) -> None:
         emit_json(
             state,
             {
-                "command": "compile explain",
+                "command": "validate compile",
                 "status": "error",
                 "config": str(config),
                 "error": msg,
@@ -336,7 +355,7 @@ def _compile_error(state, config: Path, exc: Exception) -> None:
 
     if state.mode is OutputMode.json:
         payload: dict = {
-            "command": "compile explain",
+            "command": "validate compile",
             "status": "error",
             "error": msg,
         }
@@ -349,7 +368,11 @@ def _compile_error(state, config: Path, exc: Exception) -> None:
         # parse both as unknown style tags and drop them.
         state.err_console.print(error("error:"), msg, markup=False)
         state.err_console.print(
-            " ", hint("hint:"), "run", code("decoy validate config <config>"), "for full validation."
+            " ",
+            hint("hint:"),
+            "run",
+            code("decoy validate config <config>"),
+            "for full validation.",
         )
 
 
@@ -370,6 +393,8 @@ def _extract_tables_info(raw: dict) -> list[dict]:
     for table in tables:
         if not isinstance(table, dict):
             continue
+        if table.get("generate_columns") and not table.get("columns"):
+            continue  # a generate table is shown by the generation section
         tname = table.get("name", "?")
         columns = table.get("columns") or []
         col_records = []
@@ -394,7 +419,7 @@ def _extract_tables_info(raw: dict) -> list[dict]:
     return result
 
 
-def _render_explain(state, tables_info: list[dict], plan) -> None:
+def _render_explain(state, tables_info: list[dict], plan, generation: dict | None) -> None:
     """Render the per-column explain view."""
     for table_info in tables_info:
         state.console.print(accent(f"Table: {table_info['name']}"))
@@ -411,6 +436,9 @@ def _render_explain(state, tables_info: list[dict], plan) -> None:
         state.console.print(table)
         state.console.print()
 
+    if generation is not None:
+        _render_generation(state, generation)
+
     # Execution ordering (if the planner produced one).
     if plan.ordering:
         state.console.print(accent("Execution order:"))
@@ -419,7 +447,7 @@ def _render_explain(state, tables_info: list[dict], plan) -> None:
             order_table.add_row(str(i), node.table, ", ".join(node.columns))
         state.console.print(order_table)
         state.console.print()
-    else:
+    elif generation is None:
         state.console.print(
             hint("Ordering:"),
             "tables execute in config declaration order (no FK dependencies detected).",
@@ -439,6 +467,29 @@ def _render_explain(state, tables_info: list[dict], plan) -> None:
         code("decoy scan"),
         "to inspect source data first.",
     )
+
+
+def _render_generation(state, generation: dict) -> None:
+    """The generate tables, their references and the order they are built in."""
+    for table_info in generation["tables"]:
+        state.console.print(
+            accent(f"Generate table: {table_info['name']}"), f"({table_info['rows']} rows)"
+        )
+        refs = {
+            (r["table"], r["column"]): f"{r['reference_table']}.{r['reference_column']}"
+            for r in generation["references"]
+        }
+        table = make_table("Column", "Type", "References")
+        for col in table_info["columns"]:
+            table.add_row(col["name"], col["type"], refs.get((table_info["name"], col["name"]), ""))
+        state.console.print(table)
+        state.console.print()
+    state.console.print(accent("Generation order:"), "parents are built first.")
+    order_table = make_table("Step", "Table", "Parents")
+    for i, node in enumerate(generation["order"], 1):
+        order_table.add_row(str(i), node["table"], ", ".join(node["parents"]) or "-")
+    state.console.print(order_table)
+    state.console.print()
 
 
 def _render_summary(

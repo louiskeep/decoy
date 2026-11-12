@@ -198,11 +198,12 @@ def test_storm_show_renders_field_card(scan_file: Path):
     assert "high" in result.stdout
 
 
-def test_storm_show_includes_top_values_table(scan_file: Path):
+def test_storm_show_never_prints_top_values(scan_file: Path):
+    """A legacy scan holds cell values in `top_values`; `show` drops them (S1c)."""
     result = runner.invoke(app, ["scan", "show", str(scan_file), "first_name"])
     assert result.exit_code == 0
-    assert "Top values" in result.stdout
-    assert "Alice" in result.stdout
+    assert "Top values" not in result.stdout
+    assert "Alice" not in result.stdout + result.stderr
 
 
 def test_storm_show_includes_qi_membership(scan_file: Path):
@@ -212,11 +213,10 @@ def test_storm_show_includes_qi_membership(scan_file: Path):
     assert "first_name" in result.stdout
 
 
-def test_storm_show_includes_sentinels_table(scan_file: Path):
+def test_storm_show_never_prints_sentinel_values(scan_file: Path):
     result = runner.invoke(app, ["scan", "show", str(scan_file), "ssn"])
     assert result.exit_code == 0
-    assert "Sentinel" in result.stdout
-    assert "000-00-0000" in result.stdout
+    assert "000-00-0000" not in result.stdout + result.stderr
 
 
 def test_storm_show_unknown_field_exits_with_did_you_mean(scan_file: Path):

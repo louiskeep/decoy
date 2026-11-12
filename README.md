@@ -110,9 +110,11 @@ declared under `targets:` in the YAML.
 | `decoy init [file]`              | Scaffold a starter `pipeline.yaml`. With a file: column-aware via STORM. Without: prompt for preset (`minimal`, `gdpr`, ...). |
 | `decoy validate <path>`          | Run the whole pre-run gate (config + compile + preflight): one report, one exit code. |
 | `decoy run <path>`               | Execute a pipeline: read sources, mask, write targets.                        |
+| `decoy setup`                    | Set this box's max memory and threads (`~/.decoy/settings.json`); `--max-memory` and `--threads` override per run. |
 | `decoy tokenize <path>`          | Run the pipeline, replace each `strategy: tokenize` column with a deterministic surrogate, and record the mapping in a local vault. Needs a mask secret. |
 | `decoy detokenize <path> <file>` | Reverse a tokenized file from its vault. Fails closed on a missing/wrong vault or namespace. |
-| `decoy scan <path>`              | Profile a source file: distributions, PII candidates, cardinality hints.      |
+| `decoy fit <source.csv>`         | Fit a distribution snapshot of a CSV for `statistical` generate columns. Sensitive columns keep no cell values. |
+| `decoy scan <path>...`           | Profile source files, one table each: distributions, PII candidates, cardinality hints. A CSV needs `--has-header` or `--no-header`. |
 | `decoy report show <evidence.json>` | The post-run surface: show / verify / fidelity / integrity / diff / vault over run artifacts. |
 | `decoy ci check [manifest]`      | Run the checks in a `decoy-ci/v1` manifest and emit one value-free JSON, SARIF 2.1.0, or Markdown report. See [CI integration](#ci-integration). |
 | `decoy list templates`           | List the bundled pipeline templates.                                         |
@@ -121,6 +123,25 @@ declared under `targets:` in the YAML.
 
 Run `decoy --help` for the full surface, or `decoy <command> --help` for
 any subcommand.
+
+## Generate synthetic data
+
+A generate table builds rows from column types, with no source rows in the output.
+
+```console
+$ decoy init source.csv --preset generate -o pipeline.yaml   # fit the CSV, write config + snapshot
+$ decoy run pipeline.yaml --rows 5                            # preview a few rows, writes nothing
+$ decoy run pipeline.yaml                                     # generate and write the targets
+$ decoy report fidelity source.csv synthetic.csv --generate   # score the output against the source
+```
+
+A relative path in the YAML (sources, targets, `snapshot_file`) is read from the folder that holds
+the YAML file, whatever the working directory. `global_settings.seed` fixes a plain run; with
+`--master-key` the key drives generation and the seed is not used for generated tables. `decoy run`
+warns when a generated table scores below `fidelity_warn_threshold`, overall or on any one column.
+`decoy explain generation` lists every column type and option the installed engine supports, and
+`decoy validate compile pipeline.yaml --explain` shows each generate table, its references and the
+order the tables are built in.
 
 ## CI integration
 
@@ -149,11 +170,11 @@ pipelines can switch on the integer; the contract is stable across releases.
 | Code | Name                   | Meaning                                                                                    |
 |------|------------------------|--------------------------------------------------------------------------------------------|
 | 0    | `EXIT_OK`              | Success.                                                                                   |
-| 1    | `EXIT_USAGE`           | Usage error: config did not validate, path did not exist, flag combination was invalid.    |
+| 1    | `EXIT_USAGE`           | Usage error: config did not validate, path did not exist, flag combination was invalid, or a `unique` generate column the data cannot satisfy (`uniqueness_impossible`). |
 | 2    | `EXIT_WARNINGS`        | The command ran clean except for advisory warnings, and `--fail-on-warning` was set. Returned by `decoy validate config` / `validate preflight` (and the `validate` aggregate). Without `--fail-on-warning` the same run exits 0. |
 | 3    | `EXIT_RUNTIME`         | The CLI itself failed mid-run (engine error, output write failure, transient I/O problem). |
 | 4    | `EXIT_FINDINGS`        | The CLI ran cleanly but found data issues (e.g. `decoy report integrity` flagged residual PII or FK preservation failures). The fix is in the data being checked, not in the CLI invocation. |
-| 5    | `EXIT_CAPACITY`        | `decoy run` or `decoy validate preflight` refused the job: it needs more memory than the host/budget has (the engine's out-of-core-FK memory gate). The fix is a bigger host/cgroup ceiling or a smaller job. `decoy validate preflight`'s v1 check covers the out-of-core-FK route only, not the ingestion peak or the generate path. |
+| 5    | `EXIT_CAPACITY`        | `decoy run` or `decoy validate preflight` refused the job: it needs more memory than the host/budget has (the engine's out-of-core-FK memory gate). The fix is a bigger host/cgroup ceiling or a smaller job. `decoy validate preflight`'s v1 check does not cover the ingestion peak. Generated tables whose output cannot fit the machine's memory (`generation_budget_exceeded`) exit 5 at `decoy validate` and before `decoy run` writes anything; a missing or unreadable source file exits 1 first, so this needs readable sources; a run that runs out of memory exits 5 as well. |
 
 Constants live in `decoy.cli.exit_codes`. `decoy explain exit-codes` prints
 the same table from the CLI.
@@ -161,6 +182,9 @@ the same table from the CLI.
 ## Where to go next
 
 - `examples/` -- runnable mask and generate YAML configs.
+- `docs/guides/shape-and-privacy/` -- user guide: check what shape masking
+  kept, fit and generate look-alike data, read fidelity reports, and use the
+  differential-privacy fit.
 - `src/decoy/templates/` -- the starter templates `decoy init` ships.
 - `CHANGELOG.md` -- release notes and the versioning policy.
 - `SECURITY.md` -- how to report a vulnerability privately.

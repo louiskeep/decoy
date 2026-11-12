@@ -18,10 +18,10 @@ non-negotiable disciplines:
   abandoned by design.
 
   PRIVACY (H5): the inline / `--show-fields` field rendering uses the
-  privacy-safe `_safe_field_record` -- dtype, null_rate, distinct_count,
+  privacy-safe `safe_field_record` -- dtype, null_rate, distinct_count,
   pii_score, detector ids ONLY. It NEVER includes top_values, mode/min/max, or
-  any aggregate that could expose raw cell data. (The `--output` artifact keeps
-  the engine's richer `profile.to_dict()`; that is pre-existing and intentional.)
+  any aggregate that could expose raw cell data. `--output` writes the
+  value-free `scan-set/v1` core as well.
 
 Reuses the engine's `profile_columns` function. Does NOT reimplement detection.
 """
@@ -30,29 +30,28 @@ from __future__ import annotations
 
 import difflib
 import json as _json
-import sys
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
 
 import typer
 
-from decoy._atomic import AtomicWriteError, WriteMode, describe, write_local_target
+from decoy._row_sample import sample_frame
 from decoy.cli._default_group import make_default_group
-from decoy.cli.exit_codes import EXIT_RUNTIME, EXIT_USAGE
+from decoy.cli.exit_codes import EXIT_USAGE
+from decoy.cli.io import ScanSetFormatError, load_scan_set, select_table
 from decoy.ui.card import render_card
 from decoy.ui.output import OutputMode, OutputState, emit_json, setup_output
-from decoy.ui.storm_animation import stormy_multistage
 from decoy.ui.table import make_table
-from decoy.ui.theme import accent, code, error, hint, risk_high, risk_med, success, warn
+from decoy.ui.theme import code, error, hint, risk_high, risk_med, success
 
 _SCAN_GROUP_HELP = (
     "Profile a dataset for PII and re-identification risk. `decoy scan "
-    "SOURCE` scans a CSV/Parquet/fixed-width file (shape, field stats, PII "
-    "candidates as suggestions, quasi-identifiers, reid risk) and, with "
-    "`--output scan.json`, saves the scan. Subcommands operate on a saved "
-    "scan: list fields (`fields`), per-field detail (`show`), compare two "
-    "scans (`diff`)."
+    "SOURCES...` scans CSV/Parquet/fixed-width files, one table each (shape, "
+    "field stats, PII candidates as suggestions, quasi-identifiers, reid "
+    "risk) and, with `--output scan.json`, saves the value-free scan. "
+    "Subcommands operate on a saved scan: list fields (`fields`), per-field "
+    "detail (`show`), compare two scans (`diff`)."
 )
 
 
@@ -108,20 +107,27 @@ _RAW_DATA_SUFFIXES = {".csv", ".tsv", ".txt", ".parquet", ".json.gz", ".jsonl"}
 _SCAN_EPILOG = """\
 Examples:
 
-  decoy scan data.csv
+  decoy scan data.csv --has-header
     Profile a CSV: row/field counts, PII candidates (as suggestions), reid risk.
+    A CSV always needs --has-header or --no-header: scan never guesses.
     Reads the first 10 000 rows by default (--rows 0 for a full scan).
 
-  decoy scan data.csv --show-fields
+  decoy scan customers.csv orders.csv --has-header
+    Scan several files in one run: one table each, named from the file stem.
+
+  decoy scan raw.csv --no-header --column-names id,name,email
+    A headerless CSV: row 1 is data, the names come from you.
+
+  decoy scan data.csv --has-header --show-fields
     Per-field detail: dtype, null_rate, distinct_count, PII candidate flag.
 
-  decoy scan data.csv --rows 50000 --strategy random
+  decoy scan data.csv --has-header --rows 50000 --strategy random
     Sample 50K random rows instead of the first 10 000.
 
-  decoy scan data.csv --output scan.json
-    Save the scan to scan.json, then: decoy scan fields scan.json
+  decoy scan data.csv --has-header --output scan.json
+    Save the value-free scan to scan.json, then: decoy scan fields scan.json
 
-  decoy scan data.csv --output -
+  decoy scan data.csv --has-header --output -
     Stream the scan JSON to stdout for downstream tooling.
 
   decoy scan records.fwf --layout layout.yaml
@@ -132,8 +138,8 @@ HONESTY: PII candidates are SUGGESTIONS based on STORM pattern matching. They
 are NOT authoritative classifications. You review each flagged field and decide
 what masking to apply. Decoy never auto-classifies PII.
 
-No raw cell values appear in the inline output. Field stats include dtype,
-null_rate, distinct_count only.
+No raw cell values appear in the inline output or in --output. Field stats
+include dtype, null_rate, distinct_count only.
 
 See also: decoy scan fields, decoy scan show, decoy scan diff,
   decoy explain storm, decoy validate.
@@ -160,12 +166,12 @@ _SHOW_EPILOG = """\
 Examples:
 
   decoy scan show scan.json ssn
-    Per-field detail card -- PII score, detectors, sentinels, top values, QI.
+    Per-field detail card -- type, PII score, detectors, QI. No cell values.
 
   decoy scan show scan.json email --json
     Same data as a structured JSON envelope.
 
-  decoy scan data.csv --output - | decoy scan show - ssn
+  decoy scan data.csv --has-header --output - | decoy scan show - ssn
     Pipe a fresh scan straight in.
 
 See also: decoy scan, decoy scan fields.
@@ -302,7 +308,7 @@ def _load_csv_with_sampling(path: Path, rows: int | None, strategy: SampleStrate
         df = pd.read_csv(path)
         if len(df) <= rows:
             return df
-        return df.sample(n=rows, random_state=42).reset_index(drop=True)
+        return sample_frame(df, rows, 42)
     return pd.read_csv(path)
 
 
@@ -321,7 +327,7 @@ def _load_parquet_with_sampling(path: Path, rows: int | None, strategy: SampleSt
     if strategy is SampleStrategy.head:
         return df.head(rows)
     if strategy is SampleStrategy.random:
-        return df.sample(n=rows, random_state=42).reset_index(drop=True)
+        return sample_frame(df, rows, 42)
     return df
 
 
@@ -351,7 +357,7 @@ def _load_fixed_width_with_sampling(
     df = pd.read_fwf(path, colspecs=colspecs, names=names, header=None)
     if len(df) <= rows:
         return df
-    return df.sample(n=rows, random_state=42).reset_index(drop=True)
+    return sample_frame(df, rows, 42)
 
 
 def _load_data(
@@ -379,31 +385,6 @@ def _load_data(
 # ---------------------------------------------------------------------------
 # Saved-scan helpers (used by fields/show/diff). Moved from storm.py.
 # ---------------------------------------------------------------------------
-
-
-def _load_scan_dict(scan_path: str) -> dict:
-    """Load a STORM scan JSON file (or stdin when path is `-`).
-
-    Accepts both shapes `decoy scan` produces -- the bare `to_dict()` written
-    to disk by `--output FILE`, and the `{"profile": {...}}` envelope some
-    tools wrap it in.
-    """
-    try:
-        if scan_path == "-":
-            raw = sys.stdin.read()
-        else:
-            raw = Path(scan_path).read_text(encoding="utf-8")
-    except UnicodeDecodeError as exc:
-        # UnicodeDecodeError is a ValueError, not an OSError, so the callers
-        # that catch (FileNotFoundError, JSONDecodeError, OSError) would let a
-        # non-UTF-8 scan file crash with a raw traceback and corrupt --json
-        # output. Normalise to OSError so the existing handlers emit a clean
-        # error. (QA 2026-06-04 storm-validate-cli F1.)
-        raise OSError(f"scan file is not valid UTF-8: {exc}") from exc
-    data = _json.loads(raw)
-    if "profile" in data and "row_count" not in data:
-        data = data["profile"]
-    return data
 
 
 def _pii_bucket(score: float | None) -> str:
@@ -469,7 +450,7 @@ def _emit_load_error(
     if raw_data:
         label = Path(scan).name
         message = f"{label} looks like raw data, not a STORM scan JSON."
-        scan_cmd = f"decoy scan {scan} --output scan.json"
+        scan_cmd = f"decoy scan {scan} --has-header --output scan.json"
     elif isinstance(exc, FileNotFoundError):
         message = f"could not open {scan}: file not found."
         scan_cmd = None
@@ -504,87 +485,15 @@ def _emit_load_error(
             )
 
 
-# ---------------------------------------------------------------------------
-# Privacy-safe field record (H5). Carried from `profile`.
-# ---------------------------------------------------------------------------
+_TABLE_HELP = "Table to read when the saved scan holds more than one."
 
 
-def _safe_field_record(field_stats) -> dict:
-    """Return a privacy-safe field record from a FieldStats object.
-
-    Includes ONLY: name, inferred_type (dtype), null_rate, distinct_count,
-    pii_score, pii_candidate (bool), detector ids (names only, no match
-    details).
-
-    NEVER includes: top_values, mode_value, min_value, max_value, sample_invalid,
-    mean_value, or any other aggregate that could expose raw cell data.
-    """
-    is_candidate = field_stats.pii_score >= _PII_CANDIDATE_THRESHOLD
-    # Detector IDs only (no match rates, no sample_misses which could be raw data).
-    detector_ids = [m.detector_id for m in (field_stats.detector_matches or [])]
-    return {
-        "name": field_stats.name,
-        "dtype": field_stats.inferred_type,
-        "null_rate": round(field_stats.null_rate, 4),
-        "distinct_count": field_stats.distinct_count,
-        "pii_score": round(field_stats.pii_score, 3),
-        "pii_candidate": is_candidate,
-        # Detector IDs are safe metadata (pattern names, not cell values).
-        "detector_hits": detector_ids,
-    }
+_LOAD_ERRORS = (ScanSetFormatError, FileNotFoundError, _json.JSONDecodeError, OSError)
 
 
-_PII_NOTE = (
-    "PII candidates are SUGGESTIONS based on STORM pattern matching. "
-    "They are not authoritative classifications. Review each flagged field "
-    "and decide what masking to apply. Decoy never auto-classifies PII."
-)
-
-
-def _render_fields(state, field_records: list[dict], pii_candidate_count: int) -> None:
-    """Render the privacy-safe per-field detail table + honesty framing."""
-    state.console.print(accent(f"Fields ({len(field_records)}):"))
-
-    tbl = make_table("Field", "Type", "Null rate", "Distinct", "PII candidate")
-    for f in field_records:
-        pii_cell = ""
-        if f["pii_candidate"]:
-            detectors = ", ".join(f["detector_hits"]) if f["detector_hits"] else ""
-            pii_cell = "suggestion -- review"
-            if detectors:
-                pii_cell += f" [{detectors}]"
-        tbl.add_row(
-            f["name"],
-            f["dtype"],
-            f"{f['null_rate']:.1%}",
-            str(f["distinct_count"]),
-            pii_cell,
-        )
-    state.console.print(tbl)
-    state.console.print()
-
-    if pii_candidate_count > 0:
-        _render_pii_honesty(state, pii_candidate_count)
-
-
-def _render_pii_honesty(state, pii_candidate_count: int) -> None:
-    """The profile-honesty framing block (H4): candidates are suggestions."""
-    state.console.print(
-        warn("PII candidates:"),
-        f"{pii_candidate_count} field(s) flagged by STORM pattern matching.",
-    )
-    state.console.print(
-        " ",
-        hint("These are SUGGESTIONS for review -- NOT authoritative classifications."),
-    )
-    state.console.print(
-        " ",
-        "Review each flagged field and choose the masking strategy that fits.",
-        "Use",
-        code("decoy list templates"),
-        "to browse available templates.",
-    )
-    state.console.print()
+def _read_table(scan: str, table: str | None) -> dict:
+    """A saved scan's one table (raises one of `_LOAD_ERRORS`)."""
+    return select_table(load_scan_set(scan), table)
 
 
 # ---------------------------------------------------------------------------
@@ -593,12 +502,12 @@ def _render_pii_honesty(state, pii_candidate_count: int) -> None:
 
 
 def _scan(
-    source: Path = typer.Argument(
+    sources: list[Path] = typer.Argument(
         ...,
         exists=True,
         dir_okay=False,
         readable=True,
-        help="Path to a file to scan (CSV, Parquet, or fixed-width).",
+        help="Files to scan (CSV, Parquet, or fixed-width), one table each.",
     ),
     show_fields: bool = typer.Option(
         False,
@@ -623,7 +532,7 @@ def _scan(
         "--output",
         "-o",
         help=(
-            "Save the scan JSON to this path. Use - for stdout. "
+            "Save the value-free scan JSON to this path. Use - for stdout. "
             "Without --output nothing is written to disk."
         ),
     ),
@@ -632,7 +541,7 @@ def _scan(
         "--format",
         help=(
             "Input format: delimited (CSV/TSV), parquet, or fixed-width. "
-            "Default: inferred from file extension. "
+            "Default: inferred from file extension. One file only. "
             "fixed-width always requires --layout."
         ),
     ),
@@ -646,6 +555,19 @@ def _scan(
             "Each column needs 'name', 'start' (0-indexed), and 'width'."
         ),
     ),
+    has_header: bool | None = typer.Option(
+        None,
+        "--has-header/--no-header",
+        help=(
+            "Required for every CSV: does row 1 hold the column names? "
+            "With --no-header, row 1 is data and --column-names supplies the names."
+        ),
+    ),
+    column_names: str | None = typer.Option(
+        None,
+        "--column-names",
+        help="Comma-separated column names for one headerless CSV (needs --no-header).",
+    ),
     json_: bool = typer.Option(
         False,
         "--json",
@@ -658,219 +580,31 @@ def _scan(
         False, "--verbose", "-v", help="Enable debug-level CLI logs on stderr."
     ),
 ) -> None:
-    """Profile a source dataset: shape, field stats, PII candidates, reid risk.
+    """Profile source files: shape, field stats, PII candidates, reid risk.
 
-    Runs STORM detection on the source file. PII candidates are surfaced as
-    SUGGESTIONS for review -- never as authoritative auto-classifications.
-    No raw cell values appear in the inline output. Save the scan with
-    `--output scan.json`, then operate on it with `decoy scan fields/show/diff`.
+    Runs STORM detection on each file, one table per file. PII candidates are
+    surfaced as SUGGESTIONS for review, never as authoritative classifications.
+    No raw cell values appear in the inline output or in `--output`. Save the
+    scan with `--output scan.json`, then use `decoy scan fields/show/diff`.
 
-    Supported formats: delimited (CSV/TSV, default), parquet, and fixed-width.
-    Fixed-width input requires an explicit --layout spec (column boundaries are
-    ambiguous without one). Format is inferred from the extension when --format
-    is not supplied.
+    A CSV needs `--has-header` or `--no-header`: scan never guesses. Fixed-width
+    input requires an explicit --layout spec. Format is inferred from the
+    extension when --format is not supplied.
     """
-    state = setup_output(json_, quiet, verbose)
-    source_str = str(source)
+    from decoy.cli.scanning import run_scan
 
-    # Fail closed early: `--output -` streams the rich profile (raw-value-bearing,
-    # like the on-disk artifact) to stdout, which collides with the two stdout
-    # contracts that must stay privacy-safe -- the --json envelope and --quiet's
-    # suppression. Resolve the conflict before scanning rather than letting the
-    # stream path (below) silently win and leak values a -q/--json caller never
-    # asked for.
-    if out is not None and str(out) == "-" and state.mode is not OutputMode.default:
-        msg = (
-            "--output - (stream the scan to stdout) cannot be combined with "
-            f"--{'json' if state.mode is OutputMode.json else 'quiet'}: the "
-            "streamed profile carries raw values and would break that mode's "
-            "stdout contract. Save to a file (--output scan.json), or drop the "
-            "conflicting flag."
-        )
-        if state.mode is OutputMode.json:
-            emit_json(
-                state,
-                {"command": "scan", "status": "error", "source": source_str, "error": msg},
-            )
-        else:  # quiet: the contract is "no stdout", so the error goes to stderr.
-            state.err_console.print(error("error:"), msg)
-        raise typer.Exit(code=EXIT_USAGE)
-
-    # Resolve the effective format (explicit flag overrides extension detection).
-    effective_fmt: InputFormat = fmt if fmt is not None else _infer_format(source)
-
-    # Fail closed early: fixed-width without a layout is always an error.
-    if effective_fmt is InputFormat.fixed_width and layout is None:
-        msg = (
-            f"Fixed-width input requires --layout: column boundaries in {source.name} "
-            "are ambiguous without an explicit layout spec. "
-            "Run: decoy scan <file> --layout <layout.yaml>"
-        )
-        if state.mode is OutputMode.json:
-            emit_json(
-                state,
-                {"command": "scan", "status": "error", "source": source_str, "error": msg},
-            )
-        elif state.mode is not OutputMode.quiet:
-            state.err_console.print(error("error:"), msg)
-            state.err_console.print(
-                " ",
-                hint("hint:"),
-                "provide a layout file:",
-                code(f"decoy scan {source.name} --layout layout.yaml"),
-            )
-        raise typer.Exit(code=EXIT_USAGE)
-
-    # Load layout spec if needed.
-    layout_columns: list[dict] | None = None
-    if layout is not None:
-        if not layout.exists():
-            msg = f"Layout file not found: {layout}"
-            if state.mode is OutputMode.json:
-                emit_json(
-                    state,
-                    {"command": "scan", "status": "error", "source": source_str, "error": msg},
-                )
-            elif state.mode is not OutputMode.quiet:
-                state.err_console.print(error("error:"), msg)
-            raise typer.Exit(code=EXIT_USAGE)
-        try:
-            layout_columns = _parse_layout(layout)
-        except Exception as exc:
-            msg = f"Could not parse layout file {layout.name}: {exc}"
-            if state.mode is OutputMode.json:
-                emit_json(
-                    state,
-                    {"command": "scan", "status": "error", "source": source_str, "error": msg},
-                )
-            elif state.mode is not OutputMode.quiet:
-                state.err_console.print(error("error:"), msg)
-            raise typer.Exit(code=EXIT_USAGE)
-
-    # --rows default 10000 bounds the sample (profile's safe default); --rows 0
-    # scans the whole file. A bounded scan uses --strategy; a full scan ignores it.
-    row_cap: int | None = None if rows == 0 else rows
-    effective_strategy = SampleStrategy.full if rows == 0 else strategy
-
-    try:
-        from decoy_engine import profile_columns
-
-        with stormy_multistage(state, ["Load source", "Profile columns", "Summarize"]) as ms:
-            df = _load_data(source, effective_fmt, layout_columns, row_cap, effective_strategy)
-            ms.complete()
-            profile = profile_columns(
-                df,
-                source_label=source.name,
-                sample_strategy=effective_strategy.value,
-                sample_row_cap=row_cap,
-            )
-            ms.complete()
-
-            # PERSIST ONLY on --output (H7b): no auto scan_<ts>.json to cwd.
-            streamed = out is not None and str(out) == "-"
-            out_path: Path | None = out if (out is not None and not streamed) else None
-            if out_path is not None:
-                # The on-disk artifact keeps the engine's richer profile.to_dict()
-                # (pre-existing); the inline/--json field output stays privacy-safe.
-                write_local_target(
-                    out_path,
-                    _json.dumps(profile.to_dict(), indent=2).encode("utf-8"),
-                    WriteMode.REPLACE,
-                )
-            ms.complete()
-    except Exception as exc:
-        # Do NOT interpolate str(exc) -- engine parse errors can embed raw cell
-        # data in their messages. Report only the exception class name.
-        msg = (
-            f"scan failed: {describe(exc)}"
-            if isinstance(exc, AtomicWriteError)
-            else f"scan failed: {type(exc).__name__}"
-        )
-        if state.mode is OutputMode.json:
-            emit_json(
-                state,
-                {"command": "scan", "status": "error", "source": source_str, "error": msg},
-            )
-        elif state.mode is not OutputMode.quiet:
-            state.err_console.print(error("error:"), msg)
-            state.err_console.print(
-                " ", hint("hint:"), "rerun with --verbose for the full traceback."
-            )
-        if state.verbose:
-            state.err_console.print(
-                hint("(--verbose: traceback below; diagnostic output may contain row data)")
-            )
-            state.err_console.print_exception()
-        raise typer.Exit(code=EXIT_RUNTIME)
-
-    # --output - streams the scan JSON (the richer artifact) to stdout, nothing else.
-    if streamed:
-        sys.stdout.write(_json.dumps(profile.to_dict()) + "\n")
-        return
-
-    # Privacy-safe field records (no raw cell values) for inline / --json output.
-    field_records = [_safe_field_record(f) for f in profile.fields]
-    pii_candidate_count = sum(
-        1 for f in profile.fields if f.pii_score >= _PII_CANDIDATE_THRESHOLD
+    run_scan(
+        setup_output(json_, quiet, verbose),
+        sources=sources,
+        show_fields=show_fields,
+        rows=rows,
+        strategy=strategy.value,
+        out=out,
+        fmt=fmt.value if fmt is not None else None,
+        layout=layout,
+        has_header=has_header,
+        column_names=column_names,
     )
-
-    if state.mode is OutputMode.json:
-        payload: dict = {
-            "command": "scan",
-            "status": "ok",
-            "source": source_str,
-            "row_count": profile.row_count,
-            "field_count": len(profile.fields),
-            "sample_strategy": profile.sample_strategy,
-            "pii_candidate_count": pii_candidate_count,
-            # H4: the honesty note travels in --json too.
-            "pii_note": _PII_NOTE,
-            "reid_risk_score": profile.reid_risk_score,
-            "quasi_identifier_groups": [list(g) for g in profile.quasi_identifier_groups],
-            "saved": str(out_path) if out_path else None,
-        }
-        if show_fields:
-            payload["fields"] = field_records
-        emit_json(state, payload)
-        return
-
-    if state.mode is OutputMode.quiet:
-        return
-
-    # Human-readable: a run-summary card with PII framed as suggestions (H4).
-    facts: list[tuple[str, str]] = [
-        ("Source", source.name),
-        ("Rows scanned", f"{profile.row_count:,} ({profile.sample_strategy})"),
-        ("Columns", str(len(profile.fields))),
-    ]
-    if pii_candidate_count > 0:
-        facts.append(
-            ("PII candidates", f"{pii_candidate_count} field(s) -- suggestions only, review required")
-        )
-    else:
-        facts.append(("PII candidates", "none detected"))
-    facts.append(("Reid risk", f"{profile.reid_risk_score}"))
-    if profile.quasi_identifier_groups:
-        qi = ", ".join("(" + " + ".join(g) + ")" for g in profile.quasi_identifier_groups)
-        facts.append(("Quasi-identifiers", qi))
-
-    next_hint: str | None
-    if out_path is not None:
-        facts.append(("Saved", str(out_path)))
-        next_hint = f"decoy scan fields {out_path}"
-    else:
-        # Persist-only-on-output: point at the two-step saved-scan flow.
-        next_hint = f"decoy scan {source.name} --output scan.json  (then: decoy scan fields scan.json)"
-
-    render_card(state, command="decoy scan", facts=facts, next_hint=next_hint, status="ok")
-
-    if show_fields:
-        state.console.print()
-        _render_fields(state, field_records, pii_candidate_count)
-    elif pii_candidate_count > 0:
-        state.console.print()
-        _render_pii_honesty(state, pii_candidate_count)
-        state.console.print(hint("Tip:"), "add", code("--show-fields"), "for per-field detail.")
 
 
 # ---------------------------------------------------------------------------
@@ -890,6 +624,7 @@ def _fields(
         False, "--quasi",
         help="Only fields that participate in any quasi-identifier group.",
     ),
+    table: str | None = typer.Option(None, "--table", help=_TABLE_HELP),
     json_: bool = typer.Option(
         False, "--json", help="Emit the filtered field list as JSON to stdout."
     ),
@@ -909,10 +644,10 @@ def _fields(
     state = setup_output(json_, quiet, verbose)
 
     try:
-        data = _load_scan_dict(scan)
-    except (FileNotFoundError, _json.JSONDecodeError, OSError) as exc:
+        data = _read_table(scan, table)
+    except _LOAD_ERRORS as exc:
         _emit_load_error(state, scan, exc, "scan fields")
-        raise typer.Exit(code=EXIT_USAGE)
+        raise typer.Exit(code=EXIT_USAGE) from None
 
     fields = data.get("fields", [])
     qi_groups = data.get("quasi_identifier_groups", [])
@@ -992,6 +727,7 @@ def _show(
         ..., help="Path to a STORM scan JSON, or `-` for stdin."
     ),
     field: str = typer.Argument(..., help="Field name to inspect."),
+    table: str | None = typer.Option(None, "--table", help=_TABLE_HELP),
     json_: bool = typer.Option(
         False, "--json", help="Emit the full field detail as JSON to stdout."
     ),
@@ -1004,16 +740,17 @@ def _show(
 ) -> None:
     """Per-field detail from a saved scan.
 
-    The drill-down view of one field: PII score + bucket, detector matches,
-    sentinel hits, top values, quasi-identifier membership. Read-only.
+    The drill-down view of one field: PII score + bucket, detector hits,
+    quasi-identifier membership. Read-only. Counts and labels only: the top
+    values and sentinel values of a legacy scan are never printed.
     """
     state = setup_output(json_, quiet, verbose)
 
     try:
-        data = _load_scan_dict(scan)
-    except (FileNotFoundError, _json.JSONDecodeError, OSError) as exc:
+        data = _read_table(scan, table)
+    except _LOAD_ERRORS as exc:
         _emit_load_error(state, scan, exc, "scan show")
-        raise typer.Exit(code=EXIT_USAGE)
+        raise typer.Exit(code=EXIT_USAGE) from None
 
     fields = data.get("fields", [])
     matched = next((f for f in fields if f.get("name") == field), None)
@@ -1052,9 +789,7 @@ def _show(
     qi_member = [g for g in qi_groups if field in g]
     score = matched.get("pii_score")
     bucket = _pii_bucket(score)
-    detectors = matched.get("detector_matches", []) or []
-    sentinels = matched.get("sentinels", []) or []
-    top_values = matched.get("top_values", []) or []
+    detectors = matched.get("detector_hits") or []
 
     if state.mode is OutputMode.json:
         emit_json(
@@ -1081,20 +816,12 @@ def _show(
     for key, label in (
         ("dtype", "Type"),
         ("null_count", "Nulls"),
-        ("unique_count", "Distinct"),
+        ("distinct_count", "Distinct"),
     ):
         if key in matched and matched[key] is not None:
             facts.append((label, str(matched[key])))
     if detectors:
-        names = [
-            str(d.get("detector") or d.get("name") or "?")
-            if isinstance(d, dict)
-            else str(d)
-            for d in detectors
-        ]
-        facts.append(("Detectors", ", ".join(names)))
-    if sentinels:
-        facts.append(("Sentinels", str(len(sentinels))))
+        facts.append(("Detectors", ", ".join(str(d) for d in detectors)))
     if qi_member:
         qi_str = ", ".join("(" + " + ".join(g) + ")" for g in qi_member)
         facts.append(("Quasi-identifier in", qi_str))
@@ -1110,28 +837,6 @@ def _show(
         next_hint=next_hint,
         status="ok",
     )
-
-    if top_values:
-        t = make_table("Value", "Count", title="Top values")
-        for tv in top_values[:10]:
-            if isinstance(tv, dict):
-                v = str(tv.get("value", ""))
-                c = str(tv.get("count", ""))
-            else:
-                v, c = str(tv), ""
-            t.add_row(v, c)
-        state.console.print(t)
-
-    if sentinels:
-        t = make_table("Sentinel", "Count", title="Sentinel hits")
-        for s in sentinels:
-            if isinstance(s, dict):
-                v = str(s.get("value") or s.get("kind") or "?")
-                c = str(s.get("count", ""))
-            else:
-                v, c = str(s), ""
-            t.add_row(v, c)
-        state.console.print(t)
 
 
 # ---------------------------------------------------------------------------
@@ -1246,6 +951,7 @@ def _diff(
         False, "--strict",
         help="Exit 1 on drift -- any PII bucket bumped up, any new high-PII field, or any new quasi-identifier group.",
     ),
+    table: str | None = typer.Option(None, "--table", help=_TABLE_HELP),
     json_: bool = typer.Option(
         False, "--json", help="Emit the categorized diff as JSON to stdout."
     ),
@@ -1285,15 +991,15 @@ def _diff(
         raise typer.Exit(code=EXIT_USAGE)
 
     try:
-        old_data = _load_scan_dict(old)
-    except (FileNotFoundError, _json.JSONDecodeError, OSError) as exc:
+        old_data = _read_table(old, table)
+    except _LOAD_ERRORS as exc:
         _emit_load_error(state, old, exc, "scan diff")
-        raise typer.Exit(code=EXIT_USAGE)
+        raise typer.Exit(code=EXIT_USAGE) from None
     try:
-        new_data = _load_scan_dict(new)
-    except (FileNotFoundError, _json.JSONDecodeError, OSError) as exc:
+        new_data = _read_table(new, table)
+    except _LOAD_ERRORS as exc:
         _emit_load_error(state, new, exc, "scan diff")
-        raise typer.Exit(code=EXIT_USAGE)
+        raise typer.Exit(code=EXIT_USAGE) from None
 
     diff = compute_scan_diff(old_data, new_data)
     added_rows, removed_rows = diff.added_rows, diff.removed_rows
@@ -1348,7 +1054,7 @@ def _diff(
     ]
     if risk_delta is not None:
         sign = "+" if risk_delta > 0 else ""
-        facts.append(("Reid risk delta", f"{sign}{risk_delta:.2f}"))
+        facts.append(("Reid risk delta", f"{sign}{risk_delta:.2f} points"))
     if qi_added or qi_removed:
         facts.append(("QI groups", f"+{len(qi_added)} -{len(qi_removed)}"))
 

@@ -9,7 +9,6 @@ reason; its text goes to the unsafe debug sink and nowhere else.
 
 from __future__ import annotations
 
-import json
 from pathlib import Path
 
 from decoy.ci.contracts import (
@@ -64,6 +63,7 @@ def not_applicable(check_id: str, kind: str) -> CheckOutcome:
 # ---------------------------------------------------------------------------
 # Validation (full / config) over the existing pre-run gate
 # ---------------------------------------------------------------------------
+
 
 def validation_outcome(
     loaded: LoadedManifest,
@@ -147,12 +147,9 @@ def validation_outcome(
 
 def _load_scan(path: Path) -> dict:
     # An absolute path always: the shared loader treats the literal "-" as stdin.
-    from decoy.cli.scan import _load_scan_dict
+    from decoy.cli.io import load_scan_set, select_table
 
-    data = _load_scan_dict(str(path))
-    if not isinstance(data, dict):
-        raise ValueError("scan is not a mapping")
-    return data
+    return select_table(load_scan_set(str(path)), None)
 
 
 def drift_outcome(loaded: LoadedManifest, check: DriftCheck, sink: DebugSink) -> CheckOutcome:
@@ -228,19 +225,19 @@ def drift_outcome(loaded: LoadedManifest, check: DriftCheck, sink: DebugSink) ->
 def evidence_outcome(loaded: LoadedManifest, check: EvidenceCheck, sink: DebugSink) -> CheckOutcome:
     check_id = f"evidence.{check.id}"
     try:
-        from decoy.cli.evidence import verify_manifest_issues
+        from decoy.cli.evidence import ManifestError, read_manifest, verify_manifest_issues
 
         path = loaded.resolve(check.manifest)
-        if not path.is_file():
-            return refused(check_id, "evidence", "ci.input_missing")
         try:
-            manifest = json.loads(path.read_text(encoding="utf-8"))
-        except (OSError, ValueError) as exc:
-            sink.add(check_id, f"unreadable evidence manifest: {exc!r}")
-            return refused(check_id, "evidence", "ci.evidence_unreadable")
-        if not isinstance(manifest, dict):
-            return refused(check_id, "evidence", "ci.evidence_unreadable")
-        issues = verify_manifest_issues(manifest, regular_files_only=True)
+            # The shared reader owns every check of the file and its object; a project-relative
+            # manifest reads from the marker above its own file, never the working directory or
+            # DECOY_PROJECT, so the check passes from any folder.
+            manifest = read_manifest(path)
+            issues = verify_manifest_issues(manifest, manifest_file=path, regular_files_only=True)
+        except ManifestError as exc:
+            sink.add(check_id, exc.message)
+            reason = "ci.input_missing" if exc.kind == "missing" else "ci.evidence_unreadable"
+            return refused(check_id, "evidence", reason)
         for issue in issues:
             sink.add(check_id, issue.message)
         rel = loaded.repo_relative(path)

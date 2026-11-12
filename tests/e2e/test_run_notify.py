@@ -23,6 +23,7 @@ from typer.testing import CliRunner
 
 from decoy.__main__ import app
 from decoy.cli.exit_codes import EXIT_USAGE
+from tests.csv_sources import csv_source
 from tests.keyed_secret import TEST_MASK_SECRET_REF
 
 # Keyed strategies need an admitted mask secret (engine 0.17.0); see tests/keyed_secret.py.
@@ -37,7 +38,7 @@ def _write_mask_config(tmp_path: Path) -> Path:
     cfg = {
         "version": 2,
         "global_settings": {"seed": 42, "mask_secret_ref": TEST_MASK_SECRET_REF},
-        "sources": {"customers": {"type": "file", "format": "csv", "path": str(src)}},
+        "sources": {"customers": csv_source(src)},
         "tables": [
             {
                 "name": "customers",
@@ -66,8 +67,13 @@ def _write_bad_config(tmp_path: Path) -> Path:
     cfg = {
         "version": 2,
         "global_settings": {"seed": 1, "mask_secret_ref": TEST_MASK_SECRET_REF},
-        "sources": {"t": {"type": "file", "format": "csv", "path": "./missing.csv"}},
-        "tables": [{"name": "t", "columns": [{"name": "x", "strategy": "faker", "provider": "no_such_provider"}]}],
+        "sources": {"t": csv_source("./missing.csv")},
+        "tables": [
+            {
+                "name": "t",
+                "columns": [{"name": "x", "strategy": "faker", "provider": "no_such_provider"}],
+            }
+        ],
         "targets": {"t": {"type": "file", "format": "csv", "path": str(tmp_path / "out.csv")}},
     }
     p = tmp_path / "bad.yaml"
@@ -103,8 +109,8 @@ def test_run_bad_notify_spec_exits_usage_before_running(tmp_path: Path):
 
 
 # Off a TTY Rich folds at 80 columns and parses `[...]` as markup, so each notify print of
-# user or remote text is verbatim and unfolded. Mutation: drop `markup=False, soft_wrap=True`
-# from the print each cell names.
+# user or remote text is verbatim and unfolded. Mutation: drop `markup=False` from the print
+# each cell names (markup), or `soft_wrap=stderr` from `_make_console` (fold).
 _LONG = "x" * 120
 
 

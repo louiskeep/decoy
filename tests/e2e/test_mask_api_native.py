@@ -25,6 +25,7 @@ from decoy_engine import NativeCompanionStatus
 
 import decoy
 from decoy._native_gate import NativeGateError
+from tests.csv_sources import csv_source
 from tests.keyed_secret import TEST_MASK_SECRET_REF
 
 # Keyed strategies need an admitted mask secret (engine 0.17.0); see tests/keyed_secret.py.
@@ -95,7 +96,7 @@ def csv_config(tmp_path: Path) -> dict:
     return {
         "version": 2,
         "global_settings": {"seed": 42, "mask_secret_ref": TEST_MASK_SECRET_REF},
-        "sources": {"customers": {"type": "file", "format": "csv", "path": str(src)}},
+        "sources": {"customers": csv_source(src)},
         "tables": [
             {
                 "name": "customers",
@@ -213,6 +214,7 @@ def test_mask_native_false_stays_compatible_with_an_older_engine(
         vault_writer=None,
         # DE-02 (engine 0.4.0, the floor) predates the slice; a real old engine has it.
         key_provider=None,
+        base_dir=None,
     ):
         return real_run_pipeline(
             config,
@@ -223,6 +225,7 @@ def test_mask_native_false_stays_compatible_with_an_older_engine(
             instance_default_locale=instance_default_locale,
             vault_writer=vault_writer,
             key_provider=key_provider,
+            base_dir=base_dir,
         )
 
     monkeypatch.setattr("decoy_engine.run_pipeline", _old_engine_run_pipeline)

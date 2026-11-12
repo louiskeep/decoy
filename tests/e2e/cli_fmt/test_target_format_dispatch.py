@@ -23,6 +23,7 @@ from typer.testing import CliRunner
 import decoy
 from decoy.__main__ import app
 from decoy.cli.exit_codes import EXIT_RUNTIME, EXIT_USAGE
+from tests.csv_sources import file_source
 from tests.e2e.test_source_format_dispatch import (
     _COLUMNS,
     _LAYOUT,
@@ -101,7 +102,7 @@ def _target(fmt: str, path: Path, layout: dict | None = None) -> dict[str, Any]:
 
 def _refuse_reads(monkeypatch: pytest.MonkeyPatch) -> None:
     """Make any source read fail, so an exit 1 proves the refusal came first."""
-    import decoy.cli.run as run_module
+    import decoy.cli.run._execute as run_module
 
     def boom(*_a: object, **_k: object) -> None:
         raise AssertionError("a source was read before the target refusal")
@@ -213,7 +214,7 @@ def _csv_config(tmp_path: Path, targets: dict[str, dict], *, src_fmt: str = "csv
         else:
             src = tmp_path / f"src_{name}.parquet"
             _frame().to_parquet(src, index=False)
-        sources[name] = {"type": "file", "format": src_fmt, "path": str(src)}
+        sources[name] = file_source(src, src_fmt)
         tables.append({"name": name, "columns": _COLUMNS})
     cfg = {
         "version": 2,
@@ -356,10 +357,11 @@ def test_mask_out_override_takes_the_suffix_format(tmp_path: Path) -> None:
 
 def test_demo_writer_uses_the_rule(tmp_path: Path) -> None:
     from decoy.cli.demo import _write_mask_outputs
+    from decoy.cli.io import RunLayout
 
     config = {"targets": {"people": {"type": "file", "format": "parquet", "path": "x.dat"}}}
     outputs = {"people": pa.Table.from_pandas(_frame(), preserve_index=False)}
-    _write_mask_outputs(config, SimpleNamespace(outputs=outputs), tmp_path)
+    _write_mask_outputs(config, SimpleNamespace(outputs=outputs), RunLayout.fixed(tmp_path))
     assert (tmp_path / "x.dat").read_bytes().startswith(_PAR1)
 
     result = runner.invoke(app, ["demo", "--dir", str(tmp_path / "demo")])
@@ -413,7 +415,7 @@ def _passthrough_config(tmp_path: Path, src: Path, src_fmt: str, out: Path, layo
     cfg = {
         "version": 2,
         "global_settings": {"seed": 42},
-        "sources": {"t": {"type": "file", "format": src_fmt, "path": str(src)}},
+        "sources": {"t": file_source(src, src_fmt)},
         "tables": [
             {
                 "name": "t",
