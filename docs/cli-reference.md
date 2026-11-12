@@ -1843,6 +1843,10 @@ $ decoy library [OPTIONS] COMMAND [ARGS]...
 
 * `path`: Print the library root, where it came...
 * `fsck`: Check every record, ref, link, the index,...
+* `list`: List stored records, oldest first, from...
+* `show`: Show one record: its envelope and, when...
+* `diff`: Compare two records of the same kind...
+* `ref`: Show a stored ref, or set it to a record...
 
 ### `decoy library path`
 
@@ -1874,5 +1878,86 @@ $ decoy library fsck [OPTIONS]
 **Options**:
 
 * `--repair`: Quarantine corrupt records, delete stale temp files, remove refs to missing records and rebuild the index. Never deletes a valid record.
+* `--library DIR`: Use DIR as the library (else DECOY_LIBRARY, else the project&#x27;s .decoy/ folder).
+* `--help`: Show this message and exit.
+
+### `decoy library list`
+
+List stored records, oldest first, from the index (no record file is opened).
+
+**Usage**:
+
+```console
+$ decoy library list [OPTIONS]
+```
+
+**Options**:
+
+* `--kind KIND`: Only records of this kind (scan-set, evidence, run-result, sample-run, ...).
+* `--pipeline P`: Only this pipeline.
+* `--table T`: Only records naming this table.
+* `--since D`: Only records made at or after D (YYYY-MM-DD or ISO time).
+* `--json`: Emit the records as JSON, oldest first.
+* `--library DIR`: Use DIR as the library (else DECOY_LIBRARY, else the project&#x27;s .decoy/ folder).
+* `--help`: Show this message and exit.
+
+### `decoy library show`
+
+Show one record: its envelope and, when this version can read it, its payload.
+
+**Usage**:
+
+```console
+$ decoy library show [OPTIONS] ID|REF
+```
+
+**Arguments**:
+
+* `ID|REF`: An id, a unique 8+ hex prefix, KIND/NAME or KIND/latest~N.  [required]
+
+**Options**:
+
+* `--json`: Emit the record as JSON.
+* `--library DIR`: Use DIR as the library (else DECOY_LIBRARY, else the project&#x27;s .decoy/ folder).
+* `--help`: Show this message and exit.
+
+### `decoy library diff`
+
+Compare two records of the same kind (scan-set, evidence and run-result have their own rules).
+
+**Usage**:
+
+```console
+$ decoy library diff [OPTIONS] A B
+```
+
+**Arguments**:
+
+* `A`: The older record: id, prefix, KIND/NAME or KIND/latest~N.  [required]
+* `B`: The newer record, in the same forms.  [required]
+
+**Options**:
+
+* `--json`: Emit the diff as JSON.
+* `--library DIR`: Use DIR as the library (else DECOY_LIBRARY, else the project&#x27;s .decoy/ folder).
+* `--help`: Show this message and exit.
+
+### `decoy library ref`
+
+Show a stored ref, or set it to a record (under the library lock).
+
+**Usage**:
+
+```console
+$ decoy library ref [OPTIONS] NAME [ID]
+```
+
+**Arguments**:
+
+* `NAME`: KIND/NAME or KIND/SCOPE/NAME, for example scan-set/baseline.  [required]
+* `[ID]`: Set the ref to this record (id, prefix or ref).
+
+**Options**:
+
 * `--library DIR`: Use DIR as the library (else DECOY_LIBRARY, else the project&#x27;s .decoy/ folder).
 * `--help`: Show this message and exit.

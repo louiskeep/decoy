@@ -3,7 +3,8 @@
 Decoy keeps small, value-free records about your pipelines (scan snapshots, run results,
 evidence manifests, sample-run metadata) in one library per project. This page describes what
 exists so far. No command writes records yet (the scan and run commands start using the library
-in later releases); `decoy library path` and `decoy library fsck` read and check it.
+in later releases); `decoy library path`, `fsck`, `list`, `show`, `diff` and `ref` read, check and
+name what is there.
 
 Code: `src/decoy/cli/library/`. Plan: `plan/local-record-library:docs/plans/2026-11-05-local-record-library.md`.
 
@@ -110,6 +111,34 @@ listing never opens a record file. It is a cache: the object files are the truth
   drive on Windows), the library runs in degraded mode: writing records still works, moving a
   ref fails with `library_lock_unavailable`, and listings read the record files. A synced folder
   (OneDrive, Dropbox) looks local and is not detected; use it from one machine at a time.
+
+## Reading the library
+
+All of these take `--library DIR`. Errors print on stderr with exit 1 for what you typed (an
+unknown or ambiguous id, a bad ref name) and exit 3 for the library's own state (degraded
+mode, a corrupt record).
+
+- `decoy library list [--kind K] [--pipeline P] [--table T] [--since D] [--json]` lists records
+  oldest first from the index, without opening record files. `--since` takes `YYYY-MM-DD` or an
+  ISO time (UTC unless it says otherwise). A record of a kind this Decoy does not know is listed
+  as `unknown kind <name>, needs a newer Decoy`, and `--kind <name>` still finds it.
+- `decoy library show ID|REF [--json]` prints the envelope (id, kind, schema, time, invocation,
+  producer, labels, links) and, when this Decoy can read it, the payload.
+- `decoy library diff A B [--json]` compares two records of the same kind. Scan records use the
+  `decoy scan diff` rules per table; evidence records use the `decoy report diff` manifest
+  comparison (warnings as codes); run results compare status, route, delivery and, per table,
+  outcome, rows out and delivery; other kinds list the payload fields that changed, were added or
+  were removed (paths only). Records of different kinds, or of a kind or version this Decoy
+  cannot read, are refused.
+- `decoy library ref KIND/NAME [ID]` prints a stored ref, or sets it under the library lock.
+
+Wherever a record is named you can give:
+
+- the full id (`sha256:...`) or any unique prefix of 8 or more hex digits (an ambiguous prefix
+  is refused, never resolved to the first match);
+- a stored ref, `KIND/NAME` or `KIND/SCOPE/NAME`;
+- `KIND/latest`, the newest record of that kind, or `KIND/latest~N`, the N-th before it. `latest`
+  is computed, so it cannot be the name of a stored ref.
 
 ## Retention policy
 

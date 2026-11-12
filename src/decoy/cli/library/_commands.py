@@ -1,6 +1,5 @@
-"""The `decoy library` command group: `path` and `fsck [--repair]` (plan 4.15; L1c.2).
-
-Later slices add `list`, `show`, `diff`, `ref`, `prune`, `export` and `clean` here. This module
+"""The `decoy library` command group (plan 4.15): `path`, `fsck` (L1c.2) and the read commands
+`list`, `show`, `diff`, `ref` (L4a, in `_read`). Later slices add `prune`, `export` and `clean`. This module
 imports nothing from the record engine at import time, so registering the group in
 `decoy.__main__` keeps `decoy --help` and `--version` free of the engine import; each command
 loads the library when it runs.
@@ -13,6 +12,8 @@ from pathlib import Path
 import typer
 
 from decoy.cli.exit_codes import EXIT_FINDINGS, EXIT_OK, EXIT_USAGE
+from decoy.cli.library._cli import LIBRARY_HELP, SOURCE
+from decoy.cli.library._read import diff_command, list_command, ref_command, show_command
 from decoy.ui.output import OutputState, setup_output
 from decoy.ui.theme import error, hint, success, warn
 
@@ -24,8 +25,8 @@ library_app = typer.Typer(
     no_args_is_help=True,
 )
 
-_LIBRARY_HELP = "Use DIR as the library (else DECOY_LIBRARY, else the project's .decoy/ folder)."
-_SOURCE = {"flag": "--library", "env": "DECOY_LIBRARY", "project": "project"}
+_LIBRARY_HELP = LIBRARY_HELP
+_SOURCE = SOURCE
 
 
 def _root(state: OutputState, library: Path | None):
@@ -125,3 +126,9 @@ def fsck_command(
         f"{count['warning']} warnings, {count['note']} notes"
     )
     raise typer.Exit(code=EXIT_OK if report.clean else EXIT_FINDINGS)
+
+
+library_app.command("list")(list_command)
+library_app.command("show")(show_command)
+library_app.command("diff")(diff_command)
+library_app.command("ref")(ref_command)

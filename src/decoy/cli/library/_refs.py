@@ -36,7 +36,9 @@ from decoy.cli.library._paths import REFS, record_digest
 if TYPE_CHECKING:
     from decoy.cli.library._store import Library
 
-__all__ = ["iter_refs", "read_ref", "remove_refs", "set_ref"]
+__all__ = ["LATEST", "iter_refs", "read_ref", "remove_refs", "set_ref"]
+
+LATEST = "latest"
 
 # One name segment (plan 4.5); a name may hold two, `<scope>/<name>`, for a pipeline scope.
 _SEGMENT = re.compile(r"[a-z0-9][a-z0-9._-]{0,63}")
@@ -51,6 +53,7 @@ def _ref_parts(kind: str, name: str) -> tuple[str, ...]:
         kind in kinds
         and len(parts) <= _MAX_SEGMENTS
         and all(_SEGMENT.fullmatch(part) for part in parts)
+        and name != LATEST  # `<kind>/latest` is computed from the index, never stored (4.5)
     )
     if not ok:
         raise LibraryError(REF_NAME_INVALID)
