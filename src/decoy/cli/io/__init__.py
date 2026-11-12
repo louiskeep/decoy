@@ -81,6 +81,7 @@ from decoy.cli.io._scan_set import (
     scan_set_from_data,
     select_table,
 )
+from decoy.cli.io._small_file import UnsafeFileError, read_small_file
 from decoy.cli.io._targets import (
     TargetFormatError,
     check_output_path,
@@ -121,6 +122,7 @@ __all__ = [
     "RunLayout",
     "ScanSetFormatError",
     "TargetFormatError",
+    "UnsafeFileError",
     "acquire_relation",
     "check_output_path",
     "check_path_budget",
@@ -155,6 +157,7 @@ __all__ = [
     "pipeline_option",
     "prepare_out",
     "read_claim",
+    "read_small_file",
     "read_source",
     "relative_outputs",
     "resolve_path",

@@ -5,7 +5,8 @@ folder is never re-permissioned, the token-vault rule). Files come from `decoy._
 `write_atomic(..., tmp_dir=library/tmp)` for records and `LAYOUT` (temp 0600 on the same volume,
 fsync, no-clobber link, directory fsync; plan 4.9), and `write_local_target` for the dot-named
 git file, whose leading `.` the record-name allowlist refuses. Nothing here calls `os.replace`,
-`mkstemp` or `chmod` itself (G-ONE-ATOMIC-WRITER, G-ONE-PRIVATE-FILE).
+`mkstemp` or `chmod` itself (G-ONE-ATOMIC-WRITER, G-ONE-PRIVATE-FILE). Reads go through the CLI's
+one small-file reader, `decoy.cli.io.read_small_file`, with a cap per file kind.
 
 Every failure leaves as `LibraryError` with `library_write_failed` or `library_read_failed`
 and the error class, raised after the `except` block so no path text is chained.
@@ -17,9 +18,16 @@ from pathlib import Path
 
 from decoy._atomic import AtomicWriteError, WriteMode, write_atomic, write_local_target
 from decoy._private_file import PRIVATE_EXISTS, PrivateFileError, create_private_directory
-from decoy.cli.library._errors import LIBRARY_READ_FAILED, LIBRARY_WRITE_FAILED, library_error
+from decoy.cli.io import UnsafeFileError, read_small_file
+from decoy.cli.library._errors import (
+    LIBRARY_FILE_TOO_LARGE,
+    LIBRARY_READ_FAILED,
+    LIBRARY_WRITE_FAILED,
+    LibraryError,
+    library_error,
+)
 
-__all__ = ["ensure_private_dir", "read_file", "write_dotfile_once", "write_once"]
+__all__ = ["ensure_private_dir", "read_capped", "write_dotfile_once", "write_once"]
 
 
 def ensure_private_dir(path: Path) -> None:
@@ -66,16 +74,26 @@ def write_dotfile_once(path: Path, data: bytes) -> bool:
     return created
 
 
-def read_file(path: Path) -> bytes | None:
-    """The bytes of `path`, or None when it does not exist."""
-    failure: OSError | None = None
-    data: bytes | None = None
+def read_capped(path: Path, max_bytes: int) -> bytes | None:
+    """The bytes of the plain regular file at `path`, or None when nothing is there.
+
+    The read goes through the CLI's one small-file reader (`decoy.cli.io.read_small_file`), so a
+    symlink, FIFO, device or a file swapped between check and open is refused and never followed
+    or waited on (`library_read_failed`). A file over `max_bytes` is refused unread past the cap
+    (`library_file_too_large`); a file whose length changed during the read is refused too.
+    """
+    failure: UnsafeFileError | None = None
+    found = None
     try:
-        data = path.read_bytes()
-    except FileNotFoundError:
-        return None
-    except OSError as exc:
+        found = read_small_file(path, max_bytes + 1)
+    except UnsafeFileError as exc:
         failure = exc
     if failure is not None:
         raise library_error(LIBRARY_READ_FAILED, failure)
-    return data
+    if found is None:
+        return None
+    if found.size > max_bytes or len(found.data) > max_bytes:
+        raise LibraryError(LIBRARY_FILE_TOO_LARGE)
+    if len(found.data) != found.size:
+        raise LibraryError(LIBRARY_READ_FAILED)
+    return found.data

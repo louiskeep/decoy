@@ -16,6 +16,7 @@ from decoy_engine.reasons import runtime, warning
 
 __all__ = [
     "LIBRARY_BUSY",
+    "LIBRARY_FILE_TOO_LARGE",
     "LIBRARY_LAYOUT_NEWER",
     "LIBRARY_LOCK_UNAVAILABLE",
     "LIBRARY_PATH_TOO_LONG",
@@ -41,6 +42,8 @@ RECORD_LINK_MISSING = "record_link_missing"
 RECORD_NOT_FOUND = "record_not_found"
 # An object file exists but cannot be read (permissions, I/O error); not corruption.
 LIBRARY_READ_FAILED = "library_read_failed"
+# A library file larger than its cap: refused unread, so a planted huge file cannot exhaust memory.
+LIBRARY_FILE_TOO_LARGE = "library_file_too_large"
 
 
 class LibraryError(Exception):

@@ -70,6 +70,11 @@ of a kind this Decoy does not know is returned as an opaque record (kind, id, ti
 links, payload unread); one written under a newer payload or envelope version is reported as
 needing a newer Decoy.
 
+Every library file is read through the CLI's one small-file reader (`decoy.cli.io.read_small_file`).
+A symlink, FIFO, device or a file swapped between the check and the open is refused with
+`library_read_failed` and never followed or waited on. A record file over 16 MiB is refused with
+`library_file_too_large`, and a record that large is never written.
+
 Errors name a code and an error class, never a path.
 
 ## File modes

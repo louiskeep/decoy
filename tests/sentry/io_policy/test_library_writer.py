@@ -12,13 +12,18 @@ Three rules over every module under `src/decoy/`:
   component (split on `/` and `\\`), anywhere, the library package included: the folder name
   comes from `decoy.cli.io.DECOY_DIR`. Allowlisted files hold an exact count. `.decoy-ci.yaml`
   and the `.<name>.decoy-<hex>.tmp` staging names are not components equal to `.decoy`.
+- W4: outside `cli/library/` and `cli/io/_project.py` (which defines the name and writes only
+  `.decoy/.gitignore`), no use of `DECOY_DIR`, by any import form. W2 and W3 alone let a module
+  build `find_project(...).root / DECOY_DIR / "library"` and write `records.canonical_bytes`
+  through `write_atomic`; the rule anchors on the destination, because `canonical_bytes` has a
+  legitimate use outside the library (the evidence manifest hash).
 
 LITERAL_ALLOWLIST starts with two entries (re-FRAME placement map): the managed runtime home
 (`distribution/layout.py`) and the project folder name (`cli/io/_project.py`). Shrink-only
 ratchet: tests/sentry/baselines/library-writer-allow.json.
 
 Named limits: a name bound at run time (`importlib.import_module`, `getattr(records, "encode")`),
-an alias by assignment, `from x import *`, and a path built from pieces that are each not
+an alias by assignment (`d = DECOY_DIR` is seen once, at the assignment), `from x import *`, and a path built from pieces that are each not
 `.decoy` (`"." + "decoy"`) are not seen.
 """
 
@@ -135,6 +140,50 @@ def _encode_calls(tree: ast.AST) -> list[int]:
     return found
 
 
+_FOLDER_NAME = "DECOY_DIR"
+_FOLDER_MODULES = frozenset({"decoy.cli.io", "decoy.cli.io._project"})
+_FOLDER_OWNER = "cli/io/_project.py"  # defines the name and writes `.decoy/.gitignore` only
+
+
+def _folder_name_uses(tree: ast.AST) -> list[int]:
+    """Lines that load the project folder name `DECOY_DIR` from `decoy.cli.io`, by any import form.
+
+    The name is how a path into `.decoy/` is built without a literal, so outside the library
+    package and the module that defines it, any use of it is a second way into the library.
+    """
+    names: set[str] = set()
+    modules: dict[str, str] = {}
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ImportFrom) and node.module:
+            for a in node.names:
+                local = a.asname or a.name
+                if node.module in _FOLDER_MODULES and a.name == _FOLDER_NAME:
+                    names.add(local)
+                else:
+                    modules[local] = f"{node.module}.{a.name}"
+        elif isinstance(node, ast.Import):
+            for a in node.names:
+                if a.asname:
+                    modules[a.asname] = a.name
+                else:
+                    top = a.name.split(".")[0]
+                    modules[top] = top
+    found: list[int] = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Name) and isinstance(node.ctx, ast.Load) and node.id in names:
+            found.append(node.lineno)
+        elif isinstance(node, ast.Attribute) and node.attr == _FOLDER_NAME:
+            dotted = _dotted(node.value)
+            if dotted is None:
+                continue
+            head, _, rest = dotted.partition(".")
+            if head in modules:
+                full = f"{modules[head]}.{rest}" if rest else modules[head]
+                if full in _FOLDER_MODULES:
+                    found.append(node.lineno)
+    return sorted(found)
+
+
 def _decoy_literals(tree: ast.AST) -> list[int]:
     skip = _docstring_ids(tree)
     return [
@@ -162,6 +211,11 @@ def scan_source(rel: str, source: str) -> list[str]:
             f"W2: {rel}:{line} calls records.encode; only the library store writes record bytes"
             for line in _encode_calls(tree)
         ]
+        if rel != _FOLDER_OWNER:
+            out += [
+                f"W4: {rel}:{line} builds a path from DECOY_DIR; only the library writes there"
+                for line in _folder_name_uses(tree)
+            ]
     out += [f"W3:{line}" for line in _decoy_literals(tree)]
     return out
 
