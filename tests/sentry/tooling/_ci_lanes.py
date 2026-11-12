@@ -17,8 +17,9 @@ Deliberate differences from the engine copy, for engine CI-E2b to fold back:
 - P1 (CLI only): the paths of the automatic pytest lanes cover every folder under `testpaths`
   that holds tests, and each `--ignore`, `--ignore-glob` or `--deselect` names a path that
   another automatic job runs, either as a pytest path or inside a repository script that job
-  calls (a script clears only a `.py` file). A glob is compared as plain text, so a wildcard
-  exclusion is a finding (fails closed).
+  calls (a script clears only a `.py` file; a `--deselect` node id counts as its file). A glob
+  is compared as plain text, so a wildcard exclusion is a finding, and so is any `-k` on an
+  automatic lane (both fail closed).
 - C1 (CLI only): each install-policy drift canary is a scheduled job that is not in the merge
   tier, listed exactly once in the reported view, with a reason.
 - No registered markers is allowed (`markers` and `addopts` may be absent from pyproject).
@@ -94,7 +95,7 @@ class Lane(NamedTuple):
     whole_suite: bool
     bad: bool  # the expression is outside the grammar
     paths: tuple[str, ...]  # positional test paths; empty means the default testpaths
-    # (option, value) of each --ignore, --ignore-glob and --deselect
+    # (option, value) of each --ignore, --ignore-glob, --deselect and -k
     ignores: tuple[tuple[str, str], ...]
 
 
@@ -243,9 +244,12 @@ def _read_args(
             ignores.append((opt, value))
             i += 1
         elif tok in _VALUE_OPTS:
-            if tok in _EXCLUDE and i + 1 < len(args):
+            if (tok in _EXCLUDE or tok == "-k") and i + 1 < len(args):
                 ignores.append((tok, args[i + 1]))
             i += 2
+        elif tok.startswith("-k") and not tok.startswith("--"):
+            ignores.append(("-k", tok[2:]))
+            i += 1
         elif tok.startswith("-"):
             i += 1
         else:
@@ -324,9 +328,13 @@ def path_findings(tree: Tree) -> list[str]:
     for ln in auto:
         others = [o for o in auto if o[:2] != ln[:2]]
         for opt, ign in ln.ignores:
-            as_path = any(_covered(ign, list(o.paths)) for o in others)
+            if opt == "-k":  # a name filter maps to no path, so coverage cannot be proved
+                out.append(f"P1 {ln.workflow}:{ln.job}: -k {ign} narrows an automatic lane")
+                continue
+            path = ign.split("::")[0].rstrip("/")  # a node id is deselected from its file
+            as_path = any(_covered(path, list(o.paths)) for o in others)
             # A script names its test files; a folder in its text is no proof that it runs there.
-            by_script = ign.split("::")[0].endswith(".py") and _script_runs(tree, ln, ign)
+            by_script = path.endswith(".py") and _script_runs(tree, ln, path)
             if not (as_path or by_script):
                 out.append(f"P1 {ln.workflow}:{ln.job}: {opt} {ign} runs in no other job")
     return out
