@@ -25,10 +25,10 @@ from decoy.cli.run._execute import (
     _check_chunked_tables,
     _ChunkedFixedWidthError,
     _ChunkedGenerateError,
-    _ChunkedIntegrityError,
     _ChunkedReportFlagError,
     _load_sources_from_config,
     _note_chunked_key_check_skipped,
+    _refuse_chunked_integrity_requested,
     _require_local_io_endpoints,
 )
 from decoy.cli.run._vault import _CHUNKED_VAULT_MESSAGE, _ChunkedVaultError, _VaultUsageError
@@ -274,11 +274,15 @@ def _refuse_chunked_integrity(ctx: RunContext) -> None:
     check only, because staging has not run and the model requires a source per mask table.
     """
     from decoy_engine import ConfigError, PipelineValidationError, parse_pipeline_config
-    from decoy_engine.config import PipelineConfigError, post_scan_integrity_requested
+    from decoy_engine.config import PipelineConfigError
 
-    if not isinstance(ctx.raw, dict) or not isinstance(ctx.raw.get("sources", {}), dict):
+    if not isinstance(ctx.raw, dict):
         return
-    probe = {**ctx.raw, "sources": dict(ctx.raw.get("sources") or {})}
+    # A null `sources` block is an omitted one, as in staging below.
+    sources = ctx.raw.get("sources")
+    if sources is not None and not isinstance(sources, dict):
+        return
+    probe = {**ctx.raw, "sources": dict(sources or {})}
     for spec in ctx.duckdb_source:
         try:
             probe["sources"][parse_flag(spec)[0]] = {
@@ -292,11 +296,7 @@ def _refuse_chunked_integrity(ctx: RunContext) -> None:
         validated = parse_pipeline_config(probe).model_dump()
     except (PipelineConfigError, PipelineValidationError, ConfigError):
         return
-    if post_scan_integrity_requested(validated):
-        raise _ChunkedIntegrityError(
-            "--chunked does not support post-scan integrity (post_scan.integrity is true). "
-            "Run without --chunked, or turn post_scan.integrity off."
-        )
+    _refuse_chunked_integrity_requested(validated)
 
 
 def prepare(ctx: RunContext, _scopes: contextlib.ExitStack) -> None:

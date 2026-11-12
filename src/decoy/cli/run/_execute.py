@@ -135,9 +135,28 @@ def _run_chunked_mask(
     return published
 
 
+_CHUNKED_INTEGRITY_MESSAGE = (
+    "--chunked does not support post-scan integrity (post_scan.integrity is true). "
+    "Run without --chunked, or turn post_scan.integrity off."
+)
+
+
+def _refuse_chunked_integrity_requested(validated: dict) -> None:
+    """Raise when a validated config asks for post-scan integrity on the chunked route."""
+    from decoy_engine.config import post_scan_integrity_requested
+
+    if post_scan_integrity_requested(validated):
+        raise _ChunkedIntegrityError(_CHUNKED_INTEGRITY_MESSAGE)
+
+
 def _check_chunked_tables(config_dict: dict) -> None:
-    """The config-only chunked checks: quarantine, target formats, then the engine's per
-    mask table. The post-scan integrity refusal runs earlier, in `_prepare`."""
+    """The config-only chunked checks: post-scan integrity, quarantine, target formats, then
+    the engine's per mask table.
+
+    `_prepare` refuses integrity before staging from a probe of the raw config. The check
+    here reads the config that will run, so an input the probe could not judge still stops.
+    """
+    _refuse_chunked_integrity_requested(config_dict)
     quarantine = config_dict.get("quarantine")
     if isinstance(quarantine, dict) and quarantine.get("enabled"):
         raise _ChunkedQuarantineError(

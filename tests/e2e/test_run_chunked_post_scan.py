@@ -129,6 +129,34 @@ def test_refusal_comes_before_duckdb_staging(tmp_path: Path) -> None:
     assert _REFUSAL in " ".join(result.output.split())
 
 
+def test_null_sources_refuses_before_duckdb_staging(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    cfg = _pipeline(tmp_path, relationships=True, integrity=True)
+    doc = yaml.safe_load(cfg.read_text(encoding="utf-8"))
+    doc["sources"] = None
+    cfg.write_text(yaml.safe_dump(doc), encoding="utf-8")
+
+    def _staged(*_args: object, **_kwargs: object) -> None:
+        raise AssertionError("staged")
+
+    monkeypatch.setattr("decoy.cli.run._prepare.acquire_relation", _staged)
+    db = tmp_path / "no-such.duckdb"
+    flags = ["--duckdb-source", f"parent={db}", "--duckdb-source", f"child={db}"]
+    result = runner.invoke(app, ["run", str(cfg), "--chunked", *flags])
+    assert result.exit_code == EXIT_USAGE, result.output
+    assert _REFUSAL in " ".join(result.output.split())
+    assert "staged" not in result.output
+
+
+def test_the_validated_config_is_checked_again_before_the_chunked_route() -> None:
+    from decoy.cli.run._execute import _check_chunked_tables, _ChunkedIntegrityError
+
+    with pytest.raises(_ChunkedIntegrityError) as caught:
+        _check_chunked_tables({"post_scan": {"integrity": True}, "tables": []})
+    assert str(caught.value) == _REFUSAL
+
+
 def test_malformed_config_still_gets_its_validation_error(tmp_path: Path) -> None:
     cfg = _pipeline(tmp_path, relationships=True, integrity=True)
     doc = yaml.safe_load(cfg.read_text(encoding="utf-8"))
