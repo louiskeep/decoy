@@ -33,6 +33,7 @@ from dataclasses import dataclass
 from urllib.parse import urlsplit
 
 import requests
+from opentelemetry.context import Context
 from opentelemetry.exporter.otlp.proto.common.trace_encoder import encode_spans
 from opentelemetry.metrics import NoOpMeterProvider
 from opentelemetry.sdk.resources import Resource
@@ -43,6 +44,7 @@ from opentelemetry.sdk.trace.export import (
     SpanExportResult,
 )
 from opentelemetry.sdk.trace.sampling import ParentBased, TraceIdRatioBased
+from opentelemetry.trace import StatusCode, set_span_in_context
 from requests.adapters import HTTPAdapter
 
 from decoy._version import __version__ as _cli_version
@@ -230,3 +232,61 @@ def flush_bounded(telemetry: CliTelemetry, budget_ms: int = FLUSH_BUDGET_MS) -> 
     telemetry.exporter.shutdown()
     logging.getLogger("opentelemetry").setLevel(logging.CRITICAL + 1)
     return not worker.is_alive()
+
+
+class RunTrace:
+    """One `decoy.run` root span with the engine's phase spans under it.
+
+    The engine's `SpanRecorder` pairs phase events into closed `SpanRecord`s; `_adopt`
+    turns each into a span parented to the root explicitly, never to the ambient context.
+    Every span call passes both exception keywords False and status is set by code only, so
+    an engine error text (which can quote a cell value) never reaches the wire.
+    """
+
+    def __init__(self, telemetry: CliTelemetry) -> None:
+        from decoy_engine import __version__ as engine_version
+        from decoy_engine.telemetry import SpanRecorder
+
+        self._tracer = telemetry.provider.get_tracer("decoy.cli")
+        # An explicit empty Context: an ambient span from another library is never the parent.
+        self._root = self._tracer.start_span(
+            "decoy.run",
+            context=Context(),
+            attributes={"decoy.engine.version": engine_version},
+            record_exception=False,
+            set_status_on_exception=False,
+        )
+        self._parent = set_span_in_context(self._root)
+        self.recorder = SpanRecorder(self._adopt)
+        self._finished = False
+
+    def _adopt(self, record) -> None:
+        span = self._tracer.start_span(
+            record.name,
+            context=self._parent,
+            start_time=record.start_ns,
+            attributes=dict(record.attributes),
+            record_exception=False,
+            set_status_on_exception=False,
+        )
+        if not record.ok:
+            span.set_status(StatusCode.ERROR)
+        span.end(record.end_ns)
+
+    def finish(self, *, ok: bool, error_class: str | None = None) -> None:
+        """Close open phases, then end the root. Idempotent."""
+        if self._finished:
+            return
+        self._finished = True
+        self.recorder.close()
+        self._root.set_attribute("decoy.spans_dropped", self.recorder.dropped)
+        if ok:
+            self._root.set_attribute("decoy.outcome", "success")
+            self._root.set_status(StatusCode.OK)
+        else:
+            from decoy_engine.progress import safe_error_class
+
+            self._root.set_attribute("decoy.outcome", "failed")
+            self._root.set_attribute("error.type", safe_error_class(error_class) or "Exception")
+            self._root.set_status(StatusCode.ERROR)
+        self._root.end()

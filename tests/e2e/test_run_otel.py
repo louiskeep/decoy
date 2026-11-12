@@ -1,6 +1,6 @@
-"""F30 C1a: `decoy run --otel-endpoint` settings, the `[otel]` extra and env isolation.
+"""F30 C1: `decoy run --otel-endpoint` settings, the `[otel]` extra, env isolation and spans.
 
-C-T1 `env`, C-T5 and C-T6 through `typer.testing.CliRunner`; the exporter cells live in
+C-T1 `env`, C-T2 to C-T7 through `typer.testing.CliRunner`; the exporter cells live in
 tests/unit/test_telemetry_exporter.py, whose `Listener` these reuse.
 """
 
@@ -209,3 +209,222 @@ def test_missing_extra_message_names_the_flag(tmp_path, monkeypatch) -> None:
     message = json.loads(result.stdout)["error"]
     assert "pip install decoy-cli[otel]" in message
     assert "--otel-endpoint" in message and "this pipeline" not in message
+
+
+# ---- C1b: spans, leak corpus, dead collector, DP limit ----------------------------------
+
+GUIDE = Path(__file__).resolve().parents[2] / "docs" / "guides" / "telemetry.md"
+
+
+def _spans(listener) -> list:
+    """Every span the listener received, decoded from the OTLP protobuf bodies."""
+    from opentelemetry.proto.collector.trace.v1.trace_service_pb2 import (
+        ExportTraceServiceRequest,
+    )
+
+    found = []
+    for raw in listener.requests:
+        msg = ExportTraceServiceRequest()
+        msg.ParseFromString(raw.split(b"\r\n\r\n", 1)[1])
+        for resource in msg.resource_spans:
+            for scope in resource.scope_spans:
+                found.extend(scope.spans)
+    return found
+
+
+def _wait_for_spans(listener, timeout: float = 5.0) -> None:
+    deadline = time.monotonic() + timeout
+    while not listener.requests and time.monotonic() < deadline:
+        time.sleep(0.05)
+
+
+@pytest.mark.parametrize("route", ["full_frame", "chunked"])
+def test_flag_exports_one_trace_with_phase_spans(tmp_path, listener, route) -> None:
+    args = ["--chunked"] if route == "chunked" else []
+    result = _run(_pipeline(tmp_path), "--json", "--otel-endpoint", listener.url, *args)
+    assert result.exit_code == 0, result.output
+    _wait_for_spans(listener)
+    spans = _spans(listener)
+    roots = [s for s in spans if s.name == "decoy.run"]
+    phases = [s for s in spans if s.name.startswith("decoy.phase.")]
+    assert len(roots) == 1 and not roots[0].parent_span_id
+    assert phases, "no phase span reached the collector"
+    assert {s.trace_id for s in spans} == {roots[0].trace_id}
+    assert {s.parent_span_id for s in phases} == {roots[0].span_id}
+    assert roots[0].status.code == 1  # OK
+
+
+MARKER = "MARKERf30c1b"
+
+
+def _marker_pipeline(tmp_path: Path) -> Path:
+    base = tmp_path / MARKER
+    base.mkdir()
+    src = base / f"{MARKER}_accounts.csv"
+    src.write_text(f"{MARKER}_col\n{MARKER}_cell1\n{MARKER}_cell2\n", encoding="utf-8")
+    cfg = {
+        "version": 2,
+        "global_settings": {"seed": 42},
+        "sources": {f"{MARKER}_table": csv_source(src)},
+        "tables": [
+            {
+                "name": f"{MARKER}_table",
+                "columns": [{"name": f"{MARKER}_col", "strategy": "redact"}],
+            }
+        ],
+        "targets": {
+            f"{MARKER}_table": {
+                "type": "file",
+                "format": "csv",
+                "path": str(base / f"{MARKER}_out.csv"),
+            }
+        },
+    }
+    path = base / "pipeline.yaml"
+    path.write_text(yaml.safe_dump(cfg), encoding="utf-8")
+    return path
+
+
+def _boom(exc: Exception):
+    """An engine entry that opens one phase, then fails with `exc` (text carries the marker)."""
+
+    def run_pipeline(*_args, **_kwargs):
+        from decoy_engine.progress import get_active_channel
+
+        with get_active_channel().phase("resolve"):
+            raise exc
+
+    return run_pipeline
+
+
+@pytest.mark.parametrize("cell", ["success", "engine_error", "os_error"])
+def test_marker_corpus_absent_from_wire(tmp_path, monkeypatch, listener, cell) -> None:
+    import decoy_engine
+    from decoy_engine.execution import ExecutionError
+
+    cfg = _marker_pipeline(tmp_path)
+    if cell == "engine_error":
+        monkeypatch.setattr(
+            decoy_engine, "run_pipeline", _boom(ExecutionError(code="boom", message=MARKER))
+        )
+    elif cell == "os_error":
+        monkeypatch.setattr(decoy_engine, "run_pipeline", _boom(OSError(MARKER)))
+    args = [
+        "--json",
+        "--otel-endpoint",
+        listener.url,
+        "--key-label",
+        f"postgresql://{MARKER}:{MARKER}@{MARKER}.example/{MARKER}",
+        "--evidence-out",
+        str(cfg.parent / f"{MARKER}_evidence.json"),
+    ]
+    result = _run(cfg, *args)
+    if cell == "success":
+        assert result.exit_code == 0, result.output
+    else:
+        assert result.exit_code != 0
+        # Non-vacuity: the failure text did carry the marker locally.
+        assert MARKER in result.stdout
+    _wait_for_spans(listener)
+    assert listener.requests, "nothing was exported"
+    wire = b"".join(listener.requests)
+    assert MARKER.encode() not in wire
+    spans = _spans(listener)
+    root = next(s for s in spans if s.name == "decoy.run")
+    if cell == "success":
+        return
+    assert root.status.code == 2  # ERROR
+    assert root.status.message == ""
+    assert len(root.events) == 0
+    for span in spans:
+        assert span.status.message == "" and len(span.events) == 0
+
+
+def _quiet_run(cfg: Path, *args: str):
+    started = time.monotonic()
+    result = _run(cfg, "--json", *args)
+    return result, time.monotonic() - started
+
+
+@pytest.mark.parametrize(
+    "behavior",
+    ["black_hole", "huge_200", "trickle_200"],
+    ids=["black_hole", "huge_body", "trickle"],
+)
+def test_dead_collector_keeps_exit_code_and_bounds_exit(tmp_path, behavior) -> None:
+    from tests.unit.test_telemetry_exporter import Listener
+
+    cfg = _pipeline(tmp_path)
+    off, off_wall = _quiet_run(cfg)
+    assert off.exit_code == 0, off.output
+    lst = Listener(behavior)
+    try:
+        on, on_wall = _quiet_run(cfg, "--otel-endpoint", lst.url)
+        # Non-vacuity: the export worker reached the dead collector with a span queued.
+        assert lst.accepted.is_set() and lst.connections >= 1
+    finally:
+        lst.close()
+    assert on.exit_code == off.exit_code
+    assert _envelope(on) == _envelope(off)
+    assert on.stderr == off.stderr
+    assert on_wall - off_wall <= 2.0 + 0.5
+
+
+def test_otel_extra_documents_dp_refusal() -> None:
+    import importlib.metadata as md
+
+    from decoy_engine.quality import dp_provenance
+
+    text = GUIDE.read_text(encoding="utf-8")
+    assert "dp_stack_uncertified" in text and "decoy-cli[otel]" in text
+    # Non-vacuity: this environment has the extra installed.
+    assert md.version("opentelemetry-sdk")
+    if dp_provenance.current_platform() != dp_provenance.CERTIFIED_PLATFORM:
+        pytest.skip("the stack check runs only on the certified platform (Linux x86-64)")
+    with pytest.raises(dp_provenance.ProvenanceError) as caught:
+        dp_provenance.check_fit_environment()
+    assert caught.value.code == "dp_stack_uncertified"
+
+
+def test_open_phase_is_closed_on_exit(tmp_path, monkeypatch, listener) -> None:
+    """A route that never finishes a phase still exports it, ended as a failed span."""
+    import decoy_engine
+
+    def run_pipeline(*_args, **_kwargs):
+        from decoy_engine.progress import get_active_channel
+
+        get_active_channel().phase_start("resolve")
+        raise OSError(MARKER)
+
+    monkeypatch.setattr(decoy_engine, "run_pipeline", run_pipeline)
+    result = _run(_pipeline(tmp_path), "--json", "--otel-endpoint", listener.url)
+    assert result.exit_code != 0
+    _wait_for_spans(listener)
+    phases = [s for s in _spans(listener) if s.name == "decoy.phase.resolve"]
+    assert len(phases) == 1 and phases[0].status.code == 2
+    assert MARKER.encode() not in b"".join(listener.requests)
+
+
+def test_sdk_failure_log_never_reaches_stderr(tmp_path, monkeypatch, listener) -> None:
+    """An exporter that raises makes the SDK log a traceback with the endpoint; the run's
+    stderr must still equal the run without telemetry. `flush_bounded` also raises the
+    logger's level; that is switched off here so the quiet handler is what is tested."""
+    import logging
+
+    from decoy.telemetry import _DecoySpanExporter
+
+    cfg = _pipeline(tmp_path)
+    off = _run(cfg, "--json")
+
+    def raising(self, spans):
+        raise RuntimeError(f"export failed for {MARKER}")
+
+    monkeypatch.setattr(_DecoySpanExporter, "export", raising)
+    # Under pytest the root logger holds capture handlers; a real CLI has none, so the
+    # last-resort handler would print to stderr.
+    monkeypatch.setattr(logging.getLogger(), "handlers", [])
+    monkeypatch.setattr(logging.getLogger("opentelemetry"), "handlers", [])
+    monkeypatch.setattr(logging.getLogger("opentelemetry"), "setLevel", lambda level: None)
+    on = _run(cfg, "--json", "--otel-endpoint", listener.url)
+    assert on.exit_code == off.exit_code == 0
+    assert on.stderr == off.stderr and MARKER not in on.stderr + on.stdout

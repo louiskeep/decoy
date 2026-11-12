@@ -64,6 +64,34 @@ def _start_telemetry(flag_endpoint: str | None, state):
         raise _OtelSettingsUsageError(str(exc)) from None
 
 
+def _begin_trace(otel):
+    """Open the `decoy.run` root span and its phase recorder; None when telemetry is off or
+    the tracer fails. Telemetry never changes the run, so any failure here is swallowed."""
+    if otel is None:
+        return None
+    try:
+        from decoy import telemetry
+
+        return telemetry.RunTrace(otel)
+    except Exception:
+        return None
+
+
+def _end_trace(otel, trace, *, ok: bool, error_class: str | None = None) -> None:
+    """Close the recorder, end the root and flush within the bounded budget. Runs on every
+    exit path after the exit code is decided, and can never raise into it."""
+    if otel is None:
+        return
+    try:
+        from decoy import telemetry
+
+        if trace is not None:
+            trace.finish(ok=ok, error_class=error_class)
+        telemetry.flush_bounded(otel)
+    except Exception:
+        pass
+
+
 def parse_channels(ctx: RunContext) -> None:
     """Parse the `--notify` specs into `ctx.notify_channels`; a bad spec exits EXIT_USAGE."""
     # Parse --notify specs BEFORE the run (D3): a bad spec is a usage error
