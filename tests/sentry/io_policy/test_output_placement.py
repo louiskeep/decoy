@@ -12,6 +12,7 @@ Three rules, each over every module under `src/decoy/`:
     the sites in NAME_ALLOWLIST that later slices move there (shrink-only baseline
     tests/sentry/baselines/output-name-allow.json).
 (c) `write_targets` and `write_chunked_output` take their placement as a `RunLayout`.
+(d) `decoy validate`'s target check reaches a target path only through `place_target`.
 
 A syntax walk: a path built through a runtime-bound name, or a literal assembled from pieces, is
 not seen.
@@ -37,6 +38,8 @@ OUT_LITERAL = "out"
 BUILDERS = frozenset({"with_suffix", "with_name", "joinpath", "Path", "PurePath"})
 WRITERS = ("write_targets", "write_chunked_output")
 TARGETS = "cli/io/_targets.py"
+PREFLIGHT = "cli/preflight.py"
+TARGET_CHECK = "_check_target_overwrite"
 
 
 @dataclass(frozen=True)
@@ -277,3 +280,37 @@ def test_each_writer_annotates_its_placement_parameter_as_run_layout(writer: str
 def test_a_writer_back_on_a_base_dir_is_caught() -> None:
     seeded = "def write_targets(config_dict, outputs, base_dir: Path):\n    pass\n"
     assert not _layout_annotated(seeded, "write_targets")
+
+
+# --- (d) validate's target check builds no path of its own ----------------------------------
+
+
+def _target_check_builds_path(source: str) -> bool | None:
+    """True when the target check calls `place_target` and constructs no path itself.
+
+    None when the function is missing, so a rename fails the test instead of passing it.
+    """
+    for node in ast.walk(ast.parse(source)):
+        if isinstance(node, ast.FunctionDef) and node.name == TARGET_CHECK:
+            names = {_builder_name(c) for c in ast.walk(node) if isinstance(c, ast.Call)}
+            return "place_target" not in names or bool(names & BUILDERS)
+    return None
+
+
+def test_validate_target_check_places_targets_only_through_place_target() -> None:
+    source = (SRC / PREFLIGHT).read_text(encoding="utf-8")
+    assert _target_check_builds_path(source) is False
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        "out = Path(raw)",
+        "out = PurePath(raw)",
+        "out = layout.place_target(raw)\n    other = Path(raw)",
+        "out = raw",
+    ],
+)
+def test_a_direct_path_in_the_target_check_is_caught(body: str) -> None:
+    seeded = f"def {TARGET_CHECK}(raw, layout):\n    {body}\n"
+    assert _target_check_builds_path(seeded) is True

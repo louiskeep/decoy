@@ -190,7 +190,7 @@ def _run_config_base(
     from decoy.cli.preflight import _check_target_overwrite, _PreflightAccumulator
 
     advisory = _PreflightAccumulator()
-    _check_target_overwrite(raw, advisory)
+    _check_target_overwrite(raw, advisory, config_path.parent)
     findings = _findings_from_checks(advisory, "config")
     # The route is unknown here, so only the route-free contradictions (chunked=False).
     findings.extend(

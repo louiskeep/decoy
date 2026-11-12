@@ -111,7 +111,7 @@ def test_every_output_consumer_agrees_with_the_one_enumerator(
     assert bool(layout_issues(config_path, config)) is issue
 
     acc = preflight._PreflightAccumulator()
-    preflight._check_target_overwrite(config, acc)
+    preflight._check_target_overwrite(config, acc, root)
     # Only the absolute row is advisory-checked; relative rows land in a new run folder.
     assert bool(acc.checks) is (entry.get("path") == absolute)
 

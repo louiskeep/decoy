@@ -49,6 +49,7 @@ validate command's code path.
 
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -266,30 +267,29 @@ def _check_source_files(raw: dict[str, Any], base_dir: Path, acc: _PreflightAccu
         )
 
 
-def _check_target_overwrite(raw: dict[str, Any], acc: _PreflightAccumulator) -> None:
+def _check_target_overwrite(raw: dict[str, Any], acc: _PreflightAccumulator, base: Path) -> None:
     """Advisory: warn when an absolute output target is invalid, exists or cannot be written.
 
     These are warnings, not failures: the run overwrites, and the writer creates a missing
     folder, so only an existing file or a parent no run could write is worth surfacing. A
     relative path lands in a new run folder (AT-16), so none of these can apply to it.
     """
-    from decoy.cli.io import is_placed_relative, target_parent_writable
+    from decoy.cli.io import LayoutError, RunLayout, target_parent_writable
 
+    layout = RunLayout.fixed(base)
     targets = raw.get("targets")
     for table_name, target in targets.items() if isinstance(targets, dict) else ():
         if not isinstance(target, dict) or target.get("type") not in ("file", None):
             continue
         out_path_str = target.get("path")
-        if not isinstance(out_path_str, str) or is_placed_relative(out_path_str):
-            continue
-        if not Path(out_path_str).is_absolute():
+        if not isinstance(out_path_str, str) or not os.path.isabs(out_path_str):
             continue
         location = f"targets.{table_name}.path"
-        out_path = Path(out_path_str)
         try:
+            out_path = layout.place_target(out_path_str)
             exists = out_path.exists()
             writable = exists or target_parent_writable(out_path)
-        except (ValueError, OSError):
+        except (ValueError, OSError, LayoutError):
             msg = f"Output target path for table {table_name} is invalid."
             acc.add_warn(f"target.{table_name}.path_invalid", msg, location)
             continue
@@ -756,7 +756,7 @@ def preflight(
     _check_source_files(raw, config.parent, acc)
 
     # -- Step 5: Target overwrite advisory -----------------------------------
-    _check_target_overwrite(raw, acc)
+    _check_target_overwrite(raw, acc, config.parent)
 
     # -- Step 6: Capacity check (OOM checker v1) -----------------------------
     _check_capacity(raw, config, acc)
