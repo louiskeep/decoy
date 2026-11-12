@@ -24,6 +24,7 @@ import typer
 
 from decoy.cli._sources import csv_file_source, read_source, resolved_source_config
 from decoy.cli.exit_codes import EXIT_RUNTIME, EXIT_USAGE
+from decoy.cli.io import RunLayout
 from decoy.cli.io._targets import check_target_formats, write_targets
 from decoy.ui.card import render_card
 from decoy.ui.output import OutputMode, OutputState, emit_json, print_traceback, setup_output
@@ -208,13 +209,13 @@ def _run_v2_mask(pipeline_yaml: Path) -> None:
     """
     import yaml as _yaml
     from decoy_engine import (
-        PipelineConfig,
-        compile_plan,
-        get_default_registry,
-        select_execution_adapter,
+        __version__ as engine_version,
     )
     from decoy_engine import (
-        __version__ as engine_version,
+        compile_plan,
+        get_default_registry,
+        parse_pipeline_config,
+        select_execution_adapter,
     )
     from decoy_engine.profile import profile_source
     from decoy_engine.relationships import (
@@ -226,7 +227,7 @@ def _run_v2_mask(pipeline_yaml: Path) -> None:
 
     text = pipeline_yaml.read_text(encoding="utf-8")
     raw = _yaml.safe_load(text)
-    config_dict = PipelineConfig.model_validate(raw).model_dump()
+    config_dict = parse_pipeline_config(raw).model_dump()
 
     job_seed = (config_dict.get("global_settings") or {}).get("seed")
     profile = profile_source(
@@ -259,7 +260,7 @@ def _run_v2_mask(pipeline_yaml: Path) -> None:
         relationship_graph=graph,
         namespace_registry=ns_registry,
     )
-    _write_mask_outputs(config_dict, result, pipeline_yaml.parent)
+    _write_mask_outputs(config_dict, result, RunLayout.fixed(pipeline_yaml.parent))
 
 
 def _load_sources_from_config(config_dict: dict, base_dir: Path) -> dict:
@@ -276,7 +277,7 @@ def _load_sources_from_config(config_dict: dict, base_dir: Path) -> dict:
     return out
 
 
-def _write_mask_outputs(config_dict: dict, result, base_dir: Path) -> None:
+def _write_mask_outputs(config_dict: dict, result, layout: RunLayout) -> None:
     """Write each declared target by its declared format, through the shared writer.
     The engine `ExecutionResult` carries masked tables on `outputs`
     (dict[table_name -> pa.Table]); not `tables`."""
@@ -284,7 +285,7 @@ def _write_mask_outputs(config_dict: dict, result, base_dir: Path) -> None:
     outputs = getattr(result, "outputs", None)
     if not isinstance(outputs, dict):
         return
-    write_targets(config_dict, outputs, base_dir)
+    write_targets(config_dict, outputs, layout)
 
 
 # ---------------------------------------------------------------------------

@@ -19,9 +19,10 @@ from pathlib import Path
 import typer
 
 from decoy import _resources
+from decoy.cli.io import pipeline_argument, resolve_pipeline
 from decoy.cli.io import resolve_path as _resolve_path
 from decoy.cli.run import _flow
-from decoy.cli.run._context import Mode, NotifyOn, RunContext
+from decoy.cli.run._context import DEFAULT_CHUNK_SIZE, Mode, NotifyOn, RunContext
 from decoy.cli.run._execute import _load_sources_from_config, _write_mask_outputs
 from decoy.cli.run._prepare import _has_kind
 from decoy.cli.run._vault import VAULT_WRITE_FAILED
@@ -45,6 +46,10 @@ Examples:
 
   decoy run pipeline.yaml
     Run with default mode (mask).
+
+  decoy run generate.yaml --rows 5
+    Preview a generate pipeline: the largest table at 5 rows, the others in proportion.
+    Prints the rows and writes nothing.
 
   decoy run pipeline.yaml --json
     Suppress chrome and emit a structured result for scripting.
@@ -96,12 +101,8 @@ See also: decoy validate compile --explain, decoy report fidelity, decoy validat
 
 
 def run(
-    config: Path = typer.Argument(
-        ...,
-        exists=True,
-        dir_okay=False,
-        readable=True,
-        help="Path to the YAML pipeline config.",
+    config: str = pipeline_argument(
+        help="Path or name of the YAML pipeline config (a name is looked up in the project).",
     ),
     mode: Mode = typer.Option(
         Mode.mask,
@@ -177,10 +178,10 @@ def run(
         ),
     ),
     chunk_size: int = typer.Option(
-        100_000,
+        None,
         "--chunk-size",
         min=1,
-        help="Rows per chunk in --chunked mode.",
+        help=f"Rows per chunk in --chunked mode (default {DEFAULT_CHUNK_SIZE}).",
     ),
     max_memory: str = _resources.MAX_MEMORY_OPTION,
     threads: str = _resources.THREADS_OPTION,
@@ -217,7 +218,18 @@ def run(
             "where available (these are omitted for --chunked runs). It does "
             "NOT contain raw data values. Use `decoy report verify` to check "
             "the manifest against current files. "
-            "See: decoy explain evidence (when available)."
+            "See: decoy report show."
+        ),
+    ),
+    out_dir: Path = typer.Option(
+        None,
+        "--out-dir",
+        metavar="DIR",
+        help=(
+            "Write relative output paths into DIR instead of a new run folder under "
+            "out/<pipeline>/. DIR is relative to the current folder and is made owner-only "
+            "if missing. No run id, LATEST or current link; files there are overwritten. "
+            "Absolute output paths are unchanged."
         ),
     ),
     notify: list[str] = typer.Option(
@@ -324,6 +336,19 @@ def run(
             "handle."
         ),
     ),
+    rows: int = typer.Option(
+        None,
+        "--rows",
+        metavar="N",
+        help=(
+            "Preview a generate pipeline: run it at a small size, print each table's rows and "
+            "write nothing. N is 1 to 1000 rows for the largest table; every other table is "
+            "scaled by the same ratio, so parent and child sizes keep their proportions. "
+            "Refused with a mask table, --chunked, --chunk-size, --evidence-out, --notify, "
+            "--vault, --fidelity, --explain-plan, --post-validate, --post-validate-enforce, "
+            "--native, --duckdb-source and --out-dir."
+        ),
+    ),
     otel_endpoint: str = typer.Option(
         None,
         "--otel-endpoint",
@@ -349,10 +374,12 @@ def run(
     counted on stderr and never stop it. There is no flag to skip the check.
     """
     state = setup_output(json_, quiet, verbose)
+    ref = resolve_pipeline(config, state, "run")
     _flow.execute(
         RunContext(
             state=state,
-            config=config,
+            config=ref.yaml,
+            given_as=ref.given_as,
             mode=mode,
             json_=json_,
             quiet=quiet,
@@ -366,6 +393,7 @@ def run(
             vault=vault,
             key_label=key_label,
             evidence_out=evidence_out,
+            out_dir=out_dir,
             notify=notify,
             notify_on=notify_on,
             native=native,
@@ -376,6 +404,7 @@ def run(
             post_validate_enforce=post_validate_enforce,
             duckdb_source=duckdb_source,
             otel_endpoint=otel_endpoint,
+            rows=rows,
         )
     )
 

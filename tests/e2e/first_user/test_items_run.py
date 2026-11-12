@@ -19,9 +19,10 @@ import yaml
 from typer.testing import CliRunner
 
 from decoy.__main__ import app
-from decoy.cli.io import _targets
+from decoy.cli.io import RunLayout, _targets
 from tests.csv_sources import csv_source
 from tests.keyed_secret import TEST_MASK_SECRET_REF
+from tests.run_outputs import latest_output
 
 pytestmark = pytest.mark.usefixtures("mask_secret")
 
@@ -112,7 +113,7 @@ def test_chunked_run_reports_files_but_no_row_count(tmp_path: Path) -> None:
     record = json.loads(machine.stdout)["tables"][0]
     assert record["name"] == "patients"
     assert record["rows"] is None
-    assert Path(record["path"]) == tmp_path / "out.csv"
+    assert Path(record["path"]).resolve() == latest_output(tmp_path, "out.csv").resolve()
 
 
 def test_chunked_run_that_publishes_nothing_counts_no_file(
@@ -139,7 +140,7 @@ def test_whole_table_writer_returns_the_published_path(tmp_path: Path) -> None:
     out = tmp_path / "out" / "t.csv"
     config = {"targets": {"t": {"type": "file", "path": str(out), "format": "csv"}}}
 
-    written = _targets.write_targets(config, {"t": pa.table({"a": [1]})}, tmp_path)
+    written = _targets.write_targets(config, {"t": pa.table({"a": [1]})}, RunLayout.fixed(tmp_path))
 
     assert written == {"t": out}
 
@@ -147,7 +148,9 @@ def test_whole_table_writer_returns_the_published_path(tmp_path: Path) -> None:
 def test_chunked_writer_returns_none_when_it_publishes_nothing(tmp_path: Path) -> None:
     out = tmp_path / "never.csv"
 
-    published = _targets.write_chunked_output([], "csv", out, empty_schema=None)
+    published = _targets.write_chunked_output(
+        [], "csv", str(out), RunLayout.fixed(tmp_path), empty_schema=None
+    )
 
     assert published is None
     assert not out.exists()
@@ -159,15 +162,17 @@ def test_a_target_with_no_output_table_is_not_reported(tmp_path: Path) -> None:
     out = tmp_path / "ghost.csv"
     config = {"targets": {"ghost": {"type": "file", "path": str(out), "format": "csv"}}}
 
-    written = _targets.write_targets(config, {"other": pa.table({"a": [1]})}, tmp_path)
+    written = _targets.write_targets(
+        config, {"other": pa.table({"a": [1]})}, RunLayout.fixed(tmp_path)
+    )
 
     assert written == {}
     assert not out.exists()
 
 
-def test_a_path_is_recorded_only_after_its_write_returns(tmp_path: Path) -> None:
-    # The second write fails. Only the first table may be recorded, and only because its write
-    # returned. A path recorded before its write, or from config alone, would show up here.
+def test_a_path_is_recorded_only_after_its_file_is_published(tmp_path: Path) -> None:
+    # The second write fails before publication, so only the first file is recorded; a path
+    # taken from config alone would show up here.
     import pyarrow as pa
 
     first, second = tmp_path / "a.csv", tmp_path / "b.csv"
@@ -189,7 +194,7 @@ def test_a_path_is_recorded_only_after_its_write_returns(tmp_path: Path) -> None
     outputs = {"a": pa.table({"x": [1]}), "b": pa.table({"x": [2]})}
     with mock.patch.object(_targets, "write_table", write_then_fail):
         with pytest.raises(OSError) as raised:
-            _targets.write_targets(config, outputs, tmp_path)
+            _targets.write_targets(config, outputs, RunLayout.fixed(tmp_path))
 
     # write_targets raised, so read what it had recorded from its own frame.
     tb = raised.value.__traceback__

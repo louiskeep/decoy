@@ -4,45 +4,37 @@
 local checks that do not require the engine to execute the full pipeline.
 
 What preflight checks (honest framing)
-----------------------------------------
-1. YAML syntax:        Is the pipeline file a valid YAML document?
-2. Schema:             Does the config satisfy the PipelineConfig schema?
-3. Config logic:       Profile-free plan-compile checks (same as `decoy validate`).
-4. File existence:     Does each declared source file exist on disk?
-5. File readability:   Can each source file be opened for reading?
-6. Target overwrite:   Does any output target already exist (advisory)?
-7. Capacity (v1):      Out-of-core-FK memory feasibility. The build-floor
-                       estimate is advisory (warns, does not refuse); only a
-                       fan-in impossibility exits EXIT_CAPACITY. Covers the
-                       out-of-core-FK route ONLY -- see the OOM checker v1 note.
-8. Native (Phase 3.1): decoy-engine-native companion health (pass/warn), plus
-                       a STATIC config-shape native-eligibility possibility
-                       -- not a guarantee of the resolved route at run time.
+--------------------------------------
+1. YAML syntax, schema and profile-free config logic.
+2. Project-layout output paths (the same refusals as `decoy validate`).
+3. Source file existence and readability.
+4. Existing output targets (advisory).
+5. Out-of-core-FK capacity and generated-output floor (hard refusals exit EXIT_CAPACITY).
+6. Native companion health and static config-shape eligibility.
 
 What preflight does NOT check
 ------------------------------
-* Platform preflight conditions (the platform's server-side pre-run checks
-  include secrets, RBAC, schedule validity, and network targets -- none of
-  those are local CLI checks).
-* Data validity or masking quality.
+* Platform preflight conditions such as secrets, RBAC, schedules, and network targets.
 * Engine run-time constraints beyond the out-of-core-FK capacity check above
   (provider capacity, null-bearing integer distributions) -- these require a
   profile pass during the run.
-* Vault or secrets accessibility.
-* Network connectivity.
-* Whether the engine can successfully execute the pipeline.
+* Vault or secret access, network connectivity, or successful engine execution.
 
 OOM checker v1 (docs/plans/2026-07-24-oom-checker-cli-v1.md): the capacity
 check is an "OOC-FK engine-gate capacity checker", NOT a whole-job OOM
 guarantee. `decoy run` fully loads every source into memory BEFORE it calls
 the engine, so an ingestion `MemoryError` or OS OOM-kill happens before this
-gate ever runs -- this check does not cover that, and does not cover the
-generate path. A "capacity: OK" here means only that no hard impossibility was
-found. The build-floor estimate is ADVISORY: when the predicted relation-build
-floor exceeds its cap, the check reports a WARNING with a recommended size and
-the job still proceeds (`--fail-on-warning` turns that warning into a nonzero
-exit). The one hard capacity refusal that exits EXIT_CAPACITY is a fan-in
-impossibility (more co-live DuckDB joiners than the budget can seat).
+gate ever runs -- this check does not cover that. A "capacity: OK" here means
+only that no hard impossibility was found. The build-floor estimate is
+ADVISORY: when the predicted relation-build floor exceeds its cap, the check
+reports a WARNING with a recommended size and the job still proceeds
+(`--fail-on-warning` turns that warning into a nonzero exit). Two hard
+capacity refusals exit EXIT_CAPACITY: a fan-in impossibility (more co-live
+DuckDB joiners than the budget can seat), and generate tables whose resident
+output cannot fit the machine's memory (`generation_budget_exceeded`, GEN-STRICT
+row 24k). A config with a non-file source skips the estimate, so a generate floor
+refusal exits 5 only at `decoy run`. A missing or unreadable source file
+fails first (exit 1), so the exit 5 needs readable sources.
 
 Do NOT describe the output of this command as "platform parity." Preflight
 here is a local file/source/schema readiness gate. The spec (cli-first-
@@ -67,6 +59,9 @@ from rich.text import Text
 
 from decoy.cli._yaml_errors import sanitize_yaml_error
 from decoy.cli.exit_codes import EXIT_CAPACITY, EXIT_USAGE, EXIT_WARNINGS
+from decoy.cli.gate._capacity_text import format_gib as _format_gib
+from decoy.cli.gate._capacity_text import insufficient_text as _insufficient_text
+from decoy.cli.io import pipeline_argument, resolve_pipeline
 from decoy.ui.output import OutputMode, emit_json, setup_output
 from decoy.ui.theme import code, error, hint, success, warn
 
@@ -89,8 +84,9 @@ What preflight checks:
   - YAML syntax and schema (same as `decoy validate`)
   - Source file existence and readability
   - Target overwrite risk (advisory warning)
-  - Out-of-core-FK memory capacity (v1; build-floor is advisory, only a fan-in
+  - Out-of-core-FK memory capacity (v1; build-floor is advisory, a fan-in
     impossibility exits EXIT_CAPACITY -- see: decoy explain exit-codes)
+  - Generated tables whose output cannot fit memory (exit EXIT_CAPACITY)
   - Native companion health, plus a STATIC (config-shape-only) native
     eligibility possibility -- see: decoy explain native
 
@@ -98,8 +94,8 @@ What preflight does NOT check:
   - Platform server-side conditions (secrets, RBAC, schedules, network targets)
   - Engine run-time constraints beyond out-of-core-FK capacity (row counts,
     provider limits)
-  - The ingestion peak `decoy run` pays before the engine's capacity gate runs,
-    or the generate path (both out of the v1 capacity check's scope)
+  - The ingestion peak `decoy run` pays before the engine's capacity gate runs
+    (out of the v1 capacity check's scope)
   - Data validity or masking quality
   - Vault or secrets accessibility
 
@@ -124,8 +120,8 @@ class _CheckResult:
     status: str  # "pass" | "warn" | "fail"
     message: str
     location: str | None = None
-    # OOM checker v1: the engine's capacity-refusal code (one of
-    # out_of_core_insufficient_memory / out_of_core_fanin_exceeds_budget),
+    # OOM checker v1: the engine's capacity-refusal code (out_of_core_insufficient_memory,
+    # out_of_core_fanin_exceeds_budget or generation_budget_exceeded),
     # carried as its own field so a --json caller can assert on it directly
     # instead of parsing `message` text (R9).
     code: str | None = None
@@ -271,52 +267,45 @@ def _check_source_files(raw: dict[str, Any], base_dir: Path, acc: _PreflightAccu
         )
 
 
-def _check_target_overwrite(raw: dict[str, Any], acc: _PreflightAccumulator) -> None:
-    """Advisory: warn when an output target file already exists.
+def _check_target_overwrite(raw: dict[str, Any], acc: _PreflightAccumulator, base: Path) -> None:
+    """Advisory: warn when an absolute output target is invalid, exists or cannot be written.
 
-    This is a warning, not a failure. The run succeeds by overwriting,
-    but this check surfaces the risk in CI so it can be treated as blocking
-    with --fail-on-warning.
+    These are warnings, not failures: the run overwrites, and the writer creates a missing
+    folder, so only an existing file or a parent no run could write is worth surfacing. A
+    relative path lands in a new run folder (AT-16), so none of these can apply to it.
     """
-    targets = raw.get("targets") or {}
-    if not isinstance(targets, dict):
-        return
+    from decoy.cli.io import LayoutError, RunLayout, is_absolute_local, target_parent_writable
 
-    for table_name, target in targets.items():
-        if not isinstance(target, dict):
-            continue
-        if target.get("type") not in ("file", None):
+    layout = RunLayout.fixed(base)
+    targets = raw.get("targets")
+    for table_name, target in targets.items() if isinstance(targets, dict) else ():
+        if not isinstance(target, dict) or target.get("type") not in ("file", None):
             continue
         out_path_str = target.get("path")
-        if not out_path_str:
+        if not is_absolute_local(out_path_str):
             continue
-        out_path = Path(out_path_str)
-        if out_path.exists():
+        location = f"targets.{table_name}.path"
+        try:
+            out_path = layout.place_target(out_path_str)
+            exists = out_path.exists()
+            writable = exists or target_parent_writable(out_path)
+        except (ValueError, OSError, LayoutError):
+            msg = f"Output target path for table {table_name} is invalid."
+            acc.add_warn(f"target.{table_name}.path_invalid", msg, location)
+            continue
+        if exists:
+            msg = f"Output target already exists and would be overwritten: {out_path_str}"
             acc.add_warn(
-                name=f"target.{table_name}.would_overwrite",
-                message=f"Output target already exists and would be overwritten: {out_path_str}",
-                location=f"targets.{table_name}.path",
+                name=f"target.{table_name}.would_overwrite", message=msg, location=location
             )
-        else:
-            # Check that the parent directory exists or can be created.
-            parent = out_path.parent
-            if not parent.exists():
-                acc.add_warn(
-                    name=f"target.{table_name}.parent_missing",
-                    message=f"Output target directory does not exist: {parent!s}",
-                    location=f"targets.{table_name}.path",
-                )
+        elif not writable:
+            msg = f"Output target directory for table {table_name} cannot be created or written."
+            acc.add_warn(f"target.{table_name}.parent_unwritable", msg, location)
 
 
 # ---------------------------------------------------------------------------
 # Capacity check (OOM checker v1, docs/plans/2026-07-24-oom-checker-cli-v1.md)
 # ---------------------------------------------------------------------------
-
-_GIB = 1024**3
-
-
-def _format_gib(byte_count: int | None) -> str:
-    return f"~{byte_count / _GIB:.1f} GB" if byte_count else "an unknown amount"
 
 
 def _file_sources_missing_on_disk(raw: dict[str, Any], base_dir: Path) -> bool:
@@ -438,7 +427,7 @@ def _check_capacity(raw: dict[str, Any], config_path: Path, acc: _PreflightAccum
         )
         return
 
-    from decoy_engine import CapacityVerdict, ExecutionError, PipelineConfig
+    from decoy_engine import CapacityVerdict, ExecutionError, parse_pipeline_config
     from decoy_engine.plan import PlanCompileError
 
     # The ONE narrow catch here (R3): a source that is present but corrupt /
@@ -451,7 +440,7 @@ def _check_capacity(raw: dict[str, Any], config_path: Path, acc: _PreflightAccum
     # raw traceback. Any OTHER exception -- an unexpected estimator defect --
     # still propagates, never degraded into a WARN or a false pass (Codex
     # P1-2 / re-gate MEDIUM).
-    config_dump = PipelineConfig.model_validate(raw).model_dump()
+    config_dump = parse_pipeline_config(raw).model_dump()
     try:
         estimate = _engine_execution.estimate_job_capacity(config_dump, base_dir=config_path.parent)
     except ExecutionError as exc:
@@ -528,15 +517,7 @@ def _check_capacity(raw: dict[str, Any], config_path: Path, acc: _PreflightAccum
         )
     elif estimate.verdict is CapacityVerdict.INSUFFICIENT:
         acc.capacity_insufficient = True
-        acc.add_fail(
-            name=CAPACITY_CHECK,
-            message=(
-                f"INSUFFICIENT -- needs {needed}, budget {available}; use a larger "
-                "tier or reduce the job. This estimate is conservative: a real run "
-                "may still admit the job via full-frame recovery."
-            ),
-            code=estimate.code,
-        )
+        acc.add_fail(name=CAPACITY_CHECK, message=_insufficient_text(estimate), code=estimate.code)
     elif estimate.verdict is CapacityVerdict.UNKNOWN:
         # An uncertain route (a byte-estimate-promoted OOC job) forces UNKNOWN,
         # but a build-floor advisory can still ride along on the estimate. Surface
@@ -635,13 +616,7 @@ def _check_native(raw: dict[str, Any], acc: _PreflightAccumulator) -> None:
 
 
 def preflight(
-    config: Path = typer.Argument(
-        ...,
-        exists=True,
-        dir_okay=False,
-        readable=True,
-        help="Path to the YAML pipeline config to check.",
-    ),
+    config: str = pipeline_argument(help="Path or name of the YAML pipeline config to check."),
     local: bool = typer.Option(
         False,
         "--local",
@@ -679,35 +654,36 @@ def preflight(
     and (v1) the engine's out-of-core-FK memory feasibility. The build-floor
     estimate is advisory: an over-budget prediction reports a WARNING with a
     recommended size, not a refusal (`--fail-on-warning` makes it exit
-    nonzero). Only a fan-in impossibility exits EXIT_CAPACITY (see `decoy
-    explain exit-codes`), distinct from a config problem (EXIT_USAGE). Reports
+    nonzero). A fan-in impossibility, and generated tables whose output
+    cannot fit the machine's memory, exit EXIT_CAPACITY (see `decoy explain
+    exit-codes`), distinct from a config problem (EXIT_USAGE). Reports
     findings as pass/warn/fail with structured output available via --json.
 
     This is a LOCAL check only. It does NOT check platform server-side
     conditions, most engine run-time constraints, data quality, vault
     access, secrets availability, or network connectivity. The capacity
-    check covers the out-of-core-FK route only -- it does not cover the
-    ingestion peak `decoy run` pays before the engine's gate runs, or the
-    generate path. Use `decoy validate` for pure schema-only checks; use
+    check does not cover the ingestion peak `decoy run` pays before the
+    engine's gate runs. Use `decoy validate` for pure schema-only checks; use
     this command when you want to confirm source files are present and check
     the job's capacity feasibility before starting a run.
     """
     state = setup_output(json_, quiet, verbose)
+    config_path = resolve_pipeline(config, state, "validate preflight").yaml
     config_str = str(config)
     acc = _PreflightAccumulator()
 
     from decoy_engine import (
         ConfigError,
-        PipelineConfig,
         PipelineValidationError,
+        parse_pipeline_config,
         run_config_only_checks,
     )
+    from decoy_engine.config import PipelineConfigError
     from decoy_engine.plan import PlanCompileError
-    from pydantic import ValidationError
 
     # -- Step 1: YAML parse ---------------------------------------------------
     try:
-        raw = _yaml.safe_load(config.read_text(encoding="utf-8"))
+        raw = _yaml.safe_load(config_path.read_text(encoding="utf-8"))
     except _yaml.YAMLError as exc:
         acc.add_fail(name="yaml.parse_error", message=sanitize_yaml_error(exc))
         _emit_preflight_result(state, acc, config_str, fail_on_warning)
@@ -731,16 +707,14 @@ def preflight(
 
     # -- Step 2: Schema validation --------------------------------------------
     try:
-        PipelineConfig.model_validate(raw)
+        parse_pipeline_config(raw)
         acc.add_pass(name="schema.valid", message="Pipeline schema is valid.")
-    except ValidationError as exc:
-        for e in exc.errors():
-            loc_parts = [str(p) for p in e.get("loc", ())]
-            location = ".".join(loc_parts) if loc_parts else None
+    except PipelineConfigError as exc:
+        for problem in exc.problems:
             acc.add_fail(
                 name="schema.field",
-                message=e.get("msg", str(e)),
-                location=location,
+                message=problem.text,
+                location=problem.location or None,
             )
         _emit_preflight_result(state, acc, config_str, fail_on_warning)
         raise typer.Exit(code=EXIT_USAGE)
@@ -751,7 +725,7 @@ def preflight(
 
     # -- Step 3: Profile-free plan-compile checks ----------------------------
     try:
-        run_config_only_checks(raw, base_dir=config.parent)
+        run_config_only_checks(raw, base_dir=config_path.parent)
         acc.add_pass(name="config.plan_checks", message="Profile-free plan-compile checks passed.")
     except PlanCompileError as exc:
         # Rewrite ner_spacy_not_installed to decoy-cli's own [ner] extra;
@@ -764,14 +738,23 @@ def preflight(
         _emit_preflight_result(state, acc, config_str, fail_on_warning)
         raise typer.Exit(code=EXIT_USAGE)
 
+    # -- Step 3b: Project-layout checks --------------------------------------
+    from decoy.cli.io import layout_failures
+
+    for code, message, location in layout_failures(config_path, raw):
+        acc.add_fail(name=code, message=message, location=location, code=code)
+    if acc.has_failures:
+        _emit_preflight_result(state, acc, config_str, fail_on_warning)
+        raise typer.Exit(code=EXIT_USAGE)
+
     # -- Step 4: Source file checks ------------------------------------------
-    _check_source_files(raw, config.parent, acc)
+    _check_source_files(raw, config_path.parent, acc)
 
     # -- Step 5: Target overwrite advisory -----------------------------------
-    _check_target_overwrite(raw, acc)
+    _check_target_overwrite(raw, acc, config_path.parent)
 
     # -- Step 6: Capacity check (OOM checker v1) -----------------------------
-    _check_capacity(raw, config, acc)
+    _check_capacity(raw, config_path, acc)
 
     # -- Step 7: Native companion health + static eligibility (Phase 3.1) ----
     _check_native(raw, acc)

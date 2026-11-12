@@ -11,8 +11,8 @@ exactly one home:
   - `render_plan_artifact`        serialize a Plan to YAML or JSON.
   - `find_first_unique_column_path`  the H2 guard (--no-profile is incompatible
                                   with cardinality_mode: unique).
-  - `empty_profile_for_no_profile`   the empty sentinel Profile for no-profile
-                                  compiles.
+  - `empty_profile_for_no_profile`   the sentinel Profile for no-profile
+                                  compiles (no tables; the config's relationships).
 
 The engine emits its own honest checks_skipped set when `compile_plan` is called
 with `no_profile=True` (structural checks like fk_plan_ordering stay in
@@ -56,15 +56,20 @@ def empty_profile_for_no_profile(config_dict: dict, engine_version: str):
     "no real profile available" sentinel; downstream consumers should
     treat this value as "do not trust profile-derived facts" rather
     than "profile was taken on this date" (CLI QA fix 2026-06-02 F3).
+
+    The config's `relationships:` are carried over, so the compile orders parents before
+    children and reports a relationship it cannot resolve. A composite relationship with
+    unequal parent and child column counts raises `ValueError`; callers build the profile
+    inside their compile-error handling.
     """
     from datetime import datetime
 
-    from decoy_engine.profile import Profile
+    from decoy_engine.profile import Profile, profile_relationships_from_config
 
     return Profile(
         schema_version=1,
         tables=(),
-        relationships=(),
+        relationships=profile_relationships_from_config(config_dict.get("relationships") or []),
         profiled_at=datetime(1970, 1, 1, 0, 0, 0),
         decoy_engine_version=engine_version,
         profile_seed=None,

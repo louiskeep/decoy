@@ -13,12 +13,15 @@ from __future__ import annotations
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import yaml as _yaml
 
 from decoy.cli._yaml_errors import sanitize_yaml_error
 from decoy.cli.exit_codes import EXIT_CAPACITY, EXIT_OK, EXIT_USAGE, EXIT_WARNINGS
+
+if TYPE_CHECKING:
+    from decoy.cli.io import OutputPlacement
 
 # Prefix of the capacity finding on the CHUNKED route, where it is advisory.
 _CHUNKED_CAPACITY_NOTE = (
@@ -112,20 +115,21 @@ def _findings_from_checks(acc: Any, layer: str) -> list[GateFinding]:
 
 
 def _run_config_base(
-    raw: Any, config_path: Path
+    raw: Any, config_path: Path, placement: OutputPlacement | None = None
 ) -> tuple[dict[str, Any] | None, tuple[str, ...], list[GateFinding]]:
     """The config layer: the empty and non-mapping refusals, schema validation, the
-    profile-free plan-compile checks, the target-overwrite advisory and the target format
-    contradictions (`target_format_issues`, the same rule `decoy run` refuses on).
+    profile-free plan-compile checks, the target-overwrite advisory, the target format
+    contradictions (`target_format_issues`, the same rule `decoy run` refuses on) and the
+    project layout checks (`layout_issues`).
 
     `run_config_only_checks` is called here EXACTLY ONCE for the whole gate (F5 dedup).
     Returns `(config, checks_run, findings)`; `config` is None when the layer failed, so the
     caller short-circuits (compile and preflight both need a valid config).
     """
     import decoy_engine
-    from decoy_engine import ConfigError, PipelineConfig, PipelineValidationError
+    from decoy_engine import ConfigError, PipelineValidationError, parse_pipeline_config
+    from decoy_engine.config import PipelineConfigError
     from decoy_engine.plan import PlanCompileError
-    from pydantic import ValidationError
 
     if raw is None:
         return None, (), [GateFinding("config", "error", "yaml.empty", "Pipeline YAML is empty.")]
@@ -145,21 +149,11 @@ def _run_config_base(
         )
 
     try:
-        validated = PipelineConfig.model_validate(raw).model_dump()
-    except ValidationError as exc:
-        findings: list[GateFinding] = []
-        for e in exc.errors():
-            loc_parts = [str(p) for p in e.get("loc", ())]
-            location = ".".join(loc_parts) if loc_parts else None
-            findings.append(
-                GateFinding(
-                    "config",
-                    "error",
-                    e.get("type", "validation_error"),
-                    e.get("msg", str(e)),
-                    location,
-                )
-            )
+        validated = parse_pipeline_config(raw).model_dump()
+    except PipelineConfigError as exc:
+        findings: list[GateFinding] = [
+            GateFinding("config", "error", p.code, p.text, p.location or None) for p in exc.problems
+        ]
         return None, (), findings
     except (PipelineValidationError, ConfigError) as exc:
         return (
@@ -187,17 +181,43 @@ def _run_config_base(
         )
         return None, (), [finding]
 
-    from decoy.cli.io import target_format_issues
+    from decoy.cli.io import (
+        OutputPlacement,
+        fixed_target_overwrites,
+        layout_issues,
+        target_format_issues,
+    )
     from decoy.cli.preflight import _check_target_overwrite, _PreflightAccumulator
 
     advisory = _PreflightAccumulator()
-    _check_target_overwrite(raw, advisory)
+    _check_target_overwrite(raw, advisory, config_path.parent)
     findings = _findings_from_checks(advisory, "config")
     # The route is unknown here, so only the route-free contradictions (chunked=False).
     findings.extend(
         GateFinding("config", "error", i.code, i.message, location=f"targets.{i.table}.format")
         for i in target_format_issues(raw, chunked=False)
     )
+    # Plan 3.14: the layout faults found without a write. One stops the gate here, so the
+    # preflight layer never reads a source for a run that cannot place its output.
+    placement = placement or OutputPlacement()
+    layout = [
+        GateFinding("config", "error", refusal.code, refusal.message, location)
+        for location, refusal in layout_issues(config_path, raw, placement)
+    ]
+    if layout:
+        return None, (), findings + layout
+    # A fixed --out-dir is overwritten in place, so each existing relative target is advised.
+    if placement.kind == "fixed" and placement.directory is not None:
+        findings.extend(
+            GateFinding(
+                "config",
+                "warning",
+                f"target.{table}.would_overwrite",
+                "Output target already exists in --out-dir and would be overwritten.",
+                location,
+            )
+            for table, location in fixed_target_overwrites(raw, placement.directory.resolve())
+        )
     return validated, tuple(checks_run), findings
 
 
@@ -240,8 +260,9 @@ def _run_compile_layer(raw: dict[str, Any], config_dir: Path) -> list[GateFindin
         )
         return findings
 
-    profile = empty_profile_for_no_profile(raw, engine_version)
     try:
+        # Inside the try: an unequal composite relationship raises `ValueError` here.
+        profile = empty_profile_for_no_profile(raw, engine_version)
         plan = compile_plan(
             raw,
             profile,
@@ -273,7 +294,10 @@ def _run_compile_layer(raw: dict[str, Any], config_dir: Path) -> list[GateFindin
 
 
 def _run_preflight_layer(
-    raw: dict[str, Any], config: Path, route: GateRoute
+    raw: dict[str, Any],
+    config: Path,
+    route: GateRoute,
+    compile_errors: frozenset[tuple[str, str | None]] = frozenset(),
 ) -> tuple[list[GateFinding], bool]:
     """The preflight layer: source/file readiness, out-of-core-FK capacity, and native
     companion/eligibility -- the check functions `validate preflight` runs, reused as-is
@@ -282,9 +306,14 @@ def _run_preflight_layer(
     Returns `(findings, capacity_insufficient)`. The capacity fan-in impossibility sets
     `capacity_insufficient` (the EXIT_CAPACITY precedence), except on the CHUNKED route,
     which never takes the route that check prices: there it is a warning.
+
+    A `capacity.plan_uncompilable` FAIL whose (code, location) is in `compile_errors` repeats
+    an error the compile layer already reports, so it becomes a not-checked warning. Matching
+    the location too keeps a same-code failure at another config path.
     """
     from decoy.cli.preflight import (
         CAPACITY_CHECK,
+        PLAN_UNCOMPILABLE_CHECK,
         _check_capacity,
         _check_native,
         _check_source_files,
@@ -302,19 +331,37 @@ def _run_preflight_layer(
                 c.status = "warn"
                 c.message = _CHUNKED_CAPACITY_NOTE + c.message.removeprefix("INSUFFICIENT -- ")
         acc.capacity_insufficient = False
+    for c in acc.checks:
+        if (
+            c.name == PLAN_UNCOMPILABLE_CHECK
+            and c.status == "fail"
+            and (c.code, c.location or None) in compile_errors
+        ):
+            c.status = "warn"
+            c.code = None
+            c.message = "Capacity not checked: the plan does not compile (see the compile error)."
     return _findings_from_checks(acc, "preflight"), acc.capacity_insufficient
 
 
 def run_gate_on_config(
-    raw: Any, config_path: Path, route: GateRoute = GateRoute.PLAIN
+    raw: Any,
+    config_path: Path,
+    route: GateRoute = GateRoute.PLAIN,
+    placement: OutputPlacement | None = None,
 ) -> GateResult:
     """Config + compile + preflight on an already-parsed YAML value, short-circuiting after a
-    failed config layer. `config_path` is used only for its directory."""
-    config, checks_run, config_findings = _run_config_base(raw, config_path)
+    failed config layer. `config_path` names the YAML; `placement` says where relative outputs
+    land (project placement when None)."""
+    config, checks_run, config_findings = _run_config_base(raw, config_path, placement)
     if config is None:
         return GateResult(config_findings, frozenset({"config"}), False)
     compile_findings = _run_compile_layer(raw, config_path.parent)
-    preflight_findings, capacity_insufficient = _run_preflight_layer(raw, config_path, route)
+    compile_errors = frozenset(
+        (f.code, f.location) for f in compile_findings if f.severity == "error"
+    )
+    preflight_findings, capacity_insufficient = _run_preflight_layer(
+        raw, config_path, route, compile_errors
+    )
     return GateResult(
         config_findings + compile_findings + preflight_findings,
         frozenset({"config", "compile", "preflight"}),

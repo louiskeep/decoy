@@ -38,6 +38,7 @@ import yaml as _yaml
 
 from decoy.cli._yaml_errors import sanitize_yaml_error
 from decoy.cli.exit_codes import EXIT_RUNTIME, EXIT_USAGE
+from decoy.cli.io import pipeline_argument, resolve_pipeline
 from decoy.ui.output import OutputMode, emit_json, print_traceback, setup_output
 from decoy.ui.table import make_table
 from decoy.ui.theme import accent, code, error, hint, success, warn
@@ -77,12 +78,8 @@ See also: decoy run, decoy validate, decoy validate preflight.
 
 
 def subset(
-    config: Path = typer.Argument(
-        ...,
-        exists=True,
-        dir_okay=False,
-        readable=True,
-        help="Path to the YAML pipeline config (must declare a subset: block).",
+    config: str = pipeline_argument(
+        help="Path or name of the YAML pipeline config (must declare a subset: block).",
     ),
     out: Path | None = typer.Option(
         None,
@@ -134,6 +131,7 @@ def subset(
     the projected row counts before committing to a real run.
     """
     state = setup_output(json_, quiet, verbose)
+    config_path = resolve_pipeline(config, state, "subset").yaml
     config_str = str(config)
 
     if not dry_run and out is None:
@@ -155,7 +153,7 @@ def subset(
         )
 
     try:
-        raw = _yaml.safe_load(config.read_text(encoding="utf-8"))
+        raw = _yaml.safe_load(config_path.read_text(encoding="utf-8"))
     except _yaml.YAMLError as exc:
         _fail_usage(state, config_str, code_="yaml.parse_error", message=sanitize_yaml_error(exc))
         raise typer.Exit(code=EXIT_USAGE)
@@ -173,21 +171,23 @@ def subset(
         )
         raise typer.Exit(code=EXIT_USAGE)
 
-    from decoy_engine import PipelineConfig
     from decoy_engine import __version__ as engine_version
-    from pydantic import ValidationError
+    from decoy_engine import parse_pipeline_config
+    from decoy_engine.config import PipelineConfigError
 
     try:
-        validated = PipelineConfig.model_validate(raw)
-    except ValidationError as exc:
-        first = exc.errors()[0]
-        loc = ".".join(str(p) for p in first.get("loc", ())) or None
-        msg = first.get("msg", str(exc))
+        validated = parse_pipeline_config(raw)
+    except PipelineConfigError as exc:
+        first = exc.problems[0] if exc.problems else None
         _fail_usage(
             state,
             config_str,
-            code_=first.get("type", "validation_error"),
-            message=f"{msg}" + (f" ({loc})" if loc else ""),
+            code_=first.code if first else "validation_error",
+            message=(
+                f"{first.text}" + (f" ({first.location})" if first.location else "")
+                if first
+                else str(exc)
+            ),
         )
         raise typer.Exit(code=EXIT_USAGE)
 

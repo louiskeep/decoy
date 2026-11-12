@@ -10,6 +10,7 @@ topics produce a `did you mean?` hint.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
 from difflib import get_close_matches
 
@@ -18,6 +19,7 @@ from rich.console import Group
 from rich.panel import Panel
 from rich.text import Text
 
+from decoy.cli import gen
 from decoy.cli.exit_codes import EXIT_USAGE
 from decoy.ui.output import OutputMode, emit_json, setup_output
 from decoy.ui.table import make_table
@@ -28,8 +30,13 @@ from decoy.ui.theme import accent, code, error, hint, info
 class _Topic:
     name: str
     summary: str
-    body: str
+    body: str = ""
     see_also: tuple[str, ...] = ()
+    # Builds the body on demand when part of it comes from an engine registry; `body` is then "".
+    render: Callable[[], str] | None = None
+
+    def text(self) -> str:
+        return self.render() if self.render is not None else self.body
 
 
 _TOPICS: dict[str, _Topic] = {
@@ -55,30 +62,15 @@ _TOPICS: dict[str, _Topic] = {
     ),
     "transforms": _Topic(
         name="transforms",
-        summary="The most common masking transforms (full set in the strategies reference).",
-        body=(
-            "Each masking_rule in the YAML names a `type:` from this set:\n\n"
-            "  faker        Replace with a realistic fake value of a chosen `faker_type`\n"
-            "               (name, email, phone_number, ssn, address, ...). The most common pick.\n"
-            "  hash         Replace with a deterministic hash. Same input -> same output.\n"
-            "               Use when downstream needs to join on the value but not see it.\n"
-            "  redact       Replace with literal text (e.g. 'XXX-XX-XXXX'). Use for fields you\n"
-            "               must blank out entirely, or when format is more important than realism.\n"
-            "  categorical  Select from an explicit list of categories, optionally weighted.\n"
-            "               In mask mode, the same input and policy choose the same category.\n"
-            "  shuffle      Randomly reorder a column's values across rows. Preserves the\n"
-            "               column's distribution while breaking the link to a specific row.\n"
-            "  passthrough  Leave the column unchanged. Useful as documentation of intent.\n"
-            "  date_shift   Add or subtract a random number of days. Preserves date proximity\n"
-            "               for analytics while breaking the exact value.\n"
-            "  formula      Compute the value from a Python-like expression and other columns.\n"
-            "               Power-user knob; can reference {col1}, {col2}, randint(), etc.\n\n"
-            "Five more advanced strategies exist: bucketize, fpe, text_redact, truncate, nested.\n"
-            "The engine ships 13 mask strategies in total; see the strategies reference.\n\n"
-            "Tab completion: `decoy run --help` shows --mode; the engine's transform factory key\n"
-            "set is what completes when a future --mask flag is added."
-        ),
-        see_also=("decoy explain disguises", "decoy explain pipeline"),
+        summary="Every masking strategy the engine registers, with the common ones described.",
+        render=lambda: _transforms_body(),
+        see_also=("decoy explain generation", "decoy explain pipeline", "decoy list strategies"),
+    ),
+    "generation": _Topic(
+        name="generation",
+        summary="Generate synthetic data: the workflow, paths, seed versus key, and every column type.",
+        render=lambda: gen.generation_body(),
+        see_also=("decoy explain unique", "decoy explain keys", "decoy run --help"),
     ),
     "disguises": _Topic(
         name="disguises",
@@ -134,6 +126,12 @@ _TOPICS: dict[str, _Topic] = {
             "  explain keys`.\n\n"
             "Mode is inferred per-table from `columns` (mask) vs `generate_columns`\n"
             "(generate); a single pipeline can mix both kinds.\n\n"
+            "A generate column is {name, type, ...options}; `type: reference` with\n"
+            "`reference_table` and `reference_column` copies keys from another generate\n"
+            "table, and the parent is built first. For a mask pair, `relationships:` lists\n"
+            "parent and child columns that share a namespace.\n\n"
+            "A relative path in the YAML is read from the folder that holds the YAML file, not\n"
+            "the working directory. Generate types and options: `decoy explain generation`.\n\n"
             "Pick a template to start from: `decoy show template minimal`.\n\n"
             "Legacy V1 shape (REJECTED by `decoy validate`): `version: '1.0'`,\n"
             "`input:`, `output:`, `masking_rules:`. Old YAML on disk must be\n"
@@ -154,6 +152,14 @@ _TOPICS: dict[str, _Topic] = {
             "Pick one top-level mode:\n"
             "  mask      sources + tables + targets (V2 PipelineConfig shape).\n"
             "  generate  tables with generate_columns + targets.\n\n"
+            "Common V2 column shape (generate):\n\n"
+            "  - name: parent_id\n"
+            "    type: reference\n"
+            "    reference_table: parents\n"
+            "    reference_column: id\n\n"
+            "A relative path in the YAML (sources, targets, snapshot_file) is read from the\n"
+            "folder that holds the YAML file, whatever the working directory. Every generate\n"
+            "type and option: `decoy explain generation`.\n\n"
             "Common V2 column shape (mask):\n\n"
             "  - name: email\n"
             "    strategy: faker\n"
@@ -443,7 +449,7 @@ _TOPICS: dict[str, _Topic] = {
         name="exit-codes",
         summary="The process exit codes every `decoy` command returns.",
         body=(
-            "Every `decoy` subcommand returns one of six exit codes. Scripts,\n"
+            "Every `decoy` subcommand returns one of seven exit codes. Scripts,\n"
             "Make recipes, and CI pipelines can switch on the integer value.\n\n"
             "  0   Success. The command did what it said. POSIX convention.\n"
             "  1   Usage error. The caller's request was wrong: config did not\n"
@@ -469,14 +475,19 @@ _TOPICS: dict[str, _Topic] = {
             "      budget) has -- the engine's out-of-core-FK memory gate,\n"
             "      either hit mid-run or predicted up front. The fix is a\n"
             "      bigger host/cgroup ceiling or a smaller job. `decoy validate\n"
-            "      preflight` v1 checks this for the out-of-core-FK route only; it does\n"
+            "      preflight` v1 checks this for the out-of-core-FK route; it does\n"
             "      not cover the ingestion peak `decoy run` pays before the\n"
-            "      engine gate runs, or the generate path. A generate run whose\n"
-            "      output cannot fit the memory budget\n"
-            "      (`generation_budget_exceeded`) also exits 5.\n\n"
+            "      engine gate runs. Generated tables whose output cannot fit\n"
+            "      the machine's memory (`generation_budget_exceeded`) exit 5\n"
+            "      at `decoy validate` and before `decoy run` writes anything;\n"
+            "      a run that runs out of memory exits 5 as well.\n"
+            "  6   Partially delivered. `decoy run` wrote some tables and withheld\n"
+            "      the rest. Reserved for best-effort delivery; no run exits 6 yet.\n\n"
+            "Exit 2 also means a command-line usage error that Click rejects before\n"
+            "the command runs, and a bad `--master-key` or `--key-label` on `decoy run`.\n\n"
             "Integer values are stable across releases.\n"
             "The named constants (EXIT_OK / EXIT_USAGE / EXIT_WARNINGS /\n"
-            "EXIT_RUNTIME / EXIT_FINDINGS / EXIT_CAPACITY) live in\n"
+            "EXIT_RUNTIME / EXIT_FINDINGS / EXIT_CAPACITY / EXIT_PARTIAL) live in\n"
             "`decoy.cli.exit_codes` for callers that import them in Python."
         ),
         see_also=("decoy --help", "decoy run --help", "decoy validate preflight --help"),
@@ -563,6 +574,39 @@ _TOPICS: dict[str, _Topic] = {
 }
 
 
+# What the common strategies do. A name the engine no longer registers is never printed, and a
+# registered name with no entry here is still listed, so the list itself is the engine's.
+_STRATEGY_NOTES = {
+    "faker": "A realistic fake value of a chosen `provider` (person_email, ...). The most common pick.",
+    "hash": "A deterministic hash: the same input gives the same output. Joins survive.",
+    "redact": "Literal text in place of the value, e.g. 'XXX-XX-XXXX'.",
+    "categorical": "A pick from an explicit category list, optionally weighted.",
+    "shuffle": "Reorder the column across rows. Keeps the distribution, breaks the row link.",
+    "passthrough": "Leave the column unchanged. Documents intent.",
+    "date_shift": "Move dates by a random number of days. Keeps proximity, hides the exact date.",
+    "formula": "Compute the value from an expression over other columns.",
+}
+
+
+def _transforms_body() -> str:
+    from decoy.cli.cockpit import registered_strategies
+
+    rows = [
+        f"  {e['name']:<14}{_STRATEGY_NOTES.get(e['name'], '')}".rstrip()
+        for e in registered_strategies()
+    ]
+    return (
+        "Each masked column in a mask table names a `strategy:` from this set:\n\n"
+        "  - name: email\n"
+        "    strategy: faker\n"
+        "    provider: person_email\n\n"
+        "Mask strategies in this engine:\n" + "\n".join(rows) + "\n\n"
+        "Inspect one with `decoy show strategy <name>`.\n"
+        "Generate columns use `type:` instead, not `strategy:`. Their types are listed by\n"
+        "`decoy explain generation`."
+    )
+
+
 def topic_names() -> list[str]:
     """Returned to Typer's `autocompletion=` for the topic argument."""
     return list(_TOPICS.keys())
@@ -586,7 +630,7 @@ See also: decoy --help, decoy list templates.
 
 def _render_topic(state, topic: _Topic) -> None:
     """Print one topic as a Rich Panel."""
-    body_text = Text(topic.body, style="info")
+    body_text = Text(topic.text(), style="info")
     children = [body_text]
     if topic.see_also:
         children.append(Text(""))
@@ -646,8 +690,8 @@ def explain(
 ) -> None:
     """Explain a Decoy concept in plain English.
 
-    Built-in topics: modes, transforms, disguises, output, pipeline, yaml,
-    storm, keys, vault, chunked, substrate, differential-privacy, security,
+    Built-in topics: modes, transforms, generation, disguises, output, pipeline,
+    yaml, storm, keys, vault, chunked, substrate, differential-privacy, security,
     completion. Run with no topic to see the full list.
     """
     state = setup_output(json_, quiet, verbose)
@@ -704,7 +748,7 @@ def explain(
                 "status": "ok",
                 "topic": found.name,
                 "summary": found.summary,
-                "body": found.body,
+                "body": found.text(),
                 "see_also": list(found.see_also),
             },
         )

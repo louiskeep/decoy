@@ -1,9 +1,14 @@
 """The success tail of `decoy run`: JSON payload, summary card, report sections and the
 `--post-validate-enforce` exit."""
 
-import typer
+from pathlib import Path
 
-from decoy.cli.exit_codes import EXIT_FINDINGS
+import typer
+from rich.text import Text
+
+from decoy.cli import gen
+from decoy.cli.exit_codes import run_exit_code
+from decoy.cli.io import shown_path
 from decoy.cli.run._context import Mode, RunContext
 from decoy.cli.run._prepare import _has_kind
 from decoy.ui.card import render_card
@@ -17,6 +22,7 @@ from decoy.ui.summary import (
     render_warnings,
     warning_records,
 )
+from decoy.ui.theme import warn
 
 
 def _seed_warnings(raw_cfg: dict | None, *, key_in_effect: bool) -> list[dict]:
@@ -43,6 +49,27 @@ def _next_hint_for_run(raw_cfg: dict | None, mode: "Mode") -> str | None:
     return None
 
 
+def commit_latest(ctx: RunContext) -> None:
+    """Move `LATEST` and `current` to this run when the run will exit 0, and warn if it could not."""
+    if ctx.layout is None:
+        return
+    if ctx.post_validate_enforce and (ctx._report_quality_metrics or {}).get("failed_checks"):
+        return
+    for item in ctx.layout.commit_latest():
+        if ctx.state.mode is not OutputMode.quiet:
+            ctx.state.err_console.print(warn("warning:"), Text(f"{item.code}: {item.message}"))
+
+
+def _where_written(ctx: RunContext) -> dict:
+    """The plan 7.6 `--json` members: the ledger's files and folder, project and pipeline."""
+    described = (
+        ctx.layout.describe(ctx.given_as)
+        if ctx.layout is not None
+        else {"project": None, "pipeline": None}
+    )
+    return {**ctx.published_members(), **described}
+
+
 def finish(ctx: RunContext) -> None:
     """Render the success result and apply the `--post-validate-enforce` exit mapping."""
     # S5 enforce mapping (plan P1-2): the engine never fails the job on a
@@ -54,7 +81,7 @@ def finish(ctx: RunContext) -> None:
     _qm = ctx._report_quality_metrics or {}
     _warnings = warning_records(
         ctx._ev_engine_warnings,
-        _seed_warnings(ctx.raw_cfg, key_in_effect=ctx.resolver is not None),
+        [*_seed_warnings(ctx.raw_cfg, key_in_effect=ctx.resolver is not None), *ctx._cli_warnings],
     )
     _enforce_fires = bool(ctx.post_validate_enforce and _qm.get("failed_checks"))
 
@@ -67,6 +94,7 @@ def finish(ctx: RunContext) -> None:
             "elapsed_s": round(ctx.elapsed, 3),
             "tables": ctx._table_records,
             "warnings": _warnings,
+            **_where_written(ctx),
         }
         payload["resources"] = ctx._resources_record
         if ctx.notify_channels:
@@ -90,12 +118,12 @@ def finish(ctx: RunContext) -> None:
             payload["report"] = report
         emit_json(ctx.state, payload)
         if _enforce_fires:
-            raise typer.Exit(code=EXIT_FINDINGS)
+            raise typer.Exit(code=run_exit_code(blocking_failed=True))
         return
 
     if ctx.state.mode is OutputMode.quiet:
         if _enforce_fires:
-            raise typer.Exit(code=EXIT_FINDINGS)
+            raise typer.Exit(code=run_exit_code(blocking_failed=True))
         return
 
     facts = [
@@ -109,6 +137,8 @@ def finish(ctx: RunContext) -> None:
         ),
         ("Files", str(sum(1 for r in ctx._table_records if r["path"] is not None))),
     ]
+    if ctx.layout is not None:
+        facts.extend(ctx.layout.summary_facts())
     if _warnings:
         facts.append(("Warnings", str(len(_warnings))))
     if ctx._native_route is not None:
@@ -128,7 +158,13 @@ def finish(ctx: RunContext) -> None:
     # S5 report sections (human mode). Rendered below the summary card so the
     # card stays the one-glance result; each is report-only and reads the
     # captured quality metrics.
-    render_table_lines(ctx.state, ctx._table_records)
+    render_table_lines(
+        ctx.state,
+        [
+            {**r, "path": shown_path(Path(r["path"]).resolve()) if r["path"] else None}
+            for r in ctx._table_records
+        ],
+    )
     render_warnings(ctx.state, _warnings)
     if ctx.explain_plan:
         render_execution_route(ctx.state, _qm.get("execution_plan"))
@@ -140,4 +176,28 @@ def finish(ctx: RunContext) -> None:
         render_post_validation(ctx.state, _qm, enforce=ctx.post_validate_enforce)
 
     if _enforce_fires:
-        raise typer.Exit(code=EXIT_FINDINGS)
+        raise typer.Exit(code=run_exit_code(blocking_failed=True))
+
+
+def finish_preview(ctx: RunContext) -> None:
+    """Render a `--rows` preview: the sampled rows (or the `--json` payload) and the warnings."""
+    warnings = warning_records(
+        ctx._ev_engine_warnings,
+        _seed_warnings(ctx.raw_cfg, key_in_effect=ctx.resolver is not None),
+    )
+    if ctx.state.mode is OutputMode.json:
+        emit_json(
+            ctx.state,
+            {
+                "command": "run",
+                "status": "ok",
+                "preview": True,
+                "config": ctx.config_str,
+                "tables": ctx._preview_tables,
+                "warnings": warnings,
+            },
+        )
+        return
+    gen.render_preview(ctx.state, ctx._preview_tables)
+    if ctx.state.mode is not OutputMode.quiet:
+        render_warnings(ctx.state, warnings)

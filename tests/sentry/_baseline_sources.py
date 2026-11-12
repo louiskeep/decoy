@@ -9,7 +9,9 @@ tuple of ``AllowedInternal`` dataclass instances, so ``InCode`` takes a key func
 stringifying a whole entry (which would put reason and removal text in the key).
 
 Named limit: the ratchet sees ``file::symbol`` keys only. Raising an existing entry's ``count``
-is not a new key; the boundary sentry's exact-count check and review hold it.
+is not a new key; the boundary sentry's exact-count check and review hold it. A source whose
+entries are counts (the layout census) also records each count as ``max``, which the ratchet
+lets only fall.
 """
 
 from __future__ import annotations
@@ -91,6 +93,15 @@ class InCode:
     def __call__(self) -> set[str]:
         return {self.key(e) for e in self.items()}
 
+    def maxes(self) -> dict[str, int]:
+        """The integer values of a dict constant, keyed like ``__call__``: the live ``max``."""
+        mapping = (
+            _literal_constant(ROOT / self.test_file, self.constant)
+            if self.literal
+            else getattr(load_module(ROOT / self.test_file), self.constant)
+        )
+        return {self.key(k): int(v) for k, v in mapping.items()}
+
     def reasons(self) -> dict[str, str]:
         out: dict[str, str] = {}
         for e in self.items():
@@ -102,14 +113,42 @@ class InCode:
 
 
 @dataclass(frozen=True)
+class FromFile:
+    """Keys a sentry reads from a committed config file instead of a module constant.
+
+    ``read`` maps the file's text to ``{key: reason}``.
+    """
+
+    path: str
+    read: Callable[[str], dict[str, str]]
+
+    def __call__(self) -> set[str]:
+        return set(self.reasons())
+
+    def reasons(self) -> dict[str, str]:
+        return self.read((ROOT / self.path).read_text(encoding="utf-8"))
+
+
+@dataclass(frozen=True)
 class Source:
     sentry_id: str
     where: str  # file the sentry reads
-    keys: InCode
+    keys: InCode | FromFile
     data_file: str = ""  # a committed data file the sentry reads besides its baseline
+    numeric: bool = False  # entries are counts, recorded as ``max`` beside the reason
+
+    def maxes(self) -> dict[str, int] | None:
+        return self.keys.maxes() if self.numeric else None
 
 
 _SURFACE = "tests/unit/test_surface_docs_consistency.py"
+_SIZE = "tests/sentry/layout/test_module_size.py"
+_FANOUT = "tests/sentry/layout/test_package_fanout.py"
+_SIZE_WHY = "legacy module over the 800-line cap when LAYOUT C2 recorded it; may only shrink"
+_FANOUT_WHY = (
+    "flat package over the 25-module cap when LAYOUT C2 froze it; may only shrink, the next "
+    "module goes in a named sub-package from the CODEMAP map"
+)
 _ROOT_HELP_WHY = (
     "top-level command deliberately kept out of the curated root help quick-start; "
     "the full surface is in decoy --help"
@@ -118,6 +157,21 @@ _README_WHY = (
     "real command the README Common commands table deliberately does not repeat; "
     "the table points readers to decoy --help"
 )
+_EXCEPTION_CONTEXT_WHY = (
+    "existing raise-from-None inside an except block at the B2 base; hoist is V2 corrective work"
+)
+_LAYER_WHY = "back import measured when LAYOUT C3 declared the tiers; may only shrink"
+
+
+def import_layer_reasons(text: str) -> dict[str, str]:
+    """``layers::<importer> -> <imported>`` for each ignore line of ``.importlinter``.
+
+    Layer membership is not keyed here: it is the exact snapshot in ``test_import_layers.py``.
+    """
+    layout = load_module(SENTRY / "layout" / "_layout.py")
+    return {f"layers::{k}": _LAYER_WHY for k in layout.ignore_keys(text)}
+
+
 SOURCES: tuple[Source, ...] = (
     Source(
         "engine-internal-allow",
@@ -126,6 +180,16 @@ SOURCES: tuple[Source, ...] = (
             "tests/sentry/test_engine_internal_boundary.py",
             "ALLOWLIST",
             key=lambda e: f"{e.file}::{e.symbol}",
+            reason=lambda e: e.reason,
+        ),
+    ),
+    Source(
+        "engine-reason-code-copies",
+        "tests/sentry/test_engine_reason_code_copies.py",
+        InCode(
+            "tests/sentry/test_engine_reason_code_copies.py",
+            "ALLOWLIST",
+            key=lambda e: f"{e.file}::{e.code}",
             reason=lambda e: e.reason,
         ),
     ),
@@ -160,6 +224,36 @@ SOURCES: tuple[Source, ...] = (
         ),
     ),
     Source(
+        "manifest-path-forward-allow",
+        "tests/sentry/io_policy/test_manifest_path_resolution.py",
+        InCode(
+            "tests/sentry/io_policy/test_manifest_path_resolution.py",
+            "ALLOWLIST",
+            key=lambda e: f"{e.file}::{e.function}::{e.callee}",
+            reason=lambda e: e.reason,
+        ),
+    ),
+    Source(
+        "output-placement-allow",
+        "tests/sentry/io_policy/test_output_placement.py",
+        InCode(
+            "tests/sentry/io_policy/test_output_placement.py",
+            "ALLOWLIST",
+            key=lambda e: f"{e.file}::{e.function}",
+            reason=lambda e: e.reason,
+        ),
+    ),
+    Source(
+        "output-name-allow",
+        "tests/sentry/io_policy/test_output_placement.py",
+        InCode(
+            "tests/sentry/io_policy/test_output_placement.py",
+            "NAME_ALLOWLIST",
+            key=lambda e: f"{e.file}::{e.function}",
+            reason=lambda e: e.reason,
+        ),
+    ),
+    Source(
         "private-file-sinks",
         "tests/sentry/io_policy/test_private_files.py",
         InCode(
@@ -181,6 +275,26 @@ SOURCES: tuple[Source, ...] = (
         ),
     ),
     Source(
+        "config-route-allow",
+        "tests/sentry/defects/test_config_error_routes.py",
+        InCode(
+            "tests/sentry/defects/test_config_error_routes.py",
+            "ALLOWLIST",
+            key=lambda e: f"{e[0]}::{e[1]}::{e[2]}#{e[3]}",
+            reason=lambda e: e[4],
+        ),
+    ),
+    Source(  # keys of the ratchet-schema baseline itself
+        "exception-context",
+        "tests/sentry/defects/test_exception_context.py",
+        InCode(
+            "tests/sentry/defects/test_exception_context.py",
+            "BASELINE_KEYS",
+            key=str,
+            reason=lambda e: _EXCEPTION_CONTEXT_WHY,
+        ),
+    ),
+    Source(
         "root-help-omitted",
         _SURFACE,
         InCode(_SURFACE, "_ROOT_HELP_OMITTED", reason=lambda e: _ROOT_HELP_WHY, literal=True),
@@ -190,6 +304,19 @@ SOURCES: tuple[Source, ...] = (
         _SURFACE,
         InCode(_SURFACE, "_README_TABLE_OMITTED", reason=lambda e: _README_WHY, literal=True),
     ),
+    Source(
+        "module-size",
+        _SIZE,
+        InCode(_SIZE, "SIZE_ALLOWLIST", reason=lambda e: _SIZE_WHY, literal=True),
+        numeric=True,
+    ),
+    Source(
+        "package-fanout",
+        _FANOUT,
+        InCode(_FANOUT, "FANOUT_ALLOWLIST", reason=lambda e: _FANOUT_WHY, literal=True),
+        numeric=True,
+    ),
+    Source("import-layers", ".importlinter", FromFile(".importlinter", import_layer_reasons)),
 )
 
 # Allowlist-shaped constants a sentry holds that are a closed contract, not a bypass list.
@@ -207,7 +334,7 @@ def baseline_path(sentry_id: str) -> Path:
     return BASELINES / f"{sentry_id}.json"
 
 
-def write_initial() -> None:
+def write_initial(created_in: str = CREATED_IN) -> None:
     """First inventory of each source that has no baseline yet. Never rewrites one that exists:
     after its first inventory a baseline only shrinks, by hand."""
     BASELINES.mkdir(exist_ok=True)
@@ -220,8 +347,12 @@ def write_initial() -> None:
         short = sorted(k for k, r in reasons.items() if len(r.strip()) < MIN_REASON)
         if short:
             raise SystemExit(f"{src.sentry_id}: reason under {MIN_REASON} chars for {short}")
-        entries = {k: {"reason": reasons[k].strip()} for k in sorted(reasons)}
-        doc = {"sentry_id": src.sentry_id, "created_in": CREATED_IN, "entries": entries}
+        entries: dict[str, dict[str, object]] = {
+            k: {"reason": reasons[k].strip()} for k in sorted(reasons)
+        }
+        for k, value in (src.maxes() or {}).items():
+            entries[k]["max"] = value
+        doc = {"sentry_id": src.sentry_id, "created_in": created_in, "entries": entries}
         path.write_text(json.dumps(doc, indent=1) + "\n", encoding="utf-8")
         rows.append(
             f'[[sentry]]\nid = "{src.sentry_id}"\nbaseline = "tests/sentry/baselines/{path.name}"\n'
@@ -235,7 +366,8 @@ def write_initial() -> None:
 
 
 if __name__ == "__main__":
-    if sys.argv[1:] == ["--write-initial"]:
-        write_initial()
+    # The slice name goes in created_in: the ratchet admits a first inventory only from its slice.
+    if sys.argv[1:2] == ["--write-initial"] and len(sys.argv) <= 3:
+        write_initial(*sys.argv[2:3])
     else:
-        raise SystemExit("usage: _baseline_sources.py --write-initial")
+        raise SystemExit("usage: _baseline_sources.py --write-initial [SLICE]")

@@ -14,8 +14,9 @@ EXIT_WARNINGS: a command ran clean except for advisory warnings and
 `--fail-on-warning` was set (the warning-blocking CI gate). Previously the
 integer belonged to the `forge` deprecation shim (removed pre-GA) and S1 docs
 mislabeled it "reserved/unused"; in fact `validate`/`preflight` already
-returned 2 under `--fail-on-warning`, so S2 promotes it to this public name
-with one meaning across every path.
+returned 2 under `--fail-on-warning`, so S2 promotes it to this public name.
+The integer 2 is also what Click exits on a usage error; `decoy run` maps its parameter
+failures to that same integer, not the same meaning (see the `RUN_EXIT_MAP` comment).
 
 OSS.4b (2026-06-02) added EXIT_FINDINGS=4 to support `decoy report integrity`
 (which began under the now-retired `storm` group, relocated in S4b), which has
@@ -36,6 +37,10 @@ Reference: README "Exit codes" section + `decoy explain exit-codes`.
 """
 
 from __future__ import annotations
+
+from collections.abc import Mapping
+from types import MappingProxyType
+from typing import Any, cast
 
 EXIT_OK: int = 0
 """Command succeeded. The default exit code for a clean run; matches POSIX
@@ -97,11 +102,56 @@ FKs into one table at a small budget), not the everyday "job too big for the
 host" the build-floor estimate used to raise -- that estimate is now advisory.
 v1 checks the out-of-core-FK route only; see `decoy explain exit-codes`."""
 
+EXIT_PARTIAL: int = 6
+"""The run delivered some of its tables and withheld the rest (best-effort delivery).
+Reserved: no path reaches it until best-effort delivery ships. Distinct from EXIT_RUNTIME so a
+script can tell a partial delivery from a crash. Ranks between EXIT_USAGE and EXIT_FINDINGS in
+`decoy ci` precedence."""
+
+# Status Typer returns for Ctrl-C (128 plus SIGINT). Private: a public `EXIT_` name in `__all__`
+# would join the `decoy ci` taxonomy, and 130 must not.
+_EXIT_INTERRUPTED = 130
+
+# Where `decoy run` turns an outcome into an exit integer. The error handler and the
+# `--post-validate-enforce` exits read it now; the remaining early refusals move to it later. The
+# key is the engine's `(status, failure category)`. Read-only; a test patches the module name.
+# `(failed, parameter)` is 2 because Click exits 2 on a usage error; the value is the same
+# integer as EXIT_WARNINGS, not the same meaning. Ctrl-C is 130, the status Typer returns today.
+RUN_EXIT_MAP: Mapping[tuple[str, str | None], int] = MappingProxyType(
+    {
+        ("succeeded", None): EXIT_OK,
+        ("findings", None): EXIT_FINDINGS,
+        ("partially_delivered", None): EXIT_PARTIAL,
+        ("failed", "usage"): EXIT_USAGE,
+        ("failed", "parameter"): EXIT_WARNINGS,
+        ("failed", "runtime"): EXIT_RUNTIME,
+        ("failed", "capacity"): EXIT_CAPACITY,
+        ("cancelled", "cancelled"): _EXIT_INTERRUPTED,
+    }
+)
+
+
+def run_exit_code(category: str | None = None, *, blocking_failed: bool = False) -> int:
+    """The exit integer of a `decoy run` outcome, read through the engine's `derive_outcome`."""
+    # Imported here so the engine stays off the `--help` path.
+    from decoy_engine.run_result import derive_outcome
+
+    return derive_outcome(
+        category=cast(Any, category),
+        delivery_mode="in_place",
+        delivery_outcome="nothing",
+        blocking_failed=blocking_failed,
+        exit_map=RUN_EXIT_MAP,
+    ).exit_code
+
+
 __all__ = [
     "EXIT_CAPACITY",
     "EXIT_FINDINGS",
     "EXIT_OK",
+    "EXIT_PARTIAL",
     "EXIT_RUNTIME",
     "EXIT_USAGE",
     "EXIT_WARNINGS",
+    "RUN_EXIT_MAP",
 ]

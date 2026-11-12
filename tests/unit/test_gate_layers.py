@@ -178,10 +178,17 @@ def test_target_overwrite_is_a_config_layer_warning_once(tmp_path: Path) -> None
         assert gate_exit_code(result, False) == EXIT_OK
 
 
-def test_missing_target_directory_is_a_config_layer_warning(tmp_path: Path) -> None:
+def test_missing_target_directory_gives_no_finding(tmp_path: Path) -> None:
+    """The writer creates the folder, so a missing parent is not a finding."""
     result = run_config_gate(_config(tmp_path, parent="no_such_dir"))
+    assert result.findings == []
+
+
+def test_unwritable_target_directory_is_a_config_layer_warning(tmp_path: Path) -> None:
+    (tmp_path / "blocker").write_text("a file, not a folder\n", encoding="utf-8")
+    result = run_config_gate(_config(tmp_path, parent="blocker"))
     assert [(f.layer, f.severity, f.code) for f in result.findings] == [
-        ("config", "warning", "target.customers.parent_missing")
+        ("config", "warning", "target.customers.parent_unwritable")
     ]
 
 

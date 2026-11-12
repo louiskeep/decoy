@@ -214,6 +214,14 @@ disposition = "public"
 reason = "Chunked masked output keeps the old file's mode bits (OQ3)."
 
 [[row]]
+file = "cli/io/_small_file.py"
+function = "read_small_file"
+sink = "os.open"
+ordinal = 1
+disposition = "read"
+reason = "Opens a project marker, claim or LATEST read-only after an lstat check, without following links or blocking; writes nothing."
+
+[[row]]
 file = "cli/run/_prepare.py"
 function = "prepare"
 sink = "tempfile.mkdtemp"

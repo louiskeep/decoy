@@ -34,6 +34,7 @@ from tests.ci_support import (
     write,
     write_clean_pipeline,
 )
+from tests.run_outputs import latest_output
 
 PATTERN = {
     "id": "pii.seeded-test-identifier",
@@ -97,7 +98,7 @@ def test_real_evidence_mismatch_is_findings_exit_four(tmp_path: Path) -> None:
     ok, report = _run(repo)
     assert ok.returncode == EXIT_OK, ok.stderr
     assert _check(report, "evidence")["status"] == "ok"
-    write(repo, "out/out.csv", "tampered\n")
+    latest_output(repo, "out/out.csv").write_text("tampered\n", encoding="utf-8")
     proc, report = _run(repo)
     assert proc.returncode == EXIT_FINDINGS, proc.stderr
     assert report["status"] == "findings"
@@ -208,6 +209,10 @@ def test_over_limit_staged_scan_is_partial_exit_usage_never_clean(tmp_path: Path
 
 def test_validation_warning_blocks_only_when_configured(tmp_path: Path) -> None:
     repo = _repo(tmp_path)
+    # An existing absolute target draws the overwrite warning; a relative one lands in a new
+    # run folder and draws none (PROJECT-LAYOUT P4, AT-16).
+    target = repo / "out" / "out.csv"
+    write(repo, "pipeline.yaml", CLEAN_PIPELINE.replace("path: out/out.csv", f"path: {target}"))
     write(repo, "out/out.csv", "already here\n")
     write(repo, MANIFEST_NAME, ci_manifest())  # default: warnings block
     proc, report = _run(repo)

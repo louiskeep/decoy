@@ -26,7 +26,8 @@ UNKNOWN_CODE = "unknown_code"
 # data, so only the fixed family token is emitted.
 _TEMPLATED = re.compile(
     r"^(?P<family>source|target)\..+\."
-    r"(?P<check>type|path|exists|is_file|readable|would_overwrite|parent_missing)$",
+    r"(?P<check>type|path|exists|is_file|readable|would_overwrite|"
+    r"path_invalid|parent_unwritable)\Z",
     re.DOTALL,
 )
 _TEMPLATED_CODES = frozenset(
@@ -37,7 +38,8 @@ _TEMPLATED_CODES = frozenset(
         "source.is_file",
         "source.readable",
         "target.would_overwrite",
-        "target.parent_missing",
+        "target.path_invalid",
+        "target.parent_unwritable",
     }
 )
 
@@ -148,6 +150,7 @@ _PYDANTIC_ERROR_TYPES: frozenset[str] = frozenset(
         "set_type",
         "string_not_ascii",
         "string_pattern_mismatch",
+        "string_sub_type",
         "string_too_long",
         "string_too_short",
         "string_type",
@@ -205,7 +208,7 @@ def _engine_registry_codes() -> frozenset[str]:
     return _codes_from_registry(reasons.manifest()["entries"])
 
 
-# Literal codes the engine emits outside the registry (sources at engine v0.21.0). The test
+# Literal codes the engine emits outside the registry (sources at engine v0.22.0). The test
 # holds this set equal to what an AST scan of the installed engine finds minus the registry.
 _ENGINE_LITERAL_CODES: frozenset[str] = frozenset(
     {
@@ -246,8 +249,13 @@ EVIDENCE_KINDS: frozenset[str] = frozenset(
 @cache
 def validation_codes() -> frozenset[str]:
     """Every code a validation finding's rule_id may carry."""
+    # Imported here, not at module load: the layout registry sits in a package that reaches the
+    # engine, and `decoy ci` imports this module with the engine's logging still silenced.
+    from decoy.cli.io import GATE_CODES as layout_gate_codes
+
     return (
         _CLI_GATE_CODES
+        | layout_gate_codes
         | _PYDANTIC_ERROR_TYPES
         | _engine_registry_codes()
         | _ENGINE_LITERAL_CODES

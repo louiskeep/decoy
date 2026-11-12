@@ -31,5 +31,41 @@ id = "target-writes-allow"
 baseline = "tests/sentry/baselines/target-writes-allow.json"
 
 [[sentry]]
+id = "manifest-path-forward-allow"
+baseline = "tests/sentry/baselines/manifest-path-forward-allow.json"
+
+[[sentry]]
+id = "output-placement-allow"
+baseline = "tests/sentry/baselines/output-placement-allow.json"
+
+[[sentry]]
+id = "output-name-allow"
+baseline = "tests/sentry/baselines/output-name-allow.json"
+
+[[sentry]]
+id = "config-route-allow"
+baseline = "tests/sentry/baselines/config-route-allow.json"
+
+[[sentry]]
+id = "exception-context"
+baseline = "tests/sentry/baselines/exception-context.json"
+
+[[sentry]]
 id = "private-file-sinks"
 baseline = "tests/sentry/baselines/private-file-sinks.json"
+
+[[sentry]]
+id = "engine-reason-code-copies"
+baseline = "tests/sentry/baselines/engine-reason-code-copies.json"
+
+[[sentry]]
+id = "module-size"
+baseline = "tests/sentry/baselines/module-size.json"
+
+[[sentry]]
+id = "package-fanout"
+baseline = "tests/sentry/baselines/package-fanout.json"
+
+[[sentry]]
+id = "import-layers"
+baseline = "tests/sentry/baselines/import-layers.json"

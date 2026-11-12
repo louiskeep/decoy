@@ -9,6 +9,7 @@ import typer
 from rich.text import Text
 
 from decoy import _mask_secret, _mask_secret_guidance, _native_gate, _resources
+from decoy.cli import gen
 from decoy.cli.exit_codes import EXIT_USAGE
 from decoy.cli.gate import (
     GateFinding,
@@ -17,7 +18,13 @@ from decoy.cli.gate import (
     check_before_run,
     parse_pipeline_yaml,
 )
-from decoy.cli.io import DuckDBSourceError, acquire_relation, parse_flag
+from decoy.cli.io import (
+    DuckDBSourceError,
+    OutputPlacement,
+    acquire_relation,
+    parse_flag,
+    quarantine_enabled,
+)
 from decoy.cli.io import resolve_path as _resolve_path
 from decoy.cli.run._context import RunContext
 from decoy.cli.run._execute import (
@@ -26,6 +33,8 @@ from decoy.cli.run._execute import (
     _ChunkedGenerateError,
     _ChunkedReportFlagError,
     _load_sources_from_config,
+    _note_chunked_key_check_skipped,
+    _refuse_chunked_integrity_requested,
     _require_local_io_endpoints,
 )
 from decoy.cli.run._vault import _CHUNKED_VAULT_MESSAGE, _ChunkedVaultError, _VaultUsageError
@@ -147,6 +156,24 @@ _FIDELITY_NEEDS_MASK = (
 )
 
 
+_PREVIEW_QUARANTINE = (
+    "--rows previews write nothing, so they cannot run with quarantine enabled. "
+    "Turn quarantine off in the config to preview."
+)
+
+
+def _refuse_usage(state, config_str: str, text: str) -> None:
+    """Print a usage refusal in the active output mode and exit 1, before any engine call."""
+    if state.mode is OutputMode.json:
+        emit_json(
+            state,
+            {"command": "run", "status": "error", "config": config_str, "error": text},
+        )
+    elif state.mode is not OutputMode.quiet:
+        state.err_console.print(error("error:"), text, markup=False)
+    raise typer.Exit(code=EXIT_USAGE)
+
+
 def _refuse_fidelity_without_mask(state, config_str: str, raw_cfg: dict) -> None:
     """Exit 1 before any engine call when `--fidelity` is given and no table is a mask table.
 
@@ -154,42 +181,46 @@ def _refuse_fidelity_without_mask(state, config_str: str, raw_cfg: dict) -> None
     """
     if not raw_cfg.get("tables"):
         return
-    if state.mode is OutputMode.json:
-        emit_json(
-            state,
-            {
-                "command": "run",
-                "status": "error",
-                "config": config_str,
-                "error": _FIDELITY_NEEDS_MASK,
-            },
+    _refuse_usage(state, config_str, _FIDELITY_NEEDS_MASK)
+
+
+def refuse_preview(ctx: RunContext) -> None:
+    """Exit 1 before any engine call when `--rows` cannot run: a bad size, a flag that writes
+    or reports, or a mask table. Names flags only."""
+    assert ctx.rows is not None
+    flags = [
+        name
+        for name, given in (
+            ("--chunked", ctx.chunked),
+            ("--chunk-size", ctx.chunk_size is not None),
+            ("--evidence-out", ctx.evidence_out is not None),
+            ("--notify", bool(ctx.notify)),
+            ("--vault", ctx.vault is not None),
+            ("--fidelity", ctx.fidelity),
+            ("--explain-plan", ctx.explain_plan),
+            ("--post-validate", ctx.post_validate),
+            ("--post-validate-enforce", ctx.post_validate_enforce),
+            ("--native", ctx.native),
+            ("--duckdb-source", bool(ctx.duckdb_source)),
+            ("--out-dir", ctx.out_dir is not None),
         )
-    elif state.mode is not OutputMode.quiet:
-        state.err_console.print(error("error:"), _FIDELITY_NEEDS_MASK, markup=False)
-    raise typer.Exit(code=EXIT_USAGE)
+        if given
+    ]
+    text = gen.refusal(ctx.rows, flags, _has_kind(ctx.raw_cfg, "columns"))
+    if text is not None:
+        _refuse_usage(ctx.state, ctx.config_str, text)
+    if quarantine_enabled(ctx.raw_cfg):
+        _refuse_usage(ctx.state, ctx.config_str, _PREVIEW_QUARANTINE)
 
 
-def prepare(ctx: RunContext, _scopes: contextlib.ExitStack) -> None:
-    """Everything between the config read and the first row: the engine import, the config
-    guards, `--duckdb-source` staging, the gate, admission and the source load."""
-    from decoy_engine import (
-        __version__ as engine_version,
-    )
-    from decoy_engine import run_pipeline  # noqa: F401  (import kept at its original point)
-
-    ctx.engine_version = engine_version
-
-    if ctx.config_read_error is not None:
-        raise ctx.config_read_error
-    if ctx.saved_findings:
-        raise PreRunCheckError.from_findings(ctx.saved_findings)
-
-    # DE-02 secret-disclosure ROOT guard: validate the RAW YAML `mask_secret_ref`
-    # BEFORE PipelineConfig.model_validate(raw). A wrong-type value would raise a
-    # Pydantic ValidationError echoing `input_value` (the secret) as exit 3. A
-    # redacted usage error here keeps the value out of Pydantic's diagnostics.
-    # YAML-only: the --mask-secret flag is always a str from Typer.
-    _raw_gs = ctx.raw.get("global_settings") if isinstance(ctx.raw, dict) else None
+def _guard_mask_secret_ref(raw: object) -> None:
+    """DE-02 secret-disclosure ROOT guard: validate the RAW YAML `mask_secret_ref` BEFORE
+    PipelineConfig.model_validate(raw). A wrong-type value would raise a Pydantic
+    ValidationError echoing `input_value` (the secret) as exit 3. A redacted usage error here
+    keeps the value out of Pydantic's diagnostics. YAML-only: the --mask-secret flag is always
+    a str from Typer.
+    """
+    _raw_gs = raw.get("global_settings") if isinstance(raw, dict) else None
     # A non-dict `global_settings` (e.g. a YAML list) is malformed AND
     # could smuggle a mask_secret_ref value nested where the dict-path
     # check below can't see it -- Pydantic would then echo that value in
@@ -210,6 +241,96 @@ def prepare(ctx: RunContext, _scopes: contextlib.ExitStack) -> None:
             "It is a REFERENCE, never the raw secret. "
             "See: decoy explain keys."
         )
+
+
+def _placement(ctx: RunContext) -> OutputPlacement:
+    """Where this run's relative outputs land, for the gate: the typed `--out-dir`, else the
+    project run folder; the typed side files join the collision rule either way."""
+    typed = tuple(
+        (flag, path)
+        for flag, path in (("--evidence-out", ctx.evidence_out), ("--vault", ctx.vault))
+        if path is not None
+    )
+    if ctx.out_dir is not None:
+        return OutputPlacement.fixed(ctx.out_dir, typed)
+    return OutputPlacement(typed=typed)
+
+
+def prepare_preview(ctx: RunContext) -> None:
+    """The `--rows` counterpart of `prepare`: the config guards and the gate on the scaled
+    config. No source is read and no vault or key provider is opened, because a preview has
+    no mask table."""
+    from decoy_engine import __version__ as engine_version
+
+    assert ctx.rows is not None
+    ctx.engine_version = engine_version
+    if ctx.config_read_error is not None:
+        raise ctx.config_read_error
+    if ctx.saved_findings:
+        raise PreRunCheckError.from_findings(ctx.saved_findings)
+    _guard_mask_secret_ref(ctx.raw)
+    ctx.config_dict = check_before_run(
+        gen.scale_row_counts(ctx.raw, ctx.rows),
+        ctx.config,
+        GateRoute.PLAIN,
+        ctx.state,
+        OutputPlacement.preview(),
+    )
+    ctx.any_generate = True
+    ctx._res = _resources.resolve(max_memory=ctx.max_memory, threads=ctx.threads)
+
+
+def _refuse_chunked_integrity(ctx: RunContext) -> None:
+    """Refuse `--chunked` with post-scan integrity before any source is opened or staged.
+
+    The model is validated first so a malformed config still gets its normal validation
+    error from the gate. `--duckdb-source` tables get a placeholder file source for this
+    check only, because staging has not run and the model requires a source per mask table.
+    """
+    from decoy_engine import ConfigError, PipelineValidationError, parse_pipeline_config
+    from decoy_engine.config import PipelineConfigError
+
+    if not isinstance(ctx.raw, dict):
+        return
+    # A null `sources` block is an omitted one, as in staging below.
+    sources = ctx.raw.get("sources")
+    if sources is not None and not isinstance(sources, dict):
+        return
+    probe = {**ctx.raw, "sources": dict(sources or {})}
+    for spec in ctx.duckdb_source:
+        try:
+            probe["sources"][parse_flag(spec)[0]] = {
+                "type": "file",
+                "format": "parquet",
+                "path": "staged.parquet",
+            }
+        except DuckDBSourceError:
+            return
+    try:
+        validated = parse_pipeline_config(probe).model_dump()
+    except (PipelineConfigError, PipelineValidationError, ConfigError):
+        return
+    _refuse_chunked_integrity_requested(validated)
+
+
+def prepare(ctx: RunContext, _scopes: contextlib.ExitStack) -> None:
+    """Everything between the config read and the first row: the engine import, the config
+    guards, `--duckdb-source` staging, the gate, admission and the source load."""
+    from decoy_engine import (
+        __version__ as engine_version,
+    )
+    from decoy_engine import run_pipeline  # noqa: F401  (import kept at its original point)
+
+    ctx.engine_version = engine_version
+
+    if ctx.config_read_error is not None:
+        raise ctx.config_read_error
+    if ctx.saved_findings:
+        raise PreRunCheckError.from_findings(ctx.saved_findings)
+
+    _guard_mask_secret_ref(ctx.raw)
+    if ctx.chunked:
+        _refuse_chunked_integrity(ctx)
 
     # DuckDB-in sources: acquire each flagged relation read-only to a
     # temp Parquet and rewrite the in-memory source to that Parquet
@@ -267,7 +388,11 @@ def prepare(ctx: RunContext, _scopes: contextlib.ExitStack) -> None:
     # validated config, so the run validates once. The DE-02 guard above keeps a
     # mask_secret_ref value out of every schema diagnostic.
     ctx.config_dict = check_before_run(
-        ctx.raw, ctx.config, GateRoute.CHUNKED if ctx.chunked else GateRoute.PLAIN, ctx.state
+        ctx.raw,
+        ctx.config,
+        GateRoute.CHUNKED if ctx.chunked else GateRoute.PLAIN,
+        ctx.state,
+        _placement(ctx),
     )
 
     # Cloud (s3/gcs) sources/targets are refused inside the shared
@@ -414,6 +539,7 @@ def prepare(ctx: RunContext, _scopes: contextlib.ExitStack) -> None:
     ctx._resources_record = ctx._res.record()
     if ctx.chunked:
         _check_chunked_tables(ctx.config_dict)
+        _note_chunked_key_check_skipped(ctx)
     else:
         ctx.sources = _load_sources_from_config(ctx.config_dict, ctx.config.parent)
     # One admission per run: the vault writer and every engine entry get this

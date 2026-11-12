@@ -27,6 +27,7 @@ The call scanner is shared with G-ONE-TARGET-WRITE (tests/sentry/io_policy/_call
 
 from __future__ import annotations
 
+import ast
 import json
 from dataclasses import dataclass
 from pathlib import Path
@@ -56,9 +57,9 @@ ALLOWLIST: tuple[AllowedRead, ...] = (
         "Reads the bundled demo sample for the STORM scan step; not a declared source.",
     ),
     AllowedRead(
-        "cli/fit.py",
-        "fit",
-        3,
+        "cli/gen/_fit.py",
+        "read_fit_csv",
+        1,
         "A caller-named file with its own parse flags; not a declared source.",
     ),
     AllowedRead(
@@ -150,6 +151,70 @@ def test_baseline_json_records_the_same_entries_and_reasons() -> None:
     entries = json.loads(BASELINE.read_text(encoding="utf-8"))["entries"]
     expected = {f"{a.file}::{a.function}": {"reason": a.reason} for a in ALLOWLIST}
     assert entries == expected
+
+
+# The callers of `cli/gen/_fit.py::read_fit_csv`, pinned by (file, function). The allowlist above
+# covers the one pandas call inside it; this pins who may reach that call.
+FIT_READER = "read_fit_csv"
+FIT_READER_CALLERS = frozenset({("cli/fit.py", "fit"), ("cli/gen/_fit.py", "fit_exact_snapshot")})
+
+
+def fit_reader_callers(root: Path) -> set[tuple[str, str]]:
+    """(file, innermost function) of every call of `read_fit_csv`, under any import spelling."""
+    found: set[tuple[str, str]] = set()
+    for path in sorted(root.rglob("*.py")):
+        rel = path.relative_to(root).as_posix()
+        found.update((rel, scope) for scope in _fit_reader_scopes(path.read_text(encoding="utf-8")))
+    return found
+
+
+def _fit_reader_scopes(source: str) -> list[str]:
+    scopes: list[str] = []
+    tree = ast.parse(source)
+    names = {FIT_READER}
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ImportFrom):
+            names.update(a.asname for a in node.names if a.name == FIT_READER and a.asname)
+
+    def walk(node: ast.AST, scope: str) -> None:
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            scope = node.name
+        if isinstance(node, ast.Call):
+            func = node.func
+            name = func.attr if isinstance(func, ast.Attribute) else getattr(func, "id", "")
+            if name in names:
+                scopes.append(scope)
+        for child in ast.iter_child_nodes(node):
+            walk(child, scope)
+
+    walk(tree, "<module>")
+    return scopes
+
+
+def test_read_fit_csv_has_exactly_the_pinned_callers() -> None:
+    assert fit_reader_callers(SRC) == FIT_READER_CALLERS
+
+
+def test_a_third_read_fit_csv_caller_is_red(tmp_path: Path) -> None:
+    pkg = tmp_path / "cli"
+    pkg.mkdir()
+    (pkg / "third.py").write_text(
+        "from decoy.cli.gen import read_fit_csv\ndef load(p):\n    return read_fit_csv(p)\n",
+        encoding="utf-8",
+    )
+    (pkg / "fourth.py").write_text(
+        "from decoy.cli import gen\ndef load(p):\n    return gen.read_fit_csv(p)\n",
+        encoding="utf-8",
+    )
+    (pkg / "fifth.py").write_text(
+        "from decoy.cli.gen import read_fit_csv as rf\ndef load(p):\n    return rf(p)\n",
+        encoding="utf-8",
+    )
+    assert fit_reader_callers(tmp_path) == {
+        ("cli/third.py", "load"),
+        ("cli/fourth.py", "load"),
+        ("cli/fifth.py", "load"),
+    }
 
 
 def test_the_choke_point_reads_through_the_engine() -> None:

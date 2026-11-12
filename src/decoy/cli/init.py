@@ -51,6 +51,13 @@ Examples:
     table, writes the YAML with `# REVIEW:` comments above every
     inferred entry. The user must read + edit before running.
 
+  decoy init --preset generate -o -
+    Print the generate template on stdout and nothing else there.
+
+  decoy init people.csv --preset generate -o gen/pipeline.yaml
+    Fit people.csv, then write gen/people.snapshot.json and a generate config
+    that names it. Both files are written together or not at all.
+
   decoy init --yes
     Skip confirmation when overwriting an existing file.
 
@@ -82,7 +89,7 @@ def _render(preset: str, input_path: str | None, output_path: str | None) -> str
 
 
 # A plain-scalar value and an optional trailing comment; quoted values are replaced whole.
-_PLAIN_VALUE_WITH_COMMENT = re.compile(r"(?P<value>[^'\"#][^#]*?)(?P<comment>[ \t]+#.*)?$")
+_PLAIN_VALUE_WITH_COMMENT = re.compile(r"(?P<value>[^'\"#][^#]*?)(?P<comment>[ \t]+#.*)?\Z")
 
 
 def _entry_path_line(lines: list[str], key: str) -> int:
@@ -395,11 +402,11 @@ def _validate_scaffold(body: str) -> None:
     """
     try:
         import yaml
-        from decoy_engine.config import PipelineConfig
+        from decoy_engine.config import parse_pipeline_config
     except Exception:
         return
     parsed = yaml.safe_load(body)
-    PipelineConfig.model_validate(parsed)
+    parse_pipeline_config(parsed)
 
 
 def _scaffold_from_file(
@@ -527,6 +534,13 @@ def _init(
     """
     state = setup_output(json_, quiet, verbose)
 
+    # A CSV with the generate preset fits a snapshot and writes it with the config.
+    if input_file is not None and preset == "generate":
+        from decoy.cli.gen import scaffold_generate
+
+        scaffold_generate(state, input_file, out, yes=yes)
+        return
+
     # Column-aware scaffolding (OSS.4c): an input file without --preset
     # routes through STORM-driven inference instead of the template path.
     # If both are given, --preset wins (explicit user override).
@@ -622,6 +636,10 @@ def _init(
                 )
         raise typer.Exit(code=EXIT_USAGE)
 
+    if str(out) == "-":
+        _template_to_stdout(state, preset)
+        return
+
     if out.exists() and not yes:
         if state.mode is not OutputMode.default:
             state.err_console.print(error("error:"), f"{out} already exists.")
@@ -699,11 +717,39 @@ def _init(
     _print_keyed_hint(state, rendered)
 
 
-def _print_keyed_hint(state: OutputState, body: str) -> None:
+def _template_to_stdout(state: OutputState, preset: str | None) -> None:
+    """`-o -` with a template: the YAML alone on stdout, every other line on stderr.
+
+    No wizard: its prompts would land on stdout beside the YAML. `--json` also wants stdout,
+    so the two are refused.
+    """
+    import sys
+
+    if state.mode is OutputMode.json:
+        emit_json(
+            state,
+            {
+                "command": "init",
+                "status": "error",
+                "error": "-o - prints the YAML on stdout, which --json also uses.",
+            },
+        )
+        raise typer.Exit(code=EXIT_USAGE)
+    chosen = preset or "minimal"
+    rendered = _render(chosen, None, None)
+    sys.stdout.write(rendered)
+    sys.stdout.flush()
+    if state.mode is not OutputMode.quiet:
+        state.err_console.print(success("OK"), "printed preset", code(chosen))
+        _print_keyed_hint(state, rendered, to_stderr=True)
+
+
+def _print_keyed_hint(state: OutputState, body: str, *, to_stderr: bool = False) -> None:
     import yaml as _yaml
 
     if _mask_secret_guidance.config_is_keyed(_yaml.safe_load(body)):
-        state.console.print(hint("Keyed:"), _mask_secret_guidance.INIT_HINT, markup=False)
+        console = state.err_console if to_stderr else state.console
+        console.print(hint("Keyed:"), _mask_secret_guidance.INIT_HINT, markup=False)
 
 
 _init.__doc__ = _init.__doc__

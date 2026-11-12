@@ -1,7 +1,8 @@
 """Every committed baseline or allowlist a CLI sentry reads is registered and mirrored.
 
 The ratchet only protects what ``sentry_registry.toml`` names. This test ties each live source
-to its registered baseline (same key set, both directions) and fails when any file in the
+to its registered baseline (same key set, both directions; a numeric source's ``max`` values
+too) and fails when any file in the
 ``SENTRIES`` manifest (``tests/unit`` sentries included) holds an allowlist-shaped constant or
 reads a committed list that is not registered, so a new allowlist cannot sit beside the ratchet.
 
@@ -46,6 +47,17 @@ def test_source_matches_its_registered_baseline(src: bs.Source) -> None:
     live, recorded = src.keys(), set(doc["entries"])
     assert live - recorded == set(), "live entries missing from the baseline"
     assert recorded - live == set(), "stale baseline entries (shrink the baseline)"
+    maxes = src.maxes()
+    if maxes is not None:
+        assert {k: doc["entries"][k].get("max") for k in recorded} == maxes, (
+            "a numeric entry's recorded max differs from its live value"
+        )
+
+
+def test_every_numeric_source_declares_its_max() -> None:
+    """A source whose entries are counts must emit them as ``max`` so the ratchet sees them."""
+    numeric = {s.sentry_id for s in bs.SOURCES if s.maxes() is not None}
+    assert numeric == {"module-size", "package-fanout"}
 
 
 def test_registry_has_no_source_less_sentry() -> None:
@@ -90,7 +102,9 @@ def unregistered_readers(
 
 
 def _covered() -> tuple[set[tuple[str, str]], set[str]]:
-    consts = {(s.keys.name, s.keys.constant) for s in bs.SOURCES} | set(bs.NOT_A_LIST_CONSTS)
+    consts = {
+        (s.keys.name, s.keys.constant) for s in bs.SOURCES if isinstance(s.keys, bs.InCode)
+    } | set(bs.NOT_A_LIST_CONSTS)
     files = {Path(p).name for p in registry().values()}
     files |= {Path(s.data_file).name for s in bs.SOURCES if s.data_file}
     return consts, files

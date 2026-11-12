@@ -1,0 +1,117 @@
+{
+ "sentry_id": "exception-context",
+ "created_in": "B2",
+ "entries": {
+  "decoy/_native_gate.py::pre_execution_gate::0": {
+   "reason": "existing raise-from-None inside an except block at the B2 base; hoist is V2 corrective work"
+  },
+  "decoy/_private_file.py::_restrict_directory::0": {
+   "reason": "existing raise-from-None inside an except block at the B2 base; hoist is V2 corrective work"
+  },
+  "decoy/api.py::mask::0": {
+   "reason": "existing raise-from-None inside an except block at the B2 base; hoist is V2 corrective work"
+  },
+  "decoy/api.py::mask::1": {
+   "reason": "existing raise-from-None inside an except block at the B2 base; hoist is V2 corrective work"
+  },
+  "decoy/ci/manifest.py::_StrictLoader.construct_mapping::0": {
+   "reason": "existing raise-from-None inside an except block at the B2 base; hoist is V2 corrective work"
+  },
+  "decoy/ci/manifest.py::_contained::0": {
+   "reason": "existing raise-from-None inside an except block at the B2 base; hoist is V2 corrective work"
+  },
+  "decoy/ci/manifest.py::_parse::0": {
+   "reason": "existing raise-from-None inside an except block at the B2 base; hoist is V2 corrective work"
+  },
+  "decoy/ci/manifest.py::load_manifest::0": {
+   "reason": "existing raise-from-None inside an except block at the B2 base; hoist is V2 corrective work"
+  },
+  "decoy/ci/manifest.py::load_manifest::1": {
+   "reason": "existing raise-from-None inside an except block at the B2 base; hoist is V2 corrective work"
+  },
+  "decoy/ci/manifest.py::load_manifest::2": {
+   "reason": "existing raise-from-None inside an except block at the B2 base; hoist is V2 corrective work"
+  },
+  "decoy/ci/manifest.py::load_manifest::3": {
+   "reason": "existing raise-from-None inside an except block at the B2 base; hoist is V2 corrective work"
+  },
+  "decoy/cli/_duckdb_source.py::acquire_relation::0": {
+   "reason": "existing raise-from-None inside an except block at the B2 base; hoist is V2 corrective work"
+  },
+  "decoy/cli/_duckdb_source.py::acquire_relation::1": {
+   "reason": "existing raise-from-None inside an except block at the B2 base; hoist is V2 corrective work"
+  },
+  "decoy/cli/_token_vault.py::LocalTokenVault.__init__::0": {
+   "reason": "existing raise-from-None inside an except block at the B2 base; hoist is V2 corrective work"
+  },
+  "decoy/cli/_token_vault.py::LocalTokenVault.__init__::1": {
+   "reason": "existing raise-from-None inside an except block at the B2 base; hoist is V2 corrective work"
+  },
+  "decoy/cli/_token_vault.py::LocalTokenVault.put::0": {
+   "reason": "existing raise-from-None inside an except block at the B2 base; hoist is V2 corrective work"
+  },
+  "decoy/cli/ci.py::_safe_target::0": {
+   "reason": "existing raise-from-None inside an except block at the B2 base; hoist is V2 corrective work"
+  },
+  "decoy/cli/ci.py::check::0": {
+   "reason": "existing raise-from-None inside an except block at the B2 base; hoist is V2 corrective work"
+  },
+  "decoy/cli/gen/_fit.py::fit_exact_snapshot::0": {
+   "reason": "existing raise-from-None inside an except block at the B2 base; hoist is V2 corrective work"
+  },
+  "decoy/cli/gen/_fit.py::fit_exact_snapshot::1": {
+   "reason": "existing raise-from-None inside an except block at the B2 base; hoist is V2 corrective work"
+  },
+  "decoy/cli/init.py::_init::0": {
+   "reason": "existing raise-from-None inside an except block at the B2 base; hoist is V2 corrective work"
+  },
+  "decoy/cli/io/_scan_set.py::load_scan_set::0": {
+   "reason": "existing raise-from-None inside an except block at the B2 base; hoist is V2 corrective work"
+  },
+  "decoy/cli/report.py::_integrity::0": {
+   "reason": "existing raise-from-None inside an except block at the B2 base; hoist is V2 corrective work"
+  },
+  "decoy/cli/run/_notify.py::_start_telemetry::0": {
+   "reason": "existing raise-from-None inside an except block at the B2 base; hoist is V2 corrective work"
+  },
+  "decoy/cli/run/_notify.py::_start_telemetry::1": {
+   "reason": "existing raise-from-None inside an except block at the B2 base; hoist is V2 corrective work"
+  },
+  "decoy/cli/scan.py::_diff::0": {
+   "reason": "existing raise-from-None inside an except block at the B2 base; hoist is V2 corrective work"
+  },
+  "decoy/cli/scan.py::_diff::1": {
+   "reason": "existing raise-from-None inside an except block at the B2 base; hoist is V2 corrective work"
+  },
+  "decoy/cli/scan.py::_fields::0": {
+   "reason": "existing raise-from-None inside an except block at the B2 base; hoist is V2 corrective work"
+  },
+  "decoy/cli/scan.py::_show::0": {
+   "reason": "existing raise-from-None inside an except block at the B2 base; hoist is V2 corrective work"
+  },
+  "decoy/cli/scanning/_multi.py::run_scan::0": {
+   "reason": "existing raise-from-None inside an except block at the B2 base; hoist is V2 corrective work"
+  },
+  "decoy/cli/scanning/_multi.py::run_scan::1": {
+   "reason": "existing raise-from-None inside an except block at the B2 base; hoist is V2 corrective work"
+  },
+  "decoy/cli/setup/__init__.py::setup_command::0": {
+   "reason": "existing raise-from-None inside an except block at the B2 base; hoist is V2 corrective work"
+  },
+  "decoy/cli/setup/__init__.py::setup_command::1": {
+   "reason": "existing raise-from-None inside an except block at the B2 base; hoist is V2 corrective work"
+  },
+  "decoy/cli/setup/__init__.py::setup_command::2": {
+   "reason": "existing raise-from-None inside an except block at the B2 base; hoist is V2 corrective work"
+  },
+  "decoy/distribution/installer.py::check_document_freshness::0": {
+   "reason": "existing raise-from-None inside an except block at the B2 base; hoist is V2 corrective work"
+  },
+  "decoy/distribution/lock.py::exclusive::0": {
+   "reason": "existing raise-from-None inside an except block at the B2 base; hoist is V2 corrective work"
+  },
+  "decoy/telemetry.py::validate_endpoint::0": {
+   "reason": "existing raise-from-None inside an except block at the B2 base; hoist is V2 corrective work"
+  }
+ }
+}

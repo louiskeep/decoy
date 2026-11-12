@@ -36,6 +36,7 @@ from decoy._mask_secret import is_valid_mask_secret_ref as _is_valid_mask_secret
 from decoy._row_sample import sample_frame
 from decoy.cli._sources import CSV_DIALECT_KEYS, csv_file_source, resolved_source_config
 from decoy.cli.extras import UnsupportedCloudEndpointError
+from decoy.cli.io import RunLayout
 from decoy.cli.io._targets import claimed_format, format_for_path
 from decoy.cli.run import (
     _load_sources_from_config,
@@ -84,9 +85,18 @@ def _load_config_dict(config: Any) -> dict:
         return copy.deepcopy(config)
     if isinstance(config, (str, Path)):
         import yaml
+        from decoy_engine.safe_output import yaml_error_text
 
         path = Path(config)
-        raw = yaml.safe_load(path.read_text(encoding="utf-8"))
+        yaml_failure: str | None = None
+        try:
+            raw = yaml.safe_load(path.read_text(encoding="utf-8"))
+        except yaml.YAMLError as exc:
+            yaml_failure = yaml_error_text(exc)
+        if yaml_failure is not None:
+            # Raised outside the handler: the YAML error quotes the offending line, so it must
+            # be neither the cause nor the context.
+            raise ConfigValidationError(f"{path}: {yaml_failure}")
         if not isinstance(raw, dict):
             raise ConfigValidationError(
                 f"{path}: expected a YAML mapping at the top level, got {type(raw).__name__}."
@@ -315,7 +325,9 @@ def _file_target_entry(existing: Any, path: Any) -> dict:
     that claims nothing keeps the declared format and `layout`. This is the opposite of
     `data=` paths, where the declared source format wins (`_stage_source_entry`)."""
     entry = dict(existing) if isinstance(existing, dict) else {}
-    entry["path"] = str(path)
+    # A relative `out=` is relative to the current folder, like a typed flag (plan 3.8).
+    text = str(path)
+    entry["path"] = text if "://" in text else str(Path(text).absolute())
     entry.setdefault("type", "file")
     if "format" not in entry:
         entry["format"] = format_for_path(Path(str(path)))
@@ -426,9 +438,9 @@ def mask(
     if config is None:
         raise TypeError("config is required (a pipeline YAML path or a config dict).")
 
-    from decoy_engine import PipelineConfig, run_pipeline
     from decoy_engine import __version__ as engine_version
-    from pydantic import ValidationError as _PydanticValidationError
+    from decoy_engine import parse_pipeline_config, run_pipeline
+    from decoy_engine.config import PipelineConfigError
 
     raw = _load_config_dict(config)
     _validate_mask_secret_ref_shape(raw)
@@ -459,10 +471,15 @@ def mask(
                 "...} (multi-table), or add a targets: block to the config."
             )
 
+        invalid: str | None = None
         try:
-            config_dict = PipelineConfig.model_validate(raw).model_dump()
-        except _PydanticValidationError as exc:
-            raise ConfigValidationError(str(exc)) from exc
+            config_dict = parse_pipeline_config(raw).model_dump()
+        except PipelineConfigError as exc:
+            invalid = str(exc)
+        if invalid is not None:
+            # Raised outside the handler: the message is value-free (names and locations only),
+            # and no chained error may carry the submitted values.
+            raise ConfigValidationError(invalid)
 
         _apply_mask_secret(config_dict, mask_secret)
 
@@ -504,6 +521,8 @@ def mask(
         # `decoy run pipeline.yaml`.
         sources = _load_sources_from_config(config_dict, base_dir)
 
+        # Library callers get fixed, predictable paths: no run folder, claim, `LATEST` or `current`.
+        layout = RunLayout.fixed(base_dir)
         resolver = _build_generation_resolver(master_key, key_label)
         instance_locale = (config_dict.get("global_settings") or {}).get("default_locale")
 
@@ -529,6 +548,7 @@ def mask(
                     derive_key=resolver,
                     instance_default_locale=instance_locale,
                     base_dir=base_dir,
+                    quarantine_path=layout.place_quarantine(config_dict),
                     **key_kwargs,
                     **extra_run_pipeline_kwargs,
                 )
@@ -552,7 +572,7 @@ def mask(
         # library's own write/return point).
         _native_gate.post_run_verify(intent=native_intent, route=route)
 
-        _write_mask_outputs(config_dict, result, base_dir)
+        _write_mask_outputs(config_dict, result, layout)
     finally:
         for tmp_path in tmp_paths:
             tmp_path.unlink(missing_ok=True)

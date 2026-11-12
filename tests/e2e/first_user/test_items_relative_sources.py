@@ -16,6 +16,7 @@ from typer.testing import CliRunner
 from decoy.__main__ import app
 from tests.csv_sources import csv_source
 from tests.keyed_secret import TEST_MASK_SECRET_REF
+from tests.run_outputs import latest_output
 
 pytestmark = pytest.mark.usefixtures("mask_secret")
 
@@ -56,14 +57,14 @@ def test_run(elsewhere: tuple[Path, Path]) -> None:
     a, _b = elsewhere
     res = runner.invoke(app, ["run", str(_config(a, _MASK))])
     assert res.exit_code == 0, res.output
-    assert (a / "out.csv").exists()
+    assert latest_output(a, "out.csv").is_file()
 
 
 def test_tokenize(elsewhere: tuple[Path, Path]) -> None:
     a, _b = elsewhere
     res = runner.invoke(app, ["tokenize", str(_config(a, _TOKEN)), "--vault", str(a / "t.db")])
     assert res.exit_code == 0, res.output
-    assert (a / "out.csv").exists()
+    assert latest_output(a, "out.csv").is_file()
 
 
 @pytest.mark.parametrize(

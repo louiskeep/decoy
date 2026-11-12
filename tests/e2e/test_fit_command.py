@@ -1083,12 +1083,13 @@ class TestFitDpGate:
             n.lineno
             for n in ast.walk(tree)
             if isinstance(n, ast.Call)
-            and isinstance(n.func, ast.Attribute)
-            and n.func.attr == "read_csv"
+            and isinstance(n.func, ast.Name)
+            and n.func.id == "read_fit_csv"
             and any(
-                k.arg is None and isinstance(k.value, ast.Name) and k.value.id == "body_kwargs"
+                k.arg is None and isinstance(k.value, ast.Name) and k.value.id == "dp_read_kwargs"
                 for k in n.keywords
             )
+            and not any(k.arg == "nrows" for k in n.keywords)
         ]
         assert len(checks) == 1 and len(body_reads) == 1
         assert checks[0] < body_reads[0]

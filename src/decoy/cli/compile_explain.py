@@ -40,8 +40,10 @@ import typer
 import yaml
 
 from decoy._atomic import AtomicWriteError, WriteMode, describe, write_local_target
+from decoy.cli import gen
 from decoy.cli._yaml_errors import sanitize_yaml_error
 from decoy.cli.exit_codes import EXIT_RUNTIME, EXIT_USAGE
+from decoy.cli.io import pipeline_argument, resolve_pipeline
 from decoy.ui.output import OutputMode, emit_json, setup_output
 from decoy.ui.table import make_table
 from decoy.ui.theme import accent, code, error, hint, success, warn
@@ -84,13 +86,7 @@ _RATIONALE_NONE = "no strategy declared"
 
 
 def compile(
-    config: Path = typer.Argument(
-        ...,
-        exists=True,
-        dir_okay=False,
-        readable=True,
-        help="Path to the pipeline YAML config to compile.",
-    ),
+    config: str = pipeline_argument(help="Path or name of the pipeline YAML config to compile."),
     explain: bool = typer.Option(
         False,
         "--explain",
@@ -162,21 +158,24 @@ def compile(
     )
 
     state = setup_output(json_, quiet, verbose)
+    config_path = resolve_pipeline(config, state, "validate compile").yaml
 
     if profile_path is not None and no_profile:
-        _simple_error(state, config, "--no-profile and --profile are mutually exclusive.")
+        _simple_error(state, config_path, "--no-profile and --profile are mutually exclusive.")
         raise typer.Exit(code=EXIT_USAGE)
 
     if out_format not in ("yaml", "json"):
-        _simple_error(state, config, f"--format must be one of yaml, json; got {out_format!r}.")
+        _simple_error(
+            state, config_path, f"--format must be one of yaml, json; got {out_format!r}."
+        )
         raise typer.Exit(code=EXIT_USAGE)
 
     # Parse YAML -- defensive; real parse errors surface here.
     try:
-        raw = yaml.safe_load(config.read_text(encoding="utf-8"))
+        raw = yaml.safe_load(config_path.read_text(encoding="utf-8"))
     except yaml.YAMLError as exc:
         # YAMLError quotes the offending source line; sanitize to coordinates.
-        _simple_error(state, config, sanitize_yaml_error(exc))
+        _simple_error(state, config_path, sanitize_yaml_error(exc))
         raise typer.Exit(code=EXIT_USAGE)
     except (OSError, UnicodeDecodeError) as exc:
         # A read/decode failure is a different category; report it as one. The
@@ -185,11 +184,13 @@ def compile(
         # UnicodeDecodeError is a ValueError, not an OSError, so it is named
         # explicitly: without it a non-UTF-8 config would escape as an uncaught
         # traceback and emit no --json envelope.
-        _simple_error(state, config, f"could not read {config}: {type(exc).__name__}")
+        _simple_error(state, config_path, f"could not read {config_path}: {type(exc).__name__}")
         raise typer.Exit(code=EXIT_USAGE)
 
     if not isinstance(raw, dict):
-        _simple_error(state, config, f"{config} does not parse to a YAML mapping at the top level.")
+        _simple_error(
+            state, config_path, f"{config_path} does not parse to a YAML mapping at the top level."
+        )
         raise typer.Exit(code=EXIT_USAGE)
 
     from decoy_engine import __version__ as engine_version
@@ -205,7 +206,9 @@ def compile(
             profile = profile_from_json(profile_path.read_text(encoding="utf-8"))
         except (ValueError, KeyError) as exc:
             _simple_error(
-                state, config, f"--profile {profile_path} did not parse as a Profile JSON: {exc}"
+                state,
+                config_path,
+                f"--profile {profile_path} did not parse as a Profile JSON: {exc}",
             )
             raise typer.Exit(code=EXIT_USAGE) from exc
     else:
@@ -216,14 +219,14 @@ def compile(
         if unique_column_path is not None:
             _simple_error(
                 state,
-                config,
+                config_path,
                 "--no-profile is incompatible with cardinality_mode: unique "
                 f"(offending column: {unique_column_path}). The "
                 "basic_uniqueness_pre_flight check requires profile data; pass "
                 "--profile <profile.json>, or remove the unique cardinality_mode.",
             )
             raise typer.Exit(code=EXIT_USAGE)
-        profile = empty_profile_for_no_profile(raw, engine_version)
+        profile = None
 
     # Compile: validate config, run plan-compile checks. no_profile=True in the
     # no-profile branch makes the ENGINE emit its own honest checks_skipped set
@@ -232,15 +235,18 @@ def compile(
     # keep structural checks like fk_plan_ordering in checks_passed. We do not
     # hand-maintain a parallel skip list (it drifts from the engine's contract).
     try:
+        if profile is None:
+            # Inside the try: an unequal composite relationship raises here.
+            profile = empty_profile_for_no_profile(raw, engine_version)
         plan = compile_plan(
             raw,
             profile,
             decoy_engine_version=engine_version,
             no_profile=not use_profile,
-            base_dir=config.parent,
+            base_dir=config_path.parent,
         )
     except Exception as exc:
-        _compile_error(state, config, exc)
+        _compile_error(state, config_path, exc)
         raise typer.Exit(code=EXIT_USAGE)
 
     # --output: also write the frozen plan artifact (absorbs the old `plan` command).
@@ -252,12 +258,13 @@ def compile(
                 WriteMode.REPLACE,
             )
         except AtomicWriteError as exc:
-            _simple_error(state, config, f"could not write the plan artifact: {describe(exc)}")
+            _simple_error(state, config_path, f"could not write the plan artifact: {describe(exc)}")
             raise typer.Exit(code=EXIT_RUNTIME)
 
     # Extract per-column info from the config (strategies come from the user's
     # explicit declarations; compile_plan verifies them but does not change them).
     tables_info = _extract_tables_info(raw)
+    generation = gen.generation_info(raw)
     checks_passed = list(plan.plan_compile.checks_passed)
     checks_skipped = list(plan.plan_compile.checks_skipped)
     warnings_list = list(plan.plan_compile.warnings)
@@ -282,6 +289,8 @@ def compile(
             payload["ordering"] = [
                 {"table": n.table, "columns": list(n.columns)} for n in plan.ordering
             ]
+            if generation is not None:
+                payload["generation"] = generation
             payload["honesty_note"] = (
                 "Strategies are declared in the pipeline config by the user. "
                 "compile --explain verifies those declarations; it does not "
@@ -295,11 +304,11 @@ def compile(
         return
 
     # Human-readable output.
-    state.console.print(accent(f"Compile: {config.name}"))
+    state.console.print(accent(f"Compile: {config_path.name}"))
     state.console.print()
 
     if explain:
-        _render_explain(state, tables_info, plan)
+        _render_explain(state, tables_info, plan, generation)
     else:
         _render_summary(state, checks_passed, checks_skipped, warnings_list)
 
@@ -386,6 +395,8 @@ def _extract_tables_info(raw: dict) -> list[dict]:
     for table in tables:
         if not isinstance(table, dict):
             continue
+        if table.get("generate_columns") and not table.get("columns"):
+            continue  # a generate table is shown by the generation section
         tname = table.get("name", "?")
         columns = table.get("columns") or []
         col_records = []
@@ -410,7 +421,7 @@ def _extract_tables_info(raw: dict) -> list[dict]:
     return result
 
 
-def _render_explain(state, tables_info: list[dict], plan) -> None:
+def _render_explain(state, tables_info: list[dict], plan, generation: dict | None) -> None:
     """Render the per-column explain view."""
     for table_info in tables_info:
         state.console.print(accent(f"Table: {table_info['name']}"))
@@ -427,6 +438,9 @@ def _render_explain(state, tables_info: list[dict], plan) -> None:
         state.console.print(table)
         state.console.print()
 
+    if generation is not None:
+        _render_generation(state, generation)
+
     # Execution ordering (if the planner produced one).
     if plan.ordering:
         state.console.print(accent("Execution order:"))
@@ -435,7 +449,7 @@ def _render_explain(state, tables_info: list[dict], plan) -> None:
             order_table.add_row(str(i), node.table, ", ".join(node.columns))
         state.console.print(order_table)
         state.console.print()
-    else:
+    elif generation is None:
         state.console.print(
             hint("Ordering:"),
             "tables execute in config declaration order (no FK dependencies detected).",
@@ -455,6 +469,29 @@ def _render_explain(state, tables_info: list[dict], plan) -> None:
         code("decoy scan"),
         "to inspect source data first.",
     )
+
+
+def _render_generation(state, generation: dict) -> None:
+    """The generate tables, their references and the order they are built in."""
+    for table_info in generation["tables"]:
+        state.console.print(
+            accent(f"Generate table: {table_info['name']}"), f"({table_info['rows']} rows)"
+        )
+        refs = {
+            (r["table"], r["column"]): f"{r['reference_table']}.{r['reference_column']}"
+            for r in generation["references"]
+        }
+        table = make_table("Column", "Type", "References")
+        for col in table_info["columns"]:
+            table.add_row(col["name"], col["type"], refs.get((table_info["name"], col["name"]), ""))
+        state.console.print(table)
+        state.console.print()
+    state.console.print(accent("Generation order:"), "parents are built first.")
+    order_table = make_table("Step", "Table", "Parents")
+    for i, node in enumerate(generation["order"], 1):
+        order_table.add_row(str(i), node["table"], ", ".join(node["parents"]) or "-")
+    state.console.print(order_table)
+    state.console.print()
 
 
 def _render_summary(

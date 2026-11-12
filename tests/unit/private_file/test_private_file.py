@@ -14,11 +14,13 @@ from tests.csv_sources import csv_source
 
 from decoy import _private_file
 from decoy._private_file import (
+    PRIVATE_EXISTS,
     PRIVATE_MODE_FAILED,
     PRIVATE_OPEN_FAILED,
     PrivateFileError,
     apply_mode,
     create_exclusive,
+    create_private_directory,
     create_private_temp,
     open_private,
     restrict_owner_only,
@@ -325,3 +327,121 @@ def test_a_failed_spool_write_removes_the_registered_temp(
     with pytest.raises(OSError):
         decoy.mask(pd.DataFrame({"a": [1]}), cfg)
     assert sorted(p.name for p in tmp_path.iterdir()) == []
+
+
+# -- create_private_directory: the run-folder creator -----------------------------------------
+
+_DIRECTORY = (
+    "import os, stat, sys\n"
+    "from pathlib import Path\n"
+    "from decoy._private_file import create_private_directory\n"
+    "os.umask(0)\n"
+    "create_private_directory(Path(sys.argv[1]) / 'run')\n"
+    "print(oct(stat.S_IMODE(os.stat(Path(sys.argv[1]) / 'run').st_mode)))\n"
+)
+
+
+@posix_only
+def test_create_private_directory_is_0700_under_umask_000(tmp_path: Path) -> None:
+    assert _run(_DIRECTORY, str(tmp_path)) == "0o700"
+
+
+@posix_only
+def test_create_private_directory_is_0700_under_a_restrictive_umask(tmp_path: Path) -> None:
+    old = os.umask(0o777)
+    try:
+        create_private_directory(tmp_path / "run")
+    finally:
+        os.umask(old)
+    assert _mode(tmp_path / "run") == 0o700
+
+
+@posix_only
+def test_an_existing_entry_is_private_exists_and_is_left_alone(tmp_path: Path) -> None:
+    (tmp_path / "run").mkdir()
+    (tmp_path / "run" / "keep").write_bytes(b"x")
+    with pytest.raises(PrivateFileError) as caught:
+        create_private_directory(tmp_path / "run")
+    assert caught.value.code == PRIVATE_EXISTS
+    assert (tmp_path / "run" / "keep").read_bytes() == b"x"
+
+
+@posix_only
+def test_a_symlink_at_the_directory_path_is_exists_and_not_followed(tmp_path: Path) -> None:
+    target = tmp_path / "elsewhere"
+    target.mkdir()
+    target.chmod(0o755)
+    (tmp_path / "run").symlink_to(target)
+    with pytest.raises(PrivateFileError) as caught:
+        create_private_directory(tmp_path / "run")
+    assert caught.value.code == PRIVATE_EXISTS
+    assert _mode(target) == 0o755
+
+
+def test_a_missing_parent_is_an_open_failure(tmp_path: Path) -> None:
+    with pytest.raises(PrivateFileError) as caught:
+        create_private_directory(tmp_path / "gone" / "run")
+    assert caught.value.code == PRIVATE_OPEN_FAILED
+    assert caught.value.__cause__ is None
+    assert caught.value.__context__ is None
+
+
+@posix_only
+def test_a_mode_that_does_not_stick_removes_the_directory(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def boom(*_a: object) -> None:
+        raise OSError(errno.EIO, "no")
+
+    monkeypatch.setattr(os, "fchmod", boom)
+    with pytest.raises(PrivateFileError) as caught:
+        create_private_directory(tmp_path / "run")
+    assert caught.value.code == PRIVATE_MODE_FAILED
+    assert not (tmp_path / "run").exists()
+
+
+@posix_only
+def test_a_mount_that_ignores_chmod_is_refused_by_the_read_back(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(os, "fchmod", lambda *_a: None)
+    real_mkdir = os.mkdir
+    old = os.umask(0)
+    try:
+        monkeypatch.setattr(os, "mkdir", lambda p, mode=0o777: real_mkdir(p, 0o755))
+        with pytest.raises(PrivateFileError) as caught:
+            create_private_directory(tmp_path / "run")
+    finally:
+        os.umask(old)
+    assert caught.value.code == PRIVATE_MODE_FAILED
+    assert not (tmp_path / "run").exists()
+
+
+_LAYOUT_FILES = (
+    "import os, stat, sys\n"
+    "from pathlib import Path\n"
+    "from decoy.cli.io import (\n"
+    "    PipelineName, RunLayout, ensure_decoy_dir, name_dir, prepare_out, write_claim,\n"
+    ")\n"
+    "os.umask(0)\n"
+    "root = Path(sys.argv[1])\n"
+    "out, _ = prepare_out(root)\n"
+    "ensure_decoy_dir(root)\n"
+    "write_claim(name_dir(out, 'p'), 'jobs/p.yaml')\n"
+    "name = PipelineName('p', False, 'jobs/p.yaml')\n"
+    "assert RunLayout.open(root, name, '0a1b2c3d-0000-4000-8000-000000000000').commit_latest() == ()\n"
+    "for rel in ('out/.gitignore', '.decoy/.gitignore', 'out/p/PIPELINE', 'out/p/LATEST'):\n"
+    "    print(rel, oct(stat.S_IMODE(os.stat(root / rel).st_mode)))\n"
+)
+
+
+@posix_only
+def test_layout_files_are_owner_only_under_umask_zero(tmp_path: Path) -> None:
+    """`out/.gitignore`, `.decoy/.gitignore`, the claim and `LATEST` go through the atomic writer."""
+    got = _run(_LAYOUT_FILES, str(tmp_path)).splitlines()
+    assert got == [
+        "out/.gitignore 0o600",
+        ".decoy/.gitignore 0o600",
+        "out/p/PIPELINE 0o600",
+        "out/p/LATEST 0o600",
+    ]

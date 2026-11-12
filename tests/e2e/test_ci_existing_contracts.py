@@ -20,6 +20,7 @@ from tests.ci_support import (
     write,
     write_clean_pipeline,
 )
+from tests.run_outputs import latest_output
 
 
 def _repo(tmp_path: Path) -> Path:
@@ -57,6 +58,10 @@ def test_validate_gate_config_error_keeps_null_location_and_exit(tmp_path: Path)
 
 def test_validate_fail_on_warning_exit_is_unchanged(tmp_path: Path) -> None:
     repo = _repo(tmp_path)
+    # An existing absolute target draws the overwrite warning; a relative one lands in a new
+    # run folder and draws none (PROJECT-LAYOUT P4, AT-16).
+    target = repo / "out" / "out.csv"
+    write(repo, "pipeline.yaml", CLEAN_PIPELINE.replace("path: out/out.csv", f"path: {target}"))
     write(repo, "out/out.csv", "exists\n")
     assert run_decoy(["validate", "pipeline.yaml"], repo).returncode == EXIT_OK
     proc = run_decoy(["validate", "pipeline.yaml", "--fail-on-warning", "--json"], repo)
@@ -98,7 +103,8 @@ def test_report_verify_output_and_exit_are_unchanged(tmp_path: Path) -> None:
         "issues": [],
         "issue_count": 0,
     }
-    write(repo, "out/out.csv", "tampered\n")
+    placed = latest_output(repo, "out/out.csv").resolve()
+    placed.write_text("tampered\n", encoding="utf-8")
     bad = run_decoy(["report", "verify", "build/evidence.json", "--json"], repo)
     assert bad.returncode == EXIT_FINDINGS
     payload = json.loads(bad.stdout)
@@ -106,6 +112,6 @@ def test_report_verify_output_and_exit_are_unchanged(tmp_path: Path) -> None:
     (issue,) = payload["issues"]
     # The public issue strings keep their exact prose shape.
     assert issue.startswith(
-        "output fingerprint changed: out/out.csv (table 'customers') (recorded sha256:"
+        f"output fingerprint changed: {placed} (table 'customers') (recorded sha256:"
     )
     assert issue.endswith("...)")

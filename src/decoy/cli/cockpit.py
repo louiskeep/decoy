@@ -37,6 +37,16 @@ from decoy.ui.theme import accent, code, error, hint, success, warn
 # ---------------------------------------------------------------------------
 
 
+def registered_strategies() -> list[dict[str, str]]:
+    """Every registered mask strategy, name order: the data `list strategies` and `explain transforms` share."""
+    from decoy_engine.execution._strategies import SCALAR_HANDLERS
+
+    return [
+        {"name": name, "class": type(handler).__name__}
+        for name, handler in sorted(SCALAR_HANDLERS.items())
+    ]
+
+
 def _strategies_list(
     json_: bool = typer.Option(
         False,
@@ -53,13 +63,7 @@ def _strategies_list(
     """List every registered mask strategy in the engine."""
     state = setup_output(json_, quiet, verbose)
 
-    # Read the REAL engine registry at runtime.
-    from decoy_engine.execution._strategies import SCALAR_HANDLERS
-
-    entries = [
-        {"name": name, "class": type(handler).__name__}
-        for name, handler in sorted(SCALAR_HANDLERS.items())
-    ]
+    entries = registered_strategies()
 
     if state.mode is OutputMode.json:
         emit_json(
@@ -528,7 +532,7 @@ def doctor(
     )
 
     # CLI version -- informational, always passes.
-    from decoy import __version__ as cli_version
+    from decoy._version import __version__ as cli_version
 
     checks.append(
         {

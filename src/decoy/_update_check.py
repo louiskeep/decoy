@@ -28,7 +28,7 @@ import sys
 import time
 from pathlib import Path
 
-from decoy import __version__
+from decoy._version import __version__
 from decoy.distribution import layout
 from decoy.distribution import version_document as vd
 

@@ -61,7 +61,9 @@ replacing per-surface redaction; the sanitizer behind F29's `approve_ref`; the C
 findings: `str(exc)`-style sites route through one exception-capture policy; physical-seam
 `<code>:<detail>` composites become typed. Owner 2026-11-02: CUT the alias, legend and run-UUID
 stack. Owner 2026-11-02 O1 to O3: no ban on except-bound text inside `raise`, but a ratchet so the
-count cannot grow; no debug opt-out, only frame locals are cleared.
+count cannot grow; no debug opt-out, only frame locals are cleared. Owner 2026-11-12 (F31 Q1 and Q2):
+the row closes for CLI V1; E0b and the platform slices move to Platform V1 (ROADMAP section 6.3);
+V2-LOG: the `decoy run` error text capped at 500 characters is not a V1 fix.
 
 **F29 (rows 62, 66).** Engine half MERGED (engine #336: versioned registry, `RetryClass`, bytes,
 retry and checkpoint progress); C0 record MERGED (engine #367). FRAME findings: the CLI maps
