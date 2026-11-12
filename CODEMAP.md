@@ -72,6 +72,7 @@ One row per kind of module. Path cells are checked by `tests/sentry/layout/test_
 | CI install, vendor and lane policy | `ci/` | `ci/install-policy.toml` (the install registry), `ci/vendored.toml`, `ci/ci-tools.in`, `ci/ci-tools.lock`, `ci/required-jobs.toml` (merge tier), `ci/unlaned.toml` (lane exceptions) | `tests/sentry/test_ci_lock_installs.py`, `tests/sentry/tooling/test_ci_lanes.py` | `tests/sentry/_ci_lock_scan.py`, `tests/sentry/tooling/_ci_lanes.py` |
 | Composite CI actions | `.github/actions/<name>/` | `action.yml`: `.github/actions/setup-uv/`, `.github/actions/lock-env/` | - | - |
 | Task-oriented user guides (one folder per topic, with a `README.md` index) | `docs/guides/<topic>/` | `docs/guides/shape-and-privacy/` | - | `tests/unit/test_surface_docs_consistency.py` |
+| Root legal files (license text, notice, licensing FAQ, trademark policy) | repo root | `LICENSE.md`, `NOTICE`, `LICENSING.md`, `TRADEMARKS.md` | `tests/unit/test_pyproject_metadata.py` | - |
 | Roadmap, plans, records | `docs/ROADMAP.md`, `docs/roadmap/`, `docs/plans/`, `docs/records/` | `docs/plans/YYYY-MM-DD-<slug>.md`; `docs/records/YYYY-MM-DD-<slug>.md` (build and gate evidence) | - | shipped log `docs/RECENTLY-SHIPPED.md` |
 
 ## Where Do I Find...
