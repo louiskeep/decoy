@@ -6,12 +6,13 @@ Rules consulted: `/home/cam/dev-rules/README.md`, `00-universal.md`, `risk-and-e
 `development-loop.md`, `cross-cutting-concerns.md`, `api-and-compatibility.md`, `testing.md`,
 `architecture.md`, `catalogs/recurring-defects.md`; CLI `CODEMAP.md`; engine `CODEMAP.md`.
 
-Bases (2026-11-12): CLI `origin/main` `ae58f68`, engine `origin/main` `c38f17cd`, CLI pins
+Bases (2026-11-12): CLI `origin/main` `ae58f68`, engine `origin/main` `c38f17cd` (every engine
+reference below is unchanged at `ad63ba1b`), CLI pins
 `decoy-engine==0.22.0` (`pyproject.toml:122`). Source plans: the gated RESULT handoff
 (vault `10_Projects/decoy/handoffs/phase0.5/p05-result-build-handoff.md`, revision 4, owner
 questions Q1 to Q6 confirmed 2026-11-06), the F29 remainder plan (engine
-`plan/f29-errors-progress-remainder` `a26994bf`, slice C1 only), the DELIV plan
-(`/home/cam/vscode/wt-plan-deliv/docs/plans/2026-11-12-deliv.md`, `037ab1ac`). This plan
+`plan/f29-errors-progress-remainder` `a26994bf`, slice C1 only), the DELIV plan (engine
+`plan/deliv` `037ab1ac`, `docs/plans/2026-11-12-deliv.md`). This plan
 replaces the handoff's E2, E3, C1a, C1b and C2 for building. Where it differs from the handoff,
 section 3 says why. Risk: R2 overall (frozen exit taxonomy, a public `--json` member, a frozen
 artifact tag); per-slice tiers in section 10. Out of scope and not planned: F29 platform slices
@@ -28,7 +29,7 @@ P1 and P2 and F31 P8 (parked with Platform V1); LIB L3a storing the record (row 
 | Status and exit derivation | `src/decoy_engine/run_result/_outcome.py:27` `derive_outcome` (cancelled, failed, partially delivered, findings, succeeded; exit integers from the caller's map) | Nothing calls it. The CLI decides exits in several places: `src/decoy/cli/run/_errors.py:142` to `:208`, `_render.py:119`, `:124`, `:177`, `_evidence.py:57`, `_notify.py:120`, `_prepare.py:174` | A CLI exit map and every `decoy run` exit read through `derive_outcome` |
 | Run result document (builder, projection, collector) | Not built. Handoff parts E2 and E3 never started (READY-STATUS 2026-11-08 rows 19 and 20; no branch on either remote) | n/a | Engine projection, builder and collector; the CLI build of one document per run and the `--json` `result` member |
 | `--json` failure `reason` (F29 C1) | Not built. The failure envelope is `src/decoy/cli/run/_errors.py:258` to `:287` (`command`, `status`, `config`, `mode`, `error`, plus `error_kind` and `code` for capacity, native and missing extra). No `reason_from_exception` reference anywhere in `src/decoy/` | n/a | The `reason` member, the attach rule, one reason call |
-| Exit 6 | Not built. `src/decoy/cli/exit_codes.py:100` `__all__` has six names (0 to 5); `src/decoy/ci/contracts.py:119` `EXIT_CODES` and `:123` `EXIT_PRECEDENCE` are hand-written without 6; `src/decoy/cli/explain.py:448` lists six codes | `decoy ci` report models validate `exit_code in EXIT_CODES` (`contracts.py:334`, `:359`, `:397`) | The constant, the map entry, the taxonomy docs. Exit 6 becomes reachable only when DELIV C3 adds best-effort; nothing in this row makes it reachable |
+| Exit 6 | Not built. `src/decoy/cli/exit_codes.py:100` `__all__` has six names (0 to 5); `src/decoy/ci/contracts.py:119` `EXIT_CODES` and `:123` `EXIT_PRECEDENCE` are hand-written without 6; `src/decoy/cli/explain.py:452` says "one of six exit codes" (topic at `:448`) | `decoy ci` report models validate `exit_code in EXIT_CODES` (`contracts.py:334`, `:359`, `:397`) | The constant, the map entry, the taxonomy docs. Exit 6 becomes reachable only when DELIV C3 adds best-effort; nothing in this row makes it reachable |
 | Capacity widening | Partly done. Engine `src/decoy_engine/errors.py:514` `CAPACITY_REASON_CODES` holds three codes: `generation_budget_exceeded` (engine #424, owner 2026-11-08 GEN QA "over-capacity row_count = exit 5"), `out_of_core_insufficient_memory`, `out_of_core_fanin_exceeds_budget`. The CLI reads it through `src/decoy/cli/gate/_run.py:31` `capacity_codes()` at `_errors.py:122` (ExecutionError) and `:127` (any coded DecoyError). A bare `MemoryError` already exits 5 with fixed text (`_errors.py:131`, `:144`, `:218`). The old `run.py` `_CAPACITY_CODES` copy is gone | `gate/_run.py:86` (picks the capacity finding for the gate envelope); engine pin test `tests/unit/generation/test_generation_floor.py:481` | Four owner-confirmed codes (handoff Q3): `out_of_core_faker_pool_budget_exceeded`, `out_of_core_reorder_budget_too_small`, `pool_exceeds_cache_budget`, `isolated_worker_out_of_memory`; the new identity `decoy.process_out_of_memory` for `MemoryError` (reason registry, needs engine #506); a walk that classifies every memory, budget or capacity code |
 
 Owner decision that supersedes the handoff: Q3 listed `generation_budget_exceeded` as "no,
@@ -37,7 +38,7 @@ engine #424 put it in the set. It stays in.
 
 Already closed by other rows since the handoff (no work here): the evidence write failure
 exits 3, not a traceback (`src/decoy/cli/run/_evidence.py:51` to `:57`, the handoff's Q6); the
-evidence `run_id` is the run's `invocation_id` (`_evidence.py:43`, minted at
+evidence `run_id` is the run's `invocation_id` (`_evidence.py:44`, minted at
 `src/decoy/cli/run/_flow.py:32`); atomic writes exist (`decoy._atomic`, `write_local_target`);
 `pipeline_config_hash` is public (`src/decoy_engine/plan/__init__.py:37`).
 
@@ -53,17 +54,20 @@ exception-to-exit-code map" (row 24zf) have nowhere to land. Four memory refusal
 1. Every `decoy run` that gets past Click parsing and `setup_output` emits exactly one
    `decoy-run-result/v1` document as the `--json` member `result`, on success, findings, every
    failure category, preview and Ctrl-C. Limits: Click parse errors (exit 2), `setup_output`
-   conflicts (exit 1), the managed-runtime refusal in the root callback (exit 3), SIGTERM,
+   conflicts (exit 1), the managed-runtime refusal in the root callback (exit 3), an unexpected
+   exception raised after the run's `try` has closed (root crash guard, X14, exit 1), SIGTERM,
    SIGKILL, a second Ctrl-C while the document is written.
 2. The engine owns the shape, the projection, the one constructor and `derive_outcome`. The CLI
    passes typed facts and never assembles the document by hand.
-3. Every exit of `decoy run` comes from `derive_outcome` with one map, `RUN_EXIT_MAP` in
-   `src/decoy/cli/exit_codes.py`. No exit integer of any path changes in this row except the
-   capacity widening (3 to 5 for the four codes), which is labelled breaking (pre-1.0) in the
-   changelog.
+3. Every exit of `decoy run` outside the limits of item 1 comes from `derive_outcome` with one
+   map, `RUN_EXIT_MAP` in `src/decoy/cli/exit_codes.py`. No exit integer of any path changes in
+   this row except the capacity widening (3 to 5 for the four codes), which is labelled breaking
+   (pre-1.0) in the changelog. `derive_outcome` raises `ValueError` for a key outside the map
+   (`_outcome.py:53` to `:56`); nothing catches it, so a map gap would reach the root crash guard
+   (exit 1). AT-X2 keeps the map total, so a gap is a red test, not a runtime path.
 4. The `--json` failure envelope carries `reason` (the engine's registered reason payload) for
    engine-raised failures, computed from the exception as raised; CLI-owned refusals carry none.
-   The document's `failure.reason` is the same payload.
+   The attach rule is F29 C1's (3.3). The document's `failure.reason` is the same payload.
 5. Value-free: no cell value, exception text, absolute path, display text or key material in
    `result`, `result_status`, `reason` or any line this row adds.
 
@@ -89,9 +93,18 @@ blocks. Everything else goes to V2-LOG (section 13).
 
 - `run_result/_project.py` (E2a): `CollectedFacts` (frozen: per table phase start, finish rows,
   error seen, final rate rows, elapsed; aggregate phase error; phase durations), `DeliveryFacts`
-  (frozen: `mode`, `vault`, per table `TableDeliveryFact(state, format, output, reason,
-  dropped_because)`, and the named constructor `DeliveryFacts.not_applicable()` for a preview),
-  `ProjectedTables` and `project_tables(*, config, execution_result, facts, delivery)`. One rule
+  (frozen: `mode`, `vault`, `tables: Mapping[str, TableDelivery]`, and the named constructor
+  `DeliveryFacts.not_applicable()` for a preview). The per-table entry is the model's own
+  `run_result.TableDelivery` (`_model.py:282`: state, format, output, reason, dropped_because),
+  so no third delivery type exists beside it and DELIV's `delivery.TableDelivery`
+  (`src/decoy_engine/delivery/_plan.py:24`). AT-P5 pins that every DELIV `DeliveryState` value
+  is a `TableDeliveryState` value. The adapter from DELIV's `DeliveryDecision` plus
+  `DeliveryReceipt` to `DeliveryFacts` is DELIV's (its C2a; DELIV picks the module). The rule
+  RESULT needs from it: a table reads `delivered` only when the decision says `delivered` and
+  the receipt is `delivered` or `uncertain` (the pointer moved, DELIV AT-12); on a `nothing`
+  receipt every such table reads `none`, so `delivery.outcome` can never say delivered for a
+  run whose pointer did not move. `ProjectedTables` and
+  `project_tables(*, config, execution_result, facts, delivery)`. One rule
   for `rows_out` on every route: `ExecutionResult.outputs`, else the phase finish rows, else the
   final rate sample, else null; `rows_source` says which. Outcome rule as the handoff (E2
   "Precedence"). A table whose delivery fact is `failed` is `failed` with that reason even when
@@ -100,18 +113,27 @@ blocks. Everything else goes to V2-LOG (section 13).
   `not_applicable`.
 - `run_result/_build.py` (E2b): `FailureInput(category, reason: ReasonRecord | None,
   error_class: str | None)`; `build_run_result(*, tables, execution_result, failure, config_ref,
-  producer, invocation_id, exit_map, delivery, native, chunked, links, started_at, finished_at,
-  elapsed_s, phases)`: the only module that constructs `RunResult`. It calls `derive_outcome`
-  once, projects checks (codes and counts only; `blocking` only under
-  `post_validation_enforce`), route and warnings, and returns the frozen model.
+  producer, invocation_id, exit_map, delivery, blocking_failed, native, chunked, links,
+  started_at, finished_at, elapsed_s, phases)`: the only module that constructs `RunResult`. It
+  calls `derive_outcome` once with the caller's `blocking_failed`, projects checks (codes and
+  counts only; `blocking` equals `blocking_failed`), route and warnings, and returns the frozen
+  model. The builder never re-decides blocking.
 - `run_result/_collect.py` (E3a): `RunResultCollector`, a `ProgressSink` whose `on_event` never
   raises and keeps typed counters; `snapshot() -> CollectedFacts`.
-- `execution/_chunked_progress.py` (E3b): `observe_chunked(table, chunks)` with manual
-  `phase_start` and `phase_finish` (never the `phase()` context manager) plus `count_rows`;
-  `run_mask_pipeline_chunked` (`src/decoy_engine/execution/_chunked.py:379`) calls it, and
+- `execution/chunked/_progress.py` (E3b, new sub-package `execution/chunked/`; the flat
+  `execution/` folder is frozen at 104 modules by `tests/sentry/layout/test_package_fanout.py:32`,
+  whose comment names `execution/chunked/` as the next route cluster): `observe_chunked(table,
+  chunks)` with manual `phase_start` and `phase_finish` (never the `phase()` context manager)
+  plus `count_rows`; `run_mask_pipeline_chunked` (`src/decoy_engine/execution/_chunked.py:379`)
+  calls it with net zero lines in `_chunked.py` (600 at `c38f17cd`, the goal), and
   `native/_chunked_entry.py:660` calls it in place of its direct `count_rows`.
 - `errors.py` (E-CAP): `CAPACITY_REASON_CODES` gains the four codes; `CAPACITY_EXCLUSIONS:
-  Mapping[str, str]` (code to reason) holds every other memory, budget or capacity code.
+  Mapping[str, str]` (code to reason) holds every other memory, budget, capacity or OOM code,
+  including `fk_full_frame_oom_risk_rejected` and `fk_full_frame_oom_risk_rejected_estimated`
+  (`src/decoy_engine/reasons/runtime/_part1.py:189` to `:194`; OQ-5).
+- Exports: the new names are exported from `decoy_engine.run_result` only (its `__all__` and
+  docstring), not from the top-level `decoy_engine/__init__.py`, which sits at the 600-line goal.
+  The CLI imports them from `decoy_engine.run_result`, as it does other public sub-packages.
 - Reason registry (E-OOM, after #506): `decoy.process_out_of_memory` (`since=UNRELEASED`,
   retry `environment_repair`), a `_FIXED` row `("builtins", "MemoryError", ...)` in
   `src/decoy_engine/reason_adapter.py:99`, and the code in `CAPACITY_REASON_CODES`.
@@ -121,23 +143,44 @@ blocks. Everything else goes to V2-LOG (section 13).
 - `exit_codes.py` (C-EXIT): `EXIT_PARTIAL = 6` and `RUN_EXIT_MAP: Mapping[tuple[str, str | None],
   int]`: `(succeeded, None)` 0, `(findings, None)` 4, `(partially_delivered, None)` 6,
   `(failed, usage)` 1, `(failed, parameter)` 2, `(failed, runtime)` 3, `(failed, capacity)` 5,
-  `(cancelled, cancelled)` today's Ctrl-C status (OQ-1). `ci/contracts.py` `EXIT_CODES` is
+  `(cancelled, cancelled)` today's Ctrl-C status (OQ-1). `(failed, parameter)` reuses the
+  integer of `EXIT_WARNINGS` (2); the README and `decoy explain exit-codes` say that 2 also means
+  a Click usage error. `ci/contracts.py` `EXIT_CODES` is
   derived from the `EXIT_` integers in `exit_codes.__all__`; `EXIT_PRECEDENCE` is
   `5 > 3 > 1 > 6 > 4 > 2 > 0` (handoff Q2, owner confirmed).
 - `run/_errors.py` (C-EXIT, C-REASON): today's type dispatch at `_errors.py:142` to `:208`
   returns a category, not an integer; the exit is `derive_outcome(...).exit_code`. The exit-1
   tuple becomes `_usage_types()`, used by both the category rule and the reason attach rule.
-  `_failure_reason(exc)` computes the reason once from the exception as raised, before the
-  missing-extra and NER rewrites at `_errors.py:69` to `:81`; it returns None for CLI-owned
-  refusals and swallows its own errors.
+  C-REASON builds F29 C1 (5.1) as written there: bind `engine_exc = exc` before the
+  missing-extra and NER rewrites at `_errors.py:69` to `:81`; one helper
+  `_engine_family(exc) -> bool | None` is the only CLI caller of `registered_families()`;
+  `_cli_refusal_types()` is the `_usage_types()` members that are not an engine family, plus
+  `_VaultWriteError` (`run/_vault.py:20`, exit 3) and `PreRunCheckError` (gate refusals, exit 1
+  or 5). Rule, stated once: **attach `reason_from_exception(engine_exc).to_payload()` unless
+  `exc` is in `_cli_refusal_types()` and `engine_exc` is not an engine family.** Both sets are
+  computed lazily in the failure path, never at import, and the classifier runs before the
+  `exc` test (F29 C1 evaluation order). `_failure_reason(exc)` holds all of it in one guard and
+  returns None on any error. Every typed refusal C-DOC2 adds joins `_usage_types()` (exit 1) or
+  `_cli_refusal_types()` (other exits), so it carries no reason; C-DOC2 updates the AT-R7 pin.
+- `run/_render.py` (C-DOC1): one `_blocking_failed(ctx) -> bool` replaces today's two copies of
+  the enforce decision (`_render.py:56` in `commit_latest` and `:84` `_enforce_fires`) and is the
+  builder's `blocking_failed` input. DELIV C5 extends that one function for a post-scan block
+  (DELIV 6.2 rows 6 and 7, exit 4); it adds no second input.
 - `run/_result.py` (C-DOC1, new): reads the run's facts off `RunContext`, builds `DeliveryFacts`
   from the ledger, calls `project_tables` and the one `build_run_result(`, and returns the
   payload and `result_status` (`{"document": "built"|"failed", "file": "written"|"failed"|
   "not_requested", "code": <CLI warning code or null>}`). A build failure falls back to
   `derive_outcome` directly with the same inputs and the code `run_result_build_failed`.
+  `_result` sits after `_vault` and before `_execute` in the package `ORDER`, so it imports only
+  `_context`, `_notify` and `_vault`. `_errors`, `_render`, `_evidence` and `_flow` call it with
+  the prebuilt legacy payload (`_seed_warnings` and `_where_written` stay in `_render`), the
+  category and the reason. `_notify` and `_vault`, which come before it, raise typed refusals
+  and never call `finish`.
 - C-DOC2 moves every `emit_json(` and `raise typer.Exit(` of `decoy run` into one
   `_result.finish(ctx, outcome)` so the early refusals, the evidence failure and Ctrl-C produce
-  the document. Exit integers stay as today.
+  the document. Exit integers stay as today. Each new typed refusal is raised after its `except`
+  block closes, so it carries no `__context__` (covered by
+  `tests/sentry/defects/test_exception_context.py`).
 - C-DOC3 adds `--result PATH`, written through `write_local_target` (`REPLACE`).
 - Legacy `--json` members keep their values; `result` and `result_status` are added.
 
@@ -150,7 +193,8 @@ blocks. Everything else goes to V2-LOG (section 13).
 | B3 | config, compile or CLI usage refusal inside the run | 1 | `failed` | `usage` | engine family only |
 | B4 | bad `--master-key` or `--key-label` (`BadParameter`) | 2 | `failed` | `parameter` | absent |
 | B5 | engine runtime error | 3 | `failed` | `runtime` | yes |
-| B6 | capacity code in `CAPACITY_REASON_CODES`, or `MemoryError` | 5 | `failed` | `capacity` | yes (MemoryError: after E-OOM) |
+| B6 | engine-raised capacity code in `CAPACITY_REASON_CODES`, or `MemoryError` | 5 | `failed` | `capacity` | yes (MemoryError: after E-OOM) |
+| B6g | gate capacity refusal (`PreRunCheckError`, exit 5) | 5 | `failed` | `capacity` | absent (CLI-owned) |
 | B7 | evidence write failure after outputs | 3 | `failed` | `runtime` | absent (CLI-owned) |
 | B8 | Ctrl-C | today's status (OQ-1) | `cancelled` | `cancelled` | `run_cancelled` |
 | B9 | `--rows` preview | 0 | `succeeded` | null | absent; `delivery.outcome` `not_applicable` |
@@ -165,8 +209,8 @@ blocks. Everything else goes to V2-LOG (section 13).
 | # | Class | Structure that closes it | Proof (test or sentry) | Mutation that turns it red |
 |---|---|---|---|---|
 | 1 | Value-bearing output | The model's value-free leaf types (E1); `_failure_reason` passes only the `ReasonRecord`; table names through `approve_name`; outputs as `RelPath` or file name | AT-D3 canary over `result`, `result_status`, `reason`, stderr; AT-R4; AT-B3 | copy `ctx.config_str` into `config.name`; read `exc.code` into the reason |
-| 2 | Cleanup missing on an exit path | One `finish` reached from every exit path (C-DOC2), `finally` order kept in `_flow.py` | AT-O1 path matrix; AT-O3 Ctrl-C | emit the bad-notify envelope before `finish` |
-| 3 | State and concurrency | `RunResultCollector` keeps only typed counters and never raises; one document per run; the build fallback | AT-K3, AT-D4, AT-O4 | let `on_event` errors escape; emit twice on a build failure |
+| 2 | Cleanup missing on an exit path | One `finish` reached from every exit path inside the run (C-DOC2), `finally` order kept in `_flow.py`; the post-`try` crash (X14) is a named limit through the root guard | AT-O1 path matrix; AT-O3 Ctrl-C; AT-O5 | emit the bad-notify envelope before `finish` |
+| 3 | State and concurrency | `RunResultCollector` keeps only typed counters and never raises; one document per run; the build fallback; one blocking decision (`_blocking_failed`) | AT-K3, AT-D4, AT-O4, AT-D9 | let `on_event` errors escape; emit twice on a build failure |
 | 4 | Route parity and silent fallback | One `rows_out` precedence rule for every route; `observe_chunked` for both chunked entries; unknown route values map to `other`, never dropped | AT-K1, AT-K5, AT-P1 | remove the `observe_chunked` call in `_chunked.py` |
 | 5 | Referential integrity | Per-table outcome follows the execution facts: a failed parent on the sequential route leaves children `not_run`, never `succeeded` | AT-K2, AT-P2 | mark every table `failed` on any error |
 | 6 | Untrusted producer | Progress events are read through the typed `ProgressEvent`; a malformed event is counted as nothing; the read model stays tolerant (E1) | AT-K3 | trust an event's `table` string without `approve_name` |
@@ -182,7 +226,7 @@ blocks. Everything else goes to V2-LOG (section 13).
 Measured on CLI `ae58f68`. "Own envelope" means the path prints its own `--json` object today.
 
 - X1 Click parse error: exit 2, no document (limit).
-- X2 `setup_output` conflict (`src/decoy/cli/run/__init__.py:376`): exit 1, no document (limit).
+- X2 `setup_output` conflict (`src/decoy/cli/run/__init__.py:379`): exit 1, no document (limit).
 - X3 bad `--notify` spec, own envelope (`src/decoy/cli/run/_notify.py:112` to `:120`): exit 1; document from C-DOC2.
 - X4 `--rows` refusals and `--fidelity` without a mask table, own envelope through `_refuse_usage` (`src/decoy/cli/run/_prepare.py:165` to `:174`): exit 1; document from C-DOC2.
 - X5 `_build_resolver` `BadParameter` (`_prepare.py:70`), called outside the `try` at `src/decoy/cli/run/_flow.py:44`: Click exit 2; document from C-DOC2, which re-raises the original `click.UsageError` so Click prints the same message.
@@ -194,10 +238,16 @@ Measured on CLI `ae58f68`. "Own envelope" means the path prints its own `--json`
 - X11 Ctrl-C: `KeyboardInterrupt` is not caught by `except Exception` (`_flow.py:84`); Click `Abort`, expected exit 1 with `Aborted!` (not measured; C-DOC2 STEP ZERO measures it).
 - X12 SIGTERM, SIGKILL, kernel OOM: no document (limit, handoff Q5).
 - X13 managed-runtime refusal in the root callback (`src/decoy/__main__.py`): exit 3, no document (limit).
+- X14 an unexpected exception after the run's `try` has closed (`_flow.py:103` onward: for
+  example `build_manifest` at `_evidence.py:37` hashing an output that vanished, which the
+  `AtomicWriteError` catch at `_evidence.py:55` does not cover; `commit_latest`; notification
+  dispatch): the root crash guard (`src/decoy/__main__.py:146` to `:165`) prints
+  `internal error (<class>)` and exits 1 with no JSON. Limit: a document would need a category
+  for exit 1 that is not `usage`, which changes the exit taxonomy. AT-O5 pins the limit.
 
 #### Routes
 
-- Plain `run_pipeline` (`src/decoy/cli/run/_execute.py:300`), whose engine routes are full-frame, sequential, out-of-core, mixed (`src/decoy_engine/execution/_pipeline_mixed_route.py:252`) and stream (RUN-STREAM E1a). The document reads the route from `quality_metrics["execution"]` (`src/decoy_engine/execution/_pipeline_route_exec.py:107`); a value outside `ExecutionMode` becomes `other`.
+- Plain `run_pipeline` (`src/decoy/cli/run/_execute.py:307`), whose engine routes are full-frame, sequential, out-of-core, mixed (`src/decoy_engine/execution/_pipeline_mixed_route.py:252`) and stream (RUN-STREAM E1a). The document reads the route from `quality_metrics["execution"]` (`src/decoy_engine/execution/_pipeline_route_exec.py:107`); a value outside `ExecutionMode` becomes `other`.
 - `--chunked` through `_run_chunked_mask` (`_execute.py:66`): oracle `run_mask_pipeline_chunked` (`src/decoy_engine/execution/_chunked.py:379`) emits no phase events today; the native entry only counts rows (`src/decoy_engine/execution/native/_chunked_entry.py:660`). Until E3b ships, chunked `rows_out` is null with `rows_source` null (named limit in C-DOC1).
 - `--rows` preview (`_execute.py:352`): document with `delivery.outcome` `not_applicable`.
 - Native and pandas variants of the plain route: same projection; `route.native` from the CLI's `RouteClassification` without its label.
@@ -214,7 +264,7 @@ Measured on CLI `ae58f68`. "Own envelope" means the path prints its own `--json`
 
 - Document: every field of `RunResult` (`src/decoy_engine/run_result/_model.py:362` to `:379`), unchanged.
 - `--json` added members: `result`, `result_status`, and on failure `reason`.
-- `--json` legacy members, values unchanged: success `command`, `status`, `config`, `mode`, `elapsed_s`, `tables`, `warnings`, `outputs`, `output_dir`, `project`, `pipeline`, `resources`, `notify`, `native_route`, `report` (`_render.py:86` to `:116`); failure `command`, `status`, `config`, `mode`, `error`, `hint`, `error_kind`, `code`, `extra`, `notify` and the gate members (`_errors.py:258` to `:287`).
+- `--json` legacy members, values unchanged: success `command`, `status`, `config`, `mode`, `elapsed_s`, `tables`, `warnings`, `outputs`, `output_dir`, `project`, `pipeline`, `resources`, `notify`, `native_route`, `report` (`_render.py:86` to `:116`); the preview envelope's `preview` member (`_render.py:192`); failure `command`, `status`, `config`, `mode`, `error`, `hint`, `error_kind`, `code`, `extra`, `notify` and the gate members (`_errors.py:258` to `:287`).
 - Exit taxonomy: `EXIT_PARTIAL`, `RUN_EXIT_MAP`.
 - CLI warning codes: `run_result_build_failed`, `run_result_write_failed`.
 
@@ -237,8 +287,12 @@ Measured on CLI `ae58f68`. "Own envelope" means the path prints its own `--json`
   ledger `ctx._published`; `CLI_WARNING_CODES`; `write_local_target` and `WriteMode.REPLACE`;
   `emit_json`; `_native_gate.classify_route`; `evidence.hash_file` for `config.file_sha256`;
   `mint_invocation_id`.
-- Sentries reused: `tests/sentry/test_engine_reason_code_copies.py` (no capacity-code literal in
-  `src/decoy`, so C-CAP needs no new sentry); `tests/sentry/test_engine_import_surface.py`
+- Sentries reused: `tests/sentry/test_engine_reason_code_copies.py`. One capacity-code literal
+  is allowlisted there today: `cli/preflight.py:446` matches
+  `exc.code == "out_of_core_fanin_exceeds_budget"` (allowlist entry at `:73`), and the run gate's
+  preflight layer reuses it. C-CAP replaces it with `exc.code in capacity_codes()` and deletes
+  the allowlist entry, so `decoy validate` and `decoy run` agree on every widened code and no
+  new sentry is needed; `tests/sentry/test_engine_import_surface.py`
   (every new engine name the CLI imports); `tests/sentry/layout/test_run_package_shape.py`
   (600-line cap, import order); engine `tests/sentry/test_run_result_constructor.py`.
 
@@ -256,20 +310,22 @@ mutation is reverted. Markers: cells `zz_marker_a` and `zz_marker_b`, a `tmp_pat
 | AT-P2 | E2a | `test_outcomes`: aggregate error marks unfinished tables `failed`; start-only is `failed` on a failed run and `succeeded` otherwise; no events is `not_run`; no facts and no result gives every table `not_run` | treat the aggregate error as `not_run` |
 | AT-P3 | E2a | `test_delivery_facts`: a `failed` delivery fact overrides execution success with its reason; a table without a fact gets `none`; `delivery.outcome` delivered, partial, nothing and `not_applicable` cells | let execution success win over a delivery failure |
 | AT-P4 | E2a | `test_names`: a name `approve_name` refuses gives `name: null` with its `index` | pass the raw name |
+| AT-P5 | E2a | `test_delivery_states_agree`: every value of DELIV's `delivery._plan.DeliveryState` (`get_args`) is a value of `run_result` `TableDeliveryState`; `DeliveryFacts.tables` values are `run_result.TableDelivery` instances | add a DELIV state the run result cannot hold (red) |
+| AT-P6 | E2a | `tests/unit/run_result/test_exports.py::test_package_exports`: `decoy_engine.run_result.__all__` lists the new names (E2a's, then E2b and E3a each extend it); the top-level `decoy_engine.__all__` is unchanged | export from the top-level `__init__.py` |
 | AT-B1 | E2b | `tests/unit/run_result/test_build.py::test_success_two_tables`: `run_pipeline` on a two-table FK fixture (one mask, one generate): the document validates with `RunResultRead`, two entries in config order, `rows_out == len(outputs[t])`, `kind` from `table_kinds`, `status` `succeeded` | skip the generate table |
 | AT-B2 | E2b | `test_failure_input`: a `ReasonRecord` from `reason_from_exception(ExecutionError(message="zz_marker_exc"))` comes back equal in `failure.reason`; marker absent from `json.dumps(payload)`; `status` follows `category` | pass `category=None` to `derive_outcome` |
-| AT-B3 | E2b | `test_checks_value_free`: `failed_checks` messages and `quality_summary.sampled_values` with markers give codes and counts only; `blocking` only under `post_validation_enforce` | copy `message` into `codes`; ignore the enforce flag |
+| AT-B3 | E2b | `test_checks_value_free`: `failed_checks` messages and `quality_summary.sampled_values` with markers give codes and counts only; `blocking` equals the `blocking_failed` input and `status` is `findings` only when it is true | copy `message` into `codes`; recompute blocking from the checks inside the builder |
 | AT-B4 | E2b | `test_paths_and_native`: an absolute target gives its file name; `../x.csv` gives `x.csv`; `out/a.csv` stays; `native` has no label | keep the absolute path |
 | AT-B5 | E2b | existing `tests/sentry/test_run_result_constructor.py` green with `_build.py` present; its seeded `model_copy` case in `_project.py` red | `model_copy(update=...)` in `_project.py` |
 | AT-B6 | E2b | `test_route_values`: every route value `execution_telemetry` is called with (listed at STEP ZERO) maps to a member of `ExecutionMode` or to `other` | drop the `other` mapping (the read of a new value raises) |
-| AT-K1 | E3a | `tests/unit/run_result/test_collect.py::test_whole_table_routes_count_rows`: full-frame, sequential and out-of-core under `use_progress(collector)`: projected `rows_out` equals the outputs | drop phase finish rows in the collector |
+| AT-K1 | E3a | `tests/unit/run_result/test_collect.py::test_whole_table_routes_count_rows`: full-frame, sequential and out-of-core under `use_progress(collector)`: the snapshot projected with `execution_result=None` (so the phase rows are the source) gives `rows_out` equal to the outputs and `rows_source` `phase` | drop phase finish rows in the collector |
 | AT-K2 | E3a | `test_per_table_on_failure`: sequential forced, table 2 raises: 1 `succeeded`, 2 `failed`, 3 `not_run`; full-frame mask strategy raises: every mask table `failed` | mark every table `failed` on any error |
-| AT-K3 | E3a | `test_collector_never_changes_a_run`: a raising or malformed event leaves the run's outputs byte-identical with and without the collector | let `on_event` exceptions escape |
+| AT-K3 | E3a | `test_collector_never_changes_a_run`: `collector.on_event` called directly (not through `Progress.emit`, which already swallows sink errors at `progress.py:186` to `:197`) with a malformed event and with an event whose read raises: no exception, counters unchanged; and a run's outputs are byte-identical with and without the collector | let `on_event` exceptions escape |
 | AT-K4 | E3a | `test_phase_timings`: `resolve` and `mask` present, `elapsed_s >= 0`, first-seen order | keep only the last phase |
 | AT-K5 | E3b | `test_chunked_entries_count_rows`: oracle and native (where the companion is installed) chunked entries: `rows_out` equals the rows the caller received, `rows_source` `phase` | remove the `observe_chunked` call in `_chunked.py` |
 | AT-K6 | E3b | `test_observe_chunked_outcomes`: early close after one chunk on a successful run gives `succeeded` and no phase error event; a producer exception gives `failed` and propagates unchanged | use the `phase()` context manager |
 | AT-CAP1 | E-CAP | `tests/unit/test_capacity_reason_codes.py::test_members`: the seven codes are in `CAPACITY_REASON_CODES` and registered; the old pin at `tests/unit/generation/test_generation_floor.py:481` moves to this set (named pin update) | drop `out_of_core_faker_pool_budget_exceeded` |
-| AT-CAP2 | E-CAP | `test_registry_walk`: every registered code whose name contains `memory`, `budget` or `capacity` is in exactly one of `CAPACITY_REASON_CODES` or `CAPACITY_EXCLUSIONS`; every exclusion has a non-empty reason; the walk's count is recorded in the build record, never hard-coded | delete one exclusion entry |
+| AT-CAP2 | E-CAP | `test_registry_walk`: every registered code whose name contains `memory`, `budget`, `capacity` or `oom` is in exactly one of `CAPACITY_REASON_CODES` or `CAPACITY_EXCLUSIONS`; every exclusion has a non-empty reason; the walk's count is recorded in the build record, never hard-coded | delete one exclusion entry |
 | AT-OOM1 | E-OOM | `test_memory_error_identity`: `reason_from_exception(MemoryError())` is `decoy.process_out_of_memory` with retry `environment_repair`; the code is in `CAPACITY_REASON_CODES`; the registry snapshot passes with `since=UNRELEASED` | drop the `_FIXED` row |
 
 ### 7.2 CLI
@@ -277,7 +333,7 @@ mutation is reverted. Markers: cells `zz_marker_a` and `zz_marker_b`, a `tmp_pat
 | Id | Slice | Test | Mutation that turns it red |
 |---|---|---|---|
 | AT-X1 | C-EXIT | `tests/unit/test_exit_code_registries.py::test_taxonomy`: `contracts.EXIT_CODES` equals the `EXIT_` integers in `exit_codes.__all__`; `EXIT_PRECEDENCE == (5, 3, 1, 6, 4, 2, 0)`; `docs/ci-contracts.md` has a row per code and the precedence string | a hand-written `EXIT_CODES` without 6 |
-| AT-X2 | C-EXIT | `test_run_exit_map_total`: `RUN_EXIT_MAP` has an entry for every `(status, category)` `derive_outcome` can return (from `get_args`), and nothing else; `partially_delivered` maps to 6 | map `partially_delivered` to 3 |
+| AT-X2 | C-EXIT | `test_run_exit_map_total`: `RUN_EXIT_MAP` has an entry for every `(status, category)` `derive_outcome` can return (from `get_args`), and nothing else; every value is pinned as a literal (0, 4, 6, 1, 2, 3, 5 and the OQ-1 Ctrl-C integer) | map `partially_delivered` to 3; map `parameter` to 1 |
 | AT-X3 | C-EXIT | `tests/e2e/test_run_exit_map.py::test_exits_read_the_map`: config error 1, engine runtime error 3, fan-in capacity 5, gate refusal 1, gate capacity 5, enforce findings 4, success 0, each equal to today; then with `RUN_EXIT_MAP[("failed", "runtime")]` patched to 9 the runtime case exits 9 | `fail` raises its local `_exit_code` again |
 | AT-X4 | C-EXIT | `test_explain_lists_exit_6`: `decoy explain exit-codes` and the README "Exit codes" section list 6 as partially delivered, reserved for best-effort delivery | drop the explain line |
 | AT-X5 | C-EXIT | `tests/unit/test_exit_codes.py` expected `__all__` gains `EXIT_PARTIAL` and `RUN_EXIT_MAP`; `tests/unit/test_ci_docs.py` precedence pin updated (named pin updates, nothing else changes) | n/a (pin update) |
@@ -286,27 +342,30 @@ mutation is reverted. Markers: cells `zz_marker_a` and `zz_marker_b`, a `tmp_pat
 | AT-R3 | C-REASON | `test_config_failure`: `ConfigError("zz_marker_exc")`: exit 1, retry `configuration_repair` | none attached for usage categories |
 | AT-R4 | C-REASON | `test_unknown_exception`: `ValueError` with `.code = "zz_marker_exc"`: exit 3, `decoy.unexpected_error`, marker absent | read `exc.code` into the reason |
 | AT-R5 | C-REASON | `test_rewrites_keep_the_original_reason`: a missing extra has no `reason`; an engine `NerUnavailableError` rewritten to `MissingExtraError` keeps the engine record of the original | compute from the rewritten exception |
-| AT-R6 | C-REASON | `test_cli_owned_refusals_have_no_reason[...]`: `_VaultUsageError`, `_ChunkedVaultError`, `_VaultWriteError`, `OutDirUsageError`, `PreRunCheckError`, `_OtelSettingsUsageError`: no `reason` | attach `unexpected_error` to every failure |
-| AT-R7 | C-REASON | `test_usage_types_single_source`: `_usage_types()` equals the base tuple at `_errors.py:157` to `:205` member for member (listed at STEP ZERO), and both the exit category and the attach rule read it | drop `DuckDBSourceError` from one rule only |
+| AT-R6 | C-REASON | `test_cli_owned_refusals_have_no_reason[...]`: cases derived from `_cli_refusal_types()` (no hand list), at least `_VaultUsageError`, `_ChunkedVaultError`, `_VaultWriteError`, `OutDirUsageError`, `PreRunCheckError` (exit 1 and exit 5) and `_OtelSettingsUsageError`: no `reason`, exits unchanged | attach `unexpected_error` to every failure; leave `_VaultWriteError` out of `_cli_refusal_types()` |
+| AT-R7 | C-REASON | `test_usage_types_single_source`: `_usage_types()` equals the base tuple at `_errors.py:157` to `:205` member for member (listed at STEP ZERO), and both the exit category and the attach rule read it; C-DOC2 extends the pinned list by its typed refusals (named pin update) | drop `DuckDBSourceError` from one rule only |
 | AT-R8 | C-REASON | `test_classifier_failure_keeps_exit`: `registered_families` patched to raise `RuntimeError("zz_marker_exc")`: exits 1, 3, 5 unchanged, no `reason`, marker absent from stdout and stderr | remove the guard in `_failure_reason` |
-| AT-R9 | C-REASON | `tests/sentry/test_run_single_reason.py` (G-ONE-REASON): exactly one `reason_from_exception` reference in `src/decoy/`, inside `_failure_reason`; seeded-violation self-test in a scratch copy | a second call in `_render.py` |
+| AT-R9 | C-REASON | `tests/sentry/run/test_one_run_reason.py` (G-ONE-REASON): exactly one `reason_from_exception` reference in `src/decoy/`, inside `_failure_reason`; seeded-violation self-test in a scratch copy | a second call in `_render.py` |
 | AT-D1 | C-DOC1 | `tests/e2e/run_result/test_run_result.py::test_success_document`: mixed config with `--json`: `result` validates with `RunResultRead`, `result.exit_code == 0 ==` process exit, `pipeline_kind` `mixed` while legacy `mode` stays as today, `config.file_sha256 == evidence.hash_file(config)` on a CRLF fixture, legacy key set equals the base set plus `result` and `result_status` | read legacy `mode` from `pipeline_kind` |
-| AT-D2 | C-DOC1 | `test_failure_document`: engine runtime error: `result.status` `failed`, `failure.category` `runtime`, `failure.reason` equals the envelope `reason`, `result.exit_code == 3 ==` process exit; capacity case gives `capacity` and 5 | take the category from a second table in `_result.py` |
+| AT-D2 | C-DOC1 | `test_failure_document`: engine runtime error: `result.status` `failed`, `failure.category` `runtime`, `failure.reason` equals the envelope `reason`, `result.exit_code == 3 ==` process exit; engine capacity case gives `capacity` and 5; gate capacity refusal gives `capacity`, 5, no `failure.reason` | pass `category="runtime"` for every failure in `_result.py` (capacity cell red) |
 | AT-D3 | C-DOC1 | `test_value_free`: success, runtime, usage and capacity runs over the markers: `result` and `result_status` hold no marker and no `str(tmp_path)` | pass `ctx.config_str` as `config.name` |
 | AT-D4 | C-DOC1 | `test_build_failure_keeps_exit`: `build_run_result` patched to raise `RuntimeError("zz_marker_exc")` on a success and a runtime failure: exits 0 and 3, no `result`, `result_status.document` `failed` with `run_result_build_failed`, marker absent; for every C-DOC1 path the fallback exit equals the builder's | let the exception escape |
-| AT-D5 | C-DOC1 | `tests/sentry/test_run_result_builder.py` (G-RESULT-ONE-BUILDER): one `build_run_result(` in `src/decoy/`, in `_result.py`; no `RunResult`, `RunResultRead`, `model_construct`, `model_validate`, `model_copy` and no `decoy-run-result/v1` literal in `src/decoy/`; seeded self-test | a second `build_run_result(` in `_render.py` |
+| AT-D5 | C-DOC1 | `tests/sentry/run/test_one_result_builder.py` (G-RESULT-ONE-BUILDER): one `build_run_result(` in `src/decoy/`, in `_result.py`; no `RunResult(` or `RunResultRead(` call, no `model_construct`, `model_validate` or `model_copy` on a `RunResult` or `RunResultRead` receiver (the engine sentry's scope; `cli/io/_scan_set.py:131` is not one), and no `decoy-run-result/v1` literal in `src/decoy/`; seeded self-test | a second `build_run_result(` in `_render.py` |
 | AT-D6 | C-DOC1 | `test_in_place_delivery`: success gives `in_place` `delivered`; the second target's write fails: exit 3, `delivery.outcome` `partial`, table 1 `delivered`, table 2 `none` | mark tables delivered from `targets:` |
 | AT-D7 | C-DOC1 | `test_preview_document`: `--rows 5 --json`: `result` present, `delivery.outcome` `not_applicable`, nothing written | derive `nothing` for a preview |
 | AT-D8 | C-DOC1 | `test_collector_registered`: a sequential run whose second table raises: document tables `succeeded`, `failed`, `not_run` | skip `ctx.progress.add(collector.on_event)` in `_flow.py` |
-| AT-O1 | C-DOC2 | `tests/e2e/run_result/test_run_exit_paths.py::test_every_path_has_one_document` (X3 to X11): `result.exit_code` equals the process exit and the base integer; legacy key set equals the base set recorded before coding, plus `result` and `result_status` (X5, X8, X11 had no JSON on base: their pinned sets are new and the changelog says so); X5 keeps Click's message on stderr | emit the X3 envelope before `finish` |
-| AT-O2 | C-DOC2 | `tests/sentry/test_run_single_exit.py` (G-RUN-ONE-EXIT): under `src/decoy/cli/run/`, `emit_json(` and `raise typer.Exit(` appear only in `_result.py`; seeded self-test | re-add `raise typer.Exit(code=EXIT_USAGE)` in `_notify.py` |
+| AT-D9 | C-DOC1 | `test_one_blocking_decision`: enforce with failed checks: exit 4, `result.status` `findings`, `LATEST` not moved; enforce off with the same checks: exit 0, `succeeded`, `LATEST` moved | keep the `commit_latest` copy of the enforce test and invert it there only |
+| AT-O1 | C-DOC2 | `tests/e2e/run_result/test_run_exit_paths.py::test_every_path_has_one_document` (X3 to X11): `result.exit_code` equals the process exit and the base integer; legacy key set equals the base set recorded before coding, plus `result` and `result_status` (X5, X8, X11 had no JSON on base: their pinned sets are new and the changelog says so); X5 keeps Click's message on stderr; X8 has no `reason` and `failure.category` `runtime` | emit the X3 envelope before `finish`; attach `unexpected_error` to the evidence failure |
+| AT-O2 | C-DOC2 | `tests/sentry/run/test_one_run_exit.py` (G-RUN-ONE-EXIT): under `src/decoy/cli/run/`, `emit_json(` and every exit raise appear only in `_result.py`. Covered shapes, listed in the docstring: `typer.Exit`, `click.exceptions.Exit`, `SystemExit`, `sys.exit(`, `typer.Abort`, and the same names bound through `from typer import Exit` or an `as` alias; `getattr` and `importlib` are a named limit; seeded self-test per shape | re-add `raise typer.Exit(code=EXIT_USAGE)` in `_notify.py`; `sys.exit(1)` in `_prepare.py` |
 | AT-O3 | C-DOC2 | `test_ctrl_c`: `KeyboardInterrupt` from a patched `run_pipeline`: `status` `cancelled`, `failure.reason.code` `run_cancelled`, exit and stderr line equal to the STEP ZERO measurement | catch only `Exception` in the wrapper |
 | AT-O4 | C-DOC2 | `test_one_json_object`: stdout parses as exactly one JSON object on every AT-O1 path | emit twice on the build fallback |
+| AT-O5 | C-DOC2 | `test_post_try_crash_is_a_named_limit` (X14): `build_manifest` patched to raise `OSError("zz_marker_exc")` with `--evidence-out --json`: exit 1, `internal error (OSError)` on stderr, no partial JSON on stdout, marker absent from both | emit a half-built envelope before the root guard |
 | AT-F1 | C-DOC3 | `tests/e2e/run_result/test_result_file.py::test_file_equals_member`: `--json --result out.json`: the file equals the envelope `result`; `result_status.file` `written`; human mode prints `Result: out.json` | write `json.dumps(model_dump(), default=str)` |
 | AT-F2 | C-DOC3 | `test_write_failure_keeps_exit`: a missing directory on success and on a runtime failure: exits 0 and 3, one stderr line with `run_result_write_failed` and no path, `result_status.file` `failed` | raise `EXIT_RUNTIME` on the write failure |
 | AT-F3 | C-DOC3 | existing `tests/sentry/test_atomic_writer.py` green with the new call | `Path.write_text` in `_result.py` |
-| AT-C1 | C-CAP | `tests/e2e/test_run_capacity_widening.py::test_each_capacity_code_exits_5`: each exception-family member of `CAPACITY_REASON_CODES` raised as its engine class with its code (and `MemoryError()`) from a patched `run_pipeline`: exit 5, `error_kind` `capacity`, `failure.category` `capacity`; `isolated_worker_out_of_memory` (no exception class in `decoy run`) covered by a unit call of the category rule | the CLI keeps a local three-code set |
-| AT-C2 | C-CAP | `test_excluded_codes_keep_their_exit`: one code per exclusion family (`storage_capacity_exhausted`, `out_of_core_budget_invalid`, `subset_budget_exceeded`, `dp_budget_exceeded`, `pool_capacity_pre_flight_unique`) keeps today's exit | widen by substring `budget` in the CLI |
+| AT-C1 | C-CAP | `tests/e2e/test_run_capacity_widening.py::test_each_capacity_code_exits_5`: each exception-family member of `CAPACITY_REASON_CODES` raised as its engine class with its code (and `MemoryError()`) from a patched `run_pipeline`: exit 5, `error_kind` `capacity`; `isolated_worker_out_of_memory` (no exception class in `decoy run`) covered by a unit call of the category rule. `failure.category` is not asserted here: C-CAP may land before C-DOC1, and AT-D2 covers the capacity category | the CLI keeps a local three-code set |
+| AT-C2 | C-CAP | `test_excluded_codes_keep_their_exit`: one code per exclusion family (`storage_capacity_exhausted`, `out_of_core_budget_invalid`, `subset_budget_exceeded`, `dp_budget_exceeded`, `pool_capacity_pre_flight_unique`, `fk_full_frame_oom_risk_rejected`) keeps today's exit | widen by substring `budget` in the CLI |
+| AT-C3 | C-CAP | `tests/e2e/test_run_preflight_capacity_parity.py` gains `test_widened_codes_agree`: each member of `CAPACITY_REASON_CODES` raised from a patched `estimate_job_capacity` gives the same capacity verdict and exit in `decoy validate` and in the `decoy run` gate | keep the fan-in literal at `cli/preflight.py:446` |
 
 Behaviour kept (assertions unchanged): every `tests/e2e/test_run_*.py`,
 `tests/e2e/test_run_capacity.py`, `tests/e2e/generate_config/test_generate_capacity.py`,
@@ -320,20 +379,22 @@ sentries under `tests/sentry/`.
 | `src/decoy_engine/run_result/_project.py` | `run_result/` (engine `CODEMAP.md`, the run_result row gains the module) | `run_result/_outcome.py` | E2a |
 | `src/decoy_engine/run_result/_build.py` | same | `run_result/_model.py` | E2b |
 | `src/decoy_engine/run_result/_collect.py` | same | `progress.py` (the `ProgressSink` protocol) | E3a |
-| `src/decoy_engine/execution/_chunked_progress.py` | `execution/`; added to the physical-seam permitted list with a one-line reason | `execution/_chunked.py` | E3b |
-| `tests/unit/run_result/test_project.py`, `test_build.py`, `test_collect.py` | tests mirror the package | `tests/unit/run_result/test_outcome.py` | E2a, E2b, E3a |
+| `src/decoy_engine/execution/chunked/__init__.py`, `src/decoy_engine/execution/chunked/_progress.py` | new sub-package `execution/chunked/`, the route cluster `tests/sentry/layout/test_package_fanout.py:32` names for the next `execution/` module (the flat folder is frozen at 104); engine `CODEMAP.md` gains a row; `_progress.py` joins `GUARDED_MODULES` in `tests/sentry/test_physical_seam_disconnection.py:64` | `execution/_chunked.py` | E3b |
+| `tests/unit/run_result/test_project.py`, `test_build.py`, `test_collect.py`, `test_exports.py` | tests mirror the package | `tests/unit/run_result/test_outcome.py` | E2a, E2b, E3a |
 | `tests/unit/test_capacity_reason_codes.py` | `tests/unit/` | `tests/unit/generation/test_generation_floor.py` | E-CAP |
 | `src/decoy/cli/run/_result.py` | `cli/run/` (CLI `CODEMAP.md:50`, row gains `_result.py`); `ORDER` in `tests/sentry/layout/test_run_package_shape.py` gains `_result` after `_vault`, before `_execute` | `run/_render.py` | C-DOC1 |
 | `tests/unit/test_exit_code_registries.py` | `tests/unit/` (CLI `CODEMAP.md:56`, exit codes row) | `tests/unit/test_exit_codes.py` | C-EXIT |
 | `tests/e2e/test_run_exit_map.py`, `tests/e2e/test_run_reason_envelope.py`, `tests/e2e/test_run_capacity_widening.py` | `tests/e2e/` beside the other `test_run_*` files | `tests/e2e/test_run_capacity.py` | C-EXIT, C-REASON, C-CAP |
-| `tests/e2e/run_result/` (`test_run_result.py`, `test_run_exit_paths.py`, `test_result_file.py`) | `tests/e2e/<topic>/` as `tests/e2e/run_progress/` | `tests/e2e/run_progress/` | C-DOC1 to C-DOC3 |
-| `tests/sentry/test_run_single_reason.py`, `test_run_result_builder.py`, `test_run_single_exit.py` | `tests/sentry/`, listed in `tests/sentry/test_sentry_manifest.py` and `scripts/dev/sentry_registry.toml` | `tests/sentry/test_engine_reason_code_copies.py` | C-REASON, C-DOC1, C-DOC2 |
+| `tests/e2e/run_result/` (`__init__.py` if the topic folders on main carry one, `test_run_result.py`, `test_run_exit_paths.py`, `test_result_file.py`) | `tests/e2e/<topic>/` as `tests/e2e/project_layout/` on main | `tests/e2e/project_layout/` | C-DOC1 to C-DOC3 |
+| `tests/sentry/run/__init__.py`, `tests/sentry/run/test_one_run_reason.py`, `test_one_result_builder.py`, `test_one_run_exit.py` | new group `tests/sentry/run/` (`decoy run` choke points), as CLI `CODEMAP.md:67` asks (`tests/sentry/<group>/test_<rule>.py`; the flat `tests/sentry/` holds existing rules only); the CODEMAP sentry row names the group; each file is listed in `SENTRIES` in `tests/sentry/test_sentry_manifest.py`. `scripts/dev/sentry_registry.toml` is not touched: none of the three has a baseline file | `tests/sentry/defects/` | C-REASON, C-DOC1, C-DOC2 |
 
-No module goes in the frozen flat `src/decoy/cli/`. Sizes at the base: engine `__init__.py` 600
-(goal 600, cap 700; E2a, E2b, E3a add about 10 export lines in total), `execution/_chunked.py`
-600, `execution/native/_chunked_entry.py` 681 (net 0 in E3b), `errors.py` 548, CLI
-`run/_errors.py` 320, `run/_render.py` 201, `run/_flow.py` 125, `run/_context.py` 163 (cap 600
-for `cli/run/`). Every new module stays under 300 lines.
+No module goes in the frozen flat `src/decoy/cli/` or the frozen flat engine `execution/`.
+Sizes at the base: engine `__init__.py` 600 (the goal; no slice edits it, the new names are
+exported from `decoy_engine.run_result` only), `execution/_chunked.py` 600 at `c38f17cd` and 599
+at `ad63ba1b` (net 0 in E3b; no new size-census entry), `execution/native/_chunked_entry.py` 681
+(net 0 in E3b), `errors.py` 548, CLI `run/_errors.py` 320, `run/_render.py` 201,
+`run/_flow.py` 125, `run/_context.py` 163 (cap 600 for `cli/run/`). Every new module stays under
+300 lines.
 
 ## 9. Frozen contracts touched
 
@@ -347,43 +408,62 @@ for `cli/run/`). Every new module stays under 300 lines.
 - Reason registry: one identity `since=UNRELEASED` (E-OOM, after #506); consumer contract
   regenerated.
 - Engine public API: `project_tables`, `ProjectedTables`, `CollectedFacts`, `DeliveryFacts`,
-  `build_run_result`, `FailureInput`, `RunResultCollector`, `CAPACITY_EXCLUSIONS`; each pinned in
-  `tests/unit/test_public_api.py`.
+  `build_run_result`, `FailureInput`, `RunResultCollector` in `decoy_engine.run_result.__all__`,
+  pinned by `tests/unit/run_result/test_exports.py` (AT-P6); `CAPACITY_EXCLUSIONS` in
+  `decoy_engine.errors`, pinned by AT-CAP2. The top-level `decoy_engine.__all__` and
+  `tests/unit/test_public_api.py` are unchanged.
 - New CLI option `--result PATH` (C-DOC3); `docs/cli-reference.md` regenerated.
 
 ## 10. Slices
 
-`_execute.py` order today: L5a (CLI #216), SUB-RUN C1, DELIV C2a, C3, C4, C5. Only C-DOC1
-writes `run/_execute.py` (two lines: keep the `ExecutionResult` on `ctx` in the plain branch).
-Its slot is after SUB-RUN C1 and before DELIV C2a. If DELIV C2a is ready first, C-DOC1 takes the
-slot after C2a instead; the hunk is additive and the orchestrator picks. `run/_errors.py` and
-`run/_render.py` are RESULT's modules: C-EXIT, C-REASON, C-DOC1, C-DOC2, C-DOC3, C-CAP write
-them one at a time in that order; DELIV C2a's `_render.py` hunk lands between whichever two it
-meets. `run/_flow.py` lane: L5a, then C-DOC1 (one line), then C-DOC2, then DELIV C2a, L3b, L5b.
+One fixed writer order per shared `cli/run/` module. Every lane is a strict sequence: a writer
+starts on the merged head of the one before it, never in parallel and never out of order. The
+DELIV plan's own order (deliv.md section 10) has no RESULT slice in the `_execute.py` lane and
+names "F29 C1" as the RESULT writer of `_render.py`; the orchestrator posts this table on the
+DELIV plan so both plans read the same order (pre-mortem).
 
-| Slice | Repo | Files | Est. changed lines (with tests) | Tier | Depends on | Startable now |
+| Module | Writers, in order (merged ones struck from the head of the lane as they land) |
+|---|---|
+| `run/_execute.py` | L5a (#216), SUB-RUN C1, C-DOC1 (two lines: keep the `ExecutionResult` on `ctx` in the plain branch), DELIV C2a, C3, C4, C5 |
+| `run/_flow.py` | L5a (#216), C-DOC1 (one line), C-DOC2, DELIV C2a (moves the `write_evidence` call into the sink), LIB L3b, L5b |
+| `run/_errors.py` | C-EXIT, C-REASON, C-DOC1, C-DOC2 (no DELIV writer) |
+| `run/_render.py` | C-EXIT, C-DOC1, C-DOC2, DELIV C2a, DELIV C5 (extends `_blocking_failed`) |
+| `run/_context.py` | L5a (#216), C-DOC1, DELIV C2a (`sink` field), C-DOC3 |
+| `run/_prepare.py` | SUB-RUN C1, C-DOC2 |
+| `run/_evidence.py` | C-DOC2 (the X8 typed refusal); DELIV C2a then calls it from the sink unchanged |
+| `run/_notify.py` | C-DOC2 |
+| `run/__init__.py` | C-DOC3 |
+
+So DELIV C2a starts after C-DOC2 has merged. C-REASON writes no `_render.py`; DELIV's "F29 C1"
+`_render.py` slot is C-DOC1 and C-DOC2 here. C-CAP writes no `cli/run/` module.
+
+| Slice | Repo | Files | Src / test lines | Tier | Depends on | Startable now |
 |---|---|---|---|---|---|---|
-| C-EXIT | CLI | `cli/exit_codes.py`, `ci/contracts.py`, `run/_errors.py`, `run/_render.py`, `cli/explain.py`, `README.md`, `docs/ci-contracts.md`, `CHANGELOG.md`, AT-X1 to AT-X5 tests | ~230 | R2 | nothing (engine 0.22.0 has `derive_outcome`) | yes |
-| C-REASON (F29 C1) | CLI | `run/_errors.py`, `CHANGELOG.md`, `tests/e2e/test_run_reason_envelope.py`, `tests/sentry/test_run_single_reason.py`, sentry manifest rows | ~320 | R2 | C-EXIT merged (same module) | yes, after C-EXIT; it waits on nothing outside this row |
-| E2a | engine | `run_result/_project.py`, `run_result/__init__.py`, `__init__.py`, `tests/unit/test_public_api.py`, `test_project.py`, `CODEMAP.md`, `CHANGELOG.md` | ~340 | R2 | nothing | yes |
-| E-CAP | engine | `errors.py`, `tests/unit/test_capacity_reason_codes.py`, `tests/unit/generation/test_generation_floor.py` (pin), `docs/strategies.md`, `CHANGELOG.md` | ~150 | R2 | nothing | yes |
-| E2b | engine | `run_result/_build.py`, `run_result/__init__.py`, `__init__.py`, `test_public_api.py`, `test_build.py`, `CHANGELOG.md` | ~380 | R2 | E2a | no: E2a |
-| E3a | engine | `run_result/_collect.py`, `run_result/__init__.py`, `__init__.py`, `test_public_api.py`, `test_collect.py`, `CHANGELOG.md` | ~300 | R2 | E2a (`CollectedFacts`) | no: E2a |
-| E3b | engine | `execution/_chunked_progress.py`, `execution/_chunked.py`, `execution/native/_chunked_entry.py`, `tests/sentry/test_physical_seam_disconnection.py` (one entry), `test_collect.py` (chunked cases), `CHANGELOG.md` | ~220 | R2 | E3a; merge main in before its gate if engine #505 or #508 (both edit the chunked entries) merged | no: E3a |
-| E-OOM | engine | `reasons/decoy/_core.py`, `reason_adapter.py`, `errors.py`, registry snapshot and consumer contract, `docs/reasons.md`, `CHANGELOG.md`, test | ~110 | R1 | engine #506 merged; E-CAP | no: #506 |
+| C-EXIT | CLI | `cli/exit_codes.py`, `ci/contracts.py`, `run/_errors.py`, `run/_render.py`, `cli/explain.py`, `README.md`, `docs/ci-contracts.md`, `CHANGELOG.md`, AT-X1 to AT-X5 tests (`tests/unit/test_exit_codes.py` and `tests/unit/test_ci_docs.py` named pins) | ~90 / ~150 | R2 | nothing (engine 0.22.0 has `derive_outcome`) | yes |
+| C-REASON (F29 C1) | CLI | `run/_errors.py`, `CHANGELOG.md`, `tests/e2e/test_run_reason_envelope.py`, `tests/sentry/run/__init__.py`, `tests/sentry/run/test_one_run_reason.py`, `SENTRIES` row, CODEMAP sentry row | ~80 / ~240 | R2 | C-EXIT merged (same module) | yes, after C-EXIT; it waits on nothing outside this row |
+| E2a | engine | `run_result/_project.py`, `run_result/__init__.py`, `tests/unit/run_result/test_project.py`, `tests/unit/run_result/test_exports.py`, `CODEMAP.md`, `CHANGELOG.md` | ~170 / ~170 | R2 | nothing | yes |
+| E-CAP | engine | `errors.py`, `tests/unit/test_capacity_reason_codes.py`, `tests/unit/generation/test_generation_floor.py` (pin), `docs/strategies.md`, `CHANGELOG.md` | ~60 / ~90 | R2 | nothing (OQ-5 has a working answer; the exclusion entries change if the owner says otherwise) | yes |
+| E2b | engine | `run_result/_build.py`, `run_result/__init__.py`, `test_build.py`, `test_exports.py`, `CHANGELOG.md` | ~170 / ~210 | R2 | E2a | no: E2a |
+| E3a | engine | `run_result/_collect.py`, `run_result/__init__.py`, `test_collect.py`, `test_exports.py`, `CHANGELOG.md` | ~160 / ~140 | R2 | E2a (`CollectedFacts`) | no: E2a |
+| E3b | engine | `execution/chunked/__init__.py`, `execution/chunked/_progress.py`, `execution/_chunked.py` (net 0), `execution/native/_chunked_entry.py` (net 0), `tests/sentry/test_physical_seam_disconnection.py` (`GUARDED_MODULES` entry), `test_collect.py` (chunked cases), `CODEMAP.md`, `CHANGELOG.md` | ~70 / ~150 | R2 | E3a; merge main in before its gate if engine #505 or #508 (both edit the chunked entries) merged | no: E3a |
+| E-OOM | engine | `reasons/decoy/_core.py`, `reason_adapter.py`, `errors.py`, registry snapshot and consumer contract, `docs/reasons.md`, `CHANGELOG.md`, test | ~30 / ~80 | R1 | engine #506 merged; E-CAP | no: #506 |
 | REL | engine, CLI | engine release with E2a, E2b, E3a, E-CAP (and E3b, E-OOM when merged); CLI repin per the repin checklist | small | R1 | the slices it carries | no |
-| C-CAP | CLI | `cli/exit_codes.py` (docstring), `cli/explain.py`, `README.md`, `CHANGELOG.md` (breaking line), `tests/e2e/test_run_capacity_widening.py` | ~150 | R2 | the repin carrying E-CAP; lands with that repin or the same day | no: release |
-| C-DOC1 | CLI | `run/_result.py`, `run/_errors.py`, `run/_render.py`, `run/_flow.py` (one line), `run/_execute.py` (two lines), `run/_context.py`, `tests/sentry/layout/test_run_package_shape.py` (`ORDER`), `CODEMAP.md`, `CHANGELOG.md`, AT-D1 to AT-D8 tests, builder sentry | ~400 | R2 | REL with E2a, E2b, E3a; C-REASON; L5a (#216) merged; the `_execute.py` slot | no: release and #216 |
-| C-DOC2 | CLI | `run/_result.py`, `run/_flow.py`, `run/_notify.py`, `run/_prepare.py`, `run/_evidence.py`, `run/_errors.py`, `run/_render.py`, `CHANGELOG.md`, AT-O1 to AT-O4 tests, exit sentry | ~360 | R2 | C-DOC1; SUB-RUN C1 merged (`_prepare.py`) | no: C-DOC1 |
-| C-DOC3 | CLI | `run/__init__.py` (one option hunk), `run/_context.py`, `run/_result.py`, `docs/cli-reference.md` (generated), `CHANGELOG.md`, AT-F1 to AT-F3 tests | ~200 | R1 | C-DOC2 | no: C-DOC2 |
+| C-CAP | CLI | `cli/exit_codes.py` (docstring), `cli/explain.py`, `cli/preflight.py` (the `:446` literal), `tests/sentry/test_engine_reason_code_copies.py` (allowlist entry `:73` removed), `README.md`, `CHANGELOG.md` (breaking line), `tests/e2e/test_run_capacity_widening.py`, `tests/e2e/test_run_preflight_capacity_parity.py` | ~40 / ~140 | R2 | the repin carrying E-CAP; lands with that repin or the same day | no: release |
+| C-DOC1 | CLI | `run/_result.py`, `run/_errors.py`, `run/_render.py`, `run/_flow.py` (one line), `run/_execute.py` (two lines), `run/_context.py`, `tests/sentry/layout/test_run_package_shape.py` (`ORDER`), `tests/sentry/run/test_one_result_builder.py`, `SENTRIES` row, `CODEMAP.md`, `CHANGELOG.md`, AT-D1 to AT-D9 tests | ~250 / ~300 | R2 | REL with E2a, E2b, E3a; C-REASON; L5a (#216) and SUB-RUN C1 merged (the `_execute.py` lane) | no: release and #216 |
+| C-DOC2 | CLI | `run/_result.py`, `run/_flow.py`, `run/_notify.py`, `run/_prepare.py`, `run/_evidence.py`, `run/_errors.py`, `run/_render.py`, `tests/sentry/run/test_one_run_exit.py`, `SENTRIES` row, `CHANGELOG.md`, AT-O1 to AT-O5 tests, AT-R7 pin update | ~200 / ~280 | R2 | C-DOC1; SUB-RUN C1 merged (`_prepare.py`) | no: C-DOC1 |
+| C-DOC3 | CLI | `run/__init__.py` (one option hunk), `run/_context.py`, `run/_result.py`, `docs/cli-reference.md` (generated), `CHANGELOG.md`, AT-F1 to AT-F3 tests | ~80 / ~120 | R2 (new public option and a frozen artifact written at a user path) | C-DOC2; DELIV C2a merged (`_context.py` lane) | no: C-DOC2 |
+
+C-DOC2 is the largest (about 480 lines with tests) and stays one slice: its exit paths share one
+`finish` and one sentry, and splitting them would leave the sentry red between the halves.
 
 Can start today without waiting on DELIV, engine #506 or the `_execute.py` order: **C-EXIT**
 (CLI), then C-REASON on its head; **E2a** and **E-CAP** (engine) in parallel with them.
 C-EXIT is the first pick: it is the smallest, unblocks C-REASON, and gives DELIV C3 the map it
 needs. None of these four edits `_execute.py`.
 
-Engine `__init__.py` and `tests/unit/test_public_api.py` take additive export lines from E2a,
-E2b, E3a and the open engine PRs #508 and #512; keep both sides on merge.
+Engine `run_result/__init__.py` takes additive export lines from E2a, E2b and E3a in that
+order. The top-level `__init__.py` and `tests/unit/test_public_api.py`, which the open engine
+PRs #508 and #512 edit, are not touched.
 
 Test depth: T0 per edit, T1 impact selection per commit. Full-suite escalation triggers: C-EXIT
 (frozen exit contract, `ci` contracts), C-DOC2 (frozen `--json` envelope), E-OOM (registry), REL
@@ -408,6 +488,14 @@ and released. Exit 6 is reachable after DELIV C3; that is row 61's acceptance, n
 - **OQ-4 (technical, taken). Warning codes for a failed build or `--result` write.** Taken: the
   CLI closed list `CLI_WARNING_CODES`, not the reason registry, so nothing waits on #506.
   Alternative: two `warning.*` registry identities after #506.
+- **OQ-5 (owner). Do the full-frame OOM-risk refusals exit 5?** `fk_full_frame_oom_risk_rejected`
+  and `fk_full_frame_oom_risk_rejected_estimated` (`reasons/runtime/_part1.py:189` to `:194`)
+  are raised as `ExecutionError` before any row is read and exit 3 today. They are not in the
+  handoff Q3 table, and preflight files them as "not applicable", not capacity
+  (`execution/capacity.py:149`). Working answer: keep exit 3 and list both in
+  `CAPACITY_EXCLUSIONS` with the reason "a routing refusal decided before any row is read; the
+  fix is the job's shape, not more memory". The other answer moves them to 5 with the four Q3
+  codes in C-CAP.
 
 ## 12. Recurring-defect walk (`/home/cam/dev-rules/catalogs/recurring-defects.md`)
 
@@ -416,11 +504,14 @@ and released. Exit 6 is reachable after DELIV C3; that is row 61's acceptance, n
 2. Strict wire types: no new persisted field; `DeliveryFacts`, `CollectedFacts` and
    `FailureInput` are in-process inputs, and their output lands in the strict E1 model.
 3. No exception context: `_failure_reason` and the build fallback never put the exception in an
-   output; any new value-free error is raised after its `except` block closes.
+   output; every typed refusal C-DOC2 adds is raised after its `except` block closes, under the
+   existing `tests/sentry/defects/test_exception_context.py`.
 4. Versioned read models: AT-D1 reads `result` with `RunResultRead`; no new format.
 5. Normalized guard scanners: AT-R9, AT-D5 and AT-O2 match calls through `ast` (attribute and
    name forms, `from x import y as z` aliases); covered shapes are listed in each sentry's
-   docstring; `getattr` and `importlib` are a named limit.
+   docstring, and AT-O2 names every exit form (`typer.Exit`, `click.exceptions.Exit`,
+   `SystemExit`, `sys.exit(`, `typer.Abort`) with a seeded case per shape; `getattr` and
+   `importlib` are a named limit.
 6. No private imports: the CLI imports `decoy_engine` public names only, checked by
    `test_engine_import_surface.py`; engine `_collect.py` uses the public `progress` module.
 7. No hidden CI failures: no new workflow or script.
@@ -429,8 +520,12 @@ and released. Exit 6 is reachable after DELIV C3; that is row 61's acceptance, n
 9. Mutations on the final head: required in every slice record (section 10).
 10. Allowlisted helpers: the builder sentry and the exit sentry allow exactly `_result.py` by
     `(path, name)`; no forwarding helper.
-11. No raised caps: no cap or allowlist rises; `test_run_package_shape.py` `ORDER` gains a module
-    name, which is placement, not a cap.
+11. No raised caps: no cap or allowlist rises. The frozen engine `execution/` folder (104
+    modules) gets nothing: E3b's module goes in the new `execution/chunked/` sub-package the
+    fan-out sentry names. Engine `__init__.py` (600, the goal) is not edited; `_chunked.py`
+    changes net 0, so no new size-census entry. `test_run_package_shape.py` `ORDER` gains a
+    module name and `GUARDED_MODULES` gains one entry, which are placement and a stricter guard,
+    not caps. C-CAP shrinks the reason-code copy allowlist by one.
 
 ## 13. V2-LOG
 
@@ -440,7 +535,11 @@ and released. Exit 6 is reachable after DELIV C3; that is row 61's acceptance, n
 - `decoy tokenize`, `decoy demo` and `decoy.mask()` produce no run result.
 - SIGTERM writes no document (handoff Q5); a second Ctrl-C during `finish`.
 - The legacy `error` member keeps `str(exc)` capped at 500 characters (F31, row 65).
-- A gate capacity refusal (`PreRunCheckError`) carries no `reason` (CLI-owned).
+- A gate capacity refusal (`PreRunCheckError`) carries no `reason` (CLI-owned; B6g).
+- X14: an unexpected exception after the run's `try` has closed exits 1 through the root crash
+  guard with no document.
+- Ctrl-C and a usage error share exit 1 under OQ-1's working answer; only the document's
+  `status` tells them apart.
 - `MemoryError` reason reads `decoy.unexpected_error` until E-OOM ships.
 
 ## 14. Pre-mortem
@@ -453,6 +552,10 @@ and released. Exit 6 is reachable after DELIV C3; that is row 61's acceptance, n
   in before its gate.
 - DELIV C3 also adds `RUN_EXIT_MAP` if OQ-3 is not passed on. The orchestrator posts the
   correction on the DELIV plan before C3 starts.
+- The two plans keep different writer orders and a builder takes the wrong slot. The
+  orchestrator posts the section 10 lane table on the DELIV plan (C-DOC1 in the `_execute.py`
+  lane before C2a; C-DOC1 and C-DOC2 as the RESULT `_render.py` writers; C2a after C-DOC2), and
+  the DELIV receipt-to-`DeliveryFacts` rule (3.2), before C2a starts.
 - The widened set changes a platform consumer. The platform is parked; C-CAP's builder greps the
   platform checkout for `CAPACITY_REASON_CODES` and reports any hit.
 
@@ -463,7 +566,15 @@ and released. Exit 6 is reachable after DELIV C3; that is row 61's acceptance, n
 - Stop if C-DOC1 needs more than the two named lines in `run/_execute.py`, or any slice other
   than C-DOC1 needs `_execute.py`.
 - Stop if a `cli/run/` module would pass 600 lines, or an engine module 700.
-- Stop if a new module would land in the flat `src/decoy/cli/` folder.
+- Stop if a new module would land in the flat `src/decoy/cli/` folder or the flat engine
+  `execution/` folder, if engine `__init__.py` needs an edit, or if `execution/_chunked.py`
+  would grow.
+- Stop if a slice needs a DELIV-owned file (`io/_targets.py`, `io/_delivery.py`, `io/_layout.py`,
+  `run/_vault.py`) or a writer slot that section 10 does not give it.
+- Stop if a legacy `--json` key would be added, removed or change value; only `result`,
+  `result_status` and `reason` are new.
+- Stop if `run/_result.py` would pass 300 lines, or a second CLI-owned refusal list appears
+  beside `_usage_types()` and `_cli_refusal_types()`.
 - Stop if a second `reason_from_exception` call, a second `build_run_result(` call or a second
   exit table appears.
 - Stop if E-OOM is started before #506 merges, or if a slice needs any other registry code.
@@ -483,3 +594,8 @@ and released. Exit 6 is reachable after DELIV C3; that is row 61's acceptance, n
 - CLI PR #216 as it will merge (read from its open diff: it adds `ctx.progress` and
   `run/_progress.py`).
 - Whether the DELIV plan's second review already changed its exit map text.
+- Whether `estimate_job_capacity` can raise any of the four widened codes (C-CAP's AT-C3 patches
+  the raise, so it holds either way).
+- Platform consumers of `CAPACITY_REASON_CODES` (the platform is parked; C-CAP greps for them).
+- That the registry walk with `oom` added yields exactly the plan's capacity and exclusion sets
+  (read by grep, not by a live import of the registry; E-CAP STEP ZERO lists the walk).
