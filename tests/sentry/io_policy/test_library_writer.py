@@ -298,3 +298,50 @@ def test_stale_and_raised_literal_counts_are_red() -> None:
     assert any("allowlisted but has no" in f for f in findings(gone))
     doubled = files["cli/io/_project.py"] + '\nOTHER = ".decoy"\n'
     assert any("2 literal(s)" in f for f in findings({**files, "cli/io/_project.py": doubled}))
+
+
+# -- W4: the folder name used to build a path outside the library (review round 1 on #205) ----
+
+_STRUCTURAL_BYPASS = """
+from decoy._atomic import WriteMode, write_atomic
+from decoy.cli.io import DECOY_DIR, find_project
+from decoy_engine import records
+
+
+def _inline(config, envelope):
+    library = find_project(config.parent, None).root / DECOY_DIR / "library"
+    data = records.canonical_bytes(envelope.model_dump())
+    write_atomic(library / "objects", "x.json", data, WriteMode.CREATE_ONCE)
+"""
+
+
+def test_seeded_structural_library_write_outside_the_library_is_red() -> None:
+    """No literal and no `records.encode`: the root, the folder name and the canonical bytes."""
+    files = live_files()
+    seeded = files["cli/scan.py"] + "\n" + _STRUCTURAL_BYPASS
+    found = findings({**files, "cli/scan.py": seeded})
+    assert len(found) == 1 and found[0].startswith("W4: cli/scan.py:"), found
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        "from decoy.cli.io import DECOY_DIR\nP = root / DECOY_DIR\n",
+        "from decoy.cli.io import DECOY_DIR as D\nP = root / D\n",
+        "from decoy.cli.io._project import DECOY_DIR\nP = root / DECOY_DIR\n",
+        "from decoy.cli import io\nP = root / io.DECOY_DIR\n",
+        "import decoy.cli.io as cio\nP = root / cio.DECOY_DIR\n",
+        "import decoy.cli.io\nP = root / decoy.cli.io.DECOY_DIR\n",
+    ],
+)
+def test_each_spelling_of_the_folder_name_is_seen(source: str) -> None:
+    found = findings({"cli/run/_records.py": source}, ())
+    assert len(found) == 1 and found[0].startswith("W4: cli/run/_records.py:2"), found
+    assert findings({"cli/library/_paths.py": source}, ()) == []
+
+
+def test_the_folder_name_is_used_only_where_it_is_allowed_today() -> None:
+    files = live_files()
+    users = sorted(rel for rel in files if _folder_name_uses(ast.parse(files[rel])))
+    assert "cli/library/_paths.py" in users or any(u.startswith(PACKAGE) for u in users)
+    assert all(u.startswith(PACKAGE) or u == "cli/io/_project.py" for u in users), users
