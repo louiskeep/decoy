@@ -43,6 +43,14 @@ class _ChunkedQuarantineError(Exception):
     """
 
 
+class _ChunkedIntegrityError(Exception):
+    """--chunked with post-scan integrity requested; user error (exits EXIT_USAGE).
+
+    The chunked path never runs the relationship key check, so a config that asks for it is
+    refused before any source is read rather than run unchecked.
+    """
+
+
 class _ChunkedReportFlagError(Exception):
     """--chunked combined with a report flag (--explain-plan / --fidelity /
     --post-validate[-enforce]); user error (exits EXIT_USAGE).
@@ -127,9 +135,28 @@ def _run_chunked_mask(
     return published
 
 
+_CHUNKED_INTEGRITY_MESSAGE = (
+    "--chunked does not support post-scan integrity (post_scan.integrity is true). "
+    "Run without --chunked, or turn post_scan.integrity off."
+)
+
+
+def _refuse_chunked_integrity_requested(validated: dict) -> None:
+    """Raise when a validated config asks for post-scan integrity on the chunked route."""
+    from decoy_engine.config import post_scan_integrity_requested
+
+    if post_scan_integrity_requested(validated):
+        raise _ChunkedIntegrityError(_CHUNKED_INTEGRITY_MESSAGE)
+
+
 def _check_chunked_tables(config_dict: dict) -> None:
-    """The config-only chunked checks: quarantine, target formats, then the engine's per
-    mask table."""
+    """The config-only chunked checks: post-scan integrity, quarantine, target formats, then
+    the engine's per mask table.
+
+    `_prepare` refuses integrity before staging from a probe of the raw config. The check
+    here reads the config that will run, so an input the probe could not judge still stops.
+    """
+    _refuse_chunked_integrity_requested(config_dict)
     quarantine = config_dict.get("quarantine")
     if isinstance(quarantine, dict) and quarantine.get("enabled"):
         raise _ChunkedQuarantineError(
@@ -144,6 +171,22 @@ def _check_chunked_tables(config_dict: dict) -> None:
     for entry in config_dict.get("tables") or []:
         if isinstance(entry, dict) and entry.get("columns"):
             check_chunked_compatibility(config_dict, table=entry["name"], registry=registry)
+
+
+def _note_chunked_key_check_skipped(ctx: RunContext) -> None:
+    """Warn and record that a chunked run does not check its declared relationships.
+
+    Interim: the chunked route has no key check yet, and refusing every config with
+    relationships would break chunked runs that work today. Remove this with the key check
+    on the chunked route.
+    """
+    if not ctx.config_dict.get("relationships"):
+        return
+    message = (
+        "--chunked does not run the relationship key check. "
+        "Run without --chunked to check the declared relationships."
+    )
+    ctx.add_cli_warning("chunked_key_check_not_run", message)
 
 
 def _require_local_io_endpoints(config_dict: dict) -> None:
