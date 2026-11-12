@@ -48,7 +48,7 @@ blocking. Drift, evidence, regression, and staged scans must be requested explic
 ## Outcomes and exit integers
 
 The process exit integer is always one of the existing public constants
-(`decoy.cli.exit_codes`); F43 adds none and does not reinterpret direct commands.
+(`decoy.cli.exit_codes`); F43 adds none (6 is reserved for `decoy run`) and does not reinterpret direct commands.
 
 | Exit | Constant | F43 meaning |
 |---:|---|---|
@@ -58,8 +58,9 @@ The process exit integer is always one of the existing public constants
 | 3 | `EXIT_RUNTIME` | CLI/engine/Git execution failed |
 | 4 | `EXIT_FINDINGS` | evidence mismatch, blocking drift, staged-pattern hit |
 | 5 | `EXIT_CAPACITY` | preflight capacity refusal |
+| 6 | `EXIT_PARTIAL` | reserved: `decoy run` best-effort partial delivery; `decoy ci` never returns it |
 
-Precedence across checks: **5 > 3 > 1 > 4 > 2 > 0**. Report `status`:
+Precedence across checks: **5 > 3 > 1 > 6 > 4 > 2 > 0**. Report `status`:
 `ok` | `noop` (only genuinely inapplicable work, e.g. nothing staged) | `findings` |
 `partial` (a selected check did not complete, alongside any completed check, or the staged
 scan could not cover every selected blob) | `refused` (no selected check could run). A

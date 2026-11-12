@@ -37,6 +37,8 @@ Reference: README "Exit codes" section + `decoy explain exit-codes`.
 
 from __future__ import annotations
 
+from typing import Any, cast
+
 EXIT_OK: int = 0
 """Command succeeded. The default exit code for a clean run; matches POSIX
 convention. `typer.Exit()` with no argument also exits 0."""
@@ -98,7 +100,41 @@ host" the build-floor estimate used to raise -- that estimate is now advisory.
 v1 checks the out-of-core-FK route only; see `decoy explain exit-codes`."""
 
 EXIT_PARTIAL: int = 6
-RUN_EXIT_MAP: dict[tuple[str, str | None], int] = {}
+"""The run delivered some of its tables and withheld the rest (best-effort delivery).
+Reserved: no path reaches it until best-effort delivery ships. Distinct from EXIT_RUNTIME so a
+script can tell a partial delivery from a crash. Ranks between EXIT_USAGE and EXIT_FINDINGS in
+`decoy ci` precedence."""
+
+# The one place `decoy run` turns an outcome into an exit integer. The key is the engine's
+# `(status, failure category)`. A dict, not a frozen mapping, so a test can patch one cell.
+# `(failed, parameter)` is 2 because Click exits 2 on a usage error; the value is the same
+# integer as EXIT_WARNINGS, not the same meaning. A Ctrl-C keeps the status Click's `Abort`
+# gives today.
+RUN_EXIT_MAP: dict[tuple[str, str | None], int] = {
+    ("succeeded", None): EXIT_OK,
+    ("findings", None): EXIT_FINDINGS,
+    ("partially_delivered", None): EXIT_PARTIAL,
+    ("failed", "usage"): EXIT_USAGE,
+    ("failed", "parameter"): EXIT_WARNINGS,
+    ("failed", "runtime"): EXIT_RUNTIME,
+    ("failed", "capacity"): EXIT_CAPACITY,
+    ("cancelled", "cancelled"): EXIT_USAGE,
+}
+
+
+def run_exit_code(category: str | None = None, *, blocking_failed: bool = False) -> int:
+    """The exit integer of a `decoy run` outcome, read through the engine's `derive_outcome`."""
+    # Imported here so the engine stays off the `--help` path.
+    from decoy_engine.run_result import derive_outcome
+
+    return derive_outcome(
+        category=cast(Any, category),
+        delivery_mode="in_place",
+        delivery_outcome="nothing",
+        blocking_failed=blocking_failed,
+        exit_map=RUN_EXIT_MAP,
+    ).exit_code
+
 
 __all__ = [
     "EXIT_CAPACITY",
