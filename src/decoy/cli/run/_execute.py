@@ -12,6 +12,7 @@ from decoy.cli.io import (
     iter_source_chunks,
     open_run_layout,
     parquet_schema,
+    quarantine_enabled,
     read_source,
     resolve_target_format,
     resolved_source_config,
@@ -157,8 +158,7 @@ def _check_chunked_tables(config_dict: dict) -> None:
     here reads the config that will run, so an input the probe could not judge still stops.
     """
     _refuse_chunked_integrity_requested(config_dict)
-    quarantine = config_dict.get("quarantine")
-    if isinstance(quarantine, dict) and quarantine.get("enabled"):
+    if quarantine_enabled(config_dict):
         raise _ChunkedQuarantineError(
             "--chunked does not support quarantine (quarantine.enabled is true). "
             "Run without --chunked, or turn quarantine off."

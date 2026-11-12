@@ -18,7 +18,13 @@ from decoy.cli.gate import (
     check_before_run,
     parse_pipeline_yaml,
 )
-from decoy.cli.io import DuckDBSourceError, OutputPlacement, acquire_relation, parse_flag
+from decoy.cli.io import (
+    DuckDBSourceError,
+    OutputPlacement,
+    acquire_relation,
+    parse_flag,
+    quarantine_enabled,
+)
 from decoy.cli.io import resolve_path as _resolve_path
 from decoy.cli.run._context import RunContext
 from decoy.cli.run._execute import (
@@ -203,8 +209,7 @@ def refuse_preview(ctx: RunContext) -> None:
     text = gen.refusal(ctx.rows, flags, _has_kind(ctx.raw_cfg, "columns"))
     if text is not None:
         _refuse_usage(ctx.state, ctx.config_str, text)
-    quarantine = ctx.raw_cfg.get("quarantine") if isinstance(ctx.raw_cfg, dict) else None
-    if isinstance(quarantine, dict) and quarantine.get("enabled"):
+    if quarantine_enabled(ctx.raw_cfg):
         _refuse_usage(ctx.state, ctx.config_str, _PREVIEW_QUARANTINE)
 
 

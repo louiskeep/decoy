@@ -557,10 +557,9 @@ class RunLayout:
         own rule. The engine applies the path after it hashes the config, so the plan hash
         matches the path as declared and the caller's dict is never edited.
         """
-        quarantine = config_dict.get("quarantine")
-        if not isinstance(quarantine, dict) or not quarantine.get("enabled"):
+        if not quarantine_enabled(config_dict):
             return None
-        raw = quarantine.get("output_path")
+        raw = config_dict["quarantine"].get("output_path")
         if not isinstance(raw, str):
             return None
         return str(self.place_target(raw))
@@ -700,6 +699,16 @@ def is_absolute_local(raw: object) -> TypeGuard[str]:
     return isinstance(raw, str) and Path(raw).is_absolute()
 
 
+def quarantine_enabled(cfg: object) -> bool:
+    """True when `cfg` has a `quarantine` block with a truthy `enabled`.
+
+    The one reader of this fact. The engine's schema check owns the value's type, so a
+    non-bool `enabled` is judged by truthiness here, as it always was.
+    """
+    block = cfg.get("quarantine") if isinstance(cfg, dict) else None
+    return isinstance(block, dict) and bool(block.get("enabled"))
+
+
 def relative_outputs(config_dict: dict) -> list[tuple[str, str]]:
     """Enumerate every string path the local target writers can place.
 
@@ -715,9 +724,8 @@ def relative_outputs(config_dict: dict) -> list[tuple[str, str]]:
             for table, entry in targets.items()
             if isinstance(entry, dict) and entry.get("type", "file") in ("file", None)
         )
-    quarantine = config_dict.get("quarantine")
-    if isinstance(quarantine, dict) and quarantine.get("enabled"):
-        found.append(("quarantine.output_path", quarantine.get("output_path")))
+    if quarantine_enabled(config_dict):
+        found.append(("quarantine.output_path", config_dict["quarantine"].get("output_path")))
     return [(location, raw) for location, raw in found if isinstance(raw, str)]
 
 
