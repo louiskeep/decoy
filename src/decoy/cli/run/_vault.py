@@ -52,10 +52,11 @@ def _commit_vault(vault_writer, vault: Path) -> None:
 
     from decoy_engine import VaultError
 
-    # Absolute, not normalized: a text collapse of `..` names the wrong folder when the part
-    # before it is a symlink, and the collision gate keyed the spelling as written.
-    vault = Path(vault).absolute()
-    directory = vault.parent
+    # The folder the kernel resolves, then the name: the entry the collision gate keyed. A text
+    # collapse of `..` names another folder behind a symlink, and `mkstemp` collapses its `dir`
+    # that way, so the temp file, the backup and the rename all take the resolved folder.
+    directory = Path(os.path.realpath(Path(vault).absolute().parent))
+    vault = directory / Path(vault).name
     tmp: Path | None = None
     backup: Path | None = None
     renamed = False

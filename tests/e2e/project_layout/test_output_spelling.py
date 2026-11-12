@@ -17,7 +17,7 @@ from typer.testing import CliRunner
 
 from decoy.__main__ import app
 from decoy.cli.exit_codes import EXIT_OK, EXIT_USAGE
-from decoy.cli.io._placement import resolved_output_collisions
+from decoy.cli.io import resolved_output_collisions
 from tests.e2e.project_layout.test_layout_gate import (
     COLLISION,
     _codes,
@@ -116,6 +116,33 @@ def test_every_writer_opens_the_spelling_the_gate_keyed(tmp_path: Path, kind: st
     assert result.exit_code == EXIT_OK, result.output
     assert kernel.is_file()
     assert not text.exists()
+
+
+@posix_only
+def test_the_vault_temp_file_is_made_in_the_folder_the_kernel_resolves(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """`mkstemp` collapses `..` in its `dir` as text, so it must be handed the resolved folder:
+    else the temp file lands in another folder (another filesystem fails the rename)."""
+    import tempfile
+
+    spelling, kernel, _text = _climb(tmp_path, "vault.bin")
+    seen: list[str] = []
+    real_mkstemp = tempfile.mkstemp
+
+    def recording(*args, **kwargs):
+        if str(kwargs.get("prefix", "")).startswith(".vault.bin."):
+            seen.append(os.fspath(kwargs["dir"]))
+        return real_mkstemp(*args, **kwargs)
+
+    monkeypatch.setattr(tempfile, "mkstemp", recording)
+    root = _project(tmp_path)
+    cfg = _vaulting(root, "m.csv")
+    result = runner.invoke(app, ["run", str(cfg), "--json", "--vault", spelling])
+    assert result.exit_code == EXIT_OK, result.output
+    assert seen == [os.path.realpath(kernel.parent)]
+    assert sorted(p.name for p in kernel.parent.iterdir()) == ["deep", "vault.bin"]
+    assert not list(tmp_path.glob(".vault.bin.*"))
 
 
 # --- characterization -----------------------------------------------------------------------
