@@ -15,6 +15,7 @@ from rich.progress import (
     BarColumn,
     Progress,
     SpinnerColumn,
+    TaskID,
     TextColumn,
     TimeElapsedColumn,
     TimeRemainingColumn,
@@ -169,7 +170,7 @@ class RunProgressHandle:
     rate) and renders them on the stderr console; it never writes to stdout.
     """
 
-    def __init__(self, progress: Progress | None, task_id: int | None, base: str) -> None:
+    def __init__(self, progress: Progress | None, task_id: TaskID | None, base: str) -> None:
         self._progress = progress
         self._task_id = task_id
         self._base = base
