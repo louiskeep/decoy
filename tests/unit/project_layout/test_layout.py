@@ -16,6 +16,7 @@ import uuid
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
+import pyarrow as pa
 import pytest
 from decoy_engine import is_valid_pipeline_name
 
@@ -26,20 +27,93 @@ from decoy.cli.io import (
     LayoutError,
     _layout,
     check_path_budget,
+    contained_path,
     create_run_folder,
+    has_placed_output,
+    is_placed_relative,
     is_run_id,
+    layout_issues,
     name_dir,
     new_run_id,
     pipeline_name_for,
     prepare_out,
     read_claim,
+    relative_outputs,
     write_claim,
+    write_targets,
 )
 
 posix_only = pytest.mark.skipif(os.name != "posix", reason="POSIX modes")
 RUN_ID_RULE = r"[0-9]{8}T[0-9]{12}Z-[0-9a-f]{8}(?:[0-9a-f]{4}){0,6}"
 START = datetime(2026, 11, 9, 10, 15, 0, 123456, tzinfo=timezone.utc)
 INVOCATION = "0a1b2c3d-4e5f-6789-abcd-ef0123456789"
+
+
+def test_contained_path_refuses_a_value_error_from_resolution(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def fail(_path: Path) -> Path:
+        raise ValueError
+
+    monkeypatch.setattr(Path, "resolve", fail)
+    assert contained_path(tmp_path, "out.csv") is None
+
+
+@pytest.mark.parametrize(
+    ("entry", "enumerated", "placed", "written", "issue"),
+    [
+        ({"format": "csv", "path": "out.csv"}, True, True, True, False),
+        ({"type": None, "format": "csv", "path": "out.csv"}, True, True, True, False),
+        ({"type": "file", "format": "csv", "path": ""}, True, False, True, True),
+        ({"type": "file", "format": "csv", "path": "/tmp/out.csv"}, True, False, True, False),
+        (
+            {"type": "file", "format": "csv", "path": "https://example.test/out.csv"},
+            True,
+            False,
+            True,
+            True,
+        ),
+        ({"type": "s3", "format": "csv", "path": "out.csv"}, False, False, False, False),
+        ({"type": "file", "format": "csv", "path": None}, False, False, False, False),
+    ],
+)
+def test_every_output_consumer_agrees_with_the_one_enumerator(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    entry: dict[str, object],
+    enumerated: bool,
+    placed: bool,
+    written: bool,
+    issue: bool,
+) -> None:
+    """One table holds enumeration, placement, gate, preflight and writer type parity."""
+    from decoy.cli import preflight
+    from decoy.cli.io import _targets
+
+    root = tmp_path / "project"
+    root.mkdir()
+    (root / "decoy.yaml").write_text("kind: decoy-project/v1\n", encoding="utf-8")
+    config_path = _yaml(root, "pipelines/orders/pipeline.yaml")
+    config = {"targets": {"orders": entry}}
+    found = relative_outputs(config)
+    raw = entry.get("path")
+
+    assert bool(found) is enumerated
+    assert has_placed_output(config) is placed
+    assert bool(layout_issues(config_path, config)) is issue
+
+    acc = preflight._PreflightAccumulator()
+    preflight._check_target_overwrite(config, acc)
+    assert not acc.checks
+
+    monkeypatch.setattr(_targets, "write_table", lambda *_args, **_kwargs: None)
+    published = write_targets(
+        config, {"orders": pa.table({"a": [1]})}, _layout.RunLayout.fixed(root)
+    )
+    assert bool(published) is written
+    if found:
+        assert found == [("targets.orders.path", raw)]
+        assert is_placed_relative(raw) is placed or not bool(raw)
 
 
 @pytest.fixture

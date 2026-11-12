@@ -217,13 +217,11 @@ def _write_mask_outputs(config_dict: dict, result, layout: RunLayout) -> dict[st
 
 def execute(ctx: RunContext) -> None:
     """Run the pipeline on the chunked or plain branch and record what the tail reports."""
-    # After the gate and before the first write: the run folder, claim and `out/`, or the
-    # folder `--out-dir` names in their place.
-    layout = ctx.layout = (
-        RunLayout.out_dir(ctx.out_dir)
-        if ctx.out_dir is not None
-        else open_run_layout(ctx.config, ctx.config_dict, ctx.invocation_id)
-    )
+    # After the gate and before the first write, open the run folder, claim and `out/`.
+    # A fixed `--out-dir` was already opened before prepare could read a source.
+    if ctx.layout is None:
+        ctx.layout = open_run_layout(ctx.config, ctx.config_dict, ctx.invocation_id)
+    layout = ctx.layout
     if ctx.chunked:
         _chunk_paths = _run_chunked_mask(
             ctx.config_dict,

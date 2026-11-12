@@ -4,34 +4,21 @@
 local checks that do not require the engine to execute the full pipeline.
 
 What preflight checks (honest framing)
-----------------------------------------
-1. YAML syntax:        Is the pipeline file a valid YAML document?
-2. Schema:             Does the config satisfy the PipelineConfig schema?
-3. Config logic:       Profile-free plan-compile checks (same as `decoy validate`).
-4. File existence:     Does each declared source file exist on disk?
-5. File readability:   Can each source file be opened for reading?
-6. Target overwrite:   Does any output target already exist (advisory)?
-7. Capacity (v1):      Out-of-core-FK memory feasibility and the generated-
-                       output floor. The build-floor estimate is advisory
-                       (warns, does not refuse); a fan-in impossibility and
-                       generated output that cannot fit memory exit
-                       EXIT_CAPACITY -- see the OOM checker v1 note.
-8. Native (Phase 3.1): decoy-engine-native companion health (pass/warn), plus
-                       a STATIC config-shape native-eligibility possibility
-                       -- not a guarantee of the resolved route at run time.
+--------------------------------------
+1. YAML syntax, schema and profile-free config logic.
+2. Project-layout output paths (the same refusals as `decoy validate`).
+3. Source file existence and readability.
+4. Existing output targets (advisory).
+5. Out-of-core-FK capacity and generated-output floor (hard refusals exit EXIT_CAPACITY).
+6. Native companion health and static config-shape eligibility.
 
 What preflight does NOT check
 ------------------------------
-* Platform preflight conditions (the platform's server-side pre-run checks
-  include secrets, RBAC, schedule validity, and network targets -- none of
-  those are local CLI checks).
-* Data validity or masking quality.
+* Platform preflight conditions such as secrets, RBAC, schedules, and network targets.
 * Engine run-time constraints beyond the out-of-core-FK capacity check above
   (provider capacity, null-bearing integer distributions) -- these require a
   profile pass during the run.
-* Vault or secrets accessibility.
-* Network connectivity.
-* Whether the engine can successfully execute the pipeline.
+* Vault or secret access, network connectivity, or successful engine execution.
 
 OOM checker v1 (docs/plans/2026-07-24-oom-checker-cli-v1.md): the capacity
 check is an "OOC-FK engine-gate capacity checker", NOT a whole-job OOM
@@ -286,6 +273,8 @@ def _check_target_overwrite(raw: dict[str, Any], acc: _PreflightAccumulator) -> 
     but this check surfaces the risk in CI so it can be treated as blocking
     with --fail-on-warning. A relative path lands in a new run folder (AT-16).
     """
+    from decoy.cli.io import is_placed_relative
+
     targets = raw.get("targets") or {}
     if not isinstance(targets, dict):
         return
@@ -296,7 +285,9 @@ def _check_target_overwrite(raw: dict[str, Any], acc: _PreflightAccumulator) -> 
         if target.get("type") not in ("file", None):
             continue
         out_path_str = target.get("path")
-        if not isinstance(out_path_str, str) or not Path(out_path_str).is_absolute():
+        if not isinstance(out_path_str, str) or is_placed_relative(out_path_str):
+            continue
+        if not Path(out_path_str).is_absolute():
             continue
         out_path = Path(out_path_str)
         if out_path.exists():
@@ -753,6 +744,20 @@ def preflight(
 
         code, message = plan_compile_error_fields(exc)
         acc.add_fail(name=f"config.{code}", message=message)
+        _emit_preflight_result(state, acc, config_str, fail_on_warning)
+        raise typer.Exit(code=EXIT_USAGE)
+
+    # -- Step 3b: Project-layout checks --------------------------------------
+    from decoy.cli.io import layout_issues
+
+    for location, refusal in layout_issues(config, raw):
+        acc.add_fail(
+            name=refusal.code,
+            message=refusal.message,
+            location=location,
+            code=refusal.code,
+        )
+    if acc.has_failures:
         _emit_preflight_result(state, acc, config_str, fail_on_warning)
         raise typer.Exit(code=EXIT_USAGE)
 

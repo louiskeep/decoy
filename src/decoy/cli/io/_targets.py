@@ -449,6 +449,8 @@ def write_targets(
     for table_name, entry in targets.items():
         if not isinstance(entry, dict):
             continue
+        if entry.get("type", "file") not in ("file", None):
+            continue
         raw_path = entry.get("path")
         if not isinstance(raw_path, str):
             continue

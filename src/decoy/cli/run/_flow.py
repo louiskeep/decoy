@@ -6,7 +6,8 @@ from datetime import datetime, timezone
 
 import typer
 
-from decoy.cli.io import mint_invocation_id
+from decoy._private_file import PrivateFileError
+from decoy.cli.io import RunLayout, mint_invocation_id
 from decoy.cli.run import _errors, _evidence, _execute, _prepare, _render
 from decoy.cli.run._context import RunContext
 from decoy.cli.run._notify import _dispatch_run_notifications, _start_telemetry, parse_channels
@@ -49,6 +50,14 @@ def execute(ctx: RunContext) -> None:
         # flush bind to `_otel` in C1b.
         _otel = _start_telemetry(ctx.otel_endpoint, ctx.state)
         with spinner(ctx.state, f"Running {ctx.yaml_mode}..."), contextlib.ExitStack() as _scopes:
+            if ctx.rows is None and ctx.out_dir is not None:
+                failed = False
+                try:
+                    ctx.layout = RunLayout.out_dir(ctx.out_dir)
+                except (OSError, PrivateFileError, ValueError):
+                    failed = True
+                if failed:
+                    raise _errors.OutDirUsageError("Could not create or use --out-dir.")
             if ctx.rows is None:
                 _prepare.prepare(ctx, _scopes)
                 _execute.execute(ctx)

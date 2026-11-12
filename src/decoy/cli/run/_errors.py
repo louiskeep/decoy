@@ -39,6 +39,10 @@ UNIQUENESS_IMPOSSIBLE_CODE = "uniqueness_impossible"
 _OUT_OF_MEMORY_TEXT = "the run ran out of memory."
 
 
+class OutDirUsageError(Exception):
+    """A fixable failure to create or validate the directory named by `--out-dir`."""
+
+
 def fail(ctx: RunContext, exc: Exception) -> NoReturn:
     """Map `exc` to an exit code, notify, print the error and exit. Called inside the
     `except` block so the exit keeps the exception as its context."""
@@ -161,6 +165,7 @@ def fail(ctx: RunContext, exc: Exception) -> NoReturn:
                     # unknown relation, unreadable database) -- the operator's
                     # request is wrong, not a runtime crash.
                     DuckDBSourceError,
+                    OutDirUsageError,
                     # CLI install DX: a pipeline step hit an optional
                     # extra that isn't installed -- the operator's
                     # environment is missing a capability their config
@@ -248,7 +253,8 @@ def fail(ctx: RunContext, exc: Exception) -> NoReturn:
             "mode": ctx.yaml_mode,
             "error": error_text,
         }
-        # Named only when files were written: an empty run folder is removed first.
+        # Named when a fixed --out-dir was opened, or when a run folder still holds a file.
+        # An empty run folder is removed first and therefore contributes no output_dir.
         if ctx.layout is not None:
             ctx.layout.abandon()
             output_dir = ctx.layout.describe()["output_dir"]

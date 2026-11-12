@@ -95,21 +95,24 @@ def read_spy(monkeypatch) -> list[str]:
 
 
 def _codes(output: str) -> list[str]:
-    return [m.get("code") for m in json.loads(output)["messages"]]
+    document = json.loads(output)
+    entries = document.get("messages", document.get("checks", []))
+    return [entry.get("code") for entry in entries]
 
 
 # --- AT-4 escape -------------------------------------------------------------------------
 
-BAD_TARGETS = ["../../x.csv", ".", "", "sub/"]
+BAD_TARGETS = ["../../x.csv", ".", "", "sub/", "a\x00b.csv", "a\\b.csv", "C:x", "x:y"]
 
 
+@pytest.mark.parametrize("command", [["validate"], ["validate", "preflight"]])
 @pytest.mark.parametrize("target", BAD_TARGETS)
 def test_validate_refuses_an_escaping_target_before_a_source_read(
-    tmp_path: Path, target: str, read_spy: list[str]
+    tmp_path: Path, command: list[str], target: str, read_spy: list[str]
 ) -> None:
     root = _project(tmp_path)
     cfg = _write(root, "pipelines/orders/pipeline.yaml", _config(root, target))
-    result = runner.invoke(app, ["validate", str(cfg), "--json"])
+    result = runner.invoke(app, [*command, str(cfg), "--json"])
     assert result.exit_code == EXIT_USAGE, result.output
     assert ESCAPES in _codes(result.output)
     assert read_spy == []
@@ -129,7 +132,7 @@ def test_run_refuses_an_escaping_target_before_a_source_read(
     assert not (root / "out").exists()
 
 
-@pytest.mark.parametrize("command", [["validate"], ["run"]])
+@pytest.mark.parametrize("command", [["validate"], ["validate", "preflight"], ["run"]])
 def test_an_escaping_quarantine_path_is_refused_before_a_source_read(
     tmp_path: Path, command: list[str], read_spy: list[str]
 ) -> None:
@@ -166,6 +169,25 @@ def test_a_dotted_path_that_stays_inside_is_accepted(tmp_path: Path) -> None:
     assert result.exit_code == EXIT_OK, result.output
     (run,) = [p for p in (root / "out" / "orders").iterdir() if p.is_dir() and p.name[0].isdigit()]
     assert (run / "b.csv").is_file()
+
+
+@pytest.mark.parametrize("target", ["https://example.test/out.csv", "s3://bucket/out.csv"])
+def test_a_file_target_url_is_refused_without_echoing_it(tmp_path: Path, target: str) -> None:
+    root = _project(tmp_path)
+    cfg = _write(root, "pipelines/orders/pipeline.yaml", _config(root, target))
+    result = runner.invoke(app, ["validate", str(cfg), "--json"])
+    assert result.exit_code == EXIT_USAGE, result.output
+    assert ESCAPES in _codes(result.output)
+    assert target not in result.output
+
+
+def test_url_like_text_after_an_escape_is_not_a_url(tmp_path: Path) -> None:
+    root = _project(tmp_path)
+    target = "../../a://b.csv"
+    cfg = _write(root, "pipelines/orders/pipeline.yaml", _config(root, target))
+    result = runner.invoke(app, ["validate", str(cfg), "--json"])
+    assert result.exit_code == EXIT_USAGE, result.output
+    assert ESCAPES in _codes(result.output)
 
 
 @posix_only

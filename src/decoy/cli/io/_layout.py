@@ -56,6 +56,7 @@ _CLAIM_MAX_BYTES = 4096
 _SLUG_MAX = 56
 _SLUG_BAD = re.compile(r"[^A-Za-z0-9_.-]+")
 _DASH_RUNS = re.compile(r"-{2,}")
+_URL_PATH = re.compile(r"[A-Za-z][A-Za-z0-9+.-]*://")
 
 
 def _valid_name(name: str) -> bool:
@@ -91,7 +92,7 @@ def same_path(a: Path, b: Path) -> bool:
         pass
     try:
         return a.resolve() == b.resolve()
-    except (OSError, RuntimeError):
+    except (OSError, RuntimeError, ValueError):
         return False
 
 
@@ -113,7 +114,7 @@ def owning_run(path: Path, root: Path, name: str) -> RunFolder | None:
     try:
         base = (root / "out" / name).resolve()
         resolved = path.resolve()
-    except (OSError, RuntimeError):
+    except (OSError, RuntimeError, ValueError):
         return None
     for ancestor in resolved.parents:
         if _same_dir(ancestor.parent, base):
@@ -146,7 +147,7 @@ def contained_path(base: Path, raw: str) -> Path | None:
         return None
     try:
         resolved = Path(os.path.normpath(base / raw)).resolve()
-    except (OSError, RuntimeError):
+    except (OSError, RuntimeError, ValueError):
         return None
     if any(_same_dir(ancestor, base) for ancestor in resolved.parents):
         return resolved
@@ -158,7 +159,7 @@ def names_a_file_inside(raw: str) -> bool:
 
     Reads only the text, so the gate can run it before any folder exists.
     """
-    if not raw or "\\" in raw or raw.endswith("/"):
+    if not raw or "\x00" in raw or "\\" in raw or raw.endswith("/"):
         return False
     for style in (PurePosixPath, PureWindowsPath):
         pure = style(raw)
@@ -454,6 +455,8 @@ class RunLayout:
         base = Path(os.path.abspath(folder))
         if not os.path.lexists(base):
             create_private_directory(base)
+        elif not base.is_dir():
+            raise NotADirectoryError
         return cls(base, contained=True)
 
     @classmethod
@@ -662,28 +665,21 @@ def _read_latest(folder: Path) -> str | None:
     return raw.decode("utf-8", errors="replace").strip() or None
 
 
-def has_placed_output(config_dict: dict) -> bool:
-    """True when the config has a relative local file target or a relative enabled quarantine path.
+def is_placed_relative(raw: object) -> bool:
+    """True when `raw` is a local path that placement resolves below its output folder.
 
-    Only such a config gets an `out/<name>/` folder and a claim (plan 3.5).
+    Empty strings count so the layout gate can refuse them. A URL is only a string whose
+    scheme and `://` start at offset zero; URL-like text later in a relative path is local.
     """
-    targets = config_dict.get("targets")
-    entries = (
-        [e for e in targets.values() if isinstance(e, dict)] if isinstance(targets, dict) else []
-    )
-    paths = [e.get("path") for e in entries if e.get("type", "file") == "file"]
-    quarantine = config_dict.get("quarantine")
-    if isinstance(quarantine, dict) and quarantine.get("enabled"):
-        paths.append(quarantine.get("output_path"))
-    return any(
-        isinstance(p, str) and p and not Path(p).is_absolute() and "://" not in p for p in paths
-    )
+    return isinstance(raw, str) and not Path(raw).is_absolute() and _URL_PATH.match(raw) is None
 
 
-def _relative_outputs(config_dict: dict) -> list[tuple[str, str]]:
-    """`(location, path)` for each relative local file target and enabled quarantine path.
+def relative_outputs(config_dict: dict) -> list[tuple[str, str]]:
+    """Enumerate every string path the local target writers can place.
 
-    Unlike `has_placed_output`, an empty path counts: it names no file, so the gate refuses it.
+    The predicate `is_placed_relative` decides which entries receive relative placement.
+    Keeping absolute paths and URLs in this one enumeration lets the gate distinguish them
+    without a second target walk. An empty path is retained so the gate refuses it.
     """
     found: list[tuple[str, object]] = []
     targets = config_dict.get("targets")
@@ -696,11 +692,12 @@ def _relative_outputs(config_dict: dict) -> list[tuple[str, str]]:
     quarantine = config_dict.get("quarantine")
     if isinstance(quarantine, dict) and quarantine.get("enabled"):
         found.append(("quarantine.output_path", quarantine.get("output_path")))
-    return [
-        (location, raw)
-        for location, raw in found
-        if isinstance(raw, str) and not Path(raw).is_absolute() and "://" not in raw
-    ]
+    return [(location, raw) for location, raw in found if isinstance(raw, str)]
+
+
+def has_placed_output(config_dict: dict) -> bool:
+    """True when the config has a non-empty relative local output."""
+    return any(raw and is_placed_relative(raw) for _location, raw in relative_outputs(config_dict))
 
 
 def layout_issues(config: Path, config_dict: dict) -> list[tuple[str | None, LayoutError]]:
@@ -712,8 +709,14 @@ def layout_issues(config: Path, config_dict: dict) -> list[tuple[str | None, Lay
     """
     from decoy.cli.io._project import find_project
 
-    outputs = _relative_outputs(config_dict)
-    if not outputs:
+    outputs = relative_outputs(config_dict)
+    placed = [(location, raw) for location, raw in outputs if is_placed_relative(raw)]
+    urls = [
+        (location, raw)
+        for location, raw in outputs
+        if not is_placed_relative(raw) and not Path(raw).is_absolute()
+    ]
+    if not placed and not urls:
         return []
     yaml = config.resolve()
     issues: list[tuple[str | None, LayoutError]] = []
@@ -725,7 +728,9 @@ def layout_issues(config: Path, config_dict: dict) -> list[tuple[str | None, Lay
         folder, base = root / "out" / name, f"out/{name}/<run-id>"
     except LayoutError as exc:
         issues.append((None, exc))
-    for location, raw in outputs:
+    for location, _raw in urls:
+        issues.append((location, OUTPUT_PATH_ESCAPES.error(path="a URL", base=base)))
+    for location, raw in placed:
         if not names_a_file_inside(raw):
             issues.append((location, OUTPUT_PATH_ESCAPES.error(path=raw or '""', base=base)))
         elif folder is not None:

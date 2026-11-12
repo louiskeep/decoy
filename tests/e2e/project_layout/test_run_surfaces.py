@@ -229,6 +229,29 @@ def test_a_missing_out_dir_is_made_owner_only(tmp_path: Path) -> None:
     assert stat.S_IMODE(build.stat().st_mode) == 0o700
 
 
+@pytest.mark.parametrize("kind", ["missing_parent", "file"])
+def test_an_invalid_out_dir_refuses_before_a_source_read(
+    tmp_path: Path, monkeypatch, kind: str
+) -> None:
+    from decoy.cli.run import _execute
+
+    root = _project(tmp_path)
+    cfg = _pipeline(root)
+    build = tmp_path / "missing" / "build" if kind == "missing_parent" else tmp_path / "build"
+    if kind == "file":
+        build.write_text("not a directory", encoding="utf-8")
+
+    def unexpected(*_args, **_kwargs):
+        pytest.fail("source was read before --out-dir validation")
+
+    monkeypatch.setattr(_execute, "read_source", unexpected)
+    monkeypatch.setattr(_execute, "iter_source_chunks", unexpected)
+    result = runner.invoke(app, ["run", str(cfg), "--out-dir", str(build)])
+    assert result.exit_code == EXIT_USAGE, result.output
+    assert "--out-dir" in result.output
+    assert str(build) not in result.output
+
+
 def test_out_dir_overwrites_like_before(tmp_path: Path) -> None:
     root = _project(tmp_path)
     cfg = _pipeline(root)
