@@ -8,7 +8,9 @@ tests/sentry/tooling/_ci_lanes.py. Acceptance items 12 to 15 of the CI-L1 handof
 from __future__ import annotations
 
 import copy
+import shutil
 from dataclasses import replace
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -47,39 +49,39 @@ def test_required_jobs_match_workflows() -> None:
     t = seeded()
     ci = t.workflows["ci.yml"]["jobs"]
     ci["ruff-renamed"] = ci.pop("ruff")
-    found = lanes.registry_findings(t)
+    found = lanes.findings(t)
     assert has(found, "R2 ci.yml:ruff: merge job does not exist")
     assert has(found, "R3 ci.yml:ruff-renamed")
     t = seeded()
     t.workflows["ci.yml"]["jobs"]["extra"] = {"runs-on": "ubuntu-latest", "timeout-minutes": 1}
-    assert has(lanes.registry_findings(t), "R3 ci.yml:extra")
+    assert has(lanes.findings(t), "R3 ci.yml:extra")
     t = seeded()
     t.required["merge"][0]["jobs"].remove("pytest")
-    assert has(lanes.registry_findings(t), "R3 ci.yml:pytest")
+    assert has(lanes.findings(t), "R3 ci.yml:pytest")
 
 
 def test_matrix_must_be_the_supported_pythons() -> None:
     t = seeded()
     job(t, "ci.yml", "pytest")["strategy"]["matrix"]["python"].append("3.13")
-    assert has(lanes.registry_findings(t), "R2 ci.yml:pytest: merge job has a templated name")
+    assert has(lanes.findings(t), "R2 ci.yml:pytest: merge job has a templated name")
     t = seeded()
     job(t, "ci.yml", "pytest")["name"] = "pytest ${{ matrix.os }}"
-    assert has(lanes.registry_findings(t), "R2 ci.yml:pytest")
+    assert has(lanes.findings(t), "R2 ci.yml:pytest")
     t = seeded()
     job(t, "ci.yml", "ruff")["name"] = "ruff ${{ github.ref }}"
-    assert has(lanes.registry_findings(t), "R2 ci.yml:ruff")
+    assert has(lanes.findings(t), "R2 ci.yml:ruff")
 
 
 def test_merge_job_rules() -> None:
     t = seeded()
     job(t, "ci.yml", "ruff")["if"] = "always()"
-    assert has(lanes.registry_findings(t), "R2 ci.yml:ruff: merge job has an `if`")
+    assert has(lanes.findings(t), "R2 ci.yml:ruff: merge job has an `if`")
     t = seeded()
     job(t, "ci.yml", "ruff")["runs-on"] = ["self-hosted", "x"]
-    assert has(lanes.registry_findings(t), "is self-hosted")
+    assert has(lanes.findings(t), "is self-hosted")
     t = seeded()
     t.required["merge"].append({"workflow": "release-smoke.yml", "jobs": ["fresh-install"]})
-    assert has(lanes.registry_findings(t), "R2 release-smoke.yml: merge workflow has no pull")
+    assert has(lanes.findings(t), "R2 release-smoke.yml: merge workflow has no pull")
 
 
 def test_registry_schema_is_closed() -> None:
@@ -97,8 +99,8 @@ def test_registry_schema_is_closed() -> None:
     t.required["bogus"] = []
     cases.append(("unknown table", t))
     for text, tree in cases:
-        assert has(lanes.registry_findings(tree), "R1"), text
-        assert has(lanes.registry_findings(tree), text), text
+        assert has(lanes.findings(tree), "R1"), text
+        assert has(lanes.findings(tree), text), text
 
 
 # --- item 13: markers and workflow triggers ------------------------------------------------
@@ -109,15 +111,15 @@ def test_new_deselected_marker_needs_a_lane_or_an_unlaned_entry() -> None:
     ini = t.pyproject["tool"]["pytest"]["ini_options"]
     ini["markers"] = ["slowx: x"]
     ini["addopts"] = '-m "not slowx"'
-    assert has(lanes.marker_findings(t), "M2 marker 'slowx'")
+    assert has(lanes.findings(t), "M2 marker 'slowx'")
     t.unlaned["marker"] = [{"name": "slowx", "reason": "test"}]
-    assert lanes.marker_findings(t) == []
+    assert lanes.findings(t) == []
 
 
 def test_unreadable_expression_is_no_lane() -> None:
     t = seeded()
     job(t, "ci.yml", "pytest")["steps"] = [{"run": 'pytest tests -m "a + b"'}]
-    assert has(lanes.marker_findings(t), "M4 ci.yml:pytest")
+    assert has(lanes.findings(t), "M4 ci.yml:pytest")
 
 
 @pytest.mark.parametrize(
@@ -142,32 +144,35 @@ def test_workflow_without_automatic_trigger_needs_an_unlaned_entry() -> None:
     t.workflows["release-smoke.yml"] = with_on(
         t.workflows["release-smoke.yml"], {"workflow_dispatch": None}
     )
-    assert has(lanes.trigger_findings(t), "T1 release-smoke.yml: no automatic trigger")
+    assert has(lanes.findings(t), "T1 release-smoke.yml: no automatic trigger")
     t.unlaned["workflow"] = [{"file": "release-smoke.yml", "reason": "x"}]
-    assert not has(lanes.trigger_findings(t), "T1")
+    assert not has(lanes.findings(t), "T1")
     t.unlaned["workflow"].append({"file": "ci.yml", "reason": "x"})
-    assert has(lanes.trigger_findings(t), "T1 ci.yml: has an automatic trigger")
+    assert has(lanes.findings(t), "T1 ci.yml: has an automatic trigger")
 
 
 def test_path_filter_needs_its_named_exception() -> None:
     t = seeded()
     t.unlaned["path_filter"] = []
-    assert has(lanes.trigger_findings(t), "T2 regen-diagrams.yml: path filter on push")
+    assert has(lanes.findings(t), "T2 regen-diagrams.yml: path filter on push")
     t = seeded()
     t.workflows["ci.yml"] = with_on(t.workflows["ci.yml"], {"pull_request": {"paths": ["src/**"]}})
-    assert has(lanes.trigger_findings(t), "T2 ci.yml")
+    assert has(lanes.findings(t), "T2 ci.yml")
     t = seeded()
     t.unlaned["path_filter"].append({"file": "gone.yml", "reason": "x"})
-    assert has(lanes.trigger_findings(t), "'gone.yml' does not exist")
+    assert has(lanes.findings(t), "'gone.yml' does not exist")
+    t = seeded()
+    del lanes._on(t.workflows["regen-diagrams.yml"])["push"]["paths"]
+    assert has(lanes.findings(t), "T2 path_filter workflow 'regen-diagrams.yml' has no path filter")
 
 
 def test_timeout_and_concurrency_rules() -> None:
     t = seeded()
     del job(t, "ci.yml", "ruff")["timeout-minutes"]
-    assert has(lanes.trigger_findings(t), "T3 ci.yml:ruff")
+    assert has(lanes.findings(t), "T3 ci.yml:ruff")
     t = seeded()
     del t.workflows["ci.yml"]["concurrency"]
-    assert has(lanes.trigger_findings(t), "T4 ci.yml: pull_request workflow lacks")
+    assert has(lanes.findings(t), "T4 ci.yml: pull_request workflow lacks")
 
 
 # --- item 14: test paths and the daily cron ------------------------------------------------
@@ -178,16 +183,45 @@ def test_lanes_collect_every_test_folder() -> None:
     t = seeded()
     steps = job(t, "ci.yml", "pytest")["steps"]
     job(t, "ci.yml", "pytest")["steps"] = [s for s in steps if "tests/e2e" not in s.get("run", "")]
-    assert has(lanes.path_findings(t), "P1 tests/e2e: no automatic pytest lane")
+    assert has(lanes.findings(t), "P1 tests/e2e: no automatic pytest lane")
 
 
 def test_ignored_file_must_run_in_another_job() -> None:
     t = seeded()
     t = replace(t, scripts={k: v.replace("test_import_layers", "x") for k, v in t.scripts.items()})
-    assert has(lanes.path_findings(t), "--ignore tests/sentry/layout/test_import_layers.py")
+    assert has(lanes.findings(t), "--ignore tests/sentry/layout/test_import_layers.py")
     t = seeded()
     del t.workflows["ci.yml"]["jobs"]["layers-gate"]
-    assert has(lanes.path_findings(t), "runs in no other job")
+    assert has(lanes.findings(t), "runs in no other job")
+
+
+@pytest.mark.parametrize(
+    "extra",
+    [
+        "--ignore-glob=tests/e2e/**",
+        "--ignore-glob 'tests/e2e/**'",
+        "--deselect=tests/e2e",
+        "--deselect tests/e2e/test_x.py::test_y",
+    ],
+)
+def test_other_exclusions_must_run_in_another_job(extra: str) -> None:
+    t = seeded()
+    (step,) = [s for s in job(t, "ci.yml", "pytest")["steps"] if "tests/e2e" in s.get("run", "")]
+    step["run"] = step["run"].replace("tests/e2e", f"tests/e2e {extra}")
+    assert has(lanes.findings(t), "runs in no other job"), extra
+
+
+def test_yaml_workflows_are_read(tmp_path: Path) -> None:
+    for d in (".github", "ci", "scripts"):
+        shutil.copytree(lanes.ROOT / d, tmp_path / d)
+    shutil.copy(lanes.ROOT / "pyproject.toml", tmp_path)
+    (tmp_path / "tests").symlink_to(lanes.ROOT / "tests")
+    flow = (
+        "on: workflow_dispatch\njobs:\n  a:\n    runs-on: ubuntu-latest\n    steps: [{run: echo}]\n"
+    )
+    (tmp_path / ".github/workflows/bypass.yaml").write_text(flow)
+    found = lanes.findings(lanes.load(tmp_path))
+    assert has(found, "T1 bypass.yaml") and has(found, "T3 bypass.yaml:a"), found
 
 
 def test_ci_cron_is_daily() -> None:
@@ -202,8 +236,8 @@ def test_drift_canary_is_reported_once_and_not_required() -> None:
     assert lanes.reported(TREE) == [("release-smoke.yml", "fresh-install")]
     t = seeded()
     t.required["merge"].append({"workflow": "release-smoke.yml", "jobs": ["fresh-install"]})
-    assert has(lanes.canary_findings(t), "not one reported, unrequired lane")
+    assert has(lanes.findings(t), "not one reported, unrequired lane")
     t = seeded()
     (site,) = [s for s in t.policy["engine_site"] if s["kind"] == "drift-canary"]
     site["reason"] = ""
-    assert has(lanes.canary_findings(t), "drift canary has no reason")
+    assert has(lanes.findings(t), "drift canary has no reason")
