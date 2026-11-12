@@ -18,6 +18,7 @@ from decoy.cli.io._layout import (
     contained_path,
     is_placed_relative,
     names_a_file_inside,
+    pipeline_folder,
     pipeline_name_for,
     relative_outputs,
 )
@@ -150,7 +151,7 @@ def layout_issues(
         try:
             root = find_project(yaml.parent, None).root
             name = pipeline_name_for(root, yaml, config_dict.get("name")).name
-            folder, base = root / "out" / name, f"out/{name}/<run-id>"
+            folder, base = pipeline_folder(root, name), f"out/{name}/<run-id>"
         except LayoutError as exc:
             issues.append((None, exc))
     for location, _raw in urls:

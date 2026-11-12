@@ -339,6 +339,11 @@ def pipeline_name_for(root: Path, yaml: Path, declared: object) -> PipelineName:
     return PipelineName(_derived(root, yaml_rel, stem), False, yaml_rel)
 
 
+def pipeline_folder(root: Path, name: str) -> Path:
+    """`<root>/out/<name>/` as a path only: nothing is made, read or resolved."""
+    return root / "out" / name
+
+
 def name_dir(out: Path, name: str) -> Path:
     """`out/<name>/` made and kept inside the physical `out/`. Raises `LayoutError`."""
     folder = out / name
