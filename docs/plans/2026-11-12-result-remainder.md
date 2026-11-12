@@ -7,7 +7,8 @@ Rules consulted: `/home/cam/dev-rules/README.md`, `00-universal.md`, `risk-and-e
 `architecture.md`, `catalogs/recurring-defects.md`; CLI `CODEMAP.md`; engine `CODEMAP.md`.
 
 Bases (2026-11-12): CLI `origin/main` `ae58f68`, engine `origin/main` `c38f17cd` (every engine
-reference below is unchanged at `ad63ba1b`), CLI pins
+file:line reference below is unchanged at `ad63ba1b`; two line counts differ and section 8
+gives both), CLI pins
 `decoy-engine==0.22.0` (`pyproject.toml:122`). Source plans: the gated RESULT handoff
 (vault `10_Projects/decoy/handoffs/phase0.5/p05-result-build-handoff.md`, revision 4, owner
 questions Q1 to Q6 confirmed 2026-11-06), the F29 remainder plan (engine
@@ -179,8 +180,9 @@ blocks. Everything else goes to V2-LOG (section 13).
 - C-DOC2 moves every `emit_json(` and `raise typer.Exit(` of `decoy run` into one
   `_result.finish(ctx, outcome)` so the early refusals, the evidence failure and Ctrl-C produce
   the document. Exit integers stay as today. Each new typed refusal is raised after its `except`
-  block closes, so it carries no `__context__` (covered by
-  `tests/sentry/defects/test_exception_context.py`).
+  block closes, so it carries no `__context__`. AT-O6 proves it; the existing
+  `tests/sentry/defects/test_exception_context.py` only ratchets `raise ... from None` inside an
+  `except` block and does not see a plain raise there.
 - C-DOC3 adds `--result PATH`, written through `write_local_target` (`REPLACE`).
 - Legacy `--json` members keep their values; `result` and `result_status` are added.
 
@@ -360,6 +362,7 @@ mutation is reverted. Markers: cells `zz_marker_a` and `zz_marker_b`, a `tmp_pat
 | AT-O3 | C-DOC2 | `test_ctrl_c`: `KeyboardInterrupt` from a patched `run_pipeline`: `status` `cancelled`, `failure.reason.code` `run_cancelled`, exit and stderr line equal to the STEP ZERO measurement | catch only `Exception` in the wrapper |
 | AT-O4 | C-DOC2 | `test_one_json_object`: stdout parses as exactly one JSON object on every AT-O1 path | emit twice on the build fallback |
 | AT-O5 | C-DOC2 | `test_post_try_crash_is_a_named_limit` (X14): `build_manifest` patched to raise `OSError("zz_marker_exc")` with `--evidence-out --json`: exit 1, `internal error (OSError)` on stderr, no partial JSON on stdout, marker absent from both | emit a half-built envelope before the root guard |
+| AT-O6 | C-DOC2 | `test_typed_refusals_carry_no_context[...]`: for every typed refusal C-DOC2 adds (cases derived from `_usage_types()` and `_cli_refusal_types()` members defined in `cli/run/`), the refusal caught at `finish` has `__context__ is None` and `__cause__ is None` | move one typed refusal's raise inside its `except` block |
 | AT-F1 | C-DOC3 | `tests/e2e/run_result/test_result_file.py::test_file_equals_member`: `--json --result out.json`: the file equals the envelope `result`; `result_status.file` `written`; human mode prints `Result: out.json` | write `json.dumps(model_dump(), default=str)` |
 | AT-F2 | C-DOC3 | `test_write_failure_keeps_exit`: a missing directory on success and on a runtime failure: exits 0 and 3, one stderr line with `run_result_write_failed` and no path, `result_status.file` `failed` | raise `EXIT_RUNTIME` on the write failure |
 | AT-F3 | C-DOC3 | existing `tests/sentry/test_atomic_writer.py` green with the new call | `Path.write_text` in `_result.py` |
@@ -392,7 +395,7 @@ No module goes in the frozen flat `src/decoy/cli/` or the frozen flat engine `ex
 Sizes at the base: engine `__init__.py` 600 (the goal; no slice edits it, the new names are
 exported from `decoy_engine.run_result` only), `execution/_chunked.py` 600 at `c38f17cd` and 599
 at `ad63ba1b` (net 0 in E3b; no new size-census entry), `execution/native/_chunked_entry.py` 681
-(net 0 in E3b), `errors.py` 548, CLI `run/_errors.py` 320, `run/_render.py` 201,
+at `c38f17cd` and 685 at `ad63ba1b`, ceiling 689 (net 0 in E3b), `errors.py` 548, CLI `run/_errors.py` 320, `run/_render.py` 201,
 `run/_flow.py` 125, `run/_context.py` 163 (cap 600 for `cli/run/`). Every new module stays under
 300 lines.
 
@@ -428,13 +431,13 @@ DELIV plan so both plans read the same order (pre-mortem).
 | `run/_flow.py` | L5a (#216), C-DOC1 (one line), C-DOC2, DELIV C2a (moves the `write_evidence` call into the sink), LIB L3b, L5b |
 | `run/_errors.py` | C-EXIT, C-REASON, C-DOC1, C-DOC2 (no DELIV writer) |
 | `run/_render.py` | C-EXIT, C-DOC1, C-DOC2, DELIV C2a, DELIV C5 (extends `_blocking_failed`) |
-| `run/_context.py` | L5a (#216), C-DOC1, DELIV C2a (`sink` field), C-DOC3 |
+| `run/_context.py` | L5a (#216), C-DOC1, C-DOC3, DELIV C2a (`sink` field) |
 | `run/_prepare.py` | SUB-RUN C1, C-DOC2 |
 | `run/_evidence.py` | C-DOC2 (the X8 typed refusal); DELIV C2a then calls it from the sink unchanged |
 | `run/_notify.py` | C-DOC2 |
 | `run/__init__.py` | C-DOC3 |
 
-So DELIV C2a starts after C-DOC2 has merged. C-REASON writes no `_render.py`; DELIV's "F29 C1"
+So DELIV C2a starts after C-DOC2 and C-DOC3 have merged; C-DOC3 waits on nothing from DELIV. C-REASON writes no `_render.py`; DELIV's "F29 C1"
 `_render.py` slot is C-DOC1 and C-DOC2 here. C-CAP writes no `cli/run/` module.
 
 | Slice | Repo | Files | Src / test lines | Tier | Depends on | Startable now |
@@ -450,8 +453,8 @@ So DELIV C2a starts after C-DOC2 has merged. C-REASON writes no `_render.py`; DE
 | REL | engine, CLI | engine release with E2a, E2b, E3a, E-CAP (and E3b, E-OOM when merged); CLI repin per the repin checklist | small | R1 | the slices it carries | no |
 | C-CAP | CLI | `cli/exit_codes.py` (docstring), `cli/explain.py`, `cli/preflight.py` (the `:446` literal), `tests/sentry/test_engine_reason_code_copies.py` (allowlist entry `:73` removed), `README.md`, `CHANGELOG.md` (breaking line), `tests/e2e/test_run_capacity_widening.py`, `tests/e2e/test_run_preflight_capacity_parity.py` | ~40 / ~140 | R2 | the repin carrying E-CAP; lands with that repin or the same day | no: release |
 | C-DOC1 | CLI | `run/_result.py`, `run/_errors.py`, `run/_render.py`, `run/_flow.py` (one line), `run/_execute.py` (two lines), `run/_context.py`, `tests/sentry/layout/test_run_package_shape.py` (`ORDER`), `tests/sentry/run/test_one_result_builder.py`, `SENTRIES` row, `CODEMAP.md`, `CHANGELOG.md`, AT-D1 to AT-D9 tests | ~250 / ~300 | R2 | REL with E2a, E2b, E3a; C-REASON; L5a (#216) and SUB-RUN C1 merged (the `_execute.py` lane) | no: release and #216 |
-| C-DOC2 | CLI | `run/_result.py`, `run/_flow.py`, `run/_notify.py`, `run/_prepare.py`, `run/_evidence.py`, `run/_errors.py`, `run/_render.py`, `tests/sentry/run/test_one_run_exit.py`, `SENTRIES` row, `CHANGELOG.md`, AT-O1 to AT-O5 tests, AT-R7 pin update | ~200 / ~280 | R2 | C-DOC1; SUB-RUN C1 merged (`_prepare.py`) | no: C-DOC1 |
-| C-DOC3 | CLI | `run/__init__.py` (one option hunk), `run/_context.py`, `run/_result.py`, `docs/cli-reference.md` (generated), `CHANGELOG.md`, AT-F1 to AT-F3 tests | ~80 / ~120 | R2 (new public option and a frozen artifact written at a user path) | C-DOC2; DELIV C2a merged (`_context.py` lane) | no: C-DOC2 |
+| C-DOC2 | CLI | `run/_result.py`, `run/_flow.py`, `run/_notify.py`, `run/_prepare.py`, `run/_evidence.py`, `run/_errors.py`, `run/_render.py`, `tests/sentry/run/test_one_run_exit.py`, `SENTRIES` row, `CHANGELOG.md`, AT-O1 to AT-O6 tests, AT-R7 pin update | ~200 / ~280 | R2 | C-DOC1; SUB-RUN C1 merged (`_prepare.py`) | no: C-DOC1 |
+| C-DOC3 | CLI | `run/__init__.py` (one option hunk), `run/_context.py`, `run/_result.py`, `docs/cli-reference.md` (generated), `CHANGELOG.md`, AT-F1 to AT-F3 tests | ~80 / ~120 | R2 (new public option and a frozen artifact written at a user path) | C-DOC2 | no: C-DOC2 |
 
 C-DOC2 is the largest (about 480 lines with tests) and stays one slice: its exit paths share one
 `finish` and one sentry, and splitting them would leave the sentry red between the halves.
@@ -504,8 +507,9 @@ and released. Exit 6 is reachable after DELIV C3; that is row 61's acceptance, n
 2. Strict wire types: no new persisted field; `DeliveryFacts`, `CollectedFacts` and
    `FailureInput` are in-process inputs, and their output lands in the strict E1 model.
 3. No exception context: `_failure_reason` and the build fallback never put the exception in an
-   output; every typed refusal C-DOC2 adds is raised after its `except` block closes, under the
-   existing `tests/sentry/defects/test_exception_context.py`.
+   output; every typed refusal C-DOC2 adds is raised after its `except` block closes, proved by
+   AT-O6 (the existing `test_exception_context.py` sentry does not cover a plain raise inside an
+   `except`).
 4. Versioned read models: AT-D1 reads `result` with `RunResultRead`; no new format.
 5. Normalized guard scanners: AT-R9, AT-D5 and AT-O2 match calls through `ast` (attribute and
    name forms, `from x import y as z` aliases); covered shapes are listed in each sentry's
