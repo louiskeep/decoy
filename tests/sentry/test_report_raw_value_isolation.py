@@ -61,6 +61,12 @@ from decoy.cli.report import compare_data, render_html, render_markdown
 _SENTINEL = "SENTRY_RAW_VALUE_ZZZZZ_" + "X" * 20
 
 
+def _outputs(path: Path) -> dict[str, Any]:
+    """A manifest (old path rule: paths as recorded) whose one output is `path`."""
+    entry = {"path": str(path), "fingerprint": "sha256:" + "0" * 64}
+    return {"output_fingerprints": {"data": entry}}
+
+
 def _make_manifest_with_file_paths(tmp_path: Path) -> dict[str, Any]:
     """Make a manifest whose file paths point into tmp_path (sentinel lives there too)."""
     return {
@@ -203,10 +209,9 @@ def test_compare_data_does_not_leak_raw_string_values(tmp_path: Path) -> None:
         encoding="utf-8",
     )
 
-    output_fps_a = {"data": {"path": str(csv_a)}}
-    output_fps_b = {"data": {"path": str(csv_b)}}
-
-    result = compare_data(output_fps_a, output_fps_b)
+    result = compare_data(
+        _outputs(csv_a), _outputs(csv_b), manifest_file_a=None, manifest_file_b=None
+    )
     serialised = _json.dumps(result)
 
     assert _STRING_SENTINEL not in serialised, (
@@ -258,10 +263,9 @@ def test_compare_data_does_not_leak_raw_numeric_values(tmp_path: Path) -> None:
     pq.write_table(pa.Table.from_pandas(df_a), str(parquet_a))
     pq.write_table(pa.Table.from_pandas(df_b), str(parquet_b))
 
-    output_fps_a = {"data": {"path": str(parquet_a)}}
-    output_fps_b = {"data": {"path": str(parquet_b)}}
-
-    result = compare_data(output_fps_a, output_fps_b)
+    result = compare_data(
+        _outputs(parquet_a), _outputs(parquet_b), manifest_file_a=None, manifest_file_b=None
+    )
     serialised = _json.dumps(result)
 
     assert str(_NUMERIC_SENTINEL) not in serialised, (
