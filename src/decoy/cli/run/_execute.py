@@ -3,6 +3,8 @@
 from functools import partial
 from pathlib import Path
 
+from rich.text import Text
+
 from decoy import _native_gate, _resources
 from decoy.cli import gen
 from decoy.cli.extras import check_cloud_endpoints, check_cloud_endpoints_supported
@@ -24,6 +26,8 @@ from decoy.cli.io import (
 )
 from decoy.cli.run._context import DEFAULT_CHUNK_SIZE, RunContext
 from decoy.cli.run._vault import _commit_vault
+from decoy.ui.output import OutputMode
+from decoy.ui.theme import warn
 
 
 class _ChunkedGenerateError(Exception):
@@ -40,6 +44,14 @@ class _ChunkedQuarantineError(Exception):
     The chunked path streams through `run_mask_pipeline_chunked`, which takes no quarantine
     path, so the rows quarantine would hold are never written there. Refused before any
     source is read rather than run without the quarantine the config asks for.
+    """
+
+
+class _ChunkedIntegrityError(Exception):
+    """--chunked with post-scan integrity requested; user error (exits EXIT_USAGE).
+
+    The chunked path never runs the relationship key check, so a config that asks for it is
+    refused before any source is read rather than run unchecked.
     """
 
 
@@ -136,6 +148,13 @@ def _check_chunked_tables(config_dict: dict) -> None:
             "--chunked does not support quarantine (quarantine.enabled is true). "
             "Run without --chunked, or turn quarantine off."
         )
+    from decoy_engine.config import post_scan_integrity_requested
+
+    if post_scan_integrity_requested(config_dict):
+        raise _ChunkedIntegrityError(
+            "--chunked does not support post-scan integrity (post_scan.integrity is true). "
+            "Run without --chunked, or turn post_scan.integrity off."
+        )
     check_target_formats(config_dict, chunked=True)
     from decoy_engine import get_default_registry
     from decoy_engine.execution import check_chunked_compatibility
@@ -144,6 +163,24 @@ def _check_chunked_tables(config_dict: dict) -> None:
     for entry in config_dict.get("tables") or []:
         if isinstance(entry, dict) and entry.get("columns"):
             check_chunked_compatibility(config_dict, table=entry["name"], registry=registry)
+
+
+def _note_chunked_key_check_skipped(ctx: RunContext) -> None:
+    """Warn and record that a chunked run does not check its declared relationships.
+
+    Interim: the chunked route has no key check yet, and refusing every config with
+    relationships would break chunked runs that work today. Remove this with the key check
+    on the chunked route.
+    """
+    if not ctx.config_dict.get("relationships"):
+        return
+    message = (
+        "--chunked does not run the relationship key check. "
+        "Run without --chunked to check the declared relationships."
+    )
+    ctx._cli_warnings.append({"code": "chunked_key_check_not_run", "message": message})
+    if ctx.state.mode is not OutputMode.quiet:
+        ctx.state.err_console.print(warn("warning:"), Text(message))
 
 
 def _require_local_io_endpoints(config_dict: dict) -> None:

@@ -27,6 +27,7 @@ from decoy.cli.run._execute import (
     _ChunkedGenerateError,
     _ChunkedReportFlagError,
     _load_sources_from_config,
+    _note_chunked_key_check_skipped,
     _require_local_io_endpoints,
 )
 from decoy.cli.run._vault import _CHUNKED_VAULT_MESSAGE, _ChunkedVaultError, _VaultUsageError
@@ -488,6 +489,7 @@ def prepare(ctx: RunContext, _scopes: contextlib.ExitStack) -> None:
     ctx._resources_record = ctx._res.record()
     if ctx.chunked:
         _check_chunked_tables(ctx.config_dict)
+        _note_chunked_key_check_skipped(ctx)
     else:
         ctx.sources = _load_sources_from_config(ctx.config_dict, ctx.config.parent)
     # One admission per run: the vault writer and every engine entry get this

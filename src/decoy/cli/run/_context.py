@@ -112,6 +112,8 @@ class RunContext:
     # the run-summary line and JSON record.
     _native_route: _native_gate.RouteClassification | None = field(init=False, default=None)
     _resources_record: dict | None = field(init=False, default=None)
+    # Warnings the CLI raises itself (`code`, `message`); they join the engine's in the summary.
+    _cli_warnings: list[dict] = field(init=False, default_factory=list)
     _report_quality_metrics: dict | None = field(init=False, default=None)
     # `--rows` preview: the sampled tables, set by `_execute.execute_preview`.
     _preview_tables: list[dict] = field(init=False, default_factory=list)

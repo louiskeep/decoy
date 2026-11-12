@@ -21,6 +21,7 @@ from decoy.cli.run._context import RunContext
 from decoy.cli.run._execute import (
     _ChunkedFixedWidthError,
     _ChunkedGenerateError,
+    _ChunkedIntegrityError,
     _ChunkedQuarantineError,
     _ChunkedReportFlagError,
 )
@@ -159,6 +160,7 @@ def fail(ctx: RunContext, exc: Exception) -> NoReturn:
                     ConfigError,
                     _ChunkedGenerateError,
                     _ChunkedFixedWidthError,
+                    _ChunkedIntegrityError,
                     _ChunkedQuarantineError,
                     TargetFormatError,
                     LayoutError,
