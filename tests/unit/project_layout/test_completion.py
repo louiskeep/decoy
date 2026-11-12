@@ -134,6 +134,17 @@ def test_a_folder_that_links_out_of_pipelines_is_not_offered(
     assert "orders" in offered and "evil" not in offered
 
 
+@posix_only
+def test_a_linked_member_folder_is_not_offered(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root = _project(tmp_path, "real")
+    (root / "pipelines" / "alias").symlink_to("real", target_is_directory=True)
+    monkeypatch.chdir(root)
+    offered = _complete("decoy run ", 2)
+    assert "real" in offered and "alias" not in offered
+
+
 def test_a_failing_project_lookup_leaves_only_paths(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

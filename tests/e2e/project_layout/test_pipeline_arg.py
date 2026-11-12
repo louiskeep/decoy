@@ -406,6 +406,49 @@ def test_a_link_loop_under_pipelines_is_unknown_and_unlisted(
     assert [e.name for e in list_pipelines(find_project(root, None))] == ["orders", "slice"]
 
 
+@posix_only
+def test_a_linked_member_folder_is_not_a_member(world, monkeypatch: pytest.MonkeyPatch) -> None:
+    root, _ = world
+    _pipeline(root, "real")
+    (root / "pipelines" / "alias").symlink_to("real", target_is_directory=True)
+    monkeypatch.chdir(root)
+    result = _invoke("run", "alias", "--json")
+    assert result.exit_code == EXIT_USAGE, result.output
+    assert _body(result)["code"] == "layout.pipeline_unknown"
+    names = [e.name for e in list_pipelines(find_project(root, None))]
+    assert "real" in names and "alias" not in names
+    assert _invoke("run", "real", "--json").exit_code == EXIT_OK
+
+
+@posix_only
+def test_a_linked_member_yaml_is_not_a_member(world, monkeypatch: pytest.MonkeyPatch) -> None:
+    root, _ = world
+    _pipeline(root, "real")
+    (root / "pipelines" / "b").mkdir()
+    (root / "pipelines" / "b" / "pipeline.yaml").symlink_to("../real/pipeline.yaml")
+    monkeypatch.chdir(root)
+    result = _invoke("run", "b", "--json")
+    assert result.exit_code == EXIT_USAGE, result.output
+    assert _body(result)["code"] == "layout.pipeline_unknown"
+    names = [e.name for e in list_pipelines(find_project(root, None))]
+    assert "real" in names and "b" not in names
+
+
+@posix_only
+def test_a_linked_pipelines_folder_has_no_members(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root = _project(tmp_path, "linked")
+    _pipeline(root, "orders")
+    (root / "pipelines").rename(root / "store")
+    (root / "pipelines").symlink_to("store", target_is_directory=True)
+    monkeypatch.chdir(root)
+    result = _invoke("run", "orders", "--json")
+    assert result.exit_code == EXIT_USAGE, result.output
+    assert _body(result)["code"] == "layout.pipeline_unknown"
+    assert list_pipelines(find_project(root, None)) == []
+
+
 # --- AT-20: the name rule ----------------------------------------------------------------
 
 

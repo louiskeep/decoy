@@ -31,13 +31,14 @@ import re
 import sys
 from collections.abc import Callable, Iterator
 from pathlib import Path
+from typing import Annotated
 
 import pytest
 import typer
 from typer.models import ArgumentInfo, OptionInfo
 
 from decoy.cli.completers import pipeline_names
-from decoy.cli.io import parse_pipeline_token
+from decoy.cli.io import parse_pipeline_token, pipeline_argument, pipeline_option
 
 ROOT = Path(__file__).resolve().parents[3]
 SRC = ROOT / "src" / "decoy"
@@ -350,6 +351,48 @@ def test_a_plain_path_argument_with_the_name_or_path_help_is_found() -> None:
     matched, findings = parameter_findings(scratch)
     assert matched == {"cmd:spec"}
     assert len(findings) == 2
+
+
+def _command(fn: Callable) -> typer.Typer:
+    scratch = typer.Typer()
+    scratch.command(name="cmd")(fn)
+    return scratch
+
+
+def test_an_annotated_parameter_is_found_and_flagged_without_the_hooks() -> None:
+    def cmd(
+        target: Annotated[str, typer.Argument(help="Path or name of the pipeline config")],
+    ) -> None:
+        """Scratch command."""
+
+    matched, findings = parameter_findings(_command(cmd))
+    assert matched == {"cmd:target"}
+    assert len(findings) == 2
+
+
+def test_an_annotated_parameter_with_the_shared_hook_passes() -> None:
+    def cmd(
+        target: Annotated[str, pipeline_argument(help="Path or name of the pipeline config")],
+    ) -> None:
+        """Scratch command."""
+
+    assert parameter_findings(_command(cmd)) == ({"cmd:target"}, [])
+
+
+def test_another_spelling_of_the_config_option_is_found_and_flagged() -> None:
+    def cmd(cfg: Path = typer.Option(..., "--pipeline-config", help="YAML file to run")) -> None:
+        """Scratch command."""
+
+    matched, findings = parameter_findings(_command(cmd))
+    assert matched == {"cmd:cfg"}
+    assert len(findings) == 2
+
+
+def test_another_spelling_with_the_shared_hook_passes() -> None:
+    def cmd(cfg: Path = pipeline_option(..., "--pipeline-config", help="YAML file to run")) -> None:
+        """Scratch command."""
+
+    assert parameter_findings(_command(cmd)) == ({"cmd:cfg"}, [])
 
 
 def test_a_parameter_with_both_hooks_is_clean() -> None:
