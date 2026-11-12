@@ -33,6 +33,7 @@ MAX_LINES = 600
 MAX_RUN_STATEMENTS = 3
 # A module may import only modules earlier in this list; `__init__` comes last.
 ORDER = (
+    "_progress",
     "_context",
     "_notify",
     "_vault",
