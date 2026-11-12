@@ -3,7 +3,8 @@ Status: plan
 # PROJECT-LAYOUT: projects, pipelines by name, and one run folder per run (roadmap row 24t)
 
 Owner: Cam. Author: claudeworkerbee (Opus). Date: 2026-11-09. Scope: CLI plus a small engine part, V1.
-Revision 4 (Dennis rounds 1 and 2, Codex r1, and addenda T0247, T0248 and T0249 folded).
+Revision 5 (Dennis rounds 1 and 2, Codex r1, addenda T0247, T0248 and T0249, and the P4 final-gate
+remediation folded).
 
 Repo and branch: CLI `louiskeep/decoy`, plan branch `plan/project-layout` at `0f91bbcf`, off `main`
 `ed5de4ed`. Code was checked against `origin/main` `31faa020`. Engine code was checked against
@@ -11,7 +12,7 @@ Repo and branch: CLI `louiskeep/decoy`, plan branch `plan/project-layout` at `0f
 
 Rules consulted: `dev-rules/README.md`, `00-universal.md`, `risk-and-exceptions.md`, `development-loop.md`
 (PLAN: choke point, Placement, Design notes, Established solutions), `feature-dev.md`, `architecture.md`,
-`reuse-first.md`, `testing.md` (test depth, escalation triggers), `cross-cutting-concerns.md`,
+`reuse-first.md`, `exploration.md`, `bugfix.md`, `verification.md`, `code-review.md`, `testing.md` (test depth, escalation triggers), `cross-cutting-concerns.md`,
 `api-and-compatibility.md`, `security.md`, `workspace-and-vcs.md`, `scope-discipline.md`, `documentation.md`,
 `catalogs/recurring-defects.md`; the plan contract (`30_Resources/Decoy-Plan-Contract-and-Defect-Catalog.md`),
 `LOCAL-BUILDER-BRIEF.md`; the standing rules develop-correctly-registries-and-sizing and
@@ -19,6 +20,7 @@ best-practice-becomes-a-sentry; the V1 bar (function break, data loss or a non-a
 second copy of a central mechanism, or a new module in a flat folder over 25, always blocks); CLI
 `CODEMAP.md:50` (new readers and writers go in `src/decoy/cli/io/`; `cli/` is frozen at 32 modules),
 `:59-60` (new tests go in named folders). Code read at CLI `ed5de4ed` and engine `44d6afe2`.
+P4 remediation was checked against CLI PR #213 head `845d93a5d77b63e877c06e144c2d3820a680bd2e`.
 
 Source: the owner, 2026-11-09: "Decoy should sort records and files somewhere automatically in the project
 folder, we don't want loose files out of their own pipeline folders." Roadmap row 24t (CLI
@@ -48,7 +50,7 @@ and the first-user QA record (`docs/records/2026-11-08-cli-qa-first-user.md` ite
 | M5 walk limits | The walk stops below `$HOME`, at a `.git` folder or file, and at a device change. An untrusted marker refuses (exit 1) instead of being skipped. `decoy project new` refuses `$HOME`, an ancestor of it, and `/` |
 | M6 init scaffold | Scaffold code in `cli/project/_scaffold.py`, not `init.py`; P7 coordinates with the INIT-WIZARD lane; W1a's collision check uses placed paths |
 | M7 path budget | The 259-character budget applies on Windows only; Codex r1 updates the longest run id to 55 characters. |
-| M8 empty outputs | `outputs[]` lists only files written; `latest` moves on exit 0 even when a chunked target wrote nothing |
+| M8 empty outputs | `outputs[]` lists only files written and is omitted when none were published; `latest` moves on exit 0 even when a chunked target wrote nothing |
 | M9 `--out-dir` and `owning_run` | Documented gap: files under `--out-dir` are not recognized by `owning_run`; `unmask` and `detokenize` there use the suffix rule, as for any other path (F6) |
 | M10 engine log | E2 makes the engine's default log file `None`; the CLI adds no call. `ci/engine_logging.py` drops its `chdir` |
 | L1 sentry scope | Sentry (b) checks path-building calls only (`with_suffix`, `/` joins, f-strings passed to `Path`); sentry (a) follows the `_resolve_path` import alias (`run.py:31`) |
@@ -146,8 +148,10 @@ or a pipeline name is.
    and at run, exit 1, before any source is read.
 6. **`latest` points at the last clean run.** After a run exits 0, `out/<p>/LATEST` names its folder and,
    on Linux and macOS, `out/<p>/latest` links to it. Other exits leave both on the previous clean run.
-7. **The run says where it wrote.** The summary prints the run folder; `--json` carries `output_dir` and
-   `outputs[]`, and `output_dir` on a failure that created one.
+7. **The run says where it wrote.** The summary prints the run folder. In `--json`, `outputs[]` is present
+   only after at least one target file was published, and lists only files that were published.
+   `output_dir` is present only when at least one of those files was published inside the placed run folder
+   or typed `--out-dir`. Opening or creating a folder is not publication.
 8. **No stray files.** With default flags, no Decoy command creates a file outside `<root>/out/`,
    `<root>/.decoy/`, `<root>/pipelines/`, `<root>/decoy.yaml`, a path typed on the command line, an absolute
    path in the YAML, the demo folder, or the folder of an input the command was given (the default output of
@@ -189,8 +193,10 @@ or a pipeline name is.
 | A marker or claim can not be made because the mount has no hard links | Exit 3, the message names the mount (`_atomic` `ATOMIC_NOCLOBBER_UNSUPPORTED`) |
 | Relative output path leaves its run folder, is empty, `.`, or ends in a separator | Exit 1 `layout.output_path_escapes` at validate and run, before any source read |
 | Placed path over 259 characters on Windows | Exit 1 `layout.path_too_long`, checked with the longest run id |
+| Two configured outputs resolve to one destination | Exit 1 `layout.output_path_collision` before any source read; no destination changes |
+| `--out-dir` names a file, dangling link, non-directory link, or a new directory with no parent | Exit 1 `layout.output_dir_unusable` before any source read; the message does not echo the path |
 | Two runs of one pipeline at once | Distinct private run folders; microsecond ids order starts in one second; `LATEST` moves forward except for the recorded V2-LOG read-replace race |
-| Run fails after its folder exists | Folder kept with the targets already committed (each target is atomic); an empty folder is removed; `LATEST` unchanged; `--json` names the folder |
+| Run fails after its folder exists | Folder kept with the targets already committed (each target is atomic); an empty folder is removed; `LATEST` unchanged; `--json` names the folder and exact published targets only when the publication ledger is non-empty |
 | `latest` link can not be made (no permission, FAT, a file in the way) | Warning `layout.latest_link_failed`; `LATEST` still written; exit code unchanged |
 | `LATEST` write fails | Warning `layout.latest_write_failed`; exit code unchanged |
 | `out/.gitignore` or `.decoy/.gitignore` can not be written | Warning `layout.gitignore_write_failed`; the run goes on |
@@ -398,10 +404,113 @@ runs crossing between the read and replace can leave the older pointer. This the
 The next clean run repairs it. `abandon()` removes the run folder only when empty (`rmdir`).
 
 `--out-dir DIR` (on `run` and `tokenize`) replaces the run folder with `DIR` (relative to the current folder,
-created mode 0700 through the same helper if missing): `RunLayout.fixed(DIR)`, no claim, no run id, no
-`latest`, no `.gitignore`, overwrite as
+created mode 0700 through the same helper after the gate if missing and needed): `RunLayout.out_dir(DIR)`,
+no claim, no run id, no `latest`, no `.gitignore`, overwrite as
 today. A placed child must stay within `DIR.resolve(strict=False)`, including through existing symlink
 ancestors. Files there are not recognized by `owning_run` (F6).
+
+#### 3.6.1 P4 layout gate, collision and JSON contract
+
+**A. Check matrix.** `Runs` means the check executes before a source read; a failure uses the stated exit
+and rule code. `Skipped` means the invocation has no such managed state. `Change` marks behavior that the
+P4 head `845d93a5` does not yet have. A warning does not change `run`'s exit; at `validate preflight
+--fail-on-warning` it exits 2.
+
+| Layout check | Placed project run | `--out-dir` run | Legacy run, absolute targets only | `validate preflight` | `--rows` preview |
+|---|---|---|---|---|---|
+| Project marker and root | Runs; refuse 1 `layout.project_marker_invalid`, `layout.project_marker_untrusted`, `layout.project_not_found` or `layout.project_mismatch` | Skipped after a path config is resolved (Change); a named config still uses the explicitly selected project only to find its YAML | Skipped | Runs as a normal placed run; refuse 1 with the same codes | Skipped because preview writes nothing (Change) |
+| Pipeline name and claim | Runs read-only; refuse 1 `layout.pipeline_name_invalid`, `layout.pipeline_name_mismatch` or `layout.pipeline_name_collision`; repeat the claim check at open | Skipped (Change) | Skipped | Runs read-only; refuse 1 with the same codes | Skipped (Change) |
+| Run folder and run id | Gate skips writes; after it passes, exclusive open runs and an operational failure exits 3 with the existing `private_*` code | Skipped; fixed-directory shape runs before the gate and refuses 1 `layout.output_dir_unusable` | Skipped | Skipped | Skipped |
+| `LATEST` and `current` | Skipped by the gate; after successful execution, run only on exit 0, including an empty chunked success; `layout.latest_invalid`, `layout.latest_write_failed` and `layout.latest_link_failed` are warnings | Skipped | Skipped | Skipped | Skipped |
+| Windows path budget | Runs against `<root>/out/<name>/<max-run-id>`; refuse 1 `layout.path_too_long` | Runs against the resolved `DIR` (Change); refuse 1 `layout.path_too_long` | Skipped for user-chosen absolute paths | Runs as a normal placed run; refuse 1 `layout.path_too_long` | Skipped (Change) |
+| Output containment and symlink ancestors | Runs for relative file targets and enabled quarantine; refuse 1 `layout.output_path_escapes` | Runs against physical `DIR`; refuse 1 `layout.output_path_escapes` | Skipped for absolute paths | Runs as a normal placed run; refuse 1 `layout.output_path_escapes` | Skipped (Change) |
+| URL carve-out | Runs: a `type: file` path whose scheme and `://` start at offset zero is not made local and is refused 1 `layout.output_path_escapes`; a non-file remote target is skipped | Runs with the same refusal and code; a non-file remote target is skipped | Runs with the same refusal and code; a non-file remote target is skipped | Runs with the same refusal and code; a non-file remote target is skipped | Skipped (Change) |
+| NUL and backslash | Runs for relative local outputs; refuse 1 `layout.output_path_escapes` | Runs for relative local outputs; refuse 1 `layout.output_path_escapes` | Runs for NUL and refuses 1 `layout.output_path_escapes`; a native absolute backslash spelling is honored | Runs as normal placement; refuse 1 `layout.output_path_escapes` | Skipped (Change) |
+| Existing-file overwrite advisory | Runs for absolute targets only; relative paths in a fresh run folder are skipped; warning `target.<table>.would_overwrite` or `target.<table>.parent_missing` | Runs on each resolved local destination, including relative targets under fixed `DIR` (Change); same warning codes | Runs; same warning codes | Runs for absolute targets only; same warning codes | Skipped |
+| Resolved-destination collision | Runs for every local file target, enabled quarantine, and typed run-side file named below; refuse 1 `layout.output_path_collision` (Change) | Runs for the same set after fixed-directory placement; refuse 1 `layout.output_path_collision` (Change) | Runs, including absolute-to-absolute collisions; refuse 1 `layout.output_path_collision` (Change) | Runs for every config destination; refuse 1 `layout.output_path_collision` (Change) | Skipped (Change) |
+
+The gate receives an output-placement context, not a boolean flag. It is normal project placement, a typed
+fixed directory, or no-write preview. `_run_config_base` passes that context to `layout_issues`; direct
+`validate preflight` passes normal project placement. This is the one route decision. It fixes the current
+call at `run/_prepare.py:322`, which loses `--out-dir`, without teaching `gate/_layers.py` a second path
+resolver. The check remains before `_check_source_files` on both gate routes.
+
+**B. One collision rule.** Add `resolved_output_collisions(...)` next to `relative_outputs` in
+`cli/io/_layout.py`. That function uses the same output enumeration and `contained_path` resolution as
+placement. After placement, every local file target and enabled quarantine destination must be pairwise
+distinct. Absolute targets participate. URLs and non-file remote targets do not. `run` supplies the typed
+`--evidence-out` and `--vault` destinations to the same function, so either typed file also cannot replace a
+target, quarantine file, or the other typed file. `validate preflight` has no invocation flags, so it checks
+the config destinations only.
+
+Resolve existing symlink ancestors exactly as containment does. Compare existing destinations by file
+identity. For destinations not yet present, resolve the nearest existing ancestor and compare the whole
+unresolved suffix. Determine case behavior without writing: case-swap an alphabetic component of that
+ancestor and use `samefile`; walk existing ancestors until one can be probed. Case-fold the unresolved
+suffix only when the probe identifies a case-insensitive filesystem. The first duplicate refuses before any
+source read with exit 1 and
+`layout.output_path_collision`. Its registry message shape is
+`Configured outputs {first} and {second} resolve to one destination. Give each output a different path.`
+The fields are config locations such as `targets.orders.path`, `quarantine.output_path`, or flag names, never
+path values. The descriptor lives in `_layout_errors.py`; CI derives it through `GATE_DESCRIPTORS`. The gate
+and direct `validate preflight` both call this one function through `layout_issues`. There is no collision
+loop in `preflight.py`, and its 891-line pin does not move. `check_before_run` remains the construction
+choke point for every `run` route; AT-30 is its guard and MP22 is the seeded bypass. AT-31 guards the direct
+`validate preflight` route and MP23 removes a real collision class from the shared enumeration.
+
+**C. JSON publication rule.** An opened folder is not evidence that a file exists. Keep one publication
+ledger mapping on `RunContext`. Pass that mapping to `write_targets`, which adds an entry immediately after
+each target publisher returns; the chunked loop adds its entry immediately after each
+`write_chunked_output` returns. A later exception therefore cannot discard earlier entries when
+`write_targets()` does not return. Both placed and `--out-dir` runs use it:
+
+- a gate refusal or a failure before the first publish omits both `output_dir` and `outputs`, even when a
+  valid `--out-dir` was inspected or already existed;
+- a failure after one or more target files publish includes `outputs` with exactly those files; it includes
+  `output_dir` only when at least one listed file is below the run folder or `--out-dir`;
+- success follows the same rule. An empty chunked run omits both fields. An absolute-target-only success has
+  `outputs` but omits `output_dir`. A placed or `--out-dir` success with a published relative target has both.
+
+`outputs` entries keep the P4 shape `{table, path}`, with absolute paths. Quarantine, evidence and vault
+artifacts keep their existing dedicated contracts and are not inferred into `outputs`; their destinations
+still take part in the collision rule. `project` and `pipeline` keep their existing independent contract.
+The success and failure renderers read the same ledger, so a mid-run failure cannot lose the record of an
+earlier publish.
+
+**Decided `run --out-dir` cells.** These close the remaining flag and filesystem combinations:
+
+This P4 remediation changes `run` only. The `tokenize --out-dir` wiring and acceptance stay in P9, and
+`owning_run` support for fixed output folders stays F6.
+
+- With a path config, `--project` does not re-enable project placement checks. An explicit project is still
+  checked for the path-token mismatch contract in 3.3 by requiring the physical YAML to be below that
+  explicit root; the command does not walk or validate a marker beside the YAML. With a named config,
+  `--project` may locate the YAML, then the fixed-directory matrix applies. `DECOY_PROJECT` remains ignored
+  for a path token.
+- `--rows --out-dir` and `--all --out-dir` are refused before any folder is made, exit 1. `--all` also keeps
+  its existing refusal of `--evidence-out` and `--vault`.
+- `--json` follows C. Human output keeps the existing summary contract and may name the opened run or fixed
+  folder even when no target file was published.
+- `--evidence-out` and `--vault` remain paths typed relative to the current folder and are not moved under
+  `DIR`. They are allowed with `--out-dir`, but all resolved destinations join B before any source read.
+- `run - --out-dir DIR` stays unsupported because `run` does not accept stdin config today; tokenization of
+  `-` does not add a new input route.
+- A relative file target is contained under physical `DIR`; an absolute target stays absolute; a file-target
+  URL is refused; a non-file remote target is unchanged. Mixed relative, absolute and remote targets use
+  those rules independently, then all local destinations enter B.
+- Enabled quarantine is placed under `DIR` when relative and enters B; an absolute quarantine stays absolute
+  and enters B; disabled or absent quarantine contributes no destination. `--chunked` with enabled
+  quarantine keeps its earlier exit-1 refusal.
+- A missing `DIR` is created mode 0700 only after the gate passes and only when a relative output is needed.
+  A regular file, dangling link, or link to a non-directory is refused before a source read with the fixed,
+  value-free `layout.output_dir_unusable` error and exit 1. Its registry message is `--out-dir must name an
+  existing directory, or a new directory whose parent exists.` A link to a directory is allowed and its
+  physical directory is the containment and collision base. A pre-existing directory that later refuses a
+  publish as unwritable exits 3; the gate does not claim a race-free writability proof.
+- `DIR` may be inside the selected project's `out/`; it is a typed override, so it gets no claim, run id,
+  `.gitignore`, `LATEST` or `current`. It may not escape its own physical base through a child symlink.
+- When all targets are absolute or remote and quarantine is absent or absolute, `DIR` is unused and is not
+  created. The absolute local destinations still receive overwrite and collision checks.
 
 ### 3.7 Placing paths
 
@@ -566,11 +675,11 @@ Every config parameter uses public Typer `autocompletion=pipeline_names`. The fu
 
 ### 3.14 Validate and gate
 
-The gate's config layer (`gate/_layers.py`) runs the layout checks that need no write: marker validity and
-trust, name validity and mismatch, claim mismatch for a declared name (read only), escape, and the Windows
-path budget for every file target and the quarantine path. `validate`, `ci check` and `run` share the gate.
-`run` repeats the claim check at `open`. The codes come from the central layout descriptor registry.
-`ci/rule_codes.py` derives its gate set from the public `decoy.cli.io` export. It repeats no literals.
+The gate's config layer (`gate/_layers.py`) runs the placement-context matrix in 3.6.1. `validate`, `ci
+check`, direct `validate preflight` and `run` share `layout_issues`; `run` supplies normal placement,
+`--out-dir`, or no-write preview context. `run` repeats the claim check at `open`. The codes come from the
+central layout descriptor registry. `ci/rule_codes.py` derives its gate set from the public
+`decoy.cli.io` export. It repeats no literals.
 
 ### 3.15 Engine log
 
@@ -733,7 +842,7 @@ tree and exit codes, not report numbers.
 | `path: sub/orders.csv` | `<yaml dir>/sub/orders.csv` | `<run folder>/sub/orders.csv` |
 | `path: ../../../x.csv`, `path: .`, `path: ""` | written outside, or an error at write | validate and run exit 1, `layout.output_path_escapes` |
 | `quarantine.output_path: q.jsonl` | the current folder | `<run folder>/q.jsonl`; config hash unchanged |
-| run exits 3 after one of two targets | one file beside the YAML | one file in the run folder; `latest` unchanged; `--json` has `output_dir` |
+| run exits 3 after one of two targets | one file beside the YAML | one file in the run folder; `latest` unchanged; `--json` has that file in `outputs[]` and has `output_dir` |
 | `decoy run members-mask` from `proj/a/b/` | n/a | finds `proj/pipelines/members-mask/pipeline.yaml` |
 | `decoy run membrs-mask` | n/a | exit 1 `layout.pipeline_unknown`: "known: members-generate, members-mask; did you mean members-mask?" |
 | `decoy run ./members-mask` with no such file | file not found (exit 2) | file not found (exit 2; a path token is never a name) |
@@ -805,8 +914,8 @@ relationship is read or changed.
 - engine strict `PipelineConfig.name: str | None` (optional, excluded from dumps when absent);
 - engine `run_pipeline(..., quarantine_path: str | None = None)`, strict at runtime and applied after the
   config hash;
-- run `--json`: `output_dir`, `outputs` (`{table, path}` for files written), `project` (`root`, `implicit`,
-  `skipped`), `pipeline` (`name`, `yaml`, `given_as`);
+- run `--json`: conditional `output_dir` and `outputs` per 3.6.1 C (`{table, path}` for target files actually
+  published), plus `project` (`root`, `implicit`, `skipped`) and `pipeline` (`name`, `yaml`, `given_as`);
 - `run --all --json`: `{"pipelines": [<child payload>...], "exit_code": N}`;
 - evidence manifest: exact string `path_base: "project"` when paths are project-relative;
 - marker: `kind: decoy-project/v1`.
@@ -830,16 +939,16 @@ only.
 |---|---|---|---|---|---|
 | 1 | Value-bearing output | layout messages; the quarantine, unmasked and report files hold rows or row-derived values | messages come from the value-free registry; run folders are 0700; row files stay in run folders or typed locations; `out/.gitignore` holds `*` | AT-12 canary (stdout, stderr, `--json`, every refusal), AT-15 | MP11: a target's first row in the escape message |
 | 2 | Cleanup missing on an exit path | an empty run folder after an early failure; a temp link after a failed swap; a temp file after a failed claim | `abandon()` removes an empty folder; `replace_symlink` removes its temp name on failure; the claim's temp is removed by `_atomic` as for every write | AT-6 failure cells, AT-7 no-temp-left cell, `tests/unit/test_atomic.py` link cells | MP12: skip `abandon()` |
-| 3 | State and ordering | `latest` moved before the outcome is known, or moved back by an older run; the folder made before the gate | microsecond run ids; strict shared parser; `commit_latest` only on exit 0 and only forward; `open` after the gate | AT-5, AT-6 | MP4: `commit_latest` in a `finally`; MP15: drop the run id comparison |
+| 3 | State and ordering | `latest` moved before the outcome is known, or moved back by an older run; the folder made before the gate; JSON infers publication from an opened folder | microsecond run ids; strict shared parser; `commit_latest` only on exit 0 and only forward; `open` after the gate; one publication ledger | AT-5, AT-6, AT-32 | MP4: `commit_latest` in a `finally`; MP15: drop the run id comparison; MP24: derive JSON from the opened layout |
 | 4 | Route parity and silent fallback | `run`, `tokenize`, `demo`, `mask()`, chunked writes placing differently; `validate` passing what `run` refuses; one command taking a name and another not | one `RunLayout` for both table writers; one gate; one token callback | AT-3 per route, AT-4 per command, AT-18 per command, G-ONE-OUTPUT-PLACE (c), G-ONE-PIPELINE-ARG | MP1, MP5, MP16: `subset` loses the callback |
-| 5 | Referential integrity | the claim naming its YAML; listed names resolving to members; `LATEST` naming a run folder; `owning_run` matching a target; manifest paths naming files | claim by exclusive create; list only validated pipeline folders; strict `LATEST`; `owning_run`; one manifest-aware path resolver guarded by G-ONE-MANIFEST-PATH | AT-7, AT-9, AT-11, AT-25 | MP7, MP9, MP3, MP21 |
+| 5 | Referential integrity | the claim naming its YAML; listed names resolving to members; `LATEST` naming a run folder; `owning_run` matching a target; manifest paths naming files; two outputs naming one destination | claim by exclusive create; list only validated pipeline folders; strict `LATEST`; `owning_run`; one manifest-aware path resolver guarded by G-ONE-MANIFEST-PATH; one resolved-destination collision check | AT-7, AT-9, AT-11, AT-25, AT-31 | MP7, MP9, MP3, MP21, MP23 |
 | 6 | Untrusted producer | a marker in a parent folder written by another user; a hand-written marker; a pipeline name from a stem or folder; a name token on the command line | owner check on the opened descriptor; `kind` check; one strict name rule; name lookup remains physically under `pipelines/` | AT-1, AT-2 property, AT-19 | MP10: skip the owner check; MP18: join a name without the rule check |
 | 7 | Check then use on a path (TOCTOU) | claim checked at the gate, written at `open`; run folder clash; marker checked then read | claim re-checked at `open` and made by hard-link `CREATE_ONCE`; private-directory exclusive create; `fstat` on the descriptor read; physical containment | AT-4, AT-5 clash cell, AT-7 race cell, AT-1 swap cell | MP13: non-exclusive directory create |
 | 8 | Weak tests and overclaimed evidence | a sweep that checks only the current folder; a placement test that only checks a file exists | AT-12 snapshots the project, the current folder and `$HOME` stand-in and asserts the full set of new paths; AT-3 asserts the exact path and no other copy | AT-3, AT-12, AT-26 | MP1 |
 | 9 | Behavior-preserving refactor drift | side-file names moved; `ci/engine_logging.py` simplified; distribution link swap moved; config parameters gain one callback | moved verbatim; existing tests stay green unchanged | `test_unmask_command.py`, `test_tokenize_cli.py`, `test_fit_command.py`, `test_ci_output_isolation.py`, distribution layout tests, every command's existing path-argument tests | MP2 |
-| 10 | Frozen contract drift | run `--json`, evidence manifest and `ci-contracts.md`, engine schema and registry, target location, `init` | additive JSON fields; `path_base` additive with the old rule kept; engine dump identity without `name`; CHANGELOG breaking entries | E1 dump identity, AT-8, AT-9 old-manifest cell, reason minor fixture | MP14: emit `name: null` in dumps |
+| 10 | Frozen contract drift | run `--json`, evidence manifest and `ci-contracts.md`, engine schema and registry, target location, `init` | conditional JSON fields tied to the publication ledger; `path_base` additive with the old rule kept; engine dump identity without `name`; CHANGELOG breaking entries | E1 dump identity, AT-8, AT-9 old-manifest cell, AT-32, reason minor fixture | MP14: emit `name: null` in dumps; MP24: render an opened folder as published |
 
-All mutations MP1 to MP19 are listed in section 9.
+All mutations MP1 to MP24 are listed in section 9.
 
 ## 9. Acceptance tests (red first)
 
@@ -885,10 +994,10 @@ CLI unit tests in `tests/unit/project_layout/`, e2e in `tests/e2e/project_layout
   temp file; a patched `ATOMIC_NOCLOBBER_UNSUPPORTED` exits 3 naming
   the mount; `Orders` and `orders` collide on a case-insensitive filesystem; a config with only absolute
   targets writes no claim and no `out/`.
-- **AT-8** Surfaces: the summary prints project, run folder and `latest`; `--json` has `output_dir`,
-  `outputs[]` (only files written: an empty chunked CSV is absent), `project`, `pipeline`; a failure after the
-  folder exists has `output_dir`; a gate refusal has none; human paths are relative under the current folder
-  and absolute otherwise.
+- **AT-8** Surfaces: the summary prints project, run folder and `latest`; `--json` has conditional
+  `output_dir` and `outputs[]` per 3.6.1 C, plus `project` and `pipeline`; a failure after a publish lists
+  only the files already published, while a failure before publication and a gate refusal have neither
+  conditional field; human paths are relative under the current folder and absolute otherwise.
 - **AT-9** Evidence: output fingerprints are the placed files (non-null, equal to a re-hash); input
   fingerprints resolve sources against the YAML folder; the config fingerprint is equal across two runs.
   Every row below starts with `cwd != project root`, keeps the output files present only at their recorded
@@ -930,8 +1039,8 @@ CLI unit tests in `tests/unit/project_layout/`, e2e in `tests/e2e/project_layout
 - **AT-15** `out/.gitignore` holds `*` after the first run in a project whose `out/` the user made by hand;
   a user-edited one is kept; an unwritable one warns `layout.gitignore_write_failed` and the run exits 0;
   under umask 0 and 0777 each run folder is 0700; a mode-verification failure exits 3 before a data write.
-- **AT-16** Preflight: no overwrite or missing-folder warning for a placed relative target; an existing
-  absolute target still warns.
+- **AT-16** Preflight: no overwrite or missing-folder warning for a relative target in a fresh project run;
+  an existing absolute target still warns; under `--out-dir`, an existing resolved relative target warns.
 - **AT-17** Windows budget: with a patched `os.name`, a placed path over 259 characters with the 55-character
   run id exits 1 `layout.path_too_long`; on POSIX the same path passes.
 - **AT-18** Name argument per command: for every command in 3.4, a name from a subfolder of the project gives
@@ -979,6 +1088,30 @@ CLI unit tests in `tests/unit/project_layout/`, e2e in `tests/e2e/project_layout
 - **AT-29** Reports: `report integrity` on a run output with no `--output` writes
   `<run>/reports/integrity.json` and prints it; with `--output` only the typed file is written; on a file
   outside any run folder no file is written; same three cells for `report fidelity`.
+- **AT-30** P4 gate matrix (`tests/e2e/project_layout/test_layout_gate.py::test_layout_gate_matrix`): one
+  parametrized row for every cell in 3.6.1 A asserts runs, skipped or refused, its exit and code, and that a
+  source-read spy stays empty on refusal. Red-first inputs include a path config below an invalid marker with
+  a valid `--out-dir` (must run), the same config through `validate preflight` (must refuse), a `--rows`
+  generate preview below the invalid marker (must run), a Windows-over-budget destination under `--out-dir`
+  (must refuse), an existing fixed-directory target (must warn), and a `DIR` that is a regular file (must
+  refuse 1 `layout.output_dir_unusable`). Mutation MP22 drops the placement context at `check_before_run`;
+  the invalid-marker `--out-dir` cell must turn red.
+- **AT-31** Destination collision
+  (`tests/e2e/project_layout/test_layout_gate.py::test_resolved_output_collisions_refuse_before_source`):
+  red-first configs use two tables targeting `masked.csv`, a target plus enabled quarantine targeting one
+  file, two equal absolute targets, case-only names under a case-insensitive parent, and two spellings through
+  a symlink ancestor. Cells cover project placement, `--out-dir`, direct `validate preflight`, and a run whose
+  `--evidence-out` or `--vault` aliases a target or each other. Every cell exits 1 with
+  `layout.output_path_collision`, names only the two config locations or flag names, fires before the
+  source-read spy, and leaves every destination absent or unchanged. Mutation MP23 removes the quarantine
+  and typed-file entries from the single collision enumeration; the corresponding cells must turn red.
+- **AT-32** JSON publication
+  (`tests/e2e/project_layout/test_run_surfaces.py::test_json_location_fields_follow_publication`): red-first
+  cells cover a valid `--out-dir` plus gate refusal, placed and fixed-directory failures before the first
+  publish, a two-target failure after the first publish, normal success, empty chunked success, and
+  absolute-target-only success. They assert the exact presence or absence of `output_dir` and `outputs`, and
+  exact absolute entries when present. Mutation MP24 derives either field from `layout.describe()` instead
+  of the publication ledger; the refusal and empty-success cells must turn red.
 - **G-ONE-OUTPUT-PLACE** (`tests/sentry/io_policy/test_output_placement.py`, in the sentry manifest): (a)
   normalized AST imports, aliases and qualified calls to `resolve_path` are allowed only at input sites in
   a shrink-only baseline
@@ -1026,7 +1159,10 @@ comparison in `commit_latest` (AT-6); MP16 `subset` declares `config: Path` (G-O
 MP17 `run --all` runs children in-process (AT-22 process spy); MP18 join a name under `pipelines/` without
 the rule check (AT-19); MP19 `pipelines/` runs skip the claim (AT-7 both-orders cells); MP20 add a
 `layout.*` literal outside the registry (G-ONE-LAYOUT-CODE); MP21 restore `Path(entry["path"])` in
-`report.py:compare_data` (G-ONE-MANIFEST-PATH and the outside-project AT-9 diff row).
+`report.py:compare_data` (G-ONE-MANIFEST-PATH and the outside-project AT-9 diff row); MP22 drop the output
+placement context passed to the gate (AT-30); MP23 omit quarantine and typed side files from
+`resolved_output_collisions` (AT-31); MP24 derive JSON location fields from an opened layout instead of the
+publication ledger (AT-32).
 
 ## 10. Owner questions (recommended option taken)
 
@@ -1082,7 +1218,7 @@ Owner answers (Cam, 2026-11-09): "go with recommended". Every question below tak
 | What | Where | Size | Why there |
 |---|---|---|---|
 | project root, marker, selection, `ensure_decoy_dir` | `src/decoy/cli/io/_project.py` (new) | about 220 | CODEMAP "Where things go": reader and writer support belongs in `cli/io/`; `cli/` is frozen |
-| layout and placement | `src/decoy/cli/io/_layout.py` (new in P2a, extended in P1b) | about 380 | same; under the 600 aim |
+| layout, placement context and collision check | `src/decoy/cli/io/_layout.py` (new in P2a, extended in P1b and P4) | P4 head 764, about +80, final below 900 | same; `resolved_output_collisions` sits beside the one output enumeration and reuses containment; no second resolver or new module |
 | pipeline argument | `src/decoy/cli/io/_pipelines.py` (new) | about 220 | the argument resolves to a file the I/O layer reads |
 | layout descriptors and public I/O API | `src/decoy/cli/io/_layout_errors.py` (new), `cli/io/__init__.py` | about 150 | the same CODEMAP row; one registry and public package boundary |
 | private run directory | `src/decoy/_private_file.py` | about +35 | existing private file and permission choke point |
@@ -1098,10 +1234,15 @@ Owner answers (Cam, 2026-11-09): "go with recommended". Every question below tak
 | docs | `docs/project-layout.md` (new), `docs/cli-reference.md`, `docs/ci-contracts.md` | about 200 | user reference, frozen contract |
 | CODEMAP rows | CLI `CODEMAP.md` | 8 rows | four `cli/io` modules, its public API, `cli/project/`, and two test folders |
 
-`run.py` is 1736 lines and gains call-site edits, the optional argument and `--all` dispatch (about 25 lines
-net); summary rendering of the new fields lives in `_layout.describe()`, the `--all` loop in
-`cli/project/_run_all.py`. `report.py` is 2364 lines and gets call-site edits only (about +30 over P5 and
-P9: the parameter type, the `resolve_pipeline` call, and a call to `_layout.report_default_path`).
+At the P4 head the run command is already split under `cli/run/`. P4 changes `_context.py` (130 lines),
+`_prepare.py` (482), `_errors.py` (314) and `_render.py` (216), each for its existing concern; it adds no
+logic to a flat `cli/run.py`. The later `--all` loop remains in `cli/project/_run_all.py`. `report.py` is
+2340 lines and gets call-site edits only in P5 and P9: the parameter type, the `resolve_pipeline` call, and a
+call to `_layout.report_default_path`.
+
+V2-LOG size: at the P4 head, `cli/io/_layout.py` is 764 lines and this remediation is expected to leave it
+between 800 and 900; `cli/preflight.py` is already pinned at 891 and does not grow. Both are cleanup-pass
+items under the owner size rule, not P4 blockers. No P4 file crosses 900 and no new module is added.
 
 ## 13. Frozen contracts touched
 
@@ -1111,7 +1252,8 @@ P9: the parameter type, the `resolve_pipeline` call, and a call to `_layout.repo
 - **`decoy init`** (breaking, pre-GA): writes `pipelines/NAME/pipeline.yaml` in a project; refused outside
   one without `-o`.
 - **Pipeline arguments** (additive): every config argument accepts a name.
-- **Run `--json`** (additive): `output_dir`, `outputs`, `project`, `pipeline`.
+- **Run `--json`** (additive fields, conditional presence): `output_dir` and `outputs` follow 3.6.1 C;
+  `project` and `pipeline` keep their prior presence and shapes.
 - **Evidence manifest and `docs/ci-contracts.md`** (additive): `path_base: "project"`; the old rule kept for
   manifests without it; the reader requires exact `schema_version: "cli-local-1"`; `run_id` keeps its UUID4
   value and equals the invocation id embedded in the folder name.
@@ -1126,7 +1268,7 @@ P9: the parameter type, the `resolve_pipeline` call, and a call to `_layout.repo
   `layout.project_marker_untrusted`, `layout.project_not_found`, `layout.project_mismatch`,
   `layout.pipeline_unknown`, `layout.pipeline_name_invalid`, `layout.pipeline_name_mismatch`,
   `layout.pipeline_name_collision`, `layout.output_path_escapes`, `layout.path_too_long`,
-  `layout.project_root_refused`. (Refusals raised by `resolve_pipeline` and `project new` use the same codes
+  `layout.output_path_collision`, `layout.output_dir_unusable`, `layout.project_root_refused`. (Refusals raised by `resolve_pipeline` and `project new` use the same codes
   in the command's error envelope.) Runtime warnings (not gate codes): `layout.latest_invalid`, `layout.latest_link_failed`,
   `layout.latest_write_failed`, `layout.gitignore_write_failed`, `layout.project_nested`,
   `layout.config_inside_out`.
@@ -1143,13 +1285,13 @@ P9: the parameter type, the `resolve_pipeline` call, and a call to `_layout.repo
 | P2a | CLI | `cli/io/_layout.py` (new: `is_run_id`, `RunFolder`, `owning_run(path, root, name)`, `placed_path`), `cli/io/_targets.py` (`input_format` calls them; the old compare is at `:203-217`), `tests/e2e/project_layout/__init__.py`, `test_owning_run.py` (4) | about 200 | AT-11 old-path and run-folder cells first; T1 plus `tests/e2e/cli_fmt` |
 | P2b | CLI | `cli/io/_layout.py` (extend: `RunLayout`, `mint_invocation_id`, on top of P1b's project, claim and private-directory helpers), `cli/io/_targets.py`, `cli/run.py`, `cli/demo.py`, `cli/tokenize.py`, `api.py`, `tests/e2e/project_layout/test_run_placement.py`, `tests/unit/test_run_local_io_guard.py`, `tests/e2e/cli_fmt/test_target_format_dispatch.py`, `tests/e2e/test_vault_commit_order.py`, `tests/unit/cli_fmt/test_targets_format.py`, `tests/sentry/io_policy/test_output_placement.py`, `tests/sentry/baselines/output-placement-allow.json`, `tests/sentry/test_sentry_manifest.py`, `CHANGELOG.md` (14) | about 800 | AT-3, AT-5, AT-6, AT-7, AT-10 and initial G-ONE-OUTPUT-PLACE first; the four signature tests move to `RunLayout` in the same commit; full CLI suite |
 | P3 | CLI | `cli/evidence.py`, `ci/adapters.py`, `cli/report.py` (`_load_manifest` uses the shared reader; `compare_data` resolves both manifests through the shared resolver), `cli/run/_evidence.py` (passes the evidence path), `docs/ci-contracts.md`, `tests/e2e/project_layout/test_evidence_paths.py`, `tests/sentry/io_policy/test_manifest_path_resolution.py`, `tests/sentry/test_sentry_manifest.py`, `CHANGELOG.md` (9) | about 720 | AT-9 consumer matrix and G-ONE-MANIFEST-PATH first; run the sentry's seeded spellings and the outside-project `report diff --require-data --json` mutation on the final head; full CLI suite (frozen contract) |
-| P4 | CLI | `gate/_layers.py`, `ci/rule_codes.py`, `preflight.py`, `cli/run.py` (summary, `--json`, `--out-dir`), `cli/io/_layout.py` (`describe`), `tests/e2e/project_layout/test_layout_gate.py`, `test_run_surfaces.py`, `docs/cli-reference.md`, `CHANGELOG.md` (9) | about 550 | AT-4, AT-8, AT-16, `--out-dir` cells first; full CLI suite (`--json` contract) |
+| P4 | CLI | `cli/gate/_layers.py`, `ci/rule_codes.py`, `cli/preflight.py` (call site only, 891-line pin unchanged), `cli/run/_context.py`, `_prepare.py`, `_errors.py`, `_render.py`, `cli/io/_layout.py`, `_layout_errors.py`, `_targets.py` (publication mapping only), `tests/e2e/project_layout/test_layout_gate.py`, `test_run_surfaces.py`, `docs/cli-reference.md`, `CHANGELOG.md` (14) | about 760; `_layout.py` remains below 900 | AT-4, AT-8, AT-16, AT-30, AT-31 and AT-32 first; MP22 to MP24 red; full CLI suite (`--json` contract) |
 | P5 | CLI | `cli/io/_pipelines.py`, `cli/io/__init__.py`, `__main__.py` (`--project`), `cli/completers.py`, `cli/run.py`, `cli/validate.py`, `cli/compile_explain.py`, `cli/preflight.py`, `cli/tokenize.py`, `cli/unmask.py`, `cli/subset.py`, `cli/report.py`, `tests/e2e/project_layout/test_pipeline_arg.py`, `tests/unit/project_layout/test_completion.py`, `tests/sentry/io_policy/test_pipeline_argument.py`, `docs/cli-reference.md` (regenerated), `CHANGELOG.md` (17) | about 800 | AT-18, AT-19, AT-20, AT-23, AT-27 and G-ONE-PIPELINE-ARG first; MP16 red; full CLI suite |
 | P6 | CLI | `cli/project/__init__.py`, `_new.py`, `_show.py`, `_list.py`, `__main__.py` (register), `tests/e2e/project_layout/test_project_group.py`, `CODEMAP.md`, `docs/cli-reference.md` (regenerated), `CHANGELOG.md` (9) | about 550 | AT-24, AT-25 first; T1 |
 | P7 | CLI | `cli/project/_scaffold.py`, `cli/init.py`, `tests/e2e/project_layout/test_init_project.py`, `tests/e2e/test_init_command.py`, `tests/e2e/test_init_scaffold_roundtrip.py`, `docs/project-layout.md`, `docs/cli-reference.md` (regenerated), `CHANGELOG.md` (8) | about 500 | AT-14, AT-28 first; T1 = init tests, `tests/unit/test_init_inference.py`, `tests/e2e/test_stateless_cli.py` |
 | P8 | CLI | `cli/project/_run_all.py`, `cli/run.py`, `tests/e2e/project_layout/test_run_all.py`, `docs/cli-reference.md` (regenerated), `CHANGELOG.md` (5) | about 400 | AT-21, AT-22, MP17 first; T1 |
 | P9 | CLI | `cli/unmask.py`, `cli/tokenize.py`, `cli/fit.py`, `cli/report.py`, `cli/io/_layout.py`, `tests/sentry/baselines/output-placement-allow.json`, `tests/e2e/project_layout/test_side_files.py`, `test_reports.py`, `CHANGELOG.md` (9) | about 450 | AT-11 remaining cells, AT-29 first; shrink G-ONE-OUTPUT-PLACE in the same commit; T1 = unmask, tokenize, fit, report tests, `tests/e2e/cli_fmt` |
-| P10 | CLI | `ci/engine_logging.py`, `tests/e2e/project_layout/test_no_stray_files.py`, `test_walkthrough.py`, `CHANGELOG.md` (4) | about 550 | AT-12, AT-13, AT-26, final sentry run and MP1 to MP20 shown red; full CLI suite |
+| P10 | CLI | `ci/engine_logging.py`, `tests/e2e/project_layout/test_no_stray_files.py`, `test_walkthrough.py`, `CHANGELOG.md` (4) | about 550 | AT-12, AT-13, AT-26, final sentry run and MP1 to MP24 shown red; full CLI suite |
 | LIB-A | CLI plan | LIB plan amendments: 4.1 step 3 calls `find_project`; the invocation id comes from `mint_invocation_id`; `.decoy/.gitignore` written by `ensure_decoy_dir`; class 4 names run folders; the `--emit-config out/p.yaml` example moves out of `out/` (it would warn `layout.config_inside_out`) (claudeorchestrator owns that branch) | about 12 lines | none |
 
 Order: E1 and E2, then R. P1a any time. P1b after R (needs `is_valid_pipeline_name`). P2a any time after P1a. P2b after P1b and P2a (`RunLayout.open` needs
