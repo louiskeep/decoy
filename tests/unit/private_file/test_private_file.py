@@ -127,6 +127,27 @@ def test_open_private_leaves_an_existing_parent_alone(tmp_path: Path) -> None:
     assert _mode(tmp_path) == 0o755
 
 
+@posix_only
+def test_open_private_truncate_empties_in_place_and_keeps_the_inode(tmp_path: Path) -> None:
+    """The library index reset: one inode, so a lock on it stays one lock."""
+    path = tmp_path / "index.sqlite"
+    path.write_bytes(b"not a database")
+    before = os.stat(path).st_ino
+    open_private(path, new_parent=False, truncate=True)
+    assert path.read_bytes() == b"" and os.stat(path).st_ino == before and _mode(path) == 0o600
+
+
+@posix_only
+def test_open_private_truncate_never_follows_a_symlink(tmp_path: Path) -> None:
+    victim = tmp_path / "victim.txt"
+    victim.write_bytes(b"mine")
+    link = tmp_path / "index.sqlite"
+    link.symlink_to(victim)
+    with pytest.raises(PrivateFileError) as caught:
+        open_private(link, new_parent=False, truncate=True)
+    assert caught.value.errno == errno.ELOOP and victim.read_bytes() == b"mine"
+
+
 # -- AT-P1c: planted names ------------------------------------------------------------------
 
 

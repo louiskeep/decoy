@@ -130,10 +130,14 @@ def test_no_raw_sqlite_error_leaves_the_lock(root: Path) -> None:
     _put_many(root, 1)
     library = open_library(root, probe=_local)
     with pytest.raises(LibraryError) as caught:
-        with _index.locked(library.library_dir, tmp_dir=library.tmp_dir) as conn:
+        with _index.locked(library.library_dir) as conn:
             conn.execute("SELECT * FROM no_such_table")
-    assert caught.value.__cause__ is None and caught.value.__context__ is None
-    assert "no_such_table" not in str(caught.value)
+    err = caught.value
+    assert err.code == "library_index_failed" and err.error_class == "OperationalError"
+    # A `with` body's error is always the context of what its exit raises; it is suppressed, so
+    # no traceback renders the SQLite text, and the library error never holds it.
+    assert err.__cause__ is None and err.__suppress_context__
+    assert "no_such_table" not in str(err) and "no_such_table" not in repr(err)
 
 
 # -- item 3: a schema rebuilt mid-process still answers ------------------------------------------
@@ -159,7 +163,7 @@ _HOLD = (
     "from decoy.cli.library import _index\n"
     "lib, tmp, held, release = (Path(a) for a in sys.argv[1:5])\n"
     "try:\n"
-    "    with _index.locked(lib, tmp_dir=tmp) as conn:\n"
+    "    with _index.locked(lib) as conn:\n"
     "        held.write_text('held')\n"
     "        deadline = time.time() + 30\n"
     "        while not release.exists() and time.time() < deadline:\n"
@@ -193,7 +197,7 @@ def test_two_processes_never_hold_the_lock_at_once_after_a_reset(
         monkeypatch.setattr(_index, "BUSY_TIMEOUT_SECONDS", 0.5)
         entered: list[bool] = []
         with pytest.raises(LibraryError) as caught:
-            with _index.locked(library.library_dir, tmp_dir=library.tmp_dir):
+            with _index.locked(library.library_dir):
                 entered.append(True)
         assert entered == []  # one lock: the child still holds it
         assert caught.value.code == LIBRARY_BUSY

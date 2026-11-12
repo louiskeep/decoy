@@ -9,11 +9,15 @@ cost) and with records inside SQLite (no longer committable or addressable by pa
 The one open: the file is pre-created 0600 with `_private_file.open_private` before
 `sqlite3.connect` (the token-vault recipe; SQLite gives its journal the database file's mode),
 then `BEGIN IMMEDIATE` takes the library lock, which every ref update, index write and (later)
-prune and clean hold (plan 4.8; sqlite.org/lockingv3.html). A file that is not a database is
-replaced by an empty one through the atomic writer and the lock is taken again; the inode is
-checked after locking, so a process that locked a file another one just replaced retries on the
-live file (the lock-then-verify pattern of lock files). A waiter gives up after
-`BUSY_TIMEOUT_SECONDS` with `library_busy`; any other failure is `library_lock_unavailable`.
+prune and clean hold (plan 4.8; sqlite.org/lockingv3.html). The file is never replaced: SQLite's
+locks live on the inode, and a replaced file would let two processes each hold "the" lock on a
+different one. A corrupt index is emptied in place instead (`open_private(..., truncate=True)`,
+`O_TRUNC` on the same inode) and the work is retried once (`run_locked`); the inode is still
+checked after locking, the lock-then-verify pattern of lock files, against a hand-replaced file.
+A waiter gives up after `BUSY_TIMEOUT_SECONDS` with `library_busy`; a lock that cannot be taken
+is `library_lock_unavailable`. Once the lock is held, no `sqlite3.Error` leaves this module: a
+corrupt index is `library_index_corrupt`, any other failure (a full disk) `library_index_failed`,
+both raised after the connection is closed, never chained to or rendering the SQLite text.
 
 Freshness (plan 4.4): every locked open lists the object file names (one `os.scandir` per fan-out
 folder, no file reads), inserts rows for ids the index lacks and drops rows whose file is gone,
@@ -29,16 +33,20 @@ import sqlite3
 from collections.abc import Callable, Iterable, Iterator, Mapping
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, TypeVar
 
 from decoy._private_file import PrivateFileError, open_private
 from decoy.cli.library._errors import (
     LIBRARY_BUSY,
+    LIBRARY_INDEX_CORRUPT,
+    LIBRARY_INDEX_FAILED,
     LIBRARY_LOCK_UNAVAILABLE,
+    LibraryError,
     library_error,
 )
-from decoy.cli.library._fs import replace_file
 from decoy.cli.library._paths import INDEX_FILE, record_digest
+
+_T = TypeVar("_T")
 
 __all__ = [
     "BUSY_TIMEOUT_SECONDS",
@@ -51,6 +59,7 @@ __all__ = [
     "locked",
     "object_ids",
     "row_from",
+    "run_locked",
     "select",
     "sync",
 ]
@@ -61,6 +70,9 @@ _INODE_RETRIES = 3
 _SUFFIX = ".json"
 # SQLITE_BUSY and SQLITE_LOCKED; `sqlite_errorcode` exists from Python 3.11.
 _BUSY_CODES = frozenset({5, 6})
+# SQLITE_CORRUPT and SQLITE_NOTADB, compared on the primary code (the low byte).
+_CORRUPT_CODES = frozenset({11, 26})
+_TABLES = frozenset({"records", "links", "tables"})
 _SCHEMA = (
     "CREATE TABLE records(id TEXT PRIMARY KEY, kind TEXT NOT NULL, payload_schema TEXT NOT NULL,"
     " created_at TEXT NOT NULL, invocation_id TEXT NOT NULL, pipeline TEXT, status TEXT,"
@@ -139,8 +151,14 @@ def _is_busy(exc: BaseException) -> bool:
 
 
 def _is_corrupt(exc: BaseException) -> bool:
-    # "file is not a database" is a DatabaseError but not an OperationalError.
-    return isinstance(exc, sqlite3.DatabaseError) and not isinstance(exc, sqlite3.OperationalError)
+    if not isinstance(exc, sqlite3.DatabaseError):
+        return False
+    code = getattr(exc, "sqlite_errorcode", None)
+    if code is not None:
+        return code & 0xFF in _CORRUPT_CODES
+    # Python 3.10: "file is not a database" and "database disk image is malformed" are plain
+    # DatabaseError; integrity and operational errors are subclasses.
+    return type(exc) is sqlite3.DatabaseError
 
 
 def _inode(path: Path) -> tuple[int, int] | None:
@@ -151,11 +169,14 @@ def _inode(path: Path) -> tuple[int, int] | None:
     return info.st_dev, info.st_ino
 
 
-def _begin(path: Path) -> tuple[sqlite3.Connection | None, BaseException | None, bool]:
-    """Open the file 0600 and take the lock: (connection, failure, still the live file)."""
+def _begin(
+    path: Path, *, truncate: bool
+) -> tuple[sqlite3.Connection | None, BaseException | None, bool]:
+    """Open the file 0600 (emptied in place when `truncate`) and take the lock:
+    (connection, failure, still the live file)."""
     conn: sqlite3.Connection | None = None
     try:
-        open_private(path, new_parent=False)
+        open_private(path, new_parent=False, truncate=truncate)
         before = _inode(path)
         conn = sqlite3.connect(str(path), timeout=BUSY_TIMEOUT_SECONDS, isolation_level=None)
         conn.execute("BEGIN IMMEDIATE")
@@ -167,24 +188,31 @@ def _begin(path: Path) -> tuple[sqlite3.Connection | None, BaseException | None,
     return conn, None, before is not None and before == _inode(path)
 
 
+def _commit(conn: sqlite3.Connection) -> None:
+    conn.execute("COMMIT")
+
+
 @contextlib.contextmanager
-def locked(library_dir: Path, *, tmp_dir: Path) -> Iterator[sqlite3.Connection]:
+def locked(library_dir: Path, *, reset: bool = False) -> Iterator[sqlite3.Connection]:
     """Hold the library lock on `library_dir/index.sqlite`; commit on a clean exit.
 
-    Raises `LibraryError` (`library_busy`, `library_lock_unavailable`) before the block runs.
+    `reset` empties the index in place before locking (a cache: it is rebuilt from the objects).
+    Raises `LibraryError`: `library_busy` or `library_lock_unavailable` before the block runs;
+    `library_index_corrupt` or `library_index_failed` for a SQLite error in the block or the
+    commit. A `LibraryError` the block raises itself passes through unchanged.
     """
     path = library_dir / INDEX_FILE
     conn: sqlite3.Connection | None = None
     failure: BaseException | None = None
-    reset = False
+    truncate = reset
     for _ in range(_INODE_RETRIES):
-        conn, failure, live = _begin(path)
-        if failure is not None and _is_corrupt(failure) and not reset:
-            reset = True
-            replace_file(library_dir, INDEX_FILE, b"", tmp_dir=tmp_dir)  # a cache: start empty
+        conn, failure, live = _begin(path, truncate=truncate)
+        if failure is not None and _is_corrupt(failure) and not truncate:
+            truncate = True  # not a database even to lock: empty it in place, then lock
             continue
+        truncate = False
         if conn is not None and not live:
-            conn.close()  # locked a file that was replaced meanwhile: lock the live one
+            conn.close()  # locked a file that was replaced by hand meanwhile: lock the live one
             conn, failure = None, None
             continue
         break
@@ -193,20 +221,53 @@ def locked(library_dir: Path, *, tmp_dir: Path) -> Iterator[sqlite3.Connection]:
             LIBRARY_BUSY if failure is not None and _is_busy(failure) else LIBRARY_LOCK_UNAVAILABLE
         )
         raise library_error(code, failure)
+    broken: sqlite3.Error | None = None
     try:
-        yield conn
-        conn.execute("COMMIT")
+        try:
+            yield conn
+            _commit(conn)
+        except sqlite3.Error as exc:
+            broken = exc
     finally:
         if conn.in_transaction:
             with contextlib.suppress(sqlite3.Error):
                 conn.execute("ROLLBACK")
         conn.close()
+    if broken is not None:
+        code = LIBRARY_INDEX_CORRUPT if _is_corrupt(broken) else LIBRARY_INDEX_FAILED
+        # `contextlib` attaches the block's exception as context; `from None` keeps its SQLite
+        # text out of every rendered traceback.
+        raise library_error(code, broken) from None
 
 
-def ensure_schema(conn: sqlite3.Connection) -> None:
-    """Create the tables; an index of another schema version is dropped and rebuilt."""
-    if conn.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION:
-        return
+def run_locked(library_dir: Path, work: Callable[[sqlite3.Connection], _T]) -> _T:
+    """Run `work` under the lock and commit; on a corrupt index, empty it in place and run
+    `work` once more on the fresh file. Raises `LibraryError` like `locked`."""
+    try:
+        with locked(library_dir) as conn:
+            return work(conn)
+    except LibraryError as exc:
+        if exc.code != LIBRARY_INDEX_CORRUPT:
+            raise
+    with locked(library_dir, reset=True) as conn:
+        return work(conn)
+
+
+def ensure_schema(conn: sqlite3.Connection) -> bool:
+    """Create the tables; True when it (re)built them, so the caller syncs the objects in.
+
+    An index of another schema version, or of this version with a table missing, is dropped and
+    rebuilt, never migrated.
+    """
+    version = conn.execute("PRAGMA user_version").fetchone()[0]
+    present = {
+        name
+        for (name,) in conn.execute(
+            "SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'"
+        )
+    }
+    if version == SCHEMA_VERSION and _TABLES <= present:
+        return False
     for (name,) in conn.execute(
         "SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'"
     ).fetchall():
@@ -214,6 +275,7 @@ def ensure_schema(conn: sqlite3.Connection) -> None:
     for statement in _SCHEMA:
         conn.execute(statement)
     conn.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
+    return True
 
 
 def insert(conn: sqlite3.Connection, row: IndexRow) -> None:

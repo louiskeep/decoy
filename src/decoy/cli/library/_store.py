@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import json
 import os
+import sqlite3
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
@@ -117,15 +118,23 @@ class Library:
         """The freshness sync under the lock (plan 4.4); a missing or corrupt index is rebuilt."""
         code: str | None = None
         try:
-            with _index.locked(self._library, tmp_dir=self._tmp) as conn:
-                _index.ensure_schema(conn)
-                _index.sync(conn, _index.object_ids(self._objects), self._index_row)
+            _index.run_locked(self._library, self._sync_all)
         except LibraryError as exc:
             code = exc.code
         if code == LIBRARY_LOCK_UNAVAILABLE:
             self.degraded = LOCK_UNAVAILABLE
         elif code is not None:
             self.stale = True
+
+    def _sync_all(self, conn: sqlite3.Connection) -> None:
+        _index.ensure_schema(conn)
+        _index.sync(conn, _index.object_ids(self._objects), self._index_row)
+
+    def _ready_index(self, conn: sqlite3.Connection) -> None:
+        """The schema in place; a schema just (re)built is filled from the objects at once, so
+        a rebuild in the middle of a process never answers with an empty index."""
+        if _index.ensure_schema(conn):
+            _index.sync(conn, _index.object_ids(self._objects), self._index_row)
 
     def _index_row(self, record_id: str) -> IndexRow | None:
         """The row for a stored object, or None when it is corrupt or of an unreadable major
@@ -143,10 +152,13 @@ class Library:
     def _index_put(self, row: IndexRow) -> None:
         if self.degraded is not None:
             return
+
+        def work(conn: sqlite3.Connection) -> None:
+            self._ready_index(conn)
+            _index.insert(conn, row)
+
         try:
-            with _index.locked(self._library, tmp_dir=self._tmp) as conn:
-                _index.ensure_schema(conn)
-                _index.insert(conn, row)
+            _index.run_locked(self._library, work)
         except LibraryError:
             self.stale = True  # the object is stored; the next locked open inserts the row
 
@@ -167,11 +179,14 @@ class Library:
         if not self._library.is_dir():
             return []
         if self.degraded is None and not self.stale:
+
+            def work(conn: sqlite3.Connection) -> list[IndexRow]:
+                self._ready_index(conn)
+                return _index.all_rows(conn)
+
             rows: list[IndexRow] | None = None
             try:
-                with _index.locked(self._library, tmp_dir=self._tmp) as conn:
-                    _index.ensure_schema(conn)
-                    rows = _index.all_rows(conn)
+                rows = _index.run_locked(self._library, work)
             except LibraryError:
                 rows = None
             if rows is not None:

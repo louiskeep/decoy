@@ -72,7 +72,7 @@ def set_ref(library: Library, kind: str, name: str, record_id: str) -> None:
     if library.degraded is not None:
         raise LibraryError(LIBRARY_LOCK_UNAVAILABLE)  # a remote or unlockable library (plan 4.8)
     library.prepare()
-    with _index.locked(library.library_dir, tmp_dir=library.tmp_dir):
+    with _index.locked(library.library_dir):
         library.get(record_id)  # exists and is the record its id names
         folder = library.library_dir / REFS
         ensure_private_dir(folder)

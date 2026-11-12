@@ -108,7 +108,11 @@ listing never opens a record file. It is a cache: the object files are the truth
 
 - Every open compares the index with the object file names (no file is read) and catches up:
   records added by hand or by `git pull`, records whose writer crashed before indexing them, and
-  files deleted by hand. A missing, corrupt or older-version index is rebuilt from the files.
+  files deleted by hand. A missing, corrupt or older-version index, or one with a table
+  missing, is rebuilt from the files. A corrupt index is emptied in place, never replaced, so
+  the library lock (held on that file) stays one lock for every process.
+- If the index fails while it is being updated (a full disk, a corrupt page), writing the record
+  still succeeds and listings read the record files; the next open catches the index up.
 - A record of a kind this Decoy does not know is indexed and listed as unknown; it never stops
   the listing.
 - If the index cannot be locked, or the library is on a network filesystem (NFS, SMB/CIFS, AFS,
