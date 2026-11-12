@@ -11,7 +11,7 @@ from pathlib import Path
 import pytest
 
 from decoy.cli.io import DECOY_DIR
-from decoy.cli.library import LibraryError, LibraryPolicy, load_policy
+from decoy.cli.library import LibraryError, LibraryPolicy, _errors, load_policy
 from decoy.cli.library._errors import LIBRARY_POLICY_INVALID
 
 
@@ -117,3 +117,41 @@ def test_a_symlinked_policy_file_is_refused(root: Path, tmp_path: Path) -> None:
         load_policy(root)
     assert caught.value.code == LIBRARY_POLICY_INVALID
     assert caught.value.fields == ()
+
+
+# -- review round 1 on #206, item 4: the one marker reader --------------------------------------
+
+
+def test_the_policy_is_read_by_the_one_owned_yaml_reader(
+    root: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from decoy.cli.io import _project
+    from decoy.cli.library import _policy
+
+    assert not hasattr(_policy, "read_small_file") and not hasattr(_policy, "yaml")
+    calls: list[str] = []
+    real = getattr(_project, "read_owned_yaml", None)
+
+    def spy(path: Path, max_bytes: int) -> object:
+        calls.append(Path(path).name)
+        return real(path, max_bytes)  # type: ignore[misc]
+
+    monkeypatch.setattr(_policy, "read_owned_yaml", spy, raising=False)
+    _write(root, "retention: {}\n")
+    load_policy(root)
+    assert calls == ["library.yaml"]
+
+
+@pytest.mark.skipif(not hasattr(os, "geteuid"), reason="POSIX owner check")
+def test_a_policy_file_owned_by_another_user_is_refused(
+    root: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The marker's owner rule (git `safe.directory`): a file someone else owns is not trusted."""
+    _write(root, "retention: {}\n")
+    real_uid = os.geteuid()
+    monkeypatch.setattr(os, "geteuid", lambda: real_uid + 1)
+    with pytest.raises(LibraryError) as caught:
+        load_policy(root)
+    assert caught.value.code == _errors.LIBRARY_POLICY_UNTRUSTED
+    monkeypatch.undo()
+    assert load_policy(root) == LibraryPolicy()  # control: owned by us, it reads
