@@ -39,6 +39,8 @@ def test_run_exit_map_total() -> None:
         ("failed", "parameter"): 2,
         ("failed", "runtime"): 3,
         ("failed", "capacity"): 5,
-        # Ctrl-C keeps the status Click's Abort gives today (1).
-        ("cancelled", "cancelled"): 1,
+        # Ctrl-C keeps the 128+SIGINT status Typer returns today.
+        ("cancelled", "cancelled"): 130,
     }
+    # 130 is a run-only status; it must not join the `decoy ci` taxonomy.
+    assert 130 not in contracts.EXIT_CODES
