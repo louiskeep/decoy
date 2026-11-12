@@ -580,9 +580,9 @@ def test_resolved_output_collisions_two_spellings_through_a_symlink(
 def test_resolved_output_collisions_case_only_names_on_a_folding_parent(
     tmp_path: Path, read_spy: list[str], monkeypatch
 ) -> None:
-    from decoy.cli.io import _layout
+    from decoy.cli.io import _placement
 
-    monkeypatch.setattr(_layout, "_folds_case", lambda _folder: True)
+    monkeypatch.setattr(_placement, "_folds_case", lambda _folder: True)
     root = _project(tmp_path)
     cfg = _write(root, "pipelines/orders/pipeline.yaml", _two_tables(root, "Out.csv", "out.csv"))
     result = runner.invoke(app, ["validate", "preflight", str(cfg), "--json"])
@@ -592,9 +592,9 @@ def test_resolved_output_collisions_case_only_names_on_a_folding_parent(
 def test_resolved_output_collisions_case_only_names_on_a_sensitive_parent_pass(
     tmp_path: Path, monkeypatch
 ) -> None:
-    from decoy.cli.io import _layout
+    from decoy.cli.io import _placement
 
-    monkeypatch.setattr(_layout, "_folds_case", lambda _folder: False)
+    monkeypatch.setattr(_placement, "_folds_case", lambda _folder: False)
     root = _project(tmp_path)
     cfg = _write(root, "pipelines/orders/pipeline.yaml", _two_tables(root, "Out.csv", "out.csv"))
     assert runner.invoke(app, ["validate", "preflight", str(cfg)]).exit_code == EXIT_OK

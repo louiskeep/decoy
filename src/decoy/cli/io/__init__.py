@@ -21,19 +21,15 @@ from decoy.cli._sources import (
     resolved_source_config,
 )
 from decoy.cli.io._layout import (
-    OutputPlacement,
     PipelineName,
     RunFolder,
     RunLayout,
     check_path_budget,
     contained_path,
     create_run_folder,
-    fixed_target_overwrites,
     has_placed_output,
     is_placed_relative,
     is_run_id,
-    layout_failures,
-    layout_issues,
     mint_invocation_id,
     name_dir,
     new_run_id,
@@ -42,7 +38,6 @@ from decoy.cli.io._layout import (
     prepare_out,
     read_claim,
     relative_outputs,
-    resolved_output_collisions,
     shown_path,
     write_claim,
 )
@@ -55,6 +50,13 @@ from decoy.cli.io._layout_errors import (
     Descriptor,
     LayoutError,
     LayoutWarning,
+)
+from decoy.cli.io._placement import (
+    OutputPlacement,
+    fixed_target_overwrites,
+    layout_failures,
+    layout_issues,
+    resolved_output_collisions,
 )
 from decoy.cli.io._project import Project, ensure_decoy_dir, find_project
 from decoy.cli.io._scan_set import (
