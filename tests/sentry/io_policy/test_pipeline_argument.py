@@ -8,8 +8,14 @@ Walks every module under `src/decoy/` and fails when one outside `_project.py`:
 - loops over `.parents` inside a function that also names a `.yaml` or `.yml` file, which is the
   shape of "walk up looking for a config".
 
-There is no allowlist: any hit is a second root finder. The pipeline-argument half of this file
-(G-ONE-PIPELINE-ARG) arrives with the `_pipelines.py` slice.
+There is no allowlist: any hit is a second root finder.
+
+G-ONE-PIPELINE-ARG (second half of this file): `cli/io/_pipelines.py` is the only parser of a
+pipeline token. The test walks the Typer app (registered commands and groups, recursively, the
+hidden `validate` default handler included) and fails for any parameter that takes a pipeline
+YAML without `callback=parse_pipeline_token` and `autocompletion=pipeline_names`, or whose
+command body does not call `resolve_pipeline` on it after `setup_output`. It also bans private
+Typer imports under `src/` and any `DECOY_PROJECT` literal outside `_pipelines.py`.
 
 Named limits: a marker name assembled at run time (`"decoy" + ".yaml"`), `getattr`, and a walk that
 reads `os.path.dirname` in a loop are not seen. The rule targets the spellings a contributor
@@ -19,9 +25,18 @@ would write by habit.
 from __future__ import annotations
 
 import ast
+import inspect
+import re
+import sys
+from collections.abc import Callable, Iterator
 from pathlib import Path
 
 import pytest
+import typer
+from typer.models import ArgumentInfo, OptionInfo
+
+from decoy.cli.completers import pipeline_names
+from decoy.cli.io import parse_pipeline_token
 
 ROOT = Path(__file__).resolve().parents[3]
 SRC = ROOT / "src" / "decoy"
@@ -140,3 +155,278 @@ def test_prose_and_unrelated_parent_walks_are_not_flagged(source: str) -> None:
 
 def test_the_choke_point_itself_is_exempt() -> None:
     assert violations('x = "decoy.yaml"\n', CHOKE_POINT) == []
+
+
+# --- G-ONE-PIPELINE-ARG --------------------------------------------------------------------
+
+PIPELINE_ARG_ALLOW: dict[str, str] = {}
+_NAMES = {"config", "pipeline_config", "pipeline"}
+# A help text that opens by describing the parameter itself as a pipeline config. `--master-key`
+# only mentions the YAML in passing, so it does not match.
+_HELP_RULE = re.compile(
+    r"^(path to the )?(yaml pipeline|pipeline yaml|pipeline config)|^the pipeline config"
+    r"|^optional pipeline\.yaml",
+    re.IGNORECASE,
+)
+EXPECTED = {
+    "run:config",
+    "validate config:config",
+    "validate _gate:config",
+    "validate compile:config",
+    "validate preflight:config",
+    "tokenize:config",
+    "detokenize:config",
+    "unmask:config",
+    "subset:config",
+    "report fidelity:pipeline_config",
+    "report integrity:config",
+    "report vault:config",
+}
+
+
+def typer_commands(
+    instance: typer.Typer, prefix: tuple[str, ...] = ()
+) -> Iterator[tuple[str, Callable]]:
+    """Every command of the app by its path, groups followed recursively."""
+    for info in instance.registered_commands:
+        assert info.callback is not None
+        name = info.name or info.callback.__name__.replace("_", "-")
+        yield " ".join((*prefix, name)), info.callback
+    for group in instance.registered_groups:
+        assert group.name is not None
+        yield from typer_commands(group.typer_instance, (*prefix, group.name))
+
+
+def pipeline_parameters(callback: Callable) -> Iterator[tuple[str, ArgumentInfo | OptionInfo]]:
+    for pname, param in inspect.signature(callback).parameters.items():
+        info = param.default
+        if not isinstance(info, (ArgumentInfo, OptionInfo)):
+            continue
+        decls = getattr(info, "param_decls", None) or ()
+        if pname in _NAMES or "--config" in decls or _HELP_RULE.match(str(info.help or "")):
+            yield pname, info
+
+
+def parameter_findings(instance: typer.Typer) -> tuple[set[str], list[str]]:
+    """The matched parameters (`command:param`) and the ones missing the shared hooks."""
+    matched: set[str] = set()
+    findings: list[str] = []
+    for path, callback in typer_commands(instance):
+        for pname, info in pipeline_parameters(callback):
+            key = f"{path}:{pname}"
+            matched.add(key)
+            if info.callback is not parse_pipeline_token:
+                findings.append(f"{key} lacks callback=parse_pipeline_token")
+            if info.autocompletion is not pipeline_names:
+                findings.append(f"{key} lacks autocompletion=pipeline_names")
+    return matched, findings
+
+
+def call_problem(module_source: str, function: str, param: str) -> str | None:
+    """Why `function` does not resolve `param` after `setup_output`, else None.
+
+    Direct, aliased (`from x import resolve_pipeline as r`) and module-qualified calls count.
+    """
+    tree = ast.parse(module_source)
+    bound: dict[str, set[str]] = {"setup_output": set(), "resolve_pipeline": set()}
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ImportFrom):
+            for alias in node.names:
+                if alias.name in bound:
+                    bound[alias.name].add(alias.asname or alias.name)
+
+    def calls(call: ast.Call, key: str) -> bool:
+        target = call.func
+        return (isinstance(target, ast.Name) and target.id in bound[key]) or (
+            isinstance(target, ast.Attribute) and target.attr == key
+        )
+
+    body = next((n for n in ast.walk(tree) if isinstance(n, _SCOPES) and n.name == function), None)
+    if body is None:
+        return f"{function} not found"
+    found = [n for n in ast.walk(body) if isinstance(n, ast.Call)]
+    setup = [c.lineno for c in found if calls(c, "setup_output")]
+    resolve = [
+        c.lineno
+        for c in found
+        if calls(c, "resolve_pipeline")
+        and any(isinstance(a, ast.Name) and a.id == param for a in c.args)
+    ]
+    if not resolve:
+        return f"{function} never calls resolve_pipeline on {param}"
+    if not setup or min(setup) > min(resolve):
+        return f"{function} resolves {param} before setup_output"
+    return None
+
+
+def private_typer_imports(source: str) -> list[str]:
+    found: list[str] = []
+    for node in ast.walk(ast.parse(source)):
+        if isinstance(node, ast.Import):
+            names = [a.name for a in node.names]
+        elif isinstance(node, ast.ImportFrom) and node.level == 0:
+            names = [node.module or ""] + [f"{node.module}.{a.name}" for a in node.names]
+        else:
+            continue
+        for name in names:
+            parts = name.split(".")
+            if parts[0] == "typer" and any(p.startswith("_") for p in parts[1:]):
+                found.append(f"line {node.lineno}: {name}")
+                break
+    return found
+
+
+def project_variable_literals(source: str, rel: str) -> list[str]:
+    if rel == "cli/io/_pipelines.py":
+        return []
+    tree = ast.parse(source)
+    docs = _docstring_nodes(tree)
+    return [
+        f"{rel}:{n.lineno} reads the DECOY_PROJECT variable"
+        for n in ast.walk(tree)
+        if isinstance(n, ast.Constant) and n.value == "DECOY_PROJECT" and id(n) not in docs
+    ]
+
+
+def test_every_pipeline_parameter_uses_the_shared_hooks() -> None:
+    from decoy.__main__ import app
+
+    matched, findings = parameter_findings(app)
+    assert matched == EXPECTED
+    assert findings == []
+
+
+def test_every_command_body_resolves_its_pipeline_after_output_setup() -> None:
+    from decoy.__main__ import app
+
+    problems: list[str] = []
+    for path, callback in typer_commands(app):
+        names = [n for n, _ in pipeline_parameters(callback)]
+        source = inspect.getsource(sys.modules[callback.__module__])
+        problems.extend(
+            f"{path}: {problem}"
+            for pname in names
+            if (problem := call_problem(source, callback.__name__, pname)) is not None
+        )
+    assert problems == []
+
+
+def test_the_allowlist_is_empty() -> None:
+    assert PIPELINE_ARG_ALLOW == {}
+
+
+def test_the_master_key_help_is_not_taken_for_a_pipeline_parameter() -> None:
+    from decoy.cli.run import run
+
+    helps = {
+        name: str(info.help)
+        for name, info in ((n, p.default) for n, p in inspect.signature(run).parameters.items())
+        if isinstance(info, OptionInfo) and name in {"master_key", "mask_secret"}
+    }
+    assert set(helps) == {"master_key", "mask_secret"}
+    assert not any(_HELP_RULE.match(text) for text in helps.values())
+
+
+def _scratch(decl: object) -> typer.Typer:
+    scratch = typer.Typer()
+
+    def cmd(spec: str = decl) -> None:  # type: ignore[assignment]
+        """Scratch command."""
+
+    scratch.command(name="cmd")(cmd)
+    return scratch
+
+
+def test_a_parameter_without_the_callback_is_found_by_its_help_text() -> None:
+    seeded = _scratch(typer.Option(..., help="Path to the pipeline YAML."))
+    matched, findings = parameter_findings(seeded)
+    assert matched == {"cmd:spec"}
+    assert len(findings) == 2
+
+
+def test_a_parameter_with_both_hooks_is_clean() -> None:
+    hooks = typer.Option(
+        ..., callback=parse_pipeline_token, autocompletion=pipeline_names, help="Pipeline config."
+    )
+    assert parameter_findings(_scratch(hooks)) == ({"cmd:spec"}, [])
+
+
+_ALIASED = (
+    "from decoy.cli.io import resolve_pipeline as r, parse_pipeline_token as p\n"
+    "from decoy.ui.output import setup_output as s\n"
+)
+
+
+@pytest.mark.parametrize(
+    "source, expected",
+    [
+        ("def f(c):\n    s(1)\n    r(c, 1, 'f')\n", None),
+        (
+            "import decoy.cli.io as io\nimport decoy.ui.output as ui\ndef f(c):\n    ui.setup_output(1)\n    io.resolve_pipeline(c)\n",
+            None,
+        ),
+        ("def f(c):\n    s(1)\n    return 1\n", "never calls"),
+        ("def f(c):\n    r(c, 1, 'f')\n    s(1)\n", "before setup_output"),
+        ("def f(c):\n    r(c, 1, 'f')\n", "before setup_output"),
+        ("def f(c):\n    s(1)\n    r(other, 1, 'f')\n", "never calls"),
+    ],
+)
+def test_the_call_check_sees_each_spelling(source: str, expected: str | None) -> None:
+    problem = call_problem(_ALIASED + source, "f", "c")
+    assert (problem is None) if expected is None else (expected in (problem or ""))
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        "import typer._click\n",
+        "import typer._click as c\n",
+        "from typer._click import Context\n",
+        "from typer._click.shell_completion import CompletionItem\n",
+        "from typer import _click\n",
+    ],
+)
+def test_each_spelling_of_a_private_typer_import_is_caught(source: str) -> None:
+    assert private_typer_imports(source) != []
+
+
+@pytest.mark.parametrize(
+    "source",
+    ["import typer\n", "from typer import Context\n", "from typer.models import CompletionItem\n"],
+)
+def test_public_typer_imports_pass(source: str) -> None:
+    assert private_typer_imports(source) == []
+
+
+def test_no_module_under_src_imports_a_private_typer_module() -> None:
+    found = [
+        f"{path.relative_to(SRC)} {hit}"
+        for path in sorted(SRC.rglob("*.py"))
+        for hit in private_typer_imports(path.read_text(encoding="utf-8"))
+    ]
+    assert found == []
+
+
+def test_only_the_pipeline_module_reads_the_project_variable() -> None:
+    found = [
+        hit
+        for path in sorted(SRC.rglob("*.py"))
+        for hit in project_variable_literals(
+            path.read_text(encoding="utf-8"), path.relative_to(SRC).as_posix()
+        )
+    ]
+    assert found == []
+
+
+@pytest.mark.parametrize(
+    "source",
+    ["import os\nx = os.environ['DECOY_PROJECT']\n", "import os\nx = os.getenv('DECOY_PROJECT')\n"],
+)
+def test_a_second_reader_of_the_project_variable_is_caught(source: str) -> None:
+    assert project_variable_literals(source, "cli/other.py") != []
+    assert project_variable_literals(source, "cli/io/_pipelines.py") == []
+
+
+def test_prose_naming_the_project_variable_is_not_a_reader() -> None:
+    source = '"""Reads DECOY_PROJECT."""\nhelp = "default: DECOY_PROJECT, else the walk"\n'
+    assert project_variable_literals(source, "cli/other.py") == []

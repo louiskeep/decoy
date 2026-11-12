@@ -111,3 +111,7 @@ def template_names() -> list[str]:
 def init_presets() -> list[str]:
     """Tab-complete `decoy init --preset` values. Mirrors templates."""
     return template_names()
+
+
+def pipeline_names(ctx: object, incomplete: str) -> list[object]:
+    return []
