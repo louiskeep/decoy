@@ -97,6 +97,15 @@ PATH_TOO_LONG = Descriptor(
     "The output path would be {length} characters long as Windows counts them; Windows allows {limit}. "
     "Shorten the project path, the pipeline name or the output path.",
 )
+OUTPUT_PATH_COLLISION = Descriptor(
+    "layout.output_path_collision",
+    "Configured outputs {first} and {second} resolve to one destination. "
+    "Give each output a different path.",
+)
+OUTPUT_DIR_UNUSABLE = Descriptor(
+    "layout.output_dir_unusable",
+    "--out-dir must name an existing directory, or a new directory whose parent exists.",
+)
 PROJECT_ROOT_REFUSED = Descriptor(
     "layout.project_root_refused",
     "{path} cannot be a project root: it is your home folder, one of its parents, or `/`.",
@@ -139,6 +148,8 @@ GATE_DESCRIPTORS: tuple[Descriptor, ...] = (
     PIPELINE_NAME_COLLISION,
     OUTPUT_PATH_ESCAPES,
     PATH_TOO_LONG,
+    OUTPUT_PATH_COLLISION,
+    OUTPUT_DIR_UNUSABLE,
     PROJECT_ROOT_REFUSED,
 )
 WARNING_DESCRIPTORS: tuple[Descriptor, ...] = (

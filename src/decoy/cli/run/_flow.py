@@ -6,7 +6,8 @@ from datetime import datetime, timezone
 
 import typer
 
-from decoy.cli.io import mint_invocation_id
+from decoy._private_file import PrivateFileError
+from decoy.cli.io import RunLayout, mint_invocation_id
 from decoy.cli.run import _errors, _evidence, _execute, _prepare, _render
 from decoy.cli.run._context import RunContext
 from decoy.cli.run._notify import (
@@ -62,6 +63,14 @@ def execute(ctx: RunContext) -> None:
                 from decoy_engine.progress import use_progress
 
                 _scopes.enter_context(use_progress(_trace.recorder))
+            if ctx.rows is None and ctx.out_dir is not None:
+                failed = False
+                try:
+                    ctx.layout = RunLayout.out_dir(ctx.out_dir)
+                except (OSError, PrivateFileError, ValueError):
+                    failed = True
+                if failed:
+                    raise _errors.OutDirUsageError("Could not create or use --out-dir.")
             if ctx.rows is None:
                 _prepare.prepare(ctx, _scopes)
                 _execute.execute(ctx)
