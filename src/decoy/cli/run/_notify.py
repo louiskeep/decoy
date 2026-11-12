@@ -85,9 +85,11 @@ def _end_trace(otel, trace, *, ok: bool, error_class: str | None = None) -> None
     try:
         from decoy import telemetry
 
-        if trace is not None:
-            trace.finish(ok=ok, error_class=error_class)
-        telemetry.flush_bounded(otel)
+        try:
+            if trace is not None:
+                trace.finish(ok=ok, error_class=error_class)
+        finally:
+            telemetry.flush_bounded(otel)
     except Exception:
         pass
 

@@ -364,6 +364,11 @@ def test_marker_corpus_absent_from_wire(tmp_path, monkeypatch, listener, cell) -
         assert span.status.message == "" and len(span.events) == 0
 
 
+def _output_bytes(tmp_path: Path) -> set[bytes]:
+    """Distinct contents of every `out.csv` the runs wrote (one run folder or an overwrite)."""
+    return {p.read_bytes() for p in tmp_path.rglob("out.csv")}
+
+
 def _quiet_run(cfg: Path, *args: str):
     started = time.monotonic()
     result = _run(cfg, "--json", *args)
@@ -381,6 +386,8 @@ def test_dead_collector_keeps_exit_code_and_bounds_exit(tmp_path, behavior) -> N
     cfg = _pipeline(tmp_path)
     off, off_wall = _quiet_run(cfg)
     assert off.exit_code == 0, off.output
+    off_bytes = _output_bytes(tmp_path)
+    assert off_bytes
     lst = Listener(behavior)
     try:
         on, on_wall = _quiet_run(cfg, "--otel-endpoint", lst.url)
@@ -388,9 +395,12 @@ def test_dead_collector_keeps_exit_code_and_bounds_exit(tmp_path, behavior) -> N
         assert lst.accepted.is_set() and lst.connections >= 1
     finally:
         lst.close()
+    on_bytes = _output_bytes(tmp_path)
     assert on.exit_code == off.exit_code
     assert _envelope(on) == _envelope(off)
     assert on.stderr == off.stderr
+    # The masked output is the same bytes with telemetry on (deterministic seed).
+    assert on_bytes == off_bytes
     assert on_wall - off_wall <= 2.0 + 0.5
 
 
@@ -449,6 +459,75 @@ def test_sdk_failure_log_never_reaches_stderr(tmp_path, monkeypatch, listener) -
     monkeypatch.setattr(logging.getLogger(), "handlers", [])
     monkeypatch.setattr(logging.getLogger("opentelemetry"), "handlers", [])
     monkeypatch.setattr(logging.getLogger("opentelemetry"), "setLevel", lambda level: None)
+    # An earlier cell's `flush_bounded` may have raised the level; the test must not depend on it.
+    monkeypatch.setattr(logging.getLogger("opentelemetry"), "level", logging.NOTSET)
     on = _run(cfg, "--json", "--otel-endpoint", listener.url)
     assert on.exit_code == off.exit_code == 0
     assert on.stderr == off.stderr and MARKER not in on.stderr + on.stdout
+
+
+def test_interrupt_in_flush_still_cleans_up(tmp_path, monkeypatch, listener) -> None:
+    """A Ctrl-C during the bounded flush must not skip the run's own cleanup: the staged
+    DuckDB temp dir is removed and the empty run folder is abandoned."""
+    import tempfile
+
+    import decoy_engine
+
+    import decoy.telemetry
+    from decoy.cli.io._layout import RunLayout
+    from decoy.cli.run import _prepare
+
+    staged: list[Path] = []
+    abandoned: list[bool] = []
+    real_prepare = _prepare.prepare
+    real_abandon = RunLayout.abandon
+
+    def prepare(ctx, scopes):
+        real_prepare(ctx, scopes)
+        ctx._duckdb_tmpdir = Path(tempfile.mkdtemp(prefix="decoy-duckdb-"))
+        staged.append(ctx._duckdb_tmpdir)
+
+    def abandon(self):
+        abandoned.append(True)
+        real_abandon(self)
+
+    def fail(*_args, **_kwargs):
+        raise OSError("boom")
+
+    interrupts: list[bool] = []
+
+    def interrupted(_otel):
+        interrupts.append(True)
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(_prepare, "prepare", prepare)
+    monkeypatch.setattr(RunLayout, "abandon", abandon)
+    monkeypatch.setattr(decoy_engine, "run_pipeline", fail)
+    monkeypatch.setattr(decoy.telemetry, "flush_bounded", interrupted)
+    try:
+        # Click turns the interrupt into an Abort (exit 1); the cleanup is what is under test.
+        result = _run(_pipeline(tmp_path), "--json", "--otel-endpoint", listener.url)
+        assert interrupts == [True] and result.exit_code != 0
+        assert len(staged) == 1 and not staged[0].exists()
+        assert abandoned == [True]
+    finally:
+        import shutil
+
+        for path in staged:
+            shutil.rmtree(path, ignore_errors=True)
+
+
+def test_end_trace_flushes_even_when_finish_raises(monkeypatch) -> None:
+    """A recorder that fails to close must not skip the flush, and nothing escapes."""
+    import decoy.telemetry
+    from decoy.cli.run._notify import _end_trace
+
+    calls: list[str] = []
+
+    class Trace:
+        def finish(self, **_kwargs):
+            raise RuntimeError("finish failed")
+
+    monkeypatch.setattr(decoy.telemetry, "flush_bounded", lambda _otel: calls.append("flush"))
+    _end_trace(object(), Trace(), ok=True)
+    assert calls == ["flush"]

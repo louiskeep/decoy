@@ -36,10 +36,14 @@ Span names, attribute keys and string values come from closed sets:
 | `decoy.rows_in`, `decoy.rows_out`, `decoy.bytes` | counts |
 | `decoy.elapsed_s` | seconds |
 | `decoy.reason` | a registered reason code |
-| `error.type` | an engine error class name, only on a failed span |
+| `error.type` | an engine error class name, a builtin exception name, or the fallback `Exception`; only on a failed span |
 | `decoy.outcome` | `success` or `failed` (root span) |
 | `decoy.spans_dropped` | spans the run produced past the 256 cap (root span) |
 | `decoy.engine.version` | the engine version (root span) |
+
+`decoy.outcome` describes the pipeline run, not the process exit code. A run can export
+`success` and still exit non-zero if a later step, such as writing evidence or enforcing
+post-validation, fails.
 
 The resource carries `service.name=decoy-cli` and the CLI version. Nothing else is sent: no
 table, column or file name, no path, no connection string, no cell value, no error text. A

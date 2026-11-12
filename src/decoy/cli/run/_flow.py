@@ -76,8 +76,6 @@ def execute(ctx: RunContext) -> None:
         _failed_with = type(exc).__name__
         _errors.fail(ctx, exc)
     finally:
-        # The exit code is decided by now (`fail` raised its typer.Exit above).
-        _end_trace(_otel, _trace, ok=finished, error_class=_failed_with)
         # A run that failed before writing anything leaves no empty run folder.
         if not finished and ctx.layout is not None:
             ctx.layout.abandon()
@@ -89,6 +87,9 @@ def execute(ctx: RunContext) -> None:
             import shutil
 
             shutil.rmtree(ctx._duckdb_tmpdir, ignore_errors=True)
+        # Last, so a Ctrl-C during the bounded flush cannot skip the cleanup above. The exit
+        # code is decided by now (`fail` raised its typer.Exit above).
+        _end_trace(_otel, _trace, ok=finished, error_class=_failed_with)
 
     ctx.elapsed = time.perf_counter() - ctx.started
 
