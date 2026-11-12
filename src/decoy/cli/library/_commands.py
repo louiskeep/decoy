@@ -1,9 +1,8 @@
-"""The `decoy library` command group (plan 4.15): `path`, `fsck` (L1c.2) and the read commands
-`list`, `show`, `diff`, `ref` (L4a, in `_read`) and `prune`, `clean` (L4b, in `_destructive`).
-`export` waits for an engine codec decision (see docs/records/lib-l4b-evidence.md). This module
-imports nothing from the record engine at import time, so registering the group in
-`decoy.__main__` keeps `decoy --help` and `--version` free of the engine import; each command
-loads the library when it runs.
+"""The `decoy library` command group (plan 4.15): `path`, `fsck` (L1c.2), the read commands
+`list`, `show`, `diff`, `ref` (L4a, in `_read`), and `prune`, `clean` (in `_destructive`) and
+`export` (in `_export`) (L4b). This module imports nothing from the record engine at import
+time, so registering the group in `decoy.__main__` keeps `decoy --help` and `--version` free of
+the engine import; each command loads the library when it runs.
 """
 
 from __future__ import annotations
@@ -15,6 +14,7 @@ import typer
 from decoy.cli.exit_codes import EXIT_FINDINGS, EXIT_OK, EXIT_USAGE
 from decoy.cli.library._cli import LIBRARY_HELP, SOURCE
 from decoy.cli.library._destructive import clean_command, prune_command
+from decoy.cli.library._export import export_command
 from decoy.cli.library._read import diff_command, list_command, ref_command, show_command
 from decoy.ui.output import OutputState, setup_output
 from decoy.ui.theme import error, hint, success, warn
@@ -136,3 +136,4 @@ library_app.command("diff")(diff_command)
 library_app.command("ref")(ref_command)
 library_app.command("prune")(prune_command)
 library_app.command("clean")(clean_command)
+library_app.command("export")(export_command)

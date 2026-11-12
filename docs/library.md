@@ -161,7 +161,23 @@ Both work under the library lock and refuse in degraded mode (`library_lock_unav
 3). A file another program holds open (on Windows) is listed as left behind, the rest is
 deleted, and the command exits 4; run it again once the file is closed.
 
-`decoy library export` is not available yet.
+## Exporting
+
+`decoy library export --out FILE [--kind K] [--since D] [--ref R] [--include-logs] [--keep-paths]`
+writes one self-verifying JSON Lines file (`decoy-library-export/v1`) that the platform can
+import. The file is 0600. `--ref R` exports R (a ref, an id or `KIND/latest`) and every record it
+links to; `--kind` and `--since` narrow the selection. Nothing under `scratch/` is ever exported.
+
+By default an export carries no raw path: each record's declared path fields are reduced to file
+names, which gives that record a new id, and the line names the original id as `source_id`; links
+and refs point at the new ids. **A default export withholds the records this Decoy cannot strip**:
+a record of a kind it does not know, or one written by a newer Decoy with payload fields it does
+not know. They are left out, listed by id in the header's `withheld_records`, and counted in a
+notice on stderr. To include them, rerun with `--keep-paths`: every record is then exported byte
+for byte, paths included, with its original id.
+
+`--include-logs` is accepted, but no job logs exist yet (they arrive with `decoy run` job logs),
+so none is exported.
 
 ## Retention policy
 
