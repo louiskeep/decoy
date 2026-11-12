@@ -10,6 +10,7 @@ paths are always absolute. `--out-dir DIR` replaces the run folder: no claim, no
 
 from __future__ import annotations
 
+import errno
 import json
 import stat
 import sys
@@ -20,6 +21,7 @@ import pytest
 import yaml
 from typer.testing import CliRunner
 
+from decoy import _atomic
 from decoy.__main__ import app
 from decoy.cli.exit_codes import EXIT_OK, EXIT_USAGE
 from decoy.cli.io import _targets
@@ -261,6 +263,58 @@ def test_json_location_fields_follow_publication(tmp_path: Path, monkeypatch, ce
         assert "output_dir" not in doc
     else:
         assert doc["output_dir"] == expected["output_dir"]
+
+
+def _fail_directory_sync_after_publish(monkeypatch, name: str) -> None:
+    """Make the directory sync fail once `name` is in place: the atomic writer has published."""
+    real = _atomic.fsync_directory
+
+    def sync(directory: Path) -> None:
+        if (directory / name).exists():
+            raise OSError(errno.EIO, "sync went away")
+        real(directory)
+
+    monkeypatch.setattr(_atomic, "fsync_directory", sync)
+
+
+@pytest.mark.parametrize("cell", ["placed", "fixed", "absolute", "chunked", "second_table"])
+def test_a_directory_sync_failure_after_publication_keeps_the_file_in_the_ledger(
+    tmp_path: Path, monkeypatch, cell: str
+) -> None:
+    root = _project(tmp_path)
+    build = tmp_path / "build"
+    build.mkdir()
+    extra: list[str] = []
+    name = "masked.csv"
+    if cell == "fixed":
+        cfg = _pipeline(root)
+        extra = ["--out-dir", str(build)]
+    elif cell == "absolute":
+        name = "delivery.csv"
+        cfg = _pipeline(root, str(tmp_path / name))
+    elif cell == "second_table":
+        name = "two.csv"
+        cfg = _two_target_pipeline(root, "one.csv", "two.csv")
+    else:
+        cfg = _pipeline(root)
+        extra = ["--chunked"] if cell == "chunked" else []
+    _fail_directory_sync_after_publish(monkeypatch, name)
+    result = runner.invoke(app, ["run", str(cfg), "--json", *extra])
+    assert result.exit_code != EXIT_OK, result.output
+    doc = _json(result)
+    assert doc["status"] == "error"
+    if cell == "fixed":
+        folder = build.resolve()
+    elif cell == "absolute":
+        folder = tmp_path.resolve()
+    else:
+        folder = _only_run(root).resolve()
+    expected = ["one.csv", "two.csv"] if cell == "second_table" else [name]
+    assert _paths(doc) == [str(folder / n) for n in expected]
+    if cell == "absolute":
+        assert "output_dir" not in doc
+    else:
+        assert doc["output_dir"] == str(folder)
 
 
 # --- AT-8 summary ------------------------------------------------------------------------

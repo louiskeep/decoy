@@ -16,11 +16,12 @@ Source patterns: `cli/_sources.py` for the shape, and the platform's
 
 from __future__ import annotations
 
+import contextlib
 import itertools
 import math
 import numbers
 import re
-from collections.abc import Callable, Iterable, Mapping
+from collections.abc import Callable, Iterable, Iterator, Mapping
 from contextlib import AbstractContextManager
 from dataclasses import dataclass
 from pathlib import Path
@@ -28,7 +29,12 @@ from typing import TYPE_CHECKING, Any, cast
 
 import pyarrow as pa
 
-from decoy._atomic import staged_local_target, staged_private_target
+from decoy._atomic import (
+    ATOMIC_SYNC_FAILED,
+    AtomicWriteError,
+    staged_local_target,
+    staged_private_target,
+)
 from decoy.cli._sources import resolve_path
 from decoy.cli.io._compression import csv_compression, is_archive_csv, split_compression
 from decoy.cli.io._layout import RunLayout, owning_run, placed_path, same_path
@@ -433,6 +439,25 @@ def write_private_table(
     _write_table(data, fmt, path, layout, staged_private_target)
 
 
+@contextlib.contextmanager
+def _publication(ledger: dict[str, Path] | None, key: str, path: Path) -> Iterator[None]:
+    """Enter `path` in the publication ledger once its write has published the file.
+
+    The atomic writer replaces the file and then syncs the directory, so a write that fails
+    with `ATOMIC_SYNC_FAILED` has already published (the code is raised only after the
+    replace). Every other failure published nothing. This is the one place the ledger is
+    filled by a table writer; `ledger` is None for a caller that keeps none.
+    """
+    try:
+        yield
+    except AtomicWriteError as exc:
+        if exc.code == ATOMIC_SYNC_FAILED and ledger is not None:
+            ledger[key] = path
+        raise
+    if ledger is not None:
+        ledger[key] = path
+
+
 def write_targets(
     config_dict: dict,
     outputs: Mapping[str, pa.Table],
@@ -465,8 +490,8 @@ def write_targets(
         fmt = resolve_target_format(str(table_name), entry)
         path = layout.place_target(raw_path)
         path.parent.mkdir(parents=True, exist_ok=True)
-        write_table(table, fmt, path, entry.get("layout"))
-        published[str(table_name)] = path
+        with _publication(published, str(table_name), path):
+            write_table(table, fmt, path, entry.get("layout"))
     return published
 
 
@@ -477,6 +502,8 @@ def write_chunked_output(
     layout: RunLayout,
     *,
     empty_schema: Callable[[], pa.Schema] | None,
+    ledger: dict[str, Path] | None = None,
+    name: str = "",
 ) -> Path | None:
     """Stream masked chunks to the placed `raw_path` in `fmt`. The only chunked writer in the CLI.
 
@@ -486,6 +513,8 @@ def write_chunked_output(
     a failure after chunk one keeps the old output. The first chunk is read before staging:
     an empty source that writes nothing leaves the old output alone and makes no temp.
     Returns `out_path` once the file is published, or None when nothing was published.
+    `ledger` (the caller's publication ledger) gets `out_path` under `name` as the file is
+    published, including a publication that then failed at the directory sync.
     """
     import pyarrow.parquet as pq
 
@@ -503,7 +532,7 @@ def write_chunked_output(
         schema = empty_schema()
     elif fmt == "parquet":
         schema = cast("pa.Table", first).schema
-    with staged_local_target(out_path) as tmp:
+    with _publication(ledger, name, out_path), staged_local_target(out_path) as tmp:
         if fmt == "parquet":
             with pq.ParquetWriter(str(tmp), schema) as writer:
                 for masked in () if first is _EXHAUSTED else itertools.chain((first,), chunks):

@@ -82,8 +82,8 @@ def _run_chunked_mask(
     produces an all-string schema.
 
     Returns table name to the path actually published, or None for a table whose empty CSV
-    source published nothing. `ledger` gets each published path right after its writer
-    returns, so a later table's failure keeps the earlier entries."""
+    source published nothing. `ledger` gets each published path as its writer publishes it,
+    so a later table's failure keeps the earlier entries."""
     _require_local_io_endpoints(config_dict)
     check_target_formats(config_dict, chunked=True)
 
@@ -113,7 +113,7 @@ def _run_chunked_mask(
             engine_version=engine_version,
             key_provider=key_provider,
         )
-        written = published[name] = write_chunked_output(
+        published[name] = write_chunked_output(
             masked_iter,
             resolve_target_format(name, tgt_spec),
             tgt_spec["path"],
@@ -121,9 +121,9 @@ def _run_chunked_mask(
             empty_schema=(
                 partial(parquet_schema, src_path) if src_spec.get("format") == "parquet" else None
             ),
+            ledger=ledger,
+            name=name,
         )
-        if ledger is not None and written is not None:
-            ledger[name] = written
     return published
 
 
