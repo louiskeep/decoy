@@ -156,12 +156,15 @@ def _member(root: Path, name: str) -> Path | None:
     """`<root>/pipelines/<name>/pipeline.yaml` when a regular file, with no link on the way.
 
     A linked folder or YAML would run under the name of its target (run folder, claim, LATEST),
-    so a link is not a member. `is_symlink` does not follow the link, so a loop cannot raise.
+    so a link is not a member. A failed filesystem probe is not a member; link loops stay safe.
     """
     yaml = member_yaml(root, name)
-    if any(p.is_symlink() for p in (root / PIPELINES_DIR, yaml.parent, yaml)):
+    try:
+        if any(p.is_symlink() for p in (root / PIPELINES_DIR, yaml.parent, yaml)):
+            return None
+        return yaml if yaml.is_file() else None
+    except OSError:
         return None
-    return yaml if yaml.is_file() else None
 
 
 def list_pipelines(project: Project) -> list[PipelineEntry]:

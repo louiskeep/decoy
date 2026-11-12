@@ -9,7 +9,9 @@ exits 1 with a `layout.*` code inside the command's own `--json` envelope. `--pr
 
 from __future__ import annotations
 
+import errno
 import json
+import os
 import re
 import sys
 from collections.abc import Callable
@@ -25,6 +27,7 @@ from typer.testing import CliRunner
 from decoy.__main__ import app
 from decoy.cli.exit_codes import EXIT_OK, EXIT_USAGE
 from decoy.cli.io import find_project, list_pipelines
+from decoy.cli.io._pipelines import _member
 from tests.csv_sources import csv_source
 
 runner = CliRunner()
@@ -432,6 +435,47 @@ def test_a_linked_member_yaml_is_not_a_member(world, monkeypatch: pytest.MonkeyP
     assert _body(result)["code"] == "layout.pipeline_unknown"
     names = [e.name for e in list_pipelines(find_project(root, None))]
     assert "real" in names and "b" not in names
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX search permissions are required")
+@pytest.mark.skipif(
+    not hasattr(os, "geteuid") or os.geteuid() == 0,
+    reason="the effective user must honor search permissions",
+)
+def test_an_unsearchable_member_is_unknown_without_hiding_readable_members(
+    world, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root, _ = world
+    blocked = _pipeline(root, "blocked").parent
+    monkeypatch.chdir(root)
+    blocked.chmod(0o000)
+    try:
+        result = _invoke("run", "blocked", "--json")
+        assert result.exit_code == EXIT_USAGE, result.output
+        assert _body(result)["code"] == "layout.pipeline_unknown"
+        assert "Traceback" not in result.output
+        assert "Known pipelines: orders, slice." in _body(result)["error"]
+        names = [e.name for e in list_pipelines(find_project(root, None))]
+        assert names == ["orders", "slice"]
+    finally:
+        blocked.chmod(0o700)
+
+
+def test_a_failed_member_probe_is_unlisted_without_hiding_other_members(
+    world, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root, _ = world
+    blocked_yaml = _pipeline(root, "blocked")
+    original_is_file = Path.is_file
+
+    def fail_for_blocked(path: Path) -> bool:
+        if path == blocked_yaml:
+            raise OSError(errno.ENAMETOOLONG, "member probe failed")
+        return original_is_file(path)
+
+    monkeypatch.setattr(Path, "is_file", fail_for_blocked)
+    assert _member(root, "blocked") is None
+    assert [e.name for e in list_pipelines(find_project(root, None))] == ["orders", "slice"]
 
 
 @posix_only
