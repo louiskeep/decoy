@@ -1724,8 +1724,34 @@ About 580 lines (source ~240, tests ~300, docs ~40).
 | L3-canary | canary fixture: no canary in either record | M-PAYLOAD-LEAK |
 | L3-report-id | `decoy report verify <id>` equals `report verify <file>` | ML3-file-only |
 
+**Amendment 2026-11-12: project binding fields.** CLI #200 added `path_base`
+and `project_manifest` to the manifest of a run inside a marker project, after
+this plan was written. The rules below replace any earlier text they touch.
+- Engine slice `feat/lib-evidence-binding` (before L3a): `EvidencePayload`
+  takes both keys as optional, additive to `cli-local-1`. `path_base` is
+  exactly `"project"` when present; both keys are present or both absent;
+  absent stays absent and an explicit `null` stays `null`, so the record's
+  canonical payload bytes equal the manifest's. `project_manifest` is a path
+  field for export. L3a starts after the release with this slice is pinned.
+- The manifest is built once and stored as built. `project_manifest` is the
+  `--evidence-out` file's project-relative path, or `null` with no such file
+  or a file outside the project (what `evidence.py` writes today).
+- Reading by id takes the project root from the project that owns the
+  library. The manifest-file placement check applies only to a file read.
+- L3-evidence-same holds with no exception for a marker project (its paths
+  are already project-relative).
+- Until RESULT C1a and C1b land, the evidence half has one call site in
+  `cli/run/_evidence.py` where the manifest is built, calling the library's one
+  `store` function; `finish` takes the call over in the RESULT PR. A test
+  holds "exactly one caller". `_run_records.py` is not created in the flat
+  `src/decoy/cli/` (frozen); the store function lives in the library package.
+- Section 4.9 applies to the library root whatever its name: a `--library DIR`
+  gets `DIR/.gitignore` and `DIR/.gitattributes`, once, only if absent
+  (built in L1d).
+
 **Frozen-contract effects.** `decoy run` gains a default write (4.16) and one
-flag; `report` accepts ids (additive). `cli-local-1` shape unchanged.
+flag; `report` accepts ids (additive). `cli-local-1` gains two optional keys
+(amendment above).
 
 ### L3b-cli: sample-run records and scratch lifecycle (CLI, about 530 lines)
 
