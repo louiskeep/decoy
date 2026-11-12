@@ -238,19 +238,43 @@ def _wait_for_spans(listener, timeout: float = 5.0) -> None:
         time.sleep(0.05)
 
 
-@pytest.mark.parametrize("route", ["full_frame", "chunked"])
-def test_flag_exports_one_trace_with_phase_spans(tmp_path, listener, route) -> None:
-    args = ["--chunked"] if route == "chunked" else []
+def _exported(tmp_path, listener, *args) -> tuple[list, list, list]:
+    """Run the pipeline with export on; return the root spans, the phase spans and all spans."""
     result = _run(_pipeline(tmp_path), "--json", "--otel-endpoint", listener.url, *args)
     assert result.exit_code == 0, result.output
     _wait_for_spans(listener)
     spans = _spans(listener)
     roots = [s for s in spans if s.name == "decoy.run"]
     phases = [s for s in spans if s.name.startswith("decoy.phase.")]
+    return roots, phases, spans
+
+
+# The engine's chunked route emits no phase events, so its trace is the root span alone.
+# Strict, so the cell fails the day the engine emits them and the mark has to go.
+_NO_CHUNKED_PHASES = pytest.mark.xfail(
+    strict=True, reason="the engine's chunked route emits no phase events"
+)
+
+
+@pytest.mark.parametrize(
+    "args",
+    [(), pytest.param(("--chunked",), marks=_NO_CHUNKED_PHASES)],
+    ids=["full_frame", "chunked"],
+)
+def test_flag_exports_one_trace_with_phase_spans(tmp_path, listener, args) -> None:
+    roots, phases, spans = _exported(tmp_path, listener, *args)
     assert len(roots) == 1 and not roots[0].parent_span_id
     assert phases, "no phase span reached the collector"
     assert {s.trace_id for s in spans} == {roots[0].trace_id}
     assert {s.parent_span_id for s in phases} == {roots[0].span_id}
+    assert roots[0].status.code == 1  # OK
+
+
+def test_chunked_run_exports_one_ended_root_span(tmp_path, listener) -> None:
+    roots, _phases, spans = _exported(tmp_path, listener, "--chunked")
+    assert len(roots) == 1 and not roots[0].parent_span_id
+    assert {s.trace_id for s in spans} == {roots[0].trace_id}
+    assert roots[0].end_time_unix_nano >= roots[0].start_time_unix_nano > 0
     assert roots[0].status.code == 1  # OK
 
 
