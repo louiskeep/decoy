@@ -199,7 +199,9 @@ the same table from the CLI.
 ## License
 
 Functional Source License, Version 1.1, Apache 2.0 Future License
-(FSL-1.1-ALv2), the same license as `decoy-engine`. You may use, modify and
+(FSL-1.1-ALv2). `decoy-engine` moves to the same license from its first FSL
+release onward; earlier engine releases, including the 0.22.0 this CLI pins
+today, stay Apache-2.0. You may use, modify and
 redistribute Decoy for any purpose except a Competing Use: offering it, or
 something substantially similar built from it, to others as a commercial
 product or service. Internal production use is allowed. Each release

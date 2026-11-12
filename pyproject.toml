@@ -18,7 +18,7 @@ requires-python = ">=3.10"
 # becomes Apache-2.0 two years after it ships. Counsel confirms in R1-c.
 # FSL has no Trove classifier, hence Other/Proprietary below.
 license = "FSL-1.1-ALv2"
-license-files = ["LICENSE.md"]
+license-files = ["LICENSE.md", "NOTICE"]
 authors = [{ name = "louiskeep" }]
 
 # PyPI Trove classifiers. Bare-minimum honest set: the Python versions
