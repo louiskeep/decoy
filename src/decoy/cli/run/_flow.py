@@ -8,7 +8,7 @@ import typer
 
 from decoy._private_file import PrivateFileError
 from decoy.cli.io import RunLayout, mint_invocation_id
-from decoy.cli.run import _errors, _evidence, _execute, _prepare, _render
+from decoy.cli.run import _errors, _evidence, _execute, _prepare, _progress, _render
 from decoy.cli.run._context import RunContext
 from decoy.cli.run._notify import (
     _begin_trace,
@@ -24,7 +24,7 @@ from decoy.cli.run._prepare import (
     _load_raw_config,
     _refuse_fidelity_without_mask,
 )
-from decoy.ui.progress import spinner
+from decoy.ui.progress import run_progress
 
 
 def execute(ctx: RunContext) -> None:
@@ -56,12 +56,20 @@ def execute(ctx: RunContext) -> None:
         # F30: refuse a bad telemetry setting before any work.
         _otel = _start_telemetry(ctx.otel_endpoint, ctx.state)
         _trace = _begin_trace(_otel)
-        with spinner(ctx.state, f"Running {ctx.yaml_mode}..."), contextlib.ExitStack() as _scopes:
+        # One sink for the engine; the display is one consumer of it (a job log joins in L5b).
+        ctx.progress = _progress.build()
+        with (
+            run_progress(ctx.state, f"Running {ctx.yaml_mode}...") as display,
+            contextlib.ExitStack() as _scopes,
+        ):
+            ctx.progress.add(display.on_event)
             if _trace is not None:
-                # One binding reaches the full-frame, `--chunked` and preview calls alike;
-                # the engine's own entries leave an outer binding in place.
+                # `run_pipeline(progress=...)` binds its sink over any outer binding, so the
+                # trace recorder rides on the fan-out for the full-frame and preview calls; the
+                # outer binding still reaches `--chunked`, which takes no sink.
                 from decoy_engine.progress import use_progress
 
+                ctx.progress.add(_trace.recorder.on_event)
                 _scopes.enter_context(use_progress(_trace.recorder))
             if ctx.rows is None and ctx.out_dir is not None:
                 failed = False

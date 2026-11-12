@@ -1,4 +1,5 @@
-"""Progress patterns -- spinner, bar, multistage. See CLI_UX_GUIDE.md section 7.
+"""Progress patterns -- spinner, bar, multistage, and the event-fed `decoy run` line. See
+CLI_UX_GUIDE.md section 7.
 
 All progress streams to stderr. Auto-disabled when --quiet or stderr is not
 a TTY. Commands receive an `OutputState` and pass `state.err_console` (or
@@ -14,6 +15,7 @@ from rich.progress import (
     BarColumn,
     Progress,
     SpinnerColumn,
+    TaskID,
     TextColumn,
     TimeElapsedColumn,
     TimeRemainingColumn,
@@ -28,9 +30,7 @@ def _disabled(state: OutputState) -> bool:
 
 
 @contextmanager
-def spinner(
-    state: OutputState, message: str, *, style: str = "dots"
-) -> Iterator[None]:
+def spinner(state: OutputState, message: str, *, style: str = "dots") -> Iterator[None]:
     """Indeterminate spinner. Use for ops < ~10s with no progress signal.
 
     `style` is any Rich spinner name -- run `python -m rich.spinner` to see
@@ -157,9 +157,59 @@ def multistage(state: OutputState, stages: list[str]) -> Iterator[_MultistageHan
         transient=True,
     )
     with progress:
-        task_ids = [
-            progress.add_task(f"[ ] {label}", total=None) for label in stages
-        ]
+        task_ids = [progress.add_task(f"[ ] {label}", total=None) for label in stages]
         handle = _MultistageHandle(progress, task_ids, stages)
         handle.start()
         yield handle
+
+
+class RunProgressHandle:
+    """The live line of a running `decoy run`, fed by engine progress events.
+
+    It reads only the engine's value-free fields (phase name, table name, status, rows done and
+    rate) and renders them on the stderr console; it never writes to stdout.
+    """
+
+    def __init__(self, progress: Progress | None, task_id: TaskID | None, base: str) -> None:
+        self._progress = progress
+        self._task_id = task_id
+        self._base = base
+        self.description = base
+
+    def on_event(self, event: object) -> None:
+        kind = getattr(event, "kind", None)
+        table = getattr(event, "table", None)
+        where = f" ({table})" if table else ""
+        if kind == "phase":
+            name = getattr(event, "name", None) or getattr(event, "phase", None) or "work"
+            self.description = f"{self._base} {name}{where}"
+        elif kind == "rate":
+            done = getattr(event, "rows_done", 0)
+            rate = getattr(event, "rows_per_sec", 0.0)
+            self.description = f"{self._base} {done:,} rows{where}, {rate:,.0f} rows/s"
+        else:
+            return
+        if self._progress is not None and self._task_id is not None:
+            self._progress.update(self._task_id, description=self.description)
+
+
+@contextmanager
+def run_progress(state: OutputState, message: str) -> Iterator[RunProgressHandle]:
+    """A spinner whose text follows the run's phase and rate events (stderr only).
+
+    Suppressed like `spinner`: in quiet mode or when stderr is not a terminal the handle still
+    accepts events and renders nothing.
+    """
+    if _disabled(state):
+        yield RunProgressHandle(None, None, message)
+        return
+    progress = Progress(
+        SpinnerColumn(spinner_name="dots"),
+        TextColumn("[info]{task.description}[/info]"),
+        TimeElapsedColumn(),
+        console=state.err_console,
+        transient=True,
+    )
+    with progress:
+        task_id = progress.add_task(message, total=None)
+        yield RunProgressHandle(progress, task_id, message)

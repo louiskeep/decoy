@@ -109,7 +109,7 @@ ALLOWLIST: tuple[AllowedInline, ...] = (
         4,
         "_commit_vault keeps a hard-link backup and restores or removes the vault when the "
         "directory fsync fails (tests/e2e/test_vault_commit_order.py); a transaction, not a "
-        "plain atomic write. L5a moves it to _vault_commit.py and renames this entry.",
+        "plain atomic write. The run split already moved it here from run.py.",
     ),
     AllowedInline(
         "distribution/installer.py",

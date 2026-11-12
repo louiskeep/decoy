@@ -23,6 +23,7 @@ from decoy.cli.io import (
 from decoy.cli.io import (
     resolve_path as _resolve_path,
 )
+from decoy.cli.run import _progress
 from decoy.cli.run._context import DEFAULT_CHUNK_SIZE, RunContext
 from decoy.cli.run._vault import _commit_vault
 
@@ -312,6 +313,7 @@ def execute(ctx: RunContext) -> None:
             instance_default_locale=instance_locale,
             vault_writer=ctx.vault_writer,
             base_dir=ctx.config.parent,
+            **_progress.run_pipeline_kwargs(run_pipeline, ctx.progress),
             quarantine_path=layout.place_quarantine(ctx.config_dict),
             **_key_kwargs,
             **_report_kwargs,
@@ -363,6 +365,7 @@ def execute_preview(ctx: RunContext) -> None:
         derive_key=ctx.resolver,
         instance_default_locale=instance_locale,
         base_dir=ctx.config.parent,
+        **_progress.run_pipeline_kwargs(run_pipeline, ctx.progress),
         # No layout here and nothing is written: `refuse_preview` rejects an enabled quarantine.
         quarantine_path=None,
         **_resources.run_pipeline_kwargs(ctx._res),
