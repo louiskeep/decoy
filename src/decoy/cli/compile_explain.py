@@ -43,6 +43,7 @@ from decoy._atomic import AtomicWriteError, WriteMode, describe, write_local_tar
 from decoy.cli import gen
 from decoy.cli._yaml_errors import sanitize_yaml_error
 from decoy.cli.exit_codes import EXIT_RUNTIME, EXIT_USAGE
+from decoy.cli.io import pipeline_argument, resolve_pipeline
 from decoy.ui.output import OutputMode, emit_json, setup_output
 from decoy.ui.table import make_table
 from decoy.ui.theme import accent, code, error, hint, success, warn
@@ -85,13 +86,7 @@ _RATIONALE_NONE = "no strategy declared"
 
 
 def compile(
-    config: Path = typer.Argument(
-        ...,
-        exists=True,
-        dir_okay=False,
-        readable=True,
-        help="Path to the pipeline YAML config to compile.",
-    ),
+    config: str = pipeline_argument(help="Path or name of the pipeline YAML config to compile."),
     explain: bool = typer.Option(
         False,
         "--explain",
@@ -163,21 +158,24 @@ def compile(
     )
 
     state = setup_output(json_, quiet, verbose)
+    config_path = resolve_pipeline(config, state, "validate compile").yaml
 
     if profile_path is not None and no_profile:
-        _simple_error(state, config, "--no-profile and --profile are mutually exclusive.")
+        _simple_error(state, config_path, "--no-profile and --profile are mutually exclusive.")
         raise typer.Exit(code=EXIT_USAGE)
 
     if out_format not in ("yaml", "json"):
-        _simple_error(state, config, f"--format must be one of yaml, json; got {out_format!r}.")
+        _simple_error(
+            state, config_path, f"--format must be one of yaml, json; got {out_format!r}."
+        )
         raise typer.Exit(code=EXIT_USAGE)
 
     # Parse YAML -- defensive; real parse errors surface here.
     try:
-        raw = yaml.safe_load(config.read_text(encoding="utf-8"))
+        raw = yaml.safe_load(config_path.read_text(encoding="utf-8"))
     except yaml.YAMLError as exc:
         # YAMLError quotes the offending source line; sanitize to coordinates.
-        _simple_error(state, config, sanitize_yaml_error(exc))
+        _simple_error(state, config_path, sanitize_yaml_error(exc))
         raise typer.Exit(code=EXIT_USAGE)
     except (OSError, UnicodeDecodeError) as exc:
         # A read/decode failure is a different category; report it as one. The
@@ -186,11 +184,13 @@ def compile(
         # UnicodeDecodeError is a ValueError, not an OSError, so it is named
         # explicitly: without it a non-UTF-8 config would escape as an uncaught
         # traceback and emit no --json envelope.
-        _simple_error(state, config, f"could not read {config}: {type(exc).__name__}")
+        _simple_error(state, config_path, f"could not read {config_path}: {type(exc).__name__}")
         raise typer.Exit(code=EXIT_USAGE)
 
     if not isinstance(raw, dict):
-        _simple_error(state, config, f"{config} does not parse to a YAML mapping at the top level.")
+        _simple_error(
+            state, config_path, f"{config_path} does not parse to a YAML mapping at the top level."
+        )
         raise typer.Exit(code=EXIT_USAGE)
 
     from decoy_engine import __version__ as engine_version
@@ -206,7 +206,9 @@ def compile(
             profile = profile_from_json(profile_path.read_text(encoding="utf-8"))
         except (ValueError, KeyError) as exc:
             _simple_error(
-                state, config, f"--profile {profile_path} did not parse as a Profile JSON: {exc}"
+                state,
+                config_path,
+                f"--profile {profile_path} did not parse as a Profile JSON: {exc}",
             )
             raise typer.Exit(code=EXIT_USAGE) from exc
     else:
@@ -217,7 +219,7 @@ def compile(
         if unique_column_path is not None:
             _simple_error(
                 state,
-                config,
+                config_path,
                 "--no-profile is incompatible with cardinality_mode: unique "
                 f"(offending column: {unique_column_path}). The "
                 "basic_uniqueness_pre_flight check requires profile data; pass "
@@ -241,10 +243,10 @@ def compile(
             profile,
             decoy_engine_version=engine_version,
             no_profile=not use_profile,
-            base_dir=config.parent,
+            base_dir=config_path.parent,
         )
     except Exception as exc:
-        _compile_error(state, config, exc)
+        _compile_error(state, config_path, exc)
         raise typer.Exit(code=EXIT_USAGE)
 
     # --output: also write the frozen plan artifact (absorbs the old `plan` command).
@@ -256,7 +258,7 @@ def compile(
                 WriteMode.REPLACE,
             )
         except AtomicWriteError as exc:
-            _simple_error(state, config, f"could not write the plan artifact: {describe(exc)}")
+            _simple_error(state, config_path, f"could not write the plan artifact: {describe(exc)}")
             raise typer.Exit(code=EXIT_RUNTIME)
 
     # Extract per-column info from the config (strategies come from the user's
@@ -302,7 +304,7 @@ def compile(
         return
 
     # Human-readable output.
-    state.console.print(accent(f"Compile: {config.name}"))
+    state.console.print(accent(f"Compile: {config_path.name}"))
     state.console.print()
 
     if explain:

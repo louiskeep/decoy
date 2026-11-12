@@ -28,6 +28,8 @@ from decoy.cli.io import (
     check_output_path,
     format_for_path,
     input_format,
+    pipeline_argument,
+    resolve_pipeline,
     write_private_table,
 )
 from decoy.ui.output import OutputMode, emit_json, setup_output
@@ -64,11 +66,7 @@ See also: decoy run, decoy explain transforms.
 
 
 def unmask(
-    config: Path = typer.Argument(
-        ...,
-        exists=True,
-        dir_okay=False,
-        readable=True,
+    config: str = pipeline_argument(
         help=(
             "The pipeline config the mask run used. The mask secret (--mask-secret or "
             "its global_settings.mask_secret_ref) must be the one that run used."
@@ -132,6 +130,7 @@ def unmask(
     error, 3 on a runtime failure.
     """
     state = setup_output(json_, quiet, verbose)
+    config_path = resolve_pipeline(config, state, "unmask").yaml
 
     def _emit_error(message: str, *, hint_text: str | None = None) -> None:
         if state.mode is OutputMode.json:
@@ -153,7 +152,7 @@ def unmask(
                 state.err_console.print(" ", hint("hint:"), hint_text)
 
     try:
-        raw = _yaml.safe_load(config.read_text(encoding="utf-8"))
+        raw = _yaml.safe_load(config_path.read_text(encoding="utf-8"))
     except _yaml.YAMLError as exc:
         _emit_error(sanitize_yaml_error(exc))
         raise typer.Exit(code=EXIT_USAGE)
@@ -205,7 +204,7 @@ def unmask(
 
     # The declared format of the table's target when `masked` is that file, else the suffix rule.
     try:
-        in_format, in_layout = input_format(raw, target_table, masked, config.parent)
+        in_format, in_layout = input_format(raw, target_table, masked, config_path.parent)
     except TargetFormatError as exc:
         _emit_error(f"{exc.code}: {exc}")
         raise typer.Exit(code=EXIT_USAGE)

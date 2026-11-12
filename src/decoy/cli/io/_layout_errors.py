@@ -66,7 +66,7 @@ PROJECT_NOT_FOUND = Descriptor(
 )
 PROJECT_MISMATCH = Descriptor(
     "layout.project_mismatch",
-    "{path} is in the project {actual}, but --project names {given}.",
+    "{path} is in the project {actual}, but --project or DECOY_PROJECT names {given}.",
 )
 PIPELINE_UNKNOWN = Descriptor(
     "layout.pipeline_unknown",

@@ -60,6 +60,8 @@ from decoy.cli.io._pipelines import (
     explicit_project,
     list_pipelines,
     parse_pipeline_token,
+    pipeline_argument,
+    pipeline_option,
     resolve_pipeline,
 )
 from decoy.cli.io._placement import (
@@ -141,7 +143,9 @@ __all__ = [
     "parquet_schema",
     "parse_flag",
     "parse_pipeline_token",
+    "pipeline_argument",
     "pipeline_name_for",
+    "pipeline_option",
     "prepare_out",
     "read_claim",
     "read_source",

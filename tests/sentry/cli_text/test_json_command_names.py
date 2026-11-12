@@ -37,6 +37,7 @@ FORWARDERS: dict[str, tuple[str, int, int]] = {
     "decoy.cli.report._load_manifest": ("command", 2, 5),
     "decoy.cli.scan._emit_load_error": ("command_name", 3, 4),
     "decoy.cli.reference._reject_kind": ("verb", 99, 2),
+    "decoy.cli.io.resolve_pipeline": ("command", 2, 12),
 }
 
 KIND_REGISTRIES = {"list": set(_LIST_KINDS), "show": set(_SHOW_KINDS)}
@@ -70,7 +71,12 @@ def _module(rel: str) -> str:
 
 
 def _forwarder_param(rel: str, func: str) -> str | None:
-    entry = FORWARDERS.get(f"{_module(rel)}.{func}")
+    # A forwarder in a private module of a package with a public facade (`cli/io`) is keyed by
+    # the facade name, which is what its callers import and the call-site resolver reports.
+    names = [f"{_module(rel)}.{func}"]
+    if "/" in rel:
+        names.append(f"decoy.cli.{rel.split('/')[0]}.{func}")
+    entry = next((FORWARDERS[n] for n in names if n in FORWARDERS), None)
     return entry[0] if entry else None
 
 

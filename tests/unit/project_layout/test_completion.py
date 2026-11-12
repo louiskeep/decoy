@@ -2,7 +2,10 @@
 
 Driven through Typer's own shell-completion entry point (`_DECOY_COMPLETE=complete_bash` with
 `COMP_WORDS` and `COMP_CWORD`), so the project flag already typed on the line reaches the
-completer the way a shell would hand it over. Bash lines read `<type>,<value>`.
+completer the way a shell would hand it over. Bash output is one value per line.
+
+Typer 0.26 accepts only plain strings from `autocompletion` (it asserts on a `CompletionItem`),
+so the completer offers pipeline names and then folders and YAML files at the typed location.
 """
 
 from __future__ import annotations
@@ -12,7 +15,6 @@ from pathlib import Path
 
 import pytest
 import typer
-from typer.models import CompletionItem
 from typer.testing import CliRunner
 
 from decoy.__main__ import app
@@ -44,7 +46,7 @@ def _project(tmp_path: Path, *names: str) -> Path:
     return root
 
 
-def _complete(line: str, cursor: int, env: dict[str, str] | None = None) -> list[tuple[str, str]]:
+def _complete(line: str, cursor: int, env: dict[str, str] | None = None) -> list[str]:
     result = runner.invoke(
         app,
         [],
@@ -56,16 +58,31 @@ def _complete(line: str, cursor: int, env: dict[str, str] | None = None) -> list
             **(env or {}),
         },
     )
-    pairs = [tuple(row.split(",", 1)) for row in result.stdout.splitlines() if "," in row]
-    return [(kind, value) for kind, value in pairs]
+    return [line for line in result.stdout.splitlines() if line]
 
 
-def test_names_with_the_typed_prefix_come_with_one_file_item(
+def test_names_come_first_then_folders_and_yaml_files_with_the_prefix(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     root = _project(tmp_path, "orders", "other", "members")
-    monkeypatch.chdir(root / "pipelines")
-    assert _complete("decoy run o", 2) == [("plain", "orders"), ("plain", "other"), ("file", "o")]
+    (root / "o-extra.yaml").write_text("x: 1\n", encoding="utf-8")
+    (root / "o-notes.txt").write_text("x\n", encoding="utf-8")
+    (root / "out").mkdir()
+    monkeypatch.chdir(root)
+    assert _complete("decoy run o", 2) == [
+        "orders",
+        "other",
+        "o-extra.yaml",
+        "out/",
+    ]
+
+
+def test_a_typed_folder_completes_its_yaml_files(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root = _project(tmp_path, "orders")
+    monkeypatch.chdir(root)
+    assert _complete("decoy run pipelines/orders/p", 2) == ["pipelines/orders/pipeline.yaml"]
 
 
 def test_every_pipeline_parameter_completes(
@@ -78,7 +95,7 @@ def test_every_pipeline_parameter_completes(
         ("decoy report vault v.db --config o", 5),
         ("decoy report fidelity a.csv b.csv --config o", 6),
     ):
-        assert ("plain", "orders") in _complete(line, cursor), line
+        assert "orders" in _complete(line, cursor), line
 
 
 def test_the_project_flag_already_on_the_line_is_read(
@@ -88,17 +105,19 @@ def test_the_project_flag_already_on_the_line_is_read(
     elsewhere = tmp_path / "elsewhere"
     elsewhere.mkdir()
     monkeypatch.chdir(elsewhere)
-    assert _complete("decoy run o", 2) == [("file", "o")]
-    assert _complete(f"decoy --project {root} run o", 4) == [("plain", "orders"), ("file", "o")]
-    env = {"DECOY_PROJECT": str(root)}
-    assert _complete("decoy run o", 2, env) == [("plain", "orders"), ("file", "o")]
+    assert _complete("decoy run o", 2) == []
+    assert _complete(f"decoy --project {root} run o", 4) == ["orders"]
+    assert _complete("decoy run o", 2, {"DECOY_PROJECT": str(root)}) == ["orders"]
 
 
-def test_outside_a_project_only_the_file_item_remains(
+def test_outside_a_project_only_paths_are_offered(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.chdir(tmp_path)
-    assert _complete("decoy run o", 2) == [("file", "o")]
+    bare = tmp_path / "bare"
+    (bare / "sub").mkdir(parents=True)
+    (bare / "a.yml").write_text("x: 1\n", encoding="utf-8")
+    monkeypatch.chdir(bare)
+    assert _complete("decoy run ", 2) == ["a.yml", "sub/"]
 
 
 @posix_only
@@ -111,28 +130,28 @@ def test_a_folder_that_links_out_of_pipelines_is_not_offered(
     (target / "pipeline.yaml").write_text("version: 2\n", encoding="utf-8")
     (root / "pipelines" / "evil").symlink_to(target, target_is_directory=True)
     monkeypatch.chdir(root)
-    assert _complete("decoy run ", 2) == [("plain", "orders"), ("file", "")]
+    offered = _complete("decoy run ", 2)
+    assert "orders" in offered and "evil" not in offered
 
 
-def test_a_failing_project_lookup_leaves_only_the_file_item(
+def test_a_failing_project_lookup_leaves_only_paths(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     root = _project(tmp_path, "orders")
+    (root / "o.yaml").write_text("x: 1\n", encoding="utf-8")
     monkeypatch.chdir(root)
 
     def broken(*args, **kwargs):
         raise RuntimeError("lookup failed")
 
     monkeypatch.setattr("decoy.cli.io.find_project", broken)
-    assert _complete("decoy run o", 2) == [("file", "o")]
+    assert _complete("decoy run o", 2) == ["o.yaml"]
 
 
-def test_the_completer_returns_public_typer_items(
+def test_the_completer_returns_plain_strings(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     root = _project(tmp_path, "orders")
     monkeypatch.chdir(root)
     ctx = typer.Context(typer.main.get_command(app))
-    items = completers.pipeline_names(ctx, "or")
-    assert all(isinstance(item, CompletionItem) for item in items)
-    assert [(i.type, i.value) for i in items] == [("plain", "orders"), ("file", "or")]
+    assert completers.pipeline_names(ctx, "or") == ["orders"]

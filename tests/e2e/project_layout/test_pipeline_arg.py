@@ -68,10 +68,10 @@ def _config(root: Path, tag: str, **extra: object) -> dict:
     }
 
 
-def _pipeline(root: Path, name: str = "orders", **extra: object) -> Path:
-    path = root / "pipelines" / name / "pipeline.yaml"
+def _pipeline(root: Path, folder: str = "orders", **extra: object) -> Path:
+    path = root / "pipelines" / folder / "pipeline.yaml"
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(yaml.safe_dump(_config(root, name, **extra)), encoding="utf-8")
+    path.write_text(yaml.safe_dump(_config(root, folder, **extra)), encoding="utf-8")
     return path
 
 
@@ -238,7 +238,7 @@ def test_a_name_from_a_subfolder_gives_the_result_of_the_path_from_the_root(
     if cmd.full_success:
         assert by_name.exit_code == EXIT_OK, by_name.output
     assert "layout." not in json.dumps(_body(by_name))
-    assert _normal(by_name, cmd.pipeline, path) == _normal(by_path, cmd.pipeline, path)
+    assert _normal(by_name, path, cmd.pipeline) == _normal(by_path, path, cmd.pipeline)
 
 
 @pytest.mark.parametrize("cmd", COMMANDS, ids=IDS)

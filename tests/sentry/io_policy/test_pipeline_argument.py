@@ -15,7 +15,8 @@ pipeline token. The test walks the Typer app (registered commands and groups, re
 hidden `validate` default handler included) and fails for any parameter that takes a pipeline
 YAML without `callback=parse_pipeline_token` and `autocompletion=pipeline_names`, or whose
 command body does not call `resolve_pipeline` on it after `setup_output`. It also bans private
-Typer imports under `src/` and any `DECOY_PROJECT` literal outside `_pipelines.py`.
+Typer imports under `src/` and any `DECOY_PROJECT` literal outside `_pipelines.py`. There is
+no allowlist: a parameter outside the 12 is a new command and joins `EXPECTED` on purpose.
 
 Named limits: a marker name assembled at run time (`"decoy" + ".yaml"`), `getattr`, and a walk that
 reads `os.path.dirname` in a loop are not seen. The rule targets the spellings a contributor
@@ -159,7 +160,6 @@ def test_the_choke_point_itself_is_exempt() -> None:
 
 # --- G-ONE-PIPELINE-ARG --------------------------------------------------------------------
 
-PIPELINE_ARG_ALLOW: dict[str, str] = {}
 _NAMES = {"config", "pipeline_config", "pipeline"}
 # A help text that opens by describing the parameter itself as a pipeline config. `--master-key`
 # only mentions the YAML in passing, so it does not match.
@@ -309,10 +309,6 @@ def test_every_command_body_resolves_its_pipeline_after_output_setup() -> None:
             if (problem := call_problem(source, callback.__name__, pname)) is not None
         )
     assert problems == []
-
-
-def test_the_allowlist_is_empty() -> None:
-    assert PIPELINE_ARG_ALLOW == {}
 
 
 def test_the_master_key_help_is_not_taken_for_a_pipeline_parameter() -> None:

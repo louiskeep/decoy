@@ -69,6 +69,7 @@ class RunContext:
     otel_endpoint: str
     rows: int | None
     state: OutputState
+    given_as: str = "path"  # "name" when the pipeline was given as a project name
 
     # Set before the try block.
     config_str: str = field(init=False)

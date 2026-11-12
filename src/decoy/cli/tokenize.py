@@ -42,6 +42,8 @@ from decoy.cli.io import (
     input_format,
     mint_invocation_id,
     open_run_layout,
+    pipeline_argument,
+    resolve_pipeline,
     write_private_table,
 )
 from decoy.ui.output import OutputMode, emit_json, setup_output
@@ -117,12 +119,8 @@ _is_valid_mask_secret_ref = _mask_secret.is_valid_mask_secret_ref
 
 
 def tokenize(
-    config: Path = typer.Argument(
-        ...,
-        exists=True,
-        dir_okay=False,
-        readable=True,
-        help="Path to the YAML pipeline config (with `strategy: tokenize` columns).",
+    config: str = pipeline_argument(
+        help="Path or name of the YAML pipeline config (with `strategy: tokenize` columns).",
     ),
     vault: Path = typer.Option(
         ...,
@@ -176,6 +174,7 @@ def tokenize(
     Exits 0 on success, 1 on a config/usage error, 3 on a runtime failure.
     """
     state = setup_output(json_, quiet, verbose)
+    config_path = resolve_pipeline(config, state, "tokenize").yaml
     config_str = str(config)
 
     def _emit_error(message: str, *, hint_text: str | None = None) -> None:
@@ -199,7 +198,7 @@ def tokenize(
     import yaml as _yaml
 
     try:
-        raw = _yaml.safe_load(config.read_text(encoding="utf-8"))
+        raw = _yaml.safe_load(config_path.read_text(encoding="utf-8"))
     except _yaml.YAMLError as exc:
         _emit_error(sanitize_yaml_error(exc))
         raise typer.Exit(code=EXIT_USAGE)
@@ -339,8 +338,8 @@ def tokenize(
     try:
         with spinner(state, "Tokenizing..."):
             # The claim is checked before any source is read.
-            layout = open_run_layout(config, config_dict, mint_invocation_id())
-            sources = _load_sources_from_config(config_dict, config.parent)
+            layout = open_run_layout(config_path, config_dict, mint_invocation_id())
+            sources = _load_sources_from_config(config_dict, config_path.parent)
             instance_locale = (config_dict.get("global_settings") or {}).get("default_locale")
             # The CLI admits the secret (an owner-only `file:` is checked on its open
             # descriptor) and hands the engine the provider, so the engine never reads the
@@ -351,13 +350,13 @@ def tokenize(
                 quarantine_path = layout.place_quarantine(config_dict)
                 quarantine_kwargs = {"quarantine_path": quarantine_path} if quarantine_path else {}
                 result = run_pipeline(
-                    resolved_source_config(config_dict, config.parent),
+                    resolved_source_config(config_dict, config_path.parent),
                     sources,
                     engine_version=engine_version,
                     instance_default_locale=instance_locale,
                     token_vault_writer=token_vault,
                     key_provider=key_provider,
-                    base_dir=config.parent,
+                    base_dir=config_path.parent,
                     **quarantine_kwargs,
                 )
             vault_count = token_vault.count()
@@ -452,18 +451,14 @@ def tokenize(
         " ",
         hint("hint:"),
         "reverse with: decoy detokenize",
-        code(config.name),
+        code(config_path.name),
         "<output> --vault",
         code(str(vault)),
     )
 
 
 def detokenize(
-    config: Path = typer.Argument(
-        ...,
-        exists=True,
-        dir_okay=False,
-        readable=True,
+    config: str = pipeline_argument(
         help="The pipeline config the tokenize run used (carries each column's namespace).",
     ),
     tokenized: Path = typer.Argument(
@@ -522,6 +517,7 @@ def detokenize(
     a runtime failure.
     """
     state = setup_output(json_, quiet, verbose)
+    config_path = resolve_pipeline(config, state, "detokenize").yaml
     config_str = str(config)
 
     def _emit_error(message: str, *, hint_text: str | None = None) -> None:
@@ -543,7 +539,7 @@ def detokenize(
     import yaml as _yaml
 
     try:
-        raw = _yaml.safe_load(config.read_text(encoding="utf-8"))
+        raw = _yaml.safe_load(config_path.read_text(encoding="utf-8"))
     except _yaml.YAMLError as exc:
         _emit_error(sanitize_yaml_error(exc))
         raise typer.Exit(code=EXIT_USAGE)
@@ -617,7 +613,9 @@ def detokenize(
         raise typer.Exit(code=EXIT_USAGE)
 
     try:
-        in_format, in_layout = input_format(config_dict, target_table, tokenized, config.parent)
+        in_format, in_layout = input_format(
+            config_dict, target_table, tokenized, config_path.parent
+        )
     except TargetFormatError as exc:
         _emit_error(f"{exc.code}: {exc}")
         raise typer.Exit(code=EXIT_USAGE)
