@@ -15,10 +15,18 @@ Moved here from `decoy-platform/docs/backlog/RECENTLY-SHIPPED.md` on 2026-11-05 
 ([ROADMAP.md](ROADMAP.md)). The platform copy is frozen at that date. Entries below 2026-11-05 are
 copied unchanged; paths in them are relative to the repo they name.
 
-Last updated: 2026-11-11 (entries for 2026-10-27 to 2026-10-30 are not filled in here; see the repos'
+Last updated: 2026-11-12 (entries for 2026-10-27 to 2026-10-30 are not filled in here; see the repos'
 git logs).
 
 ---
+
+## 2026-11-12
+
+- **Engine** (`426e6d05`, engine #491): CI-E2a (roadmap row 3). PR and nightly triggers are back for the lanes the self-hosted gate does not cover: certified-profile, DP and determinism on every PR; the full hosted suite, testflight and security nightly on main. `ci/required-jobs.toml` and `ci/unlaned.toml` say which job owns each test marker, and a lane sentry fails on a marker with no lane, a missing required job, or a PR workflow that cannot cancel its stale runs. One JUnit totals reader and one "the suite really ran" guard (`scripts/dev/junit_ran.py`). The substrate-matrix workflow is gone. Record: `E:docs/records/2026-11-12-ci-e2a-build.md`. Left: E2b, the merge-tier verifier.
+- **Roadmap closures** (checked 2026-11-12 on engine main `426e6d05` and CLI main `e642d69`; every commit below is an ancestor of that main):
+  - Row 24a VALUE-FREE-ERRORS, V1 slices: A1 and A2 engine #412 `bf15cd99` (2026-11-08), B1 engine #417 `38517493` (2026-11-09), A3 CLI #187 `ed39bb7d` (2026-11-11), B2 CLI #195 `68f90d0d` (2026-11-11). Both engine commits are in engine v0.22.0, which the CLI pins. B3 is V2 corrective.
+  - Row 33 L1a-engine: L0.1 engine #403 `45553d7e` (2026-11-08), L0.2 engine #411 `942dae2d` (2026-11-08), L1a engine #444 `35370165` (2026-11-10); all in engine v0.20.0 and later. The CLI halves are row 34.
+  - Row 5c CLI-MAC-TESTS: S1 CLI #110 `ec209ec6`, S2 CLI #112 `91d191b9`, bash 3.2 `gates.sh` CLI #115 `834ab996` (sentry `tests/sentry/test_bash32_compat.py`, no `mapfile` left in `scripts/`), last Mac failure CLI #118 `12fc2e62`, all 2026-11-08; engine mypy on macOS engine #404 `09376f24`. The last Mac full run (3108 passed, 0 failed) was on `12fc2e6`; none since.
 
 ## 2026-11-11
 

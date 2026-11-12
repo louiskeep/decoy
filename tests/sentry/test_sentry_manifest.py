@@ -70,6 +70,7 @@ SENTRIES = (
     "tests/sentry/layout/test_run_package_shape.py",
     "tests/sentry/layout/test_vendored_files.py",
     "tests/sentry/test_profile_raw_value_isolation.py",
+    "tests/sentry/tooling/test_ci_lanes.py",
     "tests/sentry/tooling/test_pytest_timeout.py",
     "tests/sentry/test_ratchet_check.py",
     "tests/sentry/test_report_raw_value_isolation.py",

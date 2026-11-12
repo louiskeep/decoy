@@ -34,6 +34,15 @@ class _ChunkedFixedWidthError(Exception):
     """--chunked with a fixed_width source; user error (exits EXIT_USAGE)."""
 
 
+class _ChunkedQuarantineError(Exception):
+    """--chunked with quarantine enabled; user error (exits EXIT_USAGE).
+
+    The chunked path streams through `run_mask_pipeline_chunked`, which takes no quarantine
+    path, so the rows quarantine would hold are never written there. Refused before any
+    source is read rather than run without the quarantine the config asks for.
+    """
+
+
 class _ChunkedReportFlagError(Exception):
     """--chunked combined with a report flag (--explain-plan / --fidelity /
     --post-validate[-enforce]); user error (exits EXIT_USAGE).
@@ -51,6 +60,7 @@ def _run_chunked_mask(
     chunk_size: int,
     layout: RunLayout,
     key_provider=None,
+    ledger: dict[str, Path] | None = None,
 ) -> dict[str, Path | None]:
     """WS4 chunked mask path: stream each mask table's source through
     `decoy_engine.run_mask_pipeline_chunked`, writing output per chunk, on
@@ -72,7 +82,8 @@ def _run_chunked_mask(
     produces an all-string schema.
 
     Returns table name to the path actually published, or None for a table whose empty CSV
-    source published nothing."""
+    source published nothing. `ledger` gets each published path as its writer publishes it,
+    so a later table's failure keeps the earlier entries."""
     _require_local_io_endpoints(config_dict)
     check_target_formats(config_dict, chunked=True)
 
@@ -110,12 +121,21 @@ def _run_chunked_mask(
             empty_schema=(
                 partial(parquet_schema, src_path) if src_spec.get("format") == "parquet" else None
             ),
+            ledger=ledger,
+            name=name,
         )
     return published
 
 
 def _check_chunked_tables(config_dict: dict) -> None:
-    """The config-only chunked checks: target formats, then the engine's per mask table."""
+    """The config-only chunked checks: quarantine, target formats, then the engine's per
+    mask table."""
+    quarantine = config_dict.get("quarantine")
+    if isinstance(quarantine, dict) and quarantine.get("enabled"):
+        raise _ChunkedQuarantineError(
+            "--chunked does not support quarantine (quarantine.enabled is true). "
+            "Run without --chunked, or turn quarantine off."
+        )
     check_target_formats(config_dict, chunked=True)
     from decoy_engine import get_default_registry
     from decoy_engine.execution import check_chunked_compatibility
@@ -179,7 +199,9 @@ def _load_sources_from_config(config_dict: dict, base_dir: Path) -> dict:
     return out
 
 
-def _write_mask_outputs(config_dict: dict, result, layout: RunLayout) -> dict[str, Path]:
+def _write_mask_outputs(
+    config_dict: dict, result, layout: RunLayout, published: dict[str, Path] | None = None
+) -> dict[str, Path]:
     """Write each declared target from the V2 ExecutionResult.
 
     The engine result exposes masked tables on `outputs` (dict[table_name -> pa.Table]);
@@ -196,13 +218,16 @@ def _write_mask_outputs(config_dict: dict, result, layout: RunLayout) -> dict[st
     outputs = getattr(result, "outputs", None)
     if not isinstance(outputs, dict):
         return {}
-    return write_targets(config_dict, outputs, layout)
+    return write_targets(config_dict, outputs, layout, published)
 
 
 def execute(ctx: RunContext) -> None:
     """Run the pipeline on the chunked or plain branch and record what the tail reports."""
-    # After the gate and before the first write: the run folder, claim and `out/`.
-    layout = ctx.layout = open_run_layout(ctx.config, ctx.config_dict, ctx.invocation_id)
+    # After the gate and before the first write, open the run folder, claim and `out/`.
+    # A fixed `--out-dir` was already opened before prepare could read a source.
+    if ctx.layout is None:
+        ctx.layout = open_run_layout(ctx.config, ctx.config_dict, ctx.invocation_id)
+    layout = ctx.layout
     if ctx.chunked:
         _chunk_paths = _run_chunked_mask(
             ctx.config_dict,
@@ -210,6 +235,7 @@ def execute(ctx: RunContext) -> None:
             ctx.chunk_size or DEFAULT_CHUNK_SIZE,
             layout,
             ctx.key_provider,
+            ctx._published,
         )
         ctx._table_records = table_records(dict.fromkeys(_chunk_paths), _chunk_paths)
         ctx._native_route = _native_gate.classify_route(
@@ -265,7 +291,7 @@ def execute(ctx: RunContext) -> None:
         # vault was lost can never be reversed.
         if ctx.vault_writer is not None:
             _commit_vault(ctx.vault_writer, ctx.vault)
-        _written = _write_mask_outputs(ctx.config_dict, result, layout)
+        _written = _write_mask_outputs(ctx.config_dict, result, layout, ctx._published)
         ctx._table_records = table_records(
             {name: len(tbl) for name, tbl in result.outputs.items()}, _written
         )

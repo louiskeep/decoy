@@ -198,6 +198,19 @@ def test_rows_refuses_a_conflicting_flag_before_any_work(tmp_path: Path, extra: 
     assert _written(tmp_path) == before
 
 
+def test_rows_refuses_out_dir_and_creates_no_folder(tmp_path: Path) -> None:
+    cfg = _write(tmp_path, _parent_child())
+    chosen = tmp_path / "chosen"
+    before = _written(tmp_path)
+
+    res = runner.invoke(app, ["run", str(cfg), "--rows", "5", "--out-dir", str(chosen)])
+
+    assert res.exit_code == EXIT_USAGE, res.output
+    assert "--rows" in _flat(res.output) and "--out-dir" in _flat(res.output)
+    assert not chosen.exists()
+    assert _written(tmp_path) == before
+
+
 def test_rows_refuses_a_mask_table(tmp_path: Path) -> None:
     cfg = _mixed(tmp_path)
     before = _written(tmp_path)

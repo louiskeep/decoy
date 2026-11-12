@@ -49,6 +49,7 @@ jobs:
   fresh-install:
     name: fresh-install (py${{ matrix.python }})
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     strategy:
       fail-fast: false
       matrix:

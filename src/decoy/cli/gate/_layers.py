@@ -13,12 +13,15 @@ from __future__ import annotations
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import yaml as _yaml
 
 from decoy.cli._yaml_errors import sanitize_yaml_error
 from decoy.cli.exit_codes import EXIT_CAPACITY, EXIT_OK, EXIT_USAGE, EXIT_WARNINGS
+
+if TYPE_CHECKING:
+    from decoy.cli.io import OutputPlacement
 
 # Prefix of the capacity finding on the CHUNKED route, where it is advisory.
 _CHUNKED_CAPACITY_NOTE = (
@@ -112,11 +115,12 @@ def _findings_from_checks(acc: Any, layer: str) -> list[GateFinding]:
 
 
 def _run_config_base(
-    raw: Any, config_path: Path
+    raw: Any, config_path: Path, placement: OutputPlacement | None = None
 ) -> tuple[dict[str, Any] | None, tuple[str, ...], list[GateFinding]]:
     """The config layer: the empty and non-mapping refusals, schema validation, the
-    profile-free plan-compile checks, the target-overwrite advisory and the target format
-    contradictions (`target_format_issues`, the same rule `decoy run` refuses on).
+    profile-free plan-compile checks, the target-overwrite advisory, the target format
+    contradictions (`target_format_issues`, the same rule `decoy run` refuses on) and the
+    project layout checks (`layout_issues`).
 
     `run_config_only_checks` is called here EXACTLY ONCE for the whole gate (F5 dedup).
     Returns `(config, checks_run, findings)`; `config` is None when the layer failed, so the
@@ -177,17 +181,43 @@ def _run_config_base(
         )
         return None, (), [finding]
 
-    from decoy.cli.io import target_format_issues
+    from decoy.cli.io import (
+        OutputPlacement,
+        fixed_target_overwrites,
+        layout_issues,
+        target_format_issues,
+    )
     from decoy.cli.preflight import _check_target_overwrite, _PreflightAccumulator
 
     advisory = _PreflightAccumulator()
-    _check_target_overwrite(raw, advisory, config_path.parent)
+    _check_target_overwrite(raw, advisory)
     findings = _findings_from_checks(advisory, "config")
     # The route is unknown here, so only the route-free contradictions (chunked=False).
     findings.extend(
         GateFinding("config", "error", i.code, i.message, location=f"targets.{i.table}.format")
         for i in target_format_issues(raw, chunked=False)
     )
+    # Plan 3.14: the layout faults found without a write. One stops the gate here, so the
+    # preflight layer never reads a source for a run that cannot place its output.
+    placement = placement or OutputPlacement()
+    layout = [
+        GateFinding("config", "error", refusal.code, refusal.message, location)
+        for location, refusal in layout_issues(config_path, raw, placement)
+    ]
+    if layout:
+        return None, (), findings + layout
+    # A fixed --out-dir is overwritten in place, so each existing relative target is advised.
+    if placement.kind == "fixed" and placement.directory is not None:
+        findings.extend(
+            GateFinding(
+                "config",
+                "warning",
+                f"target.{table}.would_overwrite",
+                "Output target already exists in --out-dir and would be overwritten.",
+                location,
+            )
+            for table, location in fixed_target_overwrites(raw, placement.directory.resolve())
+        )
     return validated, tuple(checks_run), findings
 
 
@@ -314,11 +344,15 @@ def _run_preflight_layer(
 
 
 def run_gate_on_config(
-    raw: Any, config_path: Path, route: GateRoute = GateRoute.PLAIN
+    raw: Any,
+    config_path: Path,
+    route: GateRoute = GateRoute.PLAIN,
+    placement: OutputPlacement | None = None,
 ) -> GateResult:
     """Config + compile + preflight on an already-parsed YAML value, short-circuiting after a
-    failed config layer. `config_path` is used only for its directory."""
-    config, checks_run, config_findings = _run_config_base(raw, config_path)
+    failed config layer. `config_path` names the YAML; `placement` says where relative outputs
+    land (project placement when None)."""
+    config, checks_run, config_findings = _run_config_base(raw, config_path, placement)
     if config is None:
         return GateResult(config_findings, frozenset({"config"}), False)
     compile_findings = _run_compile_layer(raw, config_path.parent)

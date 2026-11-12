@@ -37,7 +37,7 @@ class NotifyOn(str, Enum):
 class RunContext:
     """Options, then the state each phase sets for the next; see the module docstring."""
 
-    # The 25 options of `decoy run`, as `run()` receives them.
+    # The 26 options of `decoy run`, as `run()` receives them.
     config: Path
     mode: Mode
     json_: bool
@@ -52,6 +52,7 @@ class RunContext:
     vault: Path
     key_label: str
     evidence_out: Path
+    out_dir: Path | None
     notify: list[str]
     notify_on: NotifyOn
     native: bool
@@ -102,6 +103,9 @@ class RunContext:
     # which only fills for --evidence-out). None for --chunked runs (no
     # ExecutionResult to count).
     _notify_row_count: int | None = field(init=False, default=None)
+    # The publication ledger: table to the file a writer has finished publishing. `--json`
+    # `outputs` and `output_dir` come only from it.
+    _published: dict[str, Path] = field(init=False, default_factory=dict)
     # Per-table {name, rows, path} for the summary; rows is None on a chunked run.
     _table_records: list[dict] = field(init=False, default_factory=list)
     # Native route classification (Phase 3.1), set on a successful run for
@@ -127,3 +131,21 @@ class RunContext:
     # Set by the success tail.
     elapsed: float = field(init=False)
     notify_results: list[dict] = field(init=False)
+
+    def published_members(self) -> dict:
+        """The `--json` `outputs` and `output_dir` members (plan 3.6.1 C), from the publication
+        ledger only: an opened folder is not evidence that a file exists.
+
+        Nothing published gives no member. `output_dir` appears only when a listed file is
+        below the run folder or `--out-dir`; absolute paths are listed without it.
+        """
+        if not self._published:
+            return {}
+        files = [Path(path).resolve() for path in self._published.values()]
+        members: dict = {
+            "outputs": [{"table": t, "path": str(f)} for t, f in zip(self._published, files)]
+        }
+        folder = self.layout.output_dir() if self.layout is not None else None
+        if folder is not None and any(folder in f.parents for f in files):
+            members["output_dir"] = str(folder)
+        return members

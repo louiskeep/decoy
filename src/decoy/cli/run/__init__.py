@@ -224,6 +224,17 @@ def run(
             "See: decoy report show."
         ),
     ),
+    out_dir: Path = typer.Option(
+        None,
+        "--out-dir",
+        metavar="DIR",
+        help=(
+            "Write relative output paths into DIR instead of a new run folder under "
+            "out/<pipeline>/. DIR is relative to the current folder and is made owner-only "
+            "if missing. No run id, LATEST or current link; files there are overwritten. "
+            "Absolute output paths are unchanged."
+        ),
+    ),
     notify: list[str] = typer.Option(
         [],
         "--notify",
@@ -338,7 +349,7 @@ def run(
             "scaled by the same ratio, so parent and child sizes keep their proportions. "
             "Refused with a mask table, --chunked, --chunk-size, --evidence-out, --notify, "
             "--vault, --fidelity, --explain-plan, --post-validate, --post-validate-enforce, "
-            "--native and --duckdb-source."
+            "--native, --duckdb-source and --out-dir."
         ),
     ),
     otel_endpoint: str = typer.Option(
@@ -383,6 +394,7 @@ def run(
             vault=vault,
             key_label=key_label,
             evidence_out=evidence_out,
+            out_dir=out_dir,
             notify=notify,
             notify_on=notify_on,
             native=native,

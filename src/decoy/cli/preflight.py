@@ -4,34 +4,21 @@
 local checks that do not require the engine to execute the full pipeline.
 
 What preflight checks (honest framing)
-----------------------------------------
-1. YAML syntax:        Is the pipeline file a valid YAML document?
-2. Schema:             Does the config satisfy the PipelineConfig schema?
-3. Config logic:       Profile-free plan-compile checks (same as `decoy validate`).
-4. File existence:     Does each declared source file exist on disk?
-5. File readability:   Can each source file be opened for reading?
-6. Target overwrite:   Does any output target already exist (advisory)?
-7. Capacity (v1):      Out-of-core-FK memory feasibility and the generated-
-                       output floor. The build-floor estimate is advisory
-                       (warns, does not refuse); a fan-in impossibility and
-                       generated output that cannot fit memory exit
-                       EXIT_CAPACITY -- see the OOM checker v1 note.
-8. Native (Phase 3.1): decoy-engine-native companion health (pass/warn), plus
-                       a STATIC config-shape native-eligibility possibility
-                       -- not a guarantee of the resolved route at run time.
+--------------------------------------
+1. YAML syntax, schema and profile-free config logic.
+2. Project-layout output paths (the same refusals as `decoy validate`).
+3. Source file existence and readability.
+4. Existing output targets (advisory).
+5. Out-of-core-FK capacity and generated-output floor (hard refusals exit EXIT_CAPACITY).
+6. Native companion health and static config-shape eligibility.
 
 What preflight does NOT check
 ------------------------------
-* Platform preflight conditions (the platform's server-side pre-run checks
-  include secrets, RBAC, schedule validity, and network targets -- none of
-  those are local CLI checks).
-* Data validity or masking quality.
+* Platform preflight conditions such as secrets, RBAC, schedules, and network targets.
 * Engine run-time constraints beyond the out-of-core-FK capacity check above
   (provider capacity, null-bearing integer distributions) -- these require a
   profile pass during the run.
-* Vault or secrets accessibility.
-* Network connectivity.
-* Whether the engine can successfully execute the pipeline.
+* Vault or secret access, network connectivity, or successful engine execution.
 
 OOM checker v1 (docs/plans/2026-07-24-oom-checker-cli-v1.md): the capacity
 check is an "OOC-FK engine-gate capacity checker", NOT a whole-job OOM
@@ -279,38 +266,39 @@ def _check_source_files(raw: dict[str, Any], base_dir: Path, acc: _PreflightAccu
         )
 
 
-def _check_target_overwrite(
-    raw: dict[str, Any], acc: _PreflightAccumulator, base_dir: Path
-) -> None:
-    """Warn when a target exists, is invalid, or has no writable directory ancestor.
+def _check_target_overwrite(raw: dict[str, Any], acc: _PreflightAccumulator) -> None:
+    """Advisory: warn when an absolute output target is invalid, exists or cannot be written.
 
-    Placement goes through `RunLayout.place_target`; a missing parent is fine when an existing,
-    writable directory ancestor can hold the folders the writer creates.
+    These are warnings, not failures: the run overwrites, and the writer creates a missing
+    folder, so only an existing file or a parent no run could write is worth surfacing. A
+    relative path lands in a new run folder (AT-16), so none of these can apply to it.
     """
-    from decoy.cli.io import LayoutError, RunLayout, target_parent_writable
+    from decoy.cli.io import is_placed_relative, target_parent_writable
 
-    layout = RunLayout.fixed(base_dir)
     targets = raw.get("targets")
     for table_name, target in targets.items() if isinstance(targets, dict) else ():
         if not isinstance(target, dict) or target.get("type") not in ("file", None):
             continue
         out_path_str = target.get("path")
-        if not out_path_str:
+        if not isinstance(out_path_str, str) or is_placed_relative(out_path_str):
+            continue
+        if not Path(out_path_str).is_absolute():
             continue
         location = f"targets.{table_name}.path"
+        out_path = Path(out_path_str)
         try:
-            out_path = layout.place_target(out_path_str)
-        except (ValueError, OSError, LayoutError):
+            exists = out_path.exists()
+            writable = exists or target_parent_writable(out_path)
+        except (ValueError, OSError):
             msg = f"Output target path for table {table_name} is invalid."
             acc.add_warn(f"target.{table_name}.path_invalid", msg, location)
             continue
-        if out_path.exists():
+        if exists:
             msg = f"Output target already exists and would be overwritten: {out_path_str}"
             acc.add_warn(
                 name=f"target.{table_name}.would_overwrite", message=msg, location=location
             )
-            continue
-        if not target_parent_writable(out_path):
+        elif not writable:
             msg = f"Output target directory for table {table_name} cannot be created or written."
             acc.add_warn(f"target.{table_name}.parent_unwritable", msg, location)
 
@@ -755,11 +743,20 @@ def preflight(
         _emit_preflight_result(state, acc, config_str, fail_on_warning)
         raise typer.Exit(code=EXIT_USAGE)
 
+    # -- Step 3b: Project-layout checks --------------------------------------
+    from decoy.cli.io import layout_failures
+
+    for code, message, location in layout_failures(config, raw):
+        acc.add_fail(name=code, message=message, location=location, code=code)
+    if acc.has_failures:
+        _emit_preflight_result(state, acc, config_str, fail_on_warning)
+        raise typer.Exit(code=EXIT_USAGE)
+
     # -- Step 4: Source file checks ------------------------------------------
     _check_source_files(raw, config.parent, acc)
 
     # -- Step 5: Target overwrite advisory -----------------------------------
-    _check_target_overwrite(raw, acc, config.parent)
+    _check_target_overwrite(raw, acc)
 
     # -- Step 6: Capacity check (OOM checker v1) -----------------------------
     _check_capacity(raw, config, acc)

@@ -251,12 +251,13 @@ def test_every_top_level_command_is_in_readme_table_or_allowlisted() -> None:
 
 # ---------------------------------------------------------------------------
 # Flag-vocabulary grep gate (slice B1): the standalone flag `--out` is gone;
-# `--output`/`-o` is the one spelling. `--output` itself must not trip this.
+# `--output`/`-o` is the one spelling. `--output` and `--out-dir` (a folder, PROJECT-LAYOUT
+# plan 3.6) must not trip this.
 # ---------------------------------------------------------------------------
 
 
 def test_no_standalone_out_flag_in_source() -> None:
-    pattern = re.compile(r"--out(?!put)")
+    pattern = re.compile(r"--out(?!put|-dir)")
     offenders: list[str] = []
     for path in SRC_ROOT.rglob("*.py"):
         for lineno, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):

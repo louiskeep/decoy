@@ -87,6 +87,7 @@ __all__ = [
     "LocalTarget",
     "WriteMode",
     "describe",
+    "destination_entry",
     "fsync_directory",
     "publish_local_targets",
     "replace_symlink",
@@ -218,6 +219,18 @@ _OWNER_RW = 0o600
 # The fd aliases, matched on the user-given path before any symlink is resolved. Not all of
 # /dev or /proc: /dev/shm is a real tmpfs and must be staged.
 _FD_ALIAS = re.compile(r"/dev/(?:stdin|stdout|stderr|fd/[0-9]+)|/proc/self/fd/[0-9]+")
+
+
+def destination_entry(path: Path, *, follow_final: bool = False) -> Path:
+    """Return the strictly resolved parent and the entry an output writer uses."""
+    absolute = Path(path).absolute()
+    parent = Path(os.path.realpath(absolute.parent, strict=True))
+    entry = parent / absolute.name
+    if not follow_final:
+        return entry
+    followed = Path(os.path.realpath(entry))
+    followed_parent = Path(os.path.realpath(followed.parent, strict=True))
+    return followed_parent / followed.name
 
 
 def _final_bits(tmp: str, existing: os.stat_result | None, private: bool, created: int) -> int:
@@ -389,8 +402,18 @@ def _refuse_foreign_symlink(path: Path) -> None:
 @contextlib.contextmanager
 def _staged_target(path: Path, private: bool) -> Iterator[Path]:
     _require_component(path.name)
-    # POSIX keeps a leading "//" in abspath; collapse it so //dev/stdout is still an alias.
-    alias = re.sub(r"^/+", "/", os.path.abspath(path))
+    failed = False
+    failed_errno: int | None = None
+    try:
+        entry = destination_entry(path)
+    except OSError as exc:
+        failed, failed_errno = True, exc.errno
+    if failed:
+        raise AtomicWriteError(ATOMIC_WRITE_FAILED, failed_errno)
+    # Keep direct /proc/self and //dev aliases without text-collapsing a path that contains `..`.
+    written = re.sub(r"^/+", "/", os.fspath(path.absolute()))
+    resolved = re.sub(r"^/+", "/", os.fspath(entry))
+    alias = written if _FD_ALIAS.fullmatch(written) else resolved
     if not _private_file._WINDOWS and _FD_ALIAS.fullmatch(alias):
         if private:
             _restrict_fd_target(alias)
@@ -398,7 +421,6 @@ def _staged_target(path: Path, private: bool) -> Iterator[Path]:
         return
     _refuse_foreign_symlink(path)
     existing: os.stat_result | None = None
-    failed_errno: int | None = None
     failed = False
     try:
         existing = os.stat(path)
@@ -411,7 +433,13 @@ def _staged_target(path: Path, private: bool) -> Iterator[Path]:
     if existing is not None and any(kind(existing.st_mode) for kind in _SPECIAL_KINDS):
         yield path  # classified before realpath: /dev/stdout resolves to an unopenable name
         return
-    with _staged(Path(os.path.realpath(path)), private=private, existing=existing) as tmp:
+    try:
+        entry = destination_entry(path, follow_final=True)
+    except OSError as exc:
+        failed, failed_errno = True, exc.errno
+    if failed:
+        raise AtomicWriteError(ATOMIC_WRITE_FAILED, failed_errno)
+    with _staged(entry, private=private, existing=existing) as tmp:
         yield tmp
 
 
@@ -662,7 +690,14 @@ def publish_local_targets(
         raise AtomicWriteError(ATOMIC_BATCH_INVALID)
     for target in targets:
         _require_component(target.path.name)
-    reals = [Path(os.path.realpath(t.path)) for t in targets]
+    resolve_failed = False
+    resolve_errno: int | None = None
+    try:
+        reals = [destination_entry(t.path, follow_final=True) for t in targets]
+    except OSError as exc:
+        resolve_failed, resolve_errno = True, exc.errno
+    if resolve_failed:
+        raise AtomicWriteError(ATOMIC_WRITE_FAILED, resolve_errno)
     directory = reals[0].parent
     if any(r.parent != directory for r in reals) or len({r.name for r in reals}) != len(reals):
         raise AtomicWriteError(ATOMIC_BATCH_INVALID)
