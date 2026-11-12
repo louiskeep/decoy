@@ -52,6 +52,12 @@ so they cause neither V1 delays nor later rework:
 and its review, and `feat/v1plus-<slice>-<name>` for the build, stacked on the plan. The engine
 CHANGELOG entry for each slice says "V1+ track" and links back here.
 
+**Owner decision 2026-11-12 (cross-model gate deferred).** The per-slice Codex gate is replaced by one
+large Codex review across every built V1+ and V2 slice before any merge. Until then the Dennis-reviewed,
+T1-green slices count as a working base: new slices may stack on them. The gate is deferred, not
+passed; no slice records it as green. T3 on each merge head and the owner exceptions already listed
+still apply, and the 2026-11-07 do-not-merge instruction stands.
+
 | Slice | Repo | Plan branch | Build branch | State |
 |---|---|---|---|---|
 | V1P-2.1 check-digit schemes | engine | `plan/v1plus-p2.1-check-digit-schemes` | `feat/v1plus-p2.1-check-digit-schemes` | built, head `22ab5e51` (engine main `dd31ea91`, 0.19.0 with REG-RENUMBER, merged in 2026-11-07; changelog conflict only). Plan review PASS WITH CONCERNS (rev 2); code review PASS WITH CONCERNS (round 2, advisory fixed); T1 gates green on the new head, `registry_renumber.py --check` consistent. Still to do: Codex gate, T3 full suite on the merge head. Not merged (owner instruction 2026-11-07: do not merge) |

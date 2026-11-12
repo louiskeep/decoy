@@ -63,8 +63,14 @@ These apply unless a slice says otherwise, so the slices below do not repeat the
 Built through the standard dev loop (plan, independent plan review, build, independent code
 review, remediation) in parallel with CLI V1. Engine plans live in `E:docs/plans/2026-11-07-v2-*.md`;
 each records every review finding and its fix. None of these slices changes CLI V1 behavior
-except by adding provider names (5.4), and none is merged. Each still needs the cross-model gate
-and a T3 full-suite run on a merge head before any merge.
+except by adding provider names (5.4), and none is merged. Each still needs a T3 full-suite run on a merge head, and
+the one pre-merge cross-model review below, before any merge.
+
+**Owner decision 2026-11-12 (cross-model gate deferred).** The per-slice Codex gate is replaced by one
+large Codex review across every built V1+ and V2 slice before any merge. Until then the Dennis-reviewed,
+T1-green slices count as a working base: new slices may stack on them. The gate is deferred, not
+passed; no slice records it as green. T3 on each merge head and the owner exceptions already listed
+still apply, and the 2026-11-07 do-not-merge instruction stands.
 
 | Slice | Plan branch | Build branch (head) | Review state | Open |
 |---|---|---|---|---|
@@ -75,6 +81,7 @@ and a T3 full-suite run on a merge head before any merge.
 | V2-3.4 microaggregation (MDAV, library) | `plan/v2-3.4-microaggregation` | `feat/v2-3.4-microaggregation` (`d17dbaff`) | plan review PASS WITH CONCERNS; code review PASS WITH CONCERNS, then PASS. T1 gates all green; no ratchet growth | sdcMicro never run (no R in the build environment); cross-test with V2-3.2's `measure_k_anonymity` once that is on main; F-MDAV for larger tables |
 | V2-4.4 copula quality report (pairwise fidelity, DCR, attacks) | `plan/v2-4.4-copula-quality-report` | `feat/v2-4.4-copula-quality-report` (`7a79cc3d`), stacked on the copula branch | plan review FAIL then PASS WITH CONCERNS; code review FAIL (test gaps) then PASS WITH CONCERNS. T1: all green except the inherited copula census keys (sentry tests 4215 passed when run directly) | merges only after V2-4.2/4.3; `synthetic` must be drawn from the model by the wiring slice; moving `synth-report/v1` onto the new DCR core is CLI row 69a (SYNTH-DCR) |
 | V2-2.1 per-entity date offset (`date_shift` `entity_key`) | `plan/v2-2.1-entity-date-offset` | `feat/v2-2.1-entity-date-offset` (`8508a7f6`) | plan review PASS WITH CONCERNS; code review PASS WITH CONCERNS, re-review FAIL (multi-table fallback count) then PASS. T1 gates all green; no ratchet growth; registry consistent | owner 2026-11-08: the V1 `group_by` leak is CLI row 24zh, `group_by` kept; the near-miss and explicit-null `entity_key` refusals accepted as a narrow exception to dark; text keys drop trailing spaces only |
+| V2-3.3 enforcement search and suppression (slice 1: library) | `plan/v2-3.3-enforcement-search` (base `bc711b6c`: V2-3.1 build with V2-3.2 merged in) | not started | plan in progress | stacked on V2-3.1 and V2-3.2; merges after both; folds the duplicate `type_family` |
 
 ## Sprint order and dependencies
 
