@@ -1218,7 +1218,8 @@ Owner answers (Cam, 2026-11-09): "go with recommended". Every question below tak
 | What | Where | Size | Why there |
 |---|---|---|---|
 | project root, marker, selection, `ensure_decoy_dir` | `src/decoy/cli/io/_project.py` (new) | about 220 | CODEMAP "Where things go": reader and writer support belongs in `cli/io/`; `cli/` is frozen |
-| layout, placement context and collision check | `src/decoy/cli/io/_layout.py` (new in P2a, extended in P1b and P4) | P4 head 764, about +80, final below 900 | same; `resolved_output_collisions` sits beside the one output enumeration and reuses containment; no second resolver or new module |
+| layout and run placement | `src/decoy/cli/io/_layout.py` (new in P2a, extended in P1b and P4) | stays under the 800-line module cap | the one output enumeration and containment live here |
+| placement context and collision check | `src/decoy/cli/io/_placement.py` (new in P4) | about 130 | `OutputPlacement`, `resolved_output_collisions`, `fixed_target_overwrites`, `layout_issues` and `layout_failures`; imports the enumeration and containment from `_layout.py` (one way), so there is still one resolver; exported through `cli/io/__init__.py` unchanged |
 | pipeline argument | `src/decoy/cli/io/_pipelines.py` (new) | about 220 | the argument resolves to a file the I/O layer reads |
 | layout descriptors and public I/O API | `src/decoy/cli/io/_layout_errors.py` (new), `cli/io/__init__.py` | about 150 | the same CODEMAP row; one registry and public package boundary |
 | private run directory | `src/decoy/_private_file.py` | about +35 | existing private file and permission choke point |
@@ -1240,9 +1241,11 @@ logic to a flat `cli/run.py`. The later `--all` loop remains in `cli/project/_ru
 2340 lines and gets call-site edits only in P5 and P9: the parameter type, the `resolve_pipeline` call, and a
 call to `_layout.report_default_path`.
 
-V2-LOG size: at the P4 head, `cli/io/_layout.py` is 764 lines and this remediation is expected to leave it
-between 800 and 900; `cli/preflight.py` is already pinned at 891 and does not grow. Both are cleanup-pass
-items under the owner size rule, not P4 blockers. No P4 file crosses 900 and no new module is added.
+Size: the module-size sentry caps a CLI module at 800 lines. The collision check would take
+`cli/io/_layout.py` to about 880, so P4 moves the placement context and the collision and overwrite checks
+into the new `cli/io/_placement.py` (allowed: the flat `cli/` is frozen, `cli/io/` is not). The cap is not
+raised. `cli/preflight.py` is already pinned at 891 and does not grow; that is a cleanup-pass item under the
+owner size rule, not a P4 blocker.
 
 ## 13. Frozen contracts touched
 
