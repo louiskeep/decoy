@@ -74,5 +74,6 @@ as delivered.
   no engine phase events, so a chunked run exports the `decoy.run` root span only. Engine
   worker threads report to no recorder, so their phases are missing too. The `--rows`
   preview and the generate paths run through `run_pipeline` and export phase spans.
-- **Trust.** Self-signed or internal-CA collectors are not supported: the exporter trusts the
-  system certificate store only, and credential headers need `https`.
+- **Trust.** Self-signed or internal-CA collectors are not supported: the exporter uses the
+  CA list bundled with its HTTP client (certifi) and accepts no custom CA file. Credential
+  headers need `https`.

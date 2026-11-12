@@ -185,7 +185,7 @@ the same table from the CLI.
 - `docs/guides/shape-and-privacy/` -- user guide: check what shape masking
   kept, fit and generate look-alike data, read fidelity reports, and use the
   differential-privacy fit.
-- `docs/guides/telemetry.md` -- opt-in trace export to your collector: what is
+- `docs/guides/telemetry/README.md` -- opt-in trace export to your collector: what is
   sent, the closed attribute set and the limits (DP fits, lost spans).
 - `src/decoy/templates/` -- the starter templates `decoy init` ships.
 - `CHANGELOG.md` -- release notes and the versioning policy.
