@@ -365,7 +365,12 @@ def test_root_span_on_the_wire(ok) -> None:
     tel.exporter.shutdown()
 
 
-def test_resource_keys_are_checked_against_the_vocabulary() -> None:
+def test_resource_keys_are_checked_against_the_vocabulary(monkeypatch) -> None:
+    import decoy_engine.telemetry as engine_telemetry
+
     from decoy.telemetry import _resource_attributes
 
     assert set(_resource_attributes("1.0")) == {"service.name", "service.version"}
+    monkeypatch.setattr(engine_telemetry, "RESOURCE_KEYS", frozenset({"service.name"}))
+    with pytest.raises(ValueError):
+        build_provider("http://127.0.0.1:9/v1/traces", {}, service_version="t")
