@@ -12,6 +12,7 @@ from decoy.cli.io import (
     iter_source_chunks,
     open_run_layout,
     parquet_schema,
+    quarantine_enabled,
     read_source,
     resolve_target_format,
     resolved_source_config,
@@ -157,8 +158,7 @@ def _check_chunked_tables(config_dict: dict) -> None:
     here reads the config that will run, so an input the probe could not judge still stops.
     """
     _refuse_chunked_integrity_requested(config_dict)
-    quarantine = config_dict.get("quarantine")
-    if isinstance(quarantine, dict) and quarantine.get("enabled"):
+    if quarantine_enabled(config_dict):
         raise _ChunkedQuarantineError(
             "--chunked does not support quarantine (quarantine.enabled is true). "
             "Run without --chunked, or turn quarantine off."
@@ -304,9 +304,6 @@ def execute(ctx: RunContext) -> None:
             if ctx._report_flags
             else {}
         )
-        # Sent only when set, so an engine without the keyword still runs a config without it.
-        quarantine_path = layout.place_quarantine(ctx.config_dict)
-        quarantine_kwargs = {"quarantine_path": quarantine_path} if quarantine_path else {}
         result = run_pipeline(
             resolved_source_config(ctx.config_dict, ctx.config.parent),
             ctx.sources,
@@ -315,7 +312,7 @@ def execute(ctx: RunContext) -> None:
             instance_default_locale=instance_locale,
             vault_writer=ctx.vault_writer,
             base_dir=ctx.config.parent,
-            **quarantine_kwargs,
+            quarantine_path=layout.place_quarantine(ctx.config_dict),
             **_key_kwargs,
             **_report_kwargs,
             **_native_gate.run_pipeline_kwargs(ctx.gate_result),
@@ -366,6 +363,8 @@ def execute_preview(ctx: RunContext) -> None:
         derive_key=ctx.resolver,
         instance_default_locale=instance_locale,
         base_dir=ctx.config.parent,
+        # No layout here and nothing is written: `refuse_preview` rejects an enabled quarantine.
+        quarantine_path=None,
         **_resources.run_pipeline_kwargs(ctx._res),
     )
     order = [name for name, _parents in generation_order(ctx.config_dict)]

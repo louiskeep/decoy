@@ -347,9 +347,6 @@ def tokenize(
             # ref itself.
             with _mask_secret.admitted_key_provider(config_dict) as key_provider:
                 token_vault = LocalTokenVault(vault, create=True)
-                # Sent only when set, so an engine without the keyword still runs a config without it.
-                quarantine_path = layout.place_quarantine(config_dict)
-                quarantine_kwargs = {"quarantine_path": quarantine_path} if quarantine_path else {}
                 result = run_pipeline(
                     resolved_source_config(config_dict, config.parent),
                     sources,
@@ -358,7 +355,7 @@ def tokenize(
                     token_vault_writer=token_vault,
                     key_provider=key_provider,
                     base_dir=config.parent,
-                    **quarantine_kwargs,
+                    quarantine_path=layout.place_quarantine(config_dict),
                 )
             vault_count = token_vault.count()
             row_count = sum(len(tbl) for tbl in result.outputs.values())

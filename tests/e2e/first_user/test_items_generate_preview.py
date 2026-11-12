@@ -211,6 +211,43 @@ def test_rows_refuses_out_dir_and_creates_no_folder(tmp_path: Path) -> None:
     assert _written(tmp_path) == before
 
 
+def _with_quarantine(cfg: Path, enabled: bool) -> None:
+    raw = yaml.safe_load(cfg.read_text(encoding="utf-8"))
+    raw["quarantine"] = {"enabled": enabled, "output_path": "q.jsonl", "triggers": ["format_error"]}
+    cfg.write_text(yaml.safe_dump(raw), encoding="utf-8")
+
+
+def test_rows_refuses_an_enabled_quarantine_before_any_engine_call(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import decoy_engine
+
+    cfg = _write(tmp_path, _parent_child())
+    _with_quarantine(cfg, True)
+    before = _written(tmp_path)
+    calls: list[int] = []
+    monkeypatch.setattr(decoy_engine, "run_pipeline", lambda *a, **k: calls.append(1))
+
+    res = runner.invoke(app, ["run", str(cfg), "--rows", "5"])
+
+    assert res.exit_code == EXIT_USAGE, res.output
+    assert "--rows" in _flat(res.output) and "quarantine" in _flat(res.output)
+    assert calls == []
+    assert _written(tmp_path) == before
+
+
+def test_rows_with_quarantine_off_previews_as_before(tmp_path: Path) -> None:
+    cfg = _write(tmp_path, _parent_child())
+    _with_quarantine(cfg, False)
+    before = _written(tmp_path)
+
+    res = runner.invoke(app, ["run", str(cfg), "--rows", "5", "--json"])
+
+    assert res.exit_code == 0, res.output
+    assert json.loads(res.stdout)["preview"] is True
+    assert _written(tmp_path) == before
+
+
 def test_rows_refuses_a_mask_table(tmp_path: Path) -> None:
     cfg = _mixed(tmp_path)
     before = _written(tmp_path)

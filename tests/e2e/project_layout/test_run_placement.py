@@ -674,12 +674,14 @@ def test_an_absolute_quarantine_path_is_honored(tmp_path: Path, monkeypatch) -> 
     assert seen[0]["quarantine_path"] == str(tmp_path / "abs-q.jsonl")
 
 
-def test_a_config_without_quarantine_passes_no_quarantine_path(tmp_path: Path, monkeypatch) -> None:
+def test_a_config_without_quarantine_passes_a_none_quarantine_path(
+    tmp_path: Path, monkeypatch
+) -> None:
     root = _project(tmp_path)
     cfg = _write(root, "pipelines/orders/pipeline.yaml", _config(root))
     seen = _spy_run_pipeline(monkeypatch)
     assert _run(cfg).exit_code == 0
-    assert "quarantine_path" not in seen[0]
+    assert seen[0]["quarantine_path"] is None
 
 
 def test_the_yaml_file_is_untouched_by_a_run(tmp_path: Path) -> None:
