@@ -7,7 +7,7 @@ import typer
 from rich.text import Text
 
 from decoy.cli import gen
-from decoy.cli.exit_codes import EXIT_FINDINGS
+from decoy.cli.exit_codes import run_exit_code
 from decoy.cli.io import shown_path
 from decoy.cli.run._context import Mode, RunContext
 from decoy.cli.run._prepare import _has_kind
@@ -118,12 +118,12 @@ def finish(ctx: RunContext) -> None:
             payload["report"] = report
         emit_json(ctx.state, payload)
         if _enforce_fires:
-            raise typer.Exit(code=EXIT_FINDINGS)
+            raise typer.Exit(code=run_exit_code(blocking_failed=True))
         return
 
     if ctx.state.mode is OutputMode.quiet:
         if _enforce_fires:
-            raise typer.Exit(code=EXIT_FINDINGS)
+            raise typer.Exit(code=run_exit_code(blocking_failed=True))
         return
 
     facts = [
@@ -176,7 +176,7 @@ def finish(ctx: RunContext) -> None:
         render_post_validation(ctx.state, _qm, enforce=ctx.post_validate_enforce)
 
     if _enforce_fires:
-        raise typer.Exit(code=EXIT_FINDINGS)
+        raise typer.Exit(code=run_exit_code(blocking_failed=True))
 
 
 def finish_preview(ctx: RunContext) -> None:

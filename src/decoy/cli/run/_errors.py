@@ -8,7 +8,7 @@ import typer
 from decoy import _mask_secret_guidance, _native_gate, _resources
 from decoy._atomic import AtomicWriteError, describe
 from decoy.cli import gen
-from decoy.cli.exit_codes import EXIT_CAPACITY, EXIT_RUNTIME, EXIT_USAGE
+from decoy.cli.exit_codes import EXIT_CAPACITY, EXIT_USAGE, run_exit_code
 from decoy.cli.extras import (
     MissingExtraError,
     UnsupportedCloudEndpointError,
@@ -139,19 +139,25 @@ def fail(ctx: RunContext, exc: Exception) -> NoReturn:
     if isinstance(exc, _native_gate.NativeGateError):
         native_code = exc.code
 
+    # The category names the failure; the exit integer comes from `RUN_EXIT_MAP`.
     if isinstance(exc, PreRunCheckError):
-        _exit_code = exc.exit_code
+        if exc.exit_code == EXIT_CAPACITY:
+            _category = "capacity"
+        elif exc.exit_code == EXIT_USAGE:
+            _category = "usage"
+        else:
+            raise RuntimeError("pre-run check carried an exit code with no category")
     elif capacity_code is not None or out_of_memory:
-        _exit_code = EXIT_CAPACITY
+        _category = "capacity"
     elif isinstance(exc, GenerationError) and exc.code == UNIQUENESS_IMPOSSIBLE_CODE:
         # A `unique` column or pair the data cannot satisfy (a parent with too
         # few distinct keys, a faker type that ran out) is fixed in the config, so it exits 1
         # like the validate-time domain checks. Other GenerationError codes (dtype_unsafe,
         # timezone_naive_datetime) stay runtime errors. The engine text is value-free.
-        _exit_code = EXIT_USAGE
+        _category = "usage"
     else:
-        _exit_code = (
-            EXIT_USAGE
+        _category = (
+            "usage"
             if isinstance(
                 exc,
                 (
@@ -204,7 +210,7 @@ def fail(ctx: RunContext, exc: Exception) -> NoReturn:
                     *_mask_secret_error_types,
                 ),
             )
-            else EXIT_RUNTIME
+            else "runtime"
         )
     # CLI QA fix (2026-06-02, F8): cap the error message at 500
     # chars before emitting through --json. Engine exceptions can
@@ -317,4 +323,4 @@ def fail(ctx: RunContext, exc: Exception) -> NoReturn:
             )
     if ctx.state.verbose:
         print_traceback(ctx.state)
-    raise typer.Exit(code=_exit_code)
+    raise typer.Exit(code=run_exit_code(_category))
