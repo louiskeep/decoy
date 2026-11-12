@@ -21,6 +21,7 @@ __all__ = [
     "LIBRARY_LOCK_UNAVAILABLE",
     "LIBRARY_PATH_TOO_LONG",
     "LIBRARY_POLICY_INVALID",
+    "LIBRARY_POLICY_UNTRUSTED",
     "LIBRARY_READ_FAILED",
     "LIBRARY_WRITE_FAILED",
     "RECORD_CORRUPT",
@@ -28,6 +29,7 @@ __all__ = [
     "RECORD_LINK_MISSING",
     "RECORD_NOT_FOUND",
     "REF_NAME_INVALID",
+    "REF_NAME_RESERVED",
     "LibraryError",
     "library_error",
 ]
@@ -44,8 +46,12 @@ RECORD_LINK_MISSING = "record_link_missing"
 RECORD_NOT_FOUND = "record_not_found"
 # A ref kind that is not a registered kind, or a name outside the ref grammar (plan 4.5).
 REF_NAME_INVALID = "ref_name_invalid"
+# A one-part ref name that is a scope other refs live under (`scan-set/baseline/<slug>`).
+REF_NAME_RESERVED = "ref_name_reserved"
 # `.decoy/library.yaml` is unreadable, not YAML, or fails the policy model (field names only).
 LIBRARY_POLICY_INVALID = "library_policy_invalid"
+# `library.yaml` owned by another user (the project marker rule, git `safe.directory`).
+LIBRARY_POLICY_UNTRUSTED = "library_policy_untrusted"
 # An object file exists but cannot be read (permissions, I/O error); not corruption.
 LIBRARY_READ_FAILED = "library_read_failed"
 # A library file larger than its cap: refused unread, so a planted huge file cannot exhaust memory.

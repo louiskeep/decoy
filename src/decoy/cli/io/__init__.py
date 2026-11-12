@@ -74,7 +74,15 @@ from decoy.cli.io._placement import (
     layout_issues,
     resolved_output_collisions,
 )
-from decoy.cli.io._project import DECOY_DIR, Project, ensure_decoy_dir, find_project
+from decoy.cli.io._project import (
+    DECOY_DIR,
+    OwnedYaml,
+    OwnedYamlError,
+    Project,
+    ensure_decoy_dir,
+    find_project,
+    read_owned_yaml,
+)
 from decoy.cli.io._scan_set import (
     ScanSetFormatError,
     load_scan_set,
@@ -113,6 +121,8 @@ __all__ = [
     "LayoutError",
     "LayoutWarning",
     "OutputPlacement",
+    "OwnedYaml",
+    "OwnedYamlError",
     "PipelineEntry",
     "PipelineName",
     "PipelineRef",
@@ -157,6 +167,7 @@ __all__ = [
     "pipeline_option",
     "prepare_out",
     "read_claim",
+    "read_owned_yaml",
     "read_small_file",
     "read_source",
     "relative_outputs",

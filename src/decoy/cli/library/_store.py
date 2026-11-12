@@ -40,6 +40,7 @@ from decoy.cli.library._fs import ensure_private_dir, read_capped, write_dotfile
 from decoy.cli.library._paths import (
     GITATTRIBUTES,
     GITATTRIBUTES_TEXT,
+    ID_PREFIX,
     LAYOUT_FILE,
     LAYOUT_VERSION,
     LIBRARY,
@@ -48,15 +49,12 @@ from decoy.cli.library._paths import (
     check_root_budget,
     is_project_folder,
     record_digest,
+    record_prefix,
 )
 from decoy.cli.library._refs import read_ref, set_ref
 
 __all__ = ["Library", "PutResult", "open_library"]
 
-_PREFIX = "sha256:"
-_HEX = frozenset("0123456789abcdef")
-_DIGEST_CHARS = 64  # a full id; `record_digest` checks one
-_MIN_PREFIX = 8  # as git allows abbreviated object names
 _SUFFIX = ".json"
 # Records hold names, counts and digests only; 16 MiB is far above any real one and keeps a
 # planted file from being read whole. `put` refuses a record it could not read back.
@@ -142,8 +140,8 @@ class Library:
 
         Empty for no match or for text that is not a prefix; more than one means ambiguous.
         """
-        digest = text.removeprefix(_PREFIX)
-        if not (_MIN_PREFIX <= len(digest) <= _DIGEST_CHARS and set(digest) <= _HEX):
+        digest = record_prefix(text)
+        if digest is None:
             return ()
         failure: OSError | None = None
         names: list[str] = []
@@ -156,13 +154,14 @@ class Library:
         if failure is not None:
             raise library_error(LIBRARY_READ_FAILED, failure)
         rest = digest[2:]
+        found = (f"{ID_PREFIX}{digest[:2]}{name.removesuffix(_SUFFIX)}" for name in names)
         return tuple(
             sorted(
-                f"{_PREFIX}{digest[:2]}{name.removesuffix(_SUFFIX)}"
-                for name in names
+                record_id
+                for record_id, name in zip(found, names)
                 if name.endswith(_SUFFIX)
                 and name.startswith(rest)
-                and record_digest(f"{_PREFIX}{digest[:2]}{name.removesuffix(_SUFFIX)}") is not None
+                and record_digest(record_id) is not None
             )
         )
 

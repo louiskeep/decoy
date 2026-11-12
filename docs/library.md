@@ -85,15 +85,18 @@ Errors name a code and an error class, never a path.
 A ref is a name for a record: `library/refs/<kind>/<name>` holds one record id. The kind is a
 record kind Decoy knows (`scan-set`, `evidence`, ...). A name is 1 to 64 characters of lower-case
 letters, digits, `.`, `_` and `-`, starting with a letter or digit; one `/` is allowed for a
-pipeline scope (`claims/baseline`). Anything else is refused with `ref_name_invalid`. A ref can
-only point at a stored record (`record_not_found` otherwise).
+pipeline scope (`claims/baseline`). Anything else is refused with `ref_name_invalid`. The one-part
+name `baseline` is refused with `ref_name_reserved`: it is the scope of `scan-set/baseline/<slug>`.
+A ref can only point at a stored record (`record_not_found` otherwise). A ref file is read through
+the same safe reader as records, capped at 128 bytes.
 
 Moving a ref takes the library lock, a SQLite lock on `library/index.sqlite`, which works the
 same on Linux, macOS and Windows. A second process that wants to move a ref waits up to 5
 seconds and then fails with `library_busy`; it never overwrites silently. If the lock cannot be
 taken at all (the file cannot be opened), the update fails with `library_lock_unavailable`. On
 Windows, a ref file another program holds open is retried for about a second, then
-`library_busy`. Record writes never take the lock.
+`library_busy`; any other write failure, a permission denial included, is `library_write_failed`.
+Record writes never take the lock.
 
 The newest record of a kind is computed, not stored as a ref; that arrives with the index.
 
@@ -112,7 +115,9 @@ retention:
 
 Keys you leave out keep their defaults. An unknown key, a kind Decoy does not know, a number
 written as text, or a count below 1 makes the file invalid (`library_policy_invalid`, naming the
-field, never its value). Nothing applies the policy yet: prune and log rotation arrive later.
+field, never its value). The file is read like the project marker: a regular file of at most
+64 KiB, owned by you; one another user owns is refused with `library_policy_untrusted`. Nothing
+applies the policy yet: prune and log rotation arrive later.
 
 ## File modes
 

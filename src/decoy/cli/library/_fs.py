@@ -15,11 +15,15 @@ Every failure leaves as `LibraryError` with `library_write_failed`, `library_rea
 
 from __future__ import annotations
 
-import errno
 from pathlib import Path
 
-from decoy import _private_file
-from decoy._atomic import AtomicWriteError, WriteMode, write_atomic, write_local_target
+from decoy._atomic import (
+    ATOMIC_TARGET_BUSY,
+    AtomicWriteError,
+    WriteMode,
+    write_atomic,
+    write_local_target,
+)
 from decoy._private_file import PRIVATE_EXISTS, PrivateFileError, create_private_directory
 from decoy.cli.io import UnsafeFileError, read_small_file
 from decoy.cli.library._errors import (
@@ -61,7 +65,8 @@ def replace_file(directory: Path, name: str, data: bytes, *, tmp_dir: Path) -> N
     """Replace `directory/name` with `data` in one step (refs, plan 4.9 `REPLACE`).
 
     On Windows a target another program holds open is retried by `_atomic` (bounded backoff,
-    about one second); still held after that, it is `library_busy`.
+    about one second); still held after that, the writer says `atomic_target_busy` and this is
+    `library_busy`. Every other failure, an ACL deny included, is `library_write_failed`.
     """
     _write(directory, name, data, WriteMode.REPLACE, tmp_dir=tmp_dir)
 
@@ -75,11 +80,8 @@ def _write(directory: Path, name: str, data: bytes, mode: WriteMode, *, tmp_dir:
         failure = exc
     if failure is None:
         return created
-    # `_atomic` retried a held-open target on Windows only; what is left is a busy target.
-    held = _private_file._WINDOWS and failure.errno in (errno.EACCES, errno.EPERM)
-    if mode is WriteMode.REPLACE and held:
-        raise library_error(LIBRARY_BUSY, failure)
-    raise library_error(LIBRARY_WRITE_FAILED, failure)
+    code = LIBRARY_BUSY if failure.code == ATOMIC_TARGET_BUSY else LIBRARY_WRITE_FAILED
+    raise library_error(code, failure)
 
 
 def write_dotfile_once(path: Path, data: bytes) -> bool:
