@@ -286,14 +286,14 @@ def test_a_writer_back_on_a_base_dir_is_caught() -> None:
 
 
 def _target_check_builds_path(source: str) -> bool | None:
-    """True when the target check calls `place_target` and constructs no path itself.
+    """True when the target check skips `place_target`, builds a path or asks `os.path.isabs`.
 
     None when the function is missing, so a rename fails the test instead of passing it.
     """
     for node in ast.walk(ast.parse(source)):
         if isinstance(node, ast.FunctionDef) and node.name == TARGET_CHECK:
             names = {_builder_name(c) for c in ast.walk(node) if isinstance(c, ast.Call)}
-            return "place_target" not in names or bool(names & BUILDERS)
+            return "place_target" not in names or bool(names & (BUILDERS | {"isabs"}))
     return None
 
 
@@ -308,6 +308,7 @@ def test_validate_target_check_places_targets_only_through_place_target() -> Non
         "out = Path(raw)",
         "out = PurePath(raw)",
         "out = layout.place_target(raw)\n    other = Path(raw)",
+        "out = layout.place_target(raw) if os.path.isabs(raw) else None",
         "out = raw",
     ],
 )

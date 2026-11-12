@@ -16,7 +16,7 @@ import uuid
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path, PurePosixPath, PureWindowsPath
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, TypeGuard
 
 from decoy._atomic import (
     AtomicWriteError,
@@ -535,7 +535,7 @@ class RunLayout:
         """
         from decoy.cli._sources import resolve_path
 
-        if Path(raw).is_absolute() or (self._run is None and not self._contained):
+        if is_absolute_local(raw) or (self._run is None and not self._contained):
             return resolve_path(raw, self._base)
         if self._run is None and not self._base.exists():
             RunLayout.out_dir(self._base, create=True)
@@ -688,7 +688,16 @@ def is_placed_relative(raw: object) -> bool:
     Empty strings count so the layout gate can refuse them. A URL is only a string whose
     scheme and `://` start at offset zero; URL-like text later in a relative path is local.
     """
-    return isinstance(raw, str) and not Path(raw).is_absolute() and _URL_PATH.match(raw) is None
+    return isinstance(raw, str) and not is_absolute_local(raw) and _URL_PATH.match(raw) is None
+
+
+def is_absolute_local(raw: object) -> TypeGuard[str]:
+    """True when `raw` is a path that placement leaves where it is.
+
+    `pathlib` decides, as in `place_target`. `os.path.isabs` disagrees with it on Windows for a
+    rooted path with no drive (`\\x`, `/x`) and differs between Python versions.
+    """
+    return isinstance(raw, str) and Path(raw).is_absolute()
 
 
 def relative_outputs(config_dict: dict) -> list[tuple[str, str]]:

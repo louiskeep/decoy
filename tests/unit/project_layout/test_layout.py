@@ -30,6 +30,7 @@ from decoy.cli.io import (
     contained_path,
     create_run_folder,
     has_placed_output,
+    is_absolute_local,
     is_placed_relative,
     is_run_id,
     layout_issues,
@@ -559,3 +560,23 @@ def test_a_symlinked_claim_is_no_claim_and_is_not_read_through(
     thread.join(10)
     assert not thread.is_alive(), "reading the claim followed the link"
     assert result == [None]
+
+
+@pytest.mark.parametrize(
+    ("raw", "absolute"),
+    [
+        ("/data/out.csv", True),
+        ("out.csv", False),
+        ("sub/out.csv", False),
+        ("~/out.csv", False),
+        ("", False),
+        ("s3://bucket/out.csv", False),
+        (None, False),
+        (Path("/data/out.csv"), False),
+    ],
+)
+def test_is_absolute_local_follows_pathlib(raw: object, absolute: bool) -> None:
+    assert is_absolute_local(raw) is absolute
+    if isinstance(raw, str):
+        assert is_absolute_local(raw) is Path(raw).is_absolute()
+        assert not (is_absolute_local(raw) and is_placed_relative(raw))

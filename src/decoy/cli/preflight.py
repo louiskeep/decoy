@@ -49,7 +49,6 @@ validate command's code path.
 
 from __future__ import annotations
 
-import os
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -274,7 +273,7 @@ def _check_target_overwrite(raw: dict[str, Any], acc: _PreflightAccumulator, bas
     folder, so only an existing file or a parent no run could write is worth surfacing. A
     relative path lands in a new run folder (AT-16), so none of these can apply to it.
     """
-    from decoy.cli.io import LayoutError, RunLayout, target_parent_writable
+    from decoy.cli.io import LayoutError, RunLayout, is_absolute_local, target_parent_writable
 
     layout = RunLayout.fixed(base)
     targets = raw.get("targets")
@@ -282,7 +281,7 @@ def _check_target_overwrite(raw: dict[str, Any], acc: _PreflightAccumulator, bas
         if not isinstance(target, dict) or target.get("type") not in ("file", None):
             continue
         out_path_str = target.get("path")
-        if not isinstance(out_path_str, str) or not os.path.isabs(out_path_str):
+        if not is_absolute_local(out_path_str):
             continue
         location = f"targets.{table_name}.path"
         try:
