@@ -748,15 +748,10 @@ def preflight(
         raise typer.Exit(code=EXIT_USAGE)
 
     # -- Step 3b: Project-layout checks --------------------------------------
-    from decoy.cli.io import layout_issues
+    from decoy.cli.io import layout_failures
 
-    for location, refusal in layout_issues(config, raw):
-        acc.add_fail(
-            name=refusal.code,
-            message=refusal.message,
-            location=location,
-            code=refusal.code,
-        )
+    for code, message, location in layout_failures(config, raw):
+        acc.add_fail(name=code, message=message, location=location, code=code)
     if acc.has_failures:
         _emit_preflight_result(state, acc, config_str, fail_on_warning)
         raise typer.Exit(code=EXIT_USAGE)

@@ -741,6 +741,11 @@ def layout_issues(config: Path, config_dict: dict) -> list[tuple[str | None, Lay
     return issues
 
 
+def layout_failures(config: Path, config_dict: dict) -> list[tuple[str, str, str | None]]:
+    """`layout_issues` as plain `(code, message, location)` rows for the preflight gate."""
+    return [(err.code, err.message, loc) for loc, err in layout_issues(config, config_dict)]
+
+
 def open_run_layout(
     config: Path, config_dict: dict, invocation_id: str, *, project: Path | None = None
 ) -> RunLayout:

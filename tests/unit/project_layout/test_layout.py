@@ -65,7 +65,7 @@ def test_contained_path_refuses_a_value_error_from_resolution(
         ({"format": "csv", "path": "out.csv"}, True, True, True, False),
         ({"type": None, "format": "csv", "path": "out.csv"}, True, True, True, False),
         ({"type": "file", "format": "csv", "path": ""}, True, False, True, True),
-        ({"type": "file", "format": "csv", "path": "/tmp/out.csv"}, True, False, True, False),
+        ({"type": "file", "format": "csv", "path": "<abs>"}, True, False, True, False),
         (
             {"type": "file", "format": "csv", "path": "https://example.test/out.csv"},
             True,
@@ -94,6 +94,13 @@ def test_every_output_consumer_agrees_with_the_one_enumerator(
     root.mkdir()
     (root / "decoy.yaml").write_text("kind: decoy-project/v1\n", encoding="utf-8")
     config_path = _yaml(root, "pipelines/orders/pipeline.yaml")
+    absolute = str(tmp_path / "elsewhere" / "out.csv")
+    entry = {k: (absolute if v == "<abs>" else v) for k, v in entry.items()}
+    # Every named file exists, so the overwrite advisory is decided by the path kind alone.
+    (tmp_path / "elsewhere").mkdir()
+    (tmp_path / "elsewhere" / "out.csv").write_text("a\n", encoding="utf-8")
+    (root / "out.csv").write_text("a\n", encoding="utf-8")
+    monkeypatch.chdir(root)
     config = {"targets": {"orders": entry}}
     found = relative_outputs(config)
     raw = entry.get("path")
@@ -104,7 +111,8 @@ def test_every_output_consumer_agrees_with_the_one_enumerator(
 
     acc = preflight._PreflightAccumulator()
     preflight._check_target_overwrite(config, acc)
-    assert not acc.checks
+    # Only the absolute row is advisory-checked; relative rows land in a new run folder.
+    assert bool(acc.checks) is (entry.get("path") == absolute)
 
     monkeypatch.setattr(_targets, "write_table", lambda *_args, **_kwargs: None)
     published = write_targets(

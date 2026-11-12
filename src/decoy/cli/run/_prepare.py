@@ -188,6 +188,7 @@ def refuse_preview(ctx: RunContext) -> None:
             ("--post-validate-enforce", ctx.post_validate_enforce),
             ("--native", ctx.native),
             ("--duckdb-source", bool(ctx.duckdb_source)),
+            ("--out-dir", ctx.out_dir is not None),
         )
         if given
     ]
