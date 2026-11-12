@@ -144,7 +144,8 @@ def test_cli_owned_refusals_have_no_reason(tmp_path: Path, index: int) -> None:
         exc = _make(types[index])
     code, payload, _ = _run_failing(tmp_path, exc)
     assert "reason" not in payload
-    assert code in {1, 3}
+    # The vault write failure is a runtime refusal; every other owned type is a usage one.
+    assert code == (3 if types[index] is _errors._VaultWriteError else 1)
 
 
 @pytest.mark.parametrize(("exit_code", "kind"), [(1, "validation"), (5, "capacity")])
@@ -202,6 +203,11 @@ def test_usage_types_single_source(tmp_path: Path) -> None:
         MaskSecretError,
     )
     assert _errors._usage_types() == base
+
+    # Both rules read it: a type from the tuple exits 1 and, being the CLI's, has no reason.
+    code, payload, _ = _run_failing(tmp_path, DuckDBSourceError(MARKER))
+    assert code == 1
+    assert "reason" not in payload
 
     # One source: a type added to `_usage_types()` alone is exit 1 and carries no reason.
     class Sentinel(Exception):
