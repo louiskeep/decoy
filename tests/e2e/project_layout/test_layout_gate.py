@@ -212,9 +212,9 @@ def test_a_symlink_ancestor_cannot_leave_a_typed_out_dir(tmp_path: Path, monkeyp
     build.mkdir()
     (build / "esc").symlink_to(outside, target_is_directory=True)
     cfg = _write(root, "pipelines/orders/pipeline.yaml", _config(root, "esc/x.csv"))
-    result = runner.invoke(app, ["run", str(cfg), "--out-dir", str(build)])
+    result = runner.invoke(app, ["run", str(cfg), "--out-dir", str(build), "--json"])
     assert result.exit_code == EXIT_USAGE, result.output
-    assert ESCAPES in result.output
+    assert ESCAPES in _codes(result.output)
     assert list(outside.iterdir()) == []
 
 
@@ -354,3 +354,275 @@ def test_no_source_row_value_reaches_an_escape_refusal(tmp_path: Path) -> None:
     assert result.exit_code == EXIT_USAGE
     assert "a@example.com" not in result.output
     assert os.fspath(tmp_path / "x.csv") not in result.output
+
+
+# --- AT-30 the placement matrix (plan 3.6.1 A) ---------------------------------------------
+
+COLLISION = "layout.output_path_collision"
+UNUSABLE = "layout.output_dir_unusable"
+
+
+def _break_marker(root: Path) -> None:
+    (root / "decoy.yaml").write_text("kind: other\n", encoding="utf-8")
+
+
+def _generate_config(root: Path, target: str = "g.csv") -> Path:
+    cfg = {
+        "version": 2,
+        "global_settings": {"seed": 3},
+        "sources": {},
+        "tables": [
+            {
+                "name": "g",
+                "row_count": 10,
+                "generate_columns": [{"name": "pid", "type": "sequence", "start": 1, "step": 1}],
+            }
+        ],
+        "targets": {"g": {"type": "file", "format": "csv", "path": target}},
+    }
+    return _write(root, "pipelines/gen/pipeline.yaml", cfg)
+
+
+def test_layout_gate_matrix_out_dir_skips_project_checks(
+    tmp_path: Path, read_spy: list[str]
+) -> None:
+    root = _project(tmp_path)
+    _break_marker(root)
+    cfg = _write(root, "pipelines/orders/pipeline.yaml", _config(root))
+    build = tmp_path / "build"
+    result = runner.invoke(app, ["run", str(cfg), "--out-dir", str(build), "--json"])
+    assert result.exit_code == EXIT_OK, result.output
+    assert (build / "masked.csv").is_file()
+    assert not (root / "out").exists()
+
+
+def test_layout_gate_matrix_preflight_keeps_project_checks(
+    tmp_path: Path, read_spy: list[str]
+) -> None:
+    root = _project(tmp_path)
+    _break_marker(root)
+    cfg = _write(root, "pipelines/orders/pipeline.yaml", _config(root))
+    result = runner.invoke(app, ["validate", "preflight", str(cfg), "--json"])
+    assert result.exit_code == EXIT_USAGE, result.output
+    assert "layout.project_marker_invalid" in _codes(result.output)
+    assert read_spy == []
+
+
+@pytest.mark.usefixtures("mask_secret")
+def test_layout_gate_matrix_preview_skips_layout_checks(tmp_path: Path) -> None:
+    root = _project(tmp_path)
+    _break_marker(root)
+    cfg = _generate_config(root)
+    result = runner.invoke(app, ["run", str(cfg), "--rows", "5", "--json"])
+    assert result.exit_code == EXIT_OK, result.output
+    assert not (root / "out").exists()
+
+
+@pytest.mark.usefixtures("mask_secret")
+def test_layout_gate_matrix_preview_skips_the_escape_check(tmp_path: Path) -> None:
+    root = _project(tmp_path)
+    cfg = _generate_config(root, "../../g.csv")
+    result = runner.invoke(app, ["run", str(cfg), "--rows", "5", "--json"])
+    assert result.exit_code == EXIT_OK, result.output
+
+
+def test_layout_gate_matrix_out_dir_budget_runs_against_the_directory(
+    tmp_path: Path, monkeypatch, read_spy: list[str]
+) -> None:
+    root = _project(tmp_path)
+    _break_marker(root)
+    long_rel = "/".join(["d" * 60] * 5) + "/masked.csv"
+    cfg = _write(root, "pipelines/orders/pipeline.yaml", _config(root, long_rel))
+    build = tmp_path / "build"
+    build.mkdir()
+    monkeypatch.setattr("decoy.cli.io._layout._on_windows", lambda: True)
+    result = runner.invoke(app, ["run", str(cfg), "--out-dir", str(build), "--json"])
+    assert result.exit_code == EXIT_USAGE, result.output
+    assert "layout.path_too_long" in _codes(result.output)
+    assert read_spy == []
+
+
+def test_layout_gate_matrix_out_dir_target_that_exists_warns(tmp_path: Path) -> None:
+    root = _project(tmp_path)
+    cfg = _write(root, "pipelines/orders/pipeline.yaml", _config(root))
+    build = tmp_path / "build"
+    build.mkdir()
+    (build / "masked.csv").write_text("old\n", encoding="utf-8")
+    result = runner.invoke(app, ["run", str(cfg), "--out-dir", str(build)])
+    assert result.exit_code == EXIT_OK, result.output
+    assert "1 pre-run warning(s)" in result.output
+
+
+def test_layout_gate_matrix_out_dir_with_no_old_file_does_not_warn(tmp_path: Path) -> None:
+    root = _project(tmp_path)
+    cfg = _write(root, "pipelines/orders/pipeline.yaml", _config(root))
+    build = tmp_path / "build"
+    build.mkdir()
+    result = runner.invoke(app, ["run", str(cfg), "--out-dir", str(build)])
+    assert result.exit_code == EXIT_OK, result.output
+    assert "pre-run warning" not in result.output
+
+
+@pytest.mark.parametrize("kind", ["file", "dangling", "missing_parent"])
+def test_layout_gate_matrix_unusable_out_dir_refuses_value_free(
+    tmp_path: Path, read_spy: list[str], kind: str
+) -> None:
+    root = _project(tmp_path)
+    cfg = _write(root, "pipelines/orders/pipeline.yaml", _config(root))
+    build = tmp_path / "bld" / "deeper" if kind == "missing_parent" else tmp_path / "build"
+    if kind == "file":
+        build.write_text("x", encoding="utf-8")
+    elif kind == "dangling":
+        build.symlink_to(tmp_path / "nowhere")
+    result = runner.invoke(app, ["run", str(cfg), "--out-dir", str(build), "--json"])
+    assert result.exit_code == EXIT_USAGE, result.output
+    assert UNUSABLE in result.output
+    assert str(build) not in result.output
+    assert read_spy == []
+
+
+def test_layout_gate_matrix_unused_out_dir_is_not_created(tmp_path: Path) -> None:
+    root = _project(tmp_path)
+    cfg = _write(root, "pipelines/orders/pipeline.yaml", _config(root, str(tmp_path / "abs.csv")))
+    build = tmp_path / "build"
+    result = runner.invoke(app, ["run", str(cfg), "--out-dir", str(build)])
+    assert result.exit_code == EXIT_OK, result.output
+    assert not build.exists()
+
+
+def test_layout_gate_matrix_refused_out_dir_run_creates_no_directory(tmp_path: Path) -> None:
+    root = _project(tmp_path)
+    cfg = _write(root, "pipelines/orders/pipeline.yaml", _config(root, "../../x.csv"))
+    build = tmp_path / "build"
+    result = runner.invoke(app, ["run", str(cfg), "--out-dir", str(build)])
+    assert result.exit_code == EXIT_USAGE, result.output
+    assert not build.exists()
+
+
+# --- AT-31 destination collisions (plan 3.6.1 B) -------------------------------------------
+
+
+def _two_tables(root: Path, first: str, second: str, **extra: object) -> dict:
+    cfg = _config(root, first, **extra)
+    cfg["sources"]["b"] = cfg["sources"]["a"]
+    cfg["tables"].append({"name": "b", "columns": [{"name": "email", "strategy": "redact"}]})
+    cfg["targets"]["b"] = {"type": "file", "format": "csv", "path": second}
+    return cfg
+
+
+def _assert_collision(result, first: str, second: str, spy: list[str]) -> None:
+    assert result.exit_code == EXIT_USAGE, result.output
+    assert COLLISION in result.output
+    assert first in result.output and second in result.output
+    assert read_spy_empty(spy)
+
+
+def read_spy_empty(spy: list[str]) -> bool:
+    return spy == []
+
+
+@pytest.mark.parametrize("mode", ["project", "out_dir", "preflight"])
+def test_resolved_output_collisions_refuse_before_source_two_tables(
+    tmp_path: Path, read_spy: list[str], mode: str
+) -> None:
+    root = _project(tmp_path)
+    cfg = _write(root, "pipelines/orders/pipeline.yaml", _two_tables(root, "m.csv", "./m.csv"))
+    build = tmp_path / "build"
+    args = {
+        "project": ["run", str(cfg), "--json"],
+        "out_dir": ["run", str(cfg), "--out-dir", str(build), "--json"],
+        "preflight": ["validate", "preflight", str(cfg), "--json"],
+    }[mode]
+    result = runner.invoke(app, args)
+    _assert_collision(result, "targets.a.path", "targets.b.path", read_spy)
+    assert not (root / "out").exists()
+    assert not build.exists()
+
+
+def test_resolved_output_collisions_target_and_quarantine(
+    tmp_path: Path, read_spy: list[str]
+) -> None:
+    root = _project(tmp_path)
+    cfg = _write(
+        root, "pipelines/orders/pipeline.yaml", _config(root, "m.csv", **_quarantine("m.csv"))
+    )
+    result = runner.invoke(app, ["run", str(cfg), "--json"])
+    _assert_collision(result, "targets.a.path", "quarantine.output_path", read_spy)
+
+
+@pytest.mark.parametrize("command", [["run"], ["validate", "preflight"]])
+def test_resolved_output_collisions_equal_absolute_targets(
+    tmp_path: Path, read_spy: list[str], command: list[str]
+) -> None:
+    root = _project(tmp_path)
+    same = str(tmp_path / "abs.csv")
+    cfg = _write(root, "pipelines/orders/pipeline.yaml", _two_tables(root, same, same))
+    result = runner.invoke(app, [*command, str(cfg), "--json"])
+    _assert_collision(result, "targets.a.path", "targets.b.path", read_spy)
+    assert not (tmp_path / "abs.csv").exists()
+    assert same not in result.output
+
+
+@posix_only
+def test_resolved_output_collisions_two_spellings_through_a_symlink(
+    tmp_path: Path, read_spy: list[str]
+) -> None:
+    root = _project(tmp_path)
+    real = tmp_path / "real"
+    real.mkdir()
+    (tmp_path / "alias").symlink_to(real, target_is_directory=True)
+    cfg_dict = _two_tables(root, str(real / "o.csv"), str(tmp_path / "alias" / "o.csv"))
+    cfg = _write(root, "pipelines/orders/pipeline.yaml", cfg_dict)
+    result = runner.invoke(app, ["validate", "preflight", str(cfg), "--json"])
+    _assert_collision(result, "targets.a.path", "targets.b.path", read_spy)
+
+
+def test_resolved_output_collisions_case_only_names_on_a_folding_parent(
+    tmp_path: Path, read_spy: list[str], monkeypatch
+) -> None:
+    from decoy.cli.io import _layout
+
+    monkeypatch.setattr(_layout, "_folds_case", lambda _folder: True)
+    root = _project(tmp_path)
+    cfg = _write(root, "pipelines/orders/pipeline.yaml", _two_tables(root, "Out.csv", "out.csv"))
+    result = runner.invoke(app, ["validate", "preflight", str(cfg), "--json"])
+    _assert_collision(result, "targets.a.path", "targets.b.path", read_spy)
+
+
+def test_resolved_output_collisions_case_only_names_on_a_sensitive_parent_pass(
+    tmp_path: Path, monkeypatch
+) -> None:
+    from decoy.cli.io import _layout
+
+    monkeypatch.setattr(_layout, "_folds_case", lambda _folder: False)
+    root = _project(tmp_path)
+    cfg = _write(root, "pipelines/orders/pipeline.yaml", _two_tables(root, "Out.csv", "out.csv"))
+    assert runner.invoke(app, ["validate", "preflight", str(cfg)]).exit_code == EXIT_OK
+
+
+@pytest.mark.parametrize(
+    ("flag", "other"),
+    [("--evidence-out", "target"), ("--vault", "target"), ("--vault", "--evidence-out")],
+)
+def test_resolved_output_collisions_typed_files(
+    tmp_path: Path, read_spy: list[str], flag: str, other: str
+) -> None:
+    root = _project(tmp_path)
+    typed = tmp_path / "t.csv"
+    target = typed if other == "target" else tmp_path / "other.csv"
+    cfg = _write(root, "pipelines/orders/pipeline.yaml", _config(root, str(target)))
+    args = ["run", str(cfg), "--json", flag, str(typed)]
+    if other != "target":
+        args += [other, str(typed)]
+    result = runner.invoke(app, args)
+    assert result.exit_code == EXIT_USAGE, result.output
+    assert COLLISION in result.output
+    assert (flag if other == "target" else other) in result.output
+    assert read_spy == []
+    assert not typed.exists()
+
+
+def test_resolved_output_collisions_distinct_outputs_pass(tmp_path: Path) -> None:
+    root = _project(tmp_path)
+    cfg = _write(root, "pipelines/orders/pipeline.yaml", _two_tables(root, "a.csv", "b.csv"))
+    assert runner.invoke(app, ["validate", "preflight", str(cfg)]).exit_code == EXIT_OK

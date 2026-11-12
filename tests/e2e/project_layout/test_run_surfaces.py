@@ -97,26 +97,8 @@ def test_an_empty_chunked_source_is_absent_from_outputs(tmp_path: Path, monkeypa
     result = runner.invoke(app, ["run", str(cfg), "--chunked", "--json"])
     assert result.exit_code == EXIT_OK, result.output
     doc = _json(result)
-    assert doc["outputs"] == []
-    assert doc["output_dir"] == str(_only_run(root).resolve())
-
-
-def test_a_failure_after_a_write_names_the_run_folder(tmp_path: Path, monkeypatch) -> None:
-    root = _project(tmp_path)
-    cfg = _pipeline(root)
-    real = _targets.write_table
-
-    def write_then_fail(*args, **kwargs):
-        real(*args, **kwargs)
-        raise RuntimeError("disk went away")
-
-    monkeypatch.setattr(_targets, "write_table", write_then_fail)
-    result = runner.invoke(app, ["run", str(cfg), "--json"])
-    assert result.exit_code != EXIT_OK
-    doc = _json(result)
-    assert doc["status"] == "error"
-    run = _only_run(root)
-    assert doc["output_dir"] == str(run.resolve())
+    assert "outputs" not in doc
+    assert "output_dir" not in doc
 
 
 def test_a_failure_before_any_write_names_no_removed_folder(tmp_path: Path, monkeypatch) -> None:
@@ -158,10 +140,127 @@ def test_json_for_absolute_targets_only_has_no_run_folder(tmp_path: Path) -> Non
     target = tmp_path / "delivery.csv"
     cfg = _pipeline(root, str(target))
     doc = _json(runner.invoke(app, ["run", str(cfg), "--json"]))
-    assert doc["output_dir"] is None
+    assert "output_dir" not in doc
     assert doc["project"] is None
     assert doc["pipeline"] is None
     assert doc["outputs"] == [{"table": "a", "path": str(target.resolve())}]
+
+
+# --- AT-32 the JSON location fields follow what was published --------------------------------
+
+
+def _two_target_pipeline(root: Path, first: str, second: str) -> Path:
+    path = _pipeline(root, first)
+    cfg = yaml.safe_load(path.read_text(encoding="utf-8"))
+    cfg["sources"]["b"] = cfg["sources"]["a"]
+    cfg["tables"].append({"name": "b", "columns": [{"name": "email", "strategy": "redact"}]})
+    cfg["targets"]["b"] = {"type": "file", "format": "csv", "path": second}
+    path.write_text(yaml.safe_dump(cfg), encoding="utf-8")
+    return path
+
+
+def _fail_on_second_write(monkeypatch) -> None:
+    real = _targets.write_table
+    calls: list[int] = []
+
+    def flaky(*args, **kwargs):
+        calls.append(1)
+        if len(calls) == 2:
+            raise RuntimeError("disk went away")
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(_targets, "write_table", flaky)
+
+
+def _fail_every_write(monkeypatch) -> None:
+    def fail(*_args, **_kwargs):
+        raise RuntimeError("disk went away")
+
+    monkeypatch.setattr(_targets, "write_table", fail)
+
+
+@pytest.mark.parametrize(
+    "cell",
+    [
+        "out_dir_gate_refusal",
+        "placed_fails_before_publish",
+        "fixed_fails_before_publish",
+        "placed_fails_after_first_publish",
+        "fixed_fails_after_first_publish",
+        "absolute_fails_after_first_publish",
+        "placed_success",
+        "fixed_success",
+        "empty_chunked_success",
+        "absolute_only_success",
+    ],
+)
+def test_json_location_fields_follow_publication(tmp_path: Path, monkeypatch, cell: str) -> None:
+    from decoy.cli.run import _execute
+
+    root = _project(tmp_path)
+    build = tmp_path / "build"
+    build.mkdir()
+    extra: list[str] = []
+    if cell == "out_dir_gate_refusal":
+        cfg = _pipeline(root, "../../x.csv")
+        extra = ["--out-dir", str(build)]
+    elif cell.startswith("placed_fails_before"):
+        cfg = _pipeline(root)
+        _fail_every_write(monkeypatch)
+    elif cell.startswith("fixed_fails_before"):
+        cfg = _pipeline(root)
+        extra = ["--out-dir", str(build)]
+        _fail_every_write(monkeypatch)
+    elif cell == "placed_fails_after_first_publish":
+        cfg = _two_target_pipeline(root, "one.csv", "two.csv")
+        _fail_on_second_write(monkeypatch)
+    elif cell == "fixed_fails_after_first_publish":
+        cfg = _two_target_pipeline(root, "one.csv", "two.csv")
+        extra = ["--out-dir", str(build)]
+        _fail_on_second_write(monkeypatch)
+    elif cell == "absolute_fails_after_first_publish":
+        cfg = _two_target_pipeline(root, str(tmp_path / "one.csv"), str(tmp_path / "two.csv"))
+        _fail_on_second_write(monkeypatch)
+    elif cell == "placed_success":
+        cfg = _pipeline(root)
+    elif cell == "fixed_success":
+        cfg = _pipeline(root)
+        extra = ["--out-dir", str(build)]
+    elif cell == "empty_chunked_success":
+        cfg = _pipeline(root)
+        extra = ["--chunked"]
+        monkeypatch.setattr(_execute, "iter_source_chunks", lambda *a, **k: iter(()))
+    else:
+        cfg = _pipeline(root, str(tmp_path / "delivery.csv"))
+    result = runner.invoke(app, ["run", str(cfg), "--json", *extra])
+    doc = _json(result)
+    failed = "fails" in cell or "refusal" in cell
+    assert (result.exit_code != EXIT_OK) is failed, result.output
+    if cell in {
+        "out_dir_gate_refusal",
+        "placed_fails_before_publish",
+        "fixed_fails_before_publish",
+    }:
+        expected: dict | None = None
+    elif cell == "empty_chunked_success":
+        expected = None
+    elif cell.startswith("absolute"):
+        names = ["one.csv", "two.csv"] if "fails" in cell else ["delivery.csv"]
+        files = [str((tmp_path / n).resolve()) for n in names][:1]
+        expected = {"outputs": files, "output_dir": None}
+    else:
+        folder = build.resolve() if cell.startswith("fixed") else _only_run(root).resolve()
+        names = ["one.csv"] if "fails" in cell else ["masked.csv"]
+        expected = {"outputs": [str(folder / n) for n in names], "output_dir": str(folder)}
+    if expected is None:
+        assert "outputs" not in doc
+        assert "output_dir" not in doc
+        return
+    assert _paths(doc) == expected["outputs"]
+    if expected["output_dir"] is None:
+        assert "output_dir" not in doc
+    else:
+        assert doc["output_dir"] == expected["output_dir"]
 
 
 # --- AT-8 summary ------------------------------------------------------------------------
