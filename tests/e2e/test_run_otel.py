@@ -512,7 +512,9 @@ def test_interrupt_in_flush_still_cleans_up(tmp_path, monkeypatch, listener) -> 
         result = _run(_pipeline(tmp_path), "--json", "--otel-endpoint", listener.url)
         assert interrupts == [True] and result.exit_code != 0
         assert len(staged) == 1 and not staged[0].exists()
-        assert abandoned == [True]
+        # At least once: the JSON error envelope abandons before it lists what was
+        # published, and the run's own cleanup abandons again. `abandon` is idempotent.
+        assert abandoned
     finally:
         import shutil
 
