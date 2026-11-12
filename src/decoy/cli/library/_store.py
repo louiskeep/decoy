@@ -25,7 +25,9 @@ import json
 import os
 import sqlite3
 from collections.abc import Callable
+from contextlib import AbstractContextManager
 from dataclasses import dataclass
+from datetime import timedelta
 from pathlib import Path
 
 from decoy_engine import records
@@ -55,6 +57,7 @@ from decoy.cli.library._paths import (
     LAYOUT_VERSION,
     LIBRARY,
     OBJECTS,
+    SCRATCH,
     TMP,
     check_root_budget,
     is_project_folder,
@@ -63,6 +66,7 @@ from decoy.cli.library._paths import (
 )
 from decoy.cli.library._refs import read_ref, set_ref
 from decoy.cli.library._remote import remote_filesystem
+from decoy.cli.library._scratch import DeleteReport, ScratchAllocation, allocate, delete_tree
 
 __all__ = ["Library", "PutResult", "open_library"]
 
@@ -161,6 +165,27 @@ class Library:
             _index.run_locked(self._library, work)
         except LibraryError:
             self.stale = True  # the object is stored; the next locked open inserts the row
+
+    def scratch(
+        self, owner: str, invocation_id: str, *, ttl: timedelta | None = None
+    ) -> AbstractContextManager[ScratchAllocation]:
+        """A protected scratch allocation for rows (plan 4.6, 4.7), from the engine allocator.
+
+        With no `ttl` it is staging, removed when the block exits on success or error, with
+        files another program holds open reported in `.report` and left for a later cleanup.
+        With a `ttl` it is kept under `scratch/<owner>-<invocation_id>` (sample output). Raises
+        `LibraryError` (`scratch_acl_failed`, `scratch_unsafe`) before the block runs, leaving
+        no directory, or `ValueError` for an owner outside `[a-z0-9][a-z0-9-]{0,31}`.
+        """
+        return allocate(self, owner, invocation_id, ttl)
+
+    def delete_scratch(self, path: Path) -> DeleteReport:
+        """Best-effort delete of a folder inside `scratch/`; held-open files are reported."""
+        scratch = (self.root / SCRATCH).resolve()
+        target = path.resolve()
+        if scratch not in target.parents:
+            raise ValueError("only a folder inside scratch/ can be deleted here")
+        return delete_tree(target)
 
     def has(self, record_id: str) -> bool:
         """Whether an object file exists for this full id (no read)."""
