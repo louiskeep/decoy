@@ -150,6 +150,12 @@ _FIDELITY_NEEDS_MASK = (
 )
 
 
+_PREVIEW_QUARANTINE = (
+    "--rows previews write nothing, so they cannot run with quarantine enabled. "
+    "Turn quarantine off in the config to preview."
+)
+
+
 def _refuse_usage(state, config_str: str, text: str) -> None:
     """Print a usage refusal in the active output mode and exit 1, before any engine call."""
     if state.mode is OutputMode.json:
@@ -197,6 +203,9 @@ def refuse_preview(ctx: RunContext) -> None:
     text = gen.refusal(ctx.rows, flags, _has_kind(ctx.raw_cfg, "columns"))
     if text is not None:
         _refuse_usage(ctx.state, ctx.config_str, text)
+    quarantine = ctx.raw_cfg.get("quarantine") if isinstance(ctx.raw_cfg, dict) else None
+    if isinstance(quarantine, dict) and quarantine.get("enabled"):
+        _refuse_usage(ctx.state, ctx.config_str, _PREVIEW_QUARANTINE)
 
 
 def _guard_mask_secret_ref(raw: object) -> None:
