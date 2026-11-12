@@ -25,8 +25,9 @@ Deliberate differences from the engine copy, for engine CI-E2b to fold back:
 - No registered markers is allowed (`markers` and `addopts` may be absent from pyproject).
 
 Covered pytest spellings: `pytest`, `python -m pytest`, `uv run [opts] pytest` and `bash -c "..."`,
-with `-m X`, `-mX`, the last `-m` winning, and `-o addopts=`. Deliberate evasion (PYTEST_ADDOPTS in
-an env block, config-file indirection, command substitution) is out of scope (V2-LOG).
+with `-m X`, `-mX`, short-option clusters (`-qm X`, `-qkX`), the last `-m` winning, and
+`-o addopts=`. Deliberate evasion (PYTEST_ADDOPTS in an env block, config-file indirection,
+command substitution) is out of scope (V2-LOG).
 Shell parsing is the shared ci_scan._shell_tokens.commands; nothing here tokenizes shell.
 """
 
@@ -63,6 +64,8 @@ _VALUE_OPTS = {
     "--deselect", "--maxfail", "--rootdir", "--basetemp", "--timeout", "--cov",
 }  # fmt: skip
 _EXCLUDE = {"--ignore", "--ignore-glob", "--deselect"}
+# pytest short options that take a value; in a cluster such as `-qk x` the value option ends it.
+_SHORT_VALUE = set("kmpcorWn")
 _ENV_ASSIGN = re.compile(r"[A-Za-z_][A-Za-z0-9_]*=.*", re.S)
 _PYTHON = re.compile(r"python[0-9.]*")
 _MINORS = re.compile(r'^SUPPORTED_MINORS="([^"]*)"', re.M)
@@ -218,6 +221,18 @@ def _pytest_args(cmd: list[str]) -> list[str] | None:
     return None
 
 
+def _unbundle(tok: str) -> list[str]:
+    """Split a short-option cluster: `-qk` -> `-q -k`, `-xvmx` -> `-x -v -mx`."""
+    if not tok.startswith("-") or tok.startswith("--") or len(tok) < 3:
+        return [tok]
+    out = []
+    for j, ch in enumerate(tok[1:], 1):
+        if ch in _SHORT_VALUE:
+            return [*out, "-" + tok[j:]]
+        out.append("-" + ch)
+    return out
+
+
 def _read_args(
     args: list[str], default: str | None
 ) -> tuple[str | None, bool, bool, tuple[str, ...], tuple[tuple[str, str], ...]]:
@@ -225,6 +240,7 @@ def _read_args(
 
     Every exclusion option counts, globs included: P1 fails closed on one no other job runs.
     """
+    args = [part for tok in args for part in _unbundle(tok)]
     expr, has_m, bad, i = default, False, False, 0
     paths: list[str] = []
     ignores: list[tuple[str, str]] = []
