@@ -79,7 +79,7 @@ def finish(ctx: RunContext) -> None:
     _qm = ctx._report_quality_metrics or {}
     _warnings = warning_records(
         ctx._ev_engine_warnings,
-        _seed_warnings(ctx.raw_cfg, key_in_effect=ctx.resolver is not None),
+        [*_seed_warnings(ctx.raw_cfg, key_in_effect=ctx.resolver is not None), *ctx._cli_warnings],
     )
     _enforce_fires = bool(ctx.post_validate_enforce and _qm.get("failed_checks"))
 

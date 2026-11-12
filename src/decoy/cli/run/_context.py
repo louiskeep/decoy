@@ -21,6 +21,10 @@ from decoy.ui.output import OutputState
 # preview can tell whether it was passed.
 DEFAULT_CHUNK_SIZE = 100_000
 
+# The machine-readable `code` of each warning the CLI raises itself. Closed: a new code is
+# added here, so the `--json` `warnings` vocabulary has one list.
+CLI_WARNING_CODES: frozenset[str] = frozenset({"chunked_key_check_not_run"})
+
 
 class Mode(str, Enum):
     mask = "mask"
@@ -112,6 +116,8 @@ class RunContext:
     # the run-summary line and JSON record.
     _native_route: _native_gate.RouteClassification | None = field(init=False, default=None)
     _resources_record: dict | None = field(init=False, default=None)
+    # Warnings the CLI raises itself (`code`, `message`); they join the engine's in the summary.
+    _cli_warnings: list[dict] = field(init=False, default_factory=list)
     _report_quality_metrics: dict | None = field(init=False, default=None)
     # `--rows` preview: the sampled tables, set by `_execute.execute_preview`.
     _preview_tables: list[dict] = field(init=False, default_factory=list)
@@ -131,6 +137,12 @@ class RunContext:
     # Set by the success tail.
     elapsed: float = field(init=False)
     notify_results: list[dict] = field(init=False)
+
+    def add_cli_warning(self, code: str, message: str) -> None:
+        """Record a CLI warning for the run summary, the only place it is printed."""
+        if code not in CLI_WARNING_CODES:
+            raise ValueError(f"unknown CLI warning code: {code!r}")
+        self._cli_warnings.append({"code": code, "message": message})
 
     def published_members(self) -> dict:
         """The `--json` `outputs` and `output_dir` members (plan 3.6.1 C), from the publication
