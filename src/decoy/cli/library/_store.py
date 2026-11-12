@@ -70,7 +70,7 @@ _SUFFIX = ".json"
 # Records hold names, counts and digests only; 16 MiB is far above any real one and keeps a
 # planted file from being read whole. `put` refuses a record it could not read back.
 MAX_RECORD_BYTES = 16 * 1024 * 1024
-_MAX_LAYOUT_BYTES = 4096
+MAX_LAYOUT_BYTES = 4096
 
 Decoded = records.DecodedRecord | records.OpaqueRecord | records.RecordNeedsNewer
 Probe = Callable[[Path], "str | None"]
@@ -161,6 +161,21 @@ class Library:
             _index.run_locked(self._library, work)
         except LibraryError:
             self.stale = True  # the object is stored; the next locked open inserts the row
+
+    def has(self, record_id: str) -> bool:
+        """Whether an object file exists for this full id (no read)."""
+        digest = record_digest(record_id)
+        return digest is not None and self._object(digest).is_file()
+
+    def rebuild_index(self) -> None:
+        """Drop the index and rebuild it from the object files, under the lock (fsck --repair).
+        Raises `LibraryError` when the lock cannot be taken."""
+        def work(conn: sqlite3.Connection) -> None:
+            _index.rebuild(conn)
+            _index.sync(conn, _index.object_ids(self._objects), self._index_row)
+
+        _index.run_locked(self._library, work)
+        self.stale = False
 
     def rows(
         self, *, kind: str | None = None, pipeline: str | None = None, table: str | None = None
@@ -321,7 +336,7 @@ class Library:
         found: object = None
         try:
             found = json.loads(
-                read_capped(self._library / LAYOUT_FILE, _MAX_LAYOUT_BYTES) or b"null"
+                read_capped(self._library / LAYOUT_FILE, MAX_LAYOUT_BYTES) or b"null"
             )
         except ValueError:
             found = None

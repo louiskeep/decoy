@@ -597,14 +597,14 @@ def test_the_live_tree_is_clean(files: dict[str, str]) -> None:
     assert run(files) == []
 
 
-def test_the_census_is_61_watched_sinks(files: dict[str, str]) -> None:
+def test_the_census_is_62_watched_sinks(files: dict[str, str]) -> None:
     sinks = watched(collect(files))
-    assert len(sinks) == 61
+    assert len(sinks) == 62
     assert len([s for s in sinks if is_entry(s)]) == 24
     counts: dict[str, int] = {}
     for r in ROWS:
         counts[r.disposition] = counts.get(r.disposition, 0) + 1
-    assert counts == {"public": 23, "private": 5, "staged": 3, "temp": 3, "read": 3}
+    assert counts == {"public": 23, "private": 5, "staged": 3, "temp": 3, "read": 4}
 
 
 def test_the_baseline_has_five_rows_with_exits() -> None:

@@ -58,6 +58,7 @@ __all__ = [
     "latest",
     "locked",
     "object_ids",
+    "rebuild",
     "row_from",
     "run_locked",
     "select",
@@ -276,6 +277,12 @@ def ensure_schema(conn: sqlite3.Connection) -> bool:
         conn.execute(statement)
     conn.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
     return True
+
+
+def rebuild(conn: sqlite3.Connection) -> None:
+    """Drop every table and create the schema again (the rows come back from `sync`)."""
+    conn.execute("PRAGMA user_version = 0")
+    ensure_schema(conn)
 
 
 def insert(conn: sqlite3.Connection, row: IndexRow) -> None:

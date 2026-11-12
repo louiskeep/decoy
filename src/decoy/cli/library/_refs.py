@@ -16,7 +16,10 @@ cannot remove it in between.
 
 from __future__ import annotations
 
+import contextlib
 import re
+from collections.abc import Iterator
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 from decoy_engine import records
@@ -35,7 +38,7 @@ from decoy.cli.library._paths import REFS, record_digest
 if TYPE_CHECKING:
     from decoy.cli.library._store import Library
 
-__all__ = ["read_ref", "set_ref"]
+__all__ = ["iter_refs", "read_ref", "remove_refs", "set_ref"]
 
 # "sha256:" + 64 hex + a newline is 72 bytes; the rest is slack for a CRLF or editor newline.
 _MAX_REF_BYTES = 128
@@ -95,3 +98,42 @@ def read_ref(library: Library, kind: str, name: str) -> str | None:
     if record_digest(text) is None:
         raise LibraryError(RECORD_CORRUPT)
     return text
+
+
+def _ref_id(path: Path) -> str | None:
+    """The id a ref file holds, or None when it holds none (an unreadable, oversized or linked
+    ref file included: fsck reports it like any ref without an id)."""
+    data: bytes | None = None
+    with contextlib.suppress(LibraryError):
+        data = read_capped(path, _MAX_REF_BYTES)
+    text = (data or b"").decode("utf-8", errors="replace").strip()
+    return text if record_digest(text) is not None else None
+
+
+def iter_refs(refs_dir: Path) -> Iterator[tuple[Path, str | None]]:
+    """Every ref file under `refs_dir` with the id it holds, or None when it holds no id."""
+    if not refs_dir.is_dir():
+        return
+    for path in sorted(refs_dir.rglob("*")):
+        if path.is_file():
+            yield path, _ref_id(path)
+
+
+def remove_refs(library: Library, paths: list[Path]) -> list[Path]:
+    """Remove the given ref files that still point at no stored record, under the library lock
+    (fsck --repair, plan 4.10). Returns the ones removed; a ref set meanwhile is kept."""
+    removed: list[Path] = []
+    if not paths:
+        return removed
+    refs_dir = (library.library_dir / REFS).resolve()
+    with _index.locked(library.library_dir):
+        for path in paths:
+            if refs_dir not in path.resolve().parents or not path.is_file():
+                continue
+            target = _ref_id(path)
+            digest = record_digest(target) if target is not None else None
+            if digest is not None and library.has(target or ""):
+                continue
+            path.unlink()
+            removed.append(path)
+    return removed
