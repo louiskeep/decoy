@@ -390,6 +390,22 @@ def test_a_symlink_that_leaves_pipelines_is_unknown_and_unlisted(
     assert not (root / "out").exists()
 
 
+@posix_only
+def test_a_link_loop_under_pipelines_is_unknown_and_unlisted(
+    world, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root, _ = world
+    (root / "pipelines" / "loop").symlink_to("loop")
+    monkeypatch.chdir(root)
+    result = _invoke("run", "loop", "--json")
+    assert result.exit_code == EXIT_USAGE, result.output
+    assert _body(result)["code"] == "layout.pipeline_unknown"
+    other = _invoke("run", "nope", "--json")
+    assert other.exit_code == EXIT_USAGE, other.output
+    assert "Known pipelines: orders, slice." in _body(other)["error"]
+    assert [e.name for e in list_pipelines(find_project(root, None))] == ["orders", "slice"]
+
+
 # --- AT-20: the name rule ----------------------------------------------------------------
 
 

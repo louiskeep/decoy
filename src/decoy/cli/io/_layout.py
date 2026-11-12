@@ -51,6 +51,15 @@ _RUN_ID = re.compile(r"[0-9]{8}T[0-9]{12}Z-[0-9a-f]{8}(?:[0-9a-f]{4}){0,6}")
 MAX_RUN_ID_LENGTH = 55
 WINDOWS_PATH_LIMIT = 259
 _CLAIM_NAME = "PIPELINE"
+PIPELINES_DIR = "pipelines"
+PIPELINE_YAML = "pipeline.yaml"
+
+
+def member_yaml(root: Path, name: str) -> Path:
+    """Where the member `name` lives: the one spelling of `pipelines/<name>/pipeline.yaml`."""
+    return root / PIPELINES_DIR / name / PIPELINE_YAML
+
+
 _CLAIM_MAX_BYTES = 4096
 _SLUG_MAX = 56
 _SLUG_BAD = re.compile(r"[^A-Za-z0-9_.-]+")
@@ -296,8 +305,8 @@ def _taken(root: Path, name: str, yaml_rel: str) -> str | None:
     claimed = read_claim(root / "out", name)
     if claimed is not None and claimed != yaml_rel:
         return claimed
-    member = f"pipelines/{name}/pipeline.yaml"
-    if (root / "pipelines" / name).exists() and member != yaml_rel:
+    member = f"{PIPELINES_DIR}/{name}/{PIPELINE_YAML}"
+    if member_yaml(root, name).parent.exists() and member != yaml_rel:
         return member
     return None
 
@@ -315,7 +324,7 @@ def pipeline_name_for(root: Path, yaml: Path, declared: object) -> PipelineName:
     """
     yaml_rel = _rel_posix(root, yaml)
     parts = yaml_rel.split("/")
-    if len(parts) == 3 and parts[0] == "pipelines" and parts[2] == "pipeline.yaml":
+    if len(parts) == 3 and parts[0] == PIPELINES_DIR and parts[2] == PIPELINE_YAML:
         folder = parts[1]
         if not is_valid_name(folder):
             raise PIPELINE_NAME_INVALID.error(name=folder)

@@ -40,6 +40,10 @@ FORWARDERS: dict[str, tuple[str, int, int]] = {
     "decoy.cli.io.resolve_pipeline": ("command", 2, 12),
 }
 
+# Forwarders whose own body may pass the parameter on: keyed by the defining module, not the
+# facade that callers import (that name is only for counting call sites above).
+IN_BODY_PARAMS: dict[str, str] = {"decoy.cli.io._pipelines.resolve_pipeline": "command"}
+
 KIND_REGISTRIES = {"list": set(_LIST_KINDS), "show": set(_SHOW_KINDS)}
 
 
@@ -71,13 +75,10 @@ def _module(rel: str) -> str:
 
 
 def _forwarder_param(rel: str, func: str) -> str | None:
-    # A forwarder in a private module of a package with a public facade (`cli/io`) is keyed by
-    # the facade name, which is what its callers import and the call-site resolver reports.
-    names = [f"{_module(rel)}.{func}"]
-    if "/" in rel:
-        names.append(f"decoy.cli.{rel.split('/')[0]}.{func}")
-    entry = next((FORWARDERS[n] for n in names if n in FORWARDERS), None)
-    return entry[0] if entry else None
+    # Exact module and function only: a same-named function elsewhere gets no exemption.
+    name = f"{_module(rel)}.{func}"
+    entry = FORWARDERS.get(name)
+    return entry[0] if entry else IN_BODY_PARAMS.get(name)
 
 
 def _sites(tree: ast.AST) -> list[tuple[int, ast.AST]]:
@@ -249,3 +250,12 @@ def test_bare_same_file_forwarder_call_is_collected() -> None:
     values, _, counts = scan_source("_load_manifest(p, s, 'bogus cmd')", "report.py")
     assert [v for _, _, v in values] == ["bogus cmd"]
     assert counts == {"decoy.cli.report._load_manifest": 1}
+
+
+_IN_BODY = 'def resolve_pipeline(token, command):\n    return {"command": command}\n'
+
+
+def test_the_in_body_exemption_is_for_the_exact_resolver_module() -> None:
+    assert scan_source(_IN_BODY, "io/_pipelines.py")[1] == []
+    for rel in ("io/_other.py", "other.py"):
+        assert len(scan_source(_IN_BODY, rel)[1]) == 1

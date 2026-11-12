@@ -165,7 +165,7 @@ _NAMES = {"config", "pipeline_config", "pipeline"}
 # only mentions the YAML in passing, so it does not match.
 _HELP_RULE = re.compile(
     r"^(path to the )?(yaml pipeline|pipeline yaml|pipeline config)|^the pipeline config"
-    r"|^optional pipeline\.yaml",
+    r"|^optional pipeline\.yaml|^path or name of the (yaml )?pipeline",
     re.IGNORECASE,
 )
 EXPECTED = {
@@ -336,6 +336,18 @@ def _scratch(decl: object) -> typer.Typer:
 def test_a_parameter_without_the_callback_is_found_by_its_help_text() -> None:
     seeded = _scratch(typer.Option(..., help="Path to the pipeline YAML."))
     matched, findings = parameter_findings(seeded)
+    assert matched == {"cmd:spec"}
+    assert len(findings) == 2
+
+
+def test_a_plain_path_argument_with_the_name_or_path_help_is_found() -> None:
+    scratch = typer.Typer()
+
+    def cmd(spec: Path = typer.Argument(..., help="Path or name of the pipeline config.")) -> None:
+        """Scratch command."""
+
+    scratch.command(name="cmd")(cmd)
+    matched, findings = parameter_findings(scratch)
     assert matched == {"cmd:spec"}
     assert len(findings) == 2
 

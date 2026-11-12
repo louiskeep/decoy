@@ -29,7 +29,13 @@ import typer
 
 from decoy.cli.completers import pipeline_names
 from decoy.cli.exit_codes import EXIT_USAGE
-from decoy.cli.io._layout import is_valid_name, same_path
+from decoy.cli.io._layout import (
+    PIPELINE_YAML,
+    PIPELINES_DIR,
+    is_valid_name,
+    member_yaml,
+    same_path,
+)
 from decoy.cli.io._layout_errors import (
     PIPELINE_NAME_INVALID,
     PIPELINE_UNKNOWN,
@@ -41,8 +47,6 @@ from decoy.cli.io._project import Project, find_project
 from decoy.ui.output import OutputMode, OutputState, emit_json
 from decoy.ui.theme import error
 
-_PIPELINES = "pipelines"
-_YAML_NAME = "pipeline.yaml"
 _PATH_SUFFIXES = (".yaml", ".yml")
 
 
@@ -154,17 +158,21 @@ def _member(root: Path, name: str) -> Path | None:
     Both the folder and the YAML may be links, but where they land must be inside the physical
     `pipelines/` folder, itself inside the project. Anything else counts as not there.
     """
-    base = (root / _PIPELINES).resolve()
-    yaml = root / _PIPELINES / name / _YAML_NAME
-    real = yaml.resolve()
-    inside = base.is_relative_to(root.resolve()) and real.is_relative_to(base)
+    yaml = member_yaml(root, name)
+    try:
+        base = (root / PIPELINES_DIR).resolve()
+        real = yaml.resolve()
+        top = root.resolve()
+    except (OSError, RuntimeError):  # a link loop raises RuntimeError before Python 3.13
+        return None
+    inside = base.is_relative_to(top) and real.is_relative_to(base)
     return yaml if inside and real.is_file() else None
 
 
 def list_pipelines(project: Project) -> list[PipelineEntry]:
     """The project's members by name: valid names whose YAML passes the same checks as a lookup."""
     try:
-        folders = sorted(os.listdir(project.root / _PIPELINES))
+        folders = sorted(os.listdir(project.root / PIPELINES_DIR))
     except OSError:
         return []
     found = ((n, _member(project.root, n)) for n in folders if is_valid_name(n))
@@ -204,7 +212,7 @@ def _by_name(token: PipelineToken) -> PipelineRef:
     walked = find_project(yaml.resolve().parent, None)
     if not same_path(walked.root, project.root):
         raise PROJECT_MISMATCH.error(
-            path=f"{_PIPELINES}/{name}/{_YAML_NAME}", actual=walked.root, given=project.root
+            path=f"{PIPELINES_DIR}/{name}/{PIPELINE_YAML}", actual=walked.root, given=project.root
         )
     return PipelineRef(yaml, project, name, "name")
 
