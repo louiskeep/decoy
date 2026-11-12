@@ -213,7 +213,7 @@ def test_missing_extra_message_names_the_flag(tmp_path, monkeypatch) -> None:
 
 # ---- C1b: spans, leak corpus, dead collector, DP limit ----------------------------------
 
-GUIDE = Path(__file__).resolve().parents[2] / "docs" / "guides" / "telemetry.md"
+GUIDE = Path(__file__).resolve().parents[2] / "docs" / "guides" / "telemetry" / "README.md"
 
 
 def _spans(listener) -> list:
@@ -364,9 +364,12 @@ def test_marker_corpus_absent_from_wire(tmp_path, monkeypatch, listener, cell) -
         assert span.status.message == "" and len(span.events) == 0
 
 
-def _output_bytes(tmp_path: Path) -> set[bytes]:
-    """Distinct contents of every `out.csv` the runs wrote (one run folder or an overwrite)."""
-    return {p.read_bytes() for p in tmp_path.rglob("out.csv")}
+def _take_outputs(tmp_path: Path) -> dict[str, bytes]:
+    """Every `out.csv` the last run wrote, by relative path; removed so the next run starts clean."""
+    found = {str(p.relative_to(tmp_path)): p.read_bytes() for p in tmp_path.rglob("out.csv")}
+    for p in tmp_path.rglob("out.csv"):
+        p.unlink()
+    return found
 
 
 def _quiet_run(cfg: Path, *args: str):
@@ -386,7 +389,7 @@ def test_dead_collector_keeps_exit_code_and_bounds_exit(tmp_path, behavior) -> N
     cfg = _pipeline(tmp_path)
     off, off_wall = _quiet_run(cfg)
     assert off.exit_code == 0, off.output
-    off_bytes = _output_bytes(tmp_path)
+    off_bytes = _take_outputs(tmp_path)
     assert off_bytes
     lst = Listener(behavior)
     try:
@@ -395,11 +398,11 @@ def test_dead_collector_keeps_exit_code_and_bounds_exit(tmp_path, behavior) -> N
         assert lst.accepted.is_set() and lst.connections >= 1
     finally:
         lst.close()
-    on_bytes = _output_bytes(tmp_path)
+    on_bytes = _take_outputs(tmp_path)
     assert on.exit_code == off.exit_code
     assert _envelope(on) == _envelope(off)
     assert on.stderr == off.stderr
-    # The masked output is the same bytes with telemetry on (deterministic seed).
+    # Same file set and bytes per run with telemetry on (deterministic seed).
     assert on_bytes == off_bytes
     assert on_wall - off_wall <= 2.0 + 0.5
 

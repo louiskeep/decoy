@@ -297,3 +297,75 @@ def test_tracer_meter_is_noop_under_hostile_meter_env(monkeypatch) -> None:
     metrics = tel.provider.get_tracer("t")._tracer_metrics
     assert isinstance(metrics._started_spans, NoOpCounter)
     assert isinstance(metrics._live_spans, NoOpUpDownCounter)
+
+
+def _root_attrs(**over):
+    base = {"decoy.spans_dropped": 0, "decoy.outcome": "success"}
+    base.update(over)
+    return list(base.items())
+
+
+def test_root_record_accepts_registered_vocabulary() -> None:
+    from decoy.telemetry import _root_record
+
+    record = _root_record(1, 2, True, _root_attrs())
+    assert record.name == "decoy.run"
+    assert dict(record.attributes) == {"decoy.spans_dropped": 0, "decoy.outcome": "success"}
+
+
+@pytest.mark.parametrize(
+    "attributes",
+    [
+        [("decoy.table", "x")],
+        [("decoy.outcome", "done")],
+        [("error.type", "not a class name")],
+    ],
+    ids=["unregistered_key", "unregistered_outcome", "unregistered_error_type"],
+)
+def test_root_record_refuses_unregistered_attributes(attributes) -> None:
+    from decoy.telemetry import _root_record
+
+    with pytest.raises(ValueError):
+        _root_record(1, 2, True, attributes)
+
+
+def test_root_name_is_checked_against_span_names(monkeypatch) -> None:
+    from decoy_engine.telemetry import _vocab
+
+    from decoy.telemetry import _root_record
+
+    monkeypatch.setattr(_vocab, "SPAN_NAMES", frozenset({"decoy.job"}))
+    with pytest.raises(ValueError):
+        _root_record(1, 2, True, _root_attrs())
+
+
+@pytest.mark.parametrize("ok", [True, False])
+def test_root_span_on_the_wire(ok) -> None:
+    from opentelemetry.sdk.trace.export import SimpleSpanProcessor
+    from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
+    from opentelemetry.trace import StatusCode
+
+    from decoy.telemetry import RunTrace
+
+    tel = build_provider("http://127.0.0.1:9/v1/traces", {})
+    memory = InMemorySpanExporter()
+    tel.provider.add_span_processor(SimpleSpanProcessor(memory))
+    trace = RunTrace(tel)
+    trace.finish(ok=ok, error_class=None if ok else "ValueError")
+    (root,) = memory.get_finished_spans()
+    assert root.name == "decoy.run"
+    assert root.status.status_code is (StatusCode.OK if ok else StatusCode.ERROR)
+    assert root.status.description is None and not root.events
+    expected = {"decoy.spans_dropped", "decoy.outcome", "decoy.engine.version"}
+    assert set(root.attributes) == expected | (set() if ok else {"error.type"})
+    assert root.attributes["decoy.outcome"] == ("success" if ok else "failed")
+    if not ok:
+        assert root.attributes["error.type"] == "ValueError"
+    assert root.end_time >= root.start_time
+    tel.exporter.shutdown()
+
+
+def test_resource_keys_are_checked_against_the_vocabulary() -> None:
+    from decoy.telemetry import _resource_attributes
+
+    assert set(_resource_attributes("1.0")) == {"service.name", "service.version"}
