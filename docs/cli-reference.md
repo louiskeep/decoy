@@ -37,6 +37,7 @@ $ decoy [OPTIONS] COMMAND [ARGS]...
 
 * `--version`: Show the decoy CLI version and exit.
 * `--no-update-check`: Suppress the &#x27;new version available&#x27; startup notice.
+* `--project PATH`: Project folder for pipeline names (default: DECOY_PROJECT, else the nearest decoy.yaml above the current folder).
 * `--install-completion`: Install completion for the current shell.
 * `--show-completion`: Show completion for the current shell, to copy it or customize the installation.
 * `--help`: Show this message and exit.
@@ -90,7 +91,7 @@ $ decoy run [OPTIONS] CONFIG
 
 **Arguments**:
 
-* `CONFIG`: Path to the YAML pipeline config.  [required]
+* `CONFIG`: Path or name of the YAML pipeline config (a name is looked up in the project).  [required]
 
 **Options**:
 
@@ -107,6 +108,7 @@ $ decoy run [OPTIONS] CONFIG
 * `--vault PATH`: Write the token vault (encrypted source-to-masked map for vault: true columns) to this path. The vault plus the config re-identify every vaulted value: store them separately and never alongside the masked output. Needs the engine&#x27;s vault extra (cryptography). Not supported with --chunked.
 * `--key-label TEXT`: Stable namespace string for the --master-key generation key hierarchy (synthetic generation only, not masking). Required when --master-key is set. Pick something durable (e.g. &#x27;customers_q4&#x27;); changing it produces different generated output. CLI flag only -- PipelineConfig forbids unknown top-level keys, so there is no YAML equivalent.
 * `--evidence-out PATH`: Write a local evidence manifest (JSON) to this path after a successful run. The manifest records pipeline hash, input/output file fingerprints, run metadata, and row counts/timings/warnings where available (these are omitted for --chunked runs). It does NOT contain raw data values. Use `decoy report verify` to check the manifest against current files. See: decoy report show.
+* `--out-dir DIR`: Write relative output paths into DIR instead of a new run folder under out/&lt;pipeline&gt;/. DIR is relative to the current folder and is made owner-only if missing. No run id, LATEST or current link; files there are overwritten. Absolute output paths are unchanged.
 * `--notify TEXT`: Notify a channel after the run reaches its terminal state. Repeatable. Spec is &#x27;kind:target&#x27;: webhook:&lt;url&gt;, slack:&lt;url&gt;, email:&lt;address&gt;. Best-effort: a channel failure never changes the run&#x27;s exit code. Webhook signing key from DECOY_NOTIFY_WEBHOOK_SECRET (unsigned if unset); SMTP from DECOY_NOTIFY_SMTP_HOST/_PORT/_USER/_PASS/_FROM. Nothing is persisted to .decoy/workspace.json -- targets and secrets are flags/env only, never written to disk.
 * `--notify-on [success|failure|always]`: Which terminal outcome(s) to notify on: success, failure, or always.  [default: always]
 * `--native`: Require that a compiled native kernel actually executed. Refuses up front (no run) on --chunked or a generate/mixed config, or on an absent/broken decoy-engine-native companion. Refuses AFTER the run, before any output is written, if the job finished without positive compiled-kernel evidence (e.g. an FK table or a table masked only with passthrough/redact/truncate). Mutually exclusive with --no-native. See: decoy explain native.
@@ -116,7 +118,7 @@ $ decoy run [OPTIONS] CONFIG
 * `--post-validate`: After the run, run the post-execution validator suite over the masked output and show its results (findings + quality summary), from the result&#x27;s quality metrics. Warn-only: findings are reported but the run still exits 0. Use --post-validate-enforce to exit with findings. Default off. Not supported with --chunked.
 * `--post-validate-enforce`: Like --post-validate, but exit EXIT_FINDINGS (4) when the validator reports any hard-failed check. The masked output is still written (the mask succeeded; the findings are a data-quality signal). Implies --post-validate. Default off. Not supported with --chunked.
 * `--duckdb-source TEXT`: Read a pipeline input table from a DuckDB database file instead of a CSV/Parquet/fixed-width file. Repeatable; spec is &#x27;TABLE=DB_PATH&#x27;, where TABLE names a table in the pipeline&#x27;s `tables:` and the relation of the same name in the DuckDB file. The relation is acquired read-only (the database is never written) to a temporary Parquet file, which is then masked on the normal parquet path (native-on and --chunked apply unchanged). A flag entry overrides any `sources:` entry the YAML declares for TABLE. Not supported with --evidence-out yet. Needs no raw SQL: the relation name is the handle.
-* `--rows N`: Preview a generate pipeline: run it at a small size, print each table&#x27;s rows and write nothing. N is 1 to 1000 rows for the largest table; every other table is scaled by the same ratio, so parent and child sizes keep their proportions. Refused with a mask table, --chunked, --chunk-size, --evidence-out, --notify, --vault, --fidelity, --explain-plan, --post-validate, --post-validate-enforce, --native and --duckdb-source.
+* `--rows N`: Preview a generate pipeline: run it at a small size, print each table&#x27;s rows and write nothing. N is 1 to 1000 rows for the largest table; every other table is scaled by the same ratio, so parent and child sizes keep their proportions. Refused with a mask table, --chunked, --chunk-size, --evidence-out, --notify, --vault, --fidelity, --explain-plan, --post-validate, --post-validate-enforce, --native, --duckdb-source and --out-dir.
 * `--otel-endpoint TEXT`: Export OpenTelemetry traces of this run to the OTLP/HTTP traces URL of a collector you run (also DECOY_OTEL_ENDPOINT). Headers come only from DECOY_OTEL_HEADERS (name=value,...), which needs https unless the host is loopback. Standard OTEL_* variables are ignored. Needs decoy-cli[otel].
 * `--help`: Show this message and exit.
 
@@ -257,7 +259,7 @@ $ decoy tokenize [OPTIONS] CONFIG
 
 **Arguments**:
 
-* `CONFIG`: Path to the YAML pipeline config (with `strategy: tokenize` columns).  [required]
+* `CONFIG`: Path or name of the YAML pipeline config (with `strategy: tokenize` columns).  [required]
 
 **Options**:
 
@@ -822,7 +824,7 @@ $ decoy subset [OPTIONS] CONFIG
 
 **Arguments**:
 
-* `CONFIG`: Path to the YAML pipeline config (must declare a subset: block).  [required]
+* `CONFIG`: Path or name of the YAML pipeline config (must declare a subset: block).  [required]
 
 **Options**:
 
@@ -958,7 +960,7 @@ $ decoy validate config [OPTIONS] CONFIG
 
 **Arguments**:
 
-* `CONFIG`: Path to the YAML pipeline config to validate.  [required]
+* `CONFIG`: Path or name of the YAML pipeline config to validate.  [required]
 
 **Options**:
 
@@ -1005,7 +1007,7 @@ $ decoy validate compile [OPTIONS] CONFIG
 
 **Arguments**:
 
-* `CONFIG`: Path to the pipeline YAML config to compile.  [required]
+* `CONFIG`: Path or name of the pipeline YAML config to compile.  [required]
 
 **Options**:
 
@@ -1075,7 +1077,7 @@ $ decoy validate preflight [OPTIONS] CONFIG
 
 **Arguments**:
 
-* `CONFIG`: Path to the YAML pipeline config to check.  [required]
+* `CONFIG`: Path or name of the YAML pipeline config to check.  [required]
 
 **Options**:
 
@@ -1535,7 +1537,7 @@ $ decoy report fidelity [OPTIONS] SOURCE OUTPUT
 
 * `--joint TEXT`: Column pair &#x27;a,b&#x27; to also score jointly (repeatable).
 * `--generate`: Output is synthetic generation, not masking: row counts may legitimately differ (sets expect_row_parity=False). Default assumes masking (row parity expected).
-* `--config FILE`: Pipeline YAML naming each column&#x27;s strategy, so intentional loss (hash, bucketize, faker, ...) is not flagged as accidental drift. Without it, per-column policy checks run on defaults only.
+* `--config TEXT`: Pipeline YAML naming each column&#x27;s strategy, so intentional loss (hash, bucketize, faker, ...) is not flagged as accidental drift. Without it, per-column policy checks run on defaults only.
 * `--policy FILE`: A quality-policy config (YAML or JSON: mode / thresholds / strategy_expectations) overriding --mode / --min-grade / --min-score.
 * `--mode TEXT`: report (record only, verdict always pass) | warn (violations promote verdict to warn) | fail (violations promote verdict to fail). Ignored when --policy sets its own mode.  [default: report]
 * `--min-grade TEXT`: Shorthand: minimum letter grade (A/B/C/D) the overall score must reach.
@@ -1607,7 +1609,7 @@ $ decoy report integrity [OPTIONS] MASKED
 **Options**:
 
 * `--source FILE`: Pre-mask source CSV (ground truth for the integrity check).  [required]
-* `--config FILE`: Optional pipeline.yaml. When passed, policy_validation can compare against the configured masks. Without it the runner still produces residual_pii + fk_preservation findings.
+* `--config TEXT`: Optional pipeline.yaml, or a pipeline name. When passed, policy_validation can compare against the configured masks. Without it the runner still produces residual_pii + fk_preservation findings.
 * `-o, --output PATH`: Write the JobStormReport JSON to this path. The Rich table still renders to stderr.
 * `--allow-source-mismatch`: Suppress the stderr warning when --source does not match the pipeline&#x27;s declared sources block.
 * `--json`: Emit the full JobStormReport JSON to stdout. No card.
@@ -1735,7 +1737,7 @@ $ decoy report vault [OPTIONS] VAULT
 
 **Options**:
 
-* `--config FILE`: The pipeline config the mask run used. The vault opens only under the mask secret that run used (--mask-secret or global_settings.mask_secret_ref).  [required]
+* `--config TEXT`: The pipeline config the mask run used. The vault opens only under the mask secret that run used (--mask-secret or global_settings.mask_secret_ref).  [required]
 * `--mask-secret TEXT`: Reference to the mask secret the run used: &#x27;env:NAME&#x27; or &#x27;file:/PATH&#x27; (a &gt;=32-byte secret; an owner-only file, never the raw value). Sets global_settings.mask_secret_ref for this command; an error if the YAML also sets it. See: decoy explain keys.
 * `--json`: Emit a structured JSON result on stdout. Errors still go to stderr.
 * `-q, --quiet`: Suppress stdout. Errors still go to stderr; exit code carries the result.

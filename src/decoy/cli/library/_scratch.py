@@ -175,7 +175,7 @@ def clean_all(library: Library) -> list[tuple[str, DeleteReport]]:
     if not scratch.is_dir():
         return []
     results: list[tuple[str, DeleteReport]] = []
-    with _index.locked(library.library_dir, tmp_dir=library.tmp_dir):
+    with _index.locked(library.library_dir):
         for entry in sorted(scratch.iterdir()):
             results.append((entry.name, library.delete_scratch(entry)))
     return results

@@ -140,7 +140,7 @@ def _require_lockable(library: Library) -> None:
 def prune_preview(library: Library, rules: Sequence[Rule], *, now: datetime) -> PrunePlan:
     """The exact records `prune_apply` would delete now; deletes nothing."""
     _require_lockable(library)
-    with _index.locked(library.library_dir, tmp_dir=library.tmp_dir) as conn:
+    with _index.locked(library.library_dir) as conn:
         rows, refs = _locked_rows(library, conn)
         return _plan(rows, refs, rules, now)
 
@@ -150,7 +150,7 @@ def prune_apply(library: Library, rules: Sequence[Rule], *, now: datetime) -> Pr
     _require_lockable(library)
     deleted: list[str] = []
     left: list[str] = []
-    with _index.locked(library.library_dir, tmp_dir=library.tmp_dir) as conn:
+    with _index.locked(library.library_dir) as conn:
         rows, refs = _locked_rows(library, conn)
         for rid in _plan(rows, refs, rules, now).delete:
             path = library.object_path(rid)

@@ -210,10 +210,10 @@ def test_ref_sets_under_the_lock_and_prints(root: Path, monkeypatch: pytest.Monk
 
     monkeypatch.setattr(_index, "locked", locked)
     monkeypatch.setattr(_refs, "replace_file", write)
-    result = _cli(root, "ref", "sample-run/baseline", rid.removeprefix("sha256:")[:10])
+    result = _cli(root, "ref", "sample-run/main", rid.removeprefix("sha256:")[:10])
     assert result.exit_code == EXIT_OK, result.output
     assert writes == [True]  # one ref write, made while the library lock was held
-    shown = _cli(root, "ref", "sample-run/baseline")
+    shown = _cli(root, "ref", "sample-run/main")
     assert shown.exit_code == EXIT_OK and rid in shown.output
     scoped = _cli(root, "ref", "sample-run/claims/baseline", rid)
     assert scoped.exit_code == EXIT_OK
@@ -232,10 +232,10 @@ def test_ref_with_a_bad_name_is_a_usage_error(root: Path, name: str) -> None:
 
 def test_ref_unset_is_a_usage_error_and_degraded_set_refuses(root: Path) -> None:
     rid = _put(root, _sample(1, 11))[0]
-    assert _cli(root, "ref", "sample-run/baseline").exit_code == EXIT_USAGE
+    assert _cli(root, "ref", "sample-run/main").exit_code == EXIT_USAGE
     (root / "library" / "index.sqlite").unlink()
     (root / "library" / "index.sqlite").mkdir()
-    result = _cli(root, "ref", "sample-run/baseline", rid)
+    result = _cli(root, "ref", "sample-run/main", rid)
     assert result.exit_code == EXIT_RUNTIME
     assert "library_lock_unavailable" in result.output
     assert not (root / "library" / "refs").exists()

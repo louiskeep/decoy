@@ -56,7 +56,7 @@ from decoy.cli.evidence import (
     verify_manifest,
 )
 from decoy.cli.exit_codes import EXIT_FINDINGS, EXIT_RUNTIME, EXIT_USAGE
-from decoy.cli.io import entry_format
+from decoy.cli.io import entry_format, pipeline_option, resolve_pipeline
 from decoy.ui.output import OutputMode, OutputState, emit_json, print_traceback, setup_output
 from decoy.ui.summary import render_fidelity_report
 from decoy.ui.theme import accent, code, error, hint, info, risk_high, success, warn
@@ -1613,12 +1613,9 @@ def _fidelity(
             "assumes masking (row parity expected)."
         ),
     ),
-    pipeline_config: Path | None = typer.Option(
+    pipeline_config: str | None = pipeline_option(
         None,
         "--config",
-        exists=True,
-        dir_okay=False,
-        readable=True,
         help=(
             "Pipeline YAML naming each column's strategy, so intentional "
             "loss (hash, bucketize, faker, ...) is not flagged as accidental "
@@ -1703,6 +1700,8 @@ def _fidelity(
     import yaml as _yaml
 
     state = setup_output(json_, quiet, verbose)
+    ref = resolve_pipeline(pipeline_config, state, "report fidelity")
+    pipeline_path = ref.yaml if ref else None
     source_str = str(source)
     output_str = str(output)
 
@@ -1742,11 +1741,11 @@ def _fidelity(
         raise typer.Exit(code=EXIT_USAGE)
 
     config_dict: dict[str, Any] = {}
-    if pipeline_config is not None:
+    if pipeline_path is not None:
         from decoy_engine import parse_pipeline_config
 
         try:
-            raw_cfg = _yaml.safe_load(pipeline_config.read_text(encoding="utf-8"))
+            raw_cfg = _yaml.safe_load(pipeline_path.read_text(encoding="utf-8"))
             config_dict = parse_pipeline_config(raw_cfg).model_dump()
         except _yaml.YAMLError as exc:
             # YAMLError carries the offending source line verbatim; sanitize it.
@@ -1779,7 +1778,7 @@ def _fidelity(
 
     from decoy_engine.quality import apply_quality_policy, compute_quality_report
 
-    config_dir = pipeline_config.parent if pipeline_config is not None else Path.cwd()
+    config_dir = pipeline_path.parent if pipeline_path is not None else Path.cwd()
     try:
         src_df = read_report_source(source, config_dict, config_dir)
     except Exception as exc:
@@ -1931,14 +1930,11 @@ def _integrity(
         readable=True,
         help="Pre-mask source CSV (ground truth for the integrity check).",
     ),
-    config: Path | None = typer.Option(
+    config: str | None = pipeline_option(
         None,
         "--config",
-        exists=True,
-        dir_okay=False,
-        readable=True,
         help=(
-            "Optional pipeline.yaml. When passed, policy_validation can "
+            "Optional pipeline.yaml, or a pipeline name. When passed, policy_validation can "
             "compare against the configured masks. Without it the runner "
             "still produces residual_pii + fk_preservation findings."
         ),
@@ -1989,6 +1985,8 @@ def _integrity(
     from decoy.ui.table import make_table
 
     state = setup_output(json_, quiet, verbose)
+    ref = resolve_pipeline(config, state, "report integrity")
+    config_path = ref.yaml if ref else None
     masked_str = str(masked)
     source_str = str(source)
 
@@ -1997,12 +1995,12 @@ def _integrity(
 
         config_dict: dict
         table_name: str
-        if config is not None:
+        if config_path is not None:
             import yaml as _yaml
             from decoy_engine import parse_pipeline_config
 
             try:
-                raw = _yaml.safe_load(config.read_text(encoding="utf-8"))
+                raw = _yaml.safe_load(config_path.read_text(encoding="utf-8"))
             except _yaml.YAMLError as exc:
                 # The outer handler renders str(exc); a raw YAMLError there would
                 # echo the offending source line. Re-raise a pre-sanitized message.
@@ -2038,7 +2036,9 @@ def _integrity(
                 "relationships": [],
             }
 
-        source_df = read_report_source(source, config_dict, config.parent if config else Path.cwd())
+        source_df = read_report_source(
+            source, config_dict, config_path.parent if config_path else Path.cwd()
+        )
         masked_df = read_report_source(masked, {}, Path.cwd())
 
         report = run_post_mask(
@@ -2178,12 +2178,9 @@ def _vault(
         readable=True,
         help="The vault file written by `decoy run --vault`.",
     ),
-    config: Path = typer.Option(
+    config: str = pipeline_option(
         ...,
         "--config",
-        exists=True,
-        dir_okay=False,
-        readable=True,
         help=(
             "The pipeline config the mask run used. The vault opens only under the mask "
             "secret that run used (--mask-secret or global_settings.mask_secret_ref)."
@@ -2218,6 +2215,7 @@ def _vault(
     import yaml as _yaml
 
     state = setup_output(json_, quiet, verbose)
+    config_path = resolve_pipeline(config, state, "report vault").yaml
 
     def _emit_error(message: str, *, hint_text: str | None = None) -> None:
         if state.mode is OutputMode.json:
@@ -2240,7 +2238,7 @@ def _vault(
 
     # Parse config YAML.
     try:
-        raw = _yaml.safe_load(config.read_text(encoding="utf-8"))
+        raw = _yaml.safe_load(config_path.read_text(encoding="utf-8"))
     except _yaml.YAMLError as exc:
         _emit_error(sanitize_yaml_error(exc))
         raise typer.Exit(code=EXIT_USAGE)

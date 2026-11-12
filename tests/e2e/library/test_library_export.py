@@ -156,7 +156,7 @@ def test_links_and_refs_point_at_the_new_ids_after_stripping(root: Path, tmp_pat
     run_id = _put(
         root, run_result(12, "succeeded", [table(0, "people", 5)], links=[("baseline", scan_id)])
     )[0]
-    open_library(root).set_ref("scan-set", "baseline", scan_id)
+    open_library(root).set_ref("scan-set", "baseline/people", scan_id)
     out = tmp_path / "remap.jsonl"
     assert _export(root, out).exit_code == EXIT_OK
     header, lines = _read(out)
@@ -165,7 +165,7 @@ def test_links_and_refs_point_at_the_new_ids_after_stripping(root: Path, tmp_pat
     new_scan = by_source[scan_id].id
     assert new_scan != scan_id
     assert [link["id"] for link in by_source[run_id].raw["links"]] == [new_scan]
-    assert header.refs == {"scan-set/baseline": new_scan}
+    assert header.refs == {"scan-set/baseline/people": new_scan}
     assert header.external_links == 0
 
 

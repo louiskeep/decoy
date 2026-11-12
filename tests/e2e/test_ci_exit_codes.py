@@ -209,6 +209,10 @@ def test_over_limit_staged_scan_is_partial_exit_usage_never_clean(tmp_path: Path
 
 def test_validation_warning_blocks_only_when_configured(tmp_path: Path) -> None:
     repo = _repo(tmp_path)
+    # An existing absolute target draws the overwrite warning; a relative one lands in a new
+    # run folder and draws none (PROJECT-LAYOUT P4, AT-16).
+    target = repo / "out" / "out.csv"
+    write(repo, "pipeline.yaml", CLEAN_PIPELINE.replace("path: out/out.csv", f"path: {target}"))
     write(repo, "out/out.csv", "already here\n")
     write(repo, MANIFEST_NAME, ci_manifest())  # default: warnings block
     proc, report = _run(repo)

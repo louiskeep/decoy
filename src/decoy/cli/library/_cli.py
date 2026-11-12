@@ -41,11 +41,19 @@ def fail_library(state: OutputState, exc: Exception) -> NoReturn:
     from decoy.cli.library._errors import (
         LIBRARY_PATH_TOO_LONG,
         LIBRARY_POLICY_INVALID,
+        LIBRARY_POLICY_UNTRUSTED,
         REF_NAME_INVALID,
+        REF_NAME_RESERVED,
     )
 
     # Codes that describe what the user typed; anything else is the library's own state.
-    usage = {REF_NAME_INVALID, LIBRARY_PATH_TOO_LONG, LIBRARY_POLICY_INVALID}
+    usage = {
+        REF_NAME_INVALID,
+        REF_NAME_RESERVED,
+        LIBRARY_PATH_TOO_LONG,
+        LIBRARY_POLICY_INVALID,
+        LIBRARY_POLICY_UNTRUSTED,
+    }
     code = getattr(exc, "code", "")
     fail(state, str(exc), EXIT_USAGE if code in usage else EXIT_RUNTIME)
 

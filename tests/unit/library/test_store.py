@@ -295,3 +295,47 @@ def test_run_child_helper_reaches_the_library(root: Path) -> None:
         str(root),
     )
     assert out.strip() == "True" and len(object_files(root)) == 1
+
+
+# -- review round 1 on #206, item 1: one id rule ------------------------------------------------
+
+
+def test_resolve_uses_the_one_id_rule(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """`_store` keeps no copy of the id grammar; `resolve` asks `_paths.record_prefix`."""
+    from decoy.cli.library import _paths, _store
+
+    for name in ("_PREFIX", "_HEX", "_DIGEST_CHARS", "_MIN_PREFIX", "_digest"):
+        assert not hasattr(_store, name), name
+    calls: list[str] = []
+    real = getattr(_paths, "record_prefix", None)
+
+    def spy(text: str) -> str | None:
+        calls.append(text)
+        return real(text) if real is not None else None
+
+    monkeypatch.setattr(_store, "record_prefix", spy, raising=False)
+    root = tmp_path / DECOY_DIR
+    env = envelope()
+    library = open_library(root)
+    library.put(env)
+    assert library.resolve(env.id[:15]) == (env.id,)
+    assert calls == [env.id[:15]]  # non-vacuous: resolve went through the rule
+
+
+@pytest.mark.parametrize(
+    ("text", "digits"),
+    [
+        ("sha256:" + "a" * 8, "a" * 8),
+        ("a" * 8, "a" * 8),
+        ("sha256:" + "0" * 64, "0" * 64),
+        ("a" * 7, None),
+        ("sha256:" + "a" * 65, None),
+        ("A" * 8, None),
+        ("sha256:" + "g" * 8, None),
+        ("", None),
+    ],
+)
+def test_the_prefix_rule(text: str, digits: str | None) -> None:
+    from decoy.cli.library import _paths
+
+    assert _paths.record_prefix(text) == digits

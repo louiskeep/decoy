@@ -90,7 +90,7 @@ def test_records_reachable_from_a_ref_or_a_kept_record_survive(root: Path) -> No
     plain = _put(root, _rec(2, 3))[0]
     newest = _put(root, _rec(3, 4, links=(linked,)))[0]
     library = open_library(root, probe=_local)
-    library.set_ref("sample-run", "baseline", referenced)
+    library.set_ref("sample-run", "main", referenced)
     plan = _prune.prune_preview(library, [_rule(keep_last=1)], now=NOW)
     assert plan.delete == (plain,)
     assert set(plan.protected) == {referenced, linked}  # non-vacuous: both were candidates
