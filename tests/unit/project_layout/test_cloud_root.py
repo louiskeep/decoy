@@ -139,6 +139,36 @@ def test_at_c04_a_split_root_is_refused(tmp_path: Path, second: dict) -> None:
     assert "d/a.csv" not in message
 
 
+def test_at_c04_the_type_alone_splits_the_root(tmp_path: Path) -> None:
+    # Neither side declares a region, so only the type comparison can report the split.
+    _root, yaml_path = _project(tmp_path)
+    first = {"type": "s3", "bucket": "b", "key": "d/a.csv"}
+    second = {"type": "gcs", "bucket": "b", "object": "d/b.csv"}
+    issues = layout_issues(yaml_path, _targets(a=first, b=second))
+    assert SPLIT in _codes(issues)
+
+
+def test_the_cloud_type_tables_match_the_engine_target_types() -> None:
+    # The two tables decide "is a cloud target" and "which SDK it needs"; a provider added
+    # to the engine but missed in either would skip the cloud rule or the extras check.
+    import typing
+
+    from decoy_engine.config._targets import TargetDescriptor
+
+    from decoy.cli.extras import _CLOUD_ENDPOINT_MODULE
+    from decoy.cli.io._cloud import _KEY_FIELD
+
+    union = typing.get_args(TargetDescriptor)[0]
+    engine_types = {
+        typing.get_args(member.model_fields["type"].annotation)[0]
+        for member in typing.get_args(union)
+    }
+    cloud_types = engine_types - {"file"}
+    assert cloud_types
+    assert set(_KEY_FIELD) == cloud_types
+    assert set(_CLOUD_ENDPOINT_MODULE) == cloud_types
+
+
 def test_at_c04_the_same_root_is_one_root(tmp_path: Path) -> None:
     _root, yaml_path = _project(tmp_path)
     config = _targets(a=_s3("d/a.csv"), b=_s3("d/b.csv"))
