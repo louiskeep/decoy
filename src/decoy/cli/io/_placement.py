@@ -25,7 +25,13 @@ from decoy.cli.io._layout import (
     pipeline_name_for,
     relative_outputs,
 )
-from decoy.cli.io._layout_errors import OUTPUT_PATH_COLLISION, OUTPUT_PATH_ESCAPES, LayoutError
+from decoy.cli.io._layout_errors import (
+    DELIVERY_ROOT_SPLIT,
+    OUTPUT_PATH_COLLISION,
+    OUTPUT_PATH_ESCAPES,
+    SIDE_FILE_IN_OUT,
+    LayoutError,
+)
 
 
 @dataclass(frozen=True)
@@ -115,6 +121,43 @@ def _destination_key(path: Path, *, replaces_final: bool = False) -> tuple:
         return ("unresolved",)
 
 
+def _destination_is_within(child: Path, parent: Path) -> bool:
+    """True when `child` or one of its lexical ancestors is the same destination as `parent`.
+
+    Identity comes only from `_destination_key`, so links, case folding and missing paths
+    behave as they do for the collision rule. The caller resolves `child` first.
+    """
+    target = _destination_key(parent)
+    return any(_destination_key(path) == target for path in (child, *child.parents))
+
+
+def _split_root(config_dict: dict) -> tuple[str, str] | None:
+    """The first two local file outputs that do not share one delivery root, as labels.
+
+    Relative outputs share the run folder (or `--out-dir`); absolute ones must share one
+    parent folder, judged by `_destination_key`. A relative and an absolute output never share.
+    """
+    roots: list[tuple[str, tuple]] = []
+    for location, raw in relative_outputs(config_dict):
+        if is_placed_relative(raw):
+            roots.append((location, ("relative",)))
+        elif Path(raw).is_absolute() and "\x00" not in raw:
+            roots.append((location, _destination_key(Path(raw).parent)))
+    return next(((roots[0][0], loc) for loc, key in roots[1:] if key != roots[0][1]), None)
+
+
+def _side_file_in_out(out: Path, typed: tuple[tuple[str, Path], ...]) -> str | None:
+    """The flag of the first side file whose destination is under the project's `out/` folder."""
+    for flag, path in typed:
+        try:
+            resolved = Path(path).absolute().resolve()
+        except (OSError, RuntimeError, ValueError):
+            continue
+        if _destination_is_within(resolved, out):
+            return flag
+    return None
+
+
 def resolved_output_collisions(
     config_dict: dict, base: Path | None, typed: tuple[tuple[str, Path], ...] = ()
 ) -> tuple[str, str] | None:
@@ -169,8 +212,9 @@ def layout_issues(
     Escape is judged on the text alone. With a relative output the project marker is read
     and the pipeline name and any claim are checked read-only, then each placed path is
     held to the Windows path budget. A fixed `--out-dir` skips the project checks and holds
-    each path to the physical directory instead; a preview checks nothing. Last, no two
-    outputs may resolve to one destination.
+    each path to the physical directory instead; a preview checks nothing. Then all
+    outputs must share one delivery root, and in a project no side file may sit under `out/`.
+    Last, no two outputs may resolve to one destination.
     """
     from decoy.cli.io._project import find_project
 
@@ -186,6 +230,7 @@ def layout_issues(
     issues: list[tuple[str | None, LayoutError]] = []
     fixed = placement.directory if placement.kind == "fixed" else None
     folder: Path | None = None
+    project_out: Path | None = None
     base = "--out-dir" if fixed is not None else "its run folder"
     if fixed is not None:
         folder = fixed.resolve() if fixed.exists() else fixed
@@ -195,6 +240,7 @@ def layout_issues(
             root = find_project(yaml.parent, None).root
             name = pipeline_name_for(root, yaml, config_dict.get("name")).name
             folder, base = pipeline_folder(root, name), f"out/{name}/<run-id>"
+            project_out = folder.parent
         except LayoutError as exc:
             issues.append((None, exc))
     for location, _raw in urls:
@@ -219,6 +265,14 @@ def layout_issues(
         for flag, typed in placement.typed
         if "\x00" in os.fspath(typed)
     )
+    if not issues and (split := _split_root(config_dict)) is not None:
+        issues.append((None, DELIVERY_ROOT_SPLIT.error(first=split[0], second=split[1])))
+    if (
+        not issues
+        and project_out is not None
+        and (flag := _side_file_in_out(project_out, placement.typed))
+    ):
+        issues.append((None, SIDE_FILE_IN_OUT.error(flag=flag, base="the project's out/ folder")))
     if not issues:
         where = folder if fixed is not None else folder and folder / "<run-id>"
         clash = resolved_output_collisions(config_dict, where, placement.typed)
