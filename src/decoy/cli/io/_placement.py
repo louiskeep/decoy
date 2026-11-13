@@ -24,6 +24,7 @@ from decoy.cli.io._layout import (
     names_a_file_inside,
     pipeline_folder,
     pipeline_name_for,
+    project_out_folder,
     relative_outputs,
 )
 from decoy.cli.io._layout_errors import (
@@ -273,6 +274,13 @@ def layout_issues(
             project_out = folder.parent
         except LayoutError as exc:
             issues.append((None, exc))
+    elif placement.typed:
+        # Absolute targets only: a project-placement run still owns `<root>/out/`, so the side
+        # file rule needs the root even though no output lands there. No root, no rule.
+        try:
+            project_out = project_out_folder(find_project(config.resolve().parent, None).root)
+        except LayoutError:
+            project_out = None
     for location, _raw in urls:
         issues.append((location, OUTPUT_PATH_ESCAPES.error(path="a URL", base=base)))
     for location, raw in placed:

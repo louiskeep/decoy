@@ -124,6 +124,19 @@ def test_at47_a_side_file_under_out_is_refused(tmp_path: Path, rel: str, flag: s
 
 
 @posix_only
+@pytest.mark.parametrize("flag", ["--evidence-out", "--vault"])
+def test_at47_a_side_file_under_out_is_refused_with_only_absolute_targets(
+    tmp_path: Path, flag: str
+) -> None:
+    root, yaml = _project(tmp_path)
+    (tmp_path / "abs").mkdir()
+    config = _targets(a=str(tmp_path / "abs" / "a.csv"))
+    placement = OutputPlacement(typed=((flag, root / "out" / "side.json"),))
+    assert _codes(layout_issues(yaml, config, placement)) == [IN_OUT]
+    beside = OutputPlacement(typed=((flag, root / "side.json"),))
+    assert layout_issues(yaml, config, beside) == []
+
+
 def test_at47_a_symlink_alias_of_an_out_folder_is_refused(tmp_path: Path) -> None:
     root, yaml = _project(tmp_path)
     (root / "out" / "p").mkdir(parents=True)
