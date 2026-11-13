@@ -4,6 +4,11 @@ Walks the syntax tree of every module under `src/decoy`. Outside `_scan_set.py` 
 read a `scan_schema` key (subscript, `.get`, `in`, or a comparison against it) or call
 `records.decode`, which is how a `scan-set` record envelope would be opened. Writing the key
 into a dict literal (the `--json` envelope) is not a read.
+
+One exact-file exemption, for `records.decode` only (owner decision 2026-11-11, LIB L1b.2):
+`cli/library/_store.py`, the record library's one reader (`Library.get`). It returns the engine's
+typed record for every kind and verifies the id rule; it never reads a `scan_schema` key, which
+stays an offender there too. Any other library module or file that decodes is still red.
 """
 
 from __future__ import annotations
@@ -14,14 +19,16 @@ from pathlib import Path
 _SRC = Path(__file__).resolve().parents[2] / "src" / "decoy"
 _READER = "cli/io/_scan_set.py"
 _KEY = "scan_schema"
+# The one other file that may call `records.decode` (the library's `Library.get`); exact path.
+_LIBRARY_STORE = "cli/library/_store.py"
 
 
 def _is_key(node: ast.AST) -> bool:
     return isinstance(node, ast.Constant) and node.value == _KEY
 
 
-def offenders(source: str) -> list[int]:
-    """Line numbers where `source` reads the schema key or decodes a record."""
+def offenders(source: str, *, may_decode: bool = False) -> list[int]:
+    """Line numbers where `source` reads the schema key or (unless `may_decode`) decodes a record."""
     hits: list[int] = []
     for node in ast.walk(ast.parse(source)):
         if (
@@ -37,7 +44,11 @@ def offenders(source: str) -> list[int]:
                 and _is_key(node.args[0])
             ):
                 hits.append(node.lineno)
-            if node.func.attr == "decode" and isinstance(node.func.value, ast.Name):
+            if (
+                not may_decode
+                and node.func.attr == "decode"
+                and isinstance(node.func.value, ast.Name)
+            ):
                 if node.func.value.id == "records":
                     hits.append(node.lineno)
         elif isinstance(node, ast.Compare) and any(
@@ -54,10 +65,39 @@ def test_only_the_reader_reads_a_scan_schema() -> None:
         rel = path.relative_to(_SRC).as_posix()
         if rel == _READER:
             continue
-        found = offenders(path.read_text(encoding="utf-8"))
+        found = offenders(path.read_text(encoding="utf-8"), may_decode=rel == _LIBRARY_STORE)
         if found:
             bad[rel] = found
     assert not bad, f"read a saved scan outside load_scan_set: {bad}"
+
+
+def test_the_library_store_exemption_is_live_and_exact() -> None:
+    store = (_SRC / _LIBRARY_STORE).read_text(encoding="utf-8")
+    assert offenders(store)  # non-vacuous: the store does decode, so the exemption is in use
+    assert offenders(store, may_decode=True) == []
+    decode = "def f(blob):\n    return records.decode(blob)\n"
+    key = 'def f(data):\n    return data["scan_schema"]\n'
+    assert offenders(decode) == [2]  # any file but the store
+    assert offenders(key, may_decode=True) == [2]  # the store may not read the key
+
+
+def test_a_decode_in_another_library_module_is_red(tmp_path: Path) -> None:
+    for rel in ("cli/library/_refs.py", "cli/library/_store_copy.py", "cli/scan.py"):
+        path = tmp_path / rel
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("def f(blob):\n    return records.decode(blob)\n", encoding="utf-8")
+    bad = {
+        p.relative_to(tmp_path).as_posix(): offenders(
+            p.read_text(encoding="utf-8"),
+            may_decode=p.relative_to(tmp_path).as_posix() == _LIBRARY_STORE,
+        )
+        for p in sorted(tmp_path.rglob("*.py"))
+    }
+    assert bad == {
+        "cli/library/_refs.py": [2],
+        "cli/library/_store_copy.py": [2],
+        "cli/scan.py": [2],
+    }
 
 
 def test_the_reader_itself_is_seen_reading_the_key() -> None:

@@ -110,6 +110,7 @@ _FIT_SCAN = _E2E + "test_fit_and_scan_outputs_are_private"
 _REPORT = _E2E + "test_report_writers_are_private"
 _RESTORED = _E2E + "test_unmask_and_detokenize_outputs_are_private"
 _VAULT = _E2E + "test_tokenize_vault_and_its_journal_are_private"
+_LIBRARY = _UNIT + "test_library_files_and_folders_are_owner_only_under_umask_zero"
 PRIVATE_CASES: dict[str, str] = {
     "api.py::_stage_source_entry::create_private_temp::1": _SPOOL,
     "api.py::_stage_source_entry::write_table::1": _SPOOL,
@@ -142,6 +143,9 @@ PRIVATE_CASES: dict[str, str] = {
     + "test_layout_files_are_owner_only_under_umask_zero",
     "cli/io/_project.py::ensure_decoy_dir::write_local_target::1": _UNIT
     + "test_layout_files_are_owner_only_under_umask_zero",
+    "cli/library/_fs.py::ensure_private_dir::create_private_directory::1": _LIBRARY,
+    "cli/library/_fs.py::write_once::write_atomic::1": _LIBRARY,
+    "cli/library/_fs.py::write_dotfile_once::write_local_target::1": _LIBRARY,
 }
 _CASE_MODULES = {
     "e2e:test_private_surfaces.py": ROOT / "tests/e2e/private_file/test_private_surfaces.py",
@@ -590,10 +594,10 @@ def test_the_live_tree_is_clean(files: dict[str, str]) -> None:
     assert run(files) == []
 
 
-def test_the_census_is_56_watched_sinks(files: dict[str, str]) -> None:
+def test_the_census_is_59_watched_sinks(files: dict[str, str]) -> None:
     sinks = watched(collect(files))
-    assert len(sinks) == 56
-    assert len([s for s in sinks if is_entry(s)]) == 20
+    assert len(sinks) == 59
+    assert len([s for s in sinks if is_entry(s)]) == 23
     counts: dict[str, int] = {}
     for r in ROWS:
         counts[r.disposition] = counts.get(r.disposition, 0) + 1

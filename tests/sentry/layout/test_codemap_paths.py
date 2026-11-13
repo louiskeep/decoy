@@ -24,6 +24,7 @@ KINDS = frozenset(
     {
         "Command module",
         "Command-private helpers",
+        "Local record library (LIB): root rule, store, and later refs, index, scratch and logs; commands import the facade, never its `_` modules",
         "Generation CLI helpers (the exact fit shared by `fit` and `init`, the `run --rows` preview, the CSV generate scaffold; the flat `cli/` is frozen)",
         "`decoy run` internals (phases, error arm, summary, evidence, notifications, vault commit)",
         "`decoy scan` internals (argument resolution, engine call, card and `--json`)",

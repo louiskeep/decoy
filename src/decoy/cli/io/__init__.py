@@ -74,13 +74,14 @@ from decoy.cli.io._placement import (
     layout_issues,
     resolved_output_collisions,
 )
-from decoy.cli.io._project import Project, ensure_decoy_dir, find_project
+from decoy.cli.io._project import DECOY_DIR, Project, ensure_decoy_dir, find_project
 from decoy.cli.io._scan_set import (
     ScanSetFormatError,
     load_scan_set,
     scan_set_from_data,
     select_table,
 )
+from decoy.cli.io._small_file import UnsafeFileError, read_small_file
 from decoy.cli.io._targets import (
     TargetFormatError,
     check_output_path,
@@ -101,6 +102,7 @@ from decoy.cli.io._targets import (
 # reason code spelled the same, and the reason-code copy sentry reads any such string constant
 # as a copy.
 __all__ = [
+    "DECOY_DIR",
     "GATE_CODES",
     "GATE_DESCRIPTORS",
     "OUTPUT_DIR_UNUSABLE",
@@ -120,6 +122,7 @@ __all__ = [
     "RunLayout",
     "ScanSetFormatError",
     "TargetFormatError",
+    "UnsafeFileError",
     "acquire_relation",
     "check_output_path",
     "check_path_budget",
@@ -154,6 +157,7 @@ __all__ = [
     "pipeline_option",
     "prepare_out",
     "read_claim",
+    "read_small_file",
     "read_source",
     "relative_outputs",
     "resolve_path",

@@ -445,3 +445,40 @@ def test_layout_files_are_owner_only_under_umask_zero(tmp_path: Path) -> None:
         "out/p/PIPELINE 0o600",
         "out/p/LATEST 0o600",
     ]
+
+
+_LIBRARY_FILES = (
+    "import os, stat, sys\n"
+    "from datetime import datetime, timezone\n"
+    "from pathlib import Path\n"
+    "from decoy_engine import records\n"
+    "from decoy.cli.io import DECOY_DIR\n"
+    "from decoy.cli.library import open_library\n"
+    "os.umask(0)\n"
+    "root = Path(sys.argv[1]) / DECOY_DIR\n"
+    "payload = {'sample_size': 1, 'root_table': 't', 'table_rows': {'t': 1},\n"
+    "    'subset_seed_counts': {'t': 1}, 'approximate_columns': (), 'scratch_dir': 's',\n"
+    "    'outputs': (), 'ttl_seconds': 60}\n"
+    "env = records.build('sample-run', payload,\n"
+    "    producer={'name': 'decoy-cli', 'version': '0.0.0', 'engine_version': '0.22.0'},\n"
+    "    invocation_id='0b6c9a3e-1d2f-4c5b-8a7e-9f0e1d2c3b4a',\n"
+    "    created_at=datetime(2026, 11, 11, tzinfo=timezone.utc))\n"
+    "open_library(root).put(env)\n"
+    "for p in sorted(root.rglob('*')):\n"
+    "    kind = 'dir' if p.is_dir() else 'file'\n"
+    "    print(kind, oct(stat.S_IMODE(os.stat(p).st_mode)))\n"
+    "print('root', oct(stat.S_IMODE(os.stat(root).st_mode)))\n"
+)
+
+
+@posix_only
+def test_library_files_and_folders_are_owner_only_under_umask_zero(tmp_path: Path) -> None:
+    """Library folders come from `create_private_directory`; records, `LAYOUT` and the git files
+    from the atomic writer."""
+    got = _run(_LIBRARY_FILES, str(tmp_path)).splitlines()
+    files = [line for line in got if line.startswith("file ")]
+    dirs = [line for line in got if line.startswith(("dir ", "root "))]
+    assert len(files) == 4  # .gitignore, .gitattributes, LAYOUT, one record; tmp is empty
+    assert set(files) == {"file 0o600"}
+    assert len(dirs) == 5  # the root, library, objects, the fan-out folder, tmp
+    assert {line.split()[1] for line in dirs} == {"0o700"}
