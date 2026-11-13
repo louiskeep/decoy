@@ -17,10 +17,11 @@ import pytest
 from typer.testing import CliRunner
 
 from decoy.__main__ import app
+from decoy._atomic import AtomicWriteError
 from decoy.cli.exit_codes import EXIT_OK, EXIT_USAGE
 from decoy.cli.io import DECOY_DIR, find_project
 from decoy.cli.io._project import DECOY_DIR_GITIGNORE
-from decoy.cli.project._new import create_project
+from decoy.cli.project import create_project
 
 runner = CliRunner()
 MARKER = "kind: decoy-project/v1\n"
@@ -360,3 +361,57 @@ def test_project_commands_are_registered_in_help() -> None:
     assert res.exit_code == EXIT_OK
     for word in ("new", "show", "list"):
         assert word in res.output
+
+
+def test_show_does_not_report_runs_behind_a_linked_pipeline_folder(tmp_path: Path) -> None:
+    if os.name != "posix":
+        pytest.skip("links need POSIX here")
+    root = _project(tmp_path, "acme", ("alpha",))
+    outside = tmp_path / "elsewhere" / "alpha"
+    outside.mkdir(parents=True)
+    (outside / RUN_A).mkdir()
+    (outside / "LATEST").write_text(RUN_A + "\n", encoding="utf-8")
+    (root / "out").mkdir()
+    (root / "out" / "alpha").symlink_to(outside, target_is_directory=True)
+
+    body = _json(runner.invoke(app, ["--project", str(root), "project", "show", "--json"]))
+
+    row = body["pipelines"][0]
+    assert row["last_run"] is None
+    assert row["last_clean_run"] is None
+
+
+def test_show_does_not_report_runs_behind_a_linked_out_folder(tmp_path: Path) -> None:
+    if os.name != "posix":
+        pytest.skip("links need POSIX here")
+    root = _project(tmp_path, "acme", ("alpha",))
+    outside = tmp_path / "elsewhere"
+    (outside / "alpha" / RUN_A).mkdir(parents=True)
+    (root / "out").symlink_to(outside, target_is_directory=True)
+
+    body = _json(runner.invoke(app, ["--project", str(root), "project", "show", "--json"]))
+
+    assert body["pipelines"][0]["last_run"] is None
+
+
+@pytest.mark.parametrize("as_json", [False, True])
+def test_new_maps_a_failed_marker_write_to_exit_3(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, as_json: bool
+) -> None:
+    def refuse_write(*_a: object, **_k: object) -> bool:
+        raise AtomicWriteError("atomic_noclobber_unsupported")
+
+    monkeypatch.setattr("decoy.cli.io._project.write_local_target", refuse_write)
+    args = ["project", "new", str(tmp_path / "acme")] + (["--json"] if as_json else [])
+
+    res = runner.invoke(app, args)
+
+    assert res.exit_code == 3, res.output
+    if as_json:
+        body = _json(res)
+        assert body["status"] == "error"
+        assert body["command"] == "project new"
+        assert "atomic_noclobber_unsupported" in body["error"]
+    else:
+        assert "atomic_noclobber_unsupported" in res.output
+        assert "Traceback" not in res.output

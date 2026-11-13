@@ -8,6 +8,7 @@ from pathlib import Path
 
 import typer
 
+from decoy._atomic import AtomicWriteError
 from decoy.cli.exit_codes import EXIT_RUNTIME, EXIT_USAGE
 from decoy.cli.io import (
     PIPELINES_DIR,
@@ -107,16 +108,26 @@ def new_command(
     state = setup_output(json_, quiet, verbose)
     failure: LayoutError | None = None
     problem: OSError | None = None
+    write_code: str | None = None
     created: CreatedProject | None = None
     try:
         created = create_project(directory)
     except LayoutError as exc:
         failure = exc
+    except AtomicWriteError as exc:
+        write_code = exc.code
     except OSError as exc:
         problem = exc
     # Refused outside the handlers so the refusal carries no chained context or OS text.
     if failure is not None:
         refuse(state, {"command": "project new"}, failure.message, code=failure.code)
+    if write_code is not None:
+        refuse(
+            state,
+            {"command": "project new"},
+            f"could not write the project files ({write_code}).",
+            exit_code=EXIT_RUNTIME,
+        )
     if problem is not None:
         not_a_folder = isinstance(problem, (FileExistsError, NotADirectoryError))
         refuse(
