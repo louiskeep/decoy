@@ -18,6 +18,7 @@ from typing import Any
 import typer
 
 from decoy.cli.exit_codes import EXIT_OK, EXIT_USAGE
+from decoy.cli.io import PipelineRef, pipeline_option, resolve_pipeline
 from decoy.cli.library._cli import fail, fail_library, library_option, open_or_fail, root_or_fail
 from decoy.ui.output import OutputMode, OutputState, emit_json, setup_output
 
@@ -56,6 +57,21 @@ def _row_json(row: Any) -> dict:
     }
 
 
+def _pipeline_label(state: OutputState, ref: PipelineRef) -> str:
+    """The `pipeline` label a run of this pipeline puts on its records (plan 4.3): the YAML's
+    path relative to its project root, so a name, a path and a path typed from a subfolder all
+    select the same records."""
+    from decoy.cli.io import LayoutError, find_project, project_relative_posix
+
+    failure: LayoutError | None = None
+    try:
+        project = ref.project or find_project(ref.yaml.resolve().parent, None)
+        return project_relative_posix(project.root, ref.yaml)
+    except LayoutError as exc:
+        failure = exc
+    fail(state, str(failure))
+
+
 def list_command(
     kind: str | None = typer.Option(
         None,
@@ -64,8 +80,10 @@ def list_command(
         autocompletion=_kinds,
         help="Only records of this kind (scan-set, evidence, run-result, sample-run, ...).",
     ),
-    pipeline: str | None = typer.Option(
-        None, "--pipeline", metavar="P", help="Only this pipeline."
+    pipeline: str | None = pipeline_option(
+        None,
+        "--pipeline",
+        help="Only this pipeline's records: its name in the project, or the path to its YAML.",
     ),
     table: str | None = typer.Option(
         None, "--table", metavar="T", help="Only records naming this table."
@@ -81,6 +99,7 @@ def list_command(
 ) -> None:
     """List stored records, oldest first, from the index (no record file is opened)."""
     state = setup_output(json_, False, False)
+    ref = resolve_pipeline(pipeline, state, "library list")
     cutoff: datetime | None = None
     if since is not None:
         try:
@@ -89,10 +108,11 @@ def list_command(
             cutoff = None
         if cutoff is None:
             fail(state, "--since takes a date (YYYY-MM-DD) or an ISO time")
-    opened = open_or_fail(state, root_or_fail(state, library).path)
+    label = None if ref is None else _pipeline_label(state, ref)
+    opened = open_or_fail(state, root_or_fail(state, library, ref).path)
     rows = [
         r
-        for r in opened.rows(kind=kind, pipeline=pipeline, table=table)
+        for r in opened.rows(kind=kind, pipeline=label, table=table)
         if cutoff is None or _instant(r.created_at) >= cutoff
     ]
     emit_json(

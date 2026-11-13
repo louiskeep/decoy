@@ -16,7 +16,7 @@ hidden `validate` default handler included) and fails for any parameter that tak
 YAML without `callback=parse_pipeline_token` and `autocompletion=pipeline_names`, or whose
 command body does not call `resolve_pipeline` on it after `setup_output`. It also bans private
 Typer imports under `src/` and any `DECOY_PROJECT` literal outside `_pipelines.py`. There is
-no allowlist: a parameter outside the 12 is a new command and joins `EXPECTED` on purpose.
+no allowlist: a parameter outside the 13 is a new command and joins `EXPECTED` on purpose.
 
 Named limits: a marker name assembled at run time (`"decoy" + ".yaml"`), `getattr`, and a walk that
 reads `os.path.dirname` in a loop are not seen. The rule targets the spellings a contributor
@@ -197,6 +197,7 @@ EXPECTED = {
     "report fidelity:pipeline_config",
     "report integrity:config",
     "report vault:config",
+    "library list:pipeline",
 }
 
 

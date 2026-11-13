@@ -134,6 +134,13 @@ mode, a corrupt record).
   oldest first from the index, without opening record files. `--since` takes `YYYY-MM-DD` or an
   ISO time (UTC unless it says otherwise). A record of a kind this Decoy does not know is listed
   as `unknown kind <name>, needs a newer Decoy`, and `--kind <name>` still finds it.
+  `--pipeline P` takes a pipeline the way every other command does: its name in the project
+  (`claims` for `pipelines/claims/pipeline.yaml`) or the path to its YAML. It lists the records
+  whose `pipeline` label is that YAML's path relative to the project root (relative to the YAML's
+  own folder when there is no `decoy.yaml` marker), so a name, a path and a path typed from a
+  subfolder select the same records. An unknown name is a usage error (`layout.pipeline_unknown`,
+  exit 1) that lists the project's pipelines. With `--pipeline`, the library is the one of that
+  pipeline's project unless `--library` or `DECOY_LIBRARY` says otherwise.
 - `decoy library show ID|REF [--json]` prints the envelope (id, kind, schema, time, invocation,
   producer, labels, links) and, when this Decoy can read it, the payload.
 - `decoy library diff A B [--json]` compares two records of the same kind. Scan records use the

@@ -37,7 +37,7 @@ FORWARDERS: dict[str, tuple[str, int, int]] = {
     "decoy.cli.report._load_manifest": ("command", 2, 5),
     "decoy.cli.scan._emit_load_error": ("command_name", 3, 4),
     "decoy.cli.reference._reject_kind": ("verb", 99, 2),
-    "decoy.cli.io.resolve_pipeline": ("command", 2, 12),
+    "decoy.cli.io.resolve_pipeline": ("command", 2, 13),
 }
 
 # Forwarders whose own body may pass the parameter on: keyed by the defining module, not the
