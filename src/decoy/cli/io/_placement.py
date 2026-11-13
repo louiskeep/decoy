@@ -131,17 +131,20 @@ def _destination_is_within(child: Path, parent: Path) -> bool:
     return any(_destination_key(path) == target for path in (child, *child.parents))
 
 
-def _split_root(config_dict: dict) -> tuple[str, str] | None:
+def _split_root(config_dict: dict, fixed: Path | None = None) -> tuple[str, str] | None:
     """The first two local file outputs that do not share one delivery root, as labels.
 
-    Relative outputs share the run folder (or `--out-dir`); absolute ones must share one
-    parent folder, judged by `_destination_key`. A relative and an absolute output never share.
+    Relative outputs share the run folder, or the `--out-dir` folder when `fixed` is set;
+    absolute ones must share one parent folder, judged by `_destination_key`. In a project a
+    relative and an absolute output never share; under `--out-dir` an absolute output directly
+    in that folder shares with the relative ones.
     """
+    relative_key = _destination_key(fixed) if fixed is not None else ("relative",)
     roots: list[tuple[str, tuple]] = []
     for location, raw in relative_outputs(config_dict):
         if is_placed_relative(raw):
-            roots.append((location, ("relative",)))
-        elif Path(raw).is_absolute() and "\x00" not in raw:
+            roots.append((location, relative_key))
+        elif Path(raw).is_absolute():
             roots.append((location, _destination_key(Path(raw).parent)))
     return next(((roots[0][0], loc) for loc, key in roots[1:] if key != roots[0][1]), None)
 
@@ -150,7 +153,9 @@ def _side_file_in_out(out: Path, typed: tuple[tuple[str, Path], ...]) -> str | N
     """The flag of the first side file whose destination is under the project's `out/` folder."""
     for flag, path in typed:
         try:
-            resolved = Path(path).absolute().resolve()
+            # Only the parent is resolved: a writer that replaces a final link writes here.
+            absolute = Path(path).absolute()
+            resolved = absolute.parent.resolve() / absolute.name
         except (OSError, RuntimeError, ValueError):
             continue
         if _destination_is_within(resolved, out):
@@ -265,7 +270,7 @@ def layout_issues(
         for flag, typed in placement.typed
         if "\x00" in os.fspath(typed)
     )
-    if not issues and (split := _split_root(config_dict)) is not None:
+    if not issues and (split := _split_root(config_dict, fixed)) is not None:
         issues.append((None, DELIVERY_ROOT_SPLIT.error(first=split[0], second=split[1])))
     if (
         not issues

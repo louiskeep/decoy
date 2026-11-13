@@ -62,6 +62,13 @@ def test_a_relative_and_an_absolute_target_are_split_under_out_dir(tmp_path: Pat
     assert _codes(layout_issues(tmp_path / "p.yaml", config, placement)) == [SPLIT]
 
 
+def test_a_relative_and_an_absolute_target_in_the_out_dir_folder_share_it(tmp_path: Path) -> None:
+    build = tmp_path / "build"
+    placement = OutputPlacement.fixed(build)
+    config = _targets(a="a.csv", b=str(build / "b.csv"))
+    assert layout_issues(tmp_path / "p.yaml", config, placement) == []
+
+
 def test_relative_targets_alone_and_a_quarantine_beside_them_are_one_root(tmp_path: Path) -> None:
     _root, yaml = _project(tmp_path)
     config = {
@@ -126,6 +133,26 @@ def test_at47_a_case_variant_of_out_is_refused_where_the_filesystem_folds(tmp_pa
     if not (root / "OUT").exists():
         pytest.skip("case-sensitive filesystem")
     placement = OutputPlacement(typed=(("--vault", root / "OUT" / "v.db"),))
+    assert _codes(layout_issues(yaml, _targets(a="a.csv"), placement)) == [IN_OUT]
+
+
+def test_at47_a_case_variant_of_a_missing_out_is_refused_by_identity(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Runs on every OS: a string prefix test cannot match "OUT" to "out", identity can.
+    monkeypatch.setattr("decoy.cli.io._placement._folds_case", lambda _folder: True)
+    root, yaml = _project(tmp_path)
+    placement = OutputPlacement(typed=(("--vault", root / "OUT" / "v.db"),))
+    assert _codes(layout_issues(yaml, _targets(a="a.csv"), placement)) == [IN_OUT]
+
+
+@posix_only
+def test_at47_a_final_link_under_out_is_judged_by_where_it_sits(tmp_path: Path) -> None:
+    root, yaml = _project(tmp_path)
+    (root / "out").mkdir()
+    (root / "elsewhere.json").write_text("{}", encoding="utf-8")
+    (root / "out" / "e.json").symlink_to(root / "elsewhere.json")
+    placement = OutputPlacement(typed=(("--evidence-out", root / "out" / "e.json"),))
     assert _codes(layout_issues(yaml, _targets(a="a.csv"), placement)) == [IN_OUT]
 
 
