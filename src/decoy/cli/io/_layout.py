@@ -589,7 +589,7 @@ class RunLayout:
             return ()
         folder, run_id = self._pipeline_dir, self._run.run_id
         warnings: list[LayoutWarning] = []
-        current = _read_latest(folder)
+        current = read_latest(folder)
         if current is not None and not is_run_id(current):
             warnings.append(LATEST_INVALID.warning(path=folder))
         elif current is not None and current > run_id:
@@ -685,7 +685,7 @@ def shown_path(path: Path) -> str:
         return str(path)
 
 
-def _read_latest(folder: Path) -> str | None:
+def read_latest(folder: Path) -> str | None:
     """The run id `LATEST` names; None when absent, "" when something unreadable is there."""
     path = folder / _LATEST_FILE
     raw = _read_small(path)

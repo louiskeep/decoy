@@ -71,7 +71,7 @@ def _s3_source_pipeline(tmp_path: Path) -> Path:
     return p
 
 
-def _gcs_target_pipeline(tmp_path: Path) -> Path:
+def _cloud_target_pipeline(tmp_path: Path, target: dict) -> Path:
     src = tmp_path / "accounts.csv"
     src.write_text("ssn\n123456789\n", encoding="utf-8")
     cfg = {
@@ -93,18 +93,23 @@ def _gcs_target_pipeline(tmp_path: Path) -> Path:
                 ],
             }
         ],
-        "targets": {
-            "accounts": {
-                "type": "gcs",
-                "format": "csv",
-                "bucket": "test-bucket",
-                "object": "out.csv",
-            },
-        },
+        "targets": {"accounts": target},
     }
     p = tmp_path / "pipeline.yaml"
     p.write_text(yaml.safe_dump(cfg), encoding="utf-8")
     return p
+
+
+# An s3 target passes the cloud delivery rule, so a run reaches the execution-time refusal.
+S3_TARGET = {
+    "type": "s3",
+    "format": "csv",
+    "bucket": "test-bucket",
+    "region": "us-east-1",
+    "key": "d/out.csv",
+}
+# A gcs target is refused at the gate, before execution is reached.
+GCS_TARGET = {"type": "gcs", "format": "csv", "bucket": "test-bucket", "object": "d/out.csv"}
 
 
 class TestCloudEndpointUnsupportedByRun:
@@ -150,15 +155,24 @@ class TestCloudEndpointUnsupportedByRun:
         assert "s3" in collapsed and "accounts" in collapsed, result.output
         assert "Traceback (most recent call last)" not in result.output
 
-    def test_gcs_target_fails_closed_not_silently_skipped(self, tmp_path: Path) -> None:
-        cfg = _gcs_target_pipeline(tmp_path)
+    def test_s3_target_fails_closed_not_silently_skipped(self, tmp_path: Path) -> None:
+        cfg = _cloud_target_pipeline(tmp_path, S3_TARGET)
         result = runner.invoke(app, ["run", str(cfg)])
         assert result.exit_code == EXIT_USAGE, (
             f"expected EXIT_USAGE ({EXIT_USAGE}), got {result.exit_code}. output={result.output!r}"
         )
         collapsed = " ".join(result.output.split())
         assert "cannot run through" in collapsed, result.output
-        assert "gcs" in collapsed and "accounts" in collapsed, result.output
+        assert "s3" in collapsed and "accounts" in collapsed, result.output
+
+    def test_gcs_target_is_refused_at_the_gate(self, tmp_path: Path) -> None:
+        cfg = _cloud_target_pipeline(tmp_path, GCS_TARGET)
+        result = runner.invoke(app, ["run", str(cfg)])
+        assert result.exit_code == EXIT_USAGE, result.output
+        assert "Cloud delivery does not support type" in " ".join(result.output.split()), (
+            result.output
+        )
+        assert "cannot run through" not in result.output, result.output
 
     def test_json_mode_reports_the_same_typed_failure(self, tmp_path: Path) -> None:
         cfg = _s3_source_pipeline(tmp_path)
@@ -170,12 +184,23 @@ class TestCloudEndpointUnsupportedByRun:
         assert '"status": "ok"' not in result.output, result.output
 
     def test_chunked_run_fails_closed_too(self, tmp_path: Path) -> None:
-        # The refusal lives in the shared I/O helpers, so the --chunked path
-        # needs its own proof: it goes through _run_chunked_mask, not
-        # _load_sources_from_config.
-        cfg = _gcs_target_pipeline(tmp_path)
+        # The refusal lives in the shared I/O helpers, so the --chunked path needs its own
+        # proof: it goes through _run_chunked_mask, not _load_sources_from_config. A cloud
+        # target with --chunked is a gate refusal, so the chunked cell uses a cloud source
+        # with a file target to reach that route.
+        cfg = _s3_source_pipeline(tmp_path)
         result = runner.invoke(app, ["run", str(cfg), "--chunked"])
         assert result.exit_code == EXIT_USAGE, result.output
         collapsed = " ".join(result.output.split())
         assert "cannot run through" in collapsed, result.output
-        assert "gcs" in collapsed and "accounts" in collapsed, result.output
+        assert "s3" in collapsed and "accounts" in collapsed, result.output
+
+    def test_chunked_with_an_s3_target_is_refused_at_the_gate(self, tmp_path: Path) -> None:
+        # Fails if the run route stops threading --chunked into the output placement.
+        # The gate prints the message text, not the code.
+        cfg = _cloud_target_pipeline(tmp_path, S3_TARGET)
+        result = runner.invoke(app, ["run", str(cfg), "--chunked"])
+        assert result.exit_code == EXIT_USAGE, result.output
+        collapsed = " ".join(result.output.split())
+        assert "Cloud delivery does not support --chunked" in collapsed, result.output
+        assert "cannot run through" not in collapsed, result.output

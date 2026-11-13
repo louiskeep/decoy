@@ -118,7 +118,9 @@ def test_owner_only_file_secret_works(tmp_path: Path) -> None:
     assert result.exit_code == 0, result.output
 
 
-@pytest.mark.parametrize("case", ["chunk_incompatible", "missing_source", "cloud_target"])
+@pytest.mark.parametrize(
+    "case", ["chunk_incompatible", "missing_source", "cloud_target", "gcs_gate"]
+)
 def test_usage_and_source_refusals_come_before_the_secret_read(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, reads: list[str], case: str
 ) -> None:
@@ -132,14 +134,23 @@ def test_usage_and_source_refusals_come_before_the_secret_read(
         argv.append("--chunked")
     elif case == "missing_source":
         cfg["sources"]["a"]["path"] = str(tmp_path / "absent.csv")
+    elif case == "cloud_target":
+        cfg["targets"]["a"] = {
+            "type": "s3",
+            "format": "csv",
+            "bucket": "b",
+            "region": "us-east-1",
+            "key": "d/a.csv",
+        }
     else:
-        cfg["targets"]["a"] = {"type": "gcs", "format": "csv", "bucket": "b", "object": "a.csv"}
+        cfg["targets"]["a"] = {"type": "gcs", "format": "csv", "bucket": "b", "object": "d/a.csv"}
     cfg_path.write_text(yaml.safe_dump(cfg), encoding="utf-8")
     result = runner.invoke(app, argv)
     expected = {
         "chunk_incompatible": "value-keyed",
         "missing_source": "absent.csv",
         "cloud_target": "cannot run through",
+        "gcs_gate": "Cloud delivery does not support type",
     }[case]
     assert expected in " ".join(result.output.split()), result.output
     assert reads == [], (case, result.output)

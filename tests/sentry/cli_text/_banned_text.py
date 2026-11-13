@@ -51,9 +51,8 @@ DEAD_STRINGS = (
     "decoy templates",
     # S4a: the project/catalog/jobs persistence subsystem was deleted and the
     # CLI is now stateless. The trailing space keeps `decoy report ...` (the
-    # live post-run surface) from matching; none of these three has a
-    # surviving `decoy ...` form.
-    "decoy project",
+    # live post-run surface) from matching; neither of these has a surviving
+    # `decoy ...` form. (`decoy project` came back as the layout group in P6.)
     "decoy catalog",
     "decoy jobs",
     # S4b: the `evidence`, `vault`, and `storm` groups and `validate

@@ -147,6 +147,30 @@ def find_project(start: Path | None, explicit: Path | None) -> Project:
     return Project(root=begin, implicit=True, skipped=tuple(skipped))
 
 
+def _create_once(target: Path, data: bytes) -> bool:
+    """Write `target` only when absent: True when this call wrote it, False when it was there.
+
+    The one create-once write of this module, so the marker and the `.decoy/.gitignore` share
+    one place that decides what an existing file means. Raises `AtomicWriteError` otherwise.
+    """
+    try:
+        return write_local_target(target, data, WriteMode.CREATE_ONCE)
+    except AtomicWriteError as exc:
+        if exc.errno == errno.EEXIST:
+            return False
+        raise
+
+
+def write_project_marker(root: Path) -> bool:
+    """Write `<root>/decoy.yaml` only when absent; True when this call wrote it.
+
+    An existing file is never touched, so a caller reads it back with `find_project` to learn
+    whether it is a valid marker (also the way a losing concurrent writer checks the winner's).
+    Raises `AtomicWriteError`.
+    """
+    return _create_once(root / MARKER_NAME, f"kind: {MARKER_KIND}\n".encode())
+
+
 def ensure_decoy_dir(root: Path) -> tuple[LayoutWarning, ...]:
     """Make `<root>/.decoy/` and its `.gitignore` when absent; the one writer of both.
 
@@ -158,9 +182,9 @@ def ensure_decoy_dir(root: Path) -> tuple[LayoutWarning, ...]:
     target = folder / ".gitignore"
     problem = False
     try:
-        write_local_target(target, DECOY_DIR_GITIGNORE.encode(), WriteMode.CREATE_ONCE)
-    except AtomicWriteError as exc:
-        problem = exc.errno != errno.EEXIST
+        _create_once(target, DECOY_DIR_GITIGNORE.encode())
+    except AtomicWriteError:
+        problem = True
     if problem:
         return (GITIGNORE_WRITE_FAILED.warning(path=target),)
     return ()

@@ -119,10 +119,18 @@ SIDE_FILE_IN_OUT = Descriptor(
     "layout.side_file_in_out",
     "{flag} is inside {base}, where Decoy keeps run outputs. Write it outside out/.",
 )
+CLOUD_TARGET_INVALID = Descriptor(
+    "layout.cloud_target_invalid",
+    "Cloud target {subject} {rule}.",
+)
+CLOUD_TARGET_UNSUPPORTED = Descriptor(
+    "layout.cloud_target_unsupported",
+    "Cloud delivery does not support {field} for {subject} in this release.",
+)
 
 LATEST_INVALID = Descriptor(
     "layout.latest_invalid",
-    "The LATEST file in {path} is not a run folder name; it is ignored until the next clean run.",
+    "The LATEST file in {path} does not name an existing run folder; it is ignored until the next clean run.",
 )
 LATEST_LINK_FAILED = Descriptor(
     "layout.latest_link_failed",
@@ -162,6 +170,8 @@ GATE_DESCRIPTORS: tuple[Descriptor, ...] = (
     PROJECT_ROOT_REFUSED,
     DELIVERY_ROOT_SPLIT,
     SIDE_FILE_IN_OUT,
+    CLOUD_TARGET_INVALID,
+    CLOUD_TARGET_UNSUPPORTED,
 )
 WARNING_DESCRIPTORS: tuple[Descriptor, ...] = (
     LATEST_INVALID,

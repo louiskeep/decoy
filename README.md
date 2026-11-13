@@ -110,6 +110,7 @@ declared under `targets:` in the YAML.
 | `decoy init [file]`              | Scaffold a starter `pipeline.yaml`. With a file: column-aware via STORM. Without: prompt for preset (`minimal`, `gdpr`, ...). |
 | `decoy validate <path>`          | Run the whole pre-run gate (config + compile + preflight): one report, one exit code. |
 | `decoy run <path>`               | Execute a pipeline: read sources, mask, write targets.                        |
+| `decoy project new <dir>`        | Make a project folder (`decoy.yaml`, `pipelines/`, `out/`). `decoy project show` and `list` inspect them. |
 | `decoy setup`                    | Set this box's max memory and threads (`~/.decoy/settings.json`); `--max-memory` and `--threads` override per run. |
 | `decoy tokenize <path>`          | Run the pipeline, replace each `strategy: tokenize` column with a deterministic surrogate, and record the mapping in a local vault. Needs a mask secret. |
 | `decoy detokenize <path> <file>` | Reverse a tokenized file from its vault. Fails closed on a missing/wrong vault or namespace. |
