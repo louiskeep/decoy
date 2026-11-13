@@ -17,7 +17,7 @@ import yaml
 from typer.testing import CliRunner
 
 from decoy.__main__ import app
-from decoy.cli._sources import iter_source_chunks, source_schema_and_chunks
+from decoy.cli.io import iter_source_chunks, source_schema_and_chunks
 from tests.csv_sources import csv_source
 from tests.keyed_secret import TEST_MASK_SECRET_REF
 
