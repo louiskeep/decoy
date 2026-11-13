@@ -18,7 +18,7 @@ from tests.csv_sources import csv_source
 from decoy.cli.gate import run_gate_on_config
 from decoy.cli.io import OutputPlacement
 from decoy.cli.io._cloud import CloudRoot, cloud_root, new_cloud_run_id
-from decoy.cli.io._layout import is_run_id
+from decoy.cli.io._layout import is_run_id, pipeline_name_for
 from decoy.cli.io._placement import layout_issues
 
 SPLIT = "layout.delivery_root_split"
@@ -89,13 +89,31 @@ def test_at_c04_two_tables_sharing_a_basename_is_invalid(tmp_path: Path) -> None
     assert "second" in issues[0][1].message
 
 
-def test_at_c04_no_pipeline_name_outside_a_project_is_invalid(tmp_path: Path) -> None:
+def test_at_c04_an_implicit_root_without_a_name_uses_the_stem_slug(tmp_path: Path) -> None:
+    yaml_path = tmp_path / "orders.yaml"
+    yaml_path.write_text("x: 1\n", encoding="utf-8")
+    config = _targets(t=_s3("d/x.csv"))
+    assert layout_issues(yaml_path, config) == []
+    # The one naming rule of local delivery decides the pipeline, so the prefix follows it.
+    name = pipeline_name_for(tmp_path, yaml_path, None).name
+    root = cloud_root(config, name)
+    assert name == "orders" and root is not None and root.prefix == "d/orders"
+
+
+def test_a_bad_declared_name_is_reported_once_by_the_naming_rule(tmp_path: Path) -> None:
     yaml_path = tmp_path / "p.yaml"
     yaml_path.write_text("x: 1\n", encoding="utf-8")
-    assert _codes(layout_issues(yaml_path, _targets(t=_s3("d/x.csv")))) == [INVALID]
-    named = {**_targets(t=_s3("d/x.csv")), "name": "orders"}
-    assert layout_issues(yaml_path, named) == []
-    assert _codes(layout_issues(yaml_path, {**named, "name": "bad name"})) == [INVALID]
+    config = {**_targets(t=_s3("d/x.csv")), "name": "bad name"}
+    assert _codes(layout_issues(yaml_path, config)) == ["layout.pipeline_name_invalid"]
+
+
+def test_a_broken_project_marker_is_reported_once(tmp_path: Path) -> None:
+    (tmp_path / "decoy.yaml").write_text("kind: nope\n", encoding="utf-8")
+    yaml_path = tmp_path / "p.yaml"
+    yaml_path.write_text("x: 1\n", encoding="utf-8")
+    assert _codes(layout_issues(yaml_path, _targets(t=_s3("d/x.csv")))) == [
+        "layout.project_marker_invalid"
+    ]
 
 
 # --- AT-C04: split roots ---------------------------------------------------------------

@@ -12,7 +12,7 @@ import re
 from dataclasses import dataclass
 from datetime import datetime
 
-from decoy.cli.io._layout import is_valid_name, new_run_id, quarantine_enabled, relative_outputs
+from decoy.cli.io._layout import new_run_id, quarantine_enabled, relative_outputs
 from decoy.cli.io._layout_errors import (
     CLOUD_TARGET_INVALID,
     CLOUD_TARGET_UNSUPPORTED,
@@ -108,7 +108,7 @@ def _unsupported_issues(config_dict: dict, cloud: dict[str, dict], chunked: bool
     return issues
 
 
-def _key_issues(cloud: dict[str, dict], pipeline: str | None) -> list[Issue]:
+def _key_issues(cloud: dict[str, dict]) -> list[Issue]:
     issues: list[Issue] = []
     seen: dict[str, str] = {}
     for table, entry in cloud.items():
@@ -149,16 +149,6 @@ def _key_issues(cloud: dict[str, dict], pipeline: str | None) -> list[Issue]:
             )
         else:
             seen[basename] = table
-    if pipeline is None:
-        issues.append(
-            (
-                None,
-                CLOUD_TARGET_INVALID.error(
-                    subject="the pipeline",
-                    rule="needs a pipeline name outside a project: set a valid `name:`",
-                ),
-            )
-        )
     return issues
 
 
@@ -194,32 +184,22 @@ def _split_issues(config_dict: dict, cloud: dict[str, dict]) -> list[Issue]:
     return []
 
 
-def cloud_root_issues(
-    config_dict: dict, pipeline: str | None, *, chunked: bool = False
-) -> list[Issue]:
-    """The cloud root rule's refusals for a config, empty when it has no cloud target.
-
-    `pipeline` is the resolved pipeline name, None when none is available outside a project.
-    """
+def cloud_root_issues(config_dict: dict, *, chunked: bool = False) -> list[Issue]:
+    """The cloud root rule's refusals for a config, empty when it has no cloud target."""
     cloud = _cloud_targets(config_dict)
     if not cloud:
         return []
     return [
         *_unsupported_issues(config_dict, cloud, chunked),
-        *_key_issues(cloud, pipeline),
+        *_key_issues(cloud),
         *_split_issues(config_dict, cloud),
     ]
-
-
-def valid_pipeline_name(declared: object) -> str | None:
-    """A declared `name:` that passes the engine's rule, else None."""
-    return declared if isinstance(declared, str) and is_valid_name(declared) else None
 
 
 def cloud_root(config_dict: dict, pipeline: str) -> CloudRoot | None:
     """The root of a config's cloud targets, None when it has none or they do not share one."""
     cloud = _cloud_targets(config_dict)
-    if not cloud or cloud_root_issues(config_dict, pipeline):
+    if not cloud or cloud_root_issues(config_dict):
         return None
     first = next(iter(cloud.values()))
     basenames = tuple(sorted((table, (_split_key(e) or ("", ""))[1]) for table, e in cloud.items()))
