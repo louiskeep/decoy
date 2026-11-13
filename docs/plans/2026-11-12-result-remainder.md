@@ -208,6 +208,11 @@ blocks. Everything else goes to V2-LOG (section 13).
   symlink and hard-link aliases included (AT-F4). Whether it counts as a `replaces_final` writer
   like `--vault` follows how `write_local_target` `REPLACE` treats a final link; C-DOC3 STEP
   ZERO reads that and the `OutputPlacement` docstring (`_placement.py:36`) gains the flag.
+- Run-time file order is DELIV 4.7 (`plan/deliv` `50aa3fc2`): `finish` is the last writer of
+  the run, after the sink settles and after notifications; the document never goes into the run
+  folder. C-DOC1 to C-DOC3 keep today's order, where `finish` is already last, so they wait on
+  nothing more from DELIV. DELIV C1 refuses a side file inside `out/<name>/`; whichever of C1 and
+  C-DOC3 merges second adds the `--result` cases of DELIV AT-47.
 - Legacy `--json` members keep their values; `result` and `result_status` are added.
 
 ## 4. Behaviour
@@ -467,7 +472,7 @@ slot and the OQ-3 correction before C-DOC1 or DELIV C2a starts (pre-mortem, stop
 | `run/_notify.py` | C-DOC2 |
 | `run/__init__.py` | C-DOC3 |
 
-So DELIV C2a starts after C-DOC2 and C-DOC3 have merged; C-DOC3 waits on nothing from DELIV. C-REASON writes no `_render.py`; DELIV's "F29 C1"
+So DELIV C2a starts after C-DOC2 and C-DOC3 have merged; C-DOC3 waits on nothing from DELIV. `cli/io/_placement.py`: DELIV C1 and C-DOC3, one at a time in either order (DELIV 4.7 rule 6). C-REASON writes no `_render.py`; DELIV's "F29 C1"
 `_render.py` slot is C-DOC1 and C-DOC2 here. C-CAP writes no `cli/run/` module.
 
 | Slice | Repo | Files | Src / test lines | Tier | Depends on | Startable now |
