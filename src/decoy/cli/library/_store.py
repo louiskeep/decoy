@@ -195,6 +195,7 @@ class Library:
     def rebuild_index(self) -> None:
         """Drop the index and rebuild it from the object files, under the lock (fsck --repair).
         Raises `LibraryError` when the lock cannot be taken."""
+
         def work(conn: sqlite3.Connection) -> None:
             _index.rebuild(conn)
             _index.sync(conn, _index.object_ids(self._objects), self._index_row)
