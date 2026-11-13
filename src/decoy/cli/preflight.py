@@ -445,16 +445,11 @@ def _check_capacity(raw: dict[str, Any], config_path: Path, acc: _PreflightAccum
         estimate = _engine_execution.estimate_job_capacity(config_dump, base_dir=config_path.parent)
     except ExecutionError as exc:
         if exc.code in capacity_codes():
-            # Round-4 (engine): the build-floor gate is now advisory, so
-            # `estimate_job_capacity` no longer returns INSUFFICIENT for
-            # that case -- but a capacity refusal (a fan-in impossibility, a
-            # budget too small) found while resolving the memory budget still
-            # PROPAGATES as this ExecutionError instead of coming back as a
-            # verdict. The set is the engine's own, so `decoy run` and this
-            # check agree on every code it lists. Render it
-            # the same way the INSUFFICIENT verdict branch below does (a
-            # FAIL that trips EXIT_CAPACITY), so a fan-in job still refuses
-            # cleanly instead of crashing preflight on a raw traceback.
+            # The build-floor gate is advisory, so the estimator no longer returns
+            # INSUFFICIENT for it, but a capacity refusal found while resolving the
+            # memory budget still propagates as this ExecutionError. The set is the
+            # engine's own, so `decoy run` agrees on every code. Render it like the
+            # INSUFFICIENT verdict below: a FAIL that trips EXIT_CAPACITY.
             acc.capacity_insufficient = True
             acc.add_fail(
                 name=CAPACITY_CHECK,
