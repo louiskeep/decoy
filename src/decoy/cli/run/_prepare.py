@@ -252,8 +252,8 @@ def _placement(ctx: RunContext) -> OutputPlacement:
         if path is not None
     )
     if ctx.out_dir is not None:
-        return OutputPlacement.fixed(ctx.out_dir, typed)
-    return OutputPlacement(typed=typed)
+        return OutputPlacement.fixed(ctx.out_dir, typed, ctx.chunked)
+    return OutputPlacement(typed=typed, chunked=ctx.chunked)
 
 
 def prepare_preview(ctx: RunContext) -> None:
