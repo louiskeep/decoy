@@ -18,7 +18,7 @@ host with a warm cache works. Nothing is added to `pyproject.toml` or the locks.
 ## Which pin list
 
 `requirements-certified.txt`, the only runtime-profile pin list in this repo: the exact
-63-package third-party closure of the certified DP runtime, with no dev tooling.
+67-package third-party closure of the certified DP runtime, with no dev tooling.
 `requirements-dev.lock` is the dev profile: the script refuses it by the
 `#    scripts/dev/lock.sh` header that `scripts/dev/lock.sh` writes into it, whatever the
 file is called. The bundle builder

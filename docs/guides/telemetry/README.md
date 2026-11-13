@@ -70,10 +70,9 @@ as delivered.
   envelope and stderr do not change.
 - **Exit can wait up to 2 seconds.** At the end of the run the CLI flushes for at most 2
   seconds, then exits. Spans still queued after that are lost.
-- **Routes without phase spans.** The `--chunked` route (`run_mask_pipeline_chunked`) emits
-  no engine phase events, so a chunked run exports the `decoy.run` root span only. Engine
-  worker threads report to no recorder, so their phases are missing too. The `--rows`
-  preview and the generate paths run through `run_pipeline` and export phase spans.
+- **Worker threads.** Engine worker threads report to no recorder, so their phases are
+  missing. The `--chunked` route (`run_mask_pipeline_chunked`), the `--rows` preview and the
+  generate paths all export engine phase spans under the `decoy.run` root span.
 - **Trust.** Self-signed or internal-CA collectors are not supported: the exporter uses the
   CA list bundled with its HTTP client (certifi) and accepts no custom CA file. Credential
   headers need `https`.
