@@ -695,6 +695,37 @@ def _read_latest(folder: Path) -> str | None:
     return raw.decode("utf-8", errors="replace").strip() or None
 
 
+@dataclass(frozen=True)
+class RunHistory:
+    """The newest run folder and the last clean run of one pipeline, read from `out/<name>/`."""
+
+    last_run: str | None
+    last_clean: str | None
+    warnings: tuple[LayoutWarning, ...] = ()
+
+
+def run_history(root: Path, name: str) -> RunHistory:
+    """Run ids of pipeline `name`: the newest well-formed folder, and `LATEST` when it checks out.
+
+    Folders that are not run ids (or are links) are ignored. A `LATEST` that is not a run id, or
+    names no folder, is ignored with `layout.latest_invalid`. Reads only; nothing is made.
+    """
+    folder = pipeline_folder(root, name)
+    try:
+        found = os.listdir(folder)
+    except OSError:
+        found = []
+    runs = sorted(r for r in found if is_run_id(r) and _is_plain_dir(folder / r))
+    latest = _read_latest(folder)
+    if latest is None or latest in runs:
+        return RunHistory(runs[-1] if runs else None, latest)
+    return RunHistory(runs[-1] if runs else None, None, (LATEST_INVALID.warning(path=folder),))
+
+
+def _is_plain_dir(path: Path) -> bool:
+    return path.is_dir() and not path.is_symlink()
+
+
 def is_placed_relative(raw: object) -> bool:
     """True when `raw` is a local path that placement resolves below its output folder.
 

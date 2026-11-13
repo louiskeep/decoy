@@ -141,7 +141,7 @@ PRIVATE_CASES: dict[str, str] = {
     + "test_layout_files_are_owner_only_under_umask_zero",
     "cli/io/_layout.py::RunLayout.commit_latest::write_atomic::1": _UNIT
     + "test_layout_files_are_owner_only_under_umask_zero",
-    "cli/io/_project.py::ensure_decoy_dir::write_local_target::1": _UNIT
+    "cli/io/_project.py::_create_once::write_local_target::1": _UNIT
     + "test_layout_files_are_owner_only_under_umask_zero",
     "cli/library/_fs.py::ensure_private_dir::create_private_directory::1": _LIBRARY,
     "cli/library/_fs.py::write_once::write_atomic::1": _LIBRARY,

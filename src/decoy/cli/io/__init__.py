@@ -22,8 +22,10 @@ from decoy.cli._sources import (
     source_schema_and_chunks,
 )
 from decoy.cli.io._layout import (
+    PIPELINES_DIR,
     PipelineName,
     RunFolder,
+    RunHistory,
     RunLayout,
     check_path_budget,
     contained_path,
@@ -40,6 +42,7 @@ from decoy.cli.io._layout import (
     prepare_out,
     read_claim,
     relative_outputs,
+    run_history,
     shown_path,
     target_parent_writable,
     write_claim,
@@ -51,6 +54,9 @@ from decoy.cli.io._layout_errors import (
     GATE_CODES,
     GATE_DESCRIPTORS,
     OUTPUT_DIR_UNUSABLE,
+    PROJECT_NESTED,
+    PROJECT_NOT_FOUND,
+    PROJECT_ROOT_REFUSED,
     WARNING_CODES,
     WARNING_DESCRIPTORS,
     Descriptor,
@@ -75,7 +81,13 @@ from decoy.cli.io._placement import (
     layout_issues,
     resolved_output_collisions,
 )
-from decoy.cli.io._project import DECOY_DIR, Project, ensure_decoy_dir, find_project
+from decoy.cli.io._project import (
+    DECOY_DIR,
+    Project,
+    ensure_decoy_dir,
+    find_project,
+    write_project_marker,
+)
 from decoy.cli.io._scan_set import (
     ScanSetFormatError,
     load_scan_set,
@@ -107,6 +119,10 @@ __all__ = [
     "GATE_CODES",
     "GATE_DESCRIPTORS",
     "OUTPUT_DIR_UNUSABLE",
+    "PIPELINES_DIR",
+    "PROJECT_NESTED",
+    "PROJECT_NOT_FOUND",
+    "PROJECT_ROOT_REFUSED",
     "WARNING_CODES",
     "WARNING_DESCRIPTORS",
     "Descriptor",
@@ -120,6 +136,7 @@ __all__ = [
     "PipelineToken",
     "Project",
     "RunFolder",
+    "RunHistory",
     "RunLayout",
     "ScanSetFormatError",
     "TargetFormatError",
@@ -166,6 +183,7 @@ __all__ = [
     "resolve_target_format",
     "resolved_output_collisions",
     "resolved_source_config",
+    "run_history",
     "scan_set_from_data",
     "select_table",
     "shown_path",
@@ -176,6 +194,7 @@ __all__ = [
     "write_chunked_output",
     "write_claim",
     "write_private_table",
+    "write_project_marker",
     "write_table",
     "write_targets",
 ]
