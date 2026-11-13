@@ -109,8 +109,8 @@ def test_engine_dependency_pinned() -> None:
 
     req = Requirement(engine_deps[0])
     floors = [s for s in req.specifier if s.operator in (">=", "==")]
-    assert [str(s) for s in floors] == ["==0.22.0"], (
-        f"decoy-engine must be pinned exactly ==0.22.0 (engine release 0.22.0); "
+    assert [str(s) for s in floors] == ["==0.23.0"], (
+        f"decoy-engine must be pinned exactly ==0.23.0 (engine release 0.23.0); "
         f"got specifier {str(req.specifier)!r}"
     )
 

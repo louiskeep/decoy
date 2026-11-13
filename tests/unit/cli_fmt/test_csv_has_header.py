@@ -145,7 +145,15 @@ def test_data_override_keeps_column_names_file(tmp_path: Path) -> None:
                 "column_names_file": str(tmp_path / "names.csv"),
             }
         },
-        "tables": [{"name": "t", "columns": [{"name": "name", "strategy": "redact"}]}],
+        "tables": [
+            {
+                "name": "t",
+                "columns": [
+                    {"name": "id", "strategy": "passthrough"},
+                    {"name": "name", "strategy": "redact"},
+                ],
+            }
+        ],
     }
     got = decoy.mask(data={"t": str(other)}, config=config, out=str(tmp_path / "o.csv"))
     assert isinstance(got, (pd.DataFrame, dict))

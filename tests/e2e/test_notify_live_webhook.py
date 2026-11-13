@@ -98,7 +98,8 @@ def _write_tiny_pipeline(tmp_path: Path) -> Path:
                         "provider": "person_email",
                         "deterministic": True,
                         "namespace": "customer_identity",
-                    }
+                    },
+                    {"name": "name", "strategy": "passthrough"},
                 ],
             }
         ],

@@ -128,7 +128,7 @@ def test_usage_and_source_refusals_come_before_the_secret_read(
     cfg = yaml.safe_load(cfg_path.read_text(encoding="utf-8"))
     argv = ["run", str(cfg_path)]
     if case == "chunk_incompatible":
-        cfg["tables"][0]["columns"].append({"name": "email2", "strategy": "shuffle"})
+        cfg["tables"][0]["columns"] = [{"name": "email", "strategy": "shuffle"}]
         argv.append("--chunked")
     elif case == "missing_source":
         cfg["sources"]["a"]["path"] = str(tmp_path / "absent.csv")

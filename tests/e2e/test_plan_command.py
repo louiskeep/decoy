@@ -75,9 +75,9 @@ def test_no_profile_output_writes_yaml(tmp_path: Path) -> None:
     assert result.exit_code == 0, result.output
     assert out_path.exists()
     text = out_path.read_text(encoding="utf-8")
-    # plan_version tracks the engine constant (3 after the F06 declared-casting plan
+    # plan_version tracks the engine constant (4 since engine 0.23.0, 3 after the F06 declared-casting plan
     # format bump; see decoy_engine.plan._compile.PLAN_VERSION).
-    assert "plan_version: 3" in text
+    assert "plan_version: 4" in text
     # seed_protocol_version tracks the engine constant (7 after the FF1 adoption bump).
     assert "seed_protocol_version: 7" in text
 
@@ -95,7 +95,7 @@ def test_no_profile_output_engine_round_trips(tmp_path: Path) -> None:
     )
     assert result.exit_code == 0, result.output
     plan = plan_from_yaml(out_path.read_text(encoding="utf-8"))
-    assert plan.plan_version == 3
+    assert plan.plan_version == 4
 
 
 def test_no_profile_output_json_format_round_trips(tmp_path: Path) -> None:
@@ -112,10 +112,10 @@ def test_no_profile_output_json_format_round_trips(tmp_path: Path) -> None:
     )
     assert result.exit_code == 0, result.output
     doc = json.loads(out_path.read_text(encoding="utf-8"))
-    assert doc["plan_version"] == 3
+    assert doc["plan_version"] == 4
     # JSON is a YAML subset, so plan_from_yaml parses the same document.
     plan = plan_from_yaml(out_path.read_text(encoding="utf-8"))
-    assert plan.plan_version == 3
+    assert plan.plan_version == 4
 
 
 def test_no_profile_records_skipped_checks(tmp_path: Path) -> None:

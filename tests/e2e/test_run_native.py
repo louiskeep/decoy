@@ -405,7 +405,7 @@ def test_no_native_stays_compatible_with_an_older_engine(
         key_provider=None,
         base_dir=None,
         quarantine_path=None,
-        # The pin is decoy-engine==0.22.0, which has the resource keywords every run sends.
+        # The pin is decoy-engine==0.23.0, which has the resource keywords every run sends.
         native_threads=1,
         out_of_core_threads=None,
         out_of_core_budget_bytes=None,

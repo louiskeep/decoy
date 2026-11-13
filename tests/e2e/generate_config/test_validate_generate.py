@@ -247,11 +247,11 @@ def test_at_c2_run_stops_at_the_gate(
 
 # --- AT-C4: `decoy schema` closes each generate type ------------------------------------------
 
-# The plan's 11 types plus `constant` and `distribution`, added to the engine after it was written.
+# The plan's 11 types plus `constant`, `distribution` and `lookup`, added to the engine after it was written.
 _GENERATE_TYPES = (
     "faker", "sequence", "categorical", "formula", "reference", "statistical", "derived",
     "derived_aggregate", "grouped_series", "windowed_date", "group_key", "constant",
-    "distribution",
+    "distribution", "lookup",
 )  # fmt: skip
 
 

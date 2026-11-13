@@ -39,7 +39,10 @@ def _write_mask_config(tmp_path: Path) -> Path:
         "tables": [
             {
                 "name": "customers",
-                "columns": [{"name": "email", "strategy": "redact"}],
+                "columns": [
+                    {"name": "customer_id", "strategy": "passthrough"},
+                    {"name": "email", "strategy": "redact"},
+                ],
             }
         ],
         "targets": {

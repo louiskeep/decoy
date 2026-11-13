@@ -16,6 +16,7 @@ from decoy.cli.io import (
     read_source,
     resolve_target_format,
     resolved_source_config,
+    source_schema_and_chunks,
     table_records,
     write_chunked_output,
     write_targets,
@@ -115,12 +116,16 @@ def _run_chunked_mask(
         if not isinstance(tgt_spec, dict) or not isinstance(tgt_spec.get("path"), str):
             continue
 
+        source_schema, chunks = source_schema_and_chunks(
+            name, src_spec, base_dir, iter_source_chunks(name, src_spec, base_dir, chunk_size)
+        )
         masked_iter = run_mask_pipeline_chunked(
             config_dict,
-            iter_source_chunks(name, src_spec, base_dir, chunk_size),
+            chunks,
             table=name,
             engine_version=engine_version,
             key_provider=key_provider,
+            source_schema=source_schema,
         )
         published[name] = write_chunked_output(
             masked_iter,

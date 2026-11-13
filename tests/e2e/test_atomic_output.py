@@ -43,6 +43,7 @@ _COLUMNS = [
 ]
 _TOKEN_COLUMNS = [
     {"name": "id", "strategy": "passthrough"},
+    {"name": "ssn", "strategy": "passthrough"},
     {"name": "email", "strategy": "tokenize", "namespace": "people.email"},
 ]
 _PRIOR = b"previous,good\n1,2\n"

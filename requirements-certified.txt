@@ -1,15 +1,17 @@
 # Pinned third-party dependency closure of the certified DP runtime environment.
 #
 # This is not the dev/test lock (see pyproject.toml's `dev`/`lint`/`vault`
-# extras). It is the exact 63-package third-party set that, together with
-# decoy-engine 0.22.0 and decoy-cli on CPython 3.10.20 (Linux/x86-64/glibc),
+# extras). It is the exact 67-package third-party set that, together with
+# decoy-engine 0.23.0 and decoy-cli on CPython 3.10.20 (Linux/x86-64/glibc),
 # reproduces proof-stack fingerprint:
 #
-#   d5898d1ff084203f455907d8648e59e0156e320d0e5a12ba1e22aeba8ad6675d
+#   73acf493827ce8dbd72c6da486eb4f30e72a66cf7abb90b0127cef3e14f75eec
 #
-# (Was aa038ddd... on engine 0.21.0, 725f80a3... on engine 0.20.0, 795732eb... on engine 0.19.0, b643894d... on engine 0.18.0, a7b40d54... on engine 0.17.0,
+# (Was d5898d1f... on engine 0.22.0, aa038ddd... on engine 0.21.0, 725f80a3... on engine 0.20.0, 795732eb... on engine 0.19.0, b643894d... on engine 0.18.0, a7b40d54... on engine 0.17.0,
 # f2a5910f... on engine 0.7.0 and e75c87e9... on engine 0.6.0; only the decoy-engine version
-# differs, so the pins are unchanged (63 pins).)
+# differs, so the pins were unchanged (63 pins) until engine 0.23.0. SCAN-ML M2 made
+# scikit-learn, lightgbm, joblib and threadpoolctl base dependencies of the engine, so
+# 0.23.0 adds those four pins (67 pins).)
 #
 # That fingerprint is one of the certified rows in the engine's
 # `decoy_engine.quality.dp_provenance._CERTIFIED_STACKS` manifest. A real DP
@@ -20,7 +22,7 @@
 # decoy-cli, with NO dev tooling (no pytest, ruff, mypy, hypothesis, or
 # anything else CI needs but a shipped runtime never touches):
 #
-#   uv pip install decoy-engine==0.22.0 decoy-cli
+#   uv pip install decoy-engine==0.23.0 decoy-cli
 #   uv pip install -r requirements-certified.txt
 #
 # Adding, removing, or re-pinning ANY line here changes the fingerprint and
@@ -69,8 +71,10 @@ google-resumable-media==2.10.0
 googleapis-common-protos==1.75.0
 idna==3.18
 jmespath==1.1.0
+joblib==1.5.3
 jsonpath-ng==1.8.0
 lark==1.3.1
+lightgbm==4.6.0
 markdown-it-py==4.2.0
 mdurl==0.1.2
 mpmath==1.4.1
@@ -98,10 +102,12 @@ pyyaml==6.0.3
 requests==2.34.2
 rich==15.0.0
 s3transfer==0.19.2
+scikit-learn==1.7.2
 scipy==1.15.3
 shellingham==1.5.4
 simpleeval==1.0.7
 six==1.17.0
+threadpoolctl==3.6.0
 typer==0.27.0
 typing-extensions==4.16.0
 typing-inspection==0.4.2

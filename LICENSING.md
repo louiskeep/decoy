@@ -3,7 +3,7 @@
 Decoy (the `decoy-cli` command-line tool; the `decoy-engine` library and the
 `decoy-engine-native` companion from their first FSL release onward) is licensed under the
 **Functional Source License, Version 1.1, Apache 2.0 Future License** (SPDX: `FSL-1.1-ALv2`).
-Earlier engine releases, including the 0.22.0 the CLI pins today, stay Apache-2.0. The full terms are in
+Engine 0.22.0 and earlier stay Apache-2.0; 0.23.0 and later, including the 0.23.0 the CLI pins today, are FSL-1.1-ALv2. The full terms are in
 [`LICENSE.md`](LICENSE.md); this page explains them in plain English. If this page and the
 license ever disagree, the license wins.
 
