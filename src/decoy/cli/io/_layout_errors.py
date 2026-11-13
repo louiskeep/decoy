@@ -110,6 +110,15 @@ PROJECT_ROOT_REFUSED = Descriptor(
     "layout.project_root_refused",
     "{path} cannot be a project root: it is your home folder, one of its parents, or `/`.",
 )
+DELIVERY_ROOT_SPLIT = Descriptor(
+    "layout.delivery_root_split",
+    "Outputs {first} and {second} are not in one delivery folder. Use relative paths for "
+    "all outputs, or put every output directly in one folder.",
+)
+SIDE_FILE_IN_OUT = Descriptor(
+    "layout.side_file_in_out",
+    "{flag} is inside {base}, where Decoy keeps run outputs. Write it outside out/.",
+)
 
 LATEST_INVALID = Descriptor(
     "layout.latest_invalid",
@@ -151,6 +160,8 @@ GATE_DESCRIPTORS: tuple[Descriptor, ...] = (
     OUTPUT_PATH_COLLISION,
     OUTPUT_DIR_UNUSABLE,
     PROJECT_ROOT_REFUSED,
+    DELIVERY_ROOT_SPLIT,
+    SIDE_FILE_IN_OUT,
 )
 WARNING_DESCRIPTORS: tuple[Descriptor, ...] = (
     LATEST_INVALID,

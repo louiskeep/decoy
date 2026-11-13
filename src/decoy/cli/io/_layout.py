@@ -348,9 +348,14 @@ def pipeline_name_for(root: Path, yaml: Path, declared: object) -> PipelineName:
     return PipelineName(_derived(root, yaml_rel, stem), False, yaml_rel)
 
 
+def project_out_folder(root: Path) -> Path:
+    """`<root>/out/` as a path only: nothing is made, read or resolved."""
+    return root / "out"
+
+
 def pipeline_folder(root: Path, name: str) -> Path:
     """`<root>/out/<name>/` as a path only: nothing is made, read or resolved."""
-    return root / "out" / name
+    return project_out_folder(root) / name
 
 
 def name_dir(out: Path, name: str) -> Path:

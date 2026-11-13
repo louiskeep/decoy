@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import os
 import stat
+import sys
 import unicodedata
 from dataclasses import dataclass
 from pathlib import Path
@@ -23,9 +24,16 @@ from decoy.cli.io._layout import (
     names_a_file_inside,
     pipeline_folder,
     pipeline_name_for,
+    project_out_folder,
     relative_outputs,
 )
-from decoy.cli.io._layout_errors import OUTPUT_PATH_COLLISION, OUTPUT_PATH_ESCAPES, LayoutError
+from decoy.cli.io._layout_errors import (
+    DELIVERY_ROOT_SPLIT,
+    OUTPUT_PATH_COLLISION,
+    OUTPUT_PATH_ESCAPES,
+    SIDE_FILE_IN_OUT,
+    LayoutError,
+)
 
 
 @dataclass(frozen=True)
@@ -50,17 +58,47 @@ class OutputPlacement:
         return cls("preview")
 
 
-def _folds_case(folder: Path) -> bool:
-    """True when the existing `folder` sits on a case-insensitive filesystem.
+# The one policy for a destination's final path component. A writer either follows a final
+# symlink (file targets, quarantine and `--evidence-out`, which use `write_local_target`
+# REPLACE) or replaces it with a file (`--vault`). Everything not listed follows. The split
+# root, the side-file check and the collision rule all read this, so none decides alone.
+_REPLACES_FINAL = frozenset({"--vault"})
 
-    Probed without writing: swap the case of the nearest alphabetic path component and ask
-    whether that spelling is the same directory.
+
+def replaces_final(label: str) -> bool:
+    """True when the writer behind `label` (a config location or flag) replaces a final link."""
+    return label in _REPLACES_FINAL
+
+
+def _landing(path: Path, replaces: bool) -> Path:
+    """Where the bytes for `path` land: the strictly resolved parent plus the written entry.
+
+    A writer that follows a final link lands where the link points; one that replaces it lands
+    on the link's own name. The gate stays lenient where a writer must fail strict resolution.
+    """
+    try:
+        return destination_entry(path, follow_final=not replaces)
+    except (OSError, ValueError):
+        try:
+            absolute = path.absolute()
+            parent = Path(os.path.realpath(absolute.parent))
+            return parent / absolute.name if replaces else Path(os.path.realpath(path))
+        except (OSError, ValueError):
+            return path
+
+
+def _folds_case(folder: Path) -> bool:
+    """True when `folder` sits on a case-insensitive filesystem.
+
+    Probed without writing: swap the case of the nearest existing path component that has a
+    letter and ask whether that spelling is the same directory. When no component has a
+    letter to swap (`C:\\123`), the platform default decides: Windows and macOS fold.
     """
     for part in (folder, *folder.parents):
         swapped = part.name.swapcase()
         if swapped != part.name:
             return _same_dir(part.with_name(swapped), part)
-    return False
+    return sys.platform in ("win32", "darwin")
 
 
 def _destination_key(path: Path, *, replaces_final: bool = False) -> tuple:
@@ -74,16 +112,7 @@ def _destination_key(path: Path, *, replaces_final: bool = False) -> tuple:
     nearest existing directory plus its filesystem-normalized suffix. Two mounts of one remote
     share are outside this contract.
     """
-    try:
-        real = destination_entry(path, follow_final=not replaces_final)
-    except (OSError, ValueError):
-        # The read-only gate stays lenient where a writer must fail strict parent resolution.
-        try:
-            absolute = path.absolute()
-            parent = Path(os.path.realpath(absolute.parent))
-            real = parent / absolute.name if replaces_final else Path(os.path.realpath(path))
-        except (OSError, ValueError):
-            real = path
+    real = _landing(path, replaces_final)
     try:
         entry = os.lstat(real) if replaces_final else None
         found = None if entry is not None and stat.S_ISLNK(entry.st_mode) else os.stat(real)
@@ -115,6 +144,49 @@ def _destination_key(path: Path, *, replaces_final: bool = False) -> tuple:
         return ("unresolved",)
 
 
+def _destination_is_within(child: Path, parent: Path, *, replaces: bool = False) -> bool:
+    """True when `child` lands in, or sits lexically in, the same destination as `parent`.
+
+    Identity comes only from `_destination_key`, so links, case folding and missing paths
+    behave as they do for the collision rule. `replaces` is the writer's final-link policy.
+    """
+    target = _destination_key(parent)
+    landed = _landing(child, replaces)
+    return any(_destination_key(path) == target for path in (landed, *landed.parents))
+
+
+def _split_root(config_dict: dict, fixed: Path | None = None) -> tuple[str, str] | None:
+    """The first two local file outputs that do not share one delivery root, as labels.
+
+    Relative outputs share the run folder, or the `--out-dir` folder when `fixed` is set;
+    absolute ones must share one folder, the parent of where the file lands, judged by
+    `_destination_key`. In a project a relative and an absolute output never share; under
+    `--out-dir` an absolute output directly in that folder shares with the relative ones.
+    """
+    relative_key = _destination_key(fixed) if fixed is not None else ("relative",)
+    roots: list[tuple[str, tuple]] = []
+    for location, raw in relative_outputs(config_dict):
+        if is_placed_relative(raw):
+            roots.append((location, relative_key))
+        elif Path(raw).is_absolute():
+            landed = _landing(Path(raw), replaces_final(location))
+            roots.append((location, _destination_key(landed.parent)))
+    return next(((roots[0][0], loc) for loc, key in roots[1:] if key != roots[0][1]), None)
+
+
+def _side_file_in_out(out: Path, typed: tuple[tuple[str, Path], ...]) -> str | None:
+    """The flag of the first side file that sits or lands under the project's `out/` folder.
+
+    A final link that sits in `out/` is refused even when it points away, so the entry is
+    checked too; a link outside `out/` that points in is refused by where it lands.
+    """
+    for flag, path in typed:
+        entry = _destination_is_within(Path(path), out, replaces=True)
+        if entry or _destination_is_within(Path(path), out, replaces=replaces_final(flag)):
+            return flag
+    return None
+
+
 def resolved_output_collisions(
     config_dict: dict, base: Path | None, typed: tuple[tuple[str, Path], ...] = ()
 ) -> tuple[str, str] | None:
@@ -132,16 +204,18 @@ def resolved_output_collisions(
         if Path(raw).is_absolute():
             # As written, like the writer opens it: collapsing ".." as text first would name
             # the wrong folder when the part before it is a symlink.
-            destinations.append((location, Path(raw), False))
+            destinations.append((location, Path(raw), replaces_final(location)))
         elif is_placed_relative(raw) and base is not None and names_a_file_inside(raw):
-            destinations.append((location, Path(os.path.normpath(base / raw)), False))
-    destinations.extend((flag, Path(path).absolute(), flag == "--vault") for flag, path in typed)
-    for label, path, replaces_final in destinations:
-        key = _destination_key(path, replaces_final=replaces_final)
+            destinations.append(
+                (location, Path(os.path.normpath(base / raw)), replaces_final(location))
+            )
+    destinations.extend((flag, Path(path).absolute(), replaces_final(flag)) for flag, path in typed)
+    for label, path, replaces in destinations:
+        key = _destination_key(path, replaces_final=replaces)
         # A writer that replaces a final link turns it into a file, and a later writer that
         # follows the same name would then replace that file, so one name is one destination
         # whichever way each writer treats the link.
-        entry = key if replaces_final else _destination_key(path, replaces_final=True)
+        entry = key if replaces else _destination_key(path, replaces_final=True)
         first = seen.get(key) or entries.get(entry)
         if first is not None:
             return first, label
@@ -169,8 +243,9 @@ def layout_issues(
     Escape is judged on the text alone. With a relative output the project marker is read
     and the pipeline name and any claim are checked read-only, then each placed path is
     held to the Windows path budget. A fixed `--out-dir` skips the project checks and holds
-    each path to the physical directory instead; a preview checks nothing. Last, no two
-    outputs may resolve to one destination.
+    each path to the physical directory instead; a preview checks nothing. Then all
+    outputs must share one delivery root, and in a project no side file may sit under `out/`.
+    Last, no two outputs may resolve to one destination.
     """
     from decoy.cli.io._project import find_project
 
@@ -186,6 +261,7 @@ def layout_issues(
     issues: list[tuple[str | None, LayoutError]] = []
     fixed = placement.directory if placement.kind == "fixed" else None
     folder: Path | None = None
+    project_out: Path | None = None
     base = "--out-dir" if fixed is not None else "its run folder"
     if fixed is not None:
         folder = fixed.resolve() if fixed.exists() else fixed
@@ -195,8 +271,16 @@ def layout_issues(
             root = find_project(yaml.parent, None).root
             name = pipeline_name_for(root, yaml, config_dict.get("name")).name
             folder, base = pipeline_folder(root, name), f"out/{name}/<run-id>"
+            project_out = folder.parent
         except LayoutError as exc:
             issues.append((None, exc))
+    elif placement.typed:
+        # Absolute targets only: a project-placement run still owns `<root>/out/`, so the side
+        # file rule needs the root even though no output lands there. No root, no rule.
+        try:
+            project_out = project_out_folder(find_project(config.resolve().parent, None).root)
+        except LayoutError:
+            project_out = None
     for location, _raw in urls:
         issues.append((location, OUTPUT_PATH_ESCAPES.error(path="a URL", base=base)))
     for location, raw in placed:
@@ -219,6 +303,14 @@ def layout_issues(
         for flag, typed in placement.typed
         if "\x00" in os.fspath(typed)
     )
+    if not issues and (split := _split_root(config_dict, fixed)) is not None:
+        issues.append((None, DELIVERY_ROOT_SPLIT.error(first=split[0], second=split[1])))
+    if (
+        not issues
+        and project_out is not None
+        and (flag := _side_file_in_out(project_out, placement.typed))
+    ):
+        issues.append((None, SIDE_FILE_IN_OUT.error(flag=flag, base="the project's out/ folder")))
     if not issues:
         where = folder if fixed is not None else folder and folder / "<run-id>"
         clash = resolved_output_collisions(config_dict, where, placement.typed)

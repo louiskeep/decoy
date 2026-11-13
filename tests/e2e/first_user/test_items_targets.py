@@ -93,7 +93,7 @@ def test_existing_absolute_target_warns_would_overwrite_on_both_routes(
     existing = tmp_path / "done" / "patients.csv"
     existing.parent.mkdir()
     existing.write_text("x\n", encoding="utf-8")
-    _set_targets(config, patients=str(existing))
+    _set_targets(config, patients=str(existing), visits=str(existing.parent / "visits.csv"))
     _elsewhere(tmp_path, monkeypatch)
     assert _target_codes(_preflight_names(config)) == {"target.patients.would_overwrite"}
     assert _target_codes(_gate_codes(config)) == {"target.patients.would_overwrite"}
@@ -115,7 +115,12 @@ def test_relative_target_with_an_existing_file_gives_no_warning(
 def test_invalid_target_path_is_a_value_free_json_warning(tmp_path: Path, route: list[str]) -> None:
     config = _stage(tmp_path)
     # A NUL byte is refused earlier by the layout gate; an over-long name reaches this check.
-    _set_targets(config, patients=str(tmp_path / ("zz_marker_" + "a" * 300)) + ".csv")
+    # The second target shares the folder, so the one-root rule has nothing to refuse.
+    _set_targets(
+        config,
+        patients=str(tmp_path / ("zz_marker_" + "a" * 300)) + ".csv",
+        visits=str(tmp_path / "visits.csv"),
+    )
 
     result = runner.invoke(app, [*route, str(config), "--json"])
 
@@ -135,8 +140,10 @@ def test_non_writable_target_directory_warns_on_both_routes(tmp_path: Path) -> N
     locked.chmod(0o500)
     try:
         assert not os.access(locked, os.W_OK | os.X_OK)
-        _set_targets(config, patients=str(locked / "patients.csv"))
-        expected = {"target.patients.parent_unwritable"}
+        _set_targets(
+            config, patients=str(locked / "patients.csv"), visits=str(locked / "visits.csv")
+        )
+        expected = {"target.patients.parent_unwritable", "target.visits.parent_unwritable"}
         assert _target_codes(_preflight_names(config)) == expected
         assert _target_codes(_gate_codes(config)) == expected
     finally:

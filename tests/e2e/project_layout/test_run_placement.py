@@ -668,6 +668,7 @@ def test_an_absolute_quarantine_path_is_honored(tmp_path: Path, monkeypatch) -> 
     root = _project(tmp_path)
     cfg_dict = _quarantine_config(root)
     cfg_dict["quarantine"]["output_path"] = str(tmp_path / "abs-q.jsonl")
+    cfg_dict["targets"]["a"]["path"] = str(tmp_path / "masked.csv")
     cfg = _write(root, "pipelines/orders/pipeline.yaml", cfg_dict)
     seen = _spy_run_pipeline(monkeypatch)
     assert _run(cfg).exit_code == 0
