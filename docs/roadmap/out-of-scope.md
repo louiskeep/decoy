@@ -17,6 +17,8 @@ masking-policy export. Detail: `P:docs/backlog/v2-candidate-plan.md`.
 |---|---|---|
 | DETECT-PROFILES | Detection settings profiles: named sets of detection settings (detectors, overrides, thresholds, ML on or off) that a pipeline picks by name | owner, 2026-11-05 |
 | EXPAND | Core expansion candidates for V2 and V3 (more inputs and outputs, masks, generators, documents, images, video and audio), each with method, users, difficulty and placement: [v2-v3-expansion-candidates.md](v2-v3-expansion-candidates.md). Proposal for the V2/V3 discussion; not scheduled | owner, 2026-11-06 |
+| VAULT-STREAM | A reversible-masking vault (`decoy run --vault`) on runs that write output before they finish: `--chunked`, out-of-core FK runs and sink runs (database or bucket). Today the engine refuses these with `runtime/vault_requires_resident_output` (B-6 boundary rule B0) and the CLI refuses `--chunked --vault` first, so a vault run must fit in memory. Needs a staged two-step publish: hold the output where no one can read it, save the vault durably, then release the output, with cleanup on every failure path | owner, 2026-11-13 |
+| TOKENIZE-CHUNKED | `decoy tokenize` on the chunked and auto-chunk routes. Today a tokenize job is forced to the full-frame route (the token vault is wired only into that adapter) and the bounded routes fail closed with `tokenize_requires_vault`, so a tokenize job must fit in memory. Needs the token vault wired through the chunked and auto-chunk lanes with per-chunk token reuse | owner, 2026-11-13 |
 
 Post-V1 on demand: route-coverage phase 2 (OOC address faker, FPE FK key, resident escape hatch, OOC
 quarantine); the CLI init wizard (spec CLI #73); value-based FK discovery (SCAN-MULTI plan section 7);
