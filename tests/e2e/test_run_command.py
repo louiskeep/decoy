@@ -358,7 +358,15 @@ class TestMixedConfigSuccess:
             "global_settings": {"seed": 1},
             "sources": {"t": csv_source(sample_csv)},
             "tables": [
-                {"name": "t", "columns": [{"name": "email", "strategy": "redact"}]},
+                {
+                    "name": "t",
+                    "columns": [
+                        {"name": "customer_id", "strategy": "passthrough"},
+                        {"name": "first_name", "strategy": "passthrough"},
+                        {"name": "email", "strategy": "redact"},
+                        {"name": "ssn", "strategy": "passthrough"},
+                    ],
+                },
                 {
                     "name": "synth",
                     "generate_columns": [

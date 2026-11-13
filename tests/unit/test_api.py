@@ -109,6 +109,7 @@ def test_mask_dataframe_in_memory_roundtrip(sample_df: pd.DataFrame, tmp_path: P
                 "columns": [
                     {"name": "customer_id", "strategy": "passthrough"},
                     {"name": "first_name", "strategy": "faker", "provider": "person_first_name"},
+                    {"name": "email", "strategy": "passthrough"},
                     {"name": "ssn", "strategy": "redact"},
                 ],
             },

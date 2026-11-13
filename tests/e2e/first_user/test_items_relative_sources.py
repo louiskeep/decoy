@@ -41,7 +41,7 @@ def _config(a: Path, columns: list[dict]) -> Path:
         "version": 2,
         "global_settings": {"seed": 1, "mask_secret_ref": TEST_MASK_SECRET_REF},
         "sources": {"people": csv_source("people.csv")},
-        "tables": [{"name": "people", "columns": columns}],
+        "tables": [{"name": "people", "columns": [*columns, {"name": "id", "strategy": "passthrough"}]}],
         "targets": {"people": {"type": "file", "format": "csv", "path": "out.csv"}},
     }
     path = a / "pipeline.yaml"

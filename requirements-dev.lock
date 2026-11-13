@@ -310,6 +310,10 @@ click==8.5.1 \
     --hash=sha256:8bb5376d2006950386f8c6427613334a2acadc5f559cb80e638d00b4df957e37 \
     --hash=sha256:9bbfada76703fd1d784b83eea012e3e8c6a001a876543ef104fa56aaaeb072b4
     # via import-linter
+cloudpickle==3.1.2 \
+    --hash=sha256:7fda9eb655c9c230dab534f1983763de5835249750e85fbcef43aaa30a9a2414 \
+    --hash=sha256:9acb47f6afd73f60dc1df93bb801b472f05ff42fa6c84167d25cb206be1fbf4a
+    # via joblib
 cryptography==50.0.2 \
     --hash=sha256:0ddc924c04591c2811ca024d62ecad4f7f6f08af8939c211438f48a16bd23602 \
     --hash=sha256:0ec5f09541743261e66e291b4a0cbf0fb2997aeaab6d9e9c740b9dba1b58d1c2 \
@@ -373,7 +377,7 @@ cryptography==50.0.2 \
     # via
     #   decoy-cli (pyproject.toml)
     #   decoy-engine
-decoy-engine @ git+https://github.com/louiskeep/decoy-engine@986709412711d84bbe19cb7181812c1bdfa01e5c
+decoy-engine @ git+https://github.com/louiskeep/decoy-engine@a2b2d77f38aec4f7160ef0baeb51aeb147358b24
     # via decoy-cli (pyproject.toml)
 deprecated==1.3.1 \
     --hash=sha256:597bfef186b6f60181535a29fbe44865ce137a5079f295b479886c82729d5f3f \
@@ -635,6 +639,10 @@ iniconfig==2.3.1 \
     --hash=sha256:67f4b9c50da0dedf52af349e7749a80a9057a5031199791b906c3bb3ae878960 \
     --hash=sha256:9121e2c1fdb355232495be3194c8dfe87ccc2d5dee45947b78e68f499790d7a7
     # via pytest
+joblib==1.6.0 \
+    --hash=sha256:2ccc96785b12046c08fd6d55839c12857831b54a3c1673ffadd2f04bfc4eda03 \
+    --hash=sha256:3dbbf9f6e4b592a2357b854608e980fe6390d131d7a82f011a377ef2ebef7aba
+    # via scikit-learn
 jsonpath-ng==1.8.0 \
     --hash=sha256:54252968134b5e549ea5b872f1df1168bd7defe1a52fed5a358c194e1943ddc3 \
     --hash=sha256:b8dde192f8af58d646fc031fac9c99fe4d00326afc4148f1f043c601a8cfe138
@@ -650,6 +658,14 @@ jsonschema-specifications==2025.9.1 \
 lark==1.3.1 \
     --hash=sha256:b426a7a6d6d53189d318f2b6236ab5d6429eaf09259f1ca33eb716eed10d2905 \
     --hash=sha256:c629b661023a014c37da873b4ff58a817398d12635d3bbb2c5a03be7fe5d1e12
+    # via decoy-engine
+lightgbm==4.6.0 \
+    --hash=sha256:2dafd98d4e02b844ceb0b61450a660681076b1ea6c7adb8c566dfd66832aafad \
+    --hash=sha256:37089ee95664b6550a7189d887dbf098e3eadab03537e411f52c63c121e3ba4b \
+    --hash=sha256:4d68712bbd2b57a0b14390cbf9376c1d5ed773fa2e71e099cac588703b590336 \
+    --hash=sha256:b7a393de8a334d5c8e490df91270f0763f83f959574d504c7ccb9eee4aef70ed \
+    --hash=sha256:cb19b5afea55b5b61cbb2131095f50538bd608a00655f23ad5d25ae3e3bf1c8d \
+    --hash=sha256:cb1c59720eb569389c0ba74d14f52351b573af489f230032a1c9f314f8bab7fe
     # via decoy-engine
 markdown-it-py==4.2.0 \
     --hash=sha256:04a21681d6fbb623de53f6f364d352309d4094dd4194040a10fd51833e418d49 \
@@ -785,8 +801,10 @@ numpy==2.2.6 \
     # via
     #   dm-tree
     #   dp-accounting
+    #   lightgbm
     #   numexpr
     #   pandas
+    #   scikit-learn
     #   scipy
 opendp==0.15.1 \
     --hash=sha256:0fb85667f321659c8cc7ae317c117e31e555c0b36e48522092002a5f24d5d795 \
@@ -1411,6 +1429,39 @@ ruff==0.15.14 \
     --hash=sha256:d4ed42e6696c8dfa5f06728e6441993901f548eb92d73bc472cb5a38d1395fbf \
     --hash=sha256:f3707da619a143a2e8830e2abab8224478d69ace2d28cb6c20543ae97c36bf61 \
     --hash=sha256:ff47b90a9ef6a40c9e2f3b479c1fb78531adf055b94c1eba0a7ba04b31951826
+scikit-learn==1.7.2 \
+    --hash=sha256:0486c8f827c2e7b64837c731c8feff72c0bd2b998067a8a9cbc10643c31f0fe1 \
+    --hash=sha256:0b7dacaa05e5d76759fb071558a8b5130f4845166d88654a0f9bdf3eb57851b7 \
+    --hash=sha256:191e5550980d45449126e23ed1d5e9e24b2c68329ee1f691a3987476e115e09c \
+    --hash=sha256:20e9e49ecd130598f1ca38a1d85090e1a600147b9c02fa6f15d69cb53d968fda \
+    --hash=sha256:2a41e2a0ef45063e654152ec9d8bcfc39f7afce35b08902bfe290c2498a67a6a \
+    --hash=sha256:36749fb62b3d961b1ce4fedf08fa57a1986cd409eff2d783bca5d4b9b5fce51c \
+    --hash=sha256:4a847fea807e278f821a0406ca01e387f97653e284ecbd9750e3ee7c90347f18 \
+    --hash=sha256:502c18e39849c0ea1a5d681af1dbcf15f6cce601aebb657aabbfe84133c1907f \
+    --hash=sha256:57dc4deb1d3762c75d685507fbd0bc17160144b2f2ba4ccea5dc285ab0d0e973 \
+    --hash=sha256:6088aa475f0785e01bcf8529f55280a3d7d298679f50c0bb70a2364a82d0b290 \
+    --hash=sha256:63a9afd6f7b229aad94618c01c252ce9e6fa97918c5ca19c9a17a087d819440c \
+    --hash=sha256:6b33579c10a3081d076ab403df4a4190da4f4432d443521674637677dc91e61f \
+    --hash=sha256:7a4c328a71785382fe3fe676a9ecf2c86189249beff90bf85e22bdb7efaf9ae0 \
+    --hash=sha256:7a58814265dfc52b3295b1900cfb5701589d30a8bb026c7540f1e9d3499d5ec8 \
+    --hash=sha256:89877e19a80c7b11a2891a27c21c4894fb18e2c2e077815bcade10d34287b20d \
+    --hash=sha256:8d91a97fa2b706943822398ab943cde71858a50245e31bc71dba62aab1d60a96 \
+    --hash=sha256:8da8bf89d4d79aaec192d2bda62f9b56ae4e5b4ef93b6a56b5de4977e375c1f1 \
+    --hash=sha256:9656e4a53e54578ad10a434dc1f993330568cfee176dff07112b8785fb413106 \
+    --hash=sha256:96dc05a854add0e50d3f47a1ef21a10a595016da5b007c7d9cd9d0bffd1fcc61 \
+    --hash=sha256:98335fb98509b73385b3ab2bd0639b1f610541d3988ee675c670371d6a87aa7c \
+    --hash=sha256:9acb6c5e867447b4e1390930e3944a005e2cb115922e693c08a323421a6966e8 \
+    --hash=sha256:9b7ed8d58725030568523e937c43e56bc01cadb478fc43c042a9aca1dacb3ba1 \
+    --hash=sha256:abebbd61ad9e1deed54cca45caea8ad5f79e1b93173dece40bb8e0c658dbe6fe \
+    --hash=sha256:acbc0f5fd2edd3432a22c69bed78e837c70cf896cd7993d71d51ba6708507476 \
+    --hash=sha256:b4d6e9deed1a47aca9fe2f267ab8e8fe82ee20b4526b2c0cd9e135cea10feb44 \
+    --hash=sha256:bb24510ed3f9f61476181e4db51ce801e2ba37541def12dc9333b946fc7a9cf8 \
+    --hash=sha256:c7509693451651cd7361d30ce4e86a1347493554f172b1c72a39300fa2aea79e \
+    --hash=sha256:ca250e6836d10e6f402436d6463d6c0e4d8e0234cfb6a9a47835bd392b852ce5 \
+    --hash=sha256:e5bf3d930aee75a65478df91ac1225ff89cd28e9ac7bd1196853a9229b6adb0b \
+    --hash=sha256:f95dc55b7902b91331fa4e5845dd5bde0580c9cd9612b1b2791b7e80c3d32615 \
+    --hash=sha256:fa8f63940e29c82d1e67a45d5297bdebbcb585f5a5a50c4914cc2e852ab77f33
+    # via decoy-engine
 scipy==1.15.3 \
     --hash=sha256:05dc6abcd105e1a29f95eada46d4a3f251743cfd7d3ae8ddb4088047f24ea477 \
     --hash=sha256:06efcba926324df1696931a57a176c80848ccd67ce6ad020c810736bfd58eb1c \
@@ -1458,7 +1509,10 @@ scipy==1.15.3 \
     --hash=sha256:eae3cf522bc7df64b42cad3925c876e1b0b6c35c1337c93e12c0f366f55b0eaf \
     --hash=sha256:ed7284b21a7a0c8f1b6e5977ac05396c0d008b89e05498c8b7e8f4a1423bba0e \
     --hash=sha256:f77f853d584e72e874d87357ad70f44b437331507d1c311457bed8ed2b956126
-    # via dp-accounting
+    # via
+    #   dp-accounting
+    #   lightgbm
+    #   scikit-learn
 shellingham==1.5.4 \
     --hash=sha256:7ecfff8f2fd72616f7481040475a65b2bf8af90a56c89140852d1120324e8686 \
     --hash=sha256:8dbca0739d487e5bd35ab3ca4b36e11c4078f3a234bfce294b0a0291363404de
@@ -1471,6 +1525,10 @@ six==1.17.0 \
     --hash=sha256:4721f391ed90541fddacab5acf947aa0d3dc7d27b2e1e8eda2be8970586c3274 \
     --hash=sha256:ff70335d468e7eb6ec65b95b99d3a2836546063f63acc5171de367e834932a81
     # via python-dateutil
+threadpoolctl==3.8.0 \
+    --hash=sha256:01080674ad7ac6182429c918a79de92da789bb448acc02fc0b620b1abd6b6137 \
+    --hash=sha256:f1b49c82704d50f13ffae019c727b0fa4f6791a58f48f06a09c45face1be66da
+    # via scikit-learn
 tomli==2.5.0 \
     --hash=sha256:069435bd5480429b98c5e5afb02ab21c219b6f0064680671c6dc0d46817346ea \
     --hash=sha256:0dc598040da8d42cf20f0be588ed7004f46db12a0ac6c32e03a59dccedaaadcd \

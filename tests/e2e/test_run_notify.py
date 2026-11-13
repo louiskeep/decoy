@@ -49,7 +49,8 @@ def _write_mask_config(tmp_path: Path) -> Path:
                         "provider": "person_email",
                         "deterministic": True,
                         "namespace": "customer_identity",
-                    }
+                    },
+                    {"name": "name", "strategy": "passthrough"},
                 ],
             }
         ],

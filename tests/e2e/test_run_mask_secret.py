@@ -114,6 +114,7 @@ def _mask_pipeline(
                     }
                     if strategy == "fpe"
                     else {"name": "ssn", "strategy": strategy},
+                    {"name": "email", "strategy": "passthrough"},
                 ],
             }
         ],

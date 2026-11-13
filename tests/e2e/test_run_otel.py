@@ -249,16 +249,9 @@ def _exported(tmp_path, listener, *args) -> tuple[list, list, list]:
     return roots, phases, spans
 
 
-# The engine's chunked route emits no phase events, so its trace is the root span alone.
-# Strict, so the cell fails the day the engine emits them and the mark has to go.
-_NO_CHUNKED_PHASES = pytest.mark.xfail(
-    strict=True, reason="the engine's chunked route emits no phase events"
-)
-
-
 @pytest.mark.parametrize(
     "args",
-    [(), pytest.param(("--chunked",), marks=_NO_CHUNKED_PHASES)],
+    [(), ("--chunked",)],
     ids=["full_frame", "chunked"],
 )
 def test_flag_exports_one_trace_with_phase_spans(tmp_path, listener, args) -> None:

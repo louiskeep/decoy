@@ -14,7 +14,7 @@ description = "Source-available CLI for data masking and synthetic generation. W
 readme = "README.md"
 requires-python = ">=3.10"
 # FSL-1.1-ALv2 (owner decision, replacing BUSL-1.1) for the CLI; the engine
-# takes it from its first FSL release (0.22.0 and earlier stay Apache-2.0). Any use except a Competing Use; each release
+# takes it from 0.23.0, its first FSL release (0.22.0 and earlier stay Apache-2.0). Any use except a Competing Use; each release
 # becomes Apache-2.0 two years after it ships. Counsel confirms in R1-c.
 # FSL has no Trove classifier, hence Other/Proprietary below.
 license = "FSL-1.1-ALv2"
@@ -111,10 +111,14 @@ dependencies = [
     # generate columns per type at validate; the certified row aa038ddd is kept
     # and d5898d1f is added for the CLI runtime profile.
     #
+    # 0.23.0 adds the post-scan gate core and the chunked scan guards, makes the
+    # lgbm field classifier (scikit-learn, lightgbm) a base dependency, and moves the
+    # engine to FSL-1.1-ALv2; row 73acf493 is the CLI runtime profile (67 pins).
+    #
     # Hard-pinned to one engine release. The platform is parked and stays on
     # 0.18.0, so the two pins differ for now. The engine is not on PyPI, so CI
     # and the smoke docs install the `v0.22.0` git tag.
-    "decoy-engine==0.22.0",
+    "decoy-engine==0.23.0",
     # Pin the typer minor: `typer utils docs` metavar rendering differs across
     # typer minors (0.26.x emits `TEXT`/`FILE`; 0.27.x emits `<str>`/`<file>`),
     # and docs/cli-reference.md is committed and checked by the test_cli_surface

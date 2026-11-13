@@ -208,12 +208,13 @@ def _engine_registry_codes() -> frozenset[str]:
     return _codes_from_registry(reasons.manifest()["entries"])
 
 
-# Literal codes the engine emits outside the registry (sources at engine v0.22.0). The test
+# Literal codes the engine emits outside the registry (sources at engine v0.23.0). The test
 # holds this set equal to what an AST scan of the installed engine finds minus the registry.
 _ENGINE_LITERAL_CODES: frozenset[str] = frozenset(
     {
         "abi-mismatch",  # execution/native/_companion_status.py:346
         "absent",  # execution/native/_companion_status.py:269
+        "binding_pair",  # records/_payloads.py:117
         "collision_rate",  # execution/native/_pool_quality.py:442
         "digest",  # declared_casting/_quarantine_local.py:504
         "field_missing",  # execution/_isolated_memwatch.py:44
@@ -222,6 +223,7 @@ _ENGINE_LITERAL_CODES: frozenset[str] = frozenset(
         "magic",  # declared_casting/_quarantine_local.py:439
         "measured",  # execution/_probe.py:461
         "oom_killed",  # execution/_isolated_run.py:520
+        "path_base_value",  # records/_payloads.py:108
         "pool_duplicate_rate",  # execution/native/_pool_quality.py:454
         "present-ok",  # execution/native/_companion_status.py:384
         "process_exited",  # execution/_isolated_memwatch.py:44

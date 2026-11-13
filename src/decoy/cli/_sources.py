@@ -17,6 +17,7 @@ for CLI-written files lives with their writer, in `cli/io/_targets.py`.
 
 from __future__ import annotations
 
+import itertools
 from collections.abc import Iterator, Mapping
 from pathlib import Path
 from typing import Any
@@ -220,6 +221,26 @@ def iter_source_chunks(
             "chunks; run without --chunked"
         )
     raise _unknown_format(table_name, fmt)
+
+
+def source_schema_and_chunks(
+    table_name: str, src: dict[str, Any], base_dir: Path, chunks: Iterator[pa.Table]
+) -> tuple[pa.Schema, Iterator[pa.Table]]:
+    """The source schema for a `--chunked` table, and `chunks` with nothing consumed.
+
+    The engine checks the config against `source_schema` before it reads any chunk, and no
+    chunk may carry a column outside it. Parquet reports its footer schema without reading
+    rows. A csv source has no schema until it is read, so the first chunk is read to take it
+    and then put back at the head of the stream; a csv with no chunk at all takes the schema
+    of its whole-file read, which is the empty frame.
+    """
+    if src.get("format") == "parquet":
+        return parquet_schema(resolve_path(src["path"], base_dir)), chunks
+    first = next(chunks, None)
+    if first is None:
+        empty = read_csv_frame(table_name, src, base_dir, dtype=str)
+        return pa.Table.from_pandas(empty, preserve_index=False).schema, iter(())
+    return first.schema, itertools.chain([first], chunks)
 
 
 def parquet_schema(path: Path) -> pa.Schema:

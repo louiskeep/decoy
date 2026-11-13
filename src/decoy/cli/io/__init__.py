@@ -19,6 +19,7 @@ from decoy.cli._sources import (
     read_source,
     resolve_path,
     resolved_source_config,
+    source_schema_and_chunks,
 )
 from decoy.cli.io._layout import (
     PipelineName,
@@ -168,6 +169,7 @@ __all__ = [
     "scan_set_from_data",
     "select_table",
     "shown_path",
+    "source_schema_and_chunks",
     "table_records",
     "target_format_issues",
     "target_parent_writable",
