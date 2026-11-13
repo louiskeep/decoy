@@ -16,6 +16,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from decoy._atomic import destination_entry
+from decoy.cli.io._cloud import cloud_root_issues, has_cloud_targets, valid_pipeline_name
 from decoy.cli.io._layout import (
     _same_dir,
     check_path_budget,
@@ -43,15 +44,19 @@ class OutputPlacement:
     `project` is normal placement under `<root>/out/<name>/<run-id>/`; `fixed` is a typed
     `--out-dir` (`directory`); `preview` is a `--rows` run that writes nothing. `typed` holds
     the `(flag, path)` side files (`--evidence-out`, `--vault`) that join the collision rule.
+    `chunked` is the route, which the cloud kind cannot use.
     """
 
     kind: str = "project"
     directory: Path | None = None
     typed: tuple[tuple[str, Path], ...] = ()
+    chunked: bool = False
 
     @classmethod
-    def fixed(cls, directory: Path, typed: tuple[tuple[str, Path], ...] = ()) -> OutputPlacement:
-        return cls("fixed", Path(os.path.abspath(directory)), typed)
+    def fixed(
+        cls, directory: Path, typed: tuple[tuple[str, Path], ...] = (), chunked: bool = False
+    ) -> OutputPlacement:
+        return cls("fixed", Path(os.path.abspath(directory)), typed, chunked)
 
     @classmethod
     def preview(cls) -> OutputPlacement:
@@ -281,6 +286,22 @@ def layout_issues(
             project_out = project_out_folder(find_project(config.resolve().parent, None).root)
         except LayoutError:
             project_out = None
+    cloud_pipeline: str | None = None
+    if has_cloud_targets(config_dict):
+        # The cloud kind keeps its pointer lock under the project's out/, so the side-file
+        # rule applies to it even with --out-dir or no local output.
+        try:
+            found = find_project(config.resolve().parent, None)
+            cloud_pipeline = (
+                valid_pipeline_name(config_dict.get("name"))
+                if found.implicit
+                else pipeline_name_for(found.root, config.resolve(), config_dict.get("name")).name
+            )
+            project_out = project_out_folder(found.root)
+        except LayoutError as exc:
+            if all(seen.code != exc.code for _loc, seen in issues):
+                issues.append((None, exc))
+    issues.extend(cloud_root_issues(config_dict, cloud_pipeline, chunked=placement.chunked))
     for location, _raw in urls:
         issues.append((location, OUTPUT_PATH_ESCAPES.error(path="a URL", base=base)))
     for location, raw in placed:
