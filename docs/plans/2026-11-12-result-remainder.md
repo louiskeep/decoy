@@ -6,10 +6,8 @@ Rules consulted: `/home/cam/dev-rules/README.md`, `00-universal.md`, `risk-and-e
 `development-loop.md`, `cross-cutting-concerns.md`, `api-and-compatibility.md`, `testing.md`,
 `architecture.md`, `catalogs/recurring-defects.md`; CLI `CODEMAP.md`; engine `CODEMAP.md`.
 
-Bases (2026-11-12): CLI `origin/main` `ae58f68`, engine `origin/main` `c38f17cd` (every engine
-file:line reference below is unchanged at `ad63ba1b`; two line counts differ and section 8
-gives both), CLI pins
-`decoy-engine==0.22.0` (`pyproject.toml:122`). Source plans: the gated RESULT handoff
+Bases rechecked 2026-11-13: CLI `origin/main` `ee654315`, engine `origin/main` `c86ca58d`; CLI
+pins `decoy-engine==0.23.0` (`pyproject.toml:121`). Source plans: the gated RESULT handoff
 (vault `10_Projects/decoy/handoffs/phase0.5/p05-result-build-handoff.md`, revision 4, owner
 questions Q1 to Q6 confirmed 2026-11-06), the F29 remainder plan (engine
 `plan/f29-errors-progress-remainder` `a26994bf`, slice C1 only), the DELIV plan (engine
@@ -19,6 +17,11 @@ section 3 says why. Risk: R2 overall (frozen exit taxonomy, a public `--json` me
 artifact tag); per-slice tiers in section 10. Out of scope and not planned: F29 platform slices
 P1 and P2 and F31 P8 (parked with Platform V1); LIB L3a storing the record (row 37); LIB L5b
 `links.log` (row 37 group); best-effort delivery itself (DELIV, row 61).
+
+Revision 1.1 applies the shared-writer-order review. It removes SUB-RUN C1 as a C-DOC1 or
+C-DOC2 prerequisite, places SUB-RUN C1 after RESULT so its human line and `--json` subset object
+render through RESULT's summary, records the exact merged and remaining prerequisites from the
+2026-11-13 GitHub check, and updates the stale verification line.
 
 ## 1. Frame
 
@@ -210,8 +213,8 @@ blocks. Everything else goes to V2-LOG (section 13).
   ZERO reads that and the `OutputPlacement` docstring (`_placement.py:36`) gains the flag.
 - Run-time file order is DELIV 4.7 (`plan/deliv` `32ef9680`): `finish` is the last writer of
   the run, after the sink settles and after notifications; the document never goes into the run
-  folder. C-DOC1 and C-DOC2 keep today's order, where `finish` is already last, so they wait on
-  nothing more from DELIV. DELIV C1 refuses a side file anywhere under the project's `out/` tree
+  folder. C-DOC1 introduces `finish` in that last position and C-DOC2 routes the remaining exits
+  through it, so they wait on nothing more from DELIV. DELIV C1 refuses a side file anywhere under the project's `out/` tree
   (`layout.side_file_in_out`, DELIV 4.7 rule 7). C1 lands before C-DOC3, so `--result` is never
   unguarded; C-DOC3 adds the `--result` cases of DELIV AT-47.
 - Legacy `--json` members keep their values; `result` and `result_status` are added.
@@ -454,27 +457,37 @@ at `c38f17cd` and 685 at `ad63ba1b`, ceiling 689 (net 0 in E3b), `errors.py` 548
 ## 10. Slices
 
 One fixed writer order per shared `cli/run/` module. Every lane is a strict sequence: a writer
-starts on the merged head of the one before it, never in parallel and never out of order. The
-DELIV plan's own order (deliv.md section 10) has no RESULT slice in the `_execute.py` lane,
-names "F29 C1" as the RESULT writer of `_render.py`, gives DELIV C3 the exit-map work and has no
-`_result.py` slot; the orchestrator amends the DELIV plan with this table, the `_result.py`
-slot and the OQ-3 correction before C-DOC1 or DELIV C2a starts (pre-mortem, stop line).
+starts on the merged head of the one before it, never in parallel and never out of order. DELIV
+revision 3.5 carries the same table, the `_result.py` slot and the OQ-3 correction.
 
 | Module | Writers, in order (merged ones struck from the head of the lane as they land) |
 |---|---|
-| `run/_execute.py` | L5a (#216), SUB-RUN C1, C-DOC1 (two lines: keep the `ExecutionResult` on `ctx` in the plain branch), DELIV C2a, C3, C4, C5 |
+| `run/_execute.py` | L5a (#216), C-DOC1 (two lines: keep the `ExecutionResult` on `ctx` in the plain branch), SUB-RUN C1, DELIV C2a, C3, C4, C5 |
 | `run/_flow.py` | L5a (#216), C-DOC1 (one line), C-DOC2, DELIV C2a (moves the `write_evidence` call into the sink), LIB L3b, L5b |
 | `run/_errors.py` | C-EXIT, C-REASON, C-DOC1, C-DOC2 (no DELIV writer) |
 | `run/_render.py` | C-EXIT, C-DOC1, C-DOC2, DELIV C2a, DELIV C5 (extends `_blocking_failed`) |
-| `run/_context.py` | L5a (#216), C-DOC1, C-DOC3, DELIV C2a (`sink` field) |
-| `run/_prepare.py` | SUB-RUN C1, C-DOC2, C-DOC3 (the `--result` entry in `_placement`) |
+| `run/_context.py` | L5a (#216), C-DOC1, C-DOC3, SUB-RUN C1, DELIV C2a (`sink` field) |
+| `run/_prepare.py` | C-DOC2, C-DOC3 (the `--result` entry in `_placement`), B6-REPIN, SUB-RUN C1 |
 | `run/_result.py` | C-DOC1, C-DOC2, C-DOC3, DELIV C2a (the `delivery_facts` body) |
 | `run/_evidence.py` | C-DOC2 (the X8 typed refusal); DELIV C2a then calls it from the sink unchanged |
 | `run/_notify.py` | C-DOC2 |
 | `run/__init__.py` | C-DOC3 |
 
-So DELIV C2a starts after C-DOC2 and C-DOC3 have merged; from DELIV, C-DOC3 waits only on C1. `cli/io/_placement.py`: DELIV C1, then C-DOC3 (DELIV 4.7 rule 7). C-REASON writes no `_render.py`; DELIV's "F29 C1"
+So SUB-RUN C1 renders its human line and `--json` `subset` object through the summary introduced
+by C-DOC1. It is not a prerequisite of any RESULT slice. Its shared-file lane positions are
+after C-DOC3, so it may merge after the RESULT remainder without creating a cycle. DELIV C2a
+starts after C-DOC2, C-DOC3 and SUB-RUN C1 have merged; from DELIV, C-DOC3 waits only on C1.
+`cli/io/_placement.py`: DELIV C1, then C-DOC3 (DELIV 4.7 rule 7). C-REASON writes no `_render.py`; DELIV's "F29 C1"
 `_render.py` slot is C-DOC1 and C-DOC2 here. C-CAP writes no `cli/run/` module.
+
+C-DOC1 prerequisite status, checked with `gh` on 2026-11-13:
+
+- Merged on engine main: E2a in #535, E2b in #543 and E3a in #538.
+- Merged release path: engine 0.23.0 preparation in #556 and CLI repin in #233.
+- Merged on CLI main: C-EXIT in #228 and C-REASON in #229.
+- Remaining: L5a CLI #216 is open. C-DOC1 itself is not merged.
+- Not a prerequisite: SUB-RUN C1 is not merged and renders through C-DOC1's summary after the
+  RESULT shared-file lanes are complete.
 
 | Slice | Repo | Files | Src / test lines | Tier | Depends on | Startable now |
 |---|---|---|---|---|---|---|
@@ -488,8 +501,8 @@ So DELIV C2a starts after C-DOC2 and C-DOC3 have merged; from DELIV, C-DOC3 wait
 | E-OOM | engine | `reasons/decoy/_core.py`, `reason_adapter.py`, `errors.py`, registry snapshot and consumer contract, `docs/reasons.md`, `CHANGELOG.md`, test | ~30 / ~80 | R1 | engine #506 merged; E-CAP | no: #506 |
 | REL | engine, CLI | engine release with E2a, E2b, E3a, E-CAP (and E3b, E-OOM when merged); CLI repin per the repin checklist | small | R1 | the slices it carries | no |
 | C-CAP | CLI | `cli/exit_codes.py` (docstring), `cli/explain.py`, `cli/preflight.py` (the `:446` literal), `tests/sentry/test_engine_reason_code_copies.py` (allowlist entry `:73` removed), `README.md`, `CHANGELOG.md` (breaking line), `tests/e2e/test_run_capacity_widening.py`, `tests/e2e/test_run_preflight_capacity_parity.py` | ~40 / ~140 | R2 | the repin carrying E-CAP; lands with that repin or the same day | no: release |
-| C-DOC1 | CLI | `run/_result.py`, `run/_errors.py`, `run/_render.py`, `run/_flow.py` (one line), `run/_execute.py` (two lines), `run/_context.py`, `tests/sentry/layout/test_run_package_shape.py` (`ORDER`), `tests/sentry/run/test_one_result_builder.py`, `SENTRIES` row, `CODEMAP.md`, `CHANGELOG.md`, AT-D1 to AT-D10 tests | ~260 / ~320 | R2 | REL with E2a, E2b, E3a; C-REASON; L5a (#216) and SUB-RUN C1 merged (the `_execute.py` lane) | no: release and #216 |
-| C-DOC2 | CLI | `run/_result.py`, `run/_flow.py`, `run/_notify.py`, `run/_prepare.py`, `run/_evidence.py`, `run/_errors.py`, `run/_render.py`, `tests/sentry/run/test_one_run_exit.py`, `SENTRIES` row, `CHANGELOG.md`, AT-O1 to AT-O7 tests, AT-R7 pin update | ~210 / ~310 | R2 | C-DOC1; SUB-RUN C1 merged (`_prepare.py`) | no: C-DOC1 |
+| C-DOC1 | CLI | `run/_result.py`, `run/_errors.py`, `run/_render.py`, `run/_flow.py` (one line), `run/_execute.py` (two lines), `run/_context.py`, `tests/sentry/layout/test_run_package_shape.py` (`ORDER`), `tests/sentry/run/test_one_result_builder.py`, `SENTRIES` row, `CODEMAP.md`, `CHANGELOG.md`, AT-D1 to AT-D10 tests | ~260 / ~320 | R2 | merged REL with E2a, E2b, E3a; merged C-REASON; L5a (#216) | no: #216 |
+| C-DOC2 | CLI | `run/_result.py`, `run/_flow.py`, `run/_notify.py`, `run/_prepare.py`, `run/_evidence.py`, `run/_errors.py`, `run/_render.py`, `tests/sentry/run/test_one_run_exit.py`, `SENTRIES` row, `CHANGELOG.md`, AT-O1 to AT-O7 tests, AT-R7 pin update | ~210 / ~310 | R2 | C-DOC1 | no: C-DOC1 |
 | C-DOC3 | CLI | `run/__init__.py` (one option hunk), `run/_context.py`, `run/_result.py`, `run/_prepare.py` (the `typed` entry), `cli/io/_placement.py` (docstring), `docs/cli-reference.md` (generated), `CHANGELOG.md`, AT-F1 to AT-F4 tests, the `--result` cases of DELIV AT-47 | ~90 / ~180 | R2 (new public option and a frozen artifact written at a user path) | C-DOC2; DELIV C1 merged (`_placement.py`) | no: C-DOC2 and DELIV C1 |
 
 C-DOC2 is the largest (about 520 lines with tests) and stays one slice: its exit paths share one
@@ -636,9 +649,8 @@ and released. Exit 6 is reachable after DELIV C3; that is row 61's acceptance, n
 - That every widened code reaches `_errors.fail` as a coded `DecoyError` and is not wrapped on
   the way (read at the raise sites only).
 - The full list of `execution_telemetry` route values (E2b STEP ZERO lists them).
-- CLI PR #216 as it will merge (read from its open diff: it adds `ctx.progress` and
-  `run/_progress.py`).
-- Whether the DELIV plan's second review already changed its exit map text.
+- CLI PR #216's exact eventual merge shape. GitHub reports it open; C-DOC1 rebases after it and
+  rechecks the named `_execute.py`, `_flow.py` and `_context.py` lanes.
 - Whether `write_local_target` `REPLACE` replaces a final link, which sets the `--result` entry's
   `replaces_final` value (C-DOC3 STEP ZERO), and how the collision key treats a hard link.
 - Whether `estimate_job_capacity` can raise any of the four widened codes (C-CAP's AT-C3 patches
