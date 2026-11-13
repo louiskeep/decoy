@@ -67,6 +67,7 @@ Try one of:
   decoy fit source.csv             Fit a distribution snapshot for statistical generation.
   decoy init                       Scaffold a starter pipeline interactively.
   decoy setup                      Set this box's max memory and threads for `decoy run`.
+  decoy project new acme           Make a project folder for one client's pipelines and outputs.
   decoy list templates             Browse bundled pipeline templates.
   decoy show template hipaa        Dump one bundled template to stdout.
   decoy explain modes              Plain-English topic help. `explain` lists topics.
