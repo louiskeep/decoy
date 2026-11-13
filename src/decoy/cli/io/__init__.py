@@ -22,6 +22,7 @@ from decoy.cli._sources import (
     source_schema_and_chunks,
 )
 from decoy.cli.io._layout import (
+    PIPELINES_DIR,
     PipelineName,
     RunFolder,
     RunLayout,
@@ -51,6 +52,9 @@ from decoy.cli.io._layout_errors import (
     GATE_CODES,
     GATE_DESCRIPTORS,
     OUTPUT_DIR_UNUSABLE,
+    PROJECT_NESTED,
+    PROJECT_NOT_FOUND,
+    PROJECT_ROOT_REFUSED,
     WARNING_CODES,
     WARNING_DESCRIPTORS,
     Descriptor,
@@ -61,12 +65,14 @@ from decoy.cli.io._pipelines import (
     PipelineEntry,
     PipelineRef,
     PipelineToken,
+    RunHistory,
     explicit_project,
     list_pipelines,
     parse_pipeline_token,
     pipeline_argument,
     pipeline_option,
     resolve_pipeline,
+    run_history,
 )
 from decoy.cli.io._placement import (
     OutputPlacement,
@@ -75,7 +81,13 @@ from decoy.cli.io._placement import (
     layout_issues,
     resolved_output_collisions,
 )
-from decoy.cli.io._project import DECOY_DIR, Project, ensure_decoy_dir, find_project
+from decoy.cli.io._project import (
+    DECOY_DIR,
+    Project,
+    ensure_decoy_dir,
+    find_project,
+    write_project_marker,
+)
 from decoy.cli.io._scan_set import (
     ScanSetFormatError,
     load_scan_set,
@@ -107,6 +119,10 @@ __all__ = [
     "GATE_CODES",
     "GATE_DESCRIPTORS",
     "OUTPUT_DIR_UNUSABLE",
+    "PIPELINES_DIR",
+    "PROJECT_NESTED",
+    "PROJECT_NOT_FOUND",
+    "PROJECT_ROOT_REFUSED",
     "WARNING_CODES",
     "WARNING_DESCRIPTORS",
     "Descriptor",
@@ -120,6 +136,7 @@ __all__ = [
     "PipelineToken",
     "Project",
     "RunFolder",
+    "RunHistory",
     "RunLayout",
     "ScanSetFormatError",
     "TargetFormatError",
@@ -166,6 +183,7 @@ __all__ = [
     "resolve_target_format",
     "resolved_output_collisions",
     "resolved_source_config",
+    "run_history",
     "scan_set_from_data",
     "select_table",
     "shown_path",
@@ -176,6 +194,7 @@ __all__ = [
     "write_chunked_output",
     "write_claim",
     "write_private_table",
+    "write_project_marker",
     "write_table",
     "write_targets",
 ]

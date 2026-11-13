@@ -130,7 +130,7 @@ CLOUD_TARGET_UNSUPPORTED = Descriptor(
 
 LATEST_INVALID = Descriptor(
     "layout.latest_invalid",
-    "The LATEST file in {path} is not a run folder name; it is ignored until the next clean run.",
+    "The LATEST file in {path} does not name an existing run folder; it is ignored until the next clean run.",
 )
 LATEST_LINK_FAILED = Descriptor(
     "layout.latest_link_failed",

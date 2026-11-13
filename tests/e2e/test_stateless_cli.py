@@ -94,7 +94,7 @@ def test_run_evidence_out_writes_no_catalog(mask_config: Path, tmp_path: Path) -
     assert str(evidence_out.relative_to(work)) in created
 
 
-@pytest.mark.parametrize("sub", ["project", "catalog", "jobs"])
+@pytest.mark.parametrize("sub", ["catalog", "jobs"])
 def test_removed_subapp_is_no_such_command(sub: str) -> None:
     """The deleted top-level sub-apps report 'No such command'."""
     result = runner.invoke(app, [sub], catch_exceptions=False)

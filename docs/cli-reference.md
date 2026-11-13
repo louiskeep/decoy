@@ -15,6 +15,7 @@ Try one of:
   decoy fit source.csv             Fit a distribution snapshot for statistical generation.
   decoy init                       Scaffold a starter pipeline interactively.
   decoy setup                      Set this box&#x27;s max memory and threads for `decoy run`.
+  decoy project new acme           Make a project folder for one client&#x27;s pipelines and outputs.
   decoy list templates             Browse bundled pipeline templates.
   decoy show template hipaa        Dump one bundled template to stdout.
   decoy explain modes              Plain-English topic help. `explain` lists topics.
@@ -62,6 +63,7 @@ Generate synthetic data: decoy fit source.csv, then decoy run pipeline.yaml, the
 * `subset`: Cut a referentially-complete FK-aware...
 * `upgrade`: Upgrade (or pin) the managed Decoy runtime...
 * `validate`: Pre-run validation gate.
+* `project`: Make and inspect projects: one folder per...
 * `scan`: Profile a dataset for PII and...
 * `report`: The post-run surface: show / render /...
 * `ci`: CI integration: portable checks, SARIF,...
@@ -1120,6 +1122,127 @@ What preflight does NOT check:
   - Vault or secrets accessibility
 
 See also: decoy validate, decoy run, decoy report verify, decoy explain exit-codes.
+
+
+## `decoy project`
+
+Make and inspect projects: one folder per client, holding pipelines, outputs and records.
+
+**Usage**:
+
+```console
+$ decoy project [OPTIONS] COMMAND [ARGS]...
+```
+
+**Options**:
+
+* `--help`: Show this message and exit.
+
+**Commands**:
+
+* `new`: Make a Decoy project: a decoy.yaml marker,...
+* `show`: Show the selected project: its root,...
+* `list`: List the projects in DIR and in each...
+
+### `decoy project new`
+
+Make a Decoy project: a decoy.yaml marker, pipelines/, out/ and .decoy/.
+
+**Usage**:
+
+```console
+$ decoy project new [OPTIONS] DIR
+```
+
+**Arguments**:
+
+* `DIR`: Folder to make the project in. `.` is the current folder.  [required]
+
+**Options**:
+
+* `--json`: Emit a JSON record instead of text.
+* `-q, --quiet`: Suppress stdout. Errors still go to stderr.
+* `-v, --verbose`: Enable debug-level CLI logs on stderr.
+* `--help`: Show this message and exit.
+
+Examples:
+
+  decoy project new acme
+
+    Make ./acme as a project: decoy.yaml, pipelines/, out/ and .decoy/.
+
+  decoy project new .
+
+    Make the current folder a project. Run it again later to fill in anything missing.
+
+Exit codes: 0 made, or already a project; 1 refused (an invalid decoy.yaml, your home folder,
+a parent of it, or `/`); 3 a folder could not be made. Next: decoy init <name> --source <file>.
+
+
+### `decoy project show`
+
+Show the selected project: its root, marker and pipelines with their last runs.
+
+**Usage**:
+
+```console
+$ decoy project show [OPTIONS]
+```
+
+**Options**:
+
+* `--json`: Emit a JSON record instead of a table.
+* `-q, --quiet`: Suppress stdout. Errors still go to stderr.
+* `-v, --verbose`: Enable debug-level CLI logs on stderr.
+* `--help`: Show this message and exit.
+
+Examples:
+
+  decoy project show
+
+    The project around the current folder, with each pipeline's newest run and last clean run.
+
+  decoy --project acme project show --json
+
+    The same for the project in ./acme, as JSON.
+
+Exit codes: 0 shown; 1 no project here (make one with `decoy project new <dir>`) or an invalid
+marker. Status is `-` until run records exist.
+
+
+### `decoy project list`
+
+List the projects in DIR and in each folder directly under it.
+
+**Usage**:
+
+```console
+$ decoy project list [OPTIONS] [DIR]
+```
+
+**Arguments**:
+
+* `[DIR]`: Folder to look in (default: the current folder).  [default: .]
+
+**Options**:
+
+* `--json`: Emit a JSON record instead of a table.
+* `-q, --quiet`: Suppress stdout. Errors still go to stderr.
+* `-v, --verbose`: Enable debug-level CLI logs on stderr.
+* `--help`: Show this message and exit.
+
+Examples:
+
+  decoy project list
+
+    The current folder if it is a project, and each folder directly inside it that is one.
+
+  decoy project list ~/clients --json
+
+    The projects under ~/clients, as JSON.
+
+Exit codes: 0 listed (nothing found is not an error); 2 DIR does not exist. A folder with an
+unusable decoy.yaml is skipped and reported as a warning.
 
 
 ## `decoy scan`

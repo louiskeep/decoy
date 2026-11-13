@@ -26,6 +26,7 @@ from decoy.cli.fit import fit as fit_command
 from decoy.cli.info import INFO_EPILOG
 from decoy.cli.info import info as info_command
 from decoy.cli.init import INIT_EPILOG, init_command
+from decoy.cli.project import project_app
 from decoy.cli.reference import LIST_EPILOG, SHOW_EPILOG, list_, show
 from decoy.cli.report import report_app
 from decoy.cli.run import RUN_EPILOG
@@ -66,6 +67,7 @@ Try one of:
   decoy fit source.csv             Fit a distribution snapshot for statistical generation.
   decoy init                       Scaffold a starter pipeline interactively.
   decoy setup                      Set this box's max memory and threads for `decoy run`.
+  decoy project new acme           Make a project folder for one client's pipelines and outputs.
   decoy list templates             Browse bundled pipeline templates.
   decoy show template hipaa        Dump one bundled template to stdout.
   decoy explain modes              Plain-English topic help. `explain` lists topics.
@@ -271,6 +273,7 @@ app.command(name="demo", rich_help_panel="Start", epilog=DEMO_EPILOG)(demo_comma
 app.command(name="explain", rich_help_panel="Reference", epilog=EXPLAIN_EPILOG)(explain_command)
 app.command(name="info", rich_help_panel="Start", epilog=INFO_EPILOG)(info_command)
 app.command(name="schema", rich_help_panel="Reference", epilog=SCHEMA_EPILOG)(schema_command)
+app.add_typer(project_app, name="project", rich_help_panel="Start")
 app.add_typer(scan_app, name="scan", rich_help_panel="Mask")
 app.add_typer(report_app, name="report", rich_help_panel="Check and report")
 app.add_typer(ci_app, name="ci", rich_help_panel="Check and report")

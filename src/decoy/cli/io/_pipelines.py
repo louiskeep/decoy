@@ -32,16 +32,22 @@ from decoy.cli.exit_codes import EXIT_USAGE
 from decoy.cli.io._layout import (
     PIPELINE_YAML,
     PIPELINES_DIR,
+    is_run_id,
     is_valid_name,
     member_yaml,
+    pipeline_folder,
+    project_out_folder,
+    read_latest,
     same_path,
 )
 from decoy.cli.io._layout_errors import (
+    LATEST_INVALID,
     PIPELINE_NAME_INVALID,
     PIPELINE_UNKNOWN,
     PROJECT_MISMATCH,
     PROJECT_NOT_FOUND,
     LayoutError,
+    LayoutWarning,
 )
 from decoy.cli.io._project import Project, find_project
 from decoy.ui.output import OutputMode, OutputState, emit_json
@@ -175,6 +181,55 @@ def list_pipelines(project: Project) -> list[PipelineEntry]:
         return []
     found = ((n, _member(project.root, n)) for n in folders if is_valid_name(n))
     return [PipelineEntry(n, y) for n, y in found if y is not None]
+
+
+@dataclass(frozen=True)
+class RunHistory:
+    """The newest run folder and the last clean run of one pipeline, read from `out/<name>/`."""
+
+    last_run: str | None
+    last_clean: str | None
+    warnings: tuple[LayoutWarning, ...] = ()
+
+
+def _is_plain_dir(path: Path) -> bool:
+    return path.is_dir() and not path.is_symlink()
+
+
+def _contained_history_folder(root: Path, name: str) -> Path | None:
+    """`out/<name>/` when no link is on the way and it lies inside the project, else None.
+
+    A linked `out/` or pipeline folder would report another place's runs as this project's.
+    """
+    out = project_out_folder(root)
+    folder = pipeline_folder(root, name)
+    try:
+        if out.is_symlink() or folder.is_symlink():
+            return None
+        return folder if folder.resolve().is_relative_to(root.resolve()) else None
+    except (OSError, RuntimeError):
+        return None
+
+
+def run_history(root: Path, name: str) -> RunHistory:
+    """Run ids of pipeline `name`: the newest well-formed folder, and `LATEST` when it checks out.
+
+    Folders that are not run ids (or are links) are ignored, and so is a history folder that
+    is a link or lies outside the project. A `LATEST` that is not a run id, or names no run
+    folder, is ignored with `layout.latest_invalid`. Reads only; nothing is made.
+    """
+    folder = _contained_history_folder(root, name)
+    if folder is None:
+        return RunHistory(None, None)
+    try:
+        found = os.listdir(folder)
+    except OSError:
+        found = []
+    runs = sorted(r for r in found if is_run_id(r) and _is_plain_dir(folder / r))
+    latest = read_latest(folder)
+    if latest is None or latest in runs:
+        return RunHistory(runs[-1] if runs else None, latest)
+    return RunHistory(runs[-1] if runs else None, None, (LATEST_INVALID.warning(path=folder),))
 
 
 def _by_path(token: PipelineToken) -> PipelineRef:
