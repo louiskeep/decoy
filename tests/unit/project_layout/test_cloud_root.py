@@ -153,7 +153,7 @@ def test_the_cloud_type_tables_match_the_engine_target_types() -> None:
     # to the engine but missed in either would skip the cloud rule or the extras check.
     import typing
 
-    from decoy_engine.config._targets import TargetDescriptor
+    from decoy_engine.config import TargetDescriptor
 
     from decoy.cli.extras import _CLOUD_ENDPOINT_MODULE
     from decoy.cli.io._cloud import _KEY_FIELD
