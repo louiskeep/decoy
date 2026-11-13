@@ -117,7 +117,7 @@ dependencies = [
     #
     # Hard-pinned to one engine release. The platform is parked and stays on
     # 0.18.0, so the two pins differ for now. The engine is not on PyPI, so CI
-    # and the smoke docs install the `v0.22.0` git tag.
+    # and the smoke docs install the `v0.23.0` git tag.
     "decoy-engine==0.23.0",
     # Pin the typer minor: `typer utils docs` metavar rendering differs across
     # typer minors (0.26.x emits `TEXT`/`FILE`; 0.27.x emits `<str>`/`<file>`),

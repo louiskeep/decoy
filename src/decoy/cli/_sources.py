@@ -231,16 +231,28 @@ def source_schema_and_chunks(
     The engine checks the config against `source_schema` before it reads any chunk, and no
     chunk may carry a column outside it. Parquet reports its footer schema without reading
     rows. A csv source has no schema until it is read, so the first chunk is read to take it
-    and then put back at the head of the stream; a csv with no chunk at all takes the schema
-    of its whole-file read, which is the empty frame.
+    and then put back at the head of the stream; a csv with no chunk at all takes the header of
+    its whole-file read, which is the empty frame. Every csv chunk is cast to one all-string
+    schema built from that header, so an all-empty column never changes type between chunks.
     """
     if src.get("format") == "parquet":
         return parquet_schema(resolve_path(src["path"], base_dir)), chunks
     first = next(chunks, None)
     if first is None:
         empty = read_csv_frame(table_name, src, base_dir, dtype=str)
-        return pa.Table.from_pandas(empty, preserve_index=False).schema, iter(())
-    return first.schema, itertools.chain([first], chunks)
+        return _all_string_schema(pa.Table.from_pandas(empty, preserve_index=False)), iter(())
+    schema = _all_string_schema(first)
+    return schema, (chunk.cast(schema) for chunk in itertools.chain([first], chunks))
+
+
+def _all_string_schema(table: pa.Table) -> pa.Schema:
+    """One explicit string field per column of `table`.
+
+    A csv read is all-text, but an all-empty column in one chunk still arrives as an Arrow
+    `null` field while another chunk gives `string`. The engine rejects non-string chunks for
+    text strategies, so the result would then depend on chunk size and row placement.
+    """
+    return pa.schema([pa.field(name, pa.string()) for name in table.column_names])
 
 
 def parquet_schema(path: Path) -> pa.Schema:
