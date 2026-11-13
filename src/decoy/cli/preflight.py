@@ -59,6 +59,7 @@ from rich.text import Text
 
 from decoy.cli._yaml_errors import sanitize_yaml_error
 from decoy.cli.exit_codes import EXIT_CAPACITY, EXIT_USAGE, EXIT_WARNINGS
+from decoy.cli.gate import capacity_codes
 from decoy.cli.gate._capacity_text import format_gib as _format_gib
 from decoy.cli.gate._capacity_text import insufficient_text as _insufficient_text
 from decoy.cli.io import pipeline_argument, resolve_pipeline
@@ -120,8 +121,7 @@ class _CheckResult:
     status: str  # "pass" | "warn" | "fail"
     message: str
     location: str | None = None
-    # OOM checker v1: the engine's capacity-refusal code (out_of_core_insufficient_memory,
-    # out_of_core_fanin_exceeds_budget or generation_budget_exceeded),
+    # OOM checker v1: the engine's capacity-refusal code (a member of its capacity set),
     # carried as its own field so a --json caller can assert on it directly
     # instead of parsing `message` text (R9).
     code: str | None = None
@@ -444,15 +444,12 @@ def _check_capacity(raw: dict[str, Any], config_path: Path, acc: _PreflightAccum
     try:
         estimate = _engine_execution.estimate_job_capacity(config_dump, base_dir=config_path.parent)
     except ExecutionError as exc:
-        if exc.code == "out_of_core_fanin_exceeds_budget":
-            # Round-4 (engine): the build-floor gate is now advisory, so
-            # `estimate_job_capacity` no longer returns INSUFFICIENT for
-            # that case -- but a fan-in impossibility discovered while
-            # resolving the memory budget still PROPAGATES as this
-            # ExecutionError instead of coming back as a verdict. Render it
-            # the same way the INSUFFICIENT verdict branch below does (a
-            # FAIL that trips EXIT_CAPACITY), so a fan-in job still refuses
-            # cleanly instead of crashing preflight on a raw traceback.
+        if exc.code in capacity_codes():
+            # The build-floor gate is advisory, so the estimator no longer returns
+            # INSUFFICIENT for it, but a capacity refusal found while resolving the
+            # memory budget still propagates as this ExecutionError. The set is the
+            # engine's own, so `decoy run` agrees on every code. Render it like the
+            # INSUFFICIENT verdict below: a FAIL that trips EXIT_CAPACITY.
             acc.capacity_insufficient = True
             acc.add_fail(
                 name=CAPACITY_CHECK,

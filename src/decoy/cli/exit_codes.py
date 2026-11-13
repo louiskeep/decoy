@@ -77,30 +77,24 @@ EXIT_USAGE (the user gave bad input) and EXIT_RUNTIME (the CLI crashed)."""
 
 EXIT_CAPACITY: int = 5
 """The job needs more memory than this host (or the budget it was given) has.
-Raised by `decoy run` when the engine's out-of-core-FK memory gate refuses a
-job, and by `decoy validate preflight` when its capacity check predicts the
-same refusal before the run starts. The fix is a bigger host/cgroup ceiling or a
-smaller job -- not a config mistake (EXIT_USAGE) and not an engine defect
-(EXIT_RUNTIME).
+Raised by `decoy run` when the engine refuses a job for memory, and by
+`decoy validate preflight` when its capacity check predicts the same refusal before
+the run starts. The fix is a bigger host/cgroup ceiling or a smaller job -- not a
+config mistake (EXIT_USAGE) and not an engine defect (EXIT_RUNTIME).
 
-2026-09-08 (fan-in-only recalibration, paired with the engine's
-`fix/ooc-preflight-overreject-recalibration`): capacity refusal is now
-FAN-IN-ONLY. The engine's build-floor estimate (the other half of this gate)
-is advisory, not a refusal -- a job whose predicted relation-build floor
-exceeds its build cap now completes preflight/run with a WARNING (status
-"warn", `--fail-on-warning` governs whether that warning itself exits
-nonzero), not EXIT_CAPACITY. `out_of_core_insufficient_memory` is kept
-recognized as LEGACY-engine compat only (an older engine still running the
-pre-recalibration hard-fail gate can still raise it); on a current engine
-the only code this exit actually fires for is
-`out_of_core_fanin_exceeds_budget` -- when one table has more incoming FK
-edges (from distinct child FK columns, which the route DOES allow: the compat
-gate only rejects multiple parents into the same child column tuple) than the
-budget can seat one co-live DuckDB joiner apiece for, each needing DuckDB's
-1 MB minimum. That is a real but uncommon refusal (it takes tens of distinct
-FKs into one table at a small budget), not the everyday "job too big for the
-host" the build-floor estimate used to raise -- that estimate is now advisory.
-v1 checks the out-of-core-FK route only; see `decoy explain exit-codes`."""
+Which refusals count is the engine's call: `decoy_engine.errors.CAPACITY_REASON_CODES`
+(read through `decoy.cli.gate.capacity_codes()`), so the CLI keeps no list of its own.
+Today that set holds `out_of_core_fanin_exceeds_budget`, `out_of_core_insufficient_memory`,
+`out_of_core_faker_pool_budget_exceeded`, `out_of_core_reorder_budget_too_small`,
+`pool_exceeds_cache_budget`, `generation_budget_exceeded`, `process_out_of_memory` and
+`isolated_worker_out_of_memory`; a bare `MemoryError` also exits 5. The engine lists every
+other budget or capacity code with the reason it is not capacity (a rejected setting, disk or
+quota, a routing refusal, a different limit) and those keep their usual exit.
+
+The build-floor estimate of the out-of-core-FK gate is advisory: a job over it warns and
+does not exit 5. `out_of_core_insufficient_memory` stays in the set for engines that still
+raise it. `decoy validate preflight` checks the out-of-core-FK route and the generation
+budget; see `decoy explain exit-codes`."""
 
 EXIT_PARTIAL: int = 6
 """The run delivered some of its tables and withheld the rest (best-effort delivery).

@@ -70,7 +70,6 @@ ALLOWLIST: tuple[AllowedCopy, ...] = (
     _key("cli/gen/_preview.py", "row_count", 2),
     _key("cli/gen/_scaffold.py", "row_count", 2),
     _key("cli/io/_scan_set.py", "row_count", 3),
-    _copy("cli/preflight.py", "out_of_core_fanin_exceeds_budget"),
     _copy("cli/preflight.py", "capacity_source_unprofilable"),
     _copy("cli/report.py", "vault_protocol_version_mismatch"),
     _copy("cli/run/_errors.py", "uniqueness_impossible"),

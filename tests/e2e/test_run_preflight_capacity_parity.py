@@ -31,6 +31,7 @@ identical routing knob.
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from typing import Any
 from unittest import mock
@@ -49,6 +50,12 @@ from tests.keyed_secret import TEST_MASK_SECRET_REF
 pytestmark = pytest.mark.usefixtures("mask_secret")
 
 runner = CliRunner()
+
+
+def _capacity_codes() -> frozenset[str]:
+    from decoy.cli.gate import capacity_codes
+
+    return capacity_codes()
 
 
 def _hash_col(name: str, namespace: str) -> dict[str, Any]:
@@ -230,6 +237,32 @@ class TestParity:
         assert run_result.exit_code == EXIT_CAPACITY
         assert "capacity:" in run_result.output
 
+    @pytest.mark.parametrize("capacity_code", sorted(_capacity_codes()))
+    def test_widened_codes_agree(self, tmp_path: Path, capacity_code: str) -> None:
+        # Every member of the engine's capacity set, raised from the estimator, is one capacity
+        # refusal in `validate preflight` and in the `decoy run` gate: same exit, same code.
+        import decoy_engine.execution as engine_exec
+        from decoy_engine import ExecutionError
+
+        parent, child = _parent_child_tables(40)
+        config_path = _write_config(tmp_path, parent, child)
+
+        def _boom_estimate(*_a: Any, **_k: Any) -> Any:
+            raise ExecutionError(
+                code=capacity_code, message="over the memory budget (test double)."
+            )
+
+        with mock.patch.object(engine_exec, "estimate_job_capacity", _boom_estimate):
+            preflight = runner.invoke(app, ["validate", "preflight", str(config_path), "--json"])
+            run = runner.invoke(app, ["run", str(config_path), "--json"])
+
+        assert preflight.exit_code == EXIT_CAPACITY
+        assert run.exit_code == EXIT_CAPACITY
+        assert json.loads(preflight.output)["capacity"]["code"] == capacity_code
+        run_payload = json.loads(run.output)
+        assert run_payload["error_kind"] == "capacity"
+        assert run_payload["code"] == capacity_code
+
 
 # On the resident path the phase sizer opens a joiner cap at `incoming + 1`
 # instances REGARDLESS of whether the table also builds a relation -- the `+1`
@@ -249,7 +282,9 @@ _FANIN_INCOMING_EDGES = 67
 _FANIN_ROWS = 40
 
 
-def _fanin_config(tmp_path: Path, n_parents: int = _FANIN_INCOMING_EDGES, rows: int = _FANIN_ROWS) -> Path:
+def _fanin_config(
+    tmp_path: Path, n_parents: int = _FANIN_INCOMING_EDGES, rows: int = _FANIN_ROWS
+) -> Path:
     """A schema with `n_parents` distinct parent tables, each contributing
     exactly ONE incoming FK edge into a single shared `child` table on its
     OWN child column -- distinct (child_table, child_columns) tuples per
@@ -289,7 +324,11 @@ def _fanin_config(tmp_path: Path, n_parents: int = _FANIN_INCOMING_EDGES, rows: 
         )
 
     pq.write_table(pa.table(child_cols), tmp_path / "child.parquet")
-    sources["child"] = {"type": "file", "path": str(tmp_path / "child.parquet"), "format": "parquet"}
+    sources["child"] = {
+        "type": "file",
+        "path": str(tmp_path / "child.parquet"),
+        "format": "parquet",
+    }
     tables.append({"name": "child", "columns": child_columns_cfg})
 
     cfg = {
@@ -333,7 +372,9 @@ class TestRealFanInIsReachable:
             "decoy_engine.execution.out_of_core._budget.detect_effective_memory_bytes",
             return_value=1024 * 1024,  # small ceiling -> resolved budget floors at 64 MiB
         ):
-            preflight_result = runner.invoke(app, ["validate", "preflight", str(config_path), "--json"])
+            preflight_result = runner.invoke(
+                app, ["validate", "preflight", str(config_path), "--json"]
+            )
             run_result = runner.invoke(app, ["run", str(config_path)])
 
         import json as _json

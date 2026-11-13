@@ -62,10 +62,6 @@
    "reason": "Legacy copy of an engine reason code; import the engine constant, then delete this entry.",
    "count": 1
   },
-  "cli/preflight.py::out_of_core_fanin_exceeds_budget": {
-   "reason": "Legacy copy of an engine reason code; import the engine constant, then delete this entry.",
-   "count": 1
-  },
   "cli/report.py::vault_protocol_version_mismatch": {
    "reason": "Legacy copy of an engine reason code; import the engine constant, then delete this entry.",
    "count": 1
