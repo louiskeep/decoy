@@ -234,7 +234,7 @@ def resolve_pipeline(token: str | None, state: OutputState, command: str) -> Pip
         failure = exc
     # Emitted and raised here, outside the handler, so the refusal carries no chained context.
     # This is the one emitter of a pipeline-argument refusal; `command` is a literal at each of
-    # the 12 call sites (the forwarder entry in `tests/sentry/cli_text/test_json_command_names.py`).
+    # the 13 call sites (the forwarder entry in `tests/sentry/cli_text/test_json_command_names.py`).
     if state.mode is OutputMode.json:
         emit_json(
             state,

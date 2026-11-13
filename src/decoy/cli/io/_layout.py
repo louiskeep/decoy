@@ -256,7 +256,11 @@ class PipelineName:
     yaml_rel: str
 
 
-def _rel_posix(root: Path, yaml: Path) -> str:
+def project_relative_posix(root: Path, yaml: Path) -> str:
+    """`yaml` relative to the project `root`, with "/", or absolute when it lies outside.
+
+    The one spelling of a pipeline's YAML in a claim and in a record's `pipeline` label.
+    """
     resolved = yaml.resolve()
     try:
         return resolved.relative_to(root.resolve()).as_posix()
@@ -322,7 +326,7 @@ def pipeline_name_for(root: Path, yaml: Path, declared: object) -> PipelineName:
 
     Raises `LayoutError`.
     """
-    yaml_rel = _rel_posix(root, yaml)
+    yaml_rel = project_relative_posix(root, yaml)
     parts = yaml_rel.split("/")
     if len(parts) == 3 and parts[0] == PIPELINES_DIR and parts[2] == PIPELINE_YAML:
         folder = parts[1]

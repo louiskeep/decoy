@@ -17,6 +17,7 @@ from decoy.ui.output import OutputState
 from decoy.ui.theme import error
 
 if TYPE_CHECKING:
+    from decoy.cli.io import PipelineRef
     from decoy.cli.library._paths import LibraryRoot
     from decoy.cli.library._store import Library
 
@@ -58,13 +59,20 @@ def fail_library(state: OutputState, exc: Exception) -> NoReturn:
     fail(state, str(exc), EXIT_USAGE if code in usage else EXIT_RUNTIME)
 
 
-def root_or_fail(state: OutputState, library: Path | None) -> LibraryRoot:
+def root_or_fail(
+    state: OutputState, library: Path | None, pipeline: PipelineRef | None = None
+) -> LibraryRoot:
+    """The library root: `--library`, else the environment, else the project of the pipeline
+    when one is given (its YAML's folder, or `--project`), else of the current folder."""
     from decoy.cli.io import LayoutError
     from decoy.cli.library._paths import resolve_root
 
     failure: LayoutError | None = None
     try:
-        return resolve_root(flag=library)
+        if pipeline is None:
+            return resolve_root(flag=library)
+        project = pipeline.project.root if pipeline.project is not None else None
+        return resolve_root(flag=library, pipeline=pipeline.yaml, project=project)
     except LayoutError as exc:
         failure = exc
     fail(state, str(failure))

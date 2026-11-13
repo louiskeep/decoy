@@ -85,8 +85,11 @@ def _put(root: Path, *envs: Any) -> list[str]:
 
 def test_list_filters_by_kind_pipeline_table_and_time(root: Path) -> None:
     """ML4-filter: dropping a filter lists rows it should not; red."""
-    a = _sample(1, 11, pipeline="pipes/a.yaml", tables=["orders"])
-    b = _sample(2, 12, pipeline="pipes/b.yaml", tables=["users"])
+    # No project marker: a pipeline's label is its YAML relative to the YAML's own folder.
+    for name in ("a.yaml", "b.yaml"):
+        (root.parent / name).write_text("version: 2\n", encoding="utf-8")
+    a = _sample(1, 11, pipeline="a.yaml", tables=["orders"])
+    b = _sample(2, 12, pipeline="b.yaml", tables=["users"])
     c = _run_result(13, "succeeded", [_table(0, "orders", 3)])
     ids = _put(root, a, b, c)
 
@@ -97,7 +100,7 @@ def test_list_filters_by_kind_pipeline_table_and_time(root: Path) -> None:
 
     assert listed() == ids  # sorted by (created_at, id)
     assert listed("--kind", "sample-run") == [a.id, b.id]
-    assert listed("--pipeline", "pipes/b.yaml") == [b.id]
+    assert listed("--pipeline", "b.yaml") == [b.id]
     assert listed("--table", "orders") == [a.id]
     assert listed("--since", "2026-11-12") == [b.id, c.id]
     assert listed("--kind", "sample-run", "--since", "2026-11-12T00:00:00Z") == [b.id]

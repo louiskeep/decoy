@@ -1899,7 +1899,7 @@ $ decoy library list [OPTIONS]
 **Options**:
 
 * `--kind KIND`: Only records of this kind (scan-set, evidence, run-result, sample-run, ...).
-* `--pipeline P`: Only this pipeline.
+* `--pipeline TEXT`: Only this pipeline&#x27;s records: its name in the project, or the path to its YAML.
 * `--table T`: Only records naming this table.
 * `--since D`: Only records made at or after D (YYYY-MM-DD or ISO time).
 * `--json`: Emit the records as JSON, oldest first.
