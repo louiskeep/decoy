@@ -12,7 +12,12 @@ from pathlib import Path
 import pytest
 
 from decoy.cli.io import OutputPlacement
-from decoy.cli.io._placement import _destination_is_within, layout_issues
+from decoy.cli.io._placement import (
+    _destination_is_within,
+    _folds_case,
+    layout_issues,
+    replaces_final,
+)
 
 SPLIT = "layout.delivery_root_split"
 IN_OUT = "layout.side_file_in_out"
@@ -174,3 +179,80 @@ def test_destination_is_within_uses_only_the_destination_key(tmp_path: Path) -> 
     assert _destination_is_within(tmp_path / "d" / "x" / "y.txt", tmp_path / "d")
     assert _destination_is_within(tmp_path / "d", tmp_path / "d")
     assert not _destination_is_within(tmp_path / "e" / "y.txt", tmp_path / "d")
+
+
+def test_the_final_link_policy_is_one_declared_mapping() -> None:
+    assert replaces_final("--vault")
+    assert not replaces_final("--evidence-out")
+    assert not replaces_final("targets.a.path")
+    assert not replaces_final("quarantine.path")
+
+
+@posix_only
+def test_at47_an_evidence_link_outside_out_that_lands_in_out_is_refused(tmp_path: Path) -> None:
+    # --evidence-out follows a final link, so the bytes would overwrite old.csv in out/.
+    root, yaml = _project(tmp_path)
+    victim = root / "out" / "p" / "old.csv"
+    victim.parent.mkdir(parents=True)
+    victim.write_text("keep\n", encoding="utf-8")
+    link = tmp_path / "ev.json"
+    link.symlink_to(victim)
+    placement = OutputPlacement(typed=(("--evidence-out", link),))
+    issues = layout_issues(yaml, _targets(a="a.csv"), placement)
+    assert _codes(issues) == [IN_OUT]
+    assert str(tmp_path) not in issues[0][1].message
+    assert victim.read_text(encoding="utf-8") == "keep\n"
+
+
+@posix_only
+def test_at47_a_vault_link_outside_out_is_replaced_not_followed_so_it_is_accepted(
+    tmp_path: Path,
+) -> None:
+    root, yaml = _project(tmp_path)
+    victim = root / "out" / "p" / "old.csv"
+    victim.parent.mkdir(parents=True)
+    victim.write_text("keep\n", encoding="utf-8")
+    link = tmp_path / "v.db"
+    link.symlink_to(victim)
+    placement = OutputPlacement(typed=(("--vault", link),))
+    assert layout_issues(yaml, _targets(a="a.csv"), placement) == []
+    assert victim.read_text(encoding="utf-8") == "keep\n"
+
+
+@posix_only
+def test_at22_a_final_link_to_another_folder_splits_two_absolute_targets(tmp_path: Path) -> None:
+    here, there = tmp_path / "here", tmp_path / "there"
+    here.mkdir()
+    there.mkdir()
+    (here / "b.csv").symlink_to(there / "b.csv")
+    config = _targets(a=str(here / "a.csv"), b=str(here / "b.csv"))
+    assert _codes(layout_issues(tmp_path / "p.yaml", config)) == [SPLIT]
+
+
+@posix_only
+def test_at23_final_links_landing_in_one_folder_share_a_root_across_declared_folders(
+    tmp_path: Path,
+) -> None:
+    one, two, shared = tmp_path / "one", tmp_path / "two", tmp_path / "shared"
+    for folder in (one, two, shared):
+        folder.mkdir()
+    (one / "a.csv").symlink_to(shared / "x.csv")
+    (two / "b.csv").symlink_to(shared / "y.csv")
+    config = _targets(a=str(one / "a.csv"), b=str(two / "b.csv"))
+    assert layout_issues(tmp_path / "p.yaml", config) == []
+
+
+@pytest.mark.parametrize(
+    ("platform", "folds"), [("win32", True), ("darwin", True), ("linux", False)]
+)
+def test_a_folder_with_no_letters_uses_the_platform_default(
+    monkeypatch: pytest.MonkeyPatch, platform: str, folds: bool
+) -> None:
+    monkeypatch.setattr("decoy.cli.io._placement.sys.platform", platform)
+    assert _folds_case(Path("/123/456")) is folds
+
+
+def test_case_folding_is_probed_for_real_when_a_component_has_letters(tmp_path: Path) -> None:
+    folder = tmp_path / "Probe"
+    folder.mkdir()
+    assert _folds_case(folder) == (tmp_path / "pROBE").exists()

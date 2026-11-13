@@ -249,7 +249,7 @@ def test_output_realpath_calls_stay_in_the_destination_identity_choke_point() ->
     assert [name for name, _line in realpath_sites(seeded)] == ["sites"] * 4
     allowed = {
         ("_atomic.py", "destination_entry"),
-        ("cli/io/_placement.py", "_destination_key"),
+        ("cli/io/_placement.py", "_landing"),
     }
     found: set[tuple[str, str]] = set()
     roots = (SRC / "_atomic.py", SRC / "cli" / "io", SRC / "cli" / "run")
