@@ -156,7 +156,9 @@ class Source:
     numeric: bool = False  # entries are counts, recorded as ``max`` beside the reason
 
     def maxes(self) -> dict[str, int] | None:
-        return self.keys.maxes() if self.numeric else None
+        if self.numeric and isinstance(self.keys, InCode):
+            return self.keys.maxes()
+        return None
 
 
 _SURFACE = "tests/unit/test_surface_docs_consistency.py"
