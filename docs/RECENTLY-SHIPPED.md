@@ -15,10 +15,19 @@ Moved here from `decoy-platform/docs/backlog/RECENTLY-SHIPPED.md` on 2026-11-05 
 ([ROADMAP.md](ROADMAP.md)). The platform copy is frozen at that date. Entries below 2026-11-05 are
 copied unchanged; paths in them are relative to the repo they name.
 
-Last updated: 2026-11-12 (entries for 2026-10-27 to 2026-10-30 are not filled in here; see the repos'
+Last updated: 2026-11-13 (entries for 2026-10-27 to 2026-10-30 are not filled in here; see the repos'
 git logs).
 
 ---
+
+## 2026-11-13
+
+- **Engine** (`c86ca58d`, engine #559): B-6 vault core (roadmap row 12, now done). HKDF key derivation, scoped tokens and exclusive publish of the vault file. Pre-GA hard cut: no reader for old vaults. It merged after the `v0.23.0` tag, so it ships in the next engine release. The CLI handles `vault_exists` and `TokenVaultWriter.derivation_scope` at its next repin.
+- **Engine** (`dac26109`, engine #548): POSTSCAN-STREAM part PS-7 (roadmap row 60). The post-scan gate core and its applies predicate.
+- **Engine** (`efedebc0`, engine #560): perf test fix. The reorder memory tests pass the config to `run_fk_out_of_core`.
+- **Engine** (`a2b2d77f`, engine #556, tag `v0.23.0`): engine release 0.23.0. The licence is FSL-1.1-ALv2 from this release. The CLI repin is in review as CLI #233.
+- **CLI** (`16135525`, #205): LIB part L1b.2 (roadmap row 34). The local record store core. L1b.3 remains.
+- **CLI** (`048068a6`, #232): V2 rows VAULT-STREAM and TOKENIZE-CHUNKED added to `docs/roadmap/out-of-scope.md`.
 
 ## 2026-11-12
 
