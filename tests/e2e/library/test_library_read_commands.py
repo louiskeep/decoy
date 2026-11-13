@@ -9,7 +9,6 @@ from __future__ import annotations
 import contextlib
 import json
 from collections.abc import Iterator
-from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -23,7 +22,12 @@ from decoy.cli import evidence as evidence_module
 from decoy.cli.exit_codes import EXIT_OK, EXIT_RUNTIME, EXIT_USAGE
 from decoy.cli.io import DECOY_DIR
 from decoy.cli.library import _index, _refs, open_library
-from tests.unit.library._helpers import INVOCATION, PRODUCER, envelope, object_path
+from tests.e2e.library._records import build as _build
+from tests.e2e.library._records import run_result as _run_result
+from tests.e2e.library._records import sample as _sample
+from tests.e2e.library._records import scan_set as _scan_set
+from tests.e2e.library._records import table as _table
+from tests.unit.library._helpers import object_path
 
 runner = CliRunner()
 
@@ -38,48 +42,6 @@ def root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
 
 def _cli(root: Path, *args: str) -> Any:
     return runner.invoke(app, ["library", *args, "--library", str(root)])
-
-
-def _at(day: int) -> datetime:
-    return datetime(2026, 11, day, tzinfo=timezone.utc)
-
-
-def _build(kind: str, payload: dict, day: int, **labels: Any) -> records.RecordEnvelope:
-    return records.build(
-        kind, payload, producer=PRODUCER, invocation_id=INVOCATION, created_at=_at(day),
-        labels=labels or None,
-    )  # fmt: skip
-
-
-def _sample(n: int, day: int, **labels: Any) -> records.RecordEnvelope:
-    payload = json.loads(records.encode(envelope(n)))["payload"]
-    return _build("sample-run", payload, day, **labels)
-
-
-def _table(i: int, name: str, rows: int, state: str = "delivered") -> dict:
-    return {
-        "index": i, "name": name, "kind": "mask", "outcome": "succeeded", "rows_out": rows,
-        "rows_source": "outputs", "row_errors": 0, "elapsed_s": 0.5, "reason": None,
-        "delivery": {"state": state, "format": "csv", "output": f"out/{name}.csv",
-                     "reason": None, "dropped_because": None},
-    }  # fmt: skip
-
-
-def _run_result(day: int, status: str, tables: list[dict], chunked: bool = False) -> Any:
-    payload = {
-        "invocation_id": INVOCATION, "status": status, "exit_code": 0, "pipeline_kind": "mask",
-        "producer": {"cli_version": "0.1.0", "engine_version": "0.22.0",
-                     "registry_version": "1.22.0", "event_schema": 1},
-        "config": {"name": "claims", "file_sha256": "sha256:" + "b" * 64, "semantic_hash": "a" * 64},
-        "route": {"execution_mode": "full_frame", "route_reason": None, "chunked": chunked,
-                  "native": None},
-        "delivery": {"mode": "strict", "outcome": "delivered", "vault": "not_used"},
-        "tables": tables, "checks": [], "warnings": [], "failure": None,
-        "timings": {"started_at": "2026-11-11T00:00:00.000000Z",
-                    "finished_at": "2026-11-11T00:00:01.000000Z", "elapsed_s": 1.0, "phases": []},
-        "links": {"log": None, "evidence": None, "baseline": None},
-    }  # fmt: skip
-    return _build("run-result", payload, day)
 
 
 def _evidence(tmp_path: Path, day: int, rows: int) -> Any:
@@ -101,16 +63,6 @@ def _evidence(tmp_path: Path, day: int, rows: int) -> Any:
         cli_version="0.1.0", engine_version="0.22.0",
     )  # fmt: skip
     return _build("evidence", manifest, day)
-
-
-def _scan_set(tmp_path: Path, name: str, header: str, day: int) -> Any:
-    tmp_path.mkdir(exist_ok=True)
-    csv = tmp_path / f"{name}.csv"
-    csv.write_text(header + "\n" + "\n".join(f"{i},a{i}@b.com,Ann{i}" for i in range(5)) + "\n")
-    out = tmp_path / f"{name}.scan.json"
-    result = runner.invoke(app, ["scan", str(csv), "--has-header", "--output", str(out)])
-    assert result.exit_code == EXIT_OK, result.output
-    return _build("scan-set", json.loads(out.read_text(encoding="utf-8")), day)
 
 
 def _opaque(root: Path, day: int = 20) -> str:

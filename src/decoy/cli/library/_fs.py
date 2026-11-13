@@ -35,7 +35,14 @@ from decoy.cli.library._errors import (
     library_error,
 )
 
-__all__ = ["ensure_private_dir", "read_capped", "replace_file", "write_dotfile_once", "write_once"]
+__all__ = [
+    "ensure_private_dir",
+    "read_capped",
+    "replace_file",
+    "write_dotfile_once",
+    "write_once",
+    "write_user_file",
+]
 
 
 def ensure_private_dir(path: Path) -> None:
@@ -86,10 +93,19 @@ def _write(directory: Path, name: str, data: bytes, mode: WriteMode, *, tmp_dir:
 
 def write_dotfile_once(path: Path, data: bytes) -> bool:
     """Create the dot-named file `path` unless it exists; an existing one is never edited."""
+    return _write_local(path, data, WriteMode.CREATE_ONCE)
+
+
+def write_user_file(path: Path, data: bytes) -> None:
+    """Write a file at a path the user named (`export --output`), replacing it in one step, 0600."""
+    _write_local(path, data, WriteMode.REPLACE)
+
+
+def _write_local(path: Path, data: bytes, mode: WriteMode) -> bool:
     failure: AtomicWriteError | None = None
     created = False
     try:
-        created = write_local_target(path, data, WriteMode.CREATE_ONCE)
+        created = write_local_target(path, data, mode)
     except AtomicWriteError as exc:
         failure = exc
     if failure is not None:

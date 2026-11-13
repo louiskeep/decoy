@@ -1849,6 +1849,9 @@ $ decoy library [OPTIONS] COMMAND [ARGS]...
 * `show`: Show one record: its envelope and, when...
 * `diff`: Compare two records of the same kind...
 * `ref`: Show a stored ref, or set it to a record...
+* `prune`: Delete records you no longer keep.
+* `clean`: Delete everything in `.decoy/scratch/`...
+* `export`: Export records as one self-verifying JSON...
 
 ### `decoy library path`
 
@@ -1961,5 +1964,64 @@ $ decoy library ref [OPTIONS] NAME [ID]
 
 **Options**:
 
+* `--library DIR`: Use DIR as the library (else DECOY_LIBRARY, else the project&#x27;s .decoy/ folder).
+* `--help`: Show this message and exit.
+
+### `decoy library prune`
+
+Delete records you no longer keep. Never one a ref or a kept record links to, one younger
+than an hour, or one of a kind this Decoy does not know. With no options, applies the
+`keep_last` rules in `.decoy/library.yaml`.
+
+**Usage**:
+
+```console
+$ decoy library prune [OPTIONS]
+```
+
+**Options**:
+
+* `--kind K`: Only records of this kind.
+* `--keep-last N`: Keep the newest N records of each kind.
+* `--older-than D`: Only records older than D (90d, 12h, 30m).
+* `--yes`: Delete. Without it, prune only shows what it would delete.
+* `--library DIR`: Use DIR as the library (else DECOY_LIBRARY, else the project&#x27;s .decoy/ folder).
+* `--help`: Show this message and exit.
+
+### `decoy library clean`
+
+Delete everything in `.decoy/scratch/` (sample output and staging). Records, logs and
+anything outside the library are never touched.
+
+**Usage**:
+
+```console
+$ decoy library clean [OPTIONS]
+```
+
+**Options**:
+
+* `--yes`: Delete. Without it, clean only shows what it would delete.
+* `--library DIR`: Use DIR as the library (else DECOY_LIBRARY, else the project&#x27;s .decoy/ folder).
+* `--help`: Show this message and exit.
+
+### `decoy library export`
+
+Export records as one self-verifying JSON Lines file the platform can import.
+
+**Usage**:
+
+```console
+$ decoy library export [OPTIONS]
+```
+
+**Options**:
+
+* `-o, --output FILE`: Write the export here (0600).  [required]
+* `--kind K`: Only records of this kind.
+* `--since D`: Only records made at or after D (YYYY-MM-DD or ISO time).
+* `--ref R`: Only R (a ref, id or KIND/latest) and every record it links to.
+* `--include-logs`: Add the job logs of the exported runs (none exist yet).
+* `--keep-paths`: Keep paths as recorded and export every record byte for byte. Without it, paths are reduced to file names and records this version cannot strip are withheld.
 * `--library DIR`: Use DIR as the library (else DECOY_LIBRARY, else the project&#x27;s .decoy/ folder).
 * `--help`: Show this message and exit.

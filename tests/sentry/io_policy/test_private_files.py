@@ -148,7 +148,7 @@ PRIVATE_CASES: dict[str, str] = {
     "cli/library/_fs.py::_write::write_atomic::1": _LIBRARY,
     "cli/library/_index.py::_begin::open_private::1": _LIBRARY_LOCK,
     "cli/library/_index.py::_begin::sqlite3.connect::1": _LIBRARY_LOCK,
-    "cli/library/_fs.py::write_dotfile_once::write_local_target::1": _LIBRARY,
+    "cli/library/_fs.py::_write_local::write_local_target::1": _LIBRARY,
 }
 _CASE_MODULES = {
     "e2e:test_private_surfaces.py": ROOT / "tests/e2e/private_file/test_private_surfaces.py",
