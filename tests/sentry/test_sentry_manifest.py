@@ -39,6 +39,7 @@ SENTRIES = (
     "tests/sentry/io_policy/test_library_writer.py",
     "tests/sentry/io_policy/test_manifest_path_resolution.py",
     "tests/sentry/cli_text/test_help_panels.py",
+    "tests/sentry/cli_text/test_one_error_emitter.py",
     "tests/sentry/cli_text/test_no_traceback_escape.py",
     "tests/sentry/cli_text/test_json_command_names.py",
     "tests/sentry/cli_text/test_user_text_internal_names.py",
