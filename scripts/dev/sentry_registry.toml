@@ -77,3 +77,7 @@ baseline = "tests/sentry/baselines/canonical-json-allow.json"
 [[sentry]]
 id = "library-writer-allow"
 baseline = "tests/sentry/baselines/library-writer-allow.json"
+
+[[sentry]]
+id = "one-error-emitter"
+baseline = "tests/sentry/baselines/one-error-emitter.json"
