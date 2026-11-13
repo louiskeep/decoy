@@ -208,11 +208,12 @@ blocks. Everything else goes to V2-LOG (section 13).
   symlink and hard-link aliases included (AT-F4). Whether it counts as a `replaces_final` writer
   like `--vault` follows how `write_local_target` `REPLACE` treats a final link; C-DOC3 STEP
   ZERO reads that and the `OutputPlacement` docstring (`_placement.py:36`) gains the flag.
-- Run-time file order is DELIV 4.7 (`plan/deliv` `50aa3fc2`): `finish` is the last writer of
+- Run-time file order is DELIV 4.7 (`plan/deliv` `32ef9680`): `finish` is the last writer of
   the run, after the sink settles and after notifications; the document never goes into the run
-  folder. C-DOC1 to C-DOC3 keep today's order, where `finish` is already last, so they wait on
-  nothing more from DELIV. DELIV C1 refuses a side file inside `out/<name>/`; whichever of C1 and
-  C-DOC3 merges second adds the `--result` cases of DELIV AT-47.
+  folder. C-DOC1 and C-DOC2 keep today's order, where `finish` is already last, so they wait on
+  nothing more from DELIV. DELIV C1 refuses a side file anywhere under the project's `out/` tree
+  (`layout.side_file_in_out`, DELIV 4.7 rule 7). C1 lands before C-DOC3, so `--result` is never
+  unguarded; C-DOC3 adds the `--result` cases of DELIV AT-47.
 - Legacy `--json` members keep their values; `result` and `result_status` are added.
 
 ## 4. Behaviour
@@ -472,7 +473,7 @@ slot and the OQ-3 correction before C-DOC1 or DELIV C2a starts (pre-mortem, stop
 | `run/_notify.py` | C-DOC2 |
 | `run/__init__.py` | C-DOC3 |
 
-So DELIV C2a starts after C-DOC2 and C-DOC3 have merged; C-DOC3 waits on nothing from DELIV. `cli/io/_placement.py`: DELIV C1 and C-DOC3, one at a time in either order (DELIV 4.7 rule 6). C-REASON writes no `_render.py`; DELIV's "F29 C1"
+So DELIV C2a starts after C-DOC2 and C-DOC3 have merged; from DELIV, C-DOC3 waits only on C1. `cli/io/_placement.py`: DELIV C1, then C-DOC3 (DELIV 4.7 rule 7). C-REASON writes no `_render.py`; DELIV's "F29 C1"
 `_render.py` slot is C-DOC1 and C-DOC2 here. C-CAP writes no `cli/run/` module.
 
 | Slice | Repo | Files | Src / test lines | Tier | Depends on | Startable now |
@@ -489,7 +490,7 @@ So DELIV C2a starts after C-DOC2 and C-DOC3 have merged; C-DOC3 waits on nothing
 | C-CAP | CLI | `cli/exit_codes.py` (docstring), `cli/explain.py`, `cli/preflight.py` (the `:446` literal), `tests/sentry/test_engine_reason_code_copies.py` (allowlist entry `:73` removed), `README.md`, `CHANGELOG.md` (breaking line), `tests/e2e/test_run_capacity_widening.py`, `tests/e2e/test_run_preflight_capacity_parity.py` | ~40 / ~140 | R2 | the repin carrying E-CAP; lands with that repin or the same day | no: release |
 | C-DOC1 | CLI | `run/_result.py`, `run/_errors.py`, `run/_render.py`, `run/_flow.py` (one line), `run/_execute.py` (two lines), `run/_context.py`, `tests/sentry/layout/test_run_package_shape.py` (`ORDER`), `tests/sentry/run/test_one_result_builder.py`, `SENTRIES` row, `CODEMAP.md`, `CHANGELOG.md`, AT-D1 to AT-D10 tests | ~260 / ~320 | R2 | REL with E2a, E2b, E3a; C-REASON; L5a (#216) and SUB-RUN C1 merged (the `_execute.py` lane) | no: release and #216 |
 | C-DOC2 | CLI | `run/_result.py`, `run/_flow.py`, `run/_notify.py`, `run/_prepare.py`, `run/_evidence.py`, `run/_errors.py`, `run/_render.py`, `tests/sentry/run/test_one_run_exit.py`, `SENTRIES` row, `CHANGELOG.md`, AT-O1 to AT-O7 tests, AT-R7 pin update | ~210 / ~310 | R2 | C-DOC1; SUB-RUN C1 merged (`_prepare.py`) | no: C-DOC1 |
-| C-DOC3 | CLI | `run/__init__.py` (one option hunk), `run/_context.py`, `run/_result.py`, `run/_prepare.py` (the `typed` entry), `cli/io/_placement.py` (docstring), `docs/cli-reference.md` (generated), `CHANGELOG.md`, AT-F1 to AT-F4 tests | ~90 / ~170 | R2 (new public option and a frozen artifact written at a user path) | C-DOC2 | no: C-DOC2 |
+| C-DOC3 | CLI | `run/__init__.py` (one option hunk), `run/_context.py`, `run/_result.py`, `run/_prepare.py` (the `typed` entry), `cli/io/_placement.py` (docstring), `docs/cli-reference.md` (generated), `CHANGELOG.md`, AT-F1 to AT-F4 tests, the `--result` cases of DELIV AT-47 | ~90 / ~180 | R2 (new public option and a frozen artifact written at a user path) | C-DOC2; DELIV C1 merged (`_placement.py`) | no: C-DOC2 and DELIV C1 |
 
 C-DOC2 is the largest (about 520 lines with tests) and stays one slice: its exit paths share one
 `finish` and one sentry, and splitting them would leave the sentry red between the halves.
