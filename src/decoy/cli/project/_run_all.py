@@ -76,6 +76,9 @@ def only_pipeline(state: OutputState, ctx: typer.Context) -> PipelineRef:
         project = find_project(None, explicit_project(ctx))
     except LayoutError as exc:
         failure = exc
+    else:
+        failure = None
+    if failure is not None:
         _fail(state, failure.message, code=failure.code)
     if project.implicit:
         raise typer.BadParameter(

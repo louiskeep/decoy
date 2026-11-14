@@ -46,6 +46,7 @@ class RunContext:
     # The 26 options of `decoy run`, as `run()` receives them.
     pipeline: PipelineRef | None
     all_: bool
+    named: bool  # a pipeline was typed, found or not
     cli: typer.Context
     mode: Mode
     json_: bool

@@ -394,12 +394,14 @@ def run(
     counted on stderr and never stop it. There is no flag to skip the check.
     """
     state = setup_output(json_, quiet, verbose)
-    ref = resolve_pipeline(config, state, "run")
+    # `--all` takes no pipeline: its refusal comes before a lookup that could fail first.
+    ref = None if all_ else resolve_pipeline(config, state, "run")
     _flow.execute(
         RunContext(
             state=state,
             pipeline=ref,
             all_=all_,
+            named=config is not None,
             cli=ctx,
             mode=mode,
             json_=json_,

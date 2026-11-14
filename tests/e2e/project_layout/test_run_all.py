@@ -10,6 +10,7 @@ exit code and output, so the summary rules are tested without paying for a proce
 
 from __future__ import annotations
 
+import inspect
 import itertools
 import json
 import os
@@ -23,6 +24,8 @@ import yaml
 from typer.testing import CliRunner
 
 from decoy.__main__ import app
+from decoy.cli.run import _flow
+from decoy.cli.run import run as run_command
 from tests.csv_sources import csv_source
 
 runner = CliRunner()
@@ -338,6 +341,16 @@ def test_a_name_with_all_is_refused(tmp_path, monkeypatch) -> None:
     assert _runs(root, "alpha") == []
 
 
+def test_an_unknown_name_with_all_gets_the_no_pipeline_refusal(tmp_path, monkeypatch) -> None:
+    root = _fake_project(tmp_path, ["alpha"])
+    spy = _spy(monkeypatch)
+    result = runner.invoke(app, ["--project", str(root), "run", "nosuch", "--all"])
+    assert result.exit_code == 1
+    assert "takes no pipeline name" in _flat(result.output)
+    assert "layout.pipeline_unknown" not in result.output
+    assert spy.calls == []
+
+
 def test_a_path_with_all_is_refused(tmp_path, monkeypatch) -> None:
     root = _fake_project(tmp_path, ["alpha"])
     spy = _spy(monkeypatch)
@@ -366,14 +379,73 @@ def test_all_outside_a_project_is_refused(tmp_path, monkeypatch) -> None:
     assert spy.calls == []
 
 
-def test_flags_are_forwarded_to_each_child(tmp_path, monkeypatch) -> None:
+# One sample command-line fragment per forwarded flag. A forwarded flag with no sample fails
+# `test_every_forwarded_flag_has_a_sample`, so the cells below cover the whole table.
+SAMPLES: dict[str, list[str]] = {
+    "--mode": ["--mode", "mask"],
+    "--notify-on": ["--notify-on", "failure"],
+    "--mask-secret": ["--mask-secret", "env:SOME_REF"],
+    "--chunk-size": ["--chunk-size", "50"],
+    "--max-memory": ["--max-memory", "2GB"],
+    "--threads": ["--threads", "2"],
+    "--key-label": ["--key-label", "demo"],
+    "--otel-endpoint": ["--otel-endpoint", "https://collector.example.com/v1/traces"],
+    "--rows": ["--rows", "5"],
+    "--notify": ["--notify", "email:ops@example.com"],
+    "--duckdb-source": ["--duckdb-source", "a=db.duckdb"],
+    "-v": ["-v"],
+    "--chunked": ["--chunked"],
+    "--native": ["--native"],
+    "--no-native": ["--no-native"],
+    "--explain-plan": ["--explain-plan"],
+    "--fidelity": ["--fidelity"],
+    "--post-validate": ["--post-validate"],
+    "--post-validate-enforce": ["--post-validate-enforce"],
+}
+_TABLES = (
+    _flow.FORWARD_ENUMS,
+    _flow.FORWARD_VALUES,
+    _flow.FORWARD_REPEATED,
+    _flow.FORWARD_SWITCHES,
+)
+FORWARDED = [flag for table in _TABLES for flag, _field in table]
+
+
+def test_every_forwarded_flag_has_a_sample() -> None:
+    assert set(SAMPLES) == set(FORWARDED)
+
+
+@pytest.mark.parametrize("flag", FORWARDED)
+def test_each_forwarded_flag_reaches_every_child(tmp_path, monkeypatch, flag: str) -> None:
     root = _fake_project(tmp_path, ["alpha", "beta"])
     spy = _spy(monkeypatch, {"alpha": (0, _ok("alpha")), "beta": (0, _ok("beta"))})
-    result = _run_all(root, "--chunked", "--chunk-size", "50", "--no-native", "--fidelity")
-    assert result.exit_code == 0, result.output
+    result = _run_all(root, *SAMPLES[flag])
+    assert len(spy.calls) == 2, result.output
     for call in spy.calls:
-        assert "--chunked" in call and "--no-native" in call and "--fidelity" in call
-        assert call[call.index("--chunk-size") + 1] == "50"
+        tail = call[call.index("--json") + 1 :]
+        sample = SAMPLES[flag]
+        assert any(tail[i : i + len(sample)] == sample for i in range(len(tail))), tail
+
+
+def test_every_run_option_is_forwarded_refused_or_named_as_excluded() -> None:
+    """A new `run` option must be classified: a child that silently ignores it is a bug."""
+    forwarded = {field for table in _TABLES for _flag, field in table}
+    refused = {field for _flag, field in _flow.REFUSED_WITH_ALL}
+    excluded = set(_flow.NOT_FORWARDED)
+    params = set(inspect.signature(run_command).parameters)
+    assert forwarded.isdisjoint(refused) and forwarded.isdisjoint(excluded)
+    assert refused.isdisjoint(excluded)
+    assert params == forwarded | refused | excluded
+
+
+def test_the_flag_spellings_are_declared_options_of_run() -> None:
+    declared = {
+        decl
+        for param in inspect.signature(run_command).parameters.values()
+        for decl in (getattr(param.default, "param_decls", None) or ())
+    }
+    spelled = {flag for table in (*_TABLES, _flow.REFUSED_WITH_ALL) for flag, _f in table}
+    assert spelled <= declared
 
 
 def test_a_master_key_reaches_children_by_environment_not_by_command_line(
