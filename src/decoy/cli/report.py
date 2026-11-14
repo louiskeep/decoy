@@ -90,17 +90,17 @@ report_app = typer.Typer(
 
 
 def _write_out(state: OutputState, target: Any, text: str) -> Path | None:
-    """Write a report file (owner-only); only a typed path may fail the command."""
-    path = target.path
+    """Write a report (owner-only): `target` is a typed Path or a ReportTarget; a default only warns."""
+    path = getattr(target, "path", target)
     if path is not None:
         try:
             write_local_target(path, text.encode("utf-8"), WriteMode.REPLACE)
         except AtomicWriteError as exc:
-            if not target.implicit:
+            if not getattr(target, "implicit", False):
                 state.err_console.print(error("error:"), f"could not write {path}: {describe(exc)}")
                 raise typer.Exit(code=EXIT_USAGE)
             target = target.failed()
-    return announce_report(state, target)
+    return announce_report(state, target) if hasattr(target, "implicit") else None
 
 
 def _load_manifest(
