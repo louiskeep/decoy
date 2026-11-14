@@ -318,11 +318,15 @@ def execute(ctx: RunContext) -> None:
             vault_writer=ctx.vault_writer,
             base_dir=ctx.config.parent,
             quarantine_path=layout.place_quarantine(ctx.config_dict),
+            # The config's `subset:` block stays as written; `--no-subset` only tells the engine
+            # to leave it unapplied.
+            subset_request="skip" if ctx.no_subset else "config",
             **_key_kwargs,
             **_report_kwargs,
             **_native_gate.run_pipeline_kwargs(ctx.gate_result),
             **_resources.run_pipeline_kwargs(ctx._res),
         )
+        ctx._subset_metrics = result.quality_metrics.get("subset")
         ctx._native_route = _native_gate.classify_route(
             chunked=False,
             any_generate=ctx.any_generate,

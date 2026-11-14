@@ -326,6 +326,23 @@ def _refuse_chunked_integrity(ctx: RunContext) -> None:
     _refuse_chunked_integrity_requested(validated)
 
 
+def _refuse_chunked_subset(ctx: RunContext) -> None:
+    """Refuse `--chunked` with a `subset:` block before any source is opened.
+
+    The chunked engine cannot apply the block, and the CLI never strips it (`--no-subset`
+    included), so the refusal is the engine's own `config.subset_run_unsupported`, raised here
+    as the same exception type the engine's entry guard raises. The text is fixed.
+    """
+    from decoy_engine import PipelineValidationError, reasons
+
+    if isinstance(ctx.raw, dict) and ctx.raw.get("subset") is not None:
+        raise PipelineValidationError(
+            "subset: is not supported with --chunked; run without --chunked to apply it",
+            path="subset",
+            code=reasons.config.SUBSET_RUN_UNSUPPORTED,
+        )
+
+
 def prepare(ctx: RunContext, _scopes: contextlib.ExitStack) -> None:
     """Everything between the config read and the first row: the engine import, the config
     guards, `--duckdb-source` staging, the gate, admission and the source load."""
@@ -343,6 +360,7 @@ def prepare(ctx: RunContext, _scopes: contextlib.ExitStack) -> None:
 
     _guard_mask_secret_ref(ctx.raw)
     if ctx.chunked:
+        _refuse_chunked_subset(ctx)
         _refuse_chunked_integrity(ctx)
     # Layout and vault-path refusals need no source, so they come before DuckDB staging and
     # the source preflight: a source failure must not hide either of them.

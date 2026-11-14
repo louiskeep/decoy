@@ -212,6 +212,7 @@ def _run_compile_layer(raw: dict[str, Any], config_dir: Path) -> list[GateFindin
     """
     from decoy_engine import __version__ as engine_version
     from decoy_engine.plan import PlanCompileError, compile_plan
+    from decoy_engine.subset import SubsetError, split_subset_config
 
     from decoy.cli.plan import (
         empty_profile_for_no_profile,
@@ -242,8 +243,9 @@ def _run_compile_layer(raw: dict[str, Any], config_dir: Path) -> list[GateFindin
     try:
         # Inside the try: an unequal composite relationship raises `ValueError` here.
         profile = empty_profile_for_no_profile(raw, engine_version)
+        # `compile_plan` refuses a `subset:` block; the run applies it, so compile what it runs.
         plan = compile_plan(
-            raw,
+            split_subset_config(raw).run_config,
             profile,
             decoy_engine_version=engine_version,
             no_profile=True,
@@ -260,6 +262,13 @@ def _run_compile_layer(raw: dict[str, Any], config_dir: Path) -> list[GateFindin
                 location=exc.path or None,
                 logical_path=exc.path or None,
                 extra=extra,
+            )
+        )
+        return findings
+    except SubsetError as exc:
+        findings.append(
+            GateFinding(
+                "compile", "error", exc.code, exc.message, location="subset", logical_path="subset"
             )
         )
         return findings

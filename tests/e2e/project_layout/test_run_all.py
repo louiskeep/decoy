@@ -405,6 +405,7 @@ SAMPLES: dict[str, list[str]] = {
     "--duckdb-source": ["--duckdb-source", "a=db.duckdb"],
     "-v": ["-v"],
     "--chunked": ["--chunked"],
+    "--no-subset": ["--no-subset"],
     "--native": ["--native"],
     "--no-native": ["--no-native"],
     "--explain-plan": ["--explain-plan"],

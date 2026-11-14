@@ -182,6 +182,7 @@ def compile(
     from decoy_engine import __version__ as engine_version
     from decoy_engine.plan import compile_plan
     from decoy_engine.profile import profile_from_json
+    from decoy_engine.subset import split_subset_config
 
     # Resolve the profile. --profile loads a pre-computed Profile and runs the
     # full check set; otherwise no-profile mode (the default) uses the empty
@@ -224,8 +225,10 @@ def compile(
         if profile is None:
             # Inside the try: an unequal composite relationship raises here.
             profile = empty_profile_for_no_profile(raw, engine_version)
+        # `compile_plan` refuses a `subset:` block; the run applies it, so compile what it runs.
+        # A subset config error is a SubsetError, shown through `_compile_error` like any other.
         plan = compile_plan(
-            raw,
+            split_subset_config(raw).run_config,
             profile,
             decoy_engine_version=engine_version,
             no_profile=not use_profile,

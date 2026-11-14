@@ -38,6 +38,16 @@ def _seed_warnings(raw_cfg: dict | None, *, key_in_effect: bool) -> list[dict]:
     return [{"code": SEED_IGNORED_WITH_MASTER_KEY}]
 
 
+def subset_summary_line(metrics: dict | None) -> str | None:
+    """The one human line for an applied subset, from the engine's counts; None otherwise."""
+    if not metrics or not metrics.get("applied"):
+        return None
+    tables = metrics["tables"].values()
+    kept = sum(t["kept_rows"] for t in tables)
+    source = sum(t["source_rows"] for t in tables)
+    return f"subset: kept {kept} of {source} rows across {len(metrics['tables'])} tables"
+
+
 def _next_hint_for_run(raw_cfg: dict | None, mode: "Mode") -> str | None:
     """Best-effort follow-up hint based on the YAML's output path."""
     try:
@@ -97,6 +107,8 @@ def finish(ctx: RunContext) -> None:
             **_where_written(ctx),
         }
         payload["resources"] = ctx._resources_record
+        if ctx._subset_metrics is not None:
+            payload["subset"] = ctx._subset_metrics
         if ctx.notify_channels:
             payload["notify"] = ctx.notify_results
         if ctx._native_route is not None:
@@ -154,6 +166,10 @@ def finish(ctx: RunContext) -> None:
         next_hint=_next_hint_for_run(ctx.raw_cfg, ctx.mode),
         status="ok",
     )
+
+    subset_line = subset_summary_line(ctx._subset_metrics)
+    if subset_line is not None:
+        ctx.state.console.print(subset_line, markup=False, highlight=False, soft_wrap=True)
 
     # S5 report sections (human mode). Rendered below the summary card so the
     # card stays the one-glance result; each is report-only and reads the

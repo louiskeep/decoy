@@ -44,6 +44,7 @@ FORWARD_REPEATED = (("--notify", "notify"), ("--duckdb-source", "duckdb_source")
 FORWARD_SWITCHES = (  # sent when on
     ("-v", "verbose"),
     ("--chunked", "chunked"),
+    ("--no-subset", "no_subset"),
     ("--native", "native"),
     ("--no-native", "no_native"),
     ("--explain-plan", "explain_plan"),

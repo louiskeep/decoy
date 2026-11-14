@@ -356,6 +356,15 @@ def run(
             "handle."
         ),
     ),
+    no_subset: bool = typer.Option(
+        False,
+        "--no-subset",
+        help=(
+            "Mask every source row even when the pipeline has a `subset:` block. The YAML file "
+            "is not changed. The summary and --json then report `subset: applied false`. "
+            "A pipeline with `subset:` is refused under --chunked, with or without this flag."
+        ),
+    ),
     rows: int = typer.Option(
         None,
         "--rows",
@@ -426,6 +435,7 @@ def run(
             post_validate=post_validate,
             post_validate_enforce=post_validate_enforce,
             duckdb_source=duckdb_source,
+            no_subset=no_subset,
             otel_endpoint=otel_endpoint,
             rows=rows,
         )
