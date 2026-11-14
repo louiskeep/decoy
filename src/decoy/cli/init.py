@@ -31,19 +31,18 @@ from decoy.cli._sources import CSV_DIALECT_KEYS, csv_file_source
 from decoy.cli.completers import init_presets
 from decoy.cli.exit_codes import EXIT_RUNTIME, EXIT_USAGE
 from decoy.cli.io import explicit_project, shown_path
-from decoy.cli.project._columns import (
-    _emit_column_yaml,
-    _wrap_review_comment,  # noqa: F401  (tests import it from here)
-    _yaml_quote,
-    _yaml_scalar,
-)
-from decoy.cli.project._scaffold import (
+from decoy.cli.project import (
+    SOURCE_SUFFIXES,
     Placement,
+    emit_column_yaml,
     placed_members,
     prepare,
     resolve_destination,
     source_text,
     target_text,
+    wrap_review_comment,
+    yaml_quote,
+    yaml_scalar,
 )
 from decoy.templates import get_template
 from decoy.templates import template_names as _template_names
@@ -155,7 +154,7 @@ def _replace_yaml_path(body: str, key: str, new_path: str) -> str:
     rest = rest.rstrip("\n").strip()
     match = _PLAIN_VALUE_WITH_COMMENT.match(rest)
     comment = (match.group("comment") or "") if match else ""
-    lines[i] = f"{prefix}path: {_yaml_quote(new_path)}{comment}{ending}"
+    lines[i] = f"{prefix}path: {yaml_quote(new_path)}{comment}{ending}"
     return "".join(lines)
 
 
@@ -177,6 +176,10 @@ def _rule_count(body: str) -> int:
 # rendering). The scaffolder owns the COMMENTS; the engine owns the SCHEMA.
 
 
+# Kept under their old names: the init tests import them from this module.
+_emit_column_yaml = emit_column_yaml
+_wrap_review_comment = wrap_review_comment
+
 _TABLE_NAME = "data"
 """Name used for the single source/target/table the scaffolder emits.
 
@@ -195,17 +198,13 @@ def _scaffold_source(input_file: Path) -> dict[str, Any]:
     """
     suffix = input_file.suffix.lower()
     path = str(input_file)
-    if suffix in (".parquet", ".pq"):
+    kind = SOURCE_SUFFIXES.get(suffix)
+    if kind is None:
+        raise ValueError(f"unsupported file extension {suffix!r}; expected .csv, .tsv, or .parquet")
+    file_format, delimiter = kind
+    if file_format == "parquet":
         return {"type": "file", "format": "parquet", "path": path}
-    if suffix == ".tsv":
-        from decoy.cli._sources import csv_file_source
-
-        return csv_file_source(path, delimiter="\t")
-    if suffix == ".csv":
-        from decoy.cli._sources import csv_file_source
-
-        return csv_file_source(path)
-    raise ValueError(f"unsupported file extension {suffix!r}; expected .csv, .tsv, or .parquet")
+    return csv_file_source(path, **({"delimiter": delimiter} if delimiter else {}))
 
 
 def _load_dataframe(input_file: Path):
@@ -244,8 +243,8 @@ def _build_scaffold_yaml(
     """
     # `input_text` and `output_text` are the paths as written into the YAML (relative to its
     # folder); the Path arguments name the file for the header and the dialect.
-    input_quoted = _yaml_quote(input_text if input_text is not None else str(input_path))
-    output_quoted = _yaml_quote(output_text if output_text is not None else str(output_path))
+    input_quoted = yaml_quote(input_text if input_text is not None else str(input_path))
+    output_quoted = yaml_quote(output_text if output_text is not None else str(output_path))
 
     header = (
         "# Decoy pipeline scaffold (column-aware).\n"
@@ -270,7 +269,7 @@ def _build_scaffold_yaml(
         if file_format == "csv"
         else {}
     )
-    dialect_lines = "".join(f"    {k}: {_yaml_scalar(v)}\n" for k, v in dialect.items())
+    dialect_lines = "".join(f"    {k}: {yaml_scalar(v)}\n" for k, v in dialect.items())
     sources_block = (
         "sources:\n"
         f"  {_TABLE_NAME}:\n"
@@ -288,7 +287,7 @@ def _build_scaffold_yaml(
     )
 
     column_blocks = "\n".join(
-        _emit_column_yaml(name, inferences[name]) for name in column_names
+        emit_column_yaml(name, inferences[name]) for name in column_names
     )
 
     tables_block = (
@@ -493,8 +492,8 @@ def _init(
     if input_file is not None and preset == "generate":
         from decoy.cli.gen import scaffold_generate
 
-        if destination.is_member:
-            prepare(state, destination)
+        # The scaffold makes its own folders inside its rollback; only check the link rule here.
+        prepare(state, destination, make=False)
         scaffold_generate(state, input_file, out, yes=yes)
         return
 
@@ -633,8 +632,16 @@ def _init(
         if chosen in _PATHED_PRESETS:
             # Defaults are the template's own paths, so Enter writes what --quiet writes.
             body = _render(chosen, None, None)
-            input_path = typer.prompt(
-                "Input CSV path", default=given_in or _template_path(body, "sources")
+            template_in = _template_path(body, "sources")
+            typed_in = typer.prompt(
+                "Input CSV path", default=str(input_file) if input_file else template_in
+            )
+            # A typed path is relative to the current folder; the YAML lives elsewhere. Only the
+            # template's own placeholder, accepted unchanged, is written as it is.
+            input_path = (
+                typed_in
+                if input_file is None and typed_in == template_in
+                else source_text(Path(typed_in), destination)
             )
             output_path = typer.prompt(
                 "Output CSV path", default=given_out or _template_path(body, "targets")

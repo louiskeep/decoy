@@ -10,12 +10,12 @@ import json as _json
 from decoy.cli._init_inference import Inference
 
 
-def _yaml_scalar(value: object) -> str:
+def yaml_scalar(value: object) -> str:
     """A dialect value as a YAML scalar: bools as true/false, text as a JSON-quoted string."""
     return str(value).lower() if isinstance(value, bool) else _json.dumps(value)
 
 
-def _yaml_quote(value: str) -> str:
+def yaml_quote(value: str) -> str:
     """Quote a string for the hand-emitted YAML.
 
     Single-quoted style matches the bundled templates. Single quotes
@@ -26,7 +26,7 @@ def _yaml_quote(value: str) -> str:
     return f"'{escaped}'"
 
 
-def _wrap_review_comment(review: str, indent: str) -> str:
+def wrap_review_comment(review: str, indent: str) -> str:
     """Wrap a REVIEW comment to ~80 columns and prefix `# REVIEW: ` to the
     first line, plain `# ` to continuations.
 
@@ -57,7 +57,7 @@ _NAMESPACE_REQUIRED_STRATEGIES: frozenset[str] = frozenset(
 )
 
 
-def _emit_column_yaml(name: str, inference: Inference, indent: str = "      ") -> str:
+def emit_column_yaml(name: str, inference: Inference, indent: str = "      ") -> str:
     """Emit one column block: REVIEW comment + `- name: ...` body.
 
     The shape matches engine `ColumnConfig` (decoy_engine.config._tables):
@@ -83,7 +83,7 @@ def _emit_column_yaml(name: str, inference: Inference, indent: str = "      ") -
     (e.g. two columns that both hold the same customer id). Edit the
     namespace value by hand if you need that.
     """
-    lines = [_wrap_review_comment(inference.review, indent)]
+    lines = [wrap_review_comment(inference.review, indent)]
     lines.append(f"{indent}- name: {name}")
     body_indent = indent + "  "
     lines.append(f"{body_indent}strategy: {inference.strategy}")

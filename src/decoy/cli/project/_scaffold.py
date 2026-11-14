@@ -16,7 +16,6 @@ Nothing here reads or prints a row value.
 from __future__ import annotations
 
 import os
-import re
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
@@ -32,13 +31,21 @@ from decoy.cli.io import (
     LayoutError,
     find_project,
     is_valid_name,
+    looks_like_path,
+    member_has_link,
     member_yaml,
+    name_slug,
 )
 from decoy.ui.output import OutputMode, OutputState, emit_error
 
-DATA_SUFFIXES = (".csv", ".tsv", ".parquet", ".pq")
-_NAME_MAX = 56
-_BAD_NAME_CHARS = re.compile(r"[^A-Za-z0-9_.-]+")
+# The one table of source file types `init` scaffolds from: suffix to (format, csv delimiter).
+SOURCE_SUFFIXES: dict[str, tuple[str, str | None]] = {
+    ".csv": ("csv", None),
+    ".tsv": ("csv", "\t"),
+    ".parquet": ("parquet", None),
+    ".pq": ("parquet", None),
+}
+DATA_SUFFIXES = tuple(SOURCE_SUFFIXES)
 
 
 class ScaffoldRefused(Exception):
@@ -78,7 +85,7 @@ class Placement:
 
 
 def split_argument(token: str | None, source: Path | None) -> Argument:
-    """Classify the positional token. An existing file is the source; anything else is a name.
+    """Classify the positional token. An existing data file (or a path to one) is the source; anything else is a name.
 
     A token that names a data file which is not there stays "does not exist", as before, instead
     of becoming a pipeline called `missing.csv`.
@@ -87,17 +94,15 @@ def split_argument(token: str | None, source: Path | None) -> Argument:
         raise ScaffoldRefused(f"{source} does not exist.")
     if token is None:
         return Argument(None, source)
-    if os.path.isfile(token):
+    is_data = token.lower().endswith(DATA_SUFFIXES)
+    # An extensionless name that happens to match a file is still a name.
+    if (Path(token).suffix or looks_like_path(token)) and os.path.isfile(token):
         if source is not None:
             raise ScaffoldRefused("Give the source file once: as the argument or with --source.")
         return Argument(None, Path(token))
-    if token.lower().endswith(DATA_SUFFIXES):
+    if is_data:
         raise ScaffoldRefused(f"{token} does not exist.")
     return Argument(token, source)
-
-
-def _slug(stem: str) -> str:
-    return _BAD_NAME_CHARS.sub("-", stem).strip("-._")[:_NAME_MAX].rstrip("-.")
 
 
 def member_placement(root: Path, name: str) -> Placement:
@@ -122,7 +127,7 @@ def place(argument: Argument, out: Path | None, explicit: Path | None) -> Placem
         raise PROJECT_NOT_FOUND.error(where="the current folder")
     name = argument.name
     if name is None and argument.source is not None:
-        name = _slug(argument.source.stem)
+        name = name_slug(argument.source.stem)
         if not name:
             raise PIPELINE_NAME_INVALID.error(name=argument.source.stem)
     if name is None:
@@ -130,39 +135,45 @@ def place(argument: Argument, out: Path | None, explicit: Path | None) -> Placem
     return member_placement(project.root, name)
 
 
-def _is_link(path: Path) -> bool:
-    return path.is_symlink()
+def check_folder(destination: Placement) -> None:
+    """Refuse a project pipeline that would be written through a link. Makes nothing.
 
-
-def prepare_folder(destination: Placement) -> None:
-    """Make the folder the YAML goes in. A member is never written through a link.
-
-    For a project pipeline, `pipelines/`, `pipelines/<name>/` and `pipeline.yaml` must not be
-    symbolic links (a planted link would send the write outside the project), and the folder
-    must resolve inside `pipelines/`. Raises `ScaffoldRefused`; the messages carry no OS text.
+    `pipelines/`, `pipelines/<name>/` and `pipeline.yaml` must not be links (a planted link would
+    send the write outside the project), and the folder must resolve inside `pipelines/`.
+    Raises `ScaffoldRefused`; the messages carry no OS text.
     """
-    assert destination.yaml is not None
-    folder = destination.yaml.parent
     root = destination.root if destination.is_member else None
-    if root is not None and any(
-        _is_link(p) for p in (root / PIPELINES_DIR, folder, destination.yaml)
-    ):
+    if root is None or destination.name is None or destination.yaml is None:
+        return
+    escaped = False
+    failed = False
+    try:
+        linked = member_has_link(root, destination.name)
+        escaped = destination.yaml.parent.resolve().parent != (root / PIPELINES_DIR).resolve()
+    except OSError:
+        failed = True
+        linked = False
+    if failed:
+        raise ScaffoldRefused("The pipeline folder could not be checked.")
+    if linked or escaped:
         raise ScaffoldRefused(
             f"{PIPELINES_DIR}/{destination.name} is, or sits under, a link; init does not write "
             "through links."
         )
-    failed = False
-    escaped = False
+
+
+def prepare_folder(destination: Placement) -> None:
+    """Check the destination, then make the folder the YAML goes in. Raises `ScaffoldRefused`."""
+    assert destination.yaml is not None
+    check_folder(destination)
     try:
-        folder.mkdir(parents=True, exist_ok=True)
-        if root is not None:
-            escaped = folder.resolve().parent != (root / PIPELINES_DIR).resolve()
+        destination.yaml.parent.mkdir(parents=True, exist_ok=True)
     except OSError:
         failed = True
+    else:
+        failed = False
     if failed:
         raise ScaffoldRefused("The pipeline folder could not be made.")
-    if escaped:
-        raise ScaffoldRefused(f"{PIPELINES_DIR}/{destination.name} is a link to another folder.")
 
 
 def _relative(source: Path, base: Path) -> str | None:
@@ -249,11 +260,14 @@ def resolve_destination(
     return argument, destination
 
 
-def prepare(state: OutputState, destination: Placement) -> None:
-    """Make the folder the YAML is written into, or refuse with fixed text."""
+def prepare(state: OutputState, destination: Placement, *, make: bool = True) -> None:
+    """Check the destination and make its folder, or refuse with fixed text.
+
+    `make=False` only checks: the generate scaffold makes its own folders, inside its rollback.
+    """
     problem: ScaffoldRefused | None = None
     try:
-        prepare_folder(destination)
+        (prepare_folder if make else check_folder)(destination)
     except ScaffoldRefused as exc:
         problem = exc
     if problem is not None:
