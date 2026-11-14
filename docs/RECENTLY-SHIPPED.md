@@ -15,10 +15,24 @@ Moved here from `decoy-platform/docs/backlog/RECENTLY-SHIPPED.md` on 2026-11-05 
 ([ROADMAP.md](ROADMAP.md)). The platform copy is frozen at that date. Entries below 2026-11-05 are
 copied unchanged; paths in them are relative to the repo they name.
 
-Last updated: 2026-11-13 (entries for 2026-10-27 to 2026-10-30 are not filled in here; see the repos'
+Last updated: 2026-11-14 (entries for 2026-10-27 to 2026-10-30 are not filled in here; see the repos'
 git logs).
 
 ---
+
+## 2026-11-14
+
+- **Engine** (`f298104e`, engine #584): LOADER-DROP (roadmap row 24zg, added and closed). A run refuses a declared table the plan would drop: `config/loader_table_undeclared` before any read, `config/declared_table_dropped` after the plan is built. It ships in the next engine release.
+- **Engine** (`07763ff5`, engine #579): POSTSCAN-STREAM part PS-10 (roadmap row 60, still partly merged). Staged output is checked before commit on streamed routes. PS-11 is open as engine #585.
+- **Engine** (`a43bdaa8`, engine #578): PS-9. An isolated post-scan block reports outcome `blocked`.
+- **Engine** (`81dbfe00`, engine #570): PS-8. The post-scan gate runs on every no-sink route.
+- **Engine** (`b1254eb1`, engine #581): DUP-FREEZE E1 (roadmap row 24zf, partly merged). One canonical JSON owner for digests and fingerprints. It ships in the next engine release.
+- **Engine** (`8a77c8b6`, engine #580): DUP-FREEZE E3. One flag registry with two spelling sets.
+- **Engine** (`61aa9d8e`, engine #577): DUP-FREEZE E4. One NER mismatch raise and one generated-at shape.
+- **Engine** (`5aeda26f`, tag `v0.24.0`, engine #576): engine release 0.24.0. The CLI repin is CLI #245 (open).
+- **Engine** (engine #563 `85d99c75`, #564 `de22841d`, #565 `63beef10`, 2026-11-13): DUP-DEFECTS E1 to E3 (roadmap row 24zd, now partly merged). One snapshot parse helper, one missing-cell rule for derived and formula, one text-type predicate for the chunked guard. All three are in 0.24.0.
+- **CLI** (`af9b07fc`, #243): DUP-FREEZE CL2. One env flag rule and one JSON document writer.
+- **CLI** (`50da81e6`, #244): DUP-FREEZE CL1. One error emitter and one `--json` error shape. CL0 (#242, `1f36e1ed`) merged 2026-11-13; CL3 is in review as #246.
 
 ## 2026-11-13
 
