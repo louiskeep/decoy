@@ -33,15 +33,19 @@ from decoy._config_file import ConfigFileError, config_refusal, load_config_mapp
 from decoy.cli._sources import read_file, resolved_source_config
 from decoy.cli._token_vault import LocalTokenVault, TokenVaultError, iter_tokenize_columns
 from decoy.cli.exit_codes import EXIT_RUNTIME, EXIT_USAGE, exit_code_for
+from decoy.cli.gate import layout_findings
 from decoy.cli.io import (
     LayoutError,
+    OutputPlacement,
     RunLayout,
     TargetFormatError,
     check_output_path,
     format_for_path,
     input_format,
     mint_invocation_id,
+    open_out_dir,
     open_run_layout,
+    out_dir_option,
     owning_pipeline,
     pipeline_argument,
     resolve_pipeline,
@@ -131,6 +135,7 @@ def tokenize(
             "re-identifies every tokenized value."
         ),
     ),
+    out_dir: Path = out_dir_option(),
     mask_secret: str = typer.Option(
         None,
         "--mask-secret",
@@ -302,6 +307,15 @@ def tokenize(
         _emit_error(_mask_secret_guidance.OLD_ENGINE_TOKENIZE)
         raise typer.Exit(code=EXIT_USAGE) from exc
 
+    if out_dir is not None:
+        # The gate's layout check, before any folder or source: the same one `run --out-dir` makes.
+        findings = layout_findings(
+            config_path, raw, OutputPlacement.fixed(out_dir, (("--vault", vault),))
+        )
+        if findings:
+            _emit_error(f"{findings[0].code}: {findings[0].message}")
+            raise typer.Exit(code=EXIT_USAGE)
+
     from decoy.cli.run import _load_sources_from_config, _write_mask_outputs
 
     token_vault: LocalTokenVault | None = None
@@ -311,7 +325,10 @@ def tokenize(
     try:
         with spinner(state, "Tokenizing..."):
             # The claim is checked before any source is read.
-            layout = open_run_layout(config_path, config_dict, mint_invocation_id())
+            if out_dir is not None:
+                layout = open_out_dir(out_dir)
+            else:
+                layout = open_run_layout(config_path, config_dict, mint_invocation_id())
             sources = _load_sources_from_config(config_dict, config_path.parent)
             instance_locale = (config_dict.get("global_settings") or {}).get("default_locale")
             # The CLI admits the secret (an owner-only `file:` is checked on its open

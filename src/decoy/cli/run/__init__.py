@@ -19,7 +19,7 @@ from pathlib import Path
 import typer
 
 from decoy import _resources
-from decoy.cli.io import pipeline_argument, resolve_pipeline
+from decoy.cli.io import out_dir_option, pipeline_argument, resolve_pipeline
 from decoy.cli.io import resolve_path as _resolve_path
 from decoy.cli.run import _flow
 from decoy.cli.run._context import DEFAULT_CHUNK_SIZE, Mode, NotifyOn, RunContext
@@ -241,17 +241,7 @@ def run(
             "See: decoy report show."
         ),
     ),
-    out_dir: Path = typer.Option(
-        None,
-        "--out-dir",
-        metavar="DIR",
-        help=(
-            "Write relative output paths into DIR instead of a new run folder under "
-            "out/<pipeline>/. DIR is relative to the current folder and is made owner-only "
-            "if missing. No run id, LATEST or current link; files there are overwritten. "
-            "Absolute output paths are unchanged."
-        ),
-    ),
+    out_dir: Path = out_dir_option(),
     notify: list[str] = typer.Option(
         [],
         "--notify",

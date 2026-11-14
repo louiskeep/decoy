@@ -164,6 +164,21 @@ def pipeline_option(default: Any, *names: str, help: str) -> Any:
     )
 
 
+def out_dir_option() -> Any:
+    """The `--out-dir DIR` option of `run` and `tokenize`: one declaration, one help text."""
+    return typer.Option(
+        None,
+        "--out-dir",
+        metavar="DIR",
+        help=(
+            "Write relative output paths into DIR instead of a new run folder under "
+            "out/<pipeline>/. DIR is relative to the current folder and is made owner-only "
+            "if missing. No run id, LATEST or current link; files there are overwritten. "
+            "Absolute output paths are unchanged."
+        ),
+    )
+
+
 def _member(root: Path, name: str) -> Path | None:
     """`<root>/pipelines/<name>/pipeline.yaml` when a regular file, with no link on the way.
 

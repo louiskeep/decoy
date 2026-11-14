@@ -17,8 +17,10 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from decoy._atomic import destination_entry
+from decoy._private_file import PrivateFileError
 from decoy.cli.io._cloud import cloud_root_issues, has_cloud_targets
 from decoy.cli.io._layout import (
+    RunLayout,
     _same_dir,
     check_path_budget,
     contained_path,
@@ -32,6 +34,7 @@ from decoy.cli.io._layout import (
 )
 from decoy.cli.io._layout_errors import (
     DELIVERY_ROOT_SPLIT,
+    OUTPUT_DIR_UNUSABLE,
     OUTPUT_PATH_COLLISION,
     OUTPUT_PATH_ESCAPES,
     SIDE_FILE_IN_OUT,
@@ -384,3 +387,15 @@ def run_report_path(kind: str, file: Path, ref: PipelineRef | None) -> Path | No
     except LayoutError:
         pass
     return report_default_path(kind, file, tuple(roots))
+
+
+def open_out_dir(directory: Path) -> RunLayout:
+    """The layout for `--out-dir DIR`; anything unusable is `layout.output_dir_unusable`.
+
+    Always the registry text: the caller's wording and the path are dropped. Nothing is made
+    here; DIR is created by the first relative placement, after the gate.
+    """
+    try:
+        return RunLayout.out_dir(directory)
+    except (OSError, PrivateFileError, ValueError):
+        raise OUTPUT_DIR_UNUSABLE.error() from None

@@ -271,6 +271,7 @@ $ decoy tokenize [OPTIONS] CONFIG
 **Options**:
 
 * `--vault PATH`: Local token vault file to write the (namespace, plaintext) -&gt; token mapping to (created if absent). Required: tokenize fails closed without a vault. Store it separately from the output; it re-identifies every tokenized value.  [required]
+* `--out-dir DIR`: Write relative output paths into DIR instead of a new run folder under out/&lt;pipeline&gt;/. DIR is relative to the current folder and is made owner-only if missing. No run id, LATEST or current link; files there are overwritten. Absolute output paths are unchanged.
 * `--mask-secret TEXT`: env:NAME or file:/PATH pointing at a &gt;=32-byte mask secret to key the tokens from. REQUIRED unless the YAML sets global_settings.mask_secret_ref: tokenize fails closed without an effective secret, because seed-derived tokens are forgeable offline from the public pipeline seed. Sets &#x27;global_settings.mask_secret_ref&#x27; for this run; an error if the YAML already sets it. Explicit flag only (no env var).
 * `--json`: Emit a structured JSON result on stdout. Errors still go to stderr.
 * `-q, --quiet`: Suppress stdout. Errors still go to stderr; exit code carries the result.
