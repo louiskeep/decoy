@@ -111,7 +111,8 @@ def explicit_project(ctx: typer.Context | None) -> Path | None:
     return _select(project_flag(ctx))
 
 
-def _looks_like_path(raw: str) -> bool:
+def looks_like_path(raw: str) -> bool:
+    """True for a token with a separator, a YAML suffix, or `-`: a path, not a pipeline name."""
     return raw == "-" or "/" in raw or "\\" in raw or raw.lower().endswith(_PATH_SUFFIXES)
 
 
@@ -138,7 +139,7 @@ def parse_pipeline_token(ctx: typer.Context, value: str | None) -> PipelineToken
     if value is None:
         return None
     flag = project_flag(ctx)
-    if _looks_like_path(value) or os.path.isfile(value):
+    if looks_like_path(value) or os.path.isfile(value):
         _require_readable_file(value)
         return PipelineToken(value, "path", flag)
     return PipelineToken(value, "name", flag)
@@ -179,6 +180,16 @@ def out_dir_option() -> Any:
     )
 
 
+def member_has_link(root: Path, name: str) -> bool:
+    """True when `pipelines/`, `pipelines/<name>/` or its `pipeline.yaml` is a symbolic link.
+
+    The one link rule for a member, shared by lookup and by `decoy init`'s write. May raise
+    `OSError` from the filesystem probe.
+    """
+    yaml = member_yaml(root, name)
+    return any(p.is_symlink() for p in (root / PIPELINES_DIR, yaml.parent, yaml))
+
+
 def _member(root: Path, name: str) -> Path | None:
     """`<root>/pipelines/<name>/pipeline.yaml` when a regular file, with no link on the way.
 
@@ -187,7 +198,7 @@ def _member(root: Path, name: str) -> Path | None:
     """
     yaml = member_yaml(root, name)
     try:
-        if any(p.is_symlink() for p in (root / PIPELINES_DIR, yaml.parent, yaml)):
+        if member_has_link(root, name):
             return None
         return yaml if yaml.is_file() else None
     except OSError:

@@ -50,7 +50,7 @@ def render_banner(state: OutputState) -> None:
     quickstart.add_column()
     quickstart.add_row("First scan:", code("decoy scan data.csv --has-header"))
     quickstart.add_row("First run:", code("decoy demo"))
-    quickstart.add_row("Scaffold:", code("decoy init"))
+    quickstart.add_row("Scaffold:", code("decoy init <name>"))
     quickstart.add_row("Topics:", code("decoy explain modes"))
     quickstart.add_row("Templates:", code("decoy list templates"))
     body.add_row(quickstart)

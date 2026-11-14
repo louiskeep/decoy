@@ -280,7 +280,8 @@ def _rel_posix(root: Path, yaml: Path) -> str:
         return resolved.as_posix()
 
 
-def _slug(stem: str) -> str:
+def name_slug(stem: str) -> str:
+    """A file stem as a pipeline-name candidate: safe characters only, at most 56. May be empty."""
     slug = _DASH_RUNS.sub("-", _SLUG_BAD.sub("-", stem))
     slug = slug.lstrip("-._")[:_SLUG_MAX]
     return slug.rstrip("-.")
@@ -288,7 +289,7 @@ def _slug(stem: str) -> str:
 
 def _derived(root: Path, yaml_rel: str, stem: str) -> str:
     digest = hashlib.sha256(yaml_rel.encode()).hexdigest()[:6]
-    slug = _slug(stem)
+    slug = name_slug(stem)
     for base in (slug or "pipeline", "pipeline"):
         candidate = f"{base}-{digest}"
         if is_valid_name(candidate):
@@ -358,7 +359,7 @@ def pipeline_name_for(root: Path, yaml: Path, declared: object) -> PipelineName:
             )
         return PipelineName(declared, True, yaml_rel)
     stem = yaml.name.rsplit(".", 1)[0] if "." in yaml.name else yaml.name
-    slug = _slug(stem)
+    slug = name_slug(stem)
     if slug == stem and is_valid_name(slug) and _taken(root, slug, yaml_rel) is None:
         return PipelineName(slug, False, yaml_rel)
     return PipelineName(_derived(root, yaml_rel, stem), False, yaml_rel)

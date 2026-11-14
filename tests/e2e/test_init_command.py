@@ -270,8 +270,8 @@ def test_init_scaffold_actually_runs_and_pan_stays_luhn_valid(
         f"scaffold failed to run (exit {run_result.exit_code}): {run_result.output}"
     )
 
-    output_path = tmp_path / "accounts.masked.csv"
-    assert output_path.exists(), "decoy run did not write the scaffolded output path"
+    # A bare target is placed in the run folder under `out/`.
+    (output_path,) = (tmp_path / "out").rglob("accounts.masked.csv")
 
     masked = pd.read_csv(output_path, dtype=str)
     assert "card_number" in masked.columns
@@ -339,9 +339,13 @@ def test_every_template_with_a_source_is_path_edited():
 
 
 @pytest.mark.parametrize("preset", _PATHED_PRESETS)
-def test_typed_paths_reach_the_written_pipeline(tmp_path: Path, preset: str):
+def test_typed_paths_reach_the_written_pipeline(
+    tmp_path: Path, preset: str, monkeypatch: pytest.MonkeyPatch
+):
     from decoy_engine import PipelineConfig
 
+    # A typed source is relative to the current folder; with the YAML in it, it is written as typed.
+    monkeypatch.chdir(tmp_path)
     out = tmp_path / "pipeline.yaml"
     typed_in = "in #1/o'brien: x.csv"
     typed_out = "out dir/masked.csv"

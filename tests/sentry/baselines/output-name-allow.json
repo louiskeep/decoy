@@ -3,10 +3,7 @@
  "created_in": "PROJECT-LAYOUT-P2b",
  "entries": {
   "cli/gen/_scaffold.py::layout_for": {
-   "reason": "Snapshot name in the generate scaffold; moves with the scaffold in P7."
-  },
-  "cli/init.py::_scaffold_from_file": {
-   "reason": "Default masked target name in the mask scaffold; moves in P7."
+   "reason": "Snapshot name in the generate scaffold; moves in the P10 sweep."
   }
  }
 }
