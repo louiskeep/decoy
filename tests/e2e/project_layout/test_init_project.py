@@ -432,6 +432,10 @@ def _forbid(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr("decoy.cli.gen._scaffold.fit_exact_snapshot", boom)
 
 
+# The fixed refusal text: a bare "link" would also match the test's own paths.
+_LINK_REFUSAL = "init does not write through links."
+
+
 def _plant(root: Path, outside: Path, kind: str) -> Path:
     victim = outside / "victim.yaml"
     victim.write_text("keep\n", encoding="utf-8")
@@ -466,7 +470,8 @@ def test_the_link_refusal_comes_before_any_prompt_read_or_fit(
     result = runner.invoke(app, ["init", "orders", *extra, "--json"])
 
     assert result.exit_code == EXIT_USAGE, result.output
-    assert "link" in json.loads(result.stdout)["error"]
+    assert isinstance(result.exception, SystemExit), result.exception
+    assert _LINK_REFUSAL in json.loads(result.stdout)["error"]
     assert victim.read_text(encoding="utf-8") == "keep\n"
 
 
@@ -484,5 +489,7 @@ def test_the_link_refusal_beats_the_overwrite_prompt_in_default_mode(
     result = runner.invoke(app, ["init", "orders", "--preset", "minimal"])
 
     assert result.exit_code == EXIT_USAGE, result.output
+    assert isinstance(result.exception, SystemExit), result.exception
+    assert _LINK_REFUSAL in result.output
     assert "Overwrite" not in result.output
     assert victim.read_text(encoding="utf-8") == "keep\n"
