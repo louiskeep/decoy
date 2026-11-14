@@ -14,6 +14,7 @@ AT-C4  a headerless file declared `has_header: true` refuses without echoing its
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from typing import Any
 
@@ -315,17 +316,55 @@ def test_unparseable_config_keeps_the_gate_error_on_duckdb(tmp_path: Path) -> No
     assert "undeclared_column" not in result.output
 
 
-def test_undeclared_subset_refuses_before_the_engine_opens_a_source(tmp_path: Path) -> None:
-    _write_csv(tmp_path / "people.csv")
-    config = _config(tmp_path, csv_source(tmp_path / "people.csv"), _PARTIAL)
+def _subset_config(tmp_path: Path, columns: list[dict[str, Any]]) -> Path:
+    config = _config(tmp_path, csv_source(tmp_path / "people.csv"), columns)
     raw = yaml.safe_load(config.read_text())
     raw["subset"] = {
         "seeds": [{"table": "people", "mode": "sample", "key_columns": ["id"], "fraction": 0.5}]
     }
     config.write_text(yaml.safe_dump(raw), encoding="utf-8")
+    return config
+
+
+def test_undeclared_subset_refuses_before_the_engine_opens_a_source(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import decoy_engine.subset as subset_mod
+
+    def boom(*a, **k):
+        raise AssertionError("the engine subset ran before the declaration check")
+
+    monkeypatch.setattr(subset_mod, "plan_subset", boom)
+    monkeypatch.setattr(subset_mod, "run_subset", boom)
+    _write_csv(tmp_path / "people.csv")
+    config = _subset_config(tmp_path, _PARTIAL)
     result = runner.invoke(app, ["subset", str(config), "--dry-run"])
     assert result.exit_code == 1
     assert "source_file.undeclared_column" in result.output
+
+
+@pytest.mark.parametrize("flag", [[], ["--json"]])
+def test_subset_with_a_missing_source_is_a_coded_refusal(flag: list[str], tmp_path: Path) -> None:
+    config = _subset_config(tmp_path, _PLAIN)
+    result = runner.invoke(app, ["subset", str(config), "--dry-run", *flag])
+    assert result.exit_code == 1
+    assert "source_file.file_not_found" in result.output
+    assert "internal error" not in result.output
+    assert "people.csv" not in result.output
+    if flag:
+        assert json.loads(result.output)["code"] == "source_file.file_not_found"
+    else:
+        assert result.output.count("source_file.file_not_found") == 1
+
+
+def test_a_malformed_source_is_a_coded_value_free_refusal(tmp_path: Path) -> None:
+    (tmp_path / "people.csv").write_bytes(b"\xff\xfe\x00zz_marker\n1\n")
+    config = _subset_config(tmp_path, _PLAIN)
+    result = runner.invoke(app, ["subset", str(config), "--dry-run", "--json"])
+    assert result.exit_code == 1
+    assert "internal error" not in result.output
+    assert "zz_marker" not in result.output and "people.csv" not in result.output
+    assert json.loads(result.output)["code"]
 
 
 # ---------------------------------------------------------------- AT-C4

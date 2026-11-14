@@ -260,6 +260,13 @@ def _stage_source_entry(name: str, value: Any, tmp_paths: list[Path], declared: 
     return {"type": "file", "format": "parquet", "path": str(tmp_path)}
 
 
+def _arrow_schema(value: pd.DataFrame | pa.Table) -> pa.Schema:
+    """The Arrow schema of in-memory data, taken without converting the rows."""
+    if isinstance(value, pa.Table):
+        return value.schema
+    return pa.Schema.from_pandas(value, preserve_index=False)
+
+
 def _gate_in_memory_data(raw: dict, items: list[tuple[str, Any]]) -> None:
     """Refuse an undeclared table or column of in-memory data before any temp file is written.
 
@@ -272,7 +279,7 @@ def _gate_in_memory_data(raw: dict, items: list[tuple[str, Any]]) -> None:
     ):
         return
     schemas = {
-        name: _to_pa_table(value).schema
+        name: _arrow_schema(value)
         for name, value in items
         if isinstance(value, (pd.DataFrame, pa.Table))
     }

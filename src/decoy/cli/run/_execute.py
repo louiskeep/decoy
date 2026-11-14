@@ -7,13 +7,12 @@ from decoy import _native_gate, _resources
 from decoy.cli import gen
 from decoy.cli.extras import check_cloud_endpoints, check_cloud_endpoints_supported
 from decoy.cli.io import (
-    DuckDBSourceError,
     RunLayout,
     check_target_formats,
+    duckdb_probe_config,
     iter_source_chunks,
     open_run_layout,
     parquet_schema,
-    parse_flag,
     prepared_sources,
     quarantine_enabled,
     read_source,
@@ -167,28 +166,8 @@ def _refuse_chunked_integrity(ctx: RunContext) -> None:
     error from the gate. `--duckdb-source` tables get a placeholder file source for this
     check only, because staging has not run and the model requires a source per mask table.
     """
-    from decoy_engine import ConfigError, PipelineValidationError, parse_pipeline_config
-    from decoy_engine.config import PipelineConfigError
-
-    if not isinstance(ctx.raw, dict):
-        return
-    # A null `sources` block is an omitted one, as in staging below.
-    sources = ctx.raw.get("sources")
-    if sources is not None and not isinstance(sources, dict):
-        return
-    probe = {**ctx.raw, "sources": dict(sources or {})}
-    for spec in ctx.duckdb_source:
-        try:
-            probe["sources"][parse_flag(spec)[0]] = {
-                "type": "file",
-                "format": "parquet",
-                "path": "staged.parquet",
-            }
-        except DuckDBSourceError:
-            return
-    try:
-        validated = parse_pipeline_config(probe).model_dump()
-    except (PipelineConfigError, PipelineValidationError, ConfigError):
+    validated = duckdb_probe_config(ctx.raw, ctx.duckdb_source)
+    if validated is None:
         return
     _refuse_chunked_integrity_requested(validated)
 

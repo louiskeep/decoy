@@ -156,6 +156,11 @@ CONFIG_INSIDE_OUT = Descriptor(
     "layout.config_inside_out",
     "The pipeline YAML {path} is inside an out/ folder, where run folders live.",
 )
+REPORT_SOURCE_AMBIGUOUS = Descriptor(
+    "layout.report_source_ambiguous",
+    "--source matches no declared source and the config declares several tables; "
+    "pass the declared file",
+)
 
 # Codes a gate or command can refuse with (exit 1); the CI rule-code set is derived from them.
 GATE_DESCRIPTORS: tuple[Descriptor, ...] = (
@@ -176,6 +181,7 @@ GATE_DESCRIPTORS: tuple[Descriptor, ...] = (
     SIDE_FILE_IN_OUT,
     CLOUD_TARGET_INVALID,
     CLOUD_TARGET_UNSUPPORTED,
+    REPORT_SOURCE_AMBIGUOUS,
 )
 WARNING_DESCRIPTORS: tuple[Descriptor, ...] = (
     LATEST_INVALID,

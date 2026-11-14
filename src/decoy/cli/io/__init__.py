@@ -15,6 +15,7 @@ The source and DuckDB helpers `decoy run` uses are re-exported here as one bridg
 from decoy.cli._duckdb_source import DuckDBSourceError, acquire_relation, parse_flag
 from decoy.cli._sources import (
     check_declared_before_acquire,
+    duckdb_probe_config,
     iter_source_chunks,
     names_schema,
     parquet_schema,
@@ -65,6 +66,7 @@ from decoy.cli.io._layout_errors import (
     PROJECT_NOT_FOUND,
     PROJECT_ROOT_REFUSED,
     REPORT_NOT_WRITTEN,
+    REPORT_SOURCE_AMBIGUOUS,
     WARNING_CODES,
     WARNING_DESCRIPTORS,
     Descriptor,
@@ -143,6 +145,7 @@ __all__ = [
     "PROJECT_NOT_FOUND",
     "PROJECT_ROOT_REFUSED",
     "REPORT_NOT_WRITTEN",
+    "REPORT_SOURCE_AMBIGUOUS",
     "WARNING_CODES",
     "WARNING_DESCRIPTORS",
     "Descriptor",
@@ -169,6 +172,7 @@ __all__ = [
     "check_target_formats",
     "contained_path",
     "create_run_folder",
+    "duckdb_probe_config",
     "ensure_decoy_dir",
     "entry_format",
     "explicit_project",

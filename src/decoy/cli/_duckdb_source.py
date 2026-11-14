@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import re
 from pathlib import Path
+from typing import overload
 
 # A relation name we will interpolate into `COPY (SELECT * FROM <name>)`. The
 # allowlist is exactly a simple SQL identifier, so the name cannot carry a
@@ -63,11 +64,13 @@ def describe_relation(db_path: Path, relation: str) -> tuple[str, ...]:
     """The ordered column names of `relation` (a `DESCRIBE`); no row is read or staged.
 
     One connection point with `acquire_relation`, so both carry the same restrictions."""
-    names = acquire_relation(db_path, relation, None)
-    assert not isinstance(names, Path)
-    return names
+    return acquire_relation(db_path, relation, None)
 
 
+@overload
+def acquire_relation(db_path: Path, relation: str, dest_dir: Path) -> Path: ...
+@overload
+def acquire_relation(db_path: Path, relation: str, dest_dir: None) -> tuple[str, ...]: ...
 def acquire_relation(db_path: Path, relation: str, dest_dir: Path | None) -> Path | tuple[str, ...]:
     """Copy `relation` from the read-only DuckDB at `db_path` to a Parquet file
     under `dest_dir`, returning that Parquet path.

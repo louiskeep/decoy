@@ -12,7 +12,8 @@ every module under `src/decoy/` and applies three checks:
    (`resolved_source_config(...)`) as its first argument, never the dump as written, and no
    module builds a `CsvDialect(...)` of its own.
 
-Caller-named files (`decoy scan`, `decoy init`'s input, `read_file`) are not declared sources and
+Caller-named files (`decoy scan`, `decoy init`'s input, `read_file`, and the tokenized file of
+`decoy detokenize`, which opens no declared source) are not declared sources and
 are outside the watch lists. The csv and parquet read primitives themselves are owned by
 `test_csv_read_choke_point.py`; this sentry is about the order of the check.
 
@@ -26,7 +27,7 @@ import ast
 from pathlib import Path
 
 from tests.sentry.io_policy._calls import leaf as _leaf
-from tests.sentry.io_policy._calls import sites
+from tests.sentry.io_policy._calls import qualified, sites
 
 ROOT = Path(__file__).resolve().parents[3]
 SRC = ROOT / "src" / "decoy"
@@ -41,16 +42,18 @@ READERS = frozenset(
         "acquire_relation",
         "_stage_source_entry",
         "run_subset",
+        "plan_subset",
     }
 )
+# A gate counts by the name its import resolves to, never by its spelling: a local function that
+# happens to be called `prepared_sources` is not the gate. `decoy.cli.io` re-exports the same
+# functions for `cli/run/`. `api.py` owns its in-memory gate, a function defined in that module.
 GATES = frozenset(
-    {
-        "prepared_sources",
-        "gate_report_source",
-        "check_declared_before_acquire",
-        "_gate_in_memory_data",
-    }
+    f"{module}.{name}"
+    for module in ("decoy.cli._sources", "decoy.cli.io")
+    for name in ("prepared_sources", "gate_report_source", "check_declared_before_acquire")
 )
+LOCAL_GATES = frozenset({("api.py", "_gate_in_memory_data")})
 ENGINE_ENTRIES = frozenset({"run_pipeline", "run_mask_pipeline_chunked", "profile_source"})
 OWNERS = ("cli/_sources.py", "cli/_duckdb_source.py")
 
@@ -63,7 +66,6 @@ REQUIRED: tuple[tuple[str, str], ...] = (
     ("cli/run/_execute.py", "_run_chunked_mask"),
     ("cli/run/_prepare.py", "prepare"),
     ("cli/demo.py", "_run_v2_mask"),
-    ("cli/tokenize.py", "detokenize"),
     ("cli/subset.py", "subset"),
     ("cli/report.py", "_fidelity"),
     ("cli/report.py", "_integrity"),
@@ -83,15 +85,27 @@ def _calls(source: str) -> list[tuple[str, str, int, ast.Call]]:
     return found
 
 
-def ordering_violations(source: str) -> list[str]:
+def _gate_lines(source: str, rel: str) -> dict[str, int]:
+    """The first line of each function's gate call, matched on the resolved qualified name."""
+    first: dict[str, int] = {}
+    for s in sites(ast.parse(source)):
+        if not isinstance(s.node, ast.Call):
+            continue
+        resolved = qualified(s.node, s.bound)
+        local = resolved is None and (rel, _name_of(s.node)) in LOCAL_GATES
+        if resolved in GATES or local:
+            fn = _top(s.scope)
+            first[fn] = min(s.lineno, first.get(fn, s.lineno))
+    return first
+
+
+def ordering_violations(source: str, rel: str = "") -> list[str]:
     """Functions whose first reader call has no gate call on or before its line."""
     first_read: dict[str, int] = {}
-    first_gate: dict[str, int] = {}
+    first_gate = _gate_lines(source, rel)
     for fn, name, line, _node in _calls(source):
         if name in READERS:
             first_read[fn] = min(line, first_read.get(fn, line))
-        if name in GATES:
-            first_gate[fn] = min(line, first_gate.get(fn, line))
     return sorted(fn for fn, line in first_read.items() if first_gate.get(fn, 10**9) > line)
 
 
@@ -130,7 +144,7 @@ def test_every_reader_is_gated_first() -> None:
         (rel, fn)
         for rel, text in _modules()
         if rel not in OWNERS and rel not in CALLER_NAMED
-        for fn in ordering_violations(text)
+        for fn in ordering_violations(text, rel)
     }
     assert found == set(), sorted(found)
 
@@ -139,8 +153,7 @@ def test_required_commands_hold_a_gate() -> None:
     modules = dict(_modules())
     missing = []
     for rel, fn in REQUIRED:
-        names = {n for f, n, _l, _node in _calls(modules[rel]) if f == fn}
-        if not names & GATES:
+        if fn not in _gate_lines(modules[rel], rel):
             missing.append((rel, fn))
     assert missing == []
 
@@ -156,12 +169,24 @@ def test_no_module_builds_its_own_csv_dialect() -> None:
 
 def test_seeded_bypasses_are_detected() -> None:
     reader = "def cmd(cfg, base):\n    return read_source('t', cfg, base)\n"
-    gated = "def cmd(cfg, base):\n    prepared_sources(cfg, base_dir=base)\n    return read_source('t', cfg, base)\n"
-    late = "def cmd(cfg, base):\n    x = read_source('t', cfg, base)\n    prepared_sources(cfg, base_dir=base)\n"
+    imp = "from decoy.cli._sources import prepared_sources\n"
+    gated = (
+        imp
+        + "def cmd(cfg, base):\n    prepared_sources(cfg, base_dir=base)\n    return read_source('t', cfg, base)\n"
+    )
+    late = (
+        imp
+        + "def cmd(cfg, base):\n    x = read_source('t', cfg, base)\n    prepared_sources(cfg, base_dir=base)\n"
+    )
+    # A same-named local function is not the gate.
+    local = "def prepared_sources(c, base_dir):\n    return c\ndef cmd(cfg, base):\n    prepared_sources(cfg, base_dir=base)\n    return read_source('t', cfg, base)\n"
+    planned = "def cmd(s):\n    return plan_subset(s)\n"
     duck = "def cmd(db, rel, d):\n    return acquire_relation(db, rel, d)\n"
     assert ordering_violations(reader) == ["cmd"]
     assert ordering_violations(gated) == []
     assert ordering_violations(late) == ["cmd"]
+    assert ordering_violations(local) == ["cmd"]
+    assert ordering_violations(planned) == ["cmd"]
     assert ordering_violations(duck) == ["cmd"]
     assert unresolved_engine_calls("def f(c):\n    run_pipeline(c, {})\n") == [2]
     assert (

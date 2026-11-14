@@ -15,7 +15,8 @@ Plan: the CONFIG-EXPLICIT handoff, Part C1 as narrowed by revision note r11.
 | `decoy.mask()` with DataFrame or Arrow data | `api.py::_gate_in_memory_data`, before `_stage_source_entry` writes a temp file |
 | `decoy run --duckdb-source` | `_sources.check_declared_before_acquire`: `DESCRIBE` through `_duckdb_source.describe_relation`, engine check, then `acquire_relation` |
 | `decoy report fidelity` and `integrity` with `--config` | `_sources.gate_report_source` on the selected table's descriptor with `path` set to `--source` |
-| `decoy subset`, `decoy detokenize` | `prepared_sources` after the config parses, before the engine or the tokenized file is read |
+| `decoy subset` | `prepared_sources` after the config parses, before the engine opens a source |
+| `decoy detokenize` | none: a caller-named-artifact route, no declared source is opened (ruling below) |
 
 `prepared_sources` (in `cli/_sources.py`) holds no rule. It builds the reader-side copy and calls
 the engine's `prepare_declared_sources`. The CLI keeps its own readers.
@@ -37,3 +38,23 @@ the engine's `prepare_declared_sources`. The CLI keeps its own readers.
   wrapper), so the DuckDB connection point and its sentry rows stay in one function.
 - `decoy.mask(data=<path>)` and its `has_header` keyword (AT-C10) are C1b, not here.
 - Not built, by ruling: the repin, `_config_load.py`, dump-site and path-copy edits (done earlier).
+
+## Fix round 1 (Dennis NO-GO)
+
+- Ruling on the spec conflict for `detokenize`: the route table line 228 wins ("validate and gate
+  the config before reading the artifact; no declared source is opened"). The first build called
+  `prepared_sources`, which opens every declared file, so a deleted source broke detokenize.
+  The call is gone, the sentry no longer lists detokenize as a gated reader, and the AT-C13 cell
+  asserts the declared file is never needed.
+- One exception contract: `prepared_sources` turns an engine read failure (`OSError`,
+  `ValueError` from Arrow or decoding, a non-gate `DecoyError`) into a `PipelineValidationError`
+  with a registered code (`source_file.file_not_found`, else the error's own code or
+  `csv_malformed`) and a fixed path-free text. Every caller already catches that one type.
+- `gate_report_source` checks a non-csv declared descriptor with `csv_file_source(source)`, the
+  descriptor `read_report_source` reads with.
+- `duckdb_probe_config` (in `_sources.py`) is the one placeholder-probe builder for
+  `check_declared_before_acquire` and `_refuse_chunked_integrity`. It is the r11 ruling-4
+  exception: the config is parsed before the gate only so that an unparseable config keeps the
+  gate's own error.
+- The ambiguous `--source` refusal has the CLI-registry code `layout.report_source_ambiguous`.
+  Subset prints an engine refusal's text without its leading code.
