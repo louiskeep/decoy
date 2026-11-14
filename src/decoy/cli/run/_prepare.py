@@ -16,6 +16,7 @@ from decoy.cli.gate import (
     GateRoute,
     PreRunCheckError,
     check_before_run,
+    layout_findings,
     parse_pipeline_yaml,
 )
 from decoy.cli.io import (
@@ -37,7 +38,12 @@ from decoy.cli.run._execute import (
     _refuse_chunked_integrity_requested,
     _require_local_io_endpoints,
 )
-from decoy.cli.run._vault import _CHUNKED_VAULT_MESSAGE, _ChunkedVaultError, _VaultUsageError
+from decoy.cli.run._vault import (
+    _CHUNKED_VAULT_MESSAGE,
+    _ChunkedVaultError,
+    _VaultUsageError,
+    refuse_existing_vault,
+)
 from decoy.ui.output import OutputMode, emit_json
 from decoy.ui.theme import error, hint, warn
 
@@ -256,6 +262,19 @@ def _placement(ctx: RunContext) -> OutputPlacement:
     return OutputPlacement(typed=typed, chunked=ctx.chunked)
 
 
+def _refuse_layout_faults(ctx: RunContext) -> None:
+    """Raise the gate's own refusal for an output layout fault, before any source is touched.
+
+    A config the layout check cannot read is left to the gate, which names the fault.
+    """
+    try:
+        findings = layout_findings(ctx.config, ctx.raw, _placement(ctx))
+    except Exception:
+        return
+    if findings:
+        raise PreRunCheckError.from_findings(findings)
+
+
 def prepare_preview(ctx: RunContext) -> None:
     """The `--rows` counterpart of `prepare`: the config guards and the gate on the scaled
     config. No source is read and no vault or key provider is opened, because a preview has
@@ -331,6 +350,12 @@ def prepare(ctx: RunContext, _scopes: contextlib.ExitStack) -> None:
     _guard_mask_secret_ref(ctx.raw)
     if ctx.chunked:
         _refuse_chunked_integrity(ctx)
+    # Layout and vault-path refusals need no source, so they come before DuckDB staging and
+    # the source preflight: a source failure must not hide either of them.
+    if isinstance(ctx.raw, dict):
+        _refuse_layout_faults(ctx)
+    if ctx.vault is not None and not ctx.chunked:
+        refuse_existing_vault(ctx.vault)
 
     # DuckDB-in sources: acquire each flagged relation read-only to a
     # temp Parquet and rewrite the in-memory source to that Parquet

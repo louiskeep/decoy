@@ -27,7 +27,12 @@ from decoy.cli.run._execute import (
 )
 from decoy.cli.run._notify import _dispatch_run_notifications, _OtelSettingsUsageError
 from decoy.cli.run._prepare import _MaskSecretUsageError
-from decoy.cli.run._vault import _ChunkedVaultError, _VaultUsageError, _VaultWriteError
+from decoy.cli.run._vault import (
+    VAULT_COMMIT_FAILED_HINT,
+    _ChunkedVaultError,
+    _VaultUsageError,
+    _VaultWriteError,
+)
 from decoy.ui.output import OutputMode, emit_json, print_traceback
 from decoy.ui.theme import error, hint
 
@@ -140,7 +145,8 @@ def fail(ctx: RunContext, exc: Exception) -> NoReturn:
     engine_exc = exc
     # Dispatch on type: config wrong (EXIT_USAGE) vs run blew up (EXIT_RUNTIME).
     # Imported lazily to keep the engine import off the help path.
-    from decoy_engine import DecoyError, GenerationError
+    from decoy_engine import DecoyError, GenerationError, VaultError, reasons
+    from decoy_engine.verification.postmask import PostScanBlockedError
 
     # CLI install DX (2026-09-25): a pipeline step that lazily imports an
     # optional dependency (boto3/google-cloud-storage for a cloud
@@ -218,6 +224,13 @@ def fail(ctx: RunContext, exc: Exception) -> NoReturn:
             raise RuntimeError("pre-run check carried an exit code with no category")
     elif capacity_code is not None or out_of_memory:
         _category = "capacity"
+    elif isinstance(exc, VaultError) and exc.code == reasons.runtime.VAULT_EXISTS:
+        # An existing vault is refused, never overwritten: the operator picks a new path.
+        _category = "usage"
+    elif isinstance(exc, PostScanBlockedError):
+        # The post-scan gate withheld the output on a verdict about the data, the same
+        # state as a blocking post-validation failure (exit 4), not a crash (exit 3).
+        _category = None
     elif isinstance(exc, GenerationError) and exc.code == UNIQUENESS_IMPOSSIBLE_CODE:
         # A `unique` column or pair the data cannot satisfy (a parent with too
         # few distinct keys, a faker type that ran out) is fixed in the config, so it exits 1
@@ -269,6 +282,11 @@ def fail(ctx: RunContext, exc: Exception) -> NoReturn:
         and exc.code == UNIQUENESS_IMPOSSIBLE_CODE
     )
 
+    remove_vault_hint = (
+        isinstance(engine_exc, VaultError)
+        and engine_exc.code == reasons.runtime.VAULT_COMMIT_FAILED
+    )
+
     if ctx.state.mode is OutputMode.json:
         # R7: the capacity branch ADDS error_kind/code to this SAME
         # envelope -- command/config/mode/error are never dropped, and
@@ -288,6 +306,8 @@ def fail(ctx: RunContext, exc: Exception) -> NoReturn:
         payload.update(ctx.published_members())
         if raise_rows_hint:
             payload["hint"] = gen.RAISE_ROWS_HINT
+        if remove_vault_hint:
+            payload["hint"] = VAULT_COMMIT_FAILED_HINT
         if isinstance(exc, PreRunCheckError):
             payload.update(exc.json_members())
         elif capacity_code is not None or out_of_memory:
@@ -335,9 +355,13 @@ def fail(ctx: RunContext, exc: Exception) -> NoReturn:
             ctx.state.err_console.print(error("error:"), error_text, markup=False)
             if raise_rows_hint:
                 ctx.state.err_console.print(" ", hint("hint:"), gen.RAISE_ROWS_HINT)
+            if remove_vault_hint:
+                ctx.state.err_console.print(" ", hint("hint:"), VAULT_COMMIT_FAILED_HINT)
             ctx.state.err_console.print(
                 " ", hint("hint:"), "rerun with --verbose for the full traceback."
             )
     if ctx.state.verbose:
         print_traceback(ctx.state)
-    raise typer.Exit(code=run_exit_code(_category))
+    raise typer.Exit(
+        code=run_exit_code(_category, blocking_failed=isinstance(exc, PostScanBlockedError))
+    )

@@ -23,10 +23,7 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Iterator
 
-try:
-    import fcntl
-except ImportError:  # Windows
-    fcntl = None  # type: ignore[assignment]
+from decoy._private_file import advisory_lock_available, try_lock_exclusive
 
 LOCK_NAME = ".install.lock"
 
@@ -50,7 +47,7 @@ def exclusive(
     home: Path, name: str = LOCK_NAME, busy: Callable[[], Exception] = _install_busy
 ) -> Iterator[None]:
     """Hold ``<home>/<name>`` or raise ``busy()`` at once. Other files reuse this with their own name."""
-    if fcntl is None:
+    if not advisory_lock_available():
         yield
         return
     home.mkdir(parents=True, exist_ok=True)
@@ -59,7 +56,7 @@ def exclusive(
     fd = os.open(home / name, os.O_RDWR | os.O_CREAT, 0o600)
     try:
         try:
-            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            try_lock_exclusive(fd)
         except OSError:
             raise busy() from None
         yield

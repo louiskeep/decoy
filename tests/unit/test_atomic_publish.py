@@ -9,7 +9,7 @@ from pathlib import Path
 
 import pytest
 
-from decoy import _atomic
+from decoy import _atomic, _private_file
 from decoy._atomic import AtomicWriteError, LocalTarget, WriteMode, publish_local_targets
 
 posix = pytest.mark.skipif(os.name == "nt", reason="POSIX mode bits and directory locks")
@@ -297,7 +297,7 @@ def test_a_lock_failure_that_is_not_contention_is_a_write_failure(
     def refuse(_fd: int, _op: int) -> None:
         raise OSError(errno.ENOLCK, "no locks")
 
-    monkeypatch.setattr(_atomic.fcntl, "flock", refuse)
+    monkeypatch.setattr(_private_file.fcntl, "flock", refuse)
 
     with pytest.raises(AtomicWriteError) as caught:
         publish_local_targets([LocalTarget(tmp_path / "a.json", b"a")])
