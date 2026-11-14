@@ -23,8 +23,8 @@ from decoy._version import __version__
 from decoy.cli.exit_codes import EXIT_OK, EXIT_RUNTIME, EXIT_USAGE
 from decoy.distribution import installer, layout, release_key
 from decoy.distribution import version_document as vd
-from decoy.ui.output import OutputMode, emit_json, setup_output
-from decoy.ui.theme import error, hint, success
+from decoy.ui.output import OutputMode, emit_error, emit_json, setup_output
+from decoy.ui.theme import hint, success
 
 UPGRADE_EPILOG = """\
 Examples:
@@ -73,17 +73,18 @@ def upgrade(
 
     home = _managed_home()
     if home is None:
-        state.err_console.print(
-            error("error:"),
+        emit_error(
+            state,
+            "upgrade",
             "`decoy upgrade` manages a bundled install, but this looks like a pip/dev install.",
+            hint="upgrade it the way you installed it (e.g. `pip install -U decoy-cli`).",
         )
-        state.err_console.print(" ", hint("hint:"), "upgrade it the way you installed it (e.g. `pip install -U decoy-cli`).")
         raise typer.Exit(code=EXIT_USAGE)
 
     try:
         pubkey = release_key.pinned_public_pem()
     except release_key.NoPinnedKeyError as exc:
-        state.err_console.print(error("error:"), str(exc))
+        emit_error(state, "upgrade", str(exc))
         raise typer.Exit(code=EXIT_USAGE) from exc
 
     # Local rollback must not depend on the network. An explicit `--version <v>` that is
@@ -98,7 +99,7 @@ def upgrade(
         try:
             outcome = installer.activate_local_version(version, home=home, expected_public_pem=pubkey)
         except installer.InstallError as exc:
-            state.err_console.print(error("error:"), str(exc))
+            emit_error(state, "upgrade", str(exc))
             raise typer.Exit(code=EXIT_RUNTIME) from exc
         _report_outcome(state, outcome, "activated")
         raise typer.Exit(code=EXIT_OK)
@@ -108,22 +109,26 @@ def upgrade(
         doc_bytes = _fetch(doc_url)
         doc_sig = _fetch(doc_url + ".sig").decode("ascii").strip()
     except Exception as exc:
-        state.err_console.print(error("error:"), f"could not reach the version endpoint: {exc}")
+        emit_error(state, "upgrade", f"could not reach the version endpoint: {exc}")
         raise typer.Exit(code=EXIT_RUNTIME) from exc
 
     if not vd.verify_document(doc_bytes, doc_sig, expected_public_pem=pubkey):
-        state.err_console.print(error("error:"), "version-document signature INVALID -- refusing (possible tampering).")
+        emit_error(
+            state,
+            "upgrade",
+            "version-document signature INVALID -- refusing (possible tampering).",
+        )
         raise typer.Exit(code=EXIT_RUNTIME)
     try:
         doc = vd.parse_document(doc_bytes)
     except ValueError as exc:
-        state.err_console.print(error("error:"), f"version document rejected: {exc}")
+        emit_error(state, "upgrade", f"version document rejected: {exc}")
         raise typer.Exit(code=EXIT_RUNTIME) from exc
     try:
         # --check is read-only, so it enforces freshness but does not advance the state.
         installer.check_document_freshness(doc, home, record=False)
     except installer.InstallError as exc:
-        state.err_console.print(error("error:"), str(exc))
+        emit_error(state, "upgrade", str(exc))
         raise typer.Exit(code=EXIT_RUNTIME) from exc
     latest = doc.get("latest")
     target_version = version or latest
@@ -173,7 +178,7 @@ def upgrade(
             post_swap_validate=_post_swap,
         )
     except installer.InstallError as exc:
-        state.err_console.print(error("error:"), str(exc))
+        emit_error(state, "upgrade", str(exc))
         raise typer.Exit(code=EXIT_RUNTIME) from exc
 
     _report_outcome(state, outcome, "upgraded")

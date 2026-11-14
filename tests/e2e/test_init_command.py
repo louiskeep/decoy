@@ -54,7 +54,11 @@ def test_init_refuses_to_overwrite_in_json_mode(tmp_path: Path):
     out.write_text("existing")
     result = runner.invoke(app, ["init", "--output", str(out), "--json"])
     assert result.exit_code == 1
-    assert "already exists" in result.stderr
+    # The refusal is the one `--json` error object on stdout, not human text on stderr.
+    payload = _json.loads(result.stdout)
+    assert payload["status"] == "error"
+    assert "already exists" in payload["error"]
+    assert out.read_text() == "existing"
 
 
 def test_init_overwrites_with_yes_flag(tmp_path: Path):
