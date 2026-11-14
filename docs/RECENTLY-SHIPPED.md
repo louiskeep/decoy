@@ -22,8 +22,12 @@ git logs).
 
 ## 2026-11-14
 
+- **CLI** (`8477b345`, CLI #248): PROJECT-LAYOUT P8 (roadmap row 24t, still partly merged). `decoy run` with no argument runs the project's one pipeline; `decoy run --all` runs every pipeline in its own process and exits with the most serious child exit code.
+- **CLI** (`f876137f`, CLI #246): DUP-FREEZE CL3 (roadmap row 24zf, partly merged). One config loader, one exception-to-exit-code map and one secret-ref rule.
+- **CLI** (`41986152`, CLI #245): repin to engine 0.24.0. A vault is created only under its writer lock, a failed run removes only the vault it created, and layout refusals come before vault and source checks.
+- **Engine** (`e5114b17`, engine #585): POSTSCAN-STREAM PS-11 (roadmap row 60, partly merged). Loader and transformed baselines are teed on the sequential route. It ships in the next engine release.
 - **Engine** (`f298104e`, engine #584): LOADER-DROP (roadmap row 24zg, added and closed). A run refuses a declared table the plan would drop: `config/loader_table_undeclared` before any read, `config/declared_table_dropped` after the plan is built. It ships in the next engine release.
-- **Engine** (`07763ff5`, engine #579): POSTSCAN-STREAM part PS-10 (roadmap row 60, still partly merged). Staged output is checked before commit on streamed routes. PS-11 is open as engine #585.
+- **Engine** (`07763ff5`, engine #579): POSTSCAN-STREAM part PS-10 (roadmap row 60, still partly merged). Staged output is checked before commit on streamed routes. PS-11 merged later the same day (engine #585).
 - **Engine** (`a43bdaa8`, engine #578): PS-9. An isolated post-scan block reports outcome `blocked`.
 - **Engine** (`81dbfe00`, engine #570): PS-8. The post-scan gate runs on every no-sink route.
 - **Engine** (`b1254eb1`, engine #581): DUP-FREEZE E1 (roadmap row 24zf, partly merged). One canonical JSON owner for digests and fingerprints. It ships in the next engine release.
