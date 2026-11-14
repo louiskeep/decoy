@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import subprocess
 from pathlib import Path
+from typing import NoReturn
 
 import typer
 
@@ -100,7 +101,6 @@ def upgrade(
             outcome = installer.activate_local_version(version, home=home, expected_public_pem=pubkey)
         except installer.InstallError as exc:
             _refuse(state, "could not activate the installed version", "upgrade_activate_failed", exc)
-            raise typer.Exit(code=EXIT_RUNTIME) from None
         _report_outcome(state, outcome, "activated")
         raise typer.Exit(code=EXIT_OK)
 
@@ -110,7 +110,6 @@ def upgrade(
         doc_sig = _fetch(doc_url + ".sig").decode("ascii").strip()
     except Exception as exc:
         _refuse(state, "could not reach the version endpoint", "upgrade_endpoint_unreachable", exc)
-        raise typer.Exit(code=EXIT_RUNTIME) from None
 
     if not vd.verify_document(doc_bytes, doc_sig, expected_public_pem=pubkey):
         emit_error(
@@ -123,13 +122,11 @@ def upgrade(
         doc = vd.parse_document(doc_bytes)
     except ValueError as exc:
         _refuse(state, "version document rejected", "upgrade_document_rejected", exc)
-        raise typer.Exit(code=EXIT_RUNTIME) from None
     try:
         # --check is read-only, so it enforces freshness but does not advance the state.
         installer.check_document_freshness(doc, home, record=False)
     except installer.InstallError as exc:
         _refuse(state, "version document failed the freshness check", "upgrade_document_stale", exc)
-        raise typer.Exit(code=EXIT_RUNTIME) from None
     latest = doc.get("latest")
     target_version = version or latest
 
@@ -179,17 +176,18 @@ def upgrade(
         )
     except installer.InstallError as exc:
         _refuse(state, "the upgrade failed and the installed runtime is unchanged", "upgrade_install_failed", exc)
-        raise typer.Exit(code=EXIT_RUNTIME) from None
 
     _report_outcome(state, outcome, "upgraded")
     raise typer.Exit(code=EXIT_OK)
 
 
-def _refuse(state, message: str, code: str, exc: BaseException) -> None:
-    """Fixed text and a code, plus the exception type. Never `str(exc)`: a network, installer or
-    version-document error can quote the `--url` (credentials included), a system message or a
-    literal from the document."""
+def _refuse(state, message: str, code: str, exc: BaseException) -> NoReturn:
+    """Fixed text and a code, plus the exception type, then exit. Never `str(exc)`: a network,
+    installer or version-document error can quote the `--url` (credentials included), a system
+    message or a literal from the document. The exit drops the chain (`from None`) for the same
+    reason, so the exception cannot sit in `__cause__`."""
     emit_error(state, "upgrade", f"{message}: {type(exc).__name__}.", code=code)
+    raise typer.Exit(code=EXIT_RUNTIME) from None
 
 
 def _report_outcome(state, outcome, action: str) -> None:

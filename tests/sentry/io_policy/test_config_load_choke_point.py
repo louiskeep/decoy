@@ -109,11 +109,12 @@ def test_the_baseline_is_registered_as_cl3() -> None:
     assert 'id = "config-load-allow"' in REGISTRY.read_text(encoding="utf-8")
 
 
-# Functions that read bytes and decode them on purpose, keyed `path::function` exactly. A file
-# holding one of these gets no wider exemption: its other functions are scanned.
-BYPASS_EXEMPT: dict[str, str] = {
-    "ci/manifest.py::load_manifest": "the CI manifest's own strict reader (ci.manifest_invalid)",
-}
+def _bypass_exempt() -> dict[str, str]:
+    """Functions that read bytes and decode them on purpose, keyed `path::function` exactly. A
+    file holding one of these gets no wider exemption: its other functions are scanned."""
+    return {
+        "ci/manifest.py::load_manifest": "the CI manifest's own strict reader (ci.manifest_invalid)",
+    }
 
 
 def _stray(inventory: set[str], exempt: set[str]) -> set[str]:
@@ -122,17 +123,17 @@ def _stray(inventory: set[str], exempt: set[str]) -> set[str]:
 
 def test_no_other_function_reads_bytes_and_decodes_them_itself() -> None:
     """A user config's read-and-decode step belongs to `read_config_text`. Only the exact
-    functions in `BYPASS_EXEMPT` may do it by hand."""
-    stray = _stray(sites.bypass_inventory(), set(BYPASS_EXEMPT))
+    functions in `_bypass_exempt` may do it by hand."""
+    stray = _stray(sites.bypass_inventory(), set(_bypass_exempt()))
     assert stray == set(), "a hand-rolled read_bytes + decode (use read_config_text)"
 
 
 def test_every_bypass_exemption_matches_a_live_site() -> None:
-    assert set(BYPASS_EXEMPT) - sites.bypass_inventory() == set(), "a stale bypass exemption"
+    assert set(_bypass_exempt()) - sites.bypass_inventory() == set(), "a stale bypass exemption"
 
 
 def test_removing_the_exemption_shows_the_real_reader() -> None:
-    assert _stray(sites.bypass_inventory(), set()) == set(BYPASS_EXEMPT)
+    assert _stray(sites.bypass_inventory(), set()) == set(_bypass_exempt())
 
 
 def test_an_exempt_file_still_has_its_other_functions_scanned() -> None:
@@ -141,7 +142,7 @@ def test_an_exempt_file_still_has_its_other_functions_scanned() -> None:
         "def other(p):\n    return p.read_bytes().decode()\n"
     )
     found = sites.bypass_sites_in_source(seeded, "ci/manifest.py")
-    assert _stray(found, set(BYPASS_EXEMPT)) == {"ci/manifest.py::other"}
+    assert _stray(found, set(_bypass_exempt())) == {"ci/manifest.py::other"}
 
 
 def test_the_loader_exists_and_loads_yaml() -> None:

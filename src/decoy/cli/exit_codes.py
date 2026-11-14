@@ -293,5 +293,4 @@ __all__ = [
     "EXIT_USAGE",
     "EXIT_WARNINGS",
     "RUN_EXIT_MAP",
-    "UNIQUENESS_IMPOSSIBLE_CODE",
 ]
