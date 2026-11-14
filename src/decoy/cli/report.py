@@ -12,6 +12,12 @@ arguments reference). There is no run catalog or workspace.
   diff      -- Compare two manifests: fingerprints always, data when files exist.
   vault     -- Inspect a vault file written by `decoy run --vault`.
 
+S4b (CLI redesign) folded the former `report summarize` + `report compare`,
+the `evidence` verbs (show/verify), the `validate` distribution check, the
+`storm` integrity check, and `vault info` into this one noun. The relocated
+bodies are reused verbatim; their engine deps stay lazy-imported inside each
+body.
+
 RAW-VALUE ISOLATION (Dennis review note, cli-first-capability-guide.md L534-538):
 
   Reports build from evidence-safe data only. The manifest already excludes
@@ -51,7 +57,7 @@ from decoy.cli.evidence import (
     verify_manifest,
 )
 from decoy.cli.exit_codes import EXIT_FINDINGS, EXIT_RUNTIME, EXIT_USAGE, exit_code_for
-from decoy.cli.io import entry_format, pipeline_option, report_target, resolve_pipeline
+from decoy.cli.io import ReportTarget, entry_format, pipeline_option, report_dest, resolve_pipeline
 from decoy.ui.output import (
     OutputMode,
     OutputState,
@@ -89,18 +95,12 @@ report_app = typer.Typer(
 # ---------------------------------------------------------------------------
 
 
-def _write_out(state: OutputState, target: Any, text: str) -> Path | None:
-    """Write a report (owner-only): `target` is a typed Path or a ReportTarget; a default only warns."""
-    path = getattr(target, "path", target)
-    if path is not None:
-        try:
+def _write_out(state: OutputState, target: ReportTarget, text: str) -> Path | None:
+    """Write a report file (owner-only); a typed target refuses on failure, a default only warns."""
+    with target.recording():
+        for path in target.paths:
             write_local_target(path, text.encode("utf-8"), WriteMode.REPLACE)
-        except AtomicWriteError as exc:
-            if not getattr(target, "implicit", False):
-                state.err_console.print(error("error:"), f"could not write {path}: {describe(exc)}")
-                raise typer.Exit(code=EXIT_USAGE)
-            target = target.failed()
-    return announce_report(state, target) if hasattr(target, "implicit") else None
+    return announce_report(state, target)
 
 
 def _load_manifest(
@@ -1118,7 +1118,7 @@ def _show(
             content = render_markdown(manifest)
         else:
             content = render_html(manifest)
-        _write_out(state, out, content)
+        _write_out(state, ReportTarget(out, False), content)
         fmt_label = "Markdown" if fmt in ("markdown", "md") else "HTML"
         state.console.print(success("ok"), f"{fmt_label} report written to", code(str(out)))
         return
@@ -1805,8 +1805,9 @@ def _fidelity(
         expect_row_parity=not generate,
     )
     policy_result = apply_quality_policy(report, policy_config, strategy_map=strategy_map)
+
     text = _json.dumps({**report, "policy": policy_result}, indent=2)
-    written = _write_out(state, report_target("fidelity", output, ref, report_out), text)
+    written = _write_out(state, report_dest("fidelity", output, ref, report_out), text)
 
     verdict = policy_result["verdict"]
     status = "ok" if verdict == "pass" else verdict
@@ -1815,8 +1816,7 @@ def _fidelity(
         envelope = dict(report)
         envelope["command"] = "report fidelity"
         envelope["status"] = status
-        envelope["policy"] = policy_result
-        envelope |= {"report_path": str(written)} if written else {}
+        envelope.update(policy=policy_result, **({"report_path": str(written)} if written else {}))
         emit_json(state, envelope)
     elif state.mode is not OutputMode.quiet:
         render_fidelity_report(
@@ -2054,7 +2054,7 @@ def _integrity(
             config=config_dict,
         )
 
-        target = report_target("integrity", masked, ref, out)
+        target = report_dest("integrity", masked, ref, out)
         written = _write_out(state, target, _json.dumps(report, indent=2))
 
         # Decide exit code based on the report's severity counters.

@@ -81,12 +81,13 @@ from decoy.cli.io._pipelines import (
 )
 from decoy.cli.io._placement import (
     OutputPlacement,
+    ReportTarget,
     fixed_target_overwrites,
     layout_failures,
     layout_issues,
     open_out_dir,
     owning_pipeline,
-    report_target,
+    report_dest,
     resolved_output_collisions,
 )
 from decoy.cli.io._project import (
@@ -144,6 +145,7 @@ __all__ = [
     "PipelineRef",
     "PipelineToken",
     "Project",
+    "ReportTarget",
     "RunFolder",
     "RunHistory",
     "RunLayout",
@@ -192,7 +194,7 @@ __all__ = [
     "read_small_file",
     "read_source",
     "relative_outputs",
-    "report_target",
+    "report_dest",
     "resolve_path",
     "resolve_pipeline",
     "resolve_target_format",

@@ -125,16 +125,27 @@ def test_a_target_escaping_dir_is_refused_before_any_folder(
     assert _files(root) == before
 
 
-def test_a_dir_that_is_a_file_is_refused_and_nothing_is_made(
+def test_a_dir_that_is_a_file_is_refused_with_the_exact_envelope(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    import json
+
     root = _project(tmp_path)
     (root / "b").write_text("x", encoding="utf-8")
     _no_source_read(monkeypatch)
     before = _files(root)
-    result = _tokenize(root, monkeypatch, "--out-dir", "b", "--vault", "v.db")
+    result = _tokenize(root, monkeypatch, "--out-dir", "b", "--vault", "v.db", "--json")
     assert result.exit_code == EXIT_USAGE
-    assert "layout.output_dir_unusable" in result.output
+    doc = json.loads(result.stdout)
+    assert doc["status"] == "error"
+    assert doc["code"] == "layout.output_dir_unusable"
+    assert doc["error_kind"] == "validation"
+    (message,) = doc["messages"]
+    assert (message["layer"], message["severity"], message["code"]) == (
+        "config",
+        "error",
+        "layout.output_dir_unusable",
+    )
     assert _files(root) == before
 
 

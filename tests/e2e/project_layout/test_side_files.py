@@ -22,7 +22,7 @@ from typer.testing import CliRunner
 
 from decoy.__main__ import app
 from decoy.cli.exit_codes import EXIT_OK, EXIT_USAGE
-from decoy.cli.io import _layout
+from decoy.cli.io import side_file_default
 from tests.e2e.cli_fmt.test_target_format_dispatch import _target, _target_layout
 from tests.e2e.cli_fmt.test_target_format_readers import (
     _EMAILS,
@@ -193,11 +193,11 @@ def test_detokenize_refuses_to_overwrite_its_default_name(
 def test_side_file_default_names_beside_the_input(
     tmp_path: Path, kind: str, name: str, expected: str
 ) -> None:
-    assert _layout.side_file_default(kind, tmp_path / name) == tmp_path / expected
+    assert side_file_default(kind, tmp_path / name) == tmp_path / expected
 
 
 def test_side_file_default_parquet_form_for_detokenized(tmp_path: Path) -> None:
-    got = _layout.side_file_default("detokenized", tmp_path / "t.pq", parquet=True)
+    got = side_file_default("detokenized", tmp_path / "t.pq", parquet=True)
     assert got == tmp_path / "t.detokenized.parquet"
 
 
@@ -206,14 +206,14 @@ def test_side_file_default_resolves_a_linked_folder_first(tmp_path: Path) -> Non
     real = tmp_path / "real"
     real.mkdir()
     os.symlink(real, tmp_path / "current")
-    assert _layout.side_file_default("unmasked", tmp_path / "current" / "m.csv") == (
+    assert side_file_default("unmasked", tmp_path / "current" / "m.csv") == (
         real.resolve() / "m.unmasked.csv"
     )
 
 
 def test_side_file_default_refuses_an_unknown_kind(tmp_path: Path) -> None:
     with pytest.raises(KeyError):
-        _layout.side_file_default("bogus", tmp_path / "m.csv")  # type: ignore[arg-type]
+        side_file_default("bogus", tmp_path / "m.csv")  # type: ignore[arg-type]
 
 
 def test_open_run_layout_and_owning_pipeline_name_the_same_pipeline(tmp_path: Path) -> None:

@@ -154,11 +154,14 @@ def test_a_reports_folder_that_cannot_be_made_warns_and_keeps_the_exit(tmp_path:
     _root, src, masked = _masked_run(tmp_path)
     expected = _baseline_exit(masked, src)
     (masked.parent / "reports").write_text("in the way", encoding="utf-8")
-    for result in (_integrity(masked, src), _fidelity(src, masked)):
-        assert result.exit_code in (expected, 0, 4), result.output
+    expected_fidelity = _fidelity(src, masked, "--report-out", str(tmp_path / "f.json")).exit_code
+    for result, want in (
+        (_integrity(masked, src), expected),
+        (_fidelity(src, masked), expected_fidelity),
+    ):
+        assert result.exit_code == want, result.output
         assert "layout.report_not_written" in result.output
         assert str(masked.parent) not in result.output
-    assert _integrity(masked, src).exit_code == expected
 
 
 def test_a_failed_default_write_warns_and_a_typed_one_still_fails(
@@ -211,3 +214,56 @@ def test_a_no_marker_project_still_gets_its_default_report(
     (stray / "m.csv").write_bytes((run / "m.csv").read_bytes())
     _integrity(stray / "m.csv", src)
     assert not (stray / "reports").exists()
+
+
+# --- V1-1: only a run folder its pipeline claim vouches for gets a default report ----------
+
+
+def _look_alike(base: Path, masked: Path, name: str = "ghost") -> Path:
+    """A copy of `masked` under `<base>/out/<name>/<run-id>/`, with no claim."""
+    run = base / "out" / name / "20261109T101500123456Z-0a1b2c3d"
+    run.mkdir(parents=True)
+    (run / "m.csv").write_bytes(masked.read_bytes())
+    return run
+
+
+def _claims(root: Path, kind: str) -> str | None:
+    return {
+        "missing": None,
+        "bogus": "pipelines/nothing/pipeline.yaml",
+        "other": "pipelines/orders/pipeline.yaml",
+    }[kind]
+
+
+@pytest.mark.parametrize("claim", ["missing", "bogus", "other"])
+@pytest.mark.parametrize("marker", [True, False])
+def test_a_look_alike_run_folder_gets_no_report(tmp_path: Path, marker: bool, claim: str) -> None:
+    root, src, masked = _masked_run(tmp_path)
+    if marker:
+        base = root
+    else:
+        base = tmp_path / "plain"
+        base.mkdir()
+    expected = _baseline_exit(masked, src)
+    run = _look_alike(base, masked)
+    text = _claims(root, claim)
+    if text is not None:
+        (run.parent / "PIPELINE").write_text(text + "\n", encoding="utf-8")
+    before = _files(tmp_path)
+    result = _integrity(run / "m.csv", src)
+    assert result.exit_code == expected, result.output
+    assert _files(tmp_path) == before
+    fidelity = _fidelity(src, run / "m.csv")
+    assert fidelity.exit_code in (EXIT_OK, 4)
+    assert _files(tmp_path) == before
+
+
+def test_a_claim_that_is_a_link_is_not_vouching(tmp_path: Path) -> None:
+    root, src, masked = _masked_run(tmp_path)
+    run = _look_alike(root, masked)
+    real = masked.parent.parent / "PIPELINE"
+    assert real.is_file()
+    (run.parent / "PIPELINE").symlink_to(real)
+    before = _files(tmp_path)
+    _integrity(run / "m.csv", src)
+    assert _files(tmp_path) == before

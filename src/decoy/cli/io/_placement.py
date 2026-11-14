@@ -12,14 +12,19 @@ import os
 import stat
 import sys
 import unicodedata
-from dataclasses import dataclass, replace
+from collections.abc import Iterator
+from contextlib import contextmanager
+from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from decoy._atomic import destination_entry
+from decoy._atomic import AtomicWriteError, describe, destination_entry
+from decoy._config_file import ConfigFileError, load_config_mapping
 from decoy._private_file import PrivateFileError
+from decoy.cli.exit_codes import EXIT_USAGE
 from decoy.cli.io._cloud import cloud_root_issues, has_cloud_targets
 from decoy.cli.io._layout import (
+    RunFolder,
     RunLayout,
     _same_dir,
     check_path_budget,
@@ -283,6 +288,8 @@ def layout_issues(
     base = "--out-dir" if fixed is not None else "its run folder"
     if fixed is not None:
         folder = fixed.resolve() if fixed.exists() else fixed
+        if not (fixed.is_dir() if os.path.lexists(fixed) else fixed.parent.is_dir()):
+            issues.append((None, OUTPUT_DIR_UNUSABLE.error()))
     elif placed or urls:
         try:
             found, pn = pipeline_identity(config, config_dict.get("name"))
@@ -369,18 +376,35 @@ def owning_pipeline(
     return found.root, name.name
 
 
-def _run_root_of(file: Path) -> Path | None:
-    """The project root of a file inside `<R>/out/<name>/<run-id>/`, for a project with no marker.
+def _claimed_run(root: Path, name: str, file: Path) -> RunFolder | None:
+    """The run folder of pipeline `name` in `root` that holds `file`, when its claim vouches.
 
-    The folder names must fit: a run id, a claim under `out/<name>/`, and `owning_run` agrees.
+    A look-alike `out/<name>/<run-id>/` has no such claim. The claim must be a regular file naming
+    a YAML inside the project that exists and whose identity, by the rule `decoy run` uses, is
+    `name`. Anything else, or a YAML that cannot be read, is None.
     """
+    from decoy.cli.io._project import Project
+
+    run = owning_run(file, root, name)
+    claimed = read_claim(project_out_folder(root), name) if run is not None else None
+    yaml = contained_path(root, claimed) if claimed is not None else None
+    if run is None or yaml is None:
+        return None
+    try:
+        declared = load_config_mapping(yaml).get("name")
+        _found, identity = pipeline_identity(yaml, declared, Project(root=root))
+    except (ConfigFileError, OSError, LayoutError):
+        return None
+    return run if identity.name == name else None
+
+
+def _root_of_run_folder(file: Path) -> Path | None:
+    """The root a file's own folder names point at: `<R>/out/<name>/<run-id>/...`, claim included."""
     resolved = file.resolve()
     for run in resolved.parents:
-        name_dir_, out = run.parent, run.parent.parent
-        if is_run_id(run.name) and read_claim(out, name_dir_.name) is not None:
-            root = out.parent
-            if owning_run(resolved, root, name_dir_.name) is not None:
-                return root
+        root = run.parent.parent.parent
+        if is_run_id(run.name) and _claimed_run(root, run.parent.name, resolved) is not None:
+            return root
     return None
 
 
@@ -389,10 +413,10 @@ def _default_report_path(
 ) -> Path | LayoutWarning | None:
     """Where `report <kind>` writes by default: `<run>/reports/<kind>.json` for a run output.
 
-    The run is looked for under the pipeline's project and the config's folder, then the
-    project found from the file, then the root its own folder names fit. Makes the owner-only
-    `reports/` folder. None for any other file, so nothing new is written for it; a
-    `LayoutWarning` when the folder cannot be made.
+    Candidate roots are the pipeline's project, the config's folder, the project found from the
+    file and the root its own folders name; each goes through `_claimed_run`, so only a run folder
+    its pipeline claim vouches for qualifies. Makes the owner-only `reports/` folder. None for any
+    other file, so nothing new is written; a `LayoutWarning` when the folder cannot be made.
     """
     from decoy.cli.io._project import find_project
 
@@ -403,14 +427,14 @@ def _default_report_path(
         roots.append(find_project(file.resolve().parent, None).root)
     except LayoutError:
         pass
-    if (own := _run_root_of(file)) is not None:
+    if (own := _root_of_run_folder(file)) is not None:
         roots.append(own)
     for root in roots:
         try:
             names = os.listdir(project_out_folder(root))
         except OSError:
             continue
-        run = next((r for n in names if (r := owning_run(file, root, n)) is not None), None)
+        run = next((r for n in names if (r := _claimed_run(root, n, file)) is not None), None)
         if run is None:
             continue
         folder = run.path / "reports"
@@ -439,25 +463,38 @@ def open_out_dir(directory: Path) -> RunLayout:
     return layout
 
 
-@dataclass(frozen=True)
+@dataclass
 class ReportTarget:
     """Where one report goes: a typed path, or the default under a run folder (`implicit`).
 
-    `warning` is set when an implicit report could not be made (its folder, or later its file);
-    it never changes the check's exit code.
+    A failed write sets `warning` for a default (the check's exit code never changes) and
+    `error`, the rendered reason, for a typed path (the command refuses).
     """
 
     path: Path | None
     implicit: bool
     warning: LayoutWarning | None = None
+    error: str | None = None
+    exit_code: int = EXIT_USAGE
 
-    def failed(self) -> ReportTarget:
-        return replace(self, warning=REPORT_NOT_WRITTEN.warning())
+    @property
+    def paths(self) -> tuple[Path, ...]:
+        """The files to write: none when there is no default report to make."""
+        return () if self.path is None else (self.path,)
+
+    @contextmanager
+    def recording(self) -> Iterator[None]:
+        """Record a failed write on this target instead of raising it."""
+        try:
+            yield
+        except AtomicWriteError as exc:
+            if self.implicit:
+                self.warning = REPORT_NOT_WRITTEN.warning()
+            else:
+                self.error = f"could not write {self.path}: {describe(exc)}"
 
 
-def report_target(
-    kind: str, file: Path, ref: PipelineRef | None, typed: Path | None
-) -> ReportTarget:
+def report_dest(kind: str, file: Path, ref: PipelineRef | None, typed: Path | None) -> ReportTarget:
     """The typed path if given, else the default `<run>/reports/<kind>.json` for a run output."""
     if typed is not None:
         return ReportTarget(typed, False)
