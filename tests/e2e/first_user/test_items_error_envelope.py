@@ -10,13 +10,15 @@ import json
 from pathlib import Path
 
 import pytest
-from tests.command_tree import visible_paths
 from typer.testing import CliRunner
 
 from decoy.__main__ import app
 from decoy.cli.exit_codes import EXIT_USAGE
+from tests.command_tree import visible_paths
 
-SCHEMA_PATH = Path(__file__).resolve().parents[3] / "docs" / "schemas" / "decoy-error-v1.schema.json"
+SCHEMA_PATH = (
+    Path(__file__).resolve().parents[3] / "docs" / "schemas" / "decoy-error-v1.schema.json"
+)
 SCHEMA = json.loads(SCHEMA_PATH.read_text(encoding="utf-8"))
 runner = CliRunner()
 
@@ -46,7 +48,15 @@ BAD_INPUT: dict[str, list[str]] = {
     "report render": ["report", "render", BAD_JSON, "-o", "out.html"],
     "report verify": ["report", "verify", BAD_JSON],
     "report fidelity": ["report", "fidelity", BAD_CSV, GOOD_CSV],
-    "report integrity": ["report", "integrity", GOOD_CSV, "--source", GOOD_CSV, "--config", BAD_YAML],
+    "report integrity": [
+        "report",
+        "integrity",
+        GOOD_CSV,
+        "--source",
+        GOOD_CSV,
+        "--config",
+        BAD_YAML,
+    ],
     "report diff": ["report", "diff", BAD_JSON, BAD_JSON],
     "report vault": ["report", "vault", GOOD_CSV, "--config", BAD_YAML],
 }
@@ -139,9 +149,7 @@ def test_multi_scan_prints_error_and_hint_under_quiet(files: Path) -> None:
 
 
 def test_gen_scaffold_prints_its_error_under_quiet(files: Path) -> None:
-    result = runner.invoke(
-        app, ["init", GOOD_CSV, "--preset", "generate", "-o", "-", "--quiet"]
-    )
+    result = runner.invoke(app, ["init", GOOD_CSV, "--preset", "generate", "-o", "-", "--quiet"])
 
     assert result.exit_code == EXIT_USAGE
     assert result.stdout == ""

@@ -133,7 +133,11 @@ def _literal_problems(node: ast.Dict | ast.Call) -> list[str]:
         }
     else:
         members = {kw.arg: kw.value for kw in node.keywords if kw.arg is not None}
-    problems = [f"missing {name}" for name in ("command", "error") if name not in members]
+    # A `**spread` can supply any member, so a literal that has one is judged on what it names.
+    spread = isinstance(node, ast.Dict) and any(k is None for k in node.keys)
+    problems = [
+        f"missing {name}" for name in ("command", "error") if name not in members and not spread
+    ]
     if "message" in members:
         problems.append("carries message")
     code = members.get("code")
@@ -180,6 +184,7 @@ def test_every_retained_error_literal_fits_the_schema() -> None:
         ("{'command': 'c', 'status': 'error', 'error': 'm', 'tags': {'a'}}", "tags is not JSON"),
         ("{'command': 'c', 'status': 'error', 'error': 'm', 'raw': b'x'}", "raw is not JSON"),
         ("dict(command='c', status='error', message='m')", "missing error"),
+        ("{**base, 'status': 'error', 'error': 'm', 'message': 'm'}", "carries message"),
     ],
 )
 def test_a_literal_that_breaks_the_schema_is_reported(src: str, expected: str) -> None:
@@ -199,6 +204,8 @@ def test_list_and_object_context_is_accepted() -> None:
 def test_a_new_direct_call_and_a_new_hand_built_object_are_gained_sites() -> None:
     recorded = _recorded()
     human = _keys("def new(s):\n    s.err_console.print(error('error:'), 'x')\n")
-    built = _keys("def new(s):\n    emit_json(s, {'command': 'c', 'status': 'error', 'error': 'x'})\n")
+    built = _keys(
+        "def new(s):\n    emit_json(s, {'command': 'c', 'status': 'error', 'error': 'x'})\n"
+    )
     assert len(human) == len(built) == 1
     assert (human | built) - recorded == human | built

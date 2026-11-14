@@ -10,8 +10,9 @@ import pytest
 from decoy.ui.output import emit_error, setup_output
 
 SCHEMA = json.loads(
-    (Path(__file__).resolve().parents[2] / "docs" / "schemas" / "decoy-error-v1.schema.json")
-    .read_text(encoding="utf-8")
+    (
+        Path(__file__).resolve().parents[2] / "docs" / "schemas" / "decoy-error-v1.schema.json"
+    ).read_text(encoding="utf-8")
 )
 
 

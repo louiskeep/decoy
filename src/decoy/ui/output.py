@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json as _json
 import os
+import re
 import sys
 import warnings
 from collections.abc import Mapping
@@ -166,6 +167,13 @@ def emit_json(state: OutputState, payload: dict) -> None:
 
 JsonValue: TypeAlias = "None | bool | int | float | str | list[JsonValue] | dict[str, JsonValue]"
 
+# The members every error object owns. `context` carries the per-command rest.
+_FIXED_MEMBERS = frozenset({"command", "status", "error", "code", "hint"})
+# Same rule as `docs/schemas/decoy-error-v1.schema.json`. `fullmatch`, not `$`, so a trailing
+# newline cannot slip through.
+_CODE_RULE = re.compile(r"[a-z][a-z0-9_.]*")
+_HINT_STYLE = hint
+
 
 def emit_error(
     state: OutputState,
@@ -176,4 +184,32 @@ def emit_error(
     hint: str | None = None,
     context: Mapping[str, JsonValue] | None = None,
 ) -> None:
-    """Stub: the real emitter lands in the next commit."""
+    """Report a failure in the active mode. The one place a command's error is built.
+
+    `--json` writes one `decoy-error-v1` object to stdout. Every other mode, `--quiet`
+    included, writes `error: <message>` and an optional `  hint: <hint>` to stderr:
+    `--quiet` silences stdout, never a failure. `code` is the engine reason code or CLI
+    warning code, kept out of `message` in JSON and shown as a `[code]` prefix in the human
+    line. The caller builds `message` and `hint` without data values; this function only
+    refuses a malformed call (a `ValueError` before anything is written).
+    """
+    if code is not None and _CODE_RULE.fullmatch(code) is None:
+        raise ValueError("error code must match [a-z][a-z0-9_.]*")
+    shadowed = _FIXED_MEMBERS.intersection(context or ())
+    if shadowed:
+        raise ValueError(f"context may not reuse the fixed members {sorted(shadowed)}")
+    if state.mode is OutputMode.json:
+        payload: dict[str, JsonValue] = {"command": command, "status": "error", "error": message}
+        if code is not None:
+            payload["code"] = code
+        if hint is not None:
+            payload["hint"] = hint
+        payload.update(context or {})
+        emit_json(state, payload)
+        return
+    # markup=False: the message is engine text, a user path or a bracketed code. Rich would
+    # read `[vault]` as a style tag and drop it.
+    prefix = f"[{code}] " if code is not None else ""
+    state.err_console.print(error("error:"), f"{prefix}{message}", markup=False)
+    if hint is not None:
+        state.err_console.print(" ", _HINT_STYLE("hint:"), hint, markup=False)

@@ -90,11 +90,11 @@ def test_a_new_site_added_to_the_head_baseline_is_rejected(repo: Path) -> None:
 
 def test_a_changed_retained_expression_is_rejected(repo: Path) -> None:
     doc = _head(repo)
-    old = next(k for k in sorted(doc["entries"]) if k.startswith("cli/unmask.py"))
+    old = next(k for k in sorted(doc["entries"]) if k.startswith("cli/cockpit.py"))
     scope = old.split("::")[1]
     (edited,) = sites.sites_in_source(
         f"def {scope.split('.')[-1]}(s):\n    s.err_console.print(error('error:'), 'edited')\n",
-        "cli/unmask.py",
+        "cli/cockpit.py",
     )
     doc["entries"].pop(old)
     _write_baseline(repo, doc)

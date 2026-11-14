@@ -57,7 +57,14 @@ from decoy.cli.evidence import (
 )
 from decoy.cli.exit_codes import EXIT_FINDINGS, EXIT_RUNTIME, EXIT_USAGE
 from decoy.cli.io import entry_format, pipeline_option, resolve_pipeline
-from decoy.ui.output import OutputMode, OutputState, emit_json, print_traceback, setup_output
+from decoy.ui.output import (
+    OutputMode,
+    OutputState,
+    emit_error,
+    emit_json,
+    print_traceback,
+    setup_output,
+)
 from decoy.ui.summary import render_fidelity_report
 from decoy.ui.theme import accent, code, error, hint, info, risk_high, success, warn
 
@@ -1064,7 +1071,9 @@ def _show(
         help="Write the report to this file path (requires --format).",
     ),
     json_: bool = typer.Option(False, "--json", help="Emit the evidence manifest as JSON."),
-    quiet: bool = typer.Option(False, "--quiet", "-q", help="Suppress stdout."),
+    quiet: bool = typer.Option(
+        False, "--quiet", "-q", help="Suppress stdout. Errors still go to stderr."
+    ),
     verbose: bool = typer.Option(False, "--verbose", "-v", help="Enable debug-level logs."),
 ) -> None:
     """Render the evidence report from an evidence manifest file.
@@ -1196,7 +1205,9 @@ def _diff(
         ),
     ),
     json_: bool = typer.Option(False, "--json", help="Emit structured JSON."),
-    quiet: bool = typer.Option(False, "--quiet", "-q", help="Suppress stdout."),
+    quiet: bool = typer.Option(
+        False, "--quiet", "-q", help="Suppress stdout. Errors still go to stderr."
+    ),
     verbose: bool = typer.Option(False, "--verbose", "-v", help="Enable debug-level logs."),
 ) -> None:
     """Compare two evidence manifests: fingerprints always, data when present.
@@ -1437,7 +1448,10 @@ def _verify(
         help="Emit a structured JSON result instead of human-readable output.",
     ),
     quiet: bool = typer.Option(
-        False, "--quiet", "-q", help="Suppress stdout. Exit code carries the result."
+        False,
+        "--quiet",
+        "-q",
+        help="Suppress stdout. Errors still go to stderr; exit code carries the result.",
     ),
     verbose: bool = typer.Option(
         False, "--verbose", "-v", help="Enable debug-level CLI logs on stderr."
@@ -1671,7 +1685,7 @@ def _fidelity(
         False,
         "--quiet",
         "-q",
-        help="Suppress stdout. Exit code carries the result.",
+        help="Suppress stdout. Errors still go to stderr; exit code carries the result.",
     ),
     verbose: bool = typer.Option(
         False,
@@ -1706,19 +1720,12 @@ def _fidelity(
     output_str = str(output)
 
     def _emit_error(message: str) -> None:
-        if state.mode is OutputMode.json:
-            emit_json(
-                state,
-                {
-                    "command": "report fidelity",
-                    "status": "error",
-                    "source": source_str,
-                    "output": output_str,
-                    "error": message,
-                },
-            )
-        elif state.mode is not OutputMode.quiet:
-            state.err_console.print(error("error:"), message)
+        emit_error(
+            state,
+            "report fidelity",
+            message,
+            context={"source": source_str, "output": output_str},
+        )
 
     joint_pairs: list[tuple[str, str]] = []
     for spec in joint:
@@ -2218,23 +2225,7 @@ def _vault(
     config_path = resolve_pipeline(config, state, "report vault").yaml
 
     def _emit_error(message: str, *, hint_text: str | None = None) -> None:
-        if state.mode is OutputMode.json:
-            emit_json(
-                state,
-                {
-                    "command": "report vault",
-                    "status": "error",
-                    "vault": str(vault),
-                    "error": message,
-                },
-            )
-        elif state.mode is not OutputMode.quiet:
-            # markup=False: message is engine text or a user path, not authored
-            # markup. Engine install lines such as `pip install 'decoy-engine[vault]'`
-            # would otherwise lose the bracketed extra name to Rich's tag parser.
-            state.err_console.print(error("error:"), message, markup=False)
-            if hint_text:
-                state.err_console.print(" ", hint("hint:"), hint_text)
+        emit_error(state, "report vault", message, hint=hint_text, context={"vault": str(vault)})
 
     # Parse config YAML.
     try:

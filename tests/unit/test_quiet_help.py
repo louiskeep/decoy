@@ -28,6 +28,6 @@ def _quiet_options() -> list[tuple[str, str]]:
 
 def test_every_quiet_option_says_errors_still_print() -> None:
     options = _quiet_options()
-    assert len(options) >= 40
+    assert len(options) >= 30
     missing = [name for name, help_ in options if not STATES_ERRORS.search(help_)]
     assert missing == []

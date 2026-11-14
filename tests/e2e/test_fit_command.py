@@ -640,8 +640,9 @@ class TestFitDpErrorFamilies:
         assert result.exit_code == EXIT_USAGE
         payload = json.loads(result.stdout)
         assert payload["code"] == "dp_epsilon_invalid"
-        assert isinstance(payload["message"], str) and payload["message"]
-        assert payload["code"] != payload["message"]
+        assert "message" not in payload
+        assert isinstance(payload["error"], str) and payload["error"]
+        assert payload["code"] != payload["error"]
 
     def test_dp_error_bad_delta_exits_usage(self, tmp_path: Path) -> None:
         src = _dp_source_csv(tmp_path)
@@ -662,7 +663,7 @@ class TestFitDpErrorFamilies:
         assert result.exit_code == EXIT_RUNTIME
         payload = json.loads(result.stdout)
         assert payload["code"] == expected_dp_refusal_code_required()
-        assert payload["message"]
+        assert payload["error"] and "message" not in payload
         assert "certified install" in payload["hint"]
 
     def test_carrier_error_surfaces_code_and_message(self, tmp_path: Path, monkeypatch) -> None:
@@ -679,7 +680,7 @@ class TestFitDpErrorFamilies:
         assert result.exit_code == EXIT_USAGE
         payload = json.loads(result.stdout)
         assert payload["code"] == "dp_carrier_bounds_order"
-        assert payload["message"] == "synthetic carrier failure"
+        assert payload["error"] == "synthetic carrier failure"
 
     def test_budget_error_infeasible_exits_usage(self, tmp_path: Path, monkeypatch) -> None:
         def _raise(*args, **kwargs):
@@ -906,7 +907,7 @@ class TestFitDpDeclaredColumnMissing:
         assert result.exit_code == EXIT_USAGE
         payload = json.loads(result.stdout)
         assert payload["code"] == "dp_schema_column_missing"
-        assert "active" in payload["message"]
+        assert "active" in payload["error"]
         assert not out.exists()
 
     @pytest.mark.parametrize("platform", ["host", "foreign"])
@@ -1020,8 +1021,8 @@ class TestFitDpGate:
         assert as_json.exit_code == EXIT_RUNTIME
         payload = json.loads(as_json.stdout)
         assert payload["code"] == code
-        assert payload["message"] and payload["hint"]
-        assert payload["error"] == f"{code}: {payload['message']}"
+        assert payload["error"] and payload["hint"] and "message" not in payload
+        assert not payload["error"].startswith(code)
 
     @pytest.mark.parametrize(
         ("extra", "code"),
