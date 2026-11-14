@@ -14,6 +14,7 @@ import sys
 import unicodedata
 from dataclasses import dataclass
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from decoy._atomic import destination_entry
 from decoy.cli.io._cloud import cloud_root_issues, has_cloud_targets
@@ -27,6 +28,7 @@ from decoy.cli.io._layout import (
     pipeline_name_for,
     project_out_folder,
     relative_outputs,
+    report_default_path,
 )
 from decoy.cli.io._layout_errors import (
     DELIVERY_ROOT_SPLIT,
@@ -35,6 +37,10 @@ from decoy.cli.io._layout_errors import (
     SIDE_FILE_IN_OUT,
     LayoutError,
 )
+
+if TYPE_CHECKING:
+    from decoy.cli.io._pipelines import PipelineRef
+    from decoy.cli.io._project import Project
 
 
 @dataclass(frozen=True)
@@ -342,3 +348,39 @@ def layout_issues(
 def layout_failures(config: Path, config_dict: dict) -> list[tuple[str, str, str | None]]:
     """`layout_issues` as plain `(code, message, location)` rows for the preflight gate."""
     return [(err.code, err.message, loc) for loc, err in layout_issues(config, config_dict)]
+
+
+def owning_pipeline(
+    config: Path, declared: object, project: Project | None
+) -> tuple[Path, str] | None:
+    """`(project root, run-folder name)` of a pipeline YAML, for finding its run outputs.
+
+    The project is the one given, else the marker folder above the YAML, else the YAML's folder.
+    None when the name is refused; the caller then reads files by the suffix rule alone.
+    """
+    from decoy.cli.io._project import find_project
+
+    yaml = config.resolve()
+    try:
+        root = (project or find_project(yaml.parent, None)).root
+        return root, pipeline_name_for(root, yaml, declared).name
+    except LayoutError:
+        return None
+
+
+def run_report_path(kind: str, file: Path, ref: PipelineRef | None) -> Path | None:
+    """Where `report <kind>` writes by default: `<run>/reports/<kind>.json` for a run output.
+
+    The run is looked for under the pipeline's project, the config's folder and the project
+    found from the file. None for any other file, so nothing new is written for it.
+    """
+    from decoy.cli.io._project import find_project
+
+    roots = [ref.project.root] if ref is not None and ref.project is not None else []
+    if ref is not None:
+        roots.append(ref.yaml.resolve().parent)
+    try:
+        roots.append(find_project(file.resolve().parent, None).root)
+    except LayoutError:
+        pass
+    return report_default_path(kind, file, tuple(roots))

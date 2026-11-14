@@ -132,6 +132,39 @@ def owning_run(path: Path, root: Path, name: str) -> RunFolder | None:
     return None
 
 
+def side_file_default(kind: str, input_path: Path, *, parquet: bool = False) -> Path:
+    """The default side file (`unmasked`, `detokenized`, `snapshot`) beside its input.
+
+    A linked folder such as `current` is resolved first; a plain path keeps its spelling.
+    """
+    real, plain = input_path.parent.resolve(), Path(os.path.abspath(input_path.parent))
+    beside = input_path if real == plain else real / input_path.name
+    if kind == "detokenized":
+        return beside.with_suffix(".detokenized.parquet" if parquet else ".detokenized.csv")
+    return beside.with_suffix(".snapshot.json" if kind == "snapshot" else ".unmasked.csv")
+
+
+def report_default_path(kind: str, file: Path, roots: tuple[Path, ...]) -> Path | None:
+    """`<run>/reports/<kind>.json` for a `file` in a run folder under `roots`, else None.
+
+    Makes the owner-only `reports/` folder; None too when it cannot be made."""
+    for root in roots:
+        try:
+            names = os.listdir(project_out_folder(root))
+        except OSError:
+            continue
+        run = next((r for n in names if (r := owning_run(file, root, n)) is not None), None)
+        if run is None:
+            continue
+        folder = run.path / "reports"
+        try:
+            RunLayout.out_dir(folder, create=True)
+        except (NotADirectoryError, PrivateFileError):
+            return None
+        return folder / f"{kind}.json"
+    return None
+
+
 def placed_path(run: RunFolder, raw: str) -> Path | None:
     """`raw` placed inside `run` and resolved, or None when it does not stay inside.
 

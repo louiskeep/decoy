@@ -47,6 +47,7 @@ from decoy.cli.gen import (
     read_fit_csv,
     strict_csv,
 )
+from decoy.cli.io import side_file_default
 from decoy.ui.output import OutputMode, emit_error, emit_json, setup_output
 from decoy.ui.theme import code, hint, success, warn
 
@@ -716,9 +717,8 @@ def fit(
             raise typer.Exit(code=EXIT_USAGE)
 
     withheld: list[str] = list(snapshot.get("redacted_columns") or []) if epsilon is None else []
-    # Only reached on success: no artifact is created or overwritten when the
-    # fit above raised.
-    out_path = output if output is not None else source.with_suffix(".snapshot.json")
+    # Only reached on success: a failed fit creates or overwrites nothing.
+    out_path = output if output is not None else side_file_default("snapshot", source)
     try:
         write_local_target(
             out_path, json.dumps(snapshot, indent=1).encode("utf-8"), WriteMode.REPLACE

@@ -42,8 +42,10 @@ from decoy.cli.io import (
     input_format,
     mint_invocation_id,
     open_run_layout,
+    owning_pipeline,
     pipeline_argument,
     resolve_pipeline,
+    side_file_default,
     write_private_table,
 )
 from decoy.ui.output import OutputMode, emit_error, emit_json, setup_output
@@ -489,7 +491,8 @@ def detokenize(
     a runtime failure.
     """
     state = setup_output(json_, quiet, verbose)
-    config_path = resolve_pipeline(config, state, "detokenize").yaml
+    ref = resolve_pipeline(config, state, "detokenize")
+    config_path = ref.yaml
     config_str = str(config)
 
     def _emit_error(message: str, *, hint_text: str | None = None, code: str | None = None) -> None:
@@ -567,7 +570,11 @@ def detokenize(
 
     try:
         in_format, in_layout = input_format(
-            config_dict, target_table, tokenized, config_path.parent
+            config_dict,
+            target_table,
+            tokenized,
+            config_path.parent,
+            owning_pipeline(config_path, config_dict.get("name"), ref.project),
         )
     except TargetFormatError as exc:
         _emit_error(f"{exc.code}: {exc}")
@@ -575,9 +582,7 @@ def detokenize(
     out_path = (
         output
         if output is not None
-        else tokenized.with_suffix(
-            ".detokenized.parquet" if in_format == "parquet" else ".detokenized.csv"
-        )
+        else side_file_default("detokenized", tokenized, parquet=in_format == "parquet")
     )
     try:
         check_output_path(out_path)

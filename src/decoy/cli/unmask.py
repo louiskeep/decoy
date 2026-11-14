@@ -27,8 +27,10 @@ from decoy.cli.io import (
     check_output_path,
     format_for_path,
     input_format,
+    owning_pipeline,
     pipeline_argument,
     resolve_pipeline,
+    side_file_default,
     write_private_table,
 )
 from decoy.ui.output import OutputMode, emit_error, emit_json, setup_output
@@ -129,7 +131,8 @@ def unmask(
     error, 3 on a runtime failure.
     """
     state = setup_output(json_, quiet, verbose)
-    config_path = resolve_pipeline(config, state, "unmask").yaml
+    ref = resolve_pipeline(config, state, "unmask")
+    config_path = ref.yaml
 
     def _emit_error(message: str, *, hint_text: str | None = None, code: str | None = None) -> None:
         emit_error(
@@ -186,7 +189,13 @@ def unmask(
 
     # The declared format of the table's target when `masked` is that file, else the suffix rule.
     try:
-        in_format, in_layout = input_format(raw, target_table, masked, config_path.parent)
+        in_format, in_layout = input_format(
+            raw,
+            target_table,
+            masked,
+            config_path.parent,
+            owning_pipeline(config_path, raw.get("name"), ref.project),
+        )
     except TargetFormatError as exc:
         _emit_error(f"{exc.code}: {exc}")
         raise typer.Exit(code=EXIT_USAGE)
@@ -257,7 +266,7 @@ def unmask(
         _emit_error(f"unmask failed: {type(exc).__name__}")
         raise typer.Exit(code=EXIT_RUNTIME)
 
-    out_path = output if output is not None else masked.with_suffix(".unmasked.csv")
+    out_path = output if output is not None else side_file_default("unmasked", masked)
     try:
         write_private_table(result.outputs[target_table], format_for_path(out_path), out_path)
     except AtomicWriteError as exc:

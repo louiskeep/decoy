@@ -42,6 +42,7 @@ from decoy.cli.io._layout import (
     read_claim,
     relative_outputs,
     shown_path,
+    side_file_default,
     target_parent_writable,
     write_claim,
 )
@@ -80,7 +81,9 @@ from decoy.cli.io._placement import (
     fixed_target_overwrites,
     layout_failures,
     layout_issues,
+    owning_pipeline,
     resolved_output_collisions,
+    run_report_path,
 )
 from decoy.cli.io._project import (
     DECOY_DIR,
@@ -169,6 +172,7 @@ __all__ = [
     "name_dir",
     "new_run_id",
     "open_run_layout",
+    "owning_pipeline",
     "parquet_schema",
     "parse_flag",
     "parse_pipeline_token",
@@ -186,9 +190,11 @@ __all__ = [
     "resolved_output_collisions",
     "resolved_source_config",
     "run_history",
+    "run_report_path",
     "scan_set_from_data",
     "select_table",
     "shown_path",
+    "side_file_default",
     "source_schema_and_chunks",
     "table_records",
     "target_format_issues",
