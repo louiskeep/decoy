@@ -148,6 +148,7 @@ def exit_code_for(exc: BaseException) -> int:
     (`ConfigFileError`), the usage types of `decoy run` and a
     `unique` generate column the data cannot satisfy are 1; `fit`'s differential-privacy
     errors are 3 for a provenance refusal and a budget schedule mismatch and 1 for the rest;
+    a blocking post-scan finding (`PostScanBlockedError`) is 4 and an existing vault (`vault_exists`) is 1;
     Ctrl-C is 130; everything else, an `OSError` on a config read included, is 3.
 
     The engine and CLI exception types are imported here, not at module level: the CI modules
@@ -170,12 +171,13 @@ def exit_code_for(exc: BaseException) -> int:
     if isinstance(exc, ConfigFileError):
         return EXIT_USAGE
 
-    from decoy_engine import DecoyError, GenerationError
+    from decoy_engine import DecoyError, GenerationError, VaultError
     from decoy_engine.quality.carriers import CarrierError
     from decoy_engine.quality.dp import DpError
     from decoy_engine.quality.dp_budget import DpBudgetError
     from decoy_engine.quality.dp_provenance import ProvenanceError
     from decoy_engine.reasons.quality import DP_SCHEDULE_MISMATCH
+    from decoy_engine.verification.postmask import PostScanBlockedError
 
     if isinstance(exc, ProvenanceError):
         return EXIT_RUNTIME
@@ -192,6 +194,13 @@ def exit_code_for(exc: BaseException) -> int:
     from decoy.cli.run._errors import UNIQUENESS_IMPOSSIBLE_CODE, _usage_types
 
     if isinstance(exc, GenerationError) and exc.code == UNIQUENESS_IMPOSSIBLE_CODE:
+        return EXIT_USAGE
+    # A blocking post-scan finding is a data result, as `--post-validate-enforce` is.
+    if isinstance(exc, PostScanBlockedError):
+        return EXIT_FINDINGS
+    # An existing vault is the caller's to resolve. The literal moves to the engine's constant
+    # when the repin that ships it lands (the pinned 0.23.0 has none).
+    if isinstance(exc, VaultError) and exc.code == "vault_exists":
         return EXIT_USAGE
     if isinstance(exc, _usage_types()):
         return EXIT_USAGE

@@ -146,3 +146,15 @@ def test_the_fit_dp_arms_are_the_owner_map(
     cls = getattr(importlib.import_module(f"decoy_engine.quality.{module}"), name)
 
     assert exit_code_for(cls(code=code, message="m")) == expected
+
+
+def test_a_blocking_post_scan_is_findings_and_an_existing_vault_is_usage() -> None:
+    """Every command agrees with `decoy run`'s repin cases (engine 0.24.0 behaviour)."""
+    from decoy_engine import VaultError
+    from decoy_engine.verification.postmask import PostScanBlockedError
+
+    from decoy.cli.exit_codes import EXIT_FINDINGS
+
+    assert exit_code_for(PostScanBlockedError({})) == EXIT_FINDINGS
+    assert exit_code_for(VaultError(code="vault_exists", message="m")) == EXIT_USAGE
+    assert exit_code_for(VaultError(code="vault_other", message="m")) == EXIT_RUNTIME
