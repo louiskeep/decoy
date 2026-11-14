@@ -65,6 +65,7 @@ def mask_secret_ref_problem(raw: object) -> str | None:
     lower-cases the scheme, so `ENV:NAME` passes); this adds the CLI's provider set. The text
     names no part of `raw`, and a non-string is refused without being formatted.
     """
+    from decoy_engine.keyprovider import MaskSecretError
     from decoy_engine.secret_providers import parse_ref
 
     if not isinstance(raw, str):
@@ -72,7 +73,7 @@ def mask_secret_ref_problem(raw: object) -> str | None:
     scheme: str | None = None
     try:
         scheme = parse_ref(raw).scheme
-    except Exception:
+    except MaskSecretError:
         scheme = None  # the engine's refusal is the bare `bad_secret_ref`; only the verdict is kept
     return None if scheme in _REF_SCHEMES else INVALID
 

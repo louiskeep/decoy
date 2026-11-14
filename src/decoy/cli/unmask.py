@@ -19,7 +19,7 @@ import typer
 
 from decoy import _mask_secret, _mask_secret_guidance
 from decoy._atomic import AtomicWriteError, describe
-from decoy._config_file import ConfigFileError, load_config_mapping
+from decoy._config_file import ConfigFileError, config_refusal, load_config_mapping
 from decoy.cli._sources import read_file
 from decoy.cli.exit_codes import EXIT_RUNTIME, EXIT_USAGE, exit_code_for
 from decoy.cli.io import (
@@ -138,8 +138,8 @@ def unmask(
 
     try:
         raw = load_config_mapping(config_path)
-    except ConfigFileError as exc:
-        _emit_error(exc.message, code=exc.code)
+    except (ConfigFileError, OSError) as exc:
+        _emit_error(**config_refusal(exc))
         raise typer.Exit(code=exit_code_for(exc))
     try:
         _mask_secret.apply_mask_secret(raw, mask_secret)

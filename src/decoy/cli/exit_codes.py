@@ -145,7 +145,7 @@ def exit_code_for(exc: BaseException) -> int:
     A pure function of the exception's type and code. Categories: a pre-run gate refusal keeps
     its own 1 or 5; a capacity refusal (an engine error whose code is in the engine's capacity
     set, or a bare `MemoryError`) is 5; a config file that cannot be read as a mapping
-    (`ConfigFileError`), the usage types of `decoy run` and a
+    (`ConfigFileError`), an engine `EnvFlagError`, the usage types of `decoy run` and a
     `unique` generate column the data cannot satisfy are 1; `fit`'s differential-privacy
     errors are 3 for a provenance refusal and a budget schedule mismatch and 1 for the rest;
     a blocking post-scan finding (`PostScanBlockedError`) is 4 and an existing vault (`vault_exists`) is 1;
@@ -191,6 +191,8 @@ def exit_code_for(exc: BaseException) -> int:
     if isinstance(exc, DecoyError) and getattr(exc, "code", None) in capacity_codes():
         return EXIT_CAPACITY
 
+    # TODO(CL4): `_usage_types` and `UNIQUENESS_IMPOSSIBLE_CODE` move into this module when the
+    # run classifier in `cli/run/_errors.py` is deleted; this private import then goes.
     from decoy.cli.run._errors import UNIQUENESS_IMPOSSIBLE_CODE, _usage_types
 
     if isinstance(exc, GenerationError) and exc.code == UNIQUENESS_IMPOSSIBLE_CODE:
@@ -203,6 +205,12 @@ def exit_code_for(exc: BaseException) -> int:
     if isinstance(exc, VaultError) and exc.code == "vault_exists":
         return EXIT_USAGE
     if isinstance(exc, _usage_types()):
+        return EXIT_USAGE
+    # `EnvFlagError` ships in engine 0.24.0; the lookup is by name so 0.23.0 just has none.
+    from decoy_engine import errors as engine_errors
+
+    env_flag_error = getattr(engine_errors, "EnvFlagError", None)
+    if env_flag_error is not None and isinstance(exc, env_flag_error):
         return EXIT_USAGE
     if isinstance(exc, ImportError):
         from decoy.cli.extras import translate_missing_extra

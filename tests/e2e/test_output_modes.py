@@ -221,7 +221,7 @@ def test_compile_bad_profile_path_is_printed_whole(tmp_path: Path, good_config: 
     assert str(profile) in result.stderr, result.stderr
 
 
-def test_compile_non_mapping_config_path_is_printed_whole(tmp_path: Path, monkeypatch):
+def test_compile_non_mapping_config_error_is_printed_whole(tmp_path: Path, monkeypatch):
     monkeypatch.setenv("COLUMNS", "80")
     cfg = _non_mapping_config(tmp_path)
     result = runner.invoke(app, ["validate", "compile", str(cfg)])

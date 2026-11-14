@@ -85,8 +85,20 @@ def load_config_mapping(path: Path) -> dict[str, Any]:
     return parse_config_mapping(read_config_text(path))
 
 
+def config_refusal(exc: ConfigFileError | OSError) -> dict[str, str | None]:
+    """The `message` and `code` a command prints for a failed config load.
+
+    A `ConfigFileError` carries its own. An `OSError` (the environment failed, not the config)
+    gets fixed text naming only the exception type, never the path or the system message,
+    and no code; its exit is `exit_code_for(exc)`, 3."""
+    if isinstance(exc, ConfigFileError):
+        return {"message": exc.message, "code": exc.code}
+    return {"message": f"could not read the config file: {type(exc).__name__}.", "code": None}
+
+
 __all__ = [
     "ConfigFileError",
+    "config_refusal",
     "load_config_mapping",
     "parse_config_mapping",
     "read_config_text",

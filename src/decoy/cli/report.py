@@ -46,7 +46,7 @@ from rich.markup import escape
 
 from decoy import _mask_secret
 from decoy._atomic import AtomicWriteError, WriteMode, describe, write_local_target
-from decoy._config_file import ConfigFileError, load_config_mapping
+from decoy._config_file import ConfigFileError, config_refusal, load_config_mapping
 from decoy._yaml_errors import sanitize_yaml_error
 from decoy.cli._sources import read_file, read_report_source
 from decoy.cli.evidence import (
@@ -1755,8 +1755,8 @@ def _fidelity(
 
         try:
             raw_cfg = load_config_mapping(pipeline_path)
-        except ConfigFileError as exc:
-            _emit_error(exc.message, code=exc.code)
+        except (ConfigFileError, OSError) as exc:
+            _emit_error(**config_refusal(exc))
             raise typer.Exit(code=exit_code_for(exc))
         try:
             config_dict = parse_pipeline_config(raw_cfg).model_dump()
@@ -2009,9 +2009,9 @@ def _integrity(
 
             try:
                 raw = load_config_mapping(config_path)
-            except ConfigFileError as exc:
+            except (ConfigFileError, OSError) as exc:
                 members = {"masked": masked_str, "source": source_str}
-                emit_error(state, "report integrity", exc.message, code=exc.code, context=members)
+                emit_error(state, "report integrity", context=members, **config_refusal(exc))
                 raise typer.Exit(code=exit_code_for(exc))
             config_dict = parse_pipeline_config(raw).model_dump()
             # One source/masked pair: anchor on the first declared table.
@@ -2230,8 +2230,8 @@ def _vault(
 
     try:
         raw = load_config_mapping(config_path)
-    except ConfigFileError as exc:
-        _emit_error(exc.message, code=exc.code)
+    except (ConfigFileError, OSError) as exc:
+        _emit_error(**config_refusal(exc))
         raise typer.Exit(code=exit_code_for(exc))
     try:
         _mask_secret.apply_mask_secret(raw, mask_secret)

@@ -29,7 +29,7 @@ import typer
 
 from decoy import _mask_secret, _mask_secret_guidance
 from decoy._atomic import AtomicWriteError, describe
-from decoy._config_file import ConfigFileError, load_config_mapping
+from decoy._config_file import ConfigFileError, config_refusal, load_config_mapping
 from decoy.cli._sources import read_file, resolved_source_config
 from decoy.cli._token_vault import LocalTokenVault, TokenVaultError, iter_tokenize_columns
 from decoy.cli.exit_codes import EXIT_RUNTIME, EXIT_USAGE, exit_code_for
@@ -181,8 +181,8 @@ def tokenize(
 
     try:
         raw = load_config_mapping(config_path)
-    except ConfigFileError as exc:
-        _emit_error(exc.message, code=exc.code)
+    except (ConfigFileError, OSError) as exc:
+        _emit_error(**config_refusal(exc))
         raise typer.Exit(code=exit_code_for(exc))
 
     # DE-02 secret-disclosure ROOT guard (mirrors decoy.cli.run): validate the
@@ -498,8 +498,8 @@ def detokenize(
 
     try:
         raw = load_config_mapping(config_path)
-    except ConfigFileError as exc:
-        _emit_error(exc.message, code=exc.code)
+    except (ConfigFileError, OSError) as exc:
+        _emit_error(**config_refusal(exc))
         raise typer.Exit(code=exit_code_for(exc))
 
     # Same raw secret-reference guard as tokenize: a wrong-type mask_secret_ref

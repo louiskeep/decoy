@@ -428,6 +428,16 @@ def _scaffold_from_file(
         emit_error(state, "init", f"{input_file} does not exist.")
         raise typer.Exit(code=EXIT_USAGE)
 
+    # The extension check has fixed, value-free text, so it is shown whole.
+    unsupported: str | None = None
+    try:
+        _scaffold_source(input_file)
+    except ValueError as exc:
+        unsupported = str(exc)
+    if unsupported is not None:
+        emit_error(state, "init", unsupported)
+        raise typer.Exit(code=EXIT_USAGE)
+
     # Messages below name the exception type only: a reader's text can quote the file's bytes.
     try:
         df = _load_dataframe(input_file)

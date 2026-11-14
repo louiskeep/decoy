@@ -271,3 +271,14 @@ def test_reference_prints_bracketed_text_verbatim(files: Path) -> None:
 
     assert result.exit_code == EXIT_USAGE
     assert "a[vault]b" in result.stderr
+
+
+def test_init_names_an_unsupported_extension_with_fixed_text(files: Path) -> None:
+    (files / "data.xlsx").write_bytes(b"not a table")
+
+    result = runner.invoke(app, ["init", "data.xlsx", "--json"])
+
+    assert result.exit_code == EXIT_USAGE, result.output
+    assert json.loads(result.stdout)["error"] == (
+        "unsupported file extension '.xlsx'; expected .csv, .tsv, or .parquet"
+    )

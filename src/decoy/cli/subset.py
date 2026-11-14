@@ -35,7 +35,7 @@ from typing import Any
 
 import typer
 
-from decoy._config_file import ConfigFileError, load_config_mapping
+from decoy._config_file import ConfigFileError, config_refusal, load_config_mapping
 from decoy.cli.exit_codes import EXIT_RUNTIME, EXIT_USAGE, exit_code_for
 from decoy.cli.io import pipeline_argument, resolve_pipeline
 from decoy.ui.output import OutputMode, emit_error, emit_json, print_traceback, setup_output
@@ -155,6 +155,10 @@ def subset(
         raw = load_config_mapping(config_path)
     except ConfigFileError as exc:
         _fail_usage(state, config_str, code_=exc.code, message=exc.message)
+        raise typer.Exit(code=exit_code_for(exc))
+    except OSError as exc:
+        message = str(config_refusal(exc)["message"])
+        _fail_runtime(state, config_str, code_="config_unreadable", message=message)
         raise typer.Exit(code=exit_code_for(exc))
 
     from decoy_engine import __version__ as engine_version

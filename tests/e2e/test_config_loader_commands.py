@@ -178,3 +178,23 @@ def test_ci_check_reports_a_non_utf8_pipeline_with_its_own_rule(tmp_path: Path) 
     assert proc.returncode == EXIT_USAGE, proc.stderr
     assert [f["rule_id"] for f in parse_stdout(proc)["findings"]] == ["validate.yaml.not_utf8"]
     assert "yaml.not_utf8" in validation_codes()
+
+
+def test_an_unreadable_config_exits_3_with_a_json_object(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An `OSError` on the config read is the environment failing: exit 3, the type name only."""
+    cfg = _config(tmp_path, b"version: 2\n")
+
+    def _denied(self: Path) -> bytes:
+        raise PermissionError(13, "SECRET-SYSTEM-TEXT", str(self))
+
+    monkeypatch.setattr(Path, "read_bytes", _denied)
+
+    result = _run(["validate", "compile", cfg], "--json")
+
+    assert result.exit_code == 3, _everything(result)
+    payload = json.loads(result.stdout)
+    assert payload["status"] == "error"
+    assert payload["error"] == "could not read the config file: PermissionError."
+    assert "SECRET-SYSTEM-TEXT" not in _everything(result)

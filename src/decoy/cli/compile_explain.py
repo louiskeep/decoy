@@ -39,7 +39,7 @@ from pathlib import Path
 import typer
 
 from decoy._atomic import AtomicWriteError, WriteMode, describe, write_local_target
-from decoy._config_file import ConfigFileError, load_config_mapping
+from decoy._config_file import ConfigFileError, config_refusal, load_config_mapping
 from decoy.cli import gen
 from decoy.cli.exit_codes import EXIT_RUNTIME, EXIT_USAGE, exit_code_for
 from decoy.cli.io import pipeline_argument, resolve_pipeline
@@ -174,8 +174,9 @@ def compile(
 
     try:
         raw = load_config_mapping(config_path)
-    except ConfigFileError as exc:
-        _simple_error(state, config_path, exc.message, code=exc.code)
+    except (ConfigFileError, OSError) as exc:
+        refusal = config_refusal(exc)
+        _simple_error(state, config_path, str(refusal["message"]), code=refusal["code"])
         raise typer.Exit(code=exit_code_for(exc))
 
     from decoy_engine import __version__ as engine_version

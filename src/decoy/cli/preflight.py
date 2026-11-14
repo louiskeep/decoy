@@ -56,7 +56,7 @@ from typing import Any
 import typer
 from rich.text import Text
 
-from decoy._config_file import ConfigFileError, load_config_mapping
+from decoy._config_file import ConfigFileError, config_refusal, load_config_mapping
 from decoy.cli.exit_codes import EXIT_CAPACITY, EXIT_USAGE, EXIT_WARNINGS, exit_code_for
 from decoy.cli.gate import capacity_codes
 from decoy.cli.gate._capacity_text import format_gib as _format_gib
@@ -680,12 +680,12 @@ def preflight(
     # -- Step 1: YAML parse ---------------------------------------------------
     try:
         raw = load_config_mapping(config_path)
-    except ConfigFileError as exc:
-        acc.add_fail(name=exc.code, message=exc.message)
+    except (ConfigFileError, OSError) as exc:
+        message, reason = config_refusal(exc).values()  # reason is None for an OSError
+        acc.add_fail(name=reason or "config.unreadable", message=str(message))
         _emit_preflight_result(state, acc, config_str, fail_on_warning)
         raise typer.Exit(code=exit_code_for(exc))
 
-    # YAML parse passed
     acc.add_pass(name="yaml.syntax", message="YAML syntax is valid.")
 
     # -- Step 2: Schema validation --------------------------------------------
