@@ -590,25 +590,25 @@ def run(source_files: Mapping[str, str], **given: object) -> list[str]:
 
 
 def test_the_live_tree_is_clean(files: dict[str, str]) -> None:
-    """AT-P2j: P1 to P5 hold with the 3-row baseline, and every private site has a case."""
+    """AT-P2j: P1 to P5 hold with the 2-row baseline, and every private site has a case."""
     assert run(files) == []
 
 
-def test_the_census_is_57_watched_sinks(files: dict[str, str]) -> None:
+def test_the_census_is_56_watched_sinks(files: dict[str, str]) -> None:
     sinks = watched(collect(files))
-    assert len(sinks) == 57
+    assert len(sinks) == 56
     assert len([s for s in sinks if is_entry(s)]) == 23
     counts: dict[str, int] = {}
     for r in ROWS:
         counts[r.disposition] = counts.get(r.disposition, 0) + 1
-    assert counts == {"public": 23, "private": 2, "staged": 3, "temp": 3, "read": 3}
+    assert counts == {"public": 23, "private": 2, "staged": 3, "temp": 2, "read": 3}
 
 
-def test_the_baseline_has_three_rows_with_exits() -> None:
+def test_the_baseline_has_two_rows_with_exits() -> None:
     doc = json.loads(BASELINE_FILE.read_text(encoding="utf-8"))
     assert doc["sentry_id"] == "private-file-sinks"
     assert doc["created_in"] == "X7c-S3"
-    assert len(doc["entries"]) == 3
+    assert len(doc["entries"]) == 2
     assert all(e["exit"] for e in doc["entries"].values())
     assert doc["entries"] == baseline_entries(ROWS)
 

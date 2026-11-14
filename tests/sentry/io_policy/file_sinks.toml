@@ -27,15 +27,6 @@ reason = "Parquet bytes of the caller's DataFrame go into the spool that create_
 via = "create_private_temp"
 
 [[row]]
-file = "ci/engine_logging.py"
-function = "engine_logging_silenced"
-sink = "tempfile.TemporaryDirectory"
-ordinal = 1
-disposition = "temp"
-reason = "Scratch directory for engine log files; the stdlib makes it 0700 on POSIX."
-exit = "WIN-FEAS"
-
-[[row]]
 file = "cli/_duckdb_source.py"
 function = "acquire_relation"
 sink = "duckdb.connect"
