@@ -44,6 +44,7 @@ proven, so a failed run leaves its empty vault and a re-run reuses it.
 
 from __future__ import annotations
 
+import contextlib
 import os
 import secrets
 import sqlite3
@@ -368,7 +369,9 @@ class LocalTokenVault:
                 conn = getattr(self, "_conn", None)
                 if conn is not None:
                     conn.close()
-                self._path.unlink(missing_ok=True)
+                # A cleanup failure must not replace the error that caused the cleanup.
+                with contextlib.suppress(OSError):
+                    self._path.unlink(missing_ok=True)
         finally:
             self._release_lock()
 

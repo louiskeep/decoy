@@ -141,8 +141,9 @@ dependencies = [
     # decoy.distribution.version_document, pulled in on every `decoy` invocation
     # via __main__ -> cli.upgrade. `cryptography` (Ed25519 verify) backs
     # decoy.distribution.signing (used by `decoy upgrade`). Floors match the
-    # engine's own (`packaging>=21.0`, `cryptography>=42`), so a minimal env that
-    # lacks either breaks the whole CLI, not just upgrade.
+    # engine's own for `packaging` (`>=21.0`); `cryptography>=42` is the CLI's own floor
+    # (engine 0.24.0 itself needs a newer one), so a minimal env that lacks either
+    # breaks the whole CLI, not just upgrade.
     "packaging>=21.0",
     "cryptography>=42",
     # Declared directly: `decoy ci` owns the decoy-ci/v1 manifest as a strict Pydantic model

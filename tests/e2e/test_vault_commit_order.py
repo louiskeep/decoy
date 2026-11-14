@@ -408,3 +408,24 @@ def test_a_layout_fault_and_a_taken_vault_never_reach_the_sources(
     assert "vault_exists" not in result.output
     assert calls == [], f"work ran before the layout refusal: {calls}"
     assert clash.read_bytes() == b"taken"
+
+
+def test_a_refused_second_writer_can_rerun_after_the_first_fails_and_cleans_up(
+    tmp_path: Path,
+) -> None:
+    """A holds the lock, B is refused, A fails and removes its file, then B succeeds."""
+    from decoy.cli import _token_vault
+
+    cfg = _pipeline(tmp_path, strategy="tokenize")
+    vault = tmp_path / "t.db"
+    a = _token_vault.LocalTokenVault(vault, create=True)
+    assert a.created is True
+    refused = runner.invoke(app, ["tokenize", str(cfg), "--vault", str(vault)])
+    assert refused.exit_code == EXIT_USAGE, refused.output
+    assert "vault_busy" in refused.output
+    a.discard_unwritten()  # A fails before any commit
+    a.close()
+    assert not vault.exists()
+    rerun = runner.invoke(app, ["tokenize", str(cfg), "--vault", str(vault)])
+    assert rerun.exit_code == 0, rerun.output
+    assert vault.exists()

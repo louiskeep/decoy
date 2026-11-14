@@ -7,7 +7,10 @@ from pathlib import Path
 
 import pytest
 
+from decoy._private_file import advisory_lock_available
 from decoy.cli._token_vault import _SCOPE_KEY, LocalTokenVault
+
+posix_only = pytest.mark.skipif(not advisory_lock_available(), reason="needs an advisory lock")
 
 
 def test_a_new_vault_has_a_scope_the_engine_accepts(tmp_path: Path) -> None:
@@ -82,6 +85,7 @@ def test_only_the_opener_that_created_the_file_reports_created(tmp_path: Path) -
     second.close()
 
 
+@posix_only
 def test_a_second_writer_is_refused_while_the_first_holds_the_vault(tmp_path: Path) -> None:
     from decoy.cli._token_vault import TokenVaultError
 
@@ -98,6 +102,7 @@ def test_a_second_writer_is_refused_while_the_first_holds_the_vault(tmp_path: Pa
     again.close()
 
 
+@posix_only
 def test_the_file_is_created_only_after_the_writer_lock_is_held(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -141,6 +146,7 @@ def test_without_an_advisory_lock_a_failed_run_never_deletes_its_vault(
     assert path.exists(), "ownership cannot be proven without a lock; the file must stay"
 
 
+@posix_only
 def test_a_locked_failed_run_that_created_the_vault_removes_it(tmp_path: Path) -> None:
     path = tmp_path / "v.db"
     vault = LocalTokenVault(path, create=True)
@@ -154,3 +160,20 @@ def test_a_committed_run_is_never_discarded(tmp_path: Path) -> None:
     vault.commit()
     vault.discard_unwritten()
     assert path.exists()
+
+
+@posix_only
+def test_a_failed_cleanup_unlink_neither_raises_nor_keeps_the_lock(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    path = tmp_path / "v.db"
+    vault = LocalTokenVault(path, create=True)
+
+    def _refuse(self: Path, missing_ok: bool = False) -> None:
+        raise PermissionError(13, "denied")
+
+    monkeypatch.setattr(Path, "unlink", _refuse)
+    vault.discard_unwritten()  # must not raise
+    monkeypatch.undo()
+    assert path.exists()
+    LocalTokenVault(path, create=True).close()  # the lock was released
