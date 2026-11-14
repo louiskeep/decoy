@@ -123,24 +123,35 @@ def place(argument: Argument, out: Path | None, explicit: Path | None) -> Placem
     return member_placement(project.root, name)
 
 
-def prepare_folder(destination: Placement) -> None:
-    """Make the folder the YAML goes in. A member folder must stay inside `pipelines/`.
+def _is_link(path: Path) -> bool:
+    return path.is_symlink()
 
-    Raises `ScaffoldRefused`. The messages carry no OS text.
+
+def prepare_folder(destination: Placement) -> None:
+    """Make the folder the YAML goes in. A member is never written through a link.
+
+    For a project pipeline, `pipelines/`, `pipelines/<name>/` and `pipeline.yaml` must not be
+    symbolic links (a planted link would send the write outside the project), and the folder
+    must resolve inside `pipelines/`. Raises `ScaffoldRefused`; the messages carry no OS text.
     """
     assert destination.yaml is not None
     folder = destination.yaml.parent
+    root = destination.root if destination.is_member else None
+    if root is not None and any(
+        _is_link(p) for p in (root / PIPELINES_DIR, folder, destination.yaml)
+    ):
+        raise ScaffoldRefused(
+            f"{PIPELINES_DIR}/{destination.name} is, or sits under, a link; init does not write "
+            "through links."
+        )
     failed = False
+    escaped = False
     try:
         folder.mkdir(parents=True, exist_ok=True)
-        if destination.is_member and destination.root is not None:
-            inside = (destination.root / PIPELINES_DIR).resolve()
-            escaped = folder.resolve().parent != inside
-        else:
-            escaped = False
+        if root is not None:
+            escaped = folder.resolve().parent != (root / PIPELINES_DIR).resolve()
     except OSError:
         failed = True
-        escaped = False
     if failed:
         raise ScaffoldRefused("The pipeline folder could not be made.")
     if escaped:

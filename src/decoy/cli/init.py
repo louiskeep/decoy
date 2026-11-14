@@ -614,6 +614,8 @@ def _init(
     if input_file is not None and preset == "generate":
         from decoy.cli.gen import scaffold_generate
 
+        if destination.is_member:
+            _prepare(state, destination)
         scaffold_generate(state, input_file, out, yes=yes)
         return
 

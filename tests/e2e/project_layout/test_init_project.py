@@ -314,3 +314,29 @@ def test_a_source_named_with_a_preset_goes_into_the_template_paths(
     (target_entry,) = doc["targets"].values()
     assert source_entry["path"] == "../../data/orders.csv"
     assert target_entry["path"] == "orders.masked.csv"
+
+
+@pytest.mark.parametrize("preset_args", [["--preset", "minimal"], ["--preset", "generate"]])
+def test_a_planted_link_is_refused_and_the_outside_file_is_untouched(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, preset_args: list[str]
+) -> None:
+    root = _project(tmp_path)
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    victim = outside / "victim.yaml"
+    victim.write_text("keep\n", encoding="utf-8")
+    monkeypatch.chdir(root)
+
+    # A link at pipeline.yaml.
+    (root / "pipelines" / "a").mkdir()
+    (root / "pipelines" / "a" / "pipeline.yaml").symlink_to(victim)
+    first = runner.invoke(app, ["init", "a", *preset_args, "--yes", "--json"])
+    assert first.exit_code == EXIT_USAGE, first.output
+    assert victim.read_text(encoding="utf-8") == "keep\n"
+
+    # A link at the pipeline's folder.
+    (root / "pipelines" / "b").symlink_to(outside, target_is_directory=True)
+    second = runner.invoke(app, ["init", "b", *preset_args, "--yes", "--json"])
+    assert second.exit_code == EXIT_USAGE, second.output
+    assert sorted(p.name for p in outside.iterdir()) == ["victim.yaml"]
+    assert victim.read_text(encoding="utf-8") == "keep\n"
