@@ -364,7 +364,7 @@ def test_a_malformed_source_is_a_coded_value_free_refusal(tmp_path: Path) -> Non
     assert result.exit_code == 1
     assert "internal error" not in result.output
     assert "zz_marker" not in result.output and "people.csv" not in result.output
-    assert json.loads(result.output)["code"]
+    assert json.loads(result.output)["code"] == "csv_malformed"
 
 
 # ---------------------------------------------------------------- AT-C4
