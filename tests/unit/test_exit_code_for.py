@@ -18,6 +18,7 @@ import typer
 
 from decoy import _native_gate
 from decoy._config_file import ConfigFileError
+from decoy.cli import exit_codes
 from decoy.cli.exit_codes import (
     EXIT_CAPACITY,
     EXIT_RUNTIME,
@@ -77,7 +78,7 @@ def _run_categories() -> dict[str, Any]:
         "engine capacity code": DecoyError.__new__(DecoyError),
         "memory error": MemoryError(),
         "uniqueness impossible": GenerationError(
-            code=_errors.UNIQUENESS_IMPOSSIBLE_CODE, message="x"
+            code=exit_codes.UNIQUENESS_IMPOSSIBLE_CODE, message="x"
         ),
         "other generation error": GenerationError(code="dtype_unsafe", message="x"),
         "native gate": _bare(_native_gate.NativeGateError),
@@ -86,7 +87,7 @@ def _run_categories() -> dict[str, Any]:
         "value error": ValueError("bad"),
     }
     cases["engine capacity code"].code = capacity
-    for t in _errors._usage_types():
+    for t in exit_codes.usage_error_types():
         cases[f"usage type {t.__name__}"] = _bare(t)
     return cases
 

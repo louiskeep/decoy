@@ -100,7 +100,7 @@ def upgrade(
             outcome = installer.activate_local_version(version, home=home, expected_public_pem=pubkey)
         except installer.InstallError as exc:
             _refuse(state, "could not activate the installed version", "upgrade_activate_failed", exc)
-            raise typer.Exit(code=EXIT_RUNTIME) from exc
+            raise typer.Exit(code=EXIT_RUNTIME) from None
         _report_outcome(state, outcome, "activated")
         raise typer.Exit(code=EXIT_OK)
 
@@ -110,7 +110,7 @@ def upgrade(
         doc_sig = _fetch(doc_url + ".sig").decode("ascii").strip()
     except Exception as exc:
         _refuse(state, "could not reach the version endpoint", "upgrade_endpoint_unreachable", exc)
-        raise typer.Exit(code=EXIT_RUNTIME) from exc
+        raise typer.Exit(code=EXIT_RUNTIME) from None
 
     if not vd.verify_document(doc_bytes, doc_sig, expected_public_pem=pubkey):
         emit_error(
@@ -123,13 +123,13 @@ def upgrade(
         doc = vd.parse_document(doc_bytes)
     except ValueError as exc:
         _refuse(state, "version document rejected", "upgrade_document_rejected", exc)
-        raise typer.Exit(code=EXIT_RUNTIME) from exc
+        raise typer.Exit(code=EXIT_RUNTIME) from None
     try:
         # --check is read-only, so it enforces freshness but does not advance the state.
         installer.check_document_freshness(doc, home, record=False)
     except installer.InstallError as exc:
         _refuse(state, "version document failed the freshness check", "upgrade_document_stale", exc)
-        raise typer.Exit(code=EXIT_RUNTIME) from exc
+        raise typer.Exit(code=EXIT_RUNTIME) from None
     latest = doc.get("latest")
     target_version = version or latest
 
@@ -179,7 +179,7 @@ def upgrade(
         )
     except installer.InstallError as exc:
         _refuse(state, "the upgrade failed and the installed runtime is unchanged", "upgrade_install_failed", exc)
-        raise typer.Exit(code=EXIT_RUNTIME) from exc
+        raise typer.Exit(code=EXIT_RUNTIME) from None
 
     _report_outcome(state, outcome, "upgraded")
     raise typer.Exit(code=EXIT_OK)

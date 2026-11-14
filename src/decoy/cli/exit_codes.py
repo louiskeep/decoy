@@ -191,10 +191,6 @@ def exit_code_for(exc: BaseException) -> int:
     if isinstance(exc, DecoyError) and getattr(exc, "code", None) in capacity_codes():
         return EXIT_CAPACITY
 
-    # TODO(CL4): `_usage_types` and `UNIQUENESS_IMPOSSIBLE_CODE` move into this module when the
-    # run classifier in `cli/run/_errors.py` is deleted; this private import then goes.
-    from decoy.cli.run._errors import UNIQUENESS_IMPOSSIBLE_CODE, _usage_types
-
     if isinstance(exc, GenerationError) and exc.code == UNIQUENESS_IMPOSSIBLE_CODE:
         return EXIT_USAGE
     # A blocking post-scan finding is a data result, as `--post-validate-enforce` is.
@@ -204,7 +200,7 @@ def exit_code_for(exc: BaseException) -> int:
     # when the repin that ships it lands (the pinned 0.23.0 has none).
     if isinstance(exc, VaultError) and exc.code == "vault_exists":
         return EXIT_USAGE
-    if isinstance(exc, _usage_types()):
+    if isinstance(exc, usage_error_types()):
         return EXIT_USAGE
     # `EnvFlagError` ships in engine 0.24.0; the lookup is by name so 0.23.0 just has none.
     from decoy_engine import errors as engine_errors
@@ -221,6 +217,73 @@ def exit_code_for(exc: BaseException) -> int:
     return EXIT_RUNTIME
 
 
+# The engine's code for a `unique` generate column or pair that the data cannot satisfy.
+UNIQUENESS_IMPOSSIBLE_CODE = "uniqueness_impossible"
+
+
+def usage_error_types() -> tuple[type, ...]:
+    """The exception types that exit 1: the operator's request or environment is wrong.
+
+    One tuple, read by the exit map and by the run error arm's reason-attach rule, so the two
+    cannot drift apart. The imports are lazy: the run package imports this module.
+    """
+    from decoy_engine import ConfigError, PipelineValidationError
+    from decoy_engine.plan import PlanCompileError
+
+    from decoy import _native_gate, _resources
+    from decoy.cli.extras import MissingExtraError, UnsupportedCloudEndpointError
+    from decoy.cli.io import DuckDBSourceError, LayoutError, TargetFormatError
+    from decoy.cli.run._errors import OutDirUsageError
+    from decoy.cli.run._execute import (
+        _ChunkedFixedWidthError,
+        _ChunkedGenerateError,
+        _ChunkedIntegrityError,
+        _ChunkedQuarantineError,
+        _ChunkedReportFlagError,
+    )
+    from decoy.cli.run._notify import _OtelSettingsUsageError
+    from decoy.cli.run._prepare import _MaskSecretUsageError
+    from decoy.cli.run._vault import _ChunkedVaultError, _VaultUsageError
+
+    # Defensive imports: an engine build without the class just never matches.
+    try:
+        from decoy_engine.detection.ner import NerUnavailableError
+
+        ner: tuple[type, ...] = (NerUnavailableError,)
+    except ImportError:
+        ner = ()
+    try:
+        from decoy_engine.keyprovider import MaskSecretError
+
+        mask_secret: tuple[type, ...] = (MaskSecretError,)
+    except ImportError:
+        mask_secret = ()
+    return (
+        PlanCompileError,
+        PipelineValidationError,
+        ConfigError,
+        _ChunkedGenerateError,
+        _ChunkedFixedWidthError,
+        _ChunkedIntegrityError,
+        _ChunkedQuarantineError,
+        TargetFormatError,
+        LayoutError,
+        _ChunkedReportFlagError,
+        _ChunkedVaultError,
+        _VaultUsageError,
+        _MaskSecretUsageError,
+        _OtelSettingsUsageError,
+        _resources.ResourceError,
+        DuckDBSourceError,
+        OutDirUsageError,
+        MissingExtraError,
+        UnsupportedCloudEndpointError,
+        *ner,
+        _native_gate.NativeGateError,
+        *mask_secret,
+    )
+
+
 __all__ = [
     "EXIT_CAPACITY",
     "EXIT_FINDINGS",
@@ -230,4 +293,5 @@ __all__ = [
     "EXIT_USAGE",
     "EXIT_WARNINGS",
     "RUN_EXIT_MAP",
+    "UNIQUENESS_IMPOSSIBLE_CODE",
 ]

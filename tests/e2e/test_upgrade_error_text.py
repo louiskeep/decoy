@@ -65,3 +65,22 @@ def test_a_failure_never_quotes_the_url_or_the_exception(
         payload = json.loads(result.stdout)
         assert payload["code"].startswith("upgrade_")
         assert CANARY not in json.dumps(payload)
+
+
+@pytest.mark.parametrize("failure", [_network_failure, _installer_failure])
+def test_the_exit_drops_the_original_exception_chain(
+    managed: None, monkeypatch: pytest.MonkeyPatch, failure
+) -> None:
+    """The exception can hold the `--url` with its credentials; the exit must not chain to it."""
+    import typer
+
+    failure(monkeypatch)
+
+    with pytest.raises(typer.Exit) as raised:
+        upgrade_mod.upgrade(
+            version=None, check=False, force=False, url=URL, json_=False, quiet=True, verbose=False
+        )
+
+    assert raised.value.exit_code == EXIT_RUNTIME
+    assert raised.value.__cause__ is None
+    assert raised.value.__suppress_context__ is True

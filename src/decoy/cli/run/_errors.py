@@ -5,37 +5,31 @@ from typing import Any, NoReturn
 
 import typer
 
-from decoy import _mask_secret_guidance, _native_gate, _resources
+from decoy import _mask_secret_guidance, _native_gate
 from decoy._atomic import AtomicWriteError, describe
+from decoy.cli import exit_codes as _exit_codes
 from decoy.cli import gen
-from decoy.cli.exit_codes import EXIT_CAPACITY, EXIT_USAGE, run_exit_code
+from decoy.cli.exit_codes import (
+    EXIT_CAPACITY,
+    EXIT_USAGE,
+    UNIQUENESS_IMPOSSIBLE_CODE,
+    run_exit_code,
+)
 from decoy.cli.extras import (
     MissingExtraError,
-    UnsupportedCloudEndpointError,
     translate_missing_extra,
     translate_ner_unavailable,
 )
 from decoy.cli.gate import PreRunCheckError, cap_error_text, capacity_codes
-from decoy.cli.io import OUTPUT_DIR_UNUSABLE, DuckDBSourceError, LayoutError, TargetFormatError
+from decoy.cli.io import OUTPUT_DIR_UNUSABLE, LayoutError
 from decoy.cli.run._context import RunContext
-from decoy.cli.run._execute import (
-    _ChunkedFixedWidthError,
-    _ChunkedGenerateError,
-    _ChunkedIntegrityError,
-    _ChunkedQuarantineError,
-    _ChunkedReportFlagError,
-)
-from decoy.cli.run._notify import _dispatch_run_notifications, _OtelSettingsUsageError
-from decoy.cli.run._prepare import _MaskSecretUsageError
-from decoy.cli.run._vault import _ChunkedVaultError, _VaultUsageError, _VaultWriteError
+from decoy.cli.run._notify import _dispatch_run_notifications
+from decoy.cli.run._vault import _VaultWriteError
 from decoy.ui.output import OutputMode, emit_json, print_traceback
 from decoy.ui.theme import error, hint
 
 # The engine's capacity-refusal codes come from its registry (`capacity_codes()`); see
 # docs/plans/2026-07-24-oom-checker-cli-v1.md R8 for why the match is narrow.
-
-# The engine's code for a `unique` generate column or pair that the data cannot satisfy.
-UNIQUENESS_IMPOSSIBLE_CODE = "uniqueness_impossible"
 
 _OUT_OF_MEMORY_TEXT = "the run ran out of memory."
 
@@ -51,54 +45,6 @@ class OutDirUsageError(LayoutError):
         super().__init__(OUTPUT_DIR_UNUSABLE.code, OUTPUT_DIR_UNUSABLE.message())
 
 
-def _usage_types() -> tuple[type, ...]:
-    """The exception types that exit 1: the operator's request or environment is wrong.
-
-    One tuple, read by the category rule and by `_cli_refusal_types`, so the exit and the
-    reason attach rule cannot drift apart.
-    """
-    from decoy_engine import ConfigError, PipelineValidationError
-    from decoy_engine.plan import PlanCompileError
-
-    # Defensive imports: an engine build without the class just never matches.
-    try:
-        from decoy_engine.detection.ner import NerUnavailableError
-
-        ner: tuple[type, ...] = (NerUnavailableError,)
-    except ImportError:
-        ner = ()
-    try:
-        from decoy_engine.keyprovider import MaskSecretError
-
-        mask_secret: tuple[type, ...] = (MaskSecretError,)
-    except ImportError:
-        mask_secret = ()
-    return (
-        PlanCompileError,
-        PipelineValidationError,
-        ConfigError,
-        _ChunkedGenerateError,
-        _ChunkedFixedWidthError,
-        _ChunkedIntegrityError,
-        _ChunkedQuarantineError,
-        TargetFormatError,
-        LayoutError,
-        _ChunkedReportFlagError,
-        _ChunkedVaultError,
-        _VaultUsageError,
-        _MaskSecretUsageError,
-        _OtelSettingsUsageError,
-        _resources.ResourceError,
-        DuckDBSourceError,
-        OutDirUsageError,
-        MissingExtraError,
-        UnsupportedCloudEndpointError,
-        *ner,
-        _native_gate.NativeGateError,
-        *mask_secret,
-    )
-
-
 def _engine_family(exc_type: type) -> bool:
     """Whether the engine's reason adapter trusts this exception class."""
     from decoy_engine.reason_adapter import registered_families
@@ -112,7 +58,7 @@ def _cli_refusal_types() -> tuple[type, ...]:
     The exit-1 types that are not engine families, plus the vault write failure (exit 3) and
     the gate refusal (exit 1 or 5).
     """
-    owned = tuple(t for t in _usage_types() if not _engine_family(t))
+    owned = tuple(t for t in _exit_codes.usage_error_types() if not _engine_family(t))
     return (*owned, _VaultWriteError, PreRunCheckError)
 
 
@@ -225,7 +171,7 @@ def fail(ctx: RunContext, exc: Exception) -> NoReturn:
         # timezone_naive_datetime) stay runtime errors. The engine text is value-free.
         _category = "usage"
     else:
-        _category = "usage" if isinstance(exc, _usage_types()) else "runtime"
+        _category = "usage" if isinstance(exc, _exit_codes.usage_error_types()) else "runtime"
     # CLI QA fix (2026-06-02, F8): cap the error message at 500
     # chars before emitting through --json. Engine exceptions can
     # quote source-row content verbatim (pandas / pyarrow); without
