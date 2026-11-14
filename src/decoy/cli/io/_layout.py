@@ -16,7 +16,7 @@ import uuid
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path, PurePosixPath, PureWindowsPath
-from typing import TYPE_CHECKING, TypeGuard
+from typing import TYPE_CHECKING, Literal, TypeGuard
 
 from decoy._atomic import (
     AtomicWriteError,
@@ -130,6 +130,22 @@ def owning_run(path: Path, root: Path, name: str) -> RunFolder | None:
                 return None
             return RunFolder(base / ancestor.name, ancestor.name)
     return None
+
+
+SideKind = Literal["unmasked", "detokenized", "snapshot"]
+_SIDE_SUFFIX: dict[str, str] = {
+    "unmasked": ".unmasked.csv",
+    "detokenized": ".detokenized.csv",
+    "snapshot": ".snapshot.json",
+}
+
+
+def side_file_default(kind: SideKind, input_path: Path, *, parquet: bool = False) -> Path:
+    """The default side file beside its input; `current` is resolved first. Unknown kind: `KeyError`."""
+    suffix = ".detokenized.parquet" if parquet and kind == "detokenized" else _SIDE_SUFFIX[kind]
+    real, plain = input_path.parent.resolve(), Path(os.path.abspath(input_path.parent))
+    beside = input_path if real == plain else real / input_path.name
+    return beside.with_suffix(suffix)
 
 
 def placed_path(run: RunFolder, raw: str) -> Path | None:
@@ -757,11 +773,22 @@ def open_run_layout(
     The project root is the marker folder above the YAML, or the YAML's folder when none is
     found. Raises `LayoutError`, `AtomicWriteError` or `PrivateFileError`.
     """
-    from decoy.cli.io._project import find_project
-
     yaml = config.resolve()
     if not has_placed_output(config_dict):
         return RunLayout.fixed(yaml.parent)
-    found = find_project(yaml.parent, project)
-    name = pipeline_name_for(found.root, yaml, config_dict.get("name"))
+    found, name = pipeline_identity(yaml, config_dict.get("name"), project)
     return RunLayout.open(found.root, name, invocation_id, project=found)
+
+
+def pipeline_identity(
+    config: Path, declared: object, project: Project | Path | None = None
+) -> tuple[Project, PipelineName]:
+    """The project and run-folder name of a pipeline YAML: the one place both are decided.
+
+    `project` is a found project, a root to read (`--project`), or None to walk up. Raises `LayoutError`.
+    """
+    from decoy.cli.io._project import find_project
+
+    walk = project is None or isinstance(project, Path)
+    found = find_project(config.resolve().parent, project) if walk else project
+    return found, pipeline_name_for(found.root, config.resolve(), declared)

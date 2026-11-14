@@ -182,6 +182,7 @@ def test_at47_side_files_beside_out_or_elsewhere_are_accepted(tmp_path: Path) ->
 
 def test_at47_the_same_flags_inside_a_fixed_out_dir_are_accepted(tmp_path: Path) -> None:
     root, yaml = _project(tmp_path)
+    (root / "out").mkdir()  # a fixed DIR needs an existing parent, as `open_out_dir` requires
     build = root / "out" / "build"
     placement = OutputPlacement.fixed(build, (("--vault", build / "v.db"),))
     assert layout_issues(yaml, _targets(a="a.csv"), placement) == []
