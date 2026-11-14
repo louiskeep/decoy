@@ -22,6 +22,10 @@ git logs).
 
 ## 2026-11-14
 
+- **CLI** (`0d8f5b91`, CLI #253): PROJECT-LAYOUT P9 (roadmap row 24t, still partly merged). Side files and reports follow the run folder. P10 is in review as CLI #256.
+- **CLI** (`ba7cdc7c`, CLI #252): SUB-RUN C1 (roadmap row 57, now closed). `decoy run` applies the subset block, and `--no-subset` turns it off.
+- **CLI** (`49dac61a`, CLI #254): DUP-DEFECTS C1 (roadmap row 24zd, now closed). End-to-end tests prove the duplicated-logic fixes through the CLI.
+- **CLI** (`1828b808`, CLI #250): PROJECT-LAYOUT P7 (roadmap row 24t). `decoy init` writes pipelines into the project, with paths relative to the YAML.
 - **CLI** (`8477b345`, CLI #248): PROJECT-LAYOUT P8 (roadmap row 24t, still partly merged). `decoy run` with no argument runs the project's one pipeline; `decoy run --all` runs every pipeline in its own process and exits with the most serious child exit code.
 - **CLI** (`f876137f`, CLI #246): DUP-FREEZE CL3 (roadmap row 24zf, partly merged). One config loader, one exception-to-exit-code map and one secret-ref rule.
 - **CLI** (`41986152`, CLI #245): repin to engine 0.24.0. A vault is created only under its writer lock, a failed run removes only the vault it created, and layout refusals come before vault and source checks.
@@ -52,6 +56,7 @@ git logs).
 
 ## 2026-11-12
 
+- **Engine** (`7a0547ee`, engine #547): SAMPLE part SE2 (roadmap row 63, still partly merged). The sample stage runs inside the subset stage.
 - **CLI** (`52a2399b`, #226): PROJECT-LAYOUT part P5 (roadmap row 24t, still open). Every command takes a pipeline name in place of its config path. P6 to P10 remain.
 - **CLI** (`ae58f682`, #225): SAMPLE part SC0 (roadmap row 63). `decoy run --rows` refuses a run with quarantine on, and the quarantine path is passed to the engine explicitly.
 - **CLI** (`62798427`, #224): CLI-QA1 part C3b (roadmap row 24e). `decoy validate` checks output targets. This is the last slice of `plan/cli-qa1`; the row stays open for its distribution-integrity QA items.
