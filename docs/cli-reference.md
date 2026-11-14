@@ -410,7 +410,7 @@ $ decoy fit [OPTIONS] SOURCE
 * `--fanout COLUMN`: Record how many rows each key of COLUMN has (repeatable): the child-side key of a foreign key. A generate reference column with `distribution: fitted` then gives each generated parent about as many children as the source parents had. Counts only, never a key value. Not supported with --epsilon.
 * `--include-values`: Keep real values of sensitive columns in the snapshot. The file then holds real data. Not supported with --epsilon.
 * `--json`: Emit a structured JSON result on stdout.
-* `-q, --quiet`: Suppress stdout. Exit code carries the result.
+* `-q, --quiet`: Suppress stdout. Errors still go to stderr; exit code carries the result.
 * `-v, --verbose`: Enable debug-level CLI logs on stderr.
 * `--help`: Show this message and exit.
 
@@ -789,7 +789,7 @@ $ decoy setup [OPTIONS]
 
 * `-y, --yes`: Accept the detected or stored values; do not prompt.
 * `--json`: Emit a JSON result instead of text.
-* `-q, --quiet`: Suppress stdout.
+* `-q, --quiet`: Suppress stdout. Errors still go to stderr.
 * `-v, --verbose`: Enable debug logs on stderr.
 * `--help`: Show this message and exit.
 
@@ -883,7 +883,7 @@ $ decoy upgrade [OPTIONS]
 * `--check`: Only report if a newer version exists.
 * `--force`: Reinstall even if already current.
 * `--json`: Emit a JSON result.
-* `-q, --quiet`: Suppress stdout.
+* `-q, --quiet`: Suppress stdout. Errors still go to stderr.
 * `-v, --verbose`: Debug logs on stderr.
 * `--help`: Show this message and exit.
 
@@ -1017,7 +1017,7 @@ $ decoy validate compile [OPTIONS] CONFIG
 * `-o, --output PATH`: Also write the frozen plan artifact to this path (absorbs the old `plan` command).
 * `--format TEXT`: On-disk format for the --output artifact: yaml (default) or json.  [default: yaml]
 * `--json`: Emit structured JSON instead of the styled table output.
-* `-q, --quiet`: Suppress stdout. Exit code carries success or failure.
+* `-q, --quiet`: Suppress stdout. Errors still go to stderr; exit code carries success or failure.
 * `-v, --verbose`: Enable debug-level CLI logs on stderr.
 * `--help`: Show this message and exit.
 
@@ -1483,7 +1483,7 @@ $ decoy report show [OPTIONS] EVIDENCE_FILE
 * `--format TEXT`: Output format when --output is given: &#x27;html&#x27; or &#x27;markdown&#x27;. Without --output, prints a terminal summary.
 * `-o, --output PATH`: Write the report to this file path (requires --format).
 * `--json`: Emit the evidence manifest as JSON.
-* `-q, --quiet`: Suppress stdout.
+* `-q, --quiet`: Suppress stdout. Errors still go to stderr.
 * `-v, --verbose`: Enable debug-level logs.
 * `--help`: Show this message and exit.
 
@@ -1589,7 +1589,7 @@ $ decoy report verify [OPTIONS] EVIDENCE_FILE
 **Options**:
 
 * `--json`: Emit a structured JSON result instead of human-readable output.
-* `-q, --quiet`: Suppress stdout. Exit code carries the result.
+* `-q, --quiet`: Suppress stdout. Errors still go to stderr; exit code carries the result.
 * `-v, --verbose`: Enable debug-level CLI logs on stderr.
 * `--project PATH`: Project root for a manifest&#x27;s project-relative paths.
 * `--help`: Show this message and exit.
@@ -1666,7 +1666,7 @@ $ decoy report fidelity [OPTIONS] SOURCE OUTPUT
 * `--fail-on-warning`: Also exit non-zero (EXIT_FINDINGS) when the policy verdict is &#x27;warn&#x27;.
 * `--report-out PATH`: Write the full quality-report/v1 + policy JSON to this path.
 * `--json`: Emit the full quality-report/v1 + policy result as JSON.
-* `-q, --quiet`: Suppress stdout. Exit code carries the result.
+* `-q, --quiet`: Suppress stdout. Errors still go to stderr; exit code carries the result.
 * `-v, --verbose`: Enable debug-level CLI logs on stderr.
 * `--help`: Show this message and exit.
 
@@ -1794,7 +1794,7 @@ $ decoy report diff [OPTIONS] EVIDENCE_FILE_A EVIDENCE_FILE_B
 
 * `--require-data`: Hard-fail (EXIT_USAGE) when a referenced output file is missing, instead of degrading to manifest-level only.
 * `--json`: Emit structured JSON.
-* `-q, --quiet`: Suppress stdout.
+* `-q, --quiet`: Suppress stdout. Errors still go to stderr.
 * `-v, --verbose`: Enable debug-level logs.
 * `--help`: Show this message and exit.
 
@@ -1925,7 +1925,7 @@ $ decoy ci check [OPTIONS] [MANIFEST]
 * `--format [json|sarif|markdown]`: Report format: json (decoy-ci-report/v1), sarif (2.1.0), or markdown.  [default: json]
 * `-o, --output TEXT`: Write the report to this file inside the repository, or `-` for stdout.  [default: -]
 * `--context [ci|pre-commit]`: `pre-commit` narrows to config-only validation plus the staged scan.  [default: ci]
-* `-q, --quiet`: Suppress stderr notes and summary.
+* `-q, --quiet`: Suppress stderr notes and summary. Errors still print.
 * `-v, --verbose`: Print one value-free line per check on stderr.
 * `--help`: Show this message and exit.
 

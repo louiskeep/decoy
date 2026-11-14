@@ -193,20 +193,20 @@ def _expected_json(surface: str, cfg: Path, vault: Path, remedy: str) -> str:
         "tokenize": {
             "command": "tokenize",
             "status": "error",
-            "config": str(cfg),
             "error": remedy,
+            "config": str(cfg),
         },
         "unmask": {
             "command": "unmask",
             "status": "error",
-            "config": str(cfg),
             "error": remedy,
+            "config": str(cfg),
         },
         "report vault": {
             "command": "report vault",
             "status": "error",
-            "vault": str(vault),
             "error": remedy,
+            "vault": str(vault),
         },
     }[surface]
     return json.dumps(payload) + "\n"

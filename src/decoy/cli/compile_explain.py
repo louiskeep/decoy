@@ -44,7 +44,7 @@ from decoy.cli import gen
 from decoy.cli._yaml_errors import sanitize_yaml_error
 from decoy.cli.exit_codes import EXIT_RUNTIME, EXIT_USAGE
 from decoy.cli.io import pipeline_argument, resolve_pipeline
-from decoy.ui.output import OutputMode, emit_json, setup_output
+from decoy.ui.output import OutputMode, emit_error, emit_json, setup_output
 from decoy.ui.table import make_table
 from decoy.ui.theme import accent, code, error, hint, success, warn
 
@@ -133,7 +133,10 @@ def compile(
         help="Emit structured JSON instead of the styled table output.",
     ),
     quiet: bool = typer.Option(
-        False, "--quiet", "-q", help="Suppress stdout. Exit code carries success or failure."
+        False,
+        "--quiet",
+        "-q",
+        help="Suppress stdout. Errors still go to stderr; exit code carries success or failure.",
     ),
     verbose: bool = typer.Option(
         False, "--verbose", "-v", help="Enable debug-level CLI logs on stderr."
@@ -318,19 +321,7 @@ def compile(
 
 def _simple_error(state, config: Path, msg: str) -> None:
     """Render a usage error in the compile command's envelope / console style."""
-    if state.mode is OutputMode.json:
-        emit_json(
-            state,
-            {
-                "command": "validate compile",
-                "status": "error",
-                "config": str(config),
-                "error": msg,
-            },
-        )
-    elif state.mode is not OutputMode.quiet:
-        # markup=False: msg can carry user paths / bracketed text.
-        state.err_console.print(error("error:"), msg, markup=False)
+    emit_error(state, "validate compile", msg, context={"config": str(config)})
 
 
 def _compile_error(state, config: Path, exc: Exception) -> None:
@@ -364,7 +355,7 @@ def _compile_error(state, config: Path, exc: Exception) -> None:
         if err_code is not None:
             payload["code"] = err_code
         emit_json(state, payload)
-    elif state.mode is not OutputMode.quiet:
+    else:
         # markup=False: msg starts with a bracketed error code and can carry
         # an install line such as `pip install decoy-cli[ner]`; Rich would
         # parse both as unknown style tags and drop them.

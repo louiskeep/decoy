@@ -32,8 +32,8 @@ from decoy.cli.io import (
     resolve_pipeline,
     write_private_table,
 )
-from decoy.ui.output import OutputMode, emit_json, setup_output
-from decoy.ui.theme import code, error, hint, success, warn
+from decoy.ui.output import OutputMode, emit_error, emit_json, setup_output
+from decoy.ui.theme import code, success, warn
 
 _UNMASK_EPILOG = """\
 Examples:
@@ -133,23 +133,7 @@ def unmask(
     config_path = resolve_pipeline(config, state, "unmask").yaml
 
     def _emit_error(message: str, *, hint_text: str | None = None) -> None:
-        if state.mode is OutputMode.json:
-            emit_json(
-                state,
-                {
-                    "command": "unmask",
-                    "status": "error",
-                    "config": str(config),
-                    "error": message,
-                },
-            )
-        elif state.mode is not OutputMode.quiet:
-            # markup=False: message is engine text or a user path, not authored
-            # markup. Engine install lines such as `pip install 'decoy-engine[vault]'`
-            # would otherwise lose the bracketed extra name to Rich's tag parser.
-            state.err_console.print(error("error:"), message, markup=False)
-            if hint_text:
-                state.err_console.print(" ", hint("hint:"), hint_text)
+        emit_error(state, "unmask", message, hint=hint_text, context={"config": str(config)})
 
     try:
         raw = _yaml.safe_load(config_path.read_text(encoding="utf-8"))

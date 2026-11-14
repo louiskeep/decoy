@@ -46,9 +46,9 @@ from decoy.cli.io import (
     resolve_pipeline,
     write_private_table,
 )
-from decoy.ui.output import OutputMode, emit_json, setup_output
+from decoy.ui.output import OutputMode, emit_error, emit_json, setup_output
 from decoy.ui.progress import spinner
-from decoy.ui.theme import code, error, hint, success, warn
+from decoy.ui.theme import code, hint, success, warn
 
 _TOKENIZE_EPILOG = """\
 Examples:
@@ -178,22 +178,7 @@ def tokenize(
     config_str = str(config)
 
     def _emit_error(message: str, *, hint_text: str | None = None) -> None:
-        if state.mode is OutputMode.json:
-            emit_json(
-                state,
-                {
-                    "command": "tokenize",
-                    "status": "error",
-                    "config": config_str,
-                    "error": message,
-                },
-            )
-        elif state.mode is not OutputMode.quiet:
-            # markup=False: engine/vault text can carry `[...]` (e.g. an install
-            # hint) that Rich would otherwise parse as markup and drop.
-            state.err_console.print(error("error:"), message, markup=False)
-            if hint_text:
-                state.err_console.print(" ", hint("hint:"), hint_text)
+        emit_error(state, "tokenize", message, hint=hint_text, context={"config": config_str})
 
     import yaml as _yaml
 
@@ -518,20 +503,7 @@ def detokenize(
     config_str = str(config)
 
     def _emit_error(message: str, *, hint_text: str | None = None) -> None:
-        if state.mode is OutputMode.json:
-            emit_json(
-                state,
-                {
-                    "command": "detokenize",
-                    "status": "error",
-                    "config": config_str,
-                    "error": message,
-                },
-            )
-        elif state.mode is not OutputMode.quiet:
-            state.err_console.print(error("error:"), message, markup=False)
-            if hint_text:
-                state.err_console.print(" ", hint("hint:"), hint_text)
+        emit_error(state, "detokenize", message, hint=hint_text, context={"config": config_str})
 
     import yaml as _yaml
 

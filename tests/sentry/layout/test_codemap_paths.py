@@ -35,6 +35,7 @@ KINDS = frozenset(
         "Python API",
         "CI integration",
         "Terminal output",
+        "Versioned schema artifacts",
         "User-facing CLI text and crash handling",
         "Shipped install and update",
         "Build-host release tools (not shipped in the wheel)",
