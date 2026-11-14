@@ -309,39 +309,52 @@ def test_a_failed_tokenize_never_deletes_a_vault_it_did_not_create(
     assert vault.read_bytes() == before, "a vault this run did not create was removed"
 
 
+def _null_token_pipeline(root: Path) -> Path:
+    """A tokenize pipeline whose column is all null, so a run commits zero mappings."""
+    cfg = _pipeline(root, strategy="tokenize")
+    pd.DataFrame({"email": [None, None, None]}).to_csv(root / "a.csv", index=False)
+    return cfg
+
+
+@pytest.mark.parametrize("nulls", [False, True], ids=["mappings", "zero-mappings"])
 def test_a_creator_that_fails_keeps_the_vault_a_concurrent_run_committed(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, nulls: bool
 ) -> None:
-    """A creates the file, B opens it and commits, A then fails: B's vault must survive."""
+    """A is about to take the lock, B runs to completion, A then fails: B's vault must survive.
+
+    The guarantee: no interleaving deletes a vault whose run committed, even one that
+    committed zero mappings (an empty token_map is not proof that nobody wrote it).
+    """
     import decoy_engine
 
     from decoy.cli import _token_vault
 
-    cfg = _pipeline(tmp_path, strategy="tokenize")
+    cfg = (_null_token_pipeline if nulls else lambda r: _pipeline(r, strategy="tokenize"))(tmp_path)
     vault = tmp_path / "t.db"
-    real_create = _token_vault.create_private_exclusive
+    real_lock = _token_vault.lock_exclusive
     inner: list = []
+    started: list[bool] = []
     real_run = decoy_engine.run_pipeline
 
-    def _create_then_let_b_finish(path: Path) -> bool:
-        made = real_create(path)
-        if made and not inner:
+    def _lock_after_b_finishes(path: Path) -> int:
+        if not started:
+            started.append(True)
             inner.append(runner.invoke(app, ["tokenize", str(cfg), "--vault", str(vault)]))
-        return made
+        return real_lock(path)
 
     def _fail_for_a(*args, **kwargs):
         if inner:  # A's own pipeline call, after B finished
             raise RuntimeError(CANARY)
         return real_run(*args, **kwargs)
 
-    monkeypatch.setattr(_token_vault, "create_private_exclusive", _create_then_let_b_finish)
+    monkeypatch.setattr(_token_vault, "lock_exclusive", _lock_after_b_finishes)
     monkeypatch.setattr(decoy_engine, "run_pipeline", _fail_for_a)
     result = runner.invoke(app, ["tokenize", str(cfg), "--vault", str(vault)])
     assert inner and inner[0].exit_code == 0, inner[0].output
     assert result.exit_code == EXIT_RUNTIME, result.output
     assert vault.exists(), "A deleted the vault B had committed"
     with _token_vault.LocalTokenVault(vault, create=False) as kept:
-        assert kept.count() > 0
+        assert (kept.count() == 0) is nulls
 
 
 def test_a_second_tokenize_is_refused_while_another_holds_the_vault(tmp_path: Path) -> None:
@@ -355,3 +368,43 @@ def test_a_second_tokenize_is_refused_while_another_holds_the_vault(tmp_path: Pa
         assert "vault_busy" in result.output
         assert not list(tmp_path.rglob("out.csv"))
     assert vault.exists()
+
+
+def test_a_layout_fault_and_a_taken_vault_never_reach_the_sources(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The layout refusal is raised before DuckDB staging and the capacity preflight."""
+    import decoy_engine
+    import decoy_engine.execution as engine_execution
+
+    from decoy.cli.run import _prepare
+
+    calls: list[str] = []
+
+    def _spy(name: str, real_fn):
+        def _wrapped(*args, **kwargs):
+            calls.append(name)
+            return real_fn(*args, **kwargs)
+
+        return _wrapped
+
+    monkeypatch.setattr(_prepare, "acquire_relation", _spy("acquire", _prepare.acquire_relation))
+    monkeypatch.setattr(
+        engine_execution,
+        "estimate_job_capacity",
+        _spy("capacity", engine_execution.estimate_job_capacity),
+    )
+    monkeypatch.setattr(decoy_engine, "run_pipeline", _spy("pipeline", decoy_engine.run_pipeline))
+    cfg = _pipeline(tmp_path)
+    clash = tmp_path / "out.csv"  # the target path, so vault and target collide
+    clash.write_bytes(b"taken")
+    missing_db = tmp_path / "missing.duckdb"
+    result = runner.invoke(
+        app,
+        ["run", str(cfg), "--json", "--vault", str(clash), "--duckdb-source", f"a={missing_db}"],
+    )
+    assert result.exit_code == EXIT_USAGE, result.output
+    assert "collision" in result.output.lower() or "same" in result.output.lower(), result.output
+    assert "vault_exists" not in result.output
+    assert calls == [], f"work ran before the layout refusal: {calls}"
+    assert clash.read_bytes() == b"taken"

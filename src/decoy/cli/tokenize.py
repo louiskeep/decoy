@@ -397,7 +397,7 @@ def tokenize(
         # LocalTokenVault(create=True) writes the file + schema up front, so a run that fails
         # before commit leaves an empty vault on disk even though its rows were discarded.
         # `discard_unwritten` (above, under the writer lock) removes it only when THIS run
-        # created it and no run committed mappings to it; a re-run's vault is kept.
+        # created it, holds the lock and never committed; a re-run's vault is kept.
 
     if layout is not None:
         for item in layout.commit_latest():

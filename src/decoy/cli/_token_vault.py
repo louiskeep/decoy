@@ -33,6 +33,13 @@ and column/namespace names only. Treat the file as sensitive -- it
 re-identifies every tokenized value. It is cleartext at rest by design (no
 encryption); the file is created 0600 (and a newly created parent dir 0700) as
 the at-rest mitigation.
+
+Concurrency. Every writer (`create=True`) takes an exclusive advisory lock on a sibling
+`.<vault>.lock` before it creates or opens the vault and holds it until `close()`, so a second
+writer is refused (`vault_busy`) and a failed run that created the file may delete it without
+racing anyone. Readers (`create=False`: detokenize, unmask, report) take no lock; they read
+only committed state. Where the platform has no advisory lock (Windows) ownership cannot be
+proven, so a failed run leaves its empty vault and a re-run reuses it.
 """
 
 from __future__ import annotations
@@ -47,6 +54,7 @@ from decoy._private_file import (
     PRIVATE_BUSY,
     PRIVATE_MODE_FAILED,
     PrivateFileError,
+    advisory_lock_available,
     create_private_exclusive,
     lock_exclusive,
     open_private,
@@ -108,6 +116,7 @@ class LocalTokenVault:
         # True only when THIS opener created the vault file; tokenize may delete only that.
         self.created = False
         self._lock_fd: int | None = None
+        self._committed = False
         if not create and not path.exists():
             raise TokenVaultError(
                 code="vault_not_found",
@@ -123,8 +132,30 @@ class LocalTokenVault:
                 # may be a shared user directory we must not re-permission.
                 parent_is_new = not parent.exists()
                 parent.mkdir(parents=True, exist_ok=True)
-                # Exclusive create decides "this run made the file" without a race: of
-                # two runs that both miss an exists() check, exactly one gets it here.
+                # The writer lock comes first: while this run holds it no other writer can
+                # open the vault (every writer is create=True and locks first), so "this run
+                # created the file and did not commit" is enough to delete it. Without an
+                # advisory lock (Windows) ownership cannot be proven, so nothing is deleted.
+                if advisory_lock_available():
+                    lock_failure: PrivateFileError | None = None
+                    try:
+                        self._lock_fd = lock_exclusive(path.with_name(f".{path.name}.lock"))
+                    except PrivateFileError as exc:
+                        lock_failure = exc
+                    if lock_failure is not None:
+                        if lock_failure.code == PRIVATE_BUSY:
+                            raise TokenVaultError(
+                                code="vault_busy",
+                                message=(
+                                    "another decoy run is writing this token vault; "
+                                    "wait for it to finish or use a different --vault."
+                                ),
+                            )
+                        raise TokenVaultError(
+                            code="vault_open_error",
+                            message=f"could not lock token vault {path!s}: {lock_failure.code}.",
+                        )
+                # Exclusive create decides "this run made the file", under the lock.
                 self.created = create_private_exclusive(path)
                 # open_private creates the file 0600 before any schema write (SQLite can
                 # spill dirty pages mid-transaction, so protection cannot wait for
@@ -145,28 +176,6 @@ class LocalTokenVault:
                         code="vault_open_error",
                         message=f"could not create token vault {path!s}: {exc.code}.",
                     ) from None
-                # One writer per vault for this object's whole life, so a creator's cleanup
-                # can never delete a vault another run is committing to.
-                lock_failure: PrivateFileError | None = None
-                try:
-                    self._lock_fd = lock_exclusive(path.with_name(f".{path.name}.lock"))
-                except PrivateFileError as exc:
-                    lock_failure = exc
-                if lock_failure is not None:
-                    # The lock holder owns the file now; this run must never delete it.
-                    self.created = False
-                    if lock_failure.code == PRIVATE_BUSY:
-                        raise TokenVaultError(
-                            code="vault_busy",
-                            message=(
-                                "another decoy run is writing this token vault; "
-                                "wait for it to finish or use a different --vault."
-                            ),
-                        )
-                    raise TokenVaultError(
-                        code="vault_open_error",
-                        message=f"could not lock token vault {path!s}: {lock_failure.code}.",
-                    )
             open_failure: sqlite3.Error | None = None
             try:
                 # isolation_level="" keeps Python's implicit-transaction behavior:
@@ -340,6 +349,7 @@ class LocalTokenVault:
     def commit(self) -> None:
         """Make accumulated writes durable. Call only after the run succeeds."""
         self._conn.commit()
+        self._committed = True
 
     def _release_lock(self) -> None:
         if self._lock_fd is not None:
@@ -347,29 +357,18 @@ class LocalTokenVault:
             self._lock_fd = None
 
     def discard_unwritten(self) -> None:
-        """Remove the vault file if this run created it and no run committed mappings to it.
+        """Remove the vault file when this run created it, holds the lock, and never committed.
 
-        Runs under the writer lock. A run that opened the file in the gap before this run took
-        the lock may have committed rows; those are kept. Always releases the lock.
+        The lock was taken before the file was created, so no other run can have opened or
+        committed to it. Without a lock the file is left for a re-run to reuse. Always
+        releases the lock.
         """
         try:
-            if self.created:
+            if self.created and self._lock_fd is not None and not self._committed:
                 conn = getattr(self, "_conn", None)
-                if conn is None:
-                    # The open failed before a connection existed; a committed vault is
-                    # never empty on disk, a stub is.
-                    unwritten = self._path.stat().st_size == 0
-                else:
-                    conn.rollback()
-                    tables = conn.execute(
-                        "SELECT 1 FROM sqlite_master WHERE name = 'token_map'"
-                    ).fetchone()
-                    unwritten = tables is None or (
-                        conn.execute("SELECT 1 FROM token_map LIMIT 1").fetchone() is None
-                    )
+                if conn is not None:
                     conn.close()
-                if unwritten:
-                    self._path.unlink(missing_ok=True)
+                self._path.unlink(missing_ok=True)
         finally:
             self._release_lock()
 

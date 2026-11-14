@@ -6,10 +6,12 @@ and `open_private` are the three functions to replace. Today the Windows branch 
 documented behavior, a file that inherits its folder's permissions.
 
 `create_private_exclusive` and `lock_exclusive` give a writer of a shared file a race-free "I
-created it" and "I am the only writer" answer; the token vault uses both. The writer lock is an
-advisory `flock` on POSIX and a one-byte `msvcrt` lock on Windows, taken on a separate lock
-file so SQLite's own locks on the database never meet it (on macOS they would). The Windows
-branch is untested here.
+created it" and "I am the only writer" answer; the token vault uses both. `try_lock_exclusive`
+is the one advisory-lock primitive (`flock`) every lock in the CLI goes through, and
+`advisory_lock_available` is the one answer to "does this platform have it". Windows has no
+`fcntl`, so there is no lock there and callers must not claim ownership they cannot prove.
+The vault lock sits on a separate lock file so SQLite's own locks on the database never meet
+it (on macOS they would).
 
 The creation recipe mirrors the engine's `fileaccess/_private.py` (exclusive create, no
 symlink at the created name, narrow by descriptor) without its file-access policy, so it runs
@@ -38,12 +40,18 @@ import sys
 import tempfile
 from pathlib import Path
 
+try:
+    import fcntl
+except ImportError:  # Windows: no advisory lock
+    fcntl = None  # type: ignore[assignment]
+
 __all__ = [
     "PRIVATE_BUSY",
     "PRIVATE_EXISTS",
     "PRIVATE_MODE_FAILED",
     "PRIVATE_OPEN_FAILED",
     "PrivateFileError",
+    "advisory_lock_available",
     "apply_mode",
     "create_exclusive",
     "create_private_directory",
@@ -52,6 +60,7 @@ __all__ = [
     "lock_exclusive",
     "open_private",
     "restrict_owner_only",
+    "try_lock_exclusive",
 ]
 
 PRIVATE_OPEN_FAILED = "private_open_failed"
@@ -200,37 +209,55 @@ def create_private_exclusive(path: Path) -> bool:
     return True
 
 
-def lock_exclusive(path: Path) -> int:
-    """Take a non-blocking exclusive writer lock on the file `path`; return its descriptor.
+_BUSY_ERRNOS = (errno.EWOULDBLOCK, errno.EAGAIN, errno.EACCES)
 
-    Creates `path` owner-only if absent and leaves it in place on release. The lock lasts
-    until the caller `os.close`s the descriptor (or the process exits), so a second writer is
-    refused for the whole life of the first, in this process or another. Opens with
-    `O_NOFOLLOW`. Raises `PrivateFileError` with `PRIVATE_BUSY` when another holder has it,
-    `PRIVATE_OPEN_FAILED` on any other failure.
+
+def advisory_lock_available() -> bool:
+    """Whether this platform has the advisory lock `try_lock_exclusive` takes."""
+    return fcntl is not None
+
+
+def try_lock_exclusive(fd: int) -> bool:
+    """Take a non-blocking exclusive `flock` on `fd`; the one primitive every lock uses.
+
+    Returns True when the lock is held and False when the platform has no lock at all. The
+    lock lasts until `fd` is closed. Raises `PrivateFileError` with `PRIVATE_BUSY` when
+    another holder has it and `PRIVATE_OPEN_FAILED` (errno kept) on any other failure.
     """
-    code: str | None = None
+    if fcntl is None:
+        return False
     failed_errno: int | None = None
-    fd = -1
-    flags = os.O_RDWR | os.O_CREAT | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_BINARY", 0)
     try:
-        fd = os.open(path, flags, _OWNER_FILE)
-        if _WINDOWS:
-            import msvcrt
-
-            msvcrt.locking(fd, msvcrt.LK_NBLCK, 1)  # type: ignore[attr-defined]
-        else:
-            import fcntl
-
-            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
     except OSError as exc:
-        busy = exc.errno in (errno.EACCES, errno.EAGAIN, errno.EWOULDBLOCK, errno.EDEADLK)
-        code = PRIVATE_BUSY if busy and fd >= 0 else PRIVATE_OPEN_FAILED
-        failed_errno = exc.errno
-    if code is not None:
+        failed_errno = exc.errno if exc.errno is not None else errno.EIO
+    if failed_errno is not None:
+        busy = failed_errno in _BUSY_ERRNOS
+        raise PrivateFileError(PRIVATE_BUSY if busy else PRIVATE_OPEN_FAILED, failed_errno)
+    return True
+
+
+def lock_exclusive(path: Path) -> int:
+    """Open the lock file `path` owner-only (created if absent) and lock it; return the fd.
+
+    The file stays on disk after release. Opens with `O_NOFOLLOW`. The lock is held until the
+    caller `os.close`s the descriptor. Raises `PrivateFileError` as `try_lock_exclusive` does,
+    or `PRIVATE_OPEN_FAILED` when the file cannot be opened. Call only when
+    `advisory_lock_available()`.
+    """
+    fd = -1
+    failure: PrivateFileError | None = None
+    try:
+        fd = os.open(path, os.O_RDWR | os.O_CREAT | getattr(os, "O_NOFOLLOW", 0), _OWNER_FILE)
+        try_lock_exclusive(fd)
+    except PrivateFileError as exc:
+        failure = exc
+    except OSError as exc:
+        failure = PrivateFileError(PRIVATE_OPEN_FAILED, exc.errno)
+    if failure is not None:
         if fd >= 0:
             os.close(fd)
-        raise PrivateFileError(code, failed_errno)
+        raise failure
     return fd
 
 

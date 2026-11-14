@@ -96,3 +96,61 @@ def test_a_second_writer_is_refused_while_the_first_holds_the_vault(tmp_path: Pa
         first.close()
     again = LocalTokenVault(path, create=True)
     again.close()
+
+
+def test_the_file_is_created_only_after_the_writer_lock_is_held(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import fcntl
+    import os
+
+    from decoy.cli import _token_vault
+
+    path = tmp_path / "v.db"
+    real = _token_vault.create_private_exclusive
+    seen: list[bool] = []
+
+    def _spy(target: Path) -> bool:
+        probe = os.open(target.with_name(f".{target.name}.lock"), os.O_RDWR)
+        try:
+            try:
+                fcntl.flock(probe, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                seen.append(False)  # the lock was free, so this run did not hold it
+            except OSError:
+                seen.append(True)
+        finally:
+            os.close(probe)
+        return real(target)
+
+    monkeypatch.setattr(_token_vault, "create_private_exclusive", _spy)
+    LocalTokenVault(path, create=True).close()
+    assert seen == [True]
+
+
+def test_without_an_advisory_lock_a_failed_run_never_deletes_its_vault(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from decoy.cli import _token_vault
+
+    monkeypatch.setattr(_token_vault, "advisory_lock_available", lambda: False)
+    path = tmp_path / "v.db"
+    vault = LocalTokenVault(path, create=True)
+    assert vault.created is True
+    vault.discard_unwritten()
+    vault.close()
+    assert path.exists(), "ownership cannot be proven without a lock; the file must stay"
+
+
+def test_a_locked_failed_run_that_created_the_vault_removes_it(tmp_path: Path) -> None:
+    path = tmp_path / "v.db"
+    vault = LocalTokenVault(path, create=True)
+    vault.discard_unwritten()
+    assert not path.exists()
+
+
+def test_a_committed_run_is_never_discarded(tmp_path: Path) -> None:
+    path = tmp_path / "v.db"
+    vault = LocalTokenVault(path, create=True)
+    vault.commit()
+    vault.discard_unwritten()
+    assert path.exists()

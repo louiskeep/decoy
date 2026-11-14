@@ -184,7 +184,6 @@ def _run_config_base(
     from decoy.cli.io import (
         OutputPlacement,
         fixed_target_overwrites,
-        layout_issues,
         target_format_issues,
     )
     from decoy.cli.preflight import _check_target_overwrite, _PreflightAccumulator
@@ -200,10 +199,7 @@ def _run_config_base(
     # Plan 3.14: the layout faults found without a write. One stops the gate here, so the
     # preflight layer never reads a source for a run that cannot place its output.
     placement = placement or OutputPlacement()
-    layout = [
-        GateFinding("config", "error", refusal.code, refusal.message, location)
-        for location, refusal in layout_issues(config_path, raw, placement)
-    ]
+    layout = layout_findings(config_path, raw, placement)
     if layout:
         return None, (), findings + layout
     # A fixed --out-dir is overwritten in place, so each existing relative target is advised.
@@ -341,6 +337,23 @@ def _run_preflight_layer(
             c.code = None
             c.message = "Capacity not checked: the plan does not compile (see the compile error)."
     return _findings_from_checks(acc, "preflight"), acc.capacity_insufficient
+
+
+def layout_findings(
+    config_path: Path, raw: Any, placement: OutputPlacement | None = None
+) -> list[GateFinding]:
+    """The layout faults found without a write, as the config-layer errors the gate reports.
+
+    The one construction of these findings: the gate calls it, and `decoy run` calls it to
+    refuse a layout fault before it touches any source.
+    """
+    from decoy.cli.io import OutputPlacement as _Placement
+    from decoy.cli.io import layout_issues
+
+    return [
+        GateFinding("config", "error", refusal.code, refusal.message, location)
+        for location, refusal in layout_issues(config_path, raw, placement or _Placement())
+    ]
 
 
 def run_gate_on_config(

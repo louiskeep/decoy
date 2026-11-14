@@ -16,6 +16,7 @@ from decoy.cli.gate import (
     GateRoute,
     PreRunCheckError,
     check_before_run,
+    layout_findings,
     parse_pipeline_yaml,
 )
 from decoy.cli.io import (
@@ -261,20 +262,17 @@ def _placement(ctx: RunContext) -> OutputPlacement:
     return OutputPlacement(typed=typed, chunked=ctx.chunked)
 
 
-def _layout_is_clean(ctx: RunContext) -> bool:
-    """Whether the output layout has no refusal, so the early vault refusal does not outrank one.
+def _refuse_layout_faults(ctx: RunContext) -> None:
+    """Raise the gate's own refusal for an output layout fault, before any source is touched.
 
-    The gate reports a layout fault (a collision, an escape) before the vault; a config the
-    check cannot read is left to the gate, which names it.
+    A config the layout check cannot read is left to the gate, which names the fault.
     """
-    from decoy.cli.io import layout_issues
-
-    if not isinstance(ctx.raw, dict):
-        return False
     try:
-        return not layout_issues(ctx.config, ctx.raw, _placement(ctx))
+        findings = layout_findings(ctx.config, ctx.raw, _placement(ctx))
     except Exception:
-        return False
+        return
+    if findings:
+        raise PreRunCheckError.from_findings(findings)
 
 
 def prepare_preview(ctx: RunContext) -> None:
@@ -352,9 +350,11 @@ def prepare(ctx: RunContext, _scopes: contextlib.ExitStack) -> None:
     _guard_mask_secret_ref(ctx.raw)
     if ctx.chunked:
         _refuse_chunked_integrity(ctx)
-    # A taken vault path is known now; refuse it before DuckDB staging or the source
-    # preflight so a source failure cannot hide `vault_exists`.
-    if ctx.vault is not None and not ctx.chunked and _layout_is_clean(ctx):
+    # Layout and vault-path refusals need no source, so they come before DuckDB staging and
+    # the source preflight: a source failure must not hide either of them.
+    if isinstance(ctx.raw, dict):
+        _refuse_layout_faults(ctx)
+    if ctx.vault is not None and not ctx.chunked:
         refuse_existing_vault(ctx.vault)
 
     # DuckDB-in sources: acquire each flagged relation read-only to a
