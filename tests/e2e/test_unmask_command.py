@@ -489,8 +489,8 @@ class TestUnmaskConsoleSurfacesReversedUnverified:
         run_result = runner.invoke(app, ["run", str(out_cfg)])
         assert run_result.exit_code == 0, run_result.output
 
-        masked = tmp_path / "accounts.masked.csv"
-        assert masked.exists(), "decoy run did not write the scaffolded output path"
+        # The scaffold's bare target lands in the run folder under `out/`.
+        (masked,) = (tmp_path / "out").rglob("accounts.masked.csv")
 
         out = tmp_path / "recovered.csv"
         unmask_result = runner.invoke(
@@ -530,7 +530,7 @@ class TestUnmaskConsoleSurfacesReversedUnverified:
         run_result = runner.invoke(app, ["run", str(out_cfg)])
         assert run_result.exit_code == EXIT_USAGE, run_result.output
         assert "keyed_strategy_requires_secret" in run_result.output
-        assert not (tmp_path / "accounts.masked.csv").exists()
+        assert not list(tmp_path.rglob("accounts.masked.csv"))
 
 
 def _multitable_cfg(tmp_path: Path) -> tuple[Path, Path]:
