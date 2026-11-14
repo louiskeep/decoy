@@ -174,6 +174,22 @@ def open_private(path: Path, *, new_parent: bool) -> None:
         raise PrivateFileError(code, failed_errno)
 
 
+def create_private_exclusive(path: Path) -> bool:
+    """Create `path` owner-only if it is absent; True only for the caller that created it.
+
+    `O_EXCL` makes the creator unique even when two runs race, so a caller can tell "this run
+    made the file" without an exists() check. Any other failure returns False and is left for
+    `open_private`, which reports it with its coded errors.
+    """
+    flags = os.O_RDWR | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0)
+    try:
+        fd = os.open(path, flags, _OWNER_FILE)
+    except OSError:
+        return False
+    os.close(fd)
+    return True
+
+
 def _restrict_directory(directory: Path) -> None:
     """Narrow a directory by descriptor; Windows cannot open one, so it goes by path."""
     if _WINDOWS:

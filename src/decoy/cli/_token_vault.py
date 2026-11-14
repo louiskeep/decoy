@@ -45,6 +45,7 @@ from pathlib import Path
 from decoy._private_file import (
     PRIVATE_MODE_FAILED,
     PrivateFileError,
+    create_private_exclusive,
     open_private,
 )
 
@@ -101,6 +102,8 @@ class LocalTokenVault:
         written is a clear coded error rather than an empty-map silent miss.
         """
         self._path = path
+        # True only when THIS opener created the vault file; tokenize may delete only that.
+        self.created = False
         if not create and not path.exists():
             raise TokenVaultError(
                 code="vault_not_found",
@@ -109,44 +112,53 @@ class LocalTokenVault:
                     "vault the tokenize run wrote. Pass the correct --vault path."
                 ),
             )
-        if create:
-            parent = path.parent
-            # Restrict only a directory THIS call creates; a pre-existing parent
-            # may be a shared user directory we must not re-permission.
-            parent_is_new = not parent.exists()
-            parent.mkdir(parents=True, exist_ok=True)
-            # open_private creates the file 0600 before any schema write (SQLite can
-            # spill dirty pages mid-transaction, so protection cannot wait for
-            # commit()), repairs a vault an earlier build left 0644, and narrows a
-            # parent this call created to 0700. An empty file is a valid new database.
-            try:
-                open_private(path, new_parent=parent_is_new)
-            except PrivateFileError as exc:
-                if exc.code == PRIVATE_MODE_FAILED:
+        try:
+            if create:
+                parent = path.parent
+                # Restrict only a directory THIS call creates; a pre-existing parent
+                # may be a shared user directory we must not re-permission.
+                parent_is_new = not parent.exists()
+                parent.mkdir(parents=True, exist_ok=True)
+                # Exclusive create decides "this run made the file" without a race: of
+                # two runs that both miss an exists() check, exactly one gets it here.
+                self.created = create_private_exclusive(path)
+                # open_private creates the file 0600 before any schema write (SQLite can
+                # spill dirty pages mid-transaction, so protection cannot wait for
+                # commit()), repairs a vault an earlier build left 0644, and narrows a
+                # parent this call created to 0700. An empty file is a valid new database.
+                try:
+                    open_private(path, new_parent=parent_is_new)
+                except PrivateFileError as exc:
+                    if exc.code == PRIVATE_MODE_FAILED:
+                        raise TokenVaultError(
+                            code="vault_permission_error",
+                            message=(
+                                "could not restrict permissions on the token vault: "
+                                f"{exc.code}; refusing to write the token vault."
+                            ),
+                        ) from None
                     raise TokenVaultError(
-                        code="vault_permission_error",
-                        message=(
-                            "could not restrict permissions on the token vault: "
-                            f"{exc.code}; refusing to write the token vault."
-                        ),
+                        code="vault_open_error",
+                        message=f"could not create token vault {path!s}: {exc.code}.",
                     ) from None
+            try:
+                # isolation_level="" keeps Python's implicit-transaction behavior:
+                # the first write opens a transaction that stays open until an
+                # explicit commit(), which is exactly the fail-closed contract. It is
+                # the sqlite3 default, but passed explicitly so the contract does not
+                # ride a library default the comment would otherwise misstate.
+                self._conn = sqlite3.connect(str(path), isolation_level="")
+            except sqlite3.Error as exc:
                 raise TokenVaultError(
                     code="vault_open_error",
-                    message=f"could not create token vault {path!s}: {exc.code}.",
-                ) from None
-        try:
-            # isolation_level="" keeps Python's implicit-transaction behavior:
-            # the first write opens a transaction that stays open until an
-            # explicit commit(), which is exactly the fail-closed contract. It is
-            # the sqlite3 default, but passed explicitly so the contract does not
-            # ride a library default the comment would otherwise misstate.
-            self._conn = sqlite3.connect(str(path), isolation_level="")
-        except sqlite3.Error as exc:
-            raise TokenVaultError(
-                code="vault_open_error",
-                message=f"could not open token vault {path!s}: {type(exc).__name__}.",
-            ) from exc
-        self._ensure_schema(create=create)
+                    message=f"could not open token vault {path!s}: {type(exc).__name__}.",
+                ) from exc
+            self._ensure_schema(create=create)
+        except BaseException as exc:
+            # No object exists to ask, so the failure carries whether this run made the
+            # file; the caller removes a stub only if it did.
+            exc.vault_created = self.created  # type: ignore[attr-defined]
+            raise
 
     @property
     def derivation_scope(self) -> bytes | None:
@@ -181,8 +193,10 @@ class LocalTokenVault:
                 (str(_SCHEMA_VERSION),),
             )
             if fresh:
+                # OR IGNORE: a concurrent opener that also saw an empty meta table may have
+                # committed its scope first; keep that one so both runs share it.
                 cur.execute(
-                    "INSERT INTO meta (key, value) VALUES (?, ?)",
+                    "INSERT OR IGNORE INTO meta (key, value) VALUES (?, ?)",
                     (_SCOPE_KEY, _mint_scope().hex()),
                 )
             # The schema itself is durable immediately; only DATA rows wait for

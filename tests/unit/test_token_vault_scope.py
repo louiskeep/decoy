@@ -5,7 +5,7 @@ from __future__ import annotations
 import sqlite3
 from pathlib import Path
 
-from decoy.cli._token_vault import LocalTokenVault
+from decoy.cli._token_vault import _SCOPE_KEY, LocalTokenVault
 
 
 def test_a_new_vault_has_a_scope_the_engine_accepts(tmp_path: Path) -> None:
@@ -48,3 +48,33 @@ def test_a_vault_written_without_a_scope_never_gets_one(tmp_path: Path) -> None:
     vault = LocalTokenVault(path, create=True)
     assert vault.derivation_scope is None
     vault.close()
+
+
+def test_a_second_opener_that_lost_the_scope_race_shares_the_winners_scope(
+    tmp_path: Path,
+) -> None:
+    """Both openers saw an empty meta table; the winner's scope row committed first."""
+    path = tmp_path / "v.db"
+    winner_scope = b"\x05" * 32
+    conn = sqlite3.connect(path)
+    conn.executescript(
+        "CREATE TABLE token_map (namespace TEXT NOT NULL, plaintext TEXT NOT NULL,"
+        " token TEXT NOT NULL, PRIMARY KEY (namespace, plaintext));"
+        "CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);"
+    )
+    conn.execute("INSERT INTO meta VALUES (?, ?)", (_SCOPE_KEY, winner_scope.hex()))
+    conn.commit()
+    conn.close()
+    loser = LocalTokenVault(path, create=True)
+    assert loser.derivation_scope == winner_scope
+    loser.close()
+
+
+def test_only_the_opener_that_created_the_file_reports_created(tmp_path: Path) -> None:
+    path = tmp_path / "v.db"
+    first = LocalTokenVault(path, create=True)
+    second = LocalTokenVault(path, create=True)
+    assert first.created is True
+    assert second.created is False
+    first.close()
+    second.close()
