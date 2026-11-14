@@ -418,3 +418,71 @@ def test_a_failed_generate_fit_leaves_no_pipeline_folder(
 
     assert result.exit_code != EXIT_OK
     assert not (root / "pipelines" / "gen").exists()
+
+
+def _forbid(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Fail the test if init asks a question, reads the source, or fits it."""
+
+    def boom(*_a: object, **_k: object) -> None:
+        raise AssertionError("init went past the link refusal")
+
+    monkeypatch.setattr("typer.prompt", boom)
+    monkeypatch.setattr("typer.confirm", boom)
+    monkeypatch.setattr("decoy.cli.init._load_dataframe", boom)
+    monkeypatch.setattr("decoy.cli.gen._scaffold.fit_exact_snapshot", boom)
+
+
+def _plant(root: Path, outside: Path, kind: str) -> Path:
+    victim = outside / "victim.yaml"
+    victim.write_text("keep\n", encoding="utf-8")
+    if kind == "file":
+        (root / "pipelines" / "orders").mkdir()
+        (root / "pipelines" / "orders" / "pipeline.yaml").symlink_to(victim)
+    else:
+        (root / "pipelines" / "orders").symlink_to(outside, target_is_directory=True)
+    return victim
+
+
+@pytest.mark.parametrize("kind", ["file", "folder"])
+@pytest.mark.parametrize(
+    "extra",
+    [
+        pytest.param(["--preset", "minimal"], id="no-yes-no-prompt"),
+        pytest.param(["--yes", "--source", "data.csv"], id="yes-source-read"),
+        pytest.param(["--yes", "--source", "data.csv", "--preset", "generate"], id="generate-fit"),
+    ],
+)
+def test_the_link_refusal_comes_before_any_prompt_read_or_fit(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, kind: str, extra: list[str]
+) -> None:
+    root = _project(tmp_path)
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    victim = _plant(root, outside, kind)
+    _csv(root / "data.csv")
+    monkeypatch.chdir(root)
+    _forbid(monkeypatch)
+
+    result = runner.invoke(app, ["init", "orders", *extra, "--json"])
+
+    assert result.exit_code == EXIT_USAGE, result.output
+    assert "link" in json.loads(result.stdout)["error"]
+    assert victim.read_text(encoding="utf-8") == "keep\n"
+
+
+@pytest.mark.parametrize("kind", ["file", "folder"])
+def test_the_link_refusal_beats_the_overwrite_prompt_in_default_mode(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, kind: str
+) -> None:
+    root = _project(tmp_path)
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    victim = _plant(root, outside, kind)
+    monkeypatch.chdir(root)
+    _forbid(monkeypatch)
+
+    result = runner.invoke(app, ["init", "orders", "--preset", "minimal"])
+
+    assert result.exit_code == EXIT_USAGE, result.output
+    assert "Overwrite" not in result.output
+    assert victim.read_text(encoding="utf-8") == "keep\n"

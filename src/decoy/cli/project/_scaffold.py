@@ -257,6 +257,9 @@ def resolve_destination(
             refusal = exc
         if refusal is not None:
             _refuse(state, refusal)
+    # The link rule comes first, before an overwrite prompt, a source read or a fit: every init
+    # path (mask scaffold, wizard, generate) passes through here. Folders are made later.
+    prepare(state, destination, make=False)
     return argument, destination
 
 
