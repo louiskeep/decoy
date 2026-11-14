@@ -113,7 +113,7 @@ def _load_manifest(
         msg, missing = exc.message, exc.kind == "missing"
     if state.mode is OutputMode.json:
         emit_json(state, {"command": command, "status": "error", "error": msg})
-    elif state.mode is not OutputMode.quiet:
+    else:
         state.err_console.print(error("error:"), msg)
         if missing:
             how = code("decoy run pipeline.yaml --evidence-out evidence.json")
@@ -1260,7 +1260,7 @@ def _diff(
             msg = data_dep_error or "data-level comparison is unavailable."
         if state.mode is OutputMode.json:
             emit_json(state, {"command": "report diff", "status": "error", "error": msg})
-        elif state.mode is not OutputMode.quiet:
+        else:
             state.err_console.print(error("error:"), msg)
             state.err_console.print(
                 " ",
@@ -1487,7 +1487,7 @@ def _verify(
     if refusal is not None:
         if state.mode is OutputMode.json:
             emit_json(state, {"command": "report verify", "status": "error", "error": refusal})
-        elif state.mode is not OutputMode.quiet:
+        else:
             state.err_console.print(error("error:"), refusal)
         raise typer.Exit(code=EXIT_USAGE)
 
@@ -1789,12 +1789,12 @@ def _fidelity(
     try:
         src_df = read_report_source(source, config_dict, config_dir)
     except Exception as exc:
-        _emit_error(f"could not read {source}: {exc}")
+        _emit_error(f"could not read {source}: {type(exc).__name__}.")
         raise typer.Exit(code=EXIT_USAGE)
     try:
         out_df = read_report_source(output, {}, config_dir)
     except Exception as exc:
-        _emit_error(f"could not read {output}: {exc}")
+        _emit_error(f"could not read {output}: {type(exc).__name__}.")
         raise typer.Exit(code=EXIT_USAGE)
 
     report = compute_quality_report(

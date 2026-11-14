@@ -362,7 +362,7 @@ def _reject_kind(
                 "did_you_mean": suggestion,
             },
         )
-    elif state.mode is not OutputMode.quiet:
+    else:
         state.err_console.print(error("error:"), f"unknown kind {kind!r}.")
         if suggestion is not None:
             state.err_console.print(

@@ -379,6 +379,26 @@ def test_runtime_error_keeps_its_bracketed_code_prefix(tmp_path: Path, monkeypat
     assert "[subset_closure_violation]" in result.output, result.output
 
 
+def test_unexpected_failure_gets_a_registered_lowercase_code(tmp_path: Path, monkeypatch):
+    def _raise(**_kwargs):
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr("decoy_engine.subset.run_subset", _raise)
+    p = _sample_subset_config(tmp_path)
+    out = tmp_path / "out"
+
+    human = runner.invoke(app, ["subset", str(p), "--output", str(out)])
+    as_json = runner.invoke(app, ["subset", str(p), "--output", str(out), "--json"])
+
+    assert human.exit_code == 3
+    assert "[subset_unexpected_failure] RuntimeError: boom" in human.output
+    assert as_json.exit_code == 3
+    payload = _json.loads(as_json.stdout)
+    assert payload["code"] == "subset_unexpected_failure"
+    assert payload["status"] == "error"
+    assert payload["error"].startswith("RuntimeError")
+
+
 # ---------------------------------------------------------------------------
 # S9: fan-out budget exceeded -> clean error, no output dir
 # ---------------------------------------------------------------------------

@@ -69,6 +69,7 @@ EXEMPT: dict[str, str] = {
     "project list": "lists folders and has no failing input",
     "demo": "its only inputs are range-checked by the parser",
     "validate preflight": "reports a failed check as status fail, a result not an error",
+    "init": "moves to DUP-FREEZE CL3 (its non-scaffold paths print human text under --json)",
     "setup": "known gap: a failure prints human text to stderr under --json",
     "upgrade": "known gap: a failure prints human text to stderr under --json",
 }
@@ -102,7 +103,8 @@ def _leaf_commands() -> set[str]:
 
 def test_every_json_command_has_a_bad_input_or_a_stated_exemption() -> None:
     assert set(BAD_INPUT) | set(EXEMPT) == _leaf_commands()
-    assert set(BAD_INPUT).isdisjoint(EXEMPT)
+    # `init` has one covered failure (the generate scaffold) and a stated gap elsewhere.
+    assert set(BAD_INPUT) & set(EXEMPT) <= {"init"}
 
 
 @pytest.mark.parametrize("name", sorted(BAD_INPUT))
@@ -131,29 +133,63 @@ def test_fit_json_keeps_the_code_out_of_the_error_text(files: Path) -> None:
     assert "message" not in payload
 
 
-def test_unmask_prints_its_error_under_quiet(files: Path) -> None:
-    result = runner.invoke(app, ["unmask", BAD_YAML, GOOD_CSV, "--quiet"])
+# One --quiet failure per converted command: stdout stays empty and the error reaches stderr.
+QUIET_CASES: dict[str, list[str]] = {
+    "unmask": ["unmask", BAD_YAML, GOOD_CSV],
+    "tokenize": ["tokenize", BAD_YAML, "--vault", "v.db"],
+    "detokenize": ["detokenize", BAD_YAML, GOOD_CSV, "--vault", "v.db"],
+    "fit": ["fit", BAD_CSV],
+    "show": ["show", "nonsense"],
+    "list": ["list", "nonsense"],
+    "subset": ["subset", BAD_YAML],
+    "validate compile": ["validate", "compile", BAD_YAML],
+    "scan multi": ["scan", GOOD_CSV, GOOD_CSV, "--output", "-"],
+    "init scaffold": ["init", GOOD_CSV, "--preset", "generate", "-o", "-"],
+    "report show": ["report", "show", BAD_JSON],
+    "report verify": ["report", "verify", BAD_JSON],
+    "report diff": ["report", "diff", BAD_JSON, BAD_JSON],
+    "report fidelity": ["report", "fidelity", BAD_CSV, GOOD_CSV],
+    "report vault": ["report", "vault", GOOD_CSV, "--config", BAD_YAML],
+}
+# Converted commands that must have a quiet case above. A new emit_error caller adds its name.
+CONVERTED = {
+    "unmask", "tokenize", "detokenize", "fit", "show", "subset", "validate compile",
+    "scan multi", "init scaffold", "report vault", "report fidelity",
+}  # fmt: skip
 
-    assert result.exit_code == 1
+
+def test_every_converted_command_has_a_quiet_case() -> None:
+    assert CONVERTED <= set(QUIET_CASES)
+
+
+@pytest.mark.parametrize("name", sorted(QUIET_CASES))
+def test_a_failure_prints_to_stderr_under_quiet(files: Path, name: str) -> None:
+    result = runner.invoke(app, [*QUIET_CASES[name], "--quiet"])
+
+    assert result.exit_code != 0, result.output
     assert result.stdout == ""
     assert "error: " in result.stderr
 
 
-def test_multi_scan_prints_error_and_hint_under_quiet(files: Path) -> None:
-    result = runner.invoke(app, ["scan", GOOD_CSV, GOOD_CSV, "--output", "-", "--quiet"])
+def test_multi_scan_prints_the_hint_under_quiet(files: Path) -> None:
+    result = runner.invoke(app, [*QUIET_CASES["scan multi"], "--quiet"])
 
     assert result.exit_code == EXIT_USAGE
-    assert result.stdout == ""
-    assert "error: " in result.stderr
     assert "hint: " in result.stderr
 
 
-def test_gen_scaffold_prints_its_error_under_quiet(files: Path) -> None:
-    result = runner.invoke(app, ["init", GOOD_CSV, "--preset", "generate", "-o", "-", "--quiet"])
+def test_fidelity_read_failure_carries_no_input_bytes(files: Path, monkeypatch) -> None:
+    secret = "SECRET-CELL-BYTES"
 
-    assert result.exit_code == EXIT_USAGE
-    assert result.stdout == ""
-    assert "error: " in result.stderr
+    def _boom(*_args, **_kwargs):
+        raise UnicodeDecodeError("utf-8", secret.encode(), 0, 1, secret)
+
+    monkeypatch.setattr("decoy.cli.report.read_report_source", _boom)
+    for extra in ([], ["--json"], ["--quiet"]):
+        result = runner.invoke(app, ["report", "fidelity", GOOD_CSV, GOOD_CSV, *extra])
+
+        assert result.exit_code == EXIT_USAGE
+        assert secret not in result.stdout + result.stderr
 
 
 def test_fit_prints_bracketed_text_verbatim(tmp_path: Path, monkeypatch) -> None:

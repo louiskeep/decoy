@@ -355,7 +355,7 @@ def _compile_error(state, config: Path, exc: Exception) -> None:
         if err_code is not None:
             payload["code"] = err_code
         emit_json(state, payload)
-    elif state.mode is not OutputMode.quiet:
+    else:
         # markup=False: msg starts with a bracketed error code and can carry
         # an install line such as `pip install decoy-cli[ner]`; Rich would
         # parse both as unknown style tags and drop them.

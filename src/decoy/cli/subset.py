@@ -273,7 +273,12 @@ def subset(
         error_text = str(exc)
         if len(error_text) > 500:
             error_text = error_text[:500] + "..."
-        _fail_runtime(state, config_str, code_=type(exc).__name__, message=error_text)
+        _fail_runtime(
+            state,
+            config_str,
+            code_="subset_unexpected_failure",
+            message=f"{type(exc).__name__}: {error_text}",
+        )
         if state.verbose:
             print_traceback(state)
         raise typer.Exit(code=EXIT_RUNTIME)
@@ -433,9 +438,6 @@ def _emit_preflight_failure(state, config_str: str, failure) -> None:
         )
         return
 
-    if state.mode is OutputMode.quiet:
-        return
-
     state.err_console.print(error("error:"), "subset preflight failed:")
     for f in report.failures:
         # f.message already names the relationship/edge_id (built by the
@@ -470,9 +472,6 @@ def _emit_budget_failure(state, config_str: str, failure) -> None:
                 "edge_id": failure.edge_id,
             },
         )
-        return
-
-    if state.mode is OutputMode.quiet:
         return
 
     state.err_console.print(error("error:"), failure.message, markup=False)
