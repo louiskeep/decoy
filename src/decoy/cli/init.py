@@ -31,6 +31,18 @@ from decoy.cli._init_inference import Inference, _infer_strategy_for_column
 from decoy.cli._sources import CSV_DIALECT_KEYS, csv_file_source
 from decoy.cli.completers import init_presets
 from decoy.cli.exit_codes import EXIT_RUNTIME, EXIT_USAGE
+from decoy.cli.io import LayoutError, explicit_project, shown_path
+from decoy.cli.project._scaffold import (
+    Argument,
+    Placement,
+    ScaffoldRefused,
+    member_placement,
+    place,
+    prepare_folder,
+    source_text,
+    split_argument,
+    target_text,
+)
 from decoy.templates import get_template
 from decoy.templates import template_names as _template_names
 from decoy.ui.output import OutputMode, OutputState, emit_error, emit_json, setup_output
@@ -39,17 +51,24 @@ from decoy.ui.theme import accent, code, hint, success
 _INIT_EPILOG = """\
 Examples:
 
+  decoy init members-mask --source data/members.csv
+    In a project: STORM reads the file, picks a starter strategy per column, and writes
+    pipelines/members-mask/pipeline.yaml with `# REVIEW:` comments above every inferred entry.
+    The source is written relative to the pipeline when it is inside the project. Read and edit
+    before running. Then: decoy run members-mask
+
+  decoy init members.csv
+    The same, named after the file: pipelines/members/pipeline.yaml.
+
+  decoy init orders --preset hipaa
+    Scaffold pipelines/orders/pipeline.yaml from the HIPAA template.
+
   decoy init
-    Interactive Q&A; writes pipeline.yaml in the current directory.
+    In a project: ask for the pipeline name, the preset and the paths.
 
-  decoy init --preset hipaa --output hipaa_pipeline.yaml
-    Skip the wizard; scaffold from the HIPAA template.
-
-  decoy init customers.csv --output pipeline.yaml
-    Column-aware scaffolding. Runs STORM against
-    the file, picks a starter strategy per column from the inference
-    table, writes the YAML with `# REVIEW:` comments above every
-    inferred entry. The user must read + edit before running.
+  decoy init customers.csv -o pipeline.yaml
+    Write the YAML to a file of your choice, in or outside a project. Its source path is written
+    relative to that file.
 
   decoy init --preset generate -o -
     Print the generate template on stdout and nothing else there.
@@ -58,10 +77,13 @@ Examples:
     Fit people.csv, then write gen/people.snapshot.json and a generate config
     that names it. Both files are written together or not at all.
 
-  decoy init --yes
-    Skip confirmation when overwriting an existing file.
+  decoy init orders --preset minimal --yes
+    Skip confirmation when overwriting an existing pipeline.
 
-See also: decoy validate config, decoy run, decoy scan, decoy list templates.
+Outside a project, `init` needs -o: run `decoy project new .` first to make the folder a project.
+Pick another project with `decoy --project DIR init ...`.
+
+See also: decoy project new, decoy validate config, decoy run, decoy scan, decoy list templates.
 """
 
 
@@ -313,6 +335,8 @@ def _build_scaffold_yaml(
     inferences: dict[str, Inference],
     file_format: str,
     delimiter: str | None = None,
+    input_text: str | None = None,
+    output_text: str | None = None,
 ) -> str:
     """Compose the full scaffold YAML body from the per-column inferences.
 
@@ -320,8 +344,10 @@ def _build_scaffold_yaml(
     at the top of the file. Path values are quoted so
     Windows paths with backslashes round-trip cleanly through YAML 1.1.
     """
-    input_quoted = _yaml_quote(str(input_path))
-    output_quoted = _yaml_quote(str(output_path))
+    # `input_text` and `output_text` are the paths as written into the YAML (relative to its
+    # folder); the Path arguments name the file for the header and the dialect.
+    input_quoted = _yaml_quote(input_text if input_text is not None else str(input_path))
+    output_quoted = _yaml_quote(output_text if output_text is not None else str(output_path))
 
     header = (
         "# Decoy pipeline scaffold (column-aware).\n"
@@ -412,9 +438,8 @@ def _validate_scaffold(body: str) -> None:
 def _scaffold_from_file(
     *,
     input_file: Path,
-    out: Path,
+    destination: Placement,
     state,
-    out_is_stdout: bool,
 ) -> tuple[str, int]:
     """Run STORM against `input_file` and produce the scaffold YAML body.
 
@@ -463,14 +488,13 @@ def _scaffold_from_file(
 
     source = _scaffold_source(input_file)
     file_format = source["format"]
-    output_ext = ".parquet" if file_format == "parquet" else ".csv"
-    output_path = input_file.with_name(
-        f"{input_file.stem}.masked{output_ext}"
-    )
+    output_text = target_text(input_file, file_format)
 
     body = _build_scaffold_yaml(
         input_path=input_file,
-        output_path=output_path,
+        output_path=Path(output_text),
+        input_text=source_text(input_file, destination),
+        output_text=output_text,
         column_names=column_names,
         inferences=inferences,
         file_format=file_format,
@@ -495,21 +519,32 @@ def _scaffold_from_file(
 
 
 def _init(
-    input_file: Path = typer.Argument(
+    ctx: typer.Context,
+    token: str = typer.Argument(
         None,
+        metavar="[NAME|FILE]",
         help=(
-            "Optional input file (.csv/.tsv/.parquet). When given without "
-            "--preset, runs STORM against the file and scaffolds a "
-            "column-aware pipeline.yaml with `# REVIEW:` comments above "
-            "every auto-inferred column."
+            "The pipeline's name, or a source file (.csv/.tsv/.parquet) to name it after. "
+            "With a file and no --preset, STORM scans it and scaffolds a column-aware pipeline "
+            "with `# REVIEW:` comments above every auto-inferred column."
         ),
         show_default=False,
     ),
+    source: Path = typer.Option(
+        None,
+        "--source",
+        help="The source file (.csv/.tsv/.parquet) of the pipeline, when NAME is given.",
+        show_default=False,
+    ),
     out: Path = typer.Option(
-        Path("pipeline.yaml"),
+        None,
         "--output",
         "-o",
-        help="Where to write the pipeline YAML. Use `-` to write to stdout.",
+        help=(
+            "Write the pipeline YAML here instead of pipelines/NAME/pipeline.yaml, in or outside "
+            "a project. Use `-` to write to stdout."
+        ),
+        show_default=False,
     ),
     preset: str = typer.Option(
         None,
@@ -533,13 +568,47 @@ def _init(
         False, "--verbose", "-v", help="Enable debug-level CLI logs on stderr."
     ),
 ) -> None:
-    """Scaffold a starter pipeline YAML through a short Q&A.
+    """Scaffold a starter pipeline in the current project.
 
-    Use this on a fresh project to get a working pipeline you can run end to
-    end, then edit the rules and paths to match your data. The wizard is the
-    only interactive prompt in the CLI -- every other command is one-shot.
+    Use this inside a project (`decoy project new DIR`) to get a working pipeline you can run
+    end to end, then edit the rules to match your data. The wizard is the only interactive
+    prompt in the CLI -- every other command is one-shot.
     """
     state = setup_output(json_, quiet, verbose)
+
+    # Placement is settled before anything is read, asked or written.
+    refusal: LayoutError | ScaffoldRefused | None = None
+    argument: Argument | None = None
+    destination: Placement | None = None
+    try:
+        argument = split_argument(token, source)
+        destination = place(argument, out, explicit_project(ctx))
+    except (LayoutError, ScaffoldRefused) as exc:
+        refusal = exc
+    if refusal is not None:
+        _refuse(state, refusal)
+    assert argument is not None and destination is not None
+    input_file = argument.source
+    if input_file is not None and preset != "generate":
+        _supported_format(state, input_file)
+
+    if destination.is_member and destination.name is None:
+        # Inside a project with nothing to name the pipeline after: the wizard asks.
+        if state.mode is not OutputMode.default:
+            emit_error(state, "init", "Give the pipeline a name: decoy init <name>.")
+            raise typer.Exit(code=EXIT_USAGE)
+        asked = typer.prompt("Pipeline name").strip()
+        try:
+            destination = member_placement(destination.root, asked)
+        except LayoutError as exc:
+            refusal = exc
+        if refusal is not None:
+            _refuse(state, refusal)
+        assert destination is not None
+    out = destination.yaml if destination.yaml is not None else Path("-")
+    # What the user types next: the pipeline's name in a project, else the file.
+    next_ref = destination.name if destination.is_member and destination.name else str(out)
+    shown = shown_path(out) if destination.yaml is not None else "-"
 
     # A CSV with the generate preset fits a snapshot and writes it with the config.
     if input_file is not None and preset == "generate":
@@ -552,14 +621,14 @@ def _init(
     # routes through STORM-driven inference instead of the template path.
     # If both are given, --preset wins (explicit user override).
     if input_file is not None and preset is None:
-        out_is_stdout = str(out) == "-"
+        out_is_stdout = destination.is_stdout
 
         if not out_is_stdout and out.exists() and not yes:
             if state.mode is not OutputMode.default:
                 _refuse_overwrite(state, out)
             size = out.stat().st_size
             state.console.print(
-                f"This will overwrite {out} ({size} bytes). Continue?",
+                f"This will overwrite {shown} ({size} bytes). Continue?",
             )
             if not typer.confirm("Overwrite?", default=False):
                 state.console.print(hint("aborted."))
@@ -567,9 +636,8 @@ def _init(
 
         body, column_count = _scaffold_from_file(
             input_file=input_file,
-            out=out,
+            destination=destination,
             state=state,
-            out_is_stdout=out_is_stdout,
         )
 
         if out_is_stdout:
@@ -577,6 +645,7 @@ def _init(
             sys.stdout.write(body)
             return
 
+        _prepare(state, destination)
         out.write_text(body, encoding="utf-8")
 
         if state.mode is OutputMode.json:
@@ -589,6 +658,7 @@ def _init(
                     "source": str(input_file),
                     "mode": "scaffold-from-file",
                     "column_count": column_count,
+                    **_placed_members(destination),
                 },
             )
             return
@@ -598,14 +668,14 @@ def _init(
         state.console.print(
             success("OK"),
             "scaffolded",
-            code(str(out)),
+            code(shown),
             "from",
             code(str(input_file)),
         )
         state.console.print(
             hint("Next:"),
             "read the # REVIEW: comments, edit as needed, then",
-            code(f"decoy validate config {out}"),
+            code(f"decoy validate config {next_ref}"),
         )
         _print_keyed_hint(state, body)
         return
@@ -628,7 +698,7 @@ def _init(
         )
         raise typer.Exit(code=EXIT_USAGE)
 
-    if str(out) == "-":
+    if destination.is_stdout:
         _template_to_stdout(state, preset)
         return
 
@@ -637,16 +707,20 @@ def _init(
             _refuse_overwrite(state, out)
         size = out.stat().st_size
         state.console.print(
-            f"This will overwrite {out} ({size} bytes). Continue?",
+            f"This will overwrite {shown} ({size} bytes). Continue?",
         )
         if not typer.confirm("Overwrite?", default=False):
             state.console.print(hint("aborted."))
             raise typer.Exit(code=EXIT_USAGE)
 
+    # A source named with a template: its paths go into the pathed presets.
+    given_in, given_out = _preset_paths(state, input_file, destination)
+
     if state.mode is OutputMode.json:
         # Non-interactive: produce a scaffold with the chosen (or default) preset.
         chosen = preset or "minimal"
-        rendered = _render(chosen, None, None)
+        rendered = _render(chosen, given_in, given_out)
+        _prepare(state, destination)
         out.write_text(rendered, encoding="utf-8")
         emit_json(
             state,
@@ -656,13 +730,15 @@ def _init(
                 "out": str(out),
                 "preset": chosen,
                 "rule_count": _rule_count(rendered),
+                **_placed_members(destination),
             },
         )
         return
 
     if state.mode is OutputMode.quiet:
         chosen = preset or "minimal"
-        rendered = _render(chosen, None, None)
+        rendered = _render(chosen, given_in, given_out)
+        _prepare(state, destination)
         out.write_text(rendered, encoding="utf-8")
         return
 
@@ -692,8 +768,12 @@ def _init(
         if chosen in _PATHED_PRESETS:
             # Defaults are the template's own paths, so Enter writes what --quiet writes.
             body = _render(chosen, None, None)
-            input_path = typer.prompt("Input CSV path", default=_template_path(body, "sources"))
-            output_path = typer.prompt("Output CSV path", default=_template_path(body, "targets"))
+            input_path = typer.prompt(
+                "Input CSV path", default=given_in or _template_path(body, "sources")
+            )
+            output_path = typer.prompt(
+                "Output CSV path", default=given_out or _template_path(body, "targets")
+            )
             rendered = _render(chosen, input_path, output_path)
         else:
             rendered = _render(chosen, None, None)
@@ -701,12 +781,61 @@ def _init(
         emit_error(state, "init", str(exc))
         raise typer.Exit(code=EXIT_RUNTIME) from None
 
+    _prepare(state, destination)
     out.write_text(rendered, encoding="utf-8")
 
     state.console.print()
-    state.console.print(success("OK"), "wrote", code(str(out)), "(preset:", code(chosen) + ")")
-    state.console.print(hint("Next:"), code(f"decoy validate config {out}"))
+    state.console.print(success("OK"), "wrote", code(shown), "(preset:", code(chosen) + ")")
+    state.console.print(hint("Next:"), code(f"decoy validate config {next_ref}"))
     _print_keyed_hint(state, rendered)
+
+
+def _refuse(state: OutputState, failure: LayoutError | ScaffoldRefused) -> NoReturn:
+    """Print a placement refusal (a `layout.*` code or fixed text) and exit 1."""
+    emit_error(state, "init", failure.message, code=failure.code)
+    raise typer.Exit(code=EXIT_USAGE)
+
+
+def _prepare(state: OutputState, destination: Placement) -> None:
+    """Make the folder the YAML is written into, or refuse with fixed text."""
+    problem: ScaffoldRefused | None = None
+    try:
+        prepare_folder(destination)
+    except ScaffoldRefused as exc:
+        problem = exc
+    if problem is not None:
+        _refuse(state, problem)
+
+
+def _placed_members(destination: Placement) -> dict[str, str]:
+    """The `--json` members a project pipeline adds: its name and the project root."""
+    if destination.is_member and destination.name and destination.root:
+        return {"name": destination.name, "project": str(destination.root)}
+    return {}
+
+
+def _supported_format(state: OutputState, source: Path) -> str:
+    """The source's file format, or exit 1 with the fixed unsupported-extension text."""
+    unsupported: str | None = None
+    file_format = ""
+    try:
+        file_format = _scaffold_source(source)["format"]
+    except ValueError as exc:
+        unsupported = str(exc)
+    if unsupported is not None:
+        emit_error(state, "init", unsupported)
+        raise typer.Exit(code=EXIT_USAGE)
+    return file_format
+
+
+def _preset_paths(
+    state: OutputState, source: Path | None, destination: Placement
+) -> tuple[str | None, str | None]:
+    """The source and target paths for a template, when a source file was named."""
+    if source is None:
+        return None, None
+    file_format = _supported_format(state, source)
+    return source_text(source, destination), target_text(source, file_format)
 
 
 def _refuse_overwrite(state: OutputState, out: Path) -> NoReturn:

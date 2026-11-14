@@ -51,7 +51,7 @@ Generate synthetic data: decoy fit source.csv, then decoy run pipeline.yaml, the
 * `tokenize`: Run a tokenize masking job, writing the...
 * `detokenize`: Restore tokenized columns from a local...
 * `fit`: Fit a distribution-snapshot/v1 artifact...
-* `init`: Scaffold a starter pipeline YAML through a...
+* `init`: Scaffold a starter pipeline in the current...
 * `demo`: Walk through scan -&gt; mask on a bundled...
 * `explain`: Explain a Decoy concept in plain English.
 * `info`: Print the Decoy CLI banner with...
@@ -463,25 +463,26 @@ See also: decoy run, decoy validate, decoy explain differential-privacy.
 
 ## `decoy init`
 
-Scaffold a starter pipeline YAML through a short Q&amp;A.
+Scaffold a starter pipeline in the current project.
 
-Use this on a fresh project to get a working pipeline you can run end to
-end, then edit the rules and paths to match your data. The wizard is the
-only interactive prompt in the CLI -- every other command is one-shot.
+Use this inside a project (`decoy project new DIR`) to get a working pipeline you can run
+end to end, then edit the rules to match your data. The wizard is the only interactive
+prompt in the CLI -- every other command is one-shot.
 
 **Usage**:
 
 ```console
-$ decoy init [OPTIONS] [INPUT_FILE]
+$ decoy init [OPTIONS] [NAME|FILE]
 ```
 
 **Arguments**:
 
-* `[INPUT_FILE]`: Optional input file (.csv/.tsv/.parquet). When given without --preset, runs STORM against the file and scaffolds a column-aware pipeline.yaml with `# REVIEW:` comments above every auto-inferred column.
+* `[NAME|FILE]`: The pipeline&#x27;s name, or a source file (.csv/.tsv/.parquet) to name it after. With a file and no --preset, STORM scans it and scaffolds a column-aware pipeline with `# REVIEW:` comments above every auto-inferred column.
 
 **Options**:
 
-* `-o, --output PATH`: Where to write the pipeline YAML. Use `-` to write to stdout.  [default: pipeline.yaml]
+* `--source PATH`: The source file (.csv/.tsv/.parquet) of the pipeline, when NAME is given.
+* `-o, --output PATH`: Write the pipeline YAML here instead of pipelines/NAME/pipeline.yaml, in or outside a project. Use `-` to write to stdout.
 * `--preset TEXT`: Skip the preset prompt and use this template directly.
 * `-y, --yes`: Skip overwrite confirmation.
 * `--json`: Skip the wizard; emit a JSON record of what was written.
@@ -491,17 +492,24 @@ $ decoy init [OPTIONS] [INPUT_FILE]
 
 Examples:
 
+  decoy init members-mask --source data/members.csv
+    In a project: STORM reads the file, picks a starter strategy per column, and writes
+    pipelines/members-mask/pipeline.yaml with `# REVIEW:` comments above every inferred entry.
+    The source is written relative to the pipeline when it is inside the project. Read and edit
+    before running. Then: decoy run members-mask
+
+  decoy init members.csv
+    The same, named after the file: pipelines/members/pipeline.yaml.
+
+  decoy init orders --preset hipaa
+    Scaffold pipelines/orders/pipeline.yaml from the HIPAA template.
+
   decoy init
-    Interactive Q&A; writes pipeline.yaml in the current directory.
+    In a project: ask for the pipeline name, the preset and the paths.
 
-  decoy init --preset hipaa --output hipaa_pipeline.yaml
-    Skip the wizard; scaffold from the HIPAA template.
-
-  decoy init customers.csv --output pipeline.yaml
-    Column-aware scaffolding. Runs STORM against
-    the file, picks a starter strategy per column from the inference
-    table, writes the YAML with `# REVIEW:` comments above every
-    inferred entry. The user must read + edit before running.
+  decoy init customers.csv -o pipeline.yaml
+    Write the YAML to a file of your choice, in or outside a project. Its source path is written
+    relative to that file.
 
   decoy init --preset generate -o -
     Print the generate template on stdout and nothing else there.
@@ -510,10 +518,13 @@ Examples:
     Fit people.csv, then write gen/people.snapshot.json and a generate config
     that names it. Both files are written together or not at all.
 
-  decoy init --yes
-    Skip confirmation when overwriting an existing file.
+  decoy init orders --preset minimal --yes
+    Skip confirmation when overwriting an existing pipeline.
 
-See also: decoy validate config, decoy run, decoy scan, decoy list templates.
+Outside a project, `init` needs -o: run `decoy project new .` first to make the folder a project.
+Pick another project with `decoy --project DIR init ...`.
+
+See also: decoy project new, decoy validate config, decoy run, decoy scan, decoy list templates.
 
 
 ## `decoy demo`

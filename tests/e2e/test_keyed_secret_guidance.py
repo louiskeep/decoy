@@ -175,7 +175,7 @@ def test_init_preset_next_steps_name_the_secret_only_when_keyed(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, preset: str, keyed: bool
 ) -> None:
     monkeypatch.chdir(tmp_path)
-    result = runner.invoke(app, ["init", "--preset", preset, "-y"], input="\n\n")
+    result = runner.invoke(app, ["init", "--preset", preset, "-y", "-o", "pipeline.yaml"], input="\n\n")
     assert result.exit_code == 0, result.output
     assert ("--mask-secret env:DECOY_MASK_SECRET" in result.output) is keyed, result.output
     assert ("decoy explain keys" in result.output) is keyed, result.output
@@ -188,7 +188,7 @@ def test_init_scaffold_of_a_keyed_file_names_the_secret(
     pd.DataFrame(
         {"card_number": ["4111111111111111", "5500005555555559", "340000000000009"] * 10}
     ).to_csv(tmp_path / "cards.csv", index=False)
-    result = runner.invoke(app, ["init", "cards.csv", "-y"])
+    result = runner.invoke(app, ["init", "cards.csv", "-y", "-o", "pipeline.yaml"])
     assert result.exit_code == 0, result.output
     body = (tmp_path / "pipeline.yaml").read_text(encoding="utf-8")
     assert _engine_says_keyed(body), body

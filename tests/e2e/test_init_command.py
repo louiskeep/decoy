@@ -270,8 +270,8 @@ def test_init_scaffold_actually_runs_and_pan_stays_luhn_valid(
         f"scaffold failed to run (exit {run_result.exit_code}): {run_result.output}"
     )
 
-    output_path = tmp_path / "accounts.masked.csv"
-    assert output_path.exists(), "decoy run did not write the scaffolded output path"
+    # A bare target is placed in the run folder under `out/`.
+    (output_path,) = (tmp_path / "out").rglob("accounts.masked.csv")
 
     masked = pd.read_csv(output_path, dtype=str)
     assert "card_number" in masked.columns
