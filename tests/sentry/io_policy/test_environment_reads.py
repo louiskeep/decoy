@@ -2,144 +2,43 @@
 
 Two spellings of one switch drift: `CI=false` once counted as CI and `NO_COLOR=` (empty) once
 turned colour off, each because a site tested truthiness or `is not None` itself. Every read of
-`os.environ` or `os.getenv` under `src/decoy` is a site, keyed `(path, function, variable)`.
-`_env_flags.py` is the one reader of switches. The sites below read a path, a URL, a secret or
-a number, not a switch, and each says why; an entry that no longer matches a real read fails,
-so the list cannot hold dead rows.
-
-A read is reported through a bound import (`os.environ.get`, `os.getenv`, `os.environ[...]`,
-`from os import environ as e; e.get(...)`), by `tests/sentry/io_policy/_calls.py`. Named limits:
-a copy made earlier (`env = os.environ; env.get(...)`), `dict(os.environ)`, `k in os.environ`
-and `os.environ` handed to another function are not reads this scan sees.
+`os.environ` or `os.getenv` under `src/decoy` outside `_env_flags.py` is a site. The scan lives in
+`_env_read_sites.py`. Today's 14 sites read a path, a URL, a secret or a number, not a switch;
+they are the shrink-only baseline `baselines/env-reads.json`, keyed per read with an ordinal, so
+a second read in an allowed function is a new key. The ratchet (`scripts/dev/ratchet_check.py`)
+rejects a key added to the baseline; `test_baseline_registry.py` ties it to the live scan.
 """
 
 from __future__ import annotations
 
-import ast
-from dataclasses import dataclass
-from pathlib import Path
+import json
 
-from tests.sentry.io_policy import _calls
+from tests.sentry.io_policy import _env_read_sites as sites
 
-ROOT = Path(__file__).resolve().parents[3]
-SRC = ROOT / "src" / "decoy"
-OWNER = "_env_flags.py"
-DYNAMIC = "<dynamic>"
-
-_GETTERS = {"os.environ.get", "os.getenv"}
+BASELINE = sites.ROOT / "tests" / "sentry" / "baselines" / "env-reads.json"
+REGISTRY = sites.ROOT / "scripts" / "dev" / "sentry_registry.toml"
 
 
-@dataclass(frozen=True)
-class AllowedRead:
-    path: str
-    function: str
-    variable: str
-    reason: str
+def _recorded() -> set[str]:
+    return set(json.loads(BASELINE.read_text(encoding="utf-8"))["entries"])
 
 
-ALLOWLIST: tuple[AllowedRead, ...] = (
-    AllowedRead("_update_check.py", "check_latest", "DECOY_VERSION_URL", "a URL, not a switch"),
-    AllowedRead(
-        "distribution/release_key.py", "pinned_public_pem", "DECOY_RELEASE_PUBKEY_FILE", "a path"
-    ),
-    AllowedRead("distribution/layout.py", "decoy_home", "DECOY_HOME", "a path"),
-    AllowedRead("distribution/layout.py", "launcher_bin_dir", "DECOY_BIN_DIR", "a path"),
-    AllowedRead("cli/io/_pipelines.py", "_env_project", "DECOY_PROJECT", "a path"),
-    AllowedRead("ci/_git.py", "git_env", DYNAMIC, "copies a fixed list of names into a child env"),
-    AllowedRead("cli/run/_notify.py", "_start_telemetry", "DECOY_OTEL_ENDPOINT", "a URL"),
-    AllowedRead("cli/run/_notify.py", "_start_telemetry", "DECOY_OTEL_HEADERS", "a header secret"),
-    AllowedRead(
-        "cli/run/_notify.py",
-        "_dispatch_run_notifications",
-        "DECOY_NOTIFY_WEBHOOK_SECRET",
-        "a signing secret",
-    ),
-    AllowedRead(
-        "cli/run/_notify.py", "_dispatch_run_notifications", "DECOY_NOTIFY_SMTP_HOST", "a host name"
-    ),
-    AllowedRead(
-        "cli/run/_notify.py", "_dispatch_run_notifications", "DECOY_NOTIFY_SMTP_PORT", "a number"
-    ),
-    AllowedRead(
-        "cli/run/_notify.py", "_dispatch_run_notifications", "DECOY_NOTIFY_SMTP_USER", "a user name"
-    ),
-    AllowedRead(
-        "cli/run/_notify.py", "_dispatch_run_notifications", "DECOY_NOTIFY_SMTP_PASS", "a secret"
-    ),
-    AllowedRead(
-        "cli/run/_notify.py", "_dispatch_run_notifications", "DECOY_NOTIFY_SMTP_FROM", "an address"
-    ),
-)
+def test_baseline_equals_the_source_inventory() -> None:
+    live, recorded = sites.inventory(), _recorded()
+    assert live - recorded == set(), "environment reads outside the baseline (use decoy._env_flags)"
+    assert recorded - live == set(), "stale baseline entries (shrink the baseline)"
 
 
-def _first_arg(call: ast.Call | None) -> str:
-    if call is not None and call.args:
-        arg = call.args[0]
-        if isinstance(arg, ast.Constant) and isinstance(arg.value, str):
-            return arg.value
-    return DYNAMIC
-
-
-def reads_in_source(source: str, rel: str) -> set[tuple[str, str, str]]:
-    """`(path, function, variable)` for every environment read in one file."""
-    found: set[tuple[str, str, str]] = set()
-    for s in _calls.sites(ast.parse(source)):
-        if not isinstance(s.node, (ast.Name, ast.Attribute)):
-            continue
-        parent = s.ancestors[-1][0] if s.ancestors else None
-        name = s.name
-        if name in _GETTERS:
-            call = parent if isinstance(parent, ast.Call) and parent.func is s.node else None
-            found.add((rel, s.scope, _first_arg(call)))
-        elif name == "os.environ" and isinstance(parent, ast.Subscript) and parent.value is s.node:
-            key = parent.slice
-            named = key.value if isinstance(key, ast.Constant) else None
-            found.add((rel, s.scope, named if isinstance(named, str) else DYNAMIC))
-    return found
-
-
-def reads(files: dict[str, str]) -> set[tuple[str, str, str]]:
-    out: set[tuple[str, str, str]] = set()
-    for rel, source in files.items():
-        if rel != OWNER:
-            out |= reads_in_source(source, rel)
-    return out
-
-
-def problems(
-    files: dict[str, str], allow: tuple[AllowedRead, ...] = ALLOWLIST
-) -> tuple[list[str], list[str]]:
-    """`(unlisted reads, allowlist entries with no matching read)`, as readable lines."""
-    found = reads(files)
-    listed = {(a.path, a.function, a.variable) for a in allow}
-    unlisted = [f"{p}::{f} reads {v}" for p, f, v in sorted(found - listed)]
-    stale = [f"{p}::{f} {v}" for p, f, v in sorted(listed - found)]
-    return unlisted, stale
-
-
-def _src_files() -> dict[str, str]:
-    return {
-        p.relative_to(SRC).as_posix(): p.read_text(encoding="utf-8")
-        for p in sorted(SRC.rglob("*.py"))
-        if "__pycache__" not in p.parts
-    }
-
-
-def test_every_environment_read_is_the_flag_module_or_a_listed_non_switch() -> None:
-    unlisted, stale = problems(_src_files())
-    assert unlisted == [], "read a switch through decoy._env_flags, or list a non-switch read"
-    assert stale == [], "allowlist rows with no matching read (remove them)"
+def test_baseline_is_registered_as_cl2() -> None:
+    doc = json.loads(BASELINE.read_text(encoding="utf-8"))
+    assert doc["sentry_id"] == "env-reads"
+    assert doc["created_in"] == "CL2"
+    assert 'id = "env-reads"' in REGISTRY.read_text(encoding="utf-8")
 
 
 def test_the_flag_module_exists_and_reads_the_environment() -> None:
-    files = _src_files()
-    assert OWNER in files
-    assert reads_in_source(files[OWNER], OWNER), "the owner no longer reads the environment"
-
-
-def test_every_allowlisted_read_has_a_reason() -> None:
-    assert all(len(a.reason) >= 5 for a in ALLOWLIST)
-    assert len({(a.path, a.function, a.variable) for a in ALLOWLIST}) == len(ALLOWLIST)
+    source = (sites.SRC / sites.OWNER).read_text(encoding="utf-8")
+    assert sites.sites_in_source(source, sites.OWNER), "the owner no longer reads the environment"
 
 
 # --- seeded spellings: each turns the scan red --------------------------------------------
@@ -159,18 +58,18 @@ _SEEDS = {
 
 def test_each_seeded_spelling_is_seen() -> None:
     for name, source in _SEEDS.items():
-        unlisted, _ = problems({f"{name}.py": source}, allow=())
-        assert len(unlisted) == 1, f"{name}: {unlisted}"
+        assert len(sites.sites_in_source(source, f"{name}.py")) == 1, name
 
 
-def test_the_owner_module_and_non_reads_are_allowed() -> None:
-    files = {
-        OWNER: _SEEDS["equals"],
-        "a.py": 'import os\ndef f():\n    return "X" in os.environ and dict(os.environ)\n',
-    }
-    assert problems(files, allow=()) == ([], [])
+def test_a_second_read_in_one_function_is_a_new_key() -> None:
+    source = 'import os\ndef f():\n    a = os.environ.get("X")\n    return a, os.environ.get("X")\n'
+    assert sites.sites_in_source(source, "a.py") == {"a.py::f::X::1", "a.py::f::X::2"}
 
 
-def test_a_stale_allowlist_row_is_reported() -> None:
-    row = AllowedRead("gone.py", "f", "X", "no longer read")
-    assert problems({}, allow=(row,)) == ([], ["gone.py::f X"])
+def test_non_reads_are_not_sites() -> None:
+    source = 'import os\ndef f():\n    return "X" in os.environ and dict(os.environ)\n'
+    assert sites.sites_in_source(source, "a.py") == set()
+
+
+def test_a_baseline_key_not_in_the_source_is_stale() -> None:
+    assert _recorded() | {"gone.py::f::X::1"} != sites.inventory()

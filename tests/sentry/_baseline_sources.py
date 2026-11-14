@@ -361,17 +361,21 @@ SOURCES: tuple[Source, ...] = (
         "tests/sentry/cli_text/test_one_error_emitter.py",
         FromScan("tests/sentry/cli_text/_error_sites.py"),
     ),
+    Source(
+        "env-reads",
+        "tests/sentry/io_policy/test_environment_reads.py",
+        FromScan("tests/sentry/io_policy/_env_read_sites.py"),
+    ),
+    Source(
+        "json-stdout-writes",
+        "tests/sentry/cli_text/test_stdout_writes.py",
+        FromScan("tests/sentry/cli_text/_stdout_sites.py"),
+    ),
     Source("import-layers", ".importlinter", FromFile(".importlinter", import_layer_reasons)),
 )
 
 # Allowlist-shaped constants a sentry holds that are a closed contract, not a bypass list.
 NOT_A_LIST_CONSTS: dict[tuple[str, str], str] = {
-    ("test_environment_reads.py", "ALLOWLIST"): (
-        "non-switch environment reads (paths, URLs, secrets); a row with no live read fails"
-    ),
-    ("test_stdout_writes.py", "ALLOWLIST"): (
-        "the two ui.output writers and one child-process probe; a row with no live write fails"
-    ),
     ("test_notify_redaction.py", "_ALLOWED_EVENT_FIELDS"): (
         "closed notification fact set, pinned by test_notify_redaction lane 1"
     ),

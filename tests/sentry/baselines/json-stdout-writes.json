@@ -1,0 +1,9 @@
+{
+ "sentry_id": "json-stdout-writes",
+ "created_in": "CL2",
+ "entries": {
+  "distribution/selfcheck.py::main::1": {
+   "reason": "legacy JSON stdout write recorded when the one document writer landed; moves to ui.output.emit_json_document or leaves this baseline, never joins it"
+  }
+ }
+}
