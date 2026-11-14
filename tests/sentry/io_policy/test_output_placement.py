@@ -77,16 +77,8 @@ ALLOWLIST: tuple[AllowedSite, ...] = (
     ),
 )
 
-# Default names still built in place; each leaves this list in the P10 sweep. P9 moved the
-# side-file names into `cli/io/_layout.py`.
-NAME_ALLOWLIST: tuple[AllowedSite, ...] = (
-    AllowedSite(
-        "cli/gen/_scaffold.py",
-        "layout_for",
-        1,
-        "Snapshot name in the generate scaffold; moves in the P10 sweep.",
-    ),
-)
+# Default names are built only in the placers; the P10 sweep emptied this list.
+NAME_ALLOWLIST: tuple[AllowedSite, ...] = ()
 
 
 def _resolve_sites(source: str) -> list[tuple[int, str]]:
@@ -203,6 +195,12 @@ def test_default_names_and_out_are_built_only_by_the_placers() -> None:
     found, allowed = _name_tally(SRC), _allowed(NAME_ALLOWLIST)
     extra = {k: n for k, n in found.items() if allowed.get(k, 0) < n}
     assert not extra, f"path built from a layout literal outside the placers: {sorted(extra)}"
+
+
+def test_no_default_name_is_built_outside_the_placers() -> None:
+    """The sweep is done: the baseline is empty and stays empty."""
+    assert NAME_ALLOWLIST == ()
+    assert _name_tally(SRC) == {}
 
 
 def test_name_allowlist_is_live_and_exact() -> None:

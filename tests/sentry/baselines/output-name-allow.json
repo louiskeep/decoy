@@ -1,9 +1,5 @@
 {
  "sentry_id": "output-name-allow",
  "created_in": "PROJECT-LAYOUT-P2b",
- "entries": {
-  "cli/gen/_scaffold.py::layout_for": {
-   "reason": "Snapshot name in the generate scaffold; moves in the P10 sweep."
-  }
- }
+ "entries": {}
 }

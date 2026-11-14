@@ -23,6 +23,7 @@ from decoy._config_file import parse_config_mapping
 from decoy._resources import ResourceError, read_fit_max_rows
 from decoy.cli.exit_codes import EXIT_USAGE
 from decoy.cli.gen._fit import FitSourceError, fit_exact_snapshot
+from decoy.cli.io import side_file_name
 from decoy.ui.output import OutputMode, OutputState, emit_error, emit_json
 from decoy.ui.theme import code, hint, success
 
@@ -84,11 +85,12 @@ def layout_for(csv: Path, out: Path) -> Layout:
     table = stem if _NAME_OK.fullmatch(stem) else (re.sub(r"\W", "_", stem) or "data")
     if not _NAME_OK.fullmatch(table):
         table = f"t_{table}"
+    snapshot_name = side_file_name("snapshot", stem)
     return Layout(
         config=out,
-        snapshot=out.parent / f"{stem}.snapshot.json",
+        snapshot=out.parent / snapshot_name,
         source_name=csv.name,
-        snapshot_name=f"{stem}.snapshot.json",
+        snapshot_name=snapshot_name,
         target_name=f"{stem}.synthetic.csv",
         table=table,
     )
