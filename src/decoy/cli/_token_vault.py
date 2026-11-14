@@ -147,23 +147,27 @@ class LocalTokenVault:
                     ) from None
                 # One writer per vault for this object's whole life, so a creator's cleanup
                 # can never delete a vault another run is committing to.
+                lock_failure: PrivateFileError | None = None
                 try:
                     self._lock_fd = lock_exclusive(path.with_name(f".{path.name}.lock"))
                 except PrivateFileError as exc:
+                    lock_failure = exc
+                if lock_failure is not None:
                     # The lock holder owns the file now; this run must never delete it.
                     self.created = False
-                    if exc.code == PRIVATE_BUSY:
+                    if lock_failure.code == PRIVATE_BUSY:
                         raise TokenVaultError(
                             code="vault_busy",
                             message=(
                                 "another decoy run is writing this token vault; "
                                 "wait for it to finish or use a different --vault."
                             ),
-                        ) from None
+                        )
                     raise TokenVaultError(
                         code="vault_open_error",
-                        message=f"could not lock token vault {path!s}: {exc.code}.",
-                    ) from None
+                        message=f"could not lock token vault {path!s}: {lock_failure.code}.",
+                    )
+            open_failure: sqlite3.Error | None = None
             try:
                 # isolation_level="" keeps Python's implicit-transaction behavior:
                 # the first write opens a transaction that stays open until an
@@ -172,10 +176,12 @@ class LocalTokenVault:
                 # ride a library default the comment would otherwise misstate.
                 self._conn = sqlite3.connect(str(path), isolation_level="")
             except sqlite3.Error as exc:
+                open_failure = exc
+            if open_failure is not None:
                 raise TokenVaultError(
                     code="vault_open_error",
-                    message=f"could not open token vault {path!s}: {type(exc).__name__}.",
-                ) from None
+                    message=f"could not open token vault {path!s}: {type(open_failure).__name__}.",
+                )
             self._ensure_schema(create=create)
         except BaseException as exc:
             # No object exists to ask, so a failure that left this run holding a vault it

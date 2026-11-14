@@ -261,6 +261,22 @@ def _placement(ctx: RunContext) -> OutputPlacement:
     return OutputPlacement(typed=typed, chunked=ctx.chunked)
 
 
+def _layout_is_clean(ctx: RunContext) -> bool:
+    """Whether the output layout has no refusal, so the early vault refusal does not outrank one.
+
+    The gate reports a layout fault (a collision, an escape) before the vault; a config the
+    check cannot read is left to the gate, which names it.
+    """
+    from decoy.cli.io import layout_issues
+
+    if not isinstance(ctx.raw, dict):
+        return False
+    try:
+        return not layout_issues(ctx.config, ctx.raw, _placement(ctx))
+    except Exception:
+        return False
+
+
 def prepare_preview(ctx: RunContext) -> None:
     """The `--rows` counterpart of `prepare`: the config guards and the gate on the scaled
     config. No source is read and no vault or key provider is opened, because a preview has
@@ -338,7 +354,7 @@ def prepare(ctx: RunContext, _scopes: contextlib.ExitStack) -> None:
         _refuse_chunked_integrity(ctx)
     # A taken vault path is known now; refuse it before DuckDB staging or the source
     # preflight so a source failure cannot hide `vault_exists`.
-    if ctx.vault is not None and not ctx.chunked:
+    if ctx.vault is not None and not ctx.chunked and _layout_is_clean(ctx):
         refuse_existing_vault(ctx.vault)
 
     # DuckDB-in sources: acquire each flagged relation read-only to a
