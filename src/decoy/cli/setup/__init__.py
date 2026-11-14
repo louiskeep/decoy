@@ -104,7 +104,8 @@ def setup_command(
                 doc[section.name] = {**(owned if isinstance(owned, dict) else {}), **rendered}
             path = host.write_settings(json.dumps(doc, indent=2) + "\n")
     except host.ResourceError as exc:
-        emit_error(state, "setup", str(exc))
+        # `ResourceError` text is the setting key and a fixed reason, never a value.
+        emit_error(state, "setup", str(exc), code=f"setup_{exc.code}")
         raise typer.Exit(code=EXIT_USAGE) from None
     except AtomicWriteError as exc:
         emit_error(

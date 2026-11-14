@@ -11,6 +11,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from decoy._config_file import ConfigFileError, read_config_text
 from decoy.ci.contracts import (
     CheckOutcome,
     DriftCheck,
@@ -81,11 +82,10 @@ def validation_outcome(
         rel = loaded.repo_relative(path)
         if rel is None or not path.is_file():
             return refused(check_id, "validation", "ci.input_missing")
-        data = path.read_bytes()
         try:
-            text = data.decode("utf-8")
-        except UnicodeDecodeError:
-            # The config loader's own code for this file, the one `decoy validate` reports.
+            text = read_config_text(path)  # the one read; its text feeds the index and the gate
+        except ConfigFileError:
+            # Only the decode step can fail here: the loader's `yaml.not_utf8`, as `validate`.
             finding = SafeFinding.create(
                 rule_id="validate.yaml.not_utf8",
                 level="error",

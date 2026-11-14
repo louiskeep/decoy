@@ -109,6 +109,15 @@ def test_the_baseline_is_registered_as_cl3() -> None:
     assert 'id = "config-load-allow"' in REGISTRY.read_text(encoding="utf-8")
 
 
+def test_no_other_function_reads_bytes_and_decodes_them_itself() -> None:
+    """A user config's read-and-decode step belongs to `read_config_text`. A file that already
+    holds an allowlisted reader owns its own kind's read (the CI manifest), so its functions
+    are not counted."""
+    owners = {r.file for r in ALLOWLIST}
+    stray = {k for k in sites.bypass_inventory() if k.split("::")[0] not in owners}
+    assert stray == set(), "a hand-rolled read_bytes + decode (use read_config_text)"
+
+
 def test_the_loader_exists_and_loads_yaml() -> None:
     source = (sites.SRC / sites.OWNER).read_text(encoding="utf-8")
     assert sites.sites_in_source(source, sites.OWNER), "the owner no longer loads YAML"
@@ -149,3 +158,15 @@ def test_dumping_and_event_reads_are_not_sites() -> None:
         "    return yaml.dump(d)\n"
     )
     assert sites.sites_in_source(source, "a.py") == set()
+
+
+def test_a_hand_rolled_read_and_decode_is_seen() -> None:
+    seeded = "def adapter(path):\n    data = path.read_bytes()\n    return data.decode('utf-8')\n"
+    assert sites.bypass_sites_in_source(seeded, "x.py") == {"x.py::adapter"}
+    method = "class C:\n    def m(self, p):\n        return p.read_bytes().decode()\n"
+    assert sites.bypass_sites_in_source(method, "x.py") == {"x.py::C.m"}
+
+
+def test_reading_bytes_or_decoding_alone_is_not_a_bypass() -> None:
+    assert sites.bypass_sites_in_source("def f(p):\n    return p.read_bytes()\n", "x.py") == set()
+    assert sites.bypass_sites_in_source("def f(b):\n    return b.decode()\n", "x.py") == set()

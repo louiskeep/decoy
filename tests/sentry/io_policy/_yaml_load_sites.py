@@ -78,3 +78,41 @@ def inventory(src: Path = SRC) -> set[str]:
         if rel != OWNER and "__pycache__" not in path.parts:
             keys |= sites_in_source(path.read_text(encoding="utf-8"), rel)
     return keys
+
+
+def bypass_sites_in_source(source: str, rel: str) -> set[str]:
+    """`path::function` of every function that reads bytes and decodes them itself.
+
+    `Path.read_bytes()` plus `.decode(...)` in one function is the loader's read step done by
+    hand: a second place that decides what a non-UTF-8 file means (the CI adapter once did).
+    Named limits: the bytes handed to a helper that decodes, and `open(...).read().decode(...)`.
+    """
+    keys: set[str] = set()
+
+    def walk(node: ast.AST, prefix: str) -> None:
+        for child in ast.iter_child_nodes(node):
+            if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+                qual = f"{prefix}.{child.name}" if prefix else child.name
+                if not isinstance(child, ast.ClassDef):
+                    attrs = {
+                        n.func.attr
+                        for n in ast.walk(child)
+                        if isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute)
+                    }
+                    if {"read_bytes", "decode"} <= attrs:
+                        keys.add(f"{rel}::{qual}")
+                walk(child, qual)
+            else:
+                walk(child, prefix)
+
+    walk(ast.parse(source), "")
+    return keys
+
+
+def bypass_inventory(src: Path = SRC) -> set[str]:
+    keys: set[str] = set()
+    for path in sorted(src.rglob("*.py")):
+        rel = path.relative_to(src).as_posix()
+        if rel != OWNER and "__pycache__" not in path.parts:
+            keys |= bypass_sites_in_source(path.read_text(encoding="utf-8"), rel)
+    return keys

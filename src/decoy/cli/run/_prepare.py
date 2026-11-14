@@ -52,8 +52,9 @@ def _load_raw_config(
     """The run path's single YAML parse, through the gate's parser.
 
     Returns `(raw, findings, read_error)`: `findings` holds a YAML syntax error (the run
-    refuses it before any work), `read_error` an unreadable or non-UTF-8 file (kept as
-    today: it surfaces through the run-level handler as a runtime error).
+    refuses it before any work), as do a non-UTF-8, empty or non-mapping file; `read_error`
+    an unreadable file (an `OSError`: it surfaces through the run-level handler as a runtime
+    error).
     """
     try:
         raw, findings = parse_pipeline_yaml(config_path)

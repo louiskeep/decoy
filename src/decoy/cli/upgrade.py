@@ -84,7 +84,7 @@ def upgrade(
     try:
         pubkey = release_key.pinned_public_pem()
     except release_key.NoPinnedKeyError as exc:
-        emit_error(state, "upgrade", str(exc))
+        emit_error(state, "upgrade", "this build carries no pinned release key.", code="upgrade_no_key")
         raise typer.Exit(code=EXIT_USAGE) from exc
 
     # Local rollback must not depend on the network. An explicit `--version <v>` that is
@@ -99,7 +99,7 @@ def upgrade(
         try:
             outcome = installer.activate_local_version(version, home=home, expected_public_pem=pubkey)
         except installer.InstallError as exc:
-            emit_error(state, "upgrade", str(exc))
+            _refuse(state, "could not activate the installed version", "upgrade_activate_failed", exc)
             raise typer.Exit(code=EXIT_RUNTIME) from exc
         _report_outcome(state, outcome, "activated")
         raise typer.Exit(code=EXIT_OK)
@@ -109,7 +109,7 @@ def upgrade(
         doc_bytes = _fetch(doc_url)
         doc_sig = _fetch(doc_url + ".sig").decode("ascii").strip()
     except Exception as exc:
-        emit_error(state, "upgrade", f"could not reach the version endpoint: {exc}")
+        _refuse(state, "could not reach the version endpoint", "upgrade_endpoint_unreachable", exc)
         raise typer.Exit(code=EXIT_RUNTIME) from exc
 
     if not vd.verify_document(doc_bytes, doc_sig, expected_public_pem=pubkey):
@@ -122,13 +122,13 @@ def upgrade(
     try:
         doc = vd.parse_document(doc_bytes)
     except ValueError as exc:
-        emit_error(state, "upgrade", f"version document rejected: {exc}")
+        _refuse(state, "version document rejected", "upgrade_document_rejected", exc)
         raise typer.Exit(code=EXIT_RUNTIME) from exc
     try:
         # --check is read-only, so it enforces freshness but does not advance the state.
         installer.check_document_freshness(doc, home, record=False)
     except installer.InstallError as exc:
-        emit_error(state, "upgrade", str(exc))
+        _refuse(state, "version document failed the freshness check", "upgrade_document_stale", exc)
         raise typer.Exit(code=EXIT_RUNTIME) from exc
     latest = doc.get("latest")
     target_version = version or latest
@@ -178,11 +178,18 @@ def upgrade(
             post_swap_validate=_post_swap,
         )
     except installer.InstallError as exc:
-        emit_error(state, "upgrade", str(exc))
+        _refuse(state, "the upgrade failed and the installed runtime is unchanged", "upgrade_install_failed", exc)
         raise typer.Exit(code=EXIT_RUNTIME) from exc
 
     _report_outcome(state, outcome, "upgraded")
     raise typer.Exit(code=EXIT_OK)
+
+
+def _refuse(state, message: str, code: str, exc: BaseException) -> None:
+    """Fixed text and a code, plus the exception type. Never `str(exc)`: a network, installer or
+    version-document error can quote the `--url` (credentials included), a system message or a
+    literal from the document."""
+    emit_error(state, "upgrade", f"{message}: {type(exc).__name__}.", code=code)
 
 
 def _report_outcome(state, outcome, action: str) -> None:
