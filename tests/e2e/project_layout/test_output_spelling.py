@@ -150,28 +150,13 @@ def test_every_writer_opens_the_spelling_the_gate_keyed(tmp_path: Path, kind: st
 
 
 @posix_only
-def test_the_vault_temp_file_is_made_in_the_folder_the_kernel_resolves(
-    tmp_path: Path, monkeypatch
-) -> None:
-    """`mkstemp` collapses `..` in its `dir` as text, so it must be handed the resolved folder:
-    else the temp file lands in another folder (another filesystem fails the rename)."""
-    import tempfile
-
+def test_the_vault_is_published_in_the_folder_the_kernel_resolves(tmp_path: Path) -> None:
+    """The spelling climbs with `..`; the vault must land in the folder the kernel resolves."""
     spelling, kernel, _text = _climb(tmp_path, "vault.bin")
-    seen: list[str] = []
-    real_mkstemp = tempfile.mkstemp
-
-    def recording(*args, **kwargs):
-        if str(kwargs.get("prefix", "")).startswith(".vault.bin."):
-            seen.append(os.fspath(kwargs["dir"]))
-        return real_mkstemp(*args, **kwargs)
-
-    monkeypatch.setattr(tempfile, "mkstemp", recording)
     root = _project(tmp_path)
     cfg = _vaulting(root, "m.csv")
     result = runner.invoke(app, ["run", str(cfg), "--json", "--vault", spelling])
     assert result.exit_code == EXIT_OK, result.output
-    assert seen == [os.path.realpath(kernel.parent)]
     assert sorted(p.name for p in kernel.parent.iterdir()) == ["deep", "vault.bin"]
     assert not list(tmp_path.glob(".vault.bin.*"))
 
@@ -196,39 +181,6 @@ def test_an_unresolvable_evidence_parent_is_an_atomic_write_failure(tmp_path: Pa
     assert raised.value.code == ATOMIC_WRITE_FAILED
     assert raised.value.__cause__ is None and raised.value.__context__ is None
     assert not (tmp_path / "evidence.json").exists()
-
-
-@posix_only
-def test_a_failed_vault_restore_keeps_the_backup(tmp_path: Path, monkeypatch) -> None:
-    """Unconditionally unlinking backup in the cleanup removes the only old-vault copy."""
-    vault = tmp_path / "vault.bin"
-    (tmp_path / "first").mkdir()
-    first_root = _project(tmp_path / "first")
-    first = runner.invoke(app, ["run", str(_vaulting(first_root, "m.csv")), "--vault", str(vault)])
-    assert first.exit_code == EXIT_OK, first.output
-    old = vault.read_bytes()
-    real_fsync, real_replace = os.fsync, os.replace
-    folder = os.stat(tmp_path)
-
-    def fail_directory_fsync(fd: int) -> None:
-        # Only the vault's folder: the project markers are synced earlier in the run.
-        if os.path.samestat(os.fstat(fd), folder):
-            raise OSError(5, "directory fsync failed")
-        real_fsync(fd)
-
-    def fail_restore(src, dst, *args, **kwargs):
-        if Path(src).suffix == ".bak" and Path(dst) == vault:
-            raise OSError(5, "restore failed")
-        return real_replace(src, dst, *args, **kwargs)
-
-    monkeypatch.setattr(os, "fsync", fail_directory_fsync)
-    monkeypatch.setattr(os, "replace", fail_restore)
-    (tmp_path / "second").mkdir()
-    second = _vaulting(_project(tmp_path / "second"), "m.csv")
-    result = runner.invoke(app, ["run", str(second), "--vault", str(vault)])
-    backups = list(tmp_path.glob(".vault.bin.*.bak"))
-    assert result.exit_code == EXIT_RUNTIME, result.output
-    assert len(backups) == 1 and backups[0].read_bytes() == old, result.output
 
 
 @posix_only

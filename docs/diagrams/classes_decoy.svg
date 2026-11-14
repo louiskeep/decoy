@@ -574,16 +574,19 @@
 <!-- decoy.cli._token_vault.LocalTokenVault -->
 <g id="node37" class="node">
 <title>decoy.cli._token_vault.LocalTokenVault</title>
-<polygon fill="none" stroke="black" points="6232.25,-401.25 6232.25,-538 6659.25,-538 6659.25,-401.25 6232.25,-401.25"/>
-<text xml:space="preserve" text-anchor="start" x="6387.62" y="-520.7" font-family="Times,serif" font-size="14.00">LocalTokenVault</text>
-<polyline fill="none" stroke="black" points="6232.25,-512.75 6659.25,-512.75"/>
-<polyline fill="none" stroke="black" points="6232.25,-512.75 6659.25,-512.75"/>
-<text xml:space="preserve" text-anchor="start" x="6240.25" y="-495.45" font-family="Times,serif" font-size="14.00">close(): None</text>
-<text xml:space="preserve" text-anchor="start" x="6240.25" y="-478.2" font-family="Times,serif" font-size="14.00">commit(): None</text>
-<text xml:space="preserve" text-anchor="start" x="6240.25" y="-460.95" font-family="Times,serif" font-size="14.00">count(): int</text>
-<text xml:space="preserve" text-anchor="start" x="6240.25" y="-443.7" font-family="Times,serif" font-size="14.00">lookup_existing(namespace: str, plaintext: str): str | None</text>
-<text xml:space="preserve" text-anchor="start" x="6240.25" y="-426.45" font-family="Times,serif" font-size="14.00">put(namespace: str, plaintext: str, token: str): str</text>
-<text xml:space="preserve" text-anchor="start" x="6240.25" y="-409.2" font-family="Times,serif" font-size="14.00">reverse(namespace: str, token: str): str | None</text>
+<polygon fill="none" stroke="black" points="6232.25,-371.38 6232.25,-567.88 6659.25,-567.88 6659.25,-371.38 6232.25,-371.38"/>
+<text xml:space="preserve" text-anchor="start" x="6387.62" y="-550.58" font-family="Times,serif" font-size="14.00">LocalTokenVault</text>
+<polyline fill="none" stroke="black" points="6232.25,-542.62 6659.25,-542.62"/>
+<text xml:space="preserve" text-anchor="start" x="6334" y="-525.33" font-family="Times,serif" font-size="14.00">created : bool</text>
+<text xml:space="preserve" text-anchor="start" x="6334" y="-508.07" font-family="Times,serif" font-size="14.00">derivation_scope : bytes | None</text>
+<polyline fill="none" stroke="black" points="6232.25,-500.12 6659.25,-500.12"/>
+<text xml:space="preserve" text-anchor="start" x="6240.25" y="-482.82" font-family="Times,serif" font-size="14.00">close(): None</text>
+<text xml:space="preserve" text-anchor="start" x="6240.25" y="-465.57" font-family="Times,serif" font-size="14.00">commit(): None</text>
+<text xml:space="preserve" text-anchor="start" x="6240.25" y="-448.32" font-family="Times,serif" font-size="14.00">count(): int</text>
+<text xml:space="preserve" text-anchor="start" x="6240.25" y="-431.07" font-family="Times,serif" font-size="14.00">discard_unwritten(): None</text>
+<text xml:space="preserve" text-anchor="start" x="6240.25" y="-413.82" font-family="Times,serif" font-size="14.00">lookup_existing(namespace: str, plaintext: str): str | None</text>
+<text xml:space="preserve" text-anchor="start" x="6240.25" y="-396.57" font-family="Times,serif" font-size="14.00">put(namespace: str, plaintext: str, token: str): str</text>
+<text xml:space="preserve" text-anchor="start" x="6240.25" y="-379.32" font-family="Times,serif" font-size="14.00">reverse(namespace: str, token: str): str | None</text>
 </g>
 <!-- decoy.cli.evidence.ManifestError -->
 <g id="node38" class="node">

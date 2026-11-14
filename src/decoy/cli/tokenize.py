@@ -302,9 +302,6 @@ def tokenize(
 
     from decoy.cli.run import _load_sources_from_config, _write_mask_outputs
 
-    # Whether the vault file already existed: a failed run only removes a file
-    # THIS run created (see the finally), never a re-run's pre-existing vault.
-    vault_preexisted = vault.exists()
     token_vault: LocalTokenVault | None = None
     committed = False
     layout: RunLayout | None = None
@@ -319,7 +316,13 @@ def tokenize(
             # descriptor) and hands the engine the provider, so the engine never reads the
             # ref itself.
             with _mask_secret.admitted_key_provider(config_dict) as key_provider:
-                token_vault = LocalTokenVault(vault, create=True)
+                try:
+                    token_vault = LocalTokenVault(vault, create=True)
+                except BaseException as open_exc:
+                    discard = getattr(open_exc, "vault_discard", None)
+                    if discard is not None:
+                        discard()
+                    raise
                 result = run_pipeline(
                     resolved_source_config(config_dict, config_path.parent),
                     sources,
@@ -376,16 +379,14 @@ def tokenize(
     finally:
         if layout is not None and not ok:
             layout.abandon()
+        if token_vault is not None and token_vault.created and not committed:
+            token_vault.discard_unwritten()
         if token_vault is not None:
             token_vault.close()
-        # LocalTokenVault(create=True) writes the file + schema up front, so a
-        # run that fails before commit leaves an empty vault on disk even though
-        # its rows were discarded. Remove that file when THIS run created it and
-        # nothing was committed, so a failed tokenize leaves no empty vault to
-        # mistake for output. A pre-existing vault (a re-run) is kept: its prior
-        # mappings are intact and only this run's uncommitted rows were dropped.
-        if not committed and not vault_preexisted and vault.exists():
-            vault.unlink(missing_ok=True)
+        # LocalTokenVault(create=True) writes the file + schema up front, so a run that fails
+        # before commit leaves an empty vault on disk even though its rows were discarded.
+        # `discard_unwritten` (above, under the writer lock) removes it only when THIS run
+        # created it, holds the lock and never committed; a re-run's vault is kept.
 
     if layout is not None:
         for item in layout.commit_latest():

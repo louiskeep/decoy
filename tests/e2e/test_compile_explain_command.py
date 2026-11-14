@@ -41,7 +41,7 @@ def _minimal_config() -> dict:
                 "columns": [
                     {"name": "email", "strategy": "faker", "provider": "person_email"},
                     {"name": "ssn", "strategy": "redact"},
-                    {"name": "account_number", "strategy": "hash"},
+                    {"name": "account_number", "strategy": "hash", "namespace": "acct"},
                 ],
             }
         ],

@@ -105,13 +105,6 @@ class AllowedInline:
 
 ALLOWLIST: tuple[AllowedInline, ...] = (
     AllowedInline(
-        "cli/run/_vault.py",
-        4,
-        "_commit_vault keeps a hard-link backup and restores or removes the vault when the "
-        "directory fsync fails (tests/e2e/test_vault_commit_order.py); a transaction, not a "
-        "plain atomic write. L5a moves it to _vault_commit.py and renames this entry.",
-    ),
-    AllowedInline(
         "distribution/installer.py",
         3,
         "Moves a staged runtime directory into versions/ and writes the 0755 launcher shim "
@@ -221,9 +214,9 @@ def test_no_inline_atomic_write_outside_the_choke_point() -> None:
     assert findings(scan(SRC)) == []
 
 
-def test_allowlist_baseline_is_three_with_reasons() -> None:
-    assert len(ALLOWLIST) == 3
-    assert len({e.file for e in ALLOWLIST}) == 3
+def test_allowlist_baseline_is_two_with_reasons() -> None:
+    assert len(ALLOWLIST) == 2
+    assert len({e.file for e in ALLOWLIST}) == 2
     assert all(len(e.reason.strip()) >= 15 and e.sites > 0 for e in ALLOWLIST)
 
 
@@ -280,11 +273,14 @@ def test_seeded_inline_copy_is_red(tmp_path: Path) -> None:
 
 def test_seeded_copy_in_an_allowlisted_file_is_red() -> None:
     real = {k: v for k, v in scan(SRC).items() if k in {e.file for e in ALLOWLIST}}
-    seeded = {**real, "cli/run/_vault.py": [*real["cli/run/_vault.py"], (999, "os.replace")]}
-    lines = ", ".join(str(n) for n, _ in seeded["cli/run/_vault.py"])
-    recorded = next(e.sites for e in ALLOWLIST if e.file == "cli/run/_vault.py")
+    seeded = {
+        **real,
+        "distribution/installer.py": [*real["distribution/installer.py"], (999, "os.replace")],
+    }
+    lines = ", ".join(str(n) for n, _ in seeded["distribution/installer.py"])
+    recorded = next(e.sites for e in ALLOWLIST if e.file == "distribution/installer.py")
     assert findings(seeded) == [
-        f"cli/run/_vault.py: {recorded + 1} site(s), allowlist records {recorded} ({lines})"
+        f"distribution/installer.py: {recorded + 1} site(s), allowlist records {recorded} ({lines})"
     ]
 
 
