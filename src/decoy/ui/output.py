@@ -160,3 +160,7 @@ def emit_json(state: OutputState, payload: dict) -> None:
     if state.mode is OutputMode.json:
         sys.stdout.write(_json.dumps(payload) + "\n")
         sys.stdout.flush()
+
+
+def emit_json_document(state: OutputState, doc: object, *, indent: int | None) -> None:
+    return None
