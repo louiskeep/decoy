@@ -33,6 +33,8 @@ BAD_INPUT: dict[str, list[str]] = {
     "detokenize": ["detokenize", BAD_YAML, GOOD_CSV, "--vault", "v.db"],
     "fit": ["fit", BAD_CSV],
     "init": ["init", GOOD_CSV, "--preset", "generate", "-o", "-"],
+    "setup": ["setup"],
+    "upgrade": ["upgrade"],
     "explain": ["explain", "nonsense-topic"],
     "list": ["list", "nonsense"],
     "show": ["show", "nonsense"],
@@ -69,9 +71,6 @@ EXEMPT: dict[str, str] = {
     "project list": "lists folders and has no failing input",
     "demo": "its only inputs are range-checked by the parser",
     "validate preflight": "reports a failed check as status fail, a result not an error",
-    "init": "moves to DUP-FREEZE CL3 (its non-scaffold paths print human text under --json)",
-    "setup": "known gap: a failure prints human text to stderr under --json",
-    "upgrade": "known gap: a failure prints human text to stderr under --json",
 }
 
 
@@ -103,8 +102,7 @@ def _leaf_commands() -> set[str]:
 
 def test_every_json_command_has_a_bad_input_or_a_stated_exemption() -> None:
     assert set(BAD_INPUT) | set(EXEMPT) == _leaf_commands()
-    # `init` has one covered failure (the generate scaffold) and a stated gap elsewhere.
-    assert set(BAD_INPUT) & set(EXEMPT) <= {"init"}
+    assert set(BAD_INPUT) & set(EXEMPT) == set()
 
 
 @pytest.mark.parametrize("name", sorted(BAD_INPUT))
@@ -119,6 +117,58 @@ def test_bad_input_gives_one_schema_valid_error_object(files: Path, name: str) -
     payload = json.loads(lines[0])
     jsonschema.validate(payload, SCHEMA)
     assert payload["command"].split()[0] == BAD_INPUT[name][0]
+
+
+# `init` failures that are not the generate scaffold: every one prints through `emit_error`.
+INIT_FAILURES: dict[str, list[str]] = {
+    "unknown preset": ["init", "--preset", "nosuch"],
+    "preset to stdout under json": ["init", "--preset", "minimal", "-o", "-"],
+    "missing input": ["init", "missing.csv"],
+    "overwrite refused": ["init", "--preset", "minimal", "-o", GOOD_CSV],
+    "scaffold overwrite refused": ["init", GOOD_CSV, "-o", GOOD_CSV],
+}
+
+
+@pytest.mark.parametrize("name", sorted(INIT_FAILURES))
+def test_init_json_failure_is_one_schema_valid_error_object(files: Path, name: str) -> None:
+    jsonschema = pytest.importorskip("jsonschema")
+    result = runner.invoke(app, [*INIT_FAILURES[name], "--json"])
+
+    assert result.exit_code == EXIT_USAGE, result.output
+    lines = result.stdout.strip().splitlines()
+    assert len(lines) == 1, result.stdout
+    payload = json.loads(lines[0])
+    jsonschema.validate(payload, SCHEMA)
+    assert payload["command"] == "init"
+
+
+# Default mode asks before it overwrites, so only the two refusals that never prompt run there.
+HUMAN_MODES = [
+    (name, flag)
+    for name in sorted(INIT_FAILURES)
+    for flag in (None, "--quiet")
+    if name != "preset to stdout under json" and (flag or "overwrite" not in name)
+]
+
+
+@pytest.mark.parametrize(("name", "flag"), HUMAN_MODES)
+def test_init_failure_reaches_stderr_in_every_human_mode(
+    files: Path, name: str, flag: str | None
+) -> None:
+    result = runner.invoke(app, [*INIT_FAILURES[name], *([flag] if flag else [])])
+
+    assert result.exit_code == EXIT_USAGE, result.output
+    assert result.stdout == ""
+    assert "error: " in result.stderr
+
+
+def test_setup_and_upgrade_failures_survive_quiet(files: Path) -> None:
+    for argv in (["setup"], ["upgrade"]):
+        result = runner.invoke(app, [*argv, "--quiet"])
+
+        assert result.exit_code == EXIT_USAGE, result.output
+        assert result.stdout == ""
+        assert "error: " in result.stderr
 
 
 def test_fit_json_keeps_the_code_out_of_the_error_text(files: Path) -> None:
@@ -221,3 +271,14 @@ def test_reference_prints_bracketed_text_verbatim(files: Path) -> None:
 
     assert result.exit_code == EXIT_USAGE
     assert "a[vault]b" in result.stderr
+
+
+def test_init_names_an_unsupported_extension_with_fixed_text(files: Path) -> None:
+    (files / "data.xlsx").write_bytes(b"not a table")
+
+    result = runner.invoke(app, ["init", "data.xlsx", "--json"])
+
+    assert result.exit_code == EXIT_USAGE, result.output
+    assert json.loads(result.stdout)["error"] == (
+        "unsupported file extension '.xlsx'; expected .csv, .tsv, or .parquet"
+    )

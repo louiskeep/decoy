@@ -231,24 +231,6 @@ reason = "DuckDB spill directory; mkdtemp makes it 0700 on POSIX."
 exit = "WIN-FEAS"
 
 [[row]]
-file = "cli/run/_vault.py"
-function = "_commit_vault"
-sink = "tempfile.mkstemp"
-ordinal = 1
-disposition = "private"
-reason = "Vault staging file; mkstemp makes it 0600 and the engine writer reopens it by path."
-exit = "L5a (_vault_commit.py)"
-
-[[row]]
-file = "cli/run/_vault.py"
-function = "_commit_vault"
-sink = "os.open"
-ordinal = 1
-disposition = "private"
-reason = "Reopens the vault staging file to fsync it."
-exit = "L5a (_vault_commit.py)"
-
-[[row]]
 file = "cli/schema.py"
 function = "schema"
 sink = "write_text"

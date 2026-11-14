@@ -22,6 +22,7 @@ from typing import Any
 import yaml
 from pydantic import ValidationError
 
+from decoy._config_file import ConfigFileError, read_config_text
 from decoy.ci import CI_MANIFEST_VERSION
 from decoy.ci._git import GitBudget, toplevel
 from decoy.ci.contracts import CiManifest
@@ -156,17 +157,16 @@ def _check_paths(manifest: CiManifest, base: Path, root: Path) -> None:
 
 def load_manifest(path: Path, *, root: Path | None = None) -> LoadedManifest:
     manifest_path = Path(path)
+    # The one config read (bytes once, strict UTF-8); a failure maps to the manifest's own codes.
     try:
         if not manifest_path.is_file():
             raise ManifestError("ci.manifest_unreadable")
-        raw = manifest_path.read_bytes()
+        if manifest_path.stat().st_size > MAX_MANIFEST_BYTES:
+            raise ManifestError("ci.manifest_invalid")
+        text = read_config_text(manifest_path)
     except OSError:
         raise ManifestError("ci.manifest_unreadable") from None
-    if len(raw) > MAX_MANIFEST_BYTES:
-        raise ManifestError("ci.manifest_invalid")
-    try:
-        text = raw.decode("utf-8")
-    except UnicodeDecodeError:
+    except ConfigFileError:
         raise ManifestError("ci.manifest_invalid") from None
 
     data = _parse(text)

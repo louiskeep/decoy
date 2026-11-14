@@ -178,13 +178,16 @@ def _assert_refused(result, root: Path) -> None:
     _no_output(root)
 
 
+@pytest.mark.parametrize("scheme", ["file", "FILE"])  # the engine reads the scheme in any case
 @pytest.mark.parametrize("mode", UNSAFE_MODES, ids=oct)
 @pytest.mark.parametrize("surface", _CLI_SURFACES)
-def test_unsafe_mode_is_refused_with_no_output(tmp_path: Path, surface: str, mode: int) -> None:
+def test_unsafe_mode_is_refused_with_no_output(
+    tmp_path: Path, surface: str, mode: int, scheme: str
+) -> None:
     written = _masked_with_vault(tmp_path / "w") if surface in _NEEDS_VAULT else None
     key = _key(tmp_path / "k" / "secret.key", mode=mode)
     root = tmp_path / "r"
-    argv = _argv(surface, root, f"file:{key}", written)
+    argv = _argv(surface, root, f"{scheme}:{key}", written)
     _assert_refused(runner.invoke(app, argv), root)
     result = runner.invoke(app, [*argv, "--json"])
     assert result.exit_code == EXIT_USAGE
@@ -256,6 +259,11 @@ def test_swapping_the_path_after_the_check_changes_nothing(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, surface: str
 ) -> None:
     """The engine reads the checked descriptor: a swap changes neither output nor vault key."""
+    if surface == "tokenize":
+        # Tokens depend on a per-vault scope the CLI mints at random; fix it so bytes compare.
+        from decoy.cli import _token_vault
+
+        monkeypatch.setattr(_token_vault, "_mint_scope", lambda: b"\x07" * 32)
     written = _masked_with_vault(tmp_path / "w") if surface in _NEEDS_VAULT else None
     control_key = _key(tmp_path / "control" / "secret.key")
     control_root = tmp_path / "control"

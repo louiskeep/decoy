@@ -5,29 +5,25 @@ from typing import Any, NoReturn
 
 import typer
 
-from decoy import _mask_secret_guidance, _native_gate, _resources
+from decoy import _mask_secret_guidance, _native_gate
 from decoy._atomic import AtomicWriteError, describe
+from decoy.cli import exit_codes as _exit_codes
 from decoy.cli import gen
-from decoy.cli.exit_codes import EXIT_CAPACITY, EXIT_USAGE, run_exit_code
+from decoy.cli.exit_codes import (
+    EXIT_CAPACITY,
+    EXIT_USAGE,
+    run_exit_code,
+)
 from decoy.cli.extras import (
     MissingExtraError,
-    UnsupportedCloudEndpointError,
     translate_missing_extra,
     translate_ner_unavailable,
 )
 from decoy.cli.gate import PreRunCheckError, cap_error_text, capacity_codes
-from decoy.cli.io import OUTPUT_DIR_UNUSABLE, DuckDBSourceError, LayoutError, TargetFormatError
+from decoy.cli.io import OUTPUT_DIR_UNUSABLE, LayoutError
 from decoy.cli.run._context import RunContext
-from decoy.cli.run._execute import (
-    _ChunkedFixedWidthError,
-    _ChunkedGenerateError,
-    _ChunkedIntegrityError,
-    _ChunkedQuarantineError,
-    _ChunkedReportFlagError,
-)
-from decoy.cli.run._notify import _dispatch_run_notifications, _OtelSettingsUsageError
-from decoy.cli.run._prepare import _MaskSecretUsageError
-from decoy.cli.run._vault import _ChunkedVaultError, _VaultUsageError, _VaultWriteError
+from decoy.cli.run._notify import _dispatch_run_notifications
+from decoy.cli.run._vault import VAULT_COMMIT_FAILED_HINT, _VaultWriteError
 from decoy.ui.output import OutputMode, emit_json, print_traceback
 from decoy.ui.theme import error, hint
 
@@ -51,54 +47,6 @@ class OutDirUsageError(LayoutError):
         super().__init__(OUTPUT_DIR_UNUSABLE.code, OUTPUT_DIR_UNUSABLE.message())
 
 
-def _usage_types() -> tuple[type, ...]:
-    """The exception types that exit 1: the operator's request or environment is wrong.
-
-    One tuple, read by the category rule and by `_cli_refusal_types`, so the exit and the
-    reason attach rule cannot drift apart.
-    """
-    from decoy_engine import ConfigError, PipelineValidationError
-    from decoy_engine.plan import PlanCompileError
-
-    # Defensive imports: an engine build without the class just never matches.
-    try:
-        from decoy_engine.detection.ner import NerUnavailableError
-
-        ner: tuple[type, ...] = (NerUnavailableError,)
-    except ImportError:
-        ner = ()
-    try:
-        from decoy_engine.keyprovider import MaskSecretError
-
-        mask_secret: tuple[type, ...] = (MaskSecretError,)
-    except ImportError:
-        mask_secret = ()
-    return (
-        PlanCompileError,
-        PipelineValidationError,
-        ConfigError,
-        _ChunkedGenerateError,
-        _ChunkedFixedWidthError,
-        _ChunkedIntegrityError,
-        _ChunkedQuarantineError,
-        TargetFormatError,
-        LayoutError,
-        _ChunkedReportFlagError,
-        _ChunkedVaultError,
-        _VaultUsageError,
-        _MaskSecretUsageError,
-        _OtelSettingsUsageError,
-        _resources.ResourceError,
-        DuckDBSourceError,
-        OutDirUsageError,
-        MissingExtraError,
-        UnsupportedCloudEndpointError,
-        *ner,
-        _native_gate.NativeGateError,
-        *mask_secret,
-    )
-
-
 def _engine_family(exc_type: type) -> bool:
     """Whether the engine's reason adapter trusts this exception class."""
     from decoy_engine.reason_adapter import registered_families
@@ -112,7 +60,7 @@ def _cli_refusal_types() -> tuple[type, ...]:
     The exit-1 types that are not engine families, plus the vault write failure (exit 3) and
     the gate refusal (exit 1 or 5).
     """
-    owned = tuple(t for t in _usage_types() if not _engine_family(t))
+    owned = tuple(t for t in _exit_codes.usage_error_types() if not _engine_family(t))
     return (*owned, _VaultWriteError, PreRunCheckError)
 
 
@@ -140,7 +88,8 @@ def fail(ctx: RunContext, exc: Exception) -> NoReturn:
     engine_exc = exc
     # Dispatch on type: config wrong (EXIT_USAGE) vs run blew up (EXIT_RUNTIME).
     # Imported lazily to keep the engine import off the help path.
-    from decoy_engine import DecoyError, GenerationError
+    from decoy_engine import DecoyError, GenerationError, VaultError, reasons
+    from decoy_engine.verification.postmask import PostScanBlockedError
 
     # CLI install DX (2026-09-25): a pipeline step that lazily imports an
     # optional dependency (boto3/google-cloud-storage for a cloud
@@ -218,6 +167,13 @@ def fail(ctx: RunContext, exc: Exception) -> NoReturn:
             raise RuntimeError("pre-run check carried an exit code with no category")
     elif capacity_code is not None or out_of_memory:
         _category = "capacity"
+    elif isinstance(exc, VaultError) and exc.code == reasons.runtime.VAULT_EXISTS:
+        # An existing vault is refused, never overwritten: the operator picks a new path.
+        _category = "usage"
+    elif isinstance(exc, PostScanBlockedError):
+        # The post-scan gate withheld the output on a verdict about the data, the same
+        # state as a blocking post-validation failure (exit 4), not a crash (exit 3).
+        _category = None
     elif isinstance(exc, GenerationError) and exc.code == UNIQUENESS_IMPOSSIBLE_CODE:
         # A `unique` column or pair the data cannot satisfy (a parent with too
         # few distinct keys, a faker type that ran out) is fixed in the config, so it exits 1
@@ -225,7 +181,7 @@ def fail(ctx: RunContext, exc: Exception) -> NoReturn:
         # timezone_naive_datetime) stay runtime errors. The engine text is value-free.
         _category = "usage"
     else:
-        _category = "usage" if isinstance(exc, _usage_types()) else "runtime"
+        _category = "usage" if isinstance(exc, _exit_codes.usage_error_types()) else "runtime"
     # CLI QA fix (2026-06-02, F8): cap the error message at 500
     # chars before emitting through --json. Engine exceptions can
     # quote source-row content verbatim (pandas / pyarrow); without
@@ -269,6 +225,11 @@ def fail(ctx: RunContext, exc: Exception) -> NoReturn:
         and exc.code == UNIQUENESS_IMPOSSIBLE_CODE
     )
 
+    remove_vault_hint = (
+        isinstance(engine_exc, VaultError)
+        and engine_exc.code == reasons.runtime.VAULT_COMMIT_FAILED
+    )
+
     if ctx.state.mode is OutputMode.json:
         # R7: the capacity branch ADDS error_kind/code to this SAME
         # envelope -- command/config/mode/error are never dropped, and
@@ -288,6 +249,8 @@ def fail(ctx: RunContext, exc: Exception) -> NoReturn:
         payload.update(ctx.published_members())
         if raise_rows_hint:
             payload["hint"] = gen.RAISE_ROWS_HINT
+        if remove_vault_hint:
+            payload["hint"] = VAULT_COMMIT_FAILED_HINT
         if isinstance(exc, PreRunCheckError):
             payload.update(exc.json_members())
         elif capacity_code is not None or out_of_memory:
@@ -335,9 +298,13 @@ def fail(ctx: RunContext, exc: Exception) -> NoReturn:
             ctx.state.err_console.print(error("error:"), error_text, markup=False)
             if raise_rows_hint:
                 ctx.state.err_console.print(" ", hint("hint:"), gen.RAISE_ROWS_HINT)
+            if remove_vault_hint:
+                ctx.state.err_console.print(" ", hint("hint:"), VAULT_COMMIT_FAILED_HINT)
             ctx.state.err_console.print(
                 " ", hint("hint:"), "rerun with --verbose for the full traceback."
             )
     if ctx.state.verbose:
         print_traceback(ctx.state)
-    raise typer.Exit(code=run_exit_code(_category))
+    raise typer.Exit(
+        code=run_exit_code(_category, blocking_failed=isinstance(exc, PostScanBlockedError))
+    )

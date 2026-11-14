@@ -24,6 +24,7 @@ import pytest
 from tests.ci_support import MANIFEST_NAME, ci_manifest, make_repo, write, write_clean_pipeline
 from typer.testing import CliRunner
 
+import decoy._config_file as config_file
 import decoy.cli.evidence as cli_evidence
 import decoy.cli.gate as cli_gate
 import decoy.cli.gate._layers as cli_gate_layers
@@ -156,6 +157,11 @@ def _cli_gate_codes() -> tuple[set[str], set[str]]:
         if isinstance(node, ast.Call) and _call_name(node) == "GateFinding":
             if len(node.args) > 2 and isinstance(node.args[2], ast.Constant):
                 codes.add(node.args[2].value)
+    # The gate's `yaml.*` findings carry the loader's codes: `ConfigFileError("<code>", ...)`.
+    for node in ast.walk(_module_tree(config_file)):
+        if isinstance(node, ast.Call) and _call_name(node) == "ConfigFileError":
+            if node.args and isinstance(node.args[0], ast.Constant):
+                codes.add(node.args[0].value)
     gate_checks = {
         "_check_source_files",
         "_check_target_overwrite",
@@ -301,6 +307,7 @@ def test_every_pydantic_error_type_is_allowlisted() -> None:
 def test_every_cli_gate_code_and_preflight_template_is_allowlisted() -> None:
     codes, templates = _cli_gate_codes()
     assert {"yaml.parse_error", "missing_extra", "compile.needs_profile"} <= codes
+    assert {"yaml.not_utf8", "yaml.empty", "yaml.not_mapping"} <= codes
     assert sorted(codes - validation_codes()) == []
     assert templates, "the preflight scan found no templated check names"
     for template in templates:

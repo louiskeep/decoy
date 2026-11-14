@@ -4,7 +4,7 @@ PyYAML's error text (and ``MarkedYAMLError.get_snippet()``) quotes the line it
 choked on verbatim. Every CLI command that parses a config file before running
 once interpolated ``str(exc)`` into its error message, so a malformed config
 whose broken line held a secret leaked that secret to stdout, stderr, and the
-``--json`` envelope. `decoy.cli._yaml_errors.sanitize_yaml_error` is the shared
+``--json`` envelope. `decoy._yaml_errors.sanitize_yaml_error` is the shared
 fix; this sentry feeds each of those commands a malformed config carrying a
 distinctive sentinel on the broken line and asserts the sentinel never appears
 in any output stream.

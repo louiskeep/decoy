@@ -46,11 +46,12 @@ from typing import Any
 
 import typer
 
+from decoy._config_file import config_refusal
 from decoy.cli._default_group import make_default_group
-from decoy.cli.exit_codes import EXIT_OK
+from decoy.cli.exit_codes import EXIT_OK, exit_code_for
 from decoy.cli.gate import GateFinding, gate_exit_code, run_config_gate, run_gate
 from decoy.cli.io import pipeline_argument, resolve_pipeline
-from decoy.ui.output import OutputMode, emit_json, setup_output
+from decoy.ui.output import OutputMode, emit_error, emit_json, setup_output
 from decoy.ui.theme import accent, code, error, hint, success, warn
 
 _VALIDATE_EPILOG = """\
@@ -151,7 +152,11 @@ def config(
     state = setup_output(json_, quiet, verbose)
     config_path = resolve_pipeline(config, state, "validate").yaml
 
-    result = run_config_gate(config_path)
+    try:
+        result = run_config_gate(config_path)
+    except OSError as exc:
+        emit_error(state, "validate config", **config_refusal(exc), context={"config": str(config)})
+        raise typer.Exit(code=exit_code_for(exc))
     _emit_result(state, result.findings, str(config), result.checks_run)
     code = gate_exit_code(result, fail_on_warning)
     if code != EXIT_OK:
@@ -292,7 +297,11 @@ def _gate(
     config_path = resolve_pipeline(config, state, "validate").yaml
     config_str = str(config)
 
-    result = run_gate(config_path)
+    try:
+        result = run_gate(config_path)
+    except OSError as exc:
+        emit_error(state, "validate", **config_refusal(exc), context={"config": config_str})
+        raise typer.Exit(code=exit_code_for(exc))
     _emit_gate(
         state,
         result.findings,

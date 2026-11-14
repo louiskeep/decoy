@@ -60,6 +60,7 @@ _CLI_GATE_CODES: frozenset[str] = frozenset(
         "validation_error",
         "yaml.empty",
         "yaml.not_mapping",
+        "yaml.not_utf8",
         "yaml.parse_error",
     }
 )
@@ -208,7 +209,7 @@ def _engine_registry_codes() -> frozenset[str]:
     return _codes_from_registry(reasons.manifest()["entries"])
 
 
-# Literal codes the engine emits outside the registry (sources at engine v0.23.0). The test
+# Literal codes the engine emits outside the registry (sources at engine v0.24.0). The test
 # holds this set equal to what an AST scan of the installed engine finds minus the registry.
 _ENGINE_LITERAL_CODES: frozenset[str] = frozenset(
     {

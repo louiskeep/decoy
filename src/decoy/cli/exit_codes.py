@@ -139,6 +139,151 @@ def run_exit_code(category: str | None = None, *, blocking_failed: bool = False)
     ).exit_code
 
 
+def exit_code_for(exc: BaseException) -> int:
+    """The exit integer a command gives `exc`: the one exception-to-exit map.
+
+    A pure function of the exception's type and code. Categories: a pre-run gate refusal keeps
+    its own 1 or 5; a capacity refusal (an engine error whose code is in the engine's capacity
+    set, or a bare `MemoryError`) is 5; a config file that cannot be read as a mapping
+    (`ConfigFileError`), an engine `EnvFlagError`, the usage types of `decoy run` and a
+    `unique` generate column the data cannot satisfy are 1; `fit`'s differential-privacy
+    errors are 3 for a provenance refusal and a budget schedule mismatch and 1 for the rest;
+    a blocking post-scan finding (`PostScanBlockedError`) is 4 and an existing vault (`vault_exists`) is 1;
+    Ctrl-C is 130; everything else, an `OSError` on a config read included, is 3.
+
+    The engine and CLI exception types are imported here, not at module level: the CI modules
+    and `ui.output` import this file and must not load the engine.
+
+    Until CL4 (DUP-FREEZE) the run classifier in `cli/run/_errors.py`, `demo`'s map and `fit`'s
+    arms still decide for themselves; `tests/unit/test_exit_code_for.py` holds this function
+    equal to each of them.
+    """
+    if isinstance(exc, KeyboardInterrupt):
+        return _EXIT_INTERRUPTED
+
+    from decoy._config_file import ConfigFileError
+    from decoy.cli.gate import PreRunCheckError, capacity_codes
+
+    if isinstance(exc, PreRunCheckError):
+        if exc.exit_code in (EXIT_CAPACITY, EXIT_USAGE):
+            return exc.exit_code
+        raise RuntimeError("pre-run check carried an exit code with no category")
+    if isinstance(exc, ConfigFileError):
+        return EXIT_USAGE
+
+    from decoy_engine import DecoyError, GenerationError, VaultError
+    from decoy_engine.quality.carriers import CarrierError
+    from decoy_engine.quality.dp import DpError
+    from decoy_engine.quality.dp_budget import DpBudgetError
+    from decoy_engine.quality.dp_provenance import ProvenanceError
+    from decoy_engine.reasons.quality import DP_SCHEDULE_MISMATCH
+    from decoy_engine.reasons.runtime import VAULT_EXISTS
+    from decoy_engine.verification.postmask import PostScanBlockedError
+
+    if isinstance(exc, ProvenanceError):
+        return EXIT_RUNTIME
+    if isinstance(exc, DpBudgetError):
+        return EXIT_RUNTIME if exc.code == DP_SCHEDULE_MISMATCH else EXIT_USAGE
+    if isinstance(exc, (DpError, CarrierError)):
+        return EXIT_USAGE
+
+    if isinstance(exc, MemoryError):
+        return EXIT_CAPACITY
+    if isinstance(exc, DecoyError) and getattr(exc, "code", None) in capacity_codes():
+        return EXIT_CAPACITY
+
+    # The literal moves here when the reason-code ratchet allows a 1:1 re-home (owner decision
+    # pending), so the constant stays in `cli/run/_errors.py` for now.
+    from decoy.cli.run._errors import UNIQUENESS_IMPOSSIBLE_CODE
+
+    if isinstance(exc, GenerationError) and exc.code == UNIQUENESS_IMPOSSIBLE_CODE:
+        return EXIT_USAGE
+    # A blocking post-scan finding is a data result, as `--post-validate-enforce` is.
+    if isinstance(exc, PostScanBlockedError):
+        return EXIT_FINDINGS
+    # An existing vault is the caller's to resolve.
+    if isinstance(exc, VaultError) and exc.code == VAULT_EXISTS:
+        return EXIT_USAGE
+    if isinstance(exc, usage_error_types()):
+        return EXIT_USAGE
+    # `EnvFlagError` ships in engine 0.24.0; the lookup is by name so 0.23.0 just has none.
+    from decoy_engine import errors as engine_errors
+
+    env_flag_error = getattr(engine_errors, "EnvFlagError", None)
+    if env_flag_error is not None and isinstance(exc, env_flag_error):
+        return EXIT_USAGE
+    if isinstance(exc, ImportError):
+        from decoy.cli.extras import translate_missing_extra
+
+        # An import failure for a known optional extra is the missing-extra usage error.
+        if translate_missing_extra(exc) is not None:
+            return EXIT_USAGE
+    return EXIT_RUNTIME
+
+
+def usage_error_types() -> tuple[type, ...]:
+    """The exception types that exit 1: the operator's request or environment is wrong.
+
+    One tuple, read by the exit map and by the run error arm's reason-attach rule, so the two
+    cannot drift apart. The imports are lazy: the run package imports this module.
+    """
+    from decoy_engine import ConfigError, PipelineValidationError
+    from decoy_engine.plan import PlanCompileError
+
+    from decoy import _native_gate, _resources
+    from decoy.cli.extras import MissingExtraError, UnsupportedCloudEndpointError
+    from decoy.cli.io import DuckDBSourceError, LayoutError, TargetFormatError
+    from decoy.cli.run._errors import OutDirUsageError
+    from decoy.cli.run._execute import (
+        _ChunkedFixedWidthError,
+        _ChunkedGenerateError,
+        _ChunkedIntegrityError,
+        _ChunkedQuarantineError,
+        _ChunkedReportFlagError,
+    )
+    from decoy.cli.run._notify import _OtelSettingsUsageError
+    from decoy.cli.run._prepare import _MaskSecretUsageError
+    from decoy.cli.run._vault import _ChunkedVaultError, _VaultUsageError
+
+    # Defensive imports: an engine build without the class just never matches.
+    try:
+        from decoy_engine.detection.ner import NerUnavailableError
+
+        ner: tuple[type, ...] = (NerUnavailableError,)
+    except ImportError:
+        ner = ()
+    try:
+        from decoy_engine.keyprovider import MaskSecretError
+
+        mask_secret: tuple[type, ...] = (MaskSecretError,)
+    except ImportError:
+        mask_secret = ()
+    return (
+        PlanCompileError,
+        PipelineValidationError,
+        ConfigError,
+        _ChunkedGenerateError,
+        _ChunkedFixedWidthError,
+        _ChunkedIntegrityError,
+        _ChunkedQuarantineError,
+        TargetFormatError,
+        LayoutError,
+        _ChunkedReportFlagError,
+        _ChunkedVaultError,
+        _VaultUsageError,
+        _MaskSecretUsageError,
+        _OtelSettingsUsageError,
+        _resources.ResourceError,
+        DuckDBSourceError,
+        OutDirUsageError,
+        MissingExtraError,
+        UnsupportedCloudEndpointError,
+        *ner,
+        _native_gate.NativeGateError,
+        *mask_secret,
+    )
+
+
 __all__ = [
     "EXIT_CAPACITY",
     "EXIT_FINDINGS",

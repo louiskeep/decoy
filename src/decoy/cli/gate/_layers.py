@@ -15,9 +15,7 @@ from enum import Enum
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-import yaml as _yaml
-
-from decoy.cli._yaml_errors import sanitize_yaml_error
+from decoy._config_file import ConfigFileError, parse_config_mapping, read_config_text
 from decoy.cli.exit_codes import EXIT_CAPACITY, EXIT_OK, EXIT_USAGE, EXIT_WARNINGS
 
 if TYPE_CHECKING:
@@ -90,17 +88,19 @@ def _plan_error_fields(error: Exception) -> tuple[str, str, str | None]:
 
 def parse_pipeline_yaml(
     config_path: Path, source_text: str | None = None
-) -> tuple[Any, list[GateFinding]]:
-    """Parse the pipeline YAML. Syntax only: `raw` comes back unchanged, including `None`,
-    lists and scalars, so the gate (not the parser) emits `yaml.empty` / `yaml.not_mapping`.
+) -> tuple[dict[str, Any] | None, list[GateFinding]]:
+    """The pipeline YAML as a mapping, through the one config loader.
 
-    On a syntax error returns `(None, [yaml.parse_error])`.
+    Reads `config_path` unless `source_text` is given. Returns `(raw, [])`, or `(None,
+    [finding])` when the file is not UTF-8, does not parse, is empty or is not a mapping: the
+    finding carries the loader's code (`yaml.not_utf8`, `yaml.parse_error`, `yaml.empty`,
+    `yaml.not_mapping`) and its text. An `OSError` from the read passes through.
     """
     try:
-        text = source_text if source_text is not None else config_path.read_text(encoding="utf-8")
-        return _yaml.safe_load(text), []
-    except _yaml.YAMLError as exc:
-        return None, [GateFinding("config", "error", "yaml.parse_error", sanitize_yaml_error(exc))]
+        text = read_config_text(config_path) if source_text is None else source_text
+        return parse_config_mapping(text), []
+    except ConfigFileError as exc:
+        return None, [GateFinding("config", "error", exc.code, exc.message)]
 
 
 def _findings_from_checks(acc: Any, layer: str) -> list[GateFinding]:
@@ -115,12 +115,12 @@ def _findings_from_checks(acc: Any, layer: str) -> list[GateFinding]:
 
 
 def _run_config_base(
-    raw: Any, config_path: Path, placement: OutputPlacement | None = None
+    raw: dict[str, Any], config_path: Path, placement: OutputPlacement | None = None
 ) -> tuple[dict[str, Any] | None, tuple[str, ...], list[GateFinding]]:
-    """The config layer: the empty and non-mapping refusals, schema validation, the
-    profile-free plan-compile checks, the target-overwrite advisory, the target format
-    contradictions (`target_format_issues`, the same rule `decoy run` refuses on) and the
-    project layout checks (`layout_issues`).
+    """The config layer: schema validation, the profile-free plan-compile checks, the
+    target-overwrite advisory, the target format contradictions (`target_format_issues`, the
+    same rule `decoy run` refuses on) and the project layout checks (`layout_issues`). `raw`
+    is a mapping: the loader has already refused an empty or non-mapping file.
 
     `run_config_only_checks` is called here EXACTLY ONCE for the whole gate (F5 dedup).
     Returns `(config, checks_run, findings)`; `config` is None when the layer failed, so the
@@ -130,23 +130,6 @@ def _run_config_base(
     from decoy_engine import ConfigError, PipelineValidationError, parse_pipeline_config
     from decoy_engine.config import PipelineConfigError
     from decoy_engine.plan import PlanCompileError
-
-    if raw is None:
-        return None, (), [GateFinding("config", "error", "yaml.empty", "Pipeline YAML is empty.")]
-
-    if not isinstance(raw, dict):
-        return (
-            None,
-            (),
-            [
-                GateFinding(
-                    "config",
-                    "error",
-                    "yaml.not_mapping",
-                    f"Pipeline YAML must be a YAML mapping (object), not {type(raw).__name__}.",
-                )
-            ],
-        )
 
     try:
         validated = parse_pipeline_config(raw).model_dump()
@@ -184,7 +167,6 @@ def _run_config_base(
     from decoy.cli.io import (
         OutputPlacement,
         fixed_target_overwrites,
-        layout_issues,
         target_format_issues,
     )
     from decoy.cli.preflight import _check_target_overwrite, _PreflightAccumulator
@@ -200,10 +182,7 @@ def _run_config_base(
     # Plan 3.14: the layout faults found without a write. One stops the gate here, so the
     # preflight layer never reads a source for a run that cannot place its output.
     placement = placement or OutputPlacement()
-    layout = [
-        GateFinding("config", "error", refusal.code, refusal.message, location)
-        for location, refusal in layout_issues(config_path, raw, placement)
-    ]
+    layout = layout_findings(config_path, raw, placement)
     if layout:
         return None, (), findings + layout
     # A fixed --out-dir is overwritten in place, so each existing relative target is advised.
@@ -343,8 +322,25 @@ def _run_preflight_layer(
     return _findings_from_checks(acc, "preflight"), acc.capacity_insufficient
 
 
+def layout_findings(
+    config_path: Path, raw: Any, placement: OutputPlacement | None = None
+) -> list[GateFinding]:
+    """The layout faults found without a write, as the config-layer errors the gate reports.
+
+    The one construction of these findings: the gate calls it, and `decoy run` calls it to
+    refuse a layout fault before it touches any source.
+    """
+    from decoy.cli.io import OutputPlacement as _Placement
+    from decoy.cli.io import layout_issues
+
+    return [
+        GateFinding("config", "error", refusal.code, refusal.message, location)
+        for location, refusal in layout_issues(config_path, raw, placement or _Placement())
+    ]
+
+
 def run_gate_on_config(
-    raw: Any,
+    raw: dict[str, Any],
     config_path: Path,
     route: GateRoute = GateRoute.PLAIN,
     placement: OutputPlacement | None = None,

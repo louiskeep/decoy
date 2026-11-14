@@ -11,12 +11,12 @@ targets:
 tables:
   - name: patients
     columns:
-      - {name: patient_id, strategy: hash}
+      - {name: patient_id, strategy: hash, namespace: patient_ids}
       - {name: full_name, strategy: redact}
       - {name: ssn, strategy: redact}
   - name: visits
     columns:
-      - {name: patient_id, strategy: hash}
+      - {name: patient_id, strategy: hash, namespace: patient_ids}
       - {name: diagnosis, strategy: redact}
 relationships:
   - parent: {table: patients, columns: [patient_id]}
