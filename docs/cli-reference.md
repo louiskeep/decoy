@@ -477,11 +477,11 @@ $ decoy init [OPTIONS] [NAME|FILE]
 
 **Arguments**:
 
-* `[NAME|FILE]`: The pipeline&#x27;s name, or a source file (.csv/.tsv/.parquet) to name it after. With a file and no --preset, STORM scans it and scaffolds a column-aware pipeline with `# REVIEW:` comments above every auto-inferred column.
+* `[NAME|FILE]`: A short name, or a .csv, .tsv or .parquet data file to take the name from. With a data file and no --preset, STORM scans it and scaffolds a column-aware pipeline with `# REVIEW:` comments above every auto-inferred column.
 
 **Options**:
 
-* `--source PATH`: The source file (.csv/.tsv/.parquet) of the pipeline, when NAME is given.
+* `--source PATH`: The data to scaffold from (.csv/.tsv/.parquet), when NAME is given.
 * `-o, --output PATH`: Write the pipeline YAML here instead of pipelines/NAME/pipeline.yaml, in or outside a project. Use `-` to write to stdout.
 * `--preset TEXT`: Skip the preset prompt and use this template directly.
 * `-y, --yes`: Skip overwrite confirmation.
@@ -493,19 +493,12 @@ $ decoy init [OPTIONS] [NAME|FILE]
 Examples:
 
   decoy init members-mask --source data/members.csv
-    In a project: STORM reads the file, picks a starter strategy per column, and writes
+    STORM reads the file, picks a starter strategy per column, and writes
     pipelines/members-mask/pipeline.yaml with `# REVIEW:` comments above every inferred entry.
-    The source is written relative to the pipeline when it is inside the project. Read and edit
-    before running. Then: decoy run members-mask
-
-  decoy init members.csv
-    The same, named after the file: pipelines/members/pipeline.yaml.
+    Read and edit before running. `decoy init members.csv` names it `members`.
 
   decoy init orders --preset hipaa
     Scaffold pipelines/orders/pipeline.yaml from the HIPAA template.
-
-  decoy init
-    In a project: ask for the pipeline name, the preset and the paths.
 
   decoy init customers.csv -o pipeline.yaml
     Write the YAML to a file of your choice, in or outside a project. Its source path is written
