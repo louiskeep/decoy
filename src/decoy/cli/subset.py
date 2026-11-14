@@ -270,14 +270,11 @@ def subset(
     except typer.Exit:
         raise
     except Exception as exc:
-        error_text = str(exc)
-        if len(error_text) > 500:
-            error_text = error_text[:500] + "..."
         _fail_runtime(
             state,
             config_str,
             code_="subset_unexpected_failure",
-            message=f"{type(exc).__name__}: {error_text}",
+            message=f"subset failed unexpectedly: {type(exc).__name__}.",
         )
         if state.verbose:
             print_traceback(state)
