@@ -58,5 +58,7 @@ def env_int(name: str, default: int) -> int:
     try:
         return int(raw)
     except ValueError:
-        # No `from exc`: the parser's text quotes the rejected value.
-        raise ValueError(f"{name} must be a whole number.") from None
+        pass
+    # Raised outside the handler so the error carries no `__context__`: the parser's text
+    # quotes the rejected value.
+    raise ValueError(f"{name} must be a whole number.")

@@ -336,7 +336,7 @@ def test_a_downward_tier_move_goes_green_only_with_its_snapshot(
     cfg = tree / ".importlinter"
     before = ignore_keys(cfg.read_text(encoding="utf-8"))
     _edit(cfg, " | notify | telemetry", " | telemetry")
-    _edit(cfg, " | _atomic | _row_sample\n", " | _atomic | _row_sample | notify\n")
+    _edit(cfg, " | _row_sample | _env_flags\n", " | _row_sample | _env_flags | notify\n")
     assert lint_scratch(tree)
     text = cfg.read_text(encoding="utf-8")
     assert ignore_keys(text) == before
