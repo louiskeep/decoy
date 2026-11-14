@@ -27,7 +27,12 @@ from decoy.cli.run._execute import (
 )
 from decoy.cli.run._notify import _dispatch_run_notifications, _OtelSettingsUsageError
 from decoy.cli.run._prepare import _MaskSecretUsageError
-from decoy.cli.run._vault import _ChunkedVaultError, _VaultUsageError, _VaultWriteError
+from decoy.cli.run._vault import (
+    VAULT_COMMIT_FAILED_HINT,
+    _ChunkedVaultError,
+    _VaultUsageError,
+    _VaultWriteError,
+)
 from decoy.ui.output import OutputMode, emit_json, print_traceback
 from decoy.ui.theme import error, hint
 
@@ -277,6 +282,11 @@ def fail(ctx: RunContext, exc: Exception) -> NoReturn:
         and exc.code == UNIQUENESS_IMPOSSIBLE_CODE
     )
 
+    remove_vault_hint = (
+        isinstance(engine_exc, VaultError)
+        and engine_exc.code == reasons.runtime.VAULT_COMMIT_FAILED
+    )
+
     if ctx.state.mode is OutputMode.json:
         # R7: the capacity branch ADDS error_kind/code to this SAME
         # envelope -- command/config/mode/error are never dropped, and
@@ -296,6 +306,8 @@ def fail(ctx: RunContext, exc: Exception) -> NoReturn:
         payload.update(ctx.published_members())
         if raise_rows_hint:
             payload["hint"] = gen.RAISE_ROWS_HINT
+        if remove_vault_hint:
+            payload["hint"] = VAULT_COMMIT_FAILED_HINT
         if isinstance(exc, PreRunCheckError):
             payload.update(exc.json_members())
         elif capacity_code is not None or out_of_memory:
@@ -343,6 +355,8 @@ def fail(ctx: RunContext, exc: Exception) -> NoReturn:
             ctx.state.err_console.print(error("error:"), error_text, markup=False)
             if raise_rows_hint:
                 ctx.state.err_console.print(" ", hint("hint:"), gen.RAISE_ROWS_HINT)
+            if remove_vault_hint:
+                ctx.state.err_console.print(" ", hint("hint:"), VAULT_COMMIT_FAILED_HINT)
             ctx.state.err_console.print(
                 " ", hint("hint:"), "rerun with --verbose for the full traceback."
             )

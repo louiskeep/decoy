@@ -32,6 +32,30 @@ _CHUNKED_VAULT_MESSAGE = (
 )
 
 
+VAULT_COMMIT_FAILED_HINT = (
+    "the vault file was left in place and no output was written; remove the vault file "
+    "before rerunning, or the rerun is refused with vault_exists."
+)
+
+
+def refuse_existing_vault(vault: Path) -> None:
+    """Refuse a `--vault` path that is taken, before any source loads.
+
+    Raises the engine's own `vault_exists` error so the text and exit code match the
+    engine's refusal. The engine's exclusive link stays the authority: this only saves the
+    masking work (and a leaked output) when the answer is already known.
+    """
+    import os
+
+    from decoy_engine import VaultError, reasons
+
+    if os.path.lexists(vault):
+        raise VaultError(
+            code=reasons.runtime.VAULT_EXISTS,
+            message=reasons.get("runtime", reasons.runtime.VAULT_EXISTS).summary,
+        )
+
+
 def _commit_vault(vault_writer, vault: Path) -> None:
     """Publish the vault before any output: the engine owns the durable, exclusive publish.
 

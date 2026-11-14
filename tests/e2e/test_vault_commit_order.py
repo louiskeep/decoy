@@ -111,12 +111,56 @@ def test_a_failed_vault_write_publishes_no_output(
 def test_a_failed_directory_fsync_publishes_no_output(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """The engine reports its own coded failure; the CLI writes no output after it."""
+    """The engine keeps the vault after a directory fsync failure; the CLI writes no output."""
     cfg = _pipeline(tmp_path)
     vault = tmp_path / "vault.bin"
     _fail_directory_fsync(monkeypatch)
     result = runner.invoke(app, ["run", str(cfg), "--vault", str(vault)])
     _assert_no_output(result, tmp_path, vault, "vault_commit_failed")
+    assert vault.exists(), "the engine's linked vault was removed"
+    assert stat.S_IMODE(vault.stat().st_mode) == 0o600
+    assert "remove the vault file before rerunning" in " ".join(result.output.split())
+    monkeypatch.undo()
+    rerun = runner.invoke(app, ["run", str(cfg), "--vault", str(vault)])
+    assert rerun.exit_code == EXIT_USAGE, rerun.output
+    assert "vault_exists" in rerun.output
+    assert not list(tmp_path.rglob("out.csv"))
+
+
+def test_a_failed_directory_fsync_json_carries_the_remove_hint(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    cfg = _pipeline(tmp_path)
+    _fail_directory_fsync(monkeypatch)
+    result = runner.invoke(app, ["run", str(cfg), "--vault", str(tmp_path / "v.bin"), "--json"])
+    assert result.exit_code == EXIT_RUNTIME, result.output
+    assert "remove the vault file before rerunning" in " ".join(result.output.split())
+    assert CANARY not in result.output
+
+
+def test_an_existing_vault_is_refused_before_the_masking_step(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import decoy_engine
+
+    vault = tmp_path / "vault.bin"
+    vault.write_bytes(b"keep")
+    calls: list[int] = []
+    real = decoy_engine.run_pipeline
+
+    def _spy(*args, **kwargs):
+        calls.append(1)
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(decoy_engine, "run_pipeline", _spy)
+    root = tmp_path / "second"
+    for extra in ([], ["--json"]):
+        result = runner.invoke(app, ["run", str(_pipeline(root)), "--vault", str(vault), *extra])
+        assert result.exit_code == EXIT_USAGE, result.output
+        assert "vault_exists" in result.output
+        assert not list(root.rglob("out.csv"))
+    assert calls == [], "the pipeline ran before the existing vault was refused"
+    assert vault.read_bytes() == b"keep"
 
 
 def test_an_existing_vault_is_refused_and_left_alone(tmp_path: Path) -> None:
@@ -205,3 +249,36 @@ def test_tokenize_failed_commit_publishes_no_output(
     assert CANARY not in result.output
     assert not (tmp_path / "out.csv").exists(), "tokenized output was published uncommitted"
     assert not vault.exists()
+
+
+def test_a_failed_tokenize_never_deletes_a_vault_it_did_not_create(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Another run created the vault between this run's check and its open; keep it."""
+    import decoy_engine
+
+    cfg = _pipeline(tmp_path, strategy="tokenize")
+    vault = tmp_path / "t.db"
+    other = runner.invoke(app, ["tokenize", str(cfg), "--vault", str(vault)])
+    assert other.exit_code == 0, other.output
+    before = vault.read_bytes()
+
+    def _boom(*args, **kwargs):
+        raise RuntimeError(CANARY)
+
+    monkeypatch.setattr(decoy_engine, "run_pipeline", _boom)
+    real_exists = Path.exists
+    stale = [True]
+
+    def _stale_exists(self: Path) -> bool:
+        # Only the first look at the vault is stale: it ran before the other run created it.
+        if self.name == vault.name and stale:
+            stale.pop()
+            return False
+        return real_exists(self)
+
+    monkeypatch.setattr(Path, "exists", _stale_exists)
+    result = runner.invoke(app, ["tokenize", str(cfg), "--vault", str(vault)])
+    assert result.exit_code == EXIT_RUNTIME, result.output
+    monkeypatch.undo()
+    assert vault.read_bytes() == before, "a vault this run did not create was removed"

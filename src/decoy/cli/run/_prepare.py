@@ -37,7 +37,12 @@ from decoy.cli.run._execute import (
     _refuse_chunked_integrity_requested,
     _require_local_io_endpoints,
 )
-from decoy.cli.run._vault import _CHUNKED_VAULT_MESSAGE, _ChunkedVaultError, _VaultUsageError
+from decoy.cli.run._vault import (
+    _CHUNKED_VAULT_MESSAGE,
+    _ChunkedVaultError,
+    _VaultUsageError,
+    refuse_existing_vault,
+)
 from decoy.ui.output import OutputMode, emit_json
 from decoy.ui.theme import error, hint, warn
 
@@ -463,6 +468,8 @@ def prepare(ctx: RunContext, _scopes: contextlib.ExitStack) -> None:
         )
     if ctx.chunked and ctx.vault is not None:
         raise _ChunkedVaultError(_CHUNKED_VAULT_MESSAGE)
+    if ctx.vault is not None:
+        refuse_existing_vault(ctx.vault)
 
     # The engine has no bounded fixed-width iterator, so a chunked
     # run cannot stream one. Refuse before any table is written

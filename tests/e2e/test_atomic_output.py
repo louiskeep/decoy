@@ -233,6 +233,7 @@ _BASE_SHA: dict[str, str] = {
     "mask_api": "f9987e148964006181da8b39f71723fc5f85bc3dd73768ad9f9d6d50d177a9b8",
     "run_csv": "f9987e148964006181da8b39f71723fc5f85bc3dd73768ad9f9d6d50d177a9b8",
     "run_parquet": "fbaa202d72c0db74793d4b068ae984abe3919d95062cc7ca0e7ead23c0f74f1a",
+    "tokenize": "6b6fe58a12176fcd25252857e4d053033f62521684f3c741a03e3d2be81651de",
     "unmask": "f02d2dca5c249826e217b8aaa531146f8d99a4dff1e6cae2555efdbcb55b5ed1",
 }
 
@@ -256,7 +257,7 @@ def _success_outputs(tmp_path: Path) -> dict[str, str]:
     cfg = _config(work, columns=_TOKEN_COLUMNS, out="tokenized.csv")
     vault = work / "tokens.db"
     assert runner.invoke(app, ["tokenize", str(cfg), "--vault", str(vault)]).exit_code == 0
-    # Not pinned: engine 0.24.0 derives tokens under a random per-vault scope.
+    got["tokenize"] = _sha(work / "tokenized.csv")
     result = runner.invoke(
         app, ["detokenize", str(cfg), str(work / "tokenized.csv"), "--vault", str(vault)]
     )
@@ -282,8 +283,14 @@ def _success_outputs(tmp_path: Path) -> dict[str, str]:
     return got
 
 
-def test_success_outputs_are_byte_identical_to_the_base(tmp_path: Path) -> None:
+def test_success_outputs_are_byte_identical_to_the_base(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """Pin: green on the base and on head."""
+    # Tokens depend on a per-vault scope the CLI mints at random; fix it so bytes compare.
+    from decoy.cli import _token_vault
+
+    monkeypatch.setattr(_token_vault, "_mint_scope", lambda: b"\x07" * 32)
     got = _success_outputs(tmp_path)
     assert got == _BASE_SHA, got
 
