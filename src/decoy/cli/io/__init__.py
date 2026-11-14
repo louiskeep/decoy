@@ -14,8 +14,11 @@ The source and DuckDB helpers `decoy run` uses are re-exported here as one bridg
 
 from decoy.cli._duckdb_source import DuckDBSourceError, acquire_relation, parse_flag
 from decoy.cli._sources import (
+    check_declared_before_acquire,
     iter_source_chunks,
+    names_schema,
     parquet_schema,
+    prepared_sources,
     read_source,
     resolve_path,
     resolved_source_config,
@@ -150,6 +153,7 @@ __all__ = [
     "TargetFormatError",
     "UnsafeFileError",
     "acquire_relation",
+    "check_declared_before_acquire",
     "check_output_path",
     "check_path_budget",
     "check_target_formats",
@@ -179,6 +183,7 @@ __all__ = [
     "mint_invocation_id",
     "name_dir",
     "name_slug",
+    "names_schema",
     "new_run_id",
     "open_run_layout",
     "parquet_schema",
@@ -188,6 +193,7 @@ __all__ = [
     "pipeline_name_for",
     "pipeline_option",
     "prepare_out",
+    "prepared_sources",
     "read_claim",
     "read_small_file",
     "read_source",

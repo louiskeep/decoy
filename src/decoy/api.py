@@ -33,7 +33,12 @@ import pyarrow as pa
 
 from decoy import _mask_secret, _mask_secret_guidance, _native_gate
 from decoy._row_sample import sample_frame
-from decoy.cli._sources import CSV_DIALECT_KEYS, csv_file_source, resolved_source_config
+from decoy.cli._sources import (
+    CSV_DIALECT_KEYS,
+    csv_file_source,
+    prepared_sources,
+    resolved_source_config,
+)
 from decoy.cli.extras import UnsupportedCloudEndpointError
 from decoy.cli.io import RunLayout
 from decoy.cli.io._targets import claimed_format, format_for_path
@@ -255,6 +260,26 @@ def _stage_source_entry(name: str, value: Any, tmp_paths: list[Path], declared: 
     return {"type": "file", "format": "parquet", "path": str(tmp_path)}
 
 
+def _gate_in_memory_data(raw: dict, items: list[tuple[str, Any]]) -> None:
+    """Refuse an undeclared table or column of in-memory data before any temp file is written.
+
+    The config is not validated yet at this point, so a config whose `tables` block is not a
+    list of named mappings is left for schema validation to report. Path data is not opened
+    here: its descriptor is checked by `_load_sources_from_config`."""
+    tables = raw.get("tables")
+    if not isinstance(tables, list) or not all(
+        isinstance(t, dict) and isinstance(t.get("name"), str) for t in tables
+    ):
+        return
+    schemas = {
+        name: _to_pa_table(value).schema
+        for name, value in items
+        if isinstance(value, (pd.DataFrame, pa.Table))
+    }
+    if schemas:
+        prepared_sources(raw, base_dir=Path.cwd(), schemas=schemas)
+
+
 def _stage_data_sources(raw: dict, data: Any, tmp_paths: list[Path]) -> None:
     """Mutate `raw['sources']` so every table `data` covers points at a
     real on-disk file (spooling DataFrames/Tables to temp Parquet via
@@ -274,6 +299,7 @@ def _stage_data_sources(raw: dict, data: Any, tmp_paths: list[Path]) -> None:
             context="data was given as a single DataFrame/Table/path",
         )
         items = [(name, data)]
+    _gate_in_memory_data(raw, items)
     for name, value in items:
         sources[name] = _stage_source_entry(name, value, tmp_paths, sources.get(name))
     raw["sources"] = sources

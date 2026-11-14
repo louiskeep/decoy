@@ -14,6 +14,7 @@ from decoy.cli.io import (
     open_run_layout,
     parquet_schema,
     parse_flag,
+    prepared_sources,
     quarantine_enabled,
     read_source,
     resolve_target_format,
@@ -98,6 +99,8 @@ def _run_chunked_mask(
     so a later table's failure keeps the earlier entries."""
     _require_local_io_endpoints(config_dict)
     check_target_formats(config_dict, chunked=True)
+    # No reader or iterator exists until every source column is declared.
+    prepared_sources(config_dict, base_dir=base_dir)
 
     from decoy_engine import __version__ as engine_version
     from decoy_engine import run_mask_pipeline_chunked
@@ -122,7 +125,7 @@ def _run_chunked_mask(
             name, src_spec, base_dir, iter_source_chunks(name, src_spec, base_dir, chunk_size)
         )
         masked_iter = run_mask_pipeline_chunked(
-            config_dict,
+            resolved_source_config(config_dict, base_dir),
             chunks,
             table=name,
             engine_version=engine_version,
@@ -285,6 +288,7 @@ def _load_sources_from_config(config_dict: dict, base_dir: Path) -> dict:
     """
     _require_local_io_endpoints(config_dict)
     check_target_formats(config_dict, chunked=False)
+    prepared_sources(config_dict, base_dir=base_dir)
 
     import pyarrow as pa
 

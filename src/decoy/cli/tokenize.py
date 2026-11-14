@@ -30,7 +30,7 @@ import typer
 from decoy import _mask_secret, _mask_secret_guidance
 from decoy._atomic import AtomicWriteError, describe
 from decoy._config_file import ConfigFileError, config_refusal, load_config_mapping
-from decoy.cli._sources import read_file, resolved_source_config
+from decoy.cli._sources import prepared_sources, read_file, resolved_source_config
 from decoy.cli._token_vault import LocalTokenVault, TokenVaultError, iter_tokenize_columns
 from decoy.cli.exit_codes import EXIT_RUNTIME, EXIT_USAGE, exit_code_for
 from decoy.cli.io import (
@@ -531,6 +531,12 @@ def detokenize(
         raise typer.Exit(code=EXIT_USAGE)
     except (PlanCompileError, ConfigError) as exc:
         _emit_error(f"{getattr(exc, 'code', type(exc).__name__)}: {getattr(exc, 'message', exc)}")
+        raise typer.Exit(code=EXIT_USAGE)
+    # The declared sources are checked before the caller-named tokenized file is read.
+    try:
+        prepared_sources(config_dict, base_dir=config_path.parent)
+    except ConfigError as exc:
+        _emit_error(str(exc), code=getattr(exc, "code", None))
         raise typer.Exit(code=EXIT_USAGE)
 
     # Tables that declare at least one tokenize column -- the reversible set.

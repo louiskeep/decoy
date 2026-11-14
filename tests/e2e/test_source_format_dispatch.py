@@ -178,11 +178,13 @@ def test_csv_and_parquet_sources_read_as_before(tmp_path: Path):
     pq_path = tmp_path / "in.parquet"
     df.to_csv(csv_path, index=False)
     df.to_parquet(pq_path, index=False)
+    every_column = [{"name": c, "strategy": "passthrough"} for c in df.columns]
     config = {
         "sources": {
             "c": csv_source(csv_path),
             "p": {"type": "file", "format": "parquet", "path": str(pq_path)},
-        }
+        },
+        "tables": [{"name": t, "columns": every_column} for t in ("c", "p")],
     }
     got = _load_sources_from_config(config, tmp_path)
     assert got["c"].equals(

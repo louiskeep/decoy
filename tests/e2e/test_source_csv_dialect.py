@@ -315,8 +315,15 @@ def test_report_verbs_read_declared_dialect(tmp_path: Path, verb: str) -> None:
     declared = _config(tmp_path, pipe, dialect={"delimiter": "|", **_HEADERLESS})
     assert _report_payload(verb, pipe, masked, declared) == expected
 
+    # Changed on purpose (C1a): the one declared table's own descriptor now reads the file given
+    # as --source, so a comma-headered declaration over a pipe-delimited file is refused, where it
+    # used to fall back to the default dialect and report on the wrong columns.
     elsewhere = _config(tmp_path, _write(tmp_path / "other.csv"), out="o2.csv")
-    assert _report_payload(verb, pipe, masked, elsewhere) != expected
+    args = ["report", verb]
+    args += [str(pipe), str(masked)] if verb == "fidelity" else [str(masked), "--source", str(pipe)]
+    refused = runner.invoke(app, [*args, "--config", str(elsewhere), "--json"])
+    assert refused.exit_code == 1
+    assert "source_file.undeclared_column" in refused.output
 
 
 @pytest.mark.parametrize("branch", ["declared", "fallback"])

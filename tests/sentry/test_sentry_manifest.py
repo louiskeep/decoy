@@ -44,6 +44,7 @@ SENTRIES = (
     "tests/sentry/cli_text/test_stdout_writes.py",
     "tests/sentry/io_policy/test_environment_reads.py",
     "tests/sentry/io_policy/test_config_load_choke_point.py",
+    "tests/sentry/io_policy/test_declared_read_choke_point.py",
     "tests/sentry/cli_text/test_no_traceback_escape.py",
     "tests/sentry/cli_text/test_json_command_names.py",
     "tests/sentry/cli_text/test_user_text_internal_names.py",

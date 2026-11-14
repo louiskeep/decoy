@@ -18,7 +18,7 @@ for CLI-written files lives with their writer, in `cli/io/_targets.py`.
 from __future__ import annotations
 
 import itertools
-from collections.abc import Iterator, Mapping
+from collections.abc import Iterable, Iterator, Mapping
 from pathlib import Path
 from typing import Any
 
@@ -61,6 +61,41 @@ def resolved_source_config(config_dict: dict[str, Any], base_dir: Path) -> dict[
                     descriptor[field] = str(resolve_path(value, base_dir))
         resolved[name] = descriptor
     return {**config_dict, "sources": resolved}
+
+
+def names_schema(names: Iterable[str]) -> pa.Schema:
+    """An all-string Arrow schema holding only column names, for a declaration request."""
+    return pa.schema([pa.field(name, pa.string()) for name in names])
+
+
+def _has_path(descriptor: Any) -> bool:
+    return isinstance(descriptor, dict) and isinstance(descriptor.get("path"), str)
+
+
+def prepared_sources(
+    config_dict: dict[str, Any],
+    *,
+    base_dir: Path,
+    schemas: Mapping[str, pa.Schema] | None = None,
+) -> Any:
+    """Check a validated config's source columns against its declarations before any row is read.
+
+    The engine owns every rule (`prepare_declared_sources`); this builds its request and returns
+    its `PreparedDeclaredSources` capability, which a reader needs before it opens a data row.
+    With `schemas` (an in-memory table or a DuckDB `DESCRIBE`) the supplied schemas are checked
+    and no file is opened; without them each declared source's header or footer is read, never a
+    data row. The request holds the reader-side copy, so a relative `path` or
+    `column_names_file` resolves against `base_dir` and not the working directory.
+    """
+    from decoy_engine import DeclarationRequest, prepare_declared_sources
+
+    resolved = resolved_source_config(config_dict, base_dir)
+    if schemas is None:
+        # A source with no `path` is not read (`source_is_materialized`), so it has no header.
+        read = {n: d for n, d in (resolved.get("sources") or {}).items() if _has_path(d)}
+        resolved = {**resolved, "sources": read}
+        return prepare_declared_sources(DeclarationRequest.for_descriptors(resolved))
+    return prepare_declared_sources(DeclarationRequest.for_supplied(resolved, schemas))
 
 
 # The CSV dialect keys of a file-source descriptor, the engine's `CsvDialect` fields plus
@@ -125,22 +160,120 @@ def read_csv_frame(
     )
 
 
-def read_report_source(path: Path, config_dict: dict[str, Any], config_dir: Path) -> Any:
+def check_declared_before_acquire(raw: dict[str, Any], flags: list[str], base_dir: Path) -> None:
+    """Refuse an undeclared column of a flagged DuckDB relation before any relation is staged.
+
+    Each relation's columns come from `describe_relation`; the engine checks them against the
+    config's table declarations (`prepared_sources`). The check needs a validated config, and
+    staging has not run, so a copy stands in a placeholder Parquet descriptor for each flagged
+    table. A config that does not parse is left alone: the gate reports it, as it does today.
+    A flag naming a table the config does not declare is left to the membership check.
+    """
+    from decoy_engine import ConfigError, PipelineValidationError, parse_pipeline_config
+    from decoy_engine.config import PipelineConfigError
+
+    from decoy.cli._duckdb_source import describe_relation, parse_flag
+
+    tables = raw.get("tables")
+    if not isinstance(tables, list):
+        return
+    declared = {t.get("name") for t in tables if isinstance(t, dict)}
+    probe_sources = dict(raw.get("sources") or {})
+    schemas = {}
+    for spec in flags:
+        table, db = parse_flag(spec)
+        if table not in declared:
+            continue
+        schemas[table] = names_schema(describe_relation(resolve_path(db, base_dir), table))
+        probe_sources[table] = {"type": "file", "format": "parquet", "path": "staged.parquet"}
+    if not schemas:
+        return
+    try:
+        validated = parse_pipeline_config({**raw, "sources": probe_sources}).model_dump()
+    except (PipelineConfigError, PipelineValidationError, ConfigError):
+        return
+    prepared_sources(validated, base_dir=base_dir, schemas=schemas)
+
+
+class ReportSourceError(Exception):
+    """A `--config` report refused before its `--source` was read. `message` holds no path,
+    column or value; `code` is the engine's reason code when the engine refused."""
+
+    def __init__(self, message: str, code: str | None = None) -> None:
+        super().__init__(message)
+        self.message = message
+        self.code = code
+
+
+_AMBIGUOUS_SOURCE = (
+    "--source matches no declared source and the config declares several tables; "
+    "pass the declared file"
+)
+
+
+def _declared_table_for(source: Path, config_dict: dict[str, Any], config_dir: Path) -> str | None:
+    """The table whose declared source is `source`, else the config's only table, else None."""
+    target = source.resolve()
+    for name, src in (config_dict.get("sources") or {}).items():
+        if isinstance(src, dict) and src.get("path"):
+            if resolve_path(src["path"], config_dir).resolve() == target:
+                return str(name)
+    names = [t.get("name") for t in config_dict.get("tables") or [] if isinstance(t, dict)]
+    return str(names[0]) if len(names) == 1 else None
+
+
+def gate_report_source(
+    config_dict: dict[str, Any], config_dir: Path, source: Path, table: str | None = None
+) -> str | None:
+    """Check `source` against the selected table's declaration before it is read.
+
+    The table is `table` when given (integrity anchors on the first declared one); otherwise the
+    declared source whose resolved path is `source`, else the config's only table. The engine
+    checks the table's own descriptor with `path` set to `source`, so the bytes read are the bytes
+    checked, and a declared dialect applies. A config with no file source has nothing to check.
+    Returns the selected table, or None when nothing was selected to check.
+    """
+    from decoy_engine import PipelineValidationError
+
+    sources = {n: d for n, d in (config_dict.get("sources") or {}).items() if isinstance(d, dict)}
+    if not sources:
+        return None
+    if table is None:
+        table = _declared_table_for(source, config_dict, config_dir)
+        if table is None:
+            raise ReportSourceError(_AMBIGUOUS_SOURCE)
+    descriptor = sources.get(table)
+    if descriptor is None or descriptor.get("type", "file") != "file":
+        return None
+    gated = {**config_dict, "sources": {table: {**descriptor, "path": str(source.resolve())}}}
+    refusal: ReportSourceError | None = None
+    try:
+        prepared_sources(gated, base_dir=config_dir)
+    except PipelineValidationError as exc:
+        refusal = ReportSourceError(str(exc), exc.code)
+    if refusal is not None:
+        raise refusal
+    return table
+
+
+def read_report_source(
+    path: Path, config_dict: dict[str, Any], config_dir: Path, table: str | None = None
+) -> Any:
     """Read the `--source` file of a report verb, with its declared dialect when it has one.
 
-    The declared dialect applies only when a `format: csv` source in `config_dict` resolves
-    to this very file; any other file, or no config, reads with the default dialect. Pandas
+    The declared dialect applies when `table` names a `format: csv` source of `config_dict`
+    (the table `gate_report_source` selected), or, with no `table`, when a csv source resolves
+    to this very file. Any other file, or no config, reads with the default dialect. Pandas
     dtypes are kept, so the scores are the ones the verbs gave before.
     """
     target = path.resolve()
     for name, src in (config_dict.get("sources") or {}).items():
-        if (
-            isinstance(src, dict)
-            and src.get("format") == "csv"
-            and src.get("path")
-            and resolve_path(src["path"], config_dir).resolve() == target
+        if not (isinstance(src, dict) and src.get("format") == "csv" and src.get("path")):
+            continue
+        if name == table or (
+            table is None and resolve_path(src["path"], config_dir).resolve() == target
         ):
-            return read_csv_frame(name, src, config_dir, dtype=None)
+            return read_csv_frame(name, {**src, "path": str(target)}, config_dir, dtype=None)
     # The user's own path is relative to the current folder, never to the config directory.
     return read_csv_frame(path.stem, csv_file_source(target), config_dir, dtype=None)
 
