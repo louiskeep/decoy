@@ -52,19 +52,15 @@ class _MaskSecretUsageError(Exception):
     """--mask-secret AND YAML mask_secret_ref both set; user error (exits EXIT_USAGE)."""
 
 
-# The raw pre-check (before Pydantic) and the effective-ref guard share the one
-# predicate in `decoy._mask_secret`; callers never echo the value.
-_is_valid_mask_secret_ref = _mask_secret.is_valid_mask_secret_ref
-
-
 def _load_raw_config(
     config_path: Path,
 ) -> tuple[object, list[GateFinding], Exception | None]:
     """The run path's single YAML parse, through the gate's parser.
 
     Returns `(raw, findings, read_error)`: `findings` holds a YAML syntax error (the run
-    refuses it before any work), `read_error` an unreadable or non-UTF-8 file (kept as
-    today: it surfaces through the run-level handler as a runtime error).
+    refuses it before any work), as do a non-UTF-8, empty or non-mapping file; `read_error`
+    an unreadable file (an `OSError`: it surfaces through the run-level handler as a runtime
+    error).
     """
     try:
         raw, findings = parse_pipeline_yaml(config_path)
@@ -240,13 +236,11 @@ def _guard_mask_secret_ref(raw: object) -> None:
             "See: decoy explain keys."
         )
     _raw_ref = _raw_gs.get("mask_secret_ref") if isinstance(_raw_gs, dict) else None
-    if _raw_ref is not None and not _is_valid_mask_secret_ref(_raw_ref):
-        raise _MaskSecretUsageError(
-            "Invalid global_settings.mask_secret_ref: expected an "
-            "'env:NAME' or 'file:/PATH' reference to a >=32-byte secret. "
-            "It is a REFERENCE, never the raw secret. "
-            "See: decoy explain keys."
-        )
+    # The raw pre-check (before Pydantic) shares the one shape rule in `decoy._mask_secret`;
+    # its text never echoes the value.
+    _problem = None if _raw_ref is None else _mask_secret.mask_secret_ref_problem(_raw_ref)
+    if _problem is not None:
+        raise _MaskSecretUsageError(_problem)
 
 
 def _placement(ctx: RunContext) -> OutputPlacement:

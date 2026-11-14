@@ -1,0 +1,15 @@
+{
+ "sentry_id": "exit-code-owner",
+ "created_in": "CL3",
+ "entries": {
+  "cli/demo.py::_demo": {
+   "reason": "demo's three-type map (usage versus runtime); CL4 calls exit_code_for instead"
+  },
+  "cli/fit.py::fit": {
+   "reason": "the differential-privacy arms (provenance, budget, DP, carrier); CL4 calls exit_code_for"
+  },
+  "cli/run/_errors.py::fail": {
+   "reason": "the decoy run classifier: exception to category to exit; CL4 moves it to exit_code_for"
+  }
+ }
+}

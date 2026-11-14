@@ -1,0 +1,39 @@
+{
+ "sentry_id": "config-load-allow",
+ "created_in": "CL3",
+ "entries": {
+  "ci/locations.py::YamlSourceIndex.from_text::1": {
+   "reason": "source index: yaml.compose of text the gate already loaded, for SARIF line marks"
+  },
+  "ci/manifest.py::_parse::1": {
+   "reason": "CI manifest: strict loader with its own ci.manifest_invalid code and event check"
+  },
+  "cli/demo.py::_run_v2_mask::1": {
+   "reason": "CLI-written text: re-parses text the CLI wrote itself, not a user's config"
+  },
+  "cli/init.py::_build_scaffold_yaml::1": {
+   "reason": "CLI-written text: re-parses text the CLI wrote itself, not a user's config"
+  },
+  "cli/init.py::_print_keyed_hint::1": {
+   "reason": "CLI-written text: re-parses text the CLI wrote itself, not a user's config"
+  },
+  "cli/init.py::_template_path::1": {
+   "reason": "CLI-written text: re-parses text the CLI wrote itself, not a user's config"
+  },
+  "cli/init.py::_validate_scaffold::1": {
+   "reason": "CLI-written text: re-parses text the CLI wrote itself, not a user's config"
+  },
+  "cli/io/_project.py::_parse_marker::1": {
+   "reason": "user-editable project marker: its own trust class: bounded reader and a PROJECT_MARKER_INVALID refusal"
+  },
+  "cli/plan.py::render_plan_artifact::1": {
+   "reason": "CLI-written text: re-parses text the CLI wrote itself, not a user's config"
+  },
+  "cli/report.py::_fidelity::1": {
+   "reason": "policy file: a different file kind where an empty file means no policy"
+  },
+  "cli/scan.py::_parse_layout::1": {
+   "reason": "fixed-width layout file: YAML with a JSON fallback, not a pipeline config; scan.py is a hot lane"
+  }
+ }
+}

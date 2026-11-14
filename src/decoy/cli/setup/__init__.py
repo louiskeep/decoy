@@ -14,8 +14,8 @@ from decoy._atomic import AtomicWriteError, describe
 from decoy.cli.exit_codes import EXIT_RUNTIME, EXIT_USAGE
 from decoy.cli.setup._sections import SECTIONS
 from decoy.distribution import lock
-from decoy.ui.output import OutputMode, emit_json, setup_output
-from decoy.ui.theme import accent, error, hint, success
+from decoy.ui.output import OutputMode, emit_error, emit_json, setup_output
+from decoy.ui.theme import accent, hint, success
 
 SETTINGS_LOCK = ".settings.lock"
 # Only an unreadable or non-JSON/non-object file is replaced; anything else is the user's data.
@@ -68,7 +68,7 @@ def setup_command(
     """
     state = setup_output(json_, quiet, verbose)
     if not yes and not sys.stdin.isatty():
-        state.err_console.print(error("error:"), "setup needs a terminal; pass --yes to accept.")
+        emit_error(state, "setup", "setup needs a terminal; pass --yes to accept.")
         raise typer.Exit(code=EXIT_USAGE)
     try:
         stored = host.read_settings()
@@ -104,18 +104,25 @@ def setup_command(
                 doc[section.name] = {**(owned if isinstance(owned, dict) else {}), **rendered}
             path = host.write_settings(json.dumps(doc, indent=2) + "\n")
     except host.ResourceError as exc:
-        state.err_console.print(error("error:"), str(exc))
+        # `ResourceError` text is the setting key and a fixed reason, never a value.
+        emit_error(state, "setup", str(exc), code=f"setup_{exc.code}")
         raise typer.Exit(code=EXIT_USAGE) from None
     except AtomicWriteError as exc:
-        state.err_console.print(error("error:"), "settings not written:", describe(exc))
-        state.err_console.print(" ", hint("hint:"), "check the directory is writable.")
+        emit_error(
+            state,
+            "setup",
+            f"settings not written: {describe(exc)}",
+            hint="check the directory is writable.",
+        )
         raise typer.Exit(code=EXIT_RUNTIME) from None
     except OSError:
         # Creating the settings lock (or its folder) failed; nothing was written.
-        state.err_console.print(
-            error("error:"), "settings not written: the settings lock could not be created"
+        emit_error(
+            state,
+            "setup",
+            "settings not written: the settings lock could not be created",
+            hint="check the directory is writable.",
         )
-        state.err_console.print(" ", hint("hint:"), "check the directory is writable.")
         raise typer.Exit(code=EXIT_RUNTIME) from None
     if state.mode is OutputMode.json:
         emit_json(

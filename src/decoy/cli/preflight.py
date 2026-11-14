@@ -54,11 +54,10 @@ from pathlib import Path
 from typing import Any
 
 import typer
-import yaml as _yaml
 from rich.text import Text
 
-from decoy.cli._yaml_errors import sanitize_yaml_error
-from decoy.cli.exit_codes import EXIT_CAPACITY, EXIT_USAGE, EXIT_WARNINGS
+from decoy._config_file import ConfigFileError, config_refusal, load_config_mapping
+from decoy.cli.exit_codes import EXIT_CAPACITY, EXIT_USAGE, EXIT_WARNINGS, exit_code_for
 from decoy.cli.gate import capacity_codes
 from decoy.cli.gate._capacity_text import format_gib as _format_gib
 from decoy.cli.gate._capacity_text import insufficient_text as _insufficient_text
@@ -680,26 +679,13 @@ def preflight(
 
     # -- Step 1: YAML parse ---------------------------------------------------
     try:
-        raw = _yaml.safe_load(config_path.read_text(encoding="utf-8"))
-    except _yaml.YAMLError as exc:
-        acc.add_fail(name="yaml.parse_error", message=sanitize_yaml_error(exc))
+        raw = load_config_mapping(config_path)
+    except (ConfigFileError, OSError) as exc:
+        message, reason = config_refusal(exc).values()  # reason is None for an OSError
+        acc.add_fail(name=reason or "config.unreadable", message=str(message))
         _emit_preflight_result(state, acc, config_str, fail_on_warning)
-        raise typer.Exit(code=EXIT_USAGE)
+        raise typer.Exit(code=exit_code_for(exc))
 
-    if raw is None:
-        acc.add_fail(name="yaml.empty", message="Pipeline YAML is empty.")
-        _emit_preflight_result(state, acc, config_str, fail_on_warning)
-        raise typer.Exit(code=EXIT_USAGE)
-
-    if not isinstance(raw, dict):
-        acc.add_fail(
-            name="yaml.not_mapping",
-            message=f"Pipeline YAML must be a YAML mapping (object), not {type(raw).__name__}.",
-        )
-        _emit_preflight_result(state, acc, config_str, fail_on_warning)
-        raise typer.Exit(code=EXIT_USAGE)
-
-    # YAML parse passed
     acc.add_pass(name="yaml.syntax", message="YAML syntax is valid.")
 
     # -- Step 2: Schema validation --------------------------------------------

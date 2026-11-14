@@ -23,7 +23,7 @@ TOPS = ("src/decoy", "scripts", "packaging_tools")
 # Frozen packages: exact direct-module count at the build base; may only shrink.
 FANOUT_ALLOWLIST: dict[str, int] = {
     # next command: a named sub-package, src/decoy/cli/<command>/_<noun>.py.
-    "src/decoy/cli": 30,
+    "src/decoy/cli": 29,
 }
 
 

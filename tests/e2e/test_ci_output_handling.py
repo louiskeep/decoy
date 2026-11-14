@@ -176,7 +176,7 @@ def test_a_pipeline_that_is_not_utf8_is_a_finding_not_a_crash(tmp_path: Path) ->
     proc = ci_check(repo, "--format", "json")
     report = parse_stdout(proc)
     assert proc.returncode == EXIT_USAGE, proc.stderr
-    assert [f["rule_id"] for f in report["findings"]] == ["validate.yaml.parse_error"]
+    assert [f["rule_id"] for f in report["findings"]] == ["validate.yaml.not_utf8"]
 
 
 def test_precommit_context_also_skips_drift_and_regression_visibly(tmp_path: Path) -> None:

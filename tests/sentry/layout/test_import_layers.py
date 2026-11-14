@@ -48,7 +48,8 @@ LAYERS: tuple[str, ...] = (
     "ci | _resources",
     "ui | distribution | notify | telemetry | templates",
     "_mask_secret | _mask_secret_guidance | _native_gate | _atomic | _row_sample | _env_flags",
-    "_private_file | _version",
+    "_config_file",
+    "_private_file | _version | _yaml_errors",
 )
 
 
@@ -313,7 +314,11 @@ def test_a_reviewed_new_package_goes_green_only_with_its_snapshot(
     (pkg / "__init__.py").write_text('"""A reviewed bottom-tier leaf."""\n', encoding="utf-8")
     cfg = tree / ".importlinter"
     before = ignore_keys(cfg.read_text(encoding="utf-8"))
-    _edit(cfg, "    _private_file | _version\n", "    _private_file | _version | _probe_leaf\n")
+    _edit(
+        cfg,
+        "    _private_file | _version | _yaml_errors\n",
+        "    _private_file | _version | _yaml_errors | _probe_leaf\n",
+    )
     assert lint_scratch(tree)
     text = cfg.read_text(encoding="utf-8")
     assert ignore_keys(text) == before

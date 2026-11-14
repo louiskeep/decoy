@@ -68,12 +68,38 @@ def _codes(result: GateResult) -> list[str]:
 # -- parse_pipeline_yaml -------------------------------------------------------
 
 
-@pytest.mark.parametrize("text", ["", "- a\n- b\n", "just a scalar\n", "42\n"])
-def test_parse_returns_raw_unchanged_with_no_findings(tmp_path: Path, text: str) -> None:
-    """Mutation: make the parser refuse empty or non-mapping input itself."""
-    raw, findings = parse_pipeline_yaml(tmp_path / "x.yaml", text)
+def test_parse_returns_a_mapping_unchanged_with_no_findings(tmp_path: Path) -> None:
+    raw, findings = parse_pipeline_yaml(tmp_path / "x.yaml", "a: 1\nb: [2, 3]\n")
     assert findings == []
-    assert raw == yaml.safe_load(text)
+    assert raw == {"a": 1, "b": [2, 3]}
+
+
+@pytest.mark.parametrize(
+    ("text", "code"),
+    [
+        ("", "yaml.empty"),
+        ("# nothing\n", "yaml.empty"),
+        ("- a\n- b\n", "yaml.not_mapping"),
+        ("just a scalar\n", "yaml.not_mapping"),
+        ("42\n", "yaml.not_mapping"),
+    ],
+)
+def test_the_adapter_owns_the_empty_and_non_mapping_refusals(
+    tmp_path: Path, text: str, code: str
+) -> None:
+    """The loader's checks, as findings. Mutation: let the adapter return the raw value."""
+    raw, findings = parse_pipeline_yaml(tmp_path / "x.yaml", text)
+    assert raw is None
+    assert [(f.layer, f.severity, f.code) for f in findings] == [("config", "error", code)]
+
+
+def test_the_adapter_refuses_non_utf8_bytes_from_the_file(tmp_path: Path) -> None:
+    path = tmp_path / "x.yaml"
+    path.write_bytes(b"a: \xff\n")
+    raw, findings = parse_pipeline_yaml(path)
+    assert raw is None
+    assert [f.code for f in findings] == ["yaml.not_utf8"]
+    assert findings[0].message == "Pipeline YAML is not UTF-8 text."
 
 
 def test_parse_reports_a_syntax_error_without_the_text(tmp_path: Path) -> None:
@@ -83,21 +109,6 @@ def test_parse_reports_a_syntax_error_without_the_text(tmp_path: Path) -> None:
         ("config", "error", "yaml.parse_error")
     ]
     assert MARKER not in findings[0].message
-
-
-# -- run_gate_on_config: the empty and non-mapping refusals --------------------
-
-
-@pytest.mark.parametrize(
-    ("raw", "code"), [(None, "yaml.empty"), (["a"], "yaml.not_mapping"), ("s", "yaml.not_mapping")]
-)
-def test_entry_owns_the_empty_and_non_mapping_refusals(tmp_path: Path, raw: Any, code: str) -> None:
-    """Mutation: drop the `raw is None` / `isinstance(raw, dict)` branch in the config layer."""
-    result = run_gate_on_config(raw, tmp_path / "x.yaml")
-    assert _codes(result) == [code]
-    assert result.ran_layers == frozenset({"config"})
-    assert result.config is None
-    assert gate_exit_code(result, False) == EXIT_USAGE
 
 
 def test_run_gate_and_run_config_gate_compose_the_same_refusals(tmp_path: Path) -> None:

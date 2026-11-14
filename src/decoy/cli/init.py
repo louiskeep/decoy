@@ -21,7 +21,7 @@ from __future__ import annotations
 import json as _json
 import re
 from pathlib import Path
-from typing import Any
+from typing import Any, NoReturn
 
 import typer
 import yaml
@@ -33,8 +33,8 @@ from decoy.cli.completers import init_presets
 from decoy.cli.exit_codes import EXIT_RUNTIME, EXIT_USAGE
 from decoy.templates import get_template
 from decoy.templates import template_names as _template_names
-from decoy.ui.output import OutputMode, OutputState, emit_json, setup_output
-from decoy.ui.theme import accent, code, error, hint, success
+from decoy.ui.output import OutputMode, OutputState, emit_error, emit_json, setup_output
+from decoy.ui.theme import accent, code, hint, success
 
 _INIT_EPILOG = """\
 Examples:
@@ -425,19 +425,27 @@ def _scaffold_from_file(
     scanner crash.
     """
     if not input_file.exists():
-        if state.mode is not OutputMode.default:
-            state.err_console.print(error("error:"), f"{input_file} does not exist.")
+        emit_error(state, "init", f"{input_file} does not exist.")
         raise typer.Exit(code=EXIT_USAGE)
 
+    # The extension check has fixed, value-free text, so it is shown whole.
+    unsupported: str | None = None
+    try:
+        _scaffold_source(input_file)
+    except ValueError as exc:
+        unsupported = str(exc)
+    if unsupported is not None:
+        emit_error(state, "init", unsupported)
+        raise typer.Exit(code=EXIT_USAGE)
+
+    # Messages below name the exception type only: a reader's text can quote the file's bytes.
     try:
         df = _load_dataframe(input_file)
     except ValueError as exc:
-        if state.mode is not OutputMode.default:
-            state.err_console.print(error("error:"), str(exc))
+        emit_error(state, "init", f"could not read {input_file}: {type(exc).__name__}.")
         raise typer.Exit(code=EXIT_USAGE) from exc
     except Exception as exc:
-        if state.mode is not OutputMode.default:
-            state.err_console.print(error("error:"), f"could not read {input_file}: {exc}")
+        emit_error(state, "init", f"could not read {input_file}: {type(exc).__name__}.")
         raise typer.Exit(code=EXIT_RUNTIME) from exc
 
     try:
@@ -445,8 +453,7 @@ def _scaffold_from_file(
 
         profile = profile_columns(df, source_label=str(input_file))
     except Exception as exc:
-        if state.mode is not OutputMode.default:
-            state.err_console.print(error("error:"), f"STORM scan failed: {exc}")
+        emit_error(state, "init", f"STORM scan failed: {type(exc).__name__}.")
         raise typer.Exit(code=EXIT_RUNTIME) from exc
 
     column_names = [fs.name for fs in profile.fields]
@@ -476,12 +483,12 @@ def _scaffold_from_file(
         # Validation failure here is a bug in the scaffolder (not the
         # user's input) since we built the YAML ourselves. Surface
         # loudly via EXIT_RUNTIME so it doesn't slip past CI.
-        if state.mode is not OutputMode.default:
-            state.err_console.print(
-                error("error:"),
-                "scaffolder emitted YAML that failed PipelineConfig validation: ",
-                str(exc),
-            )
+        emit_error(
+            state,
+            "init",
+            "scaffolder emitted YAML that failed PipelineConfig validation: "
+            f"{type(exc).__name__}.",
+        )
         raise typer.Exit(code=EXIT_RUNTIME) from exc
 
     return body, len(column_names)
@@ -549,9 +556,7 @@ def _init(
 
         if not out_is_stdout and out.exists() and not yes:
             if state.mode is not OutputMode.default:
-                state.err_console.print(error("error:"), f"{out} already exists.")
-                state.err_console.print(" ", hint("hint:"), "rerun with --yes to overwrite.")
-                raise typer.Exit(code=EXIT_USAGE)
+                _refuse_overwrite(state, out)
             size = out.stat().st_size
             state.console.print(
                 f"This will overwrite {out} ({size} bytes). Continue?",
@@ -610,30 +615,17 @@ def _init(
         from difflib import get_close_matches
 
         guess = get_close_matches(preset, _template_names(), n=1, cutoff=0.5)
-        if state.mode is OutputMode.json:
-            emit_json(
-                state,
-                {
-                    "command": "init",
-                    "status": "error",
-                    "preset": preset,
-                    "error": f"unknown preset {preset!r}",
-                    "did_you_mean": guess[0] if guess else None,
-                },
-            )
-        elif state.mode is not OutputMode.quiet:
-            state.err_console.print(error("error:"), f"unknown preset {preset!r}.")
-            if guess:
-                state.err_console.print(
-                    " ", hint("hint:"), "did you mean", code(guess[0]) + "?"
-                )
-            else:
-                state.err_console.print(
-                    " ",
-                    hint("hint:"),
-                    "list every preset with",
-                    code("decoy list templates") + ".",
-                )
+        emit_error(
+            state,
+            "init",
+            f"unknown preset {preset!r}.",
+            hint=(
+                f"did you mean {guess[0]}?"
+                if guess
+                else "list every preset with `decoy list templates`."
+            ),
+            context={"preset": preset, "did_you_mean": guess[0] if guess else None},
+        )
         raise typer.Exit(code=EXIT_USAGE)
 
     if str(out) == "-":
@@ -642,9 +634,7 @@ def _init(
 
     if out.exists() and not yes:
         if state.mode is not OutputMode.default:
-            state.err_console.print(error("error:"), f"{out} already exists.")
-            state.err_console.print(" ", hint("hint:"), "rerun with --yes to overwrite.")
-            raise typer.Exit(code=EXIT_USAGE)
+            _refuse_overwrite(state, out)
         size = out.stat().st_size
         state.console.print(
             f"This will overwrite {out} ({size} bytes). Continue?",
@@ -688,9 +678,11 @@ def _init(
             default="minimal",
         ).strip().lower()
         while chosen not in _template_names():
-            state.console.print(error("error:"), f"unknown preset {chosen!r}.")
-            state.console.print(
-                " ", hint("hint:"), f"pick one of: {', '.join(_template_names())}."
+            emit_error(
+                state,
+                "init",
+                f"unknown preset {chosen!r}.",
+                hint=f"pick one of: {', '.join(_template_names())}.",
             )
             chosen = typer.prompt("Preset", default="minimal").strip().lower()
     else:
@@ -706,7 +698,7 @@ def _init(
         else:
             rendered = _render(chosen, None, None)
     except ValueError as exc:
-        state.err_console.print(error("error:"), str(exc), markup=False)
+        emit_error(state, "init", str(exc))
         raise typer.Exit(code=EXIT_RUNTIME) from None
 
     out.write_text(rendered, encoding="utf-8")
@@ -715,6 +707,12 @@ def _init(
     state.console.print(success("OK"), "wrote", code(str(out)), "(preset:", code(chosen) + ")")
     state.console.print(hint("Next:"), code(f"decoy validate config {out}"))
     _print_keyed_hint(state, rendered)
+
+
+def _refuse_overwrite(state: OutputState, out: Path) -> NoReturn:
+    """`--json` and `--quiet` cannot ask before overwriting: refuse and name the flag."""
+    emit_error(state, "init", f"{out} already exists.", hint="rerun with --yes to overwrite.")
+    raise typer.Exit(code=EXIT_USAGE)
 
 
 def _template_to_stdout(state: OutputState, preset: str | None) -> None:
@@ -726,14 +724,7 @@ def _template_to_stdout(state: OutputState, preset: str | None) -> None:
     import sys
 
     if state.mode is OutputMode.json:
-        emit_json(
-            state,
-            {
-                "command": "init",
-                "status": "error",
-                "error": "-o - prints the YAML on stdout, which --json also uses.",
-            },
-        )
+        emit_error(state, "init", "-o - prints the YAML on stdout, which --json also uses.")
         raise typer.Exit(code=EXIT_USAGE)
     chosen = preset or "minimal"
     rendered = _render(chosen, None, None)

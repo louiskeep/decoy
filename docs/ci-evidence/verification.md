@@ -65,6 +65,7 @@ maps to `pipeline.yaml` line 14 column 9; inserting two lines moves it to 16/9 w
 `partialFingerprints["primary/v1"]` is unchanged; no `snippet`. The location-free finding
 (`yaml.not_mapping`) and a missing top-level key yield schema-valid SARIF with no `locations` /
 no region, a fingerprint, and a matching `rules[]` entry.
+A pipeline that is not UTF-8 text is the same kind of finding: rule `validate.yaml.not_utf8` (code `yaml.not_utf8`, added with the one config loader), pinned by `tests/e2e/test_config_loader_commands.py`.
 
 ### Offline pre-commit (real `pre-commit` 4.7.0, `PIP_NO_INDEX=1`, socket-denying `sitecustomize`)
 Transcript of `pre-commit run --verbose` with a staged synthetic identifier (the test asserts the

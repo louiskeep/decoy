@@ -68,9 +68,6 @@
   "decoy/cli/io/_scan_set.py::load_scan_set::0": {
    "reason": "existing raise-from-None inside an except block at the B2 base; hoist is V2 corrective work"
   },
-  "decoy/cli/report.py::_integrity::0": {
-   "reason": "existing raise-from-None inside an except block at the B2 base; hoist is V2 corrective work"
-  },
   "decoy/cli/run/_notify.py::_start_telemetry::0": {
    "reason": "existing raise-from-None inside an except block at the B2 base; hoist is V2 corrective work"
   },

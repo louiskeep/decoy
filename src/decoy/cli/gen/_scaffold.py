@@ -19,6 +19,7 @@ import yaml
 
 from decoy import _atomic
 from decoy._atomic import LocalTarget, WriteMode
+from decoy._config_file import parse_config_mapping
 from decoy._resources import ResourceError, read_fit_max_rows
 from decoy.cli.exit_codes import EXIT_USAGE
 from decoy.cli.gen._fit import FitSourceError, fit_exact_snapshot
@@ -138,7 +139,7 @@ def _validate_pair(config_text: str, staged_snapshot: Path) -> list[str]:
 
     from decoy.cli.gate import GateRoute, run_gate_on_config
 
-    raw = yaml.safe_load(config_text)
+    raw = parse_config_mapping(config_text)
     for column in raw["tables"][0]["generate_columns"]:
         column["snapshot_file"] = str(staged_snapshot)
     result = run_gate_on_config(raw, staged_snapshot.parent / "pipeline.yaml", GateRoute.PLAIN)

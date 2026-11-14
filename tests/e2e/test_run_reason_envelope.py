@@ -14,6 +14,7 @@ from typer.testing import CliRunner
 
 from decoy import _resources
 from decoy.__main__ import app
+from decoy.cli import exit_codes
 from decoy.cli.extras import MissingExtraError
 from decoy.cli.run import _errors
 from tests.csv_sources import csv_source
@@ -202,7 +203,7 @@ def test_usage_types_single_source(tmp_path: Path) -> None:
         _native_gate.NativeGateError,
         MaskSecretError,
     )
-    assert _errors._usage_types() == base
+    assert exit_codes.usage_error_types() == base
 
     # Both rules read it: a type from the tuple exits 1 and, being the CLI's, has no reason.
     code, payload, _ = _run_failing(tmp_path, DuckDBSourceError(MARKER))
@@ -213,7 +214,7 @@ def test_usage_types_single_source(tmp_path: Path) -> None:
     class Sentinel(Exception):
         pass
 
-    with mock.patch.object(_errors, "_usage_types", lambda: (*base, Sentinel)):
+    with mock.patch.object(exit_codes, "usage_error_types", lambda: (*base, Sentinel)):
         code, payload, _ = _run_failing(tmp_path, Sentinel(MARKER))
     assert code == 1
     assert "reason" not in payload
