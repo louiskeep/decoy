@@ -36,6 +36,7 @@ from typing import Any
 import typer
 
 from decoy._config_file import ConfigFileError, config_refusal, load_config_mapping
+from decoy.cli._sources import prepared_sources, refusal_message
 from decoy.cli.exit_codes import EXIT_RUNTIME, EXIT_USAGE, exit_code_for
 from decoy.cli.io import pipeline_argument, resolve_pipeline
 from decoy.ui.output import OutputMode, emit_error, emit_json, print_traceback, setup_output
@@ -195,6 +196,17 @@ def subset(
         raise typer.Exit(code=EXIT_USAGE)
 
     config_dict = validated.model_dump()
+
+    from decoy_engine import PipelineValidationError
+
+    # Before the engine opens any source: every column must be declared.
+    try:
+        prepared_sources(config_dict, base_dir=config_path.parent)
+    except PipelineValidationError as exc:
+        _fail_usage(
+            state, config_str, code_=exc.code or "validation_error", message=refusal_message(exc)
+        )
+        raise typer.Exit(code=EXIT_USAGE)
 
     from decoy_engine.plan import PlanCompileError, job_seed_for_config
     from decoy_engine.subset import (

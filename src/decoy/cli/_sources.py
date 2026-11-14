@@ -18,7 +18,7 @@ for CLI-written files lives with their writer, in `cli/io/_targets.py`.
 from __future__ import annotations
 
 import itertools
-from collections.abc import Iterator, Mapping
+from collections.abc import Iterable, Iterator, Mapping
 from pathlib import Path
 from typing import Any
 
@@ -61,6 +61,85 @@ def resolved_source_config(config_dict: dict[str, Any], base_dir: Path) -> dict[
                     descriptor[field] = str(resolve_path(value, base_dir))
         resolved[name] = descriptor
     return {**config_dict, "sources": resolved}
+
+
+def names_schema(names: Iterable[str]) -> pa.Schema:
+    """An all-string Arrow schema holding only column names, for a declaration request."""
+    return pa.schema([pa.field(name, pa.string()) for name in names])
+
+
+def _has_path(descriptor: Any) -> bool:
+    return isinstance(descriptor, dict) and isinstance(descriptor.get("path"), str)
+
+
+def refusal_message(exc: Exception) -> str:
+    """An engine refusal's text without its leading `code: `, for a printer that shows the code itself."""
+    text = str(exc)
+    code = getattr(exc, "code", None)
+    return text.removeprefix(f"{code}: ") if code else text
+
+
+def _read_refusal(exc: Exception) -> Any:
+    """The coded, value-free refusal for an engine read failure of a declared source.
+
+    A missing, unreadable or malformed file raises `OSError`, `ValueError` (Arrow and decode
+    errors) or a non-gate `DecoyError`, and their text names the path. The refusal carries a
+    registered code and a fixed text, so every caller catches the one `PipelineValidationError`.
+    """
+    from decoy_engine import PipelineValidationError, reasons
+
+    if isinstance(exc, FileNotFoundError):
+        code, text = (
+            reasons.config.SOURCE_FILE_FILE_NOT_FOUND,
+            "a declared source file was not found",
+        )
+    else:
+        code = getattr(exc, "code", None) or reasons.runtime.CSV_MALFORMED
+        text = "a declared source file could not be read (unreadable or malformed)"
+    return PipelineValidationError(f"{code}: {text}", code=code)
+
+
+def prepared_sources(
+    config_dict: dict[str, Any],
+    *,
+    base_dir: Path,
+    schemas: Mapping[str, pa.Schema] | None = None,
+) -> Any:
+    """Check a validated config's source columns against its declarations before any row is read.
+
+    The engine owns every rule (`prepare_declared_sources`); this builds its request and returns
+    its `PreparedDeclaredSources` capability, which a reader needs before it opens a data row.
+    With `schemas` (an in-memory table or a DuckDB `DESCRIBE`) the supplied schemas are checked
+    and no file is opened; without them each declared source's header or footer is read, never a
+    data row. The request holds the reader-side copy, so a relative `path` or
+    `column_names_file` resolves against `base_dir` and not the working directory.
+
+    One exception contract: a gate refusal is the engine's `PipelineValidationError` as raised,
+    and an engine read failure (missing, unreadable or malformed source) becomes a
+    `PipelineValidationError` with a registered code and a fixed, path-free text.
+    """
+    from decoy_engine import (
+        DeclarationRequest,
+        DecoyError,
+        PipelineValidationError,
+        prepare_declared_sources,
+    )
+
+    resolved = resolved_source_config(config_dict, base_dir)
+    refusal = None
+    try:
+        if schemas is None:
+            # A source with no `path` is not read (`source_is_materialized`), so it has no header.
+            read = {n: d for n, d in (resolved.get("sources") or {}).items() if _has_path(d)}
+            request = DeclarationRequest.for_descriptors({**resolved, "sources": read})
+        else:
+            request = DeclarationRequest.for_supplied(resolved, schemas)
+        return prepare_declared_sources(request)
+    except PipelineValidationError:
+        raise
+    except (OSError, ValueError, DecoyError) as read_error:
+        refusal = _read_refusal(read_error)
+    raise refusal
 
 
 # The CSV dialect keys of a file-source descriptor, the engine's `CsvDialect` fields plus
@@ -125,22 +204,155 @@ def read_csv_frame(
     )
 
 
-def read_report_source(path: Path, config_dict: dict[str, Any], config_dir: Path) -> Any:
+def duckdb_probe_config(raw: Any, flags: list[str]) -> dict[str, Any] | None:
+    """The validated config with a placeholder Parquet source for each flagged, declared table.
+
+    Staging has not run when a `--duckdb-source` run is checked, and the model requires a source
+    per mask table, so a copy stands one in for each flagged table. This is the one deliberate
+    parse before the gate (r11 ruling 4): a config that does not parse returns None, so the gate
+    keeps reporting it. A malformed `--duckdb-source` flag also returns None; a flag naming an
+    undeclared table is left to the membership check.
+    """
+    from decoy_engine import ConfigError, PipelineValidationError, parse_pipeline_config
+    from decoy_engine.config import PipelineConfigError
+
+    from decoy.cli._duckdb_source import DuckDBSourceError, parse_flag
+
+    if not isinstance(raw, dict):
+        return None
+    # A null `sources` block is an omitted one, as in staging.
+    sources = raw.get("sources")
+    if sources is not None and not isinstance(sources, dict):
+        return None
+    tables = raw.get("tables")
+    declared = (
+        {t.get("name") for t in tables if isinstance(t, dict)}
+        if isinstance(tables, list)
+        else set()
+    )
+    probe_sources = dict(sources or {})
+    for spec in flags:
+        try:
+            table = parse_flag(spec)[0]
+        except DuckDBSourceError:
+            return None
+        if table in declared:
+            probe_sources[table] = {"type": "file", "format": "parquet", "path": "staged.parquet"}
+    try:
+        return parse_pipeline_config({**raw, "sources": probe_sources}).model_dump()
+    except (PipelineConfigError, PipelineValidationError, ConfigError):
+        return None
+
+
+def check_declared_before_acquire(raw: dict[str, Any], flags: list[str], base_dir: Path) -> None:
+    """Refuse an undeclared column of a flagged DuckDB relation before any relation is staged.
+
+    Each relation's columns come from `describe_relation`; the engine checks them against the
+    config's table declarations (`prepared_sources`) on the config `duckdb_probe_config` builds.
+    A config that does not parse is left alone: the gate reports it, as it does today.
+    A flag naming a table the config does not declare is left to the membership check.
+    """
+    from decoy.cli._duckdb_source import describe_relation, parse_flag
+
+    tables = raw.get("tables")
+    if not isinstance(tables, list):
+        return
+    declared = {t.get("name") for t in tables if isinstance(t, dict)}
+    schemas = {}
+    for spec in flags:
+        table, db = parse_flag(spec)
+        if table in declared:
+            schemas[table] = names_schema(describe_relation(resolve_path(db, base_dir), table))
+    if not schemas:
+        return
+    validated = duckdb_probe_config(raw, flags)
+    if validated is not None:
+        prepared_sources(validated, base_dir=base_dir, schemas=schemas)
+
+
+class ReportSourceError(Exception):
+    """A `--config` report refused before its `--source` was read. `message` holds no path,
+    column or value; `code` is the engine's reason code when the engine refused."""
+
+    def __init__(self, message: str, code: str | None = None) -> None:
+        super().__init__(message)
+        self.message = message
+        self.code = code
+
+
+def _declared_table_for(source: Path, config_dict: dict[str, Any], config_dir: Path) -> str | None:
+    """The table whose declared source is `source`, else the config's only table, else None."""
+    target = source.resolve()
+    for name, src in (config_dict.get("sources") or {}).items():
+        if isinstance(src, dict) and src.get("path"):
+            if resolve_path(src["path"], config_dir).resolve() == target:
+                return str(name)
+    names = [t.get("name") for t in config_dict.get("tables") or [] if isinstance(t, dict)]
+    return str(names[0]) if len(names) == 1 else None
+
+
+def gate_report_source(
+    config_dict: dict[str, Any], config_dir: Path, source: Path, table: str | None = None
+) -> str | None:
+    """Check `source` against the selected table's declaration before it is read.
+
+    The table is `table` when given (integrity anchors on the first declared one); otherwise the
+    declared source whose resolved path is `source`, else the config's only table. The engine
+    checks the table's own descriptor with `path` set to `source`, so the bytes read are the bytes
+    checked, and a declared dialect applies. A config with no file source has nothing to check.
+    Returns the selected table, or None when nothing was selected to check.
+    """
+    from decoy_engine import PipelineValidationError
+
+    sources = {n: d for n, d in (config_dict.get("sources") or {}).items() if isinstance(d, dict)}
+    if not sources:
+        return None
+    if table is None:
+        table = _declared_table_for(source, config_dict, config_dir)
+        if table is None:
+            from decoy.cli.io import REPORT_SOURCE_AMBIGUOUS
+
+            raise ReportSourceError(REPORT_SOURCE_AMBIGUOUS.message, REPORT_SOURCE_AMBIGUOUS.code)
+    descriptor = sources.get(table)
+    if descriptor is None or descriptor.get("type", "file") != "file":
+        return None
+    # `read_report_source` reads any source that is not `format: csv` as a default CSV, so the
+    # check uses the descriptor the reader will use, not the declared reader.
+    target = str(source.resolve())
+    checked = (
+        {**descriptor, "path": target}
+        if descriptor.get("format") == "csv"
+        else csv_file_source(target)
+    )
+    gated = {**config_dict, "sources": {table: checked}}
+    refusal: ReportSourceError | None = None
+    try:
+        prepared_sources(gated, base_dir=config_dir)
+    except PipelineValidationError as exc:
+        refusal = ReportSourceError(refusal_message(exc), exc.code)
+    if refusal is not None:
+        raise refusal
+    return table
+
+
+def read_report_source(
+    path: Path, config_dict: dict[str, Any], config_dir: Path, table: str | None = None
+) -> Any:
     """Read the `--source` file of a report verb, with its declared dialect when it has one.
 
-    The declared dialect applies only when a `format: csv` source in `config_dict` resolves
-    to this very file; any other file, or no config, reads with the default dialect. Pandas
+    The declared dialect applies when `table` names a `format: csv` source of `config_dict`
+    (the table `gate_report_source` selected), or, with no `table`, when a csv source resolves
+    to this very file. Any other file, or no config, reads with the default dialect. Pandas
     dtypes are kept, so the scores are the ones the verbs gave before.
     """
     target = path.resolve()
     for name, src in (config_dict.get("sources") or {}).items():
-        if (
-            isinstance(src, dict)
-            and src.get("format") == "csv"
-            and src.get("path")
-            and resolve_path(src["path"], config_dir).resolve() == target
+        if not (isinstance(src, dict) and src.get("format") == "csv" and src.get("path")):
+            continue
+        if name == table or (
+            table is None and resolve_path(src["path"], config_dir).resolve() == target
         ):
-            return read_csv_frame(name, src, config_dir, dtype=None)
+            return read_csv_frame(name, {**src, "path": str(target)}, config_dir, dtype=None)
     # The user's own path is relative to the current folder, never to the config directory.
     return read_csv_frame(path.stem, csv_file_source(target), config_dir, dtype=None)
 

@@ -23,6 +23,7 @@ from decoy.cli.io import (
     DuckDBSourceError,
     OutputPlacement,
     acquire_relation,
+    check_declared_before_acquire,
     parse_flag,
     quarantine_enabled,
 )
@@ -352,6 +353,7 @@ def prepare(ctx: RunContext, _scopes: contextlib.ExitStack) -> None:
             for t in (_raw_tables if _tables_wellformed else [])
             if isinstance(t, dict) and isinstance(t.get("name"), str)
         }
+        check_declared_before_acquire(ctx.raw, ctx.duckdb_source, ctx.config.parent)
         import tempfile
 
         ctx._duckdb_tmpdir = Path(tempfile.mkdtemp(prefix="decoy-duckdb-"))

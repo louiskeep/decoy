@@ -94,7 +94,13 @@ def _subset_pipeline(root: Path, name: str = "slice") -> Path:
         },
         "tables": [
             {"name": "customers", "columns": [{"name": "id", **hashed}]},
-            {"name": "orders", "columns": [{"name": "customer_id", **hashed}]},
+            {
+                "name": "orders",
+                "columns": [
+                    {"name": "id", "strategy": "passthrough"},
+                    {"name": "customer_id", **hashed},
+                ],
+            },
         ],
         "relationships": [
             {

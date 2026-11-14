@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import re
 from pathlib import Path
+from typing import overload
 
 # A relation name we will interpolate into `COPY (SELECT * FROM <name>)`. The
 # allowlist is exactly a simple SQL identifier, so the name cannot carry a
@@ -59,9 +60,23 @@ def parse_flag(value: str) -> tuple[str, str]:
     return table, db_path
 
 
-def acquire_relation(db_path: Path, relation: str, dest_dir: Path) -> Path:
+def describe_relation(db_path: Path, relation: str) -> tuple[str, ...]:
+    """The ordered column names of `relation` (a `DESCRIBE`); no row is read or staged.
+
+    One connection point with `acquire_relation`, so both carry the same restrictions."""
+    return acquire_relation(db_path, relation, None)
+
+
+@overload
+def acquire_relation(db_path: Path, relation: str, dest_dir: Path) -> Path: ...
+@overload
+def acquire_relation(db_path: Path, relation: str, dest_dir: None) -> tuple[str, ...]: ...
+def acquire_relation(db_path: Path, relation: str, dest_dir: Path | None) -> Path | tuple[str, ...]:
     """Copy `relation` from the read-only DuckDB at `db_path` to a Parquet file
     under `dest_dir`, returning that Parquet path.
+
+    With `dest_dir=None` nothing is copied and the relation's ordered column names come back
+    instead (`describe_relation` is the typed way to ask).
 
     DuckDB owns the type mapping on export. The connection is read-only, so the
     source database is never modified. `relation` is verified against the
@@ -105,6 +120,8 @@ def acquire_relation(db_path: Path, relation: str, dest_dir: Path) -> Path:
         # doubled, so this cannot inject.
         actual = str(row[0])
         actual_sql = actual.replace('"', '""')
+        if dest_dir is None:
+            return tuple(str(r[0]) for r in conn.execute(f'DESCRIBE "{actual_sql}"').fetchall())
         dest = dest_dir / f"{relation}.parquet"
         dest_sql = str(dest.as_posix()).replace("'", "''")
         conn.execute(f"COPY (SELECT * FROM \"{actual_sql}\") TO '{dest_sql}' (FORMAT PARQUET)")

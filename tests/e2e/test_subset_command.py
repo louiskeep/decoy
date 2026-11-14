@@ -78,7 +78,8 @@ def _base_config(tmp_path: Path, customers_path: Path, orders_path: Path) -> dic
             {
                 "name": "orders",
                 "columns": [
-                    {"name": "customer_id", "strategy": "hash", "namespace": "customer_identity"}
+                    {"name": "id", "strategy": "passthrough"},
+                    {"name": "customer_id", "strategy": "hash", "namespace": "customer_identity"},
                 ],
             },
         ],

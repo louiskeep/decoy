@@ -22,7 +22,12 @@ from pathlib import Path
 
 import typer
 
-from decoy.cli._sources import csv_file_source, read_source, resolved_source_config
+from decoy.cli._sources import (
+    csv_file_source,
+    prepared_sources,
+    read_source,
+    resolved_source_config,
+)
 from decoy.cli.exit_codes import EXIT_RUNTIME, EXIT_USAGE
 from decoy.cli.io import RunLayout
 from decoy.cli.io._targets import check_target_formats, write_targets
@@ -229,6 +234,8 @@ def _run_v2_mask(pipeline_yaml: Path) -> None:
     raw = _yaml.safe_load(text)
     config_dict = parse_pipeline_config(raw).model_dump()
 
+    # Before profiling, which is the first reader of a data row.
+    prepared_sources(config_dict, base_dir=pipeline_yaml.parent)
     job_seed = (config_dict.get("global_settings") or {}).get("seed")
     profile = profile_source(
         resolved_source_config(config_dict, pipeline_yaml.parent),
@@ -266,6 +273,7 @@ def _run_v2_mask(pipeline_yaml: Path) -> None:
 def _load_sources_from_config(config_dict: dict, base_dir: Path) -> dict:
     import pyarrow as pa
 
+    prepared_sources(config_dict, base_dir=base_dir)
     out: dict[str, pa.Table] = {}
     sources = config_dict.get("sources") or {}
     if not isinstance(sources, dict):

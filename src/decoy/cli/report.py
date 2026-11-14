@@ -48,7 +48,12 @@ from decoy import _mask_secret
 from decoy._atomic import AtomicWriteError, WriteMode, describe, write_local_target
 from decoy._config_file import ConfigFileError, config_refusal, load_config_mapping
 from decoy._yaml_errors import sanitize_yaml_error
-from decoy.cli._sources import read_file, read_report_source
+from decoy.cli._sources import (
+    ReportSourceError,
+    gate_report_source,
+    read_file,
+    read_report_source,
+)
 from decoy.cli.evidence import (
     ManifestError,
     _render_manifest_card,
@@ -66,7 +71,7 @@ from decoy.ui.output import (
     print_traceback,
     setup_output,
 )
-from decoy.ui.summary import announce_report, render_fidelity_report
+from decoy.ui.summary import announce_report, null_rate_pairs, render_fidelity_report
 from decoy.ui.theme import accent, code, error, hint, info, risk_high, success, warn
 
 # Grade -> minimum overall_score, mirroring the engine's own grade thresholds
@@ -1788,7 +1793,11 @@ def _fidelity(
 
     config_dir = pipeline_path.parent if pipeline_path is not None else Path.cwd()
     try:
-        src_df = read_report_source(source, config_dict, config_dir)
+        table = gate_report_source(config_dict, config_dir, source)
+        src_df = read_report_source(source, config_dict, config_dir, table)
+    except ReportSourceError as exc:
+        _emit_error(exc.message, code=exc.code)
+        raise typer.Exit(code=EXIT_USAGE)
     except Exception as exc:
         _emit_error(f"could not read {source}: {type(exc).__name__}.")
         raise typer.Exit(code=EXIT_USAGE)
@@ -1820,42 +1829,11 @@ def _fidelity(
         emit_json(state, envelope)
     elif state.mode is not OutputMode.quiet:
         render_fidelity_report(
-            state, report, policy_result, null_rates=_null_rate_pairs(report, src_df, out_df)
+            state, report, policy_result, null_rates=null_rate_pairs(report, src_df, out_df)
         )
 
     if verdict == "fail" or (verdict == "warn" and fail_on_warning):
         raise typer.Exit(code=EXIT_FINDINGS)
-
-
-def _null_rate_pairs(
-    report: dict[str, Any], src_df: Any, out_df: Any
-) -> dict[str, tuple[float | None, float | None]]:
-    """Source and output null rates per column, only when some column's rates differ.
-
-    The report carries `missing_value_similarity` but not the rates behind it, so the two
-    frames are profiled again and each rate comes from the engine's `snapshot_null_fraction`.
-    Returns an empty map when every column scored 1 (or None), so the common case pays nothing.
-    """
-    columns = [c for c in report.get("marginal", {}).get("columns", []) if isinstance(c, dict)]
-    if not any(
-        isinstance(c.get("missing_value_similarity"), (int, float))
-        and c["missing_value_similarity"] < 1
-        for c in columns
-    ):
-        return {}
-    from decoy_engine import distribution_snapshot_document
-    from decoy_engine.quality import snapshot_null_fraction
-
-    # Only the counts are read. The redacting writer is the one snapshot builder the CLI uses.
-    src_cols = distribution_snapshot_document(src_df, source_label="source")["columns"]
-    out_cols = distribution_snapshot_document(out_df, source_label="output")["columns"]
-    return {
-        str(c.get("column")): (
-            snapshot_null_fraction(src_cols[c["column"]]) if c.get("column") in src_cols else None,
-            snapshot_null_fraction(out_cols[c["column"]]) if c.get("column") in out_cols else None,
-        )
-        for c in columns
-    }
 
 
 def _render_residual_pii(state: Any, findings: list[Any]) -> None:
@@ -2043,9 +2021,14 @@ def _integrity(
                 "relationships": [],
             }
 
-        source_df = read_report_source(
-            source, config_dict, config_path.parent if config_path else Path.cwd()
-        )
+        source_dir = config_path.parent if config_path else Path.cwd()
+        try:
+            gated = gate_report_source(config_dict, source_dir, source, table_name)
+        except ReportSourceError as exc:
+            context = {"masked": masked_str, "source": source_str}
+            emit_error(state, "report integrity", exc.message, code=exc.code, context=context)
+            raise typer.Exit(code=EXIT_USAGE)
+        source_df = read_report_source(source, config_dict, source_dir, gated)
         masked_df = read_report_source(masked, {}, Path.cwd())
 
         report = run_post_mask(

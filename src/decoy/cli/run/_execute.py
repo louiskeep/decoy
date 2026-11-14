@@ -7,13 +7,13 @@ from decoy import _native_gate, _resources
 from decoy.cli import gen
 from decoy.cli.extras import check_cloud_endpoints, check_cloud_endpoints_supported
 from decoy.cli.io import (
-    DuckDBSourceError,
     RunLayout,
     check_target_formats,
+    duckdb_probe_config,
     iter_source_chunks,
     open_run_layout,
     parquet_schema,
-    parse_flag,
+    prepared_sources,
     quarantine_enabled,
     read_source,
     resolve_target_format,
@@ -98,6 +98,8 @@ def _run_chunked_mask(
     so a later table's failure keeps the earlier entries."""
     _require_local_io_endpoints(config_dict)
     check_target_formats(config_dict, chunked=True)
+    # No reader or iterator exists until every source column is declared.
+    prepared_sources(config_dict, base_dir=base_dir)
 
     from decoy_engine import __version__ as engine_version
     from decoy_engine import run_mask_pipeline_chunked
@@ -122,7 +124,7 @@ def _run_chunked_mask(
             name, src_spec, base_dir, iter_source_chunks(name, src_spec, base_dir, chunk_size)
         )
         masked_iter = run_mask_pipeline_chunked(
-            config_dict,
+            resolved_source_config(config_dict, base_dir),
             chunks,
             table=name,
             engine_version=engine_version,
@@ -164,28 +166,8 @@ def _refuse_chunked_integrity(ctx: RunContext) -> None:
     error from the gate. `--duckdb-source` tables get a placeholder file source for this
     check only, because staging has not run and the model requires a source per mask table.
     """
-    from decoy_engine import ConfigError, PipelineValidationError, parse_pipeline_config
-    from decoy_engine.config import PipelineConfigError
-
-    if not isinstance(ctx.raw, dict):
-        return
-    # A null `sources` block is an omitted one, as in staging below.
-    sources = ctx.raw.get("sources")
-    if sources is not None and not isinstance(sources, dict):
-        return
-    probe = {**ctx.raw, "sources": dict(sources or {})}
-    for spec in ctx.duckdb_source:
-        try:
-            probe["sources"][parse_flag(spec)[0]] = {
-                "type": "file",
-                "format": "parquet",
-                "path": "staged.parquet",
-            }
-        except DuckDBSourceError:
-            return
-    try:
-        validated = parse_pipeline_config(probe).model_dump()
-    except (PipelineConfigError, PipelineValidationError, ConfigError):
+    validated = duckdb_probe_config(ctx.raw, ctx.duckdb_source)
+    if validated is None:
         return
     _refuse_chunked_integrity_requested(validated)
 
@@ -285,6 +267,7 @@ def _load_sources_from_config(config_dict: dict, base_dir: Path) -> dict:
     """
     _require_local_io_endpoints(config_dict)
     check_target_formats(config_dict, chunked=False)
+    prepared_sources(config_dict, base_dir=base_dir)
 
     import pyarrow as pa
 

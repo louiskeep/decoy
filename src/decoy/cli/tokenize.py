@@ -556,6 +556,8 @@ def detokenize(
     except (PlanCompileError, ConfigError) as exc:
         _emit_error(f"{getattr(exc, 'code', type(exc).__name__)}: {getattr(exc, 'message', exc)}")
         raise typer.Exit(code=EXIT_USAGE)
+    # No declared source is opened here: detokenize reads the file the caller named, so the
+    # config is validated and gated above and the declared sources stay untouched.
 
     # Tables that declare at least one tokenize column -- the reversible set.
     tok_tables = [
