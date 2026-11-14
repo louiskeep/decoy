@@ -192,8 +192,14 @@ def test_c1_3_chunked_when_over_large_string_equals_the_whole_frame_run(tmp_path
     assert result.exit_code == 0, result.output
 
     chunked = tmp_path / "chunked.csv"
-    result = runner.invoke(app, ["run", str(config(chunked)), "--chunked", "--chunk-size", "2"])
+    result = runner.invoke(
+        app, ["run", str(config(chunked)), "--chunked", "--chunk-size", "2", "--json"]
+    )
     assert result.exit_code == 0, result.output
+    # The chunked route really ran: a silent whole-frame fallback would make the parity vacuous.
+    route = json.loads(result.stdout)["native_route"]
+    assert route["label"] == "pandas chunked stream"
+    assert route["applicable"] is False
     assert chunked.read_bytes() == whole.read_bytes()
     # The `when:` really selected: rows where keep is B keep their source value.
     rows = pd.read_csv(whole, dtype=str, keep_default_na=False)
