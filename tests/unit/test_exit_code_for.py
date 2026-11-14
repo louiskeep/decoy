@@ -78,7 +78,7 @@ def _run_categories() -> dict[str, Any]:
         "engine capacity code": DecoyError.__new__(DecoyError),
         "memory error": MemoryError(),
         "uniqueness impossible": GenerationError(
-            code=exit_codes.UNIQUENESS_IMPOSSIBLE_CODE, message="x"
+            code=_errors.UNIQUENESS_IMPOSSIBLE_CODE, message="x"
         ),
         "other generation error": GenerationError(code="dtype_unsafe", message="x"),
         "native gate": _bare(_native_gate.NativeGateError),

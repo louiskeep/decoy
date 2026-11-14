@@ -12,7 +12,6 @@ from decoy.cli import gen
 from decoy.cli.exit_codes import (
     EXIT_CAPACITY,
     EXIT_USAGE,
-    UNIQUENESS_IMPOSSIBLE_CODE,
     run_exit_code,
 )
 from decoy.cli.extras import (
@@ -30,6 +29,9 @@ from decoy.ui.theme import error, hint
 
 # The engine's capacity-refusal codes come from its registry (`capacity_codes()`); see
 # docs/plans/2026-07-24-oom-checker-cli-v1.md R8 for why the match is narrow.
+
+# The engine's code for a `unique` generate column or pair that the data cannot satisfy.
+UNIQUENESS_IMPOSSIBLE_CODE = "uniqueness_impossible"
 
 _OUT_OF_MEMORY_TEXT = "the run ran out of memory."
 

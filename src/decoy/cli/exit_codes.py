@@ -191,6 +191,10 @@ def exit_code_for(exc: BaseException) -> int:
     if isinstance(exc, DecoyError) and getattr(exc, "code", None) in capacity_codes():
         return EXIT_CAPACITY
 
+    # The literal moves here when the reason-code ratchet allows a 1:1 re-home (owner decision
+    # pending), so the constant stays in `cli/run/_errors.py` for now.
+    from decoy.cli.run._errors import UNIQUENESS_IMPOSSIBLE_CODE
+
     if isinstance(exc, GenerationError) and exc.code == UNIQUENESS_IMPOSSIBLE_CODE:
         return EXIT_USAGE
     # A blocking post-scan finding is a data result, as `--post-validate-enforce` is.
@@ -215,10 +219,6 @@ def exit_code_for(exc: BaseException) -> int:
         if translate_missing_extra(exc) is not None:
             return EXIT_USAGE
     return EXIT_RUNTIME
-
-
-# The engine's code for a `unique` generate column or pair that the data cannot satisfy.
-UNIQUENESS_IMPOSSIBLE_CODE = "uniqueness_impossible"
 
 
 def usage_error_types() -> tuple[type, ...]:

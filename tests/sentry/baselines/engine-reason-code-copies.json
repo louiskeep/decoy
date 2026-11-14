@@ -30,10 +30,6 @@
    "reason": "Legacy copy of an engine reason code; import the engine constant, then delete this entry.",
    "count": 1
   },
-  "cli/exit_codes.py::uniqueness_impossible": {
-   "reason": "Legacy copy of an engine reason code; import the engine constant, then delete this entry.",
-   "count": 1
-  },
   "cli/extras.py::ner_spacy_not_installed": {
    "reason": "Legacy copy of an engine reason code; import the engine constant, then delete this entry.",
    "count": 1
@@ -67,6 +63,10 @@
    "count": 1
   },
   "cli/report.py::vault_protocol_version_mismatch": {
+   "reason": "Legacy copy of an engine reason code; import the engine constant, then delete this entry.",
+   "count": 1
+  },
+  "cli/run/_errors.py::uniqueness_impossible": {
    "reason": "Legacy copy of an engine reason code; import the engine constant, then delete this entry.",
    "count": 1
   },
