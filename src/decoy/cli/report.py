@@ -11,12 +11,7 @@ arguments reference). There is no run catalog or workspace.
   integrity -- Verify a masked file against its pre-mask source (post-mask checks).
   diff      -- Compare two manifests: fingerprints always, data when files exist.
   vault     -- Inspect a vault file written by `decoy run --vault`.
-
-S4b (CLI redesign) folded the former `report summarize` + `report compare`,
-the `evidence` verbs (show/verify), the `validate` distribution check, the
-`storm` integrity check, and `vault info` into this one noun. The relocated
-bodies are reused verbatim; their engine deps stay lazy-imported inside each
-body.
+  (fidelity and integrity also write <run>/reports/<kind>.json for a run output.)
 
 RAW-VALUE ISOLATION (Dennis review note, cli-first-capability-guide.md L534-538):
 
@@ -57,7 +52,7 @@ from decoy.cli.evidence import (
     verify_manifest,
 )
 from decoy.cli.exit_codes import EXIT_FINDINGS, EXIT_RUNTIME, EXIT_USAGE, exit_code_for
-from decoy.cli.io import entry_format, pipeline_option, resolve_pipeline
+from decoy.cli.io import entry_format, pipeline_option, resolve_pipeline, run_report_path
 from decoy.ui.output import (
     OutputMode,
     OutputState,
@@ -95,13 +90,15 @@ report_app = typer.Typer(
 # ---------------------------------------------------------------------------
 
 
-def _write_out(state: OutputState, path: Path, text: str) -> None:
+def _write_out(state: OutputState, path: Path, text: str, *, announce: bool = False) -> None:
     """Write a report file atomically (owner-only); refuse with the rendered reason."""
     try:
         write_local_target(path, text.encode("utf-8"), WriteMode.REPLACE)
     except AtomicWriteError as exc:
         state.err_console.print(error("error:"), f"could not write {path}: {describe(exc)}")
         raise typer.Exit(code=EXIT_USAGE)
+    if announce and state.mode is OutputMode.default:
+        state.console.print("Report:", path, markup=False, soft_wrap=True)
 
 
 def _load_manifest(
@@ -1807,8 +1804,10 @@ def _fidelity(
     )
     policy_result = apply_quality_policy(report, policy_config, strategy_map=strategy_map)
 
-    if report_out is not None:
-        _write_out(state, report_out, _json.dumps({**report, "policy": policy_result}, indent=2))
+    report_file = report_out or run_report_path("fidelity", output, ref)
+    if report_file is not None:
+        text = _json.dumps({**report, "policy": policy_result}, indent=2)
+        _write_out(state, report_file, text, announce=report_out is None)
 
     verdict = policy_result["verdict"]
     status = "ok" if verdict == "pass" else verdict
@@ -2055,8 +2054,9 @@ def _integrity(
             config=config_dict,
         )
 
-        if out is not None:
-            _write_out(state, out, _json.dumps(report, indent=2))
+        out_file = out or run_report_path("integrity", masked, ref)
+        if out_file is not None:
+            _write_out(state, out_file, _json.dumps(report, indent=2), announce=out is None)
 
         # Decide exit code based on the report's severity counters.
         fail_count = int(report.get("fail_count") or 0)
