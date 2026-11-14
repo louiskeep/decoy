@@ -157,21 +157,17 @@ def _check_paths(manifest: CiManifest, base: Path, root: Path) -> None:
 
 def load_manifest(path: Path, *, root: Path | None = None) -> LoadedManifest:
     manifest_path = Path(path)
+    # The one config read (bytes once, strict UTF-8); a failure maps to the manifest's own codes.
     try:
         if not manifest_path.is_file():
             raise ManifestError("ci.manifest_unreadable")
-        size = manifest_path.stat().st_size
+        if manifest_path.stat().st_size > MAX_MANIFEST_BYTES:
+            raise ManifestError("ci.manifest_invalid")
+        text = read_config_text(manifest_path)
     except OSError:
         raise ManifestError("ci.manifest_unreadable") from None
-    if size > MAX_MANIFEST_BYTES:
-        raise ManifestError("ci.manifest_invalid")
-    # The one config read (bytes once, strict UTF-8); a failure maps to the manifest's own codes.
-    try:
-        text = read_config_text(manifest_path)
     except ConfigFileError:
         raise ManifestError("ci.manifest_invalid") from None
-    except OSError:
-        raise ManifestError("ci.manifest_unreadable") from None
 
     data = _parse(text)
     version = data.get("schema_version")
