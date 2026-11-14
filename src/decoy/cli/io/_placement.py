@@ -395,7 +395,11 @@ def open_out_dir(directory: Path) -> RunLayout:
     Always the registry text: the caller's wording and the path are dropped. Nothing is made
     here; DIR is created by the first relative placement, after the gate.
     """
+    failed = False
     try:
-        return RunLayout.out_dir(directory)
+        layout = RunLayout.out_dir(directory)
     except (OSError, PrivateFileError, ValueError):
-        raise OUTPUT_DIR_UNUSABLE.error() from None
+        failed = True
+    if failed:
+        raise OUTPUT_DIR_UNUSABLE.error()
+    return layout
