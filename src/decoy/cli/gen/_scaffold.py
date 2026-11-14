@@ -22,8 +22,8 @@ from decoy._atomic import LocalTarget, WriteMode
 from decoy._resources import ResourceError, read_fit_max_rows
 from decoy.cli.exit_codes import EXIT_USAGE
 from decoy.cli.gen._fit import FitSourceError, fit_exact_snapshot
-from decoy.ui.output import OutputMode, OutputState, emit_json
-from decoy.ui.theme import code, error, hint, success
+from decoy.ui.output import OutputMode, OutputState, emit_error, emit_json
+from decoy.ui.theme import code, hint, success
 
 _STDOUT = "-"
 _NAME_OK = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
@@ -163,15 +163,7 @@ def _validate_pair(config_text: str, staged_snapshot: Path) -> list[str]:
 
 def _fail(state: OutputState, text: str, hint_text: str | None = None) -> NoReturn:
     """Print a usage error in the active mode and exit 1. Files and column names only."""
-    if state.mode is OutputMode.json:
-        payload: dict[str, Any] = {"command": "init", "status": "error", "error": text}
-        if hint_text:
-            payload["hint"] = hint_text
-        emit_json(state, payload)
-    else:
-        state.err_console.print(error("error:"), text, markup=False)
-        if hint_text:
-            state.err_console.print(" ", hint("hint:"), hint_text, markup=False)
+    emit_error(state, "init", text, hint=hint_text or None)
     raise typer.Exit(code=EXIT_USAGE)
 
 

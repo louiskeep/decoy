@@ -128,7 +128,9 @@ def check(
         "--context",
         help="`pre-commit` narrows to config-only validation plus the staged scan.",
     ),
-    quiet: bool = typer.Option(False, "--quiet", "-q", help="Suppress stderr notes and summary."),
+    quiet: bool = typer.Option(
+        False, "--quiet", "-q", help="Suppress stderr notes and summary. Errors still print."
+    ),
     verbose: bool = typer.Option(
         False, "--verbose", "-v", help="Print one value-free line per check on stderr."
     ),

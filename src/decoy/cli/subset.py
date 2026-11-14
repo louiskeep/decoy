@@ -39,7 +39,7 @@ import yaml as _yaml
 from decoy.cli._yaml_errors import sanitize_yaml_error
 from decoy.cli.exit_codes import EXIT_RUNTIME, EXIT_USAGE
 from decoy.cli.io import pipeline_argument, resolve_pipeline
-from decoy.ui.output import OutputMode, emit_json, print_traceback, setup_output
+from decoy.ui.output import OutputMode, emit_error, emit_json, print_traceback, setup_output
 from decoy.ui.table import make_table
 from decoy.ui.theme import accent, code, error, hint, success, warn
 
@@ -270,10 +270,12 @@ def subset(
     except typer.Exit:
         raise
     except Exception as exc:
-        error_text = str(exc)
-        if len(error_text) > 500:
-            error_text = error_text[:500] + "..."
-        _fail_runtime(state, config_str, code_=type(exc).__name__, message=error_text)
+        _fail_runtime(
+            state,
+            config_str,
+            code_="subset_unexpected_failure",
+            message=f"subset failed unexpectedly: {type(exc).__name__}.",
+        )
         if state.verbose:
             print_traceback(state)
         raise typer.Exit(code=EXIT_RUNTIME)
@@ -433,9 +435,6 @@ def _emit_preflight_failure(state, config_str: str, failure) -> None:
         )
         return
 
-    if state.mode is OutputMode.quiet:
-        return
-
     state.err_console.print(error("error:"), "subset preflight failed:")
     for f in report.failures:
         # f.message already names the relationship/edge_id (built by the
@@ -472,9 +471,6 @@ def _emit_budget_failure(state, config_str: str, failure) -> None:
         )
         return
 
-    if state.mode is OutputMode.quiet:
-        return
-
     state.err_console.print(error("error:"), failure.message, markup=False)
     state.err_console.print(
         " ", hint("hint:"), "rerun with --dry-run to inspect the estimate before adjusting budget."
@@ -482,44 +478,24 @@ def _emit_budget_failure(state, config_str: str, failure) -> None:
 
 
 def _fail_usage(state, config_str: str, *, code_: str, message: str) -> None:
-    if state.mode is OutputMode.json:
-        emit_json(
-            state,
-            {
-                "command": "subset",
-                "status": "error",
-                "error_kind": "usage",
-                "config": config_str,
-                "code": code_,
-                "error": message,
-            },
-        )
-        return
-    if state.mode is OutputMode.quiet:
-        return
-    # markup=False: the `[code]` prefix is literal text; Rich would parse it
-    # as a style tag and drop it. The engine message can also quote paths.
-    state.err_console.print(error("error:"), f"[{code_}] {message}", markup=False)
+    emit_error(
+        state,
+        "subset",
+        message,
+        code=code_,
+        context={"error_kind": "usage", "config": config_str},
+    )
 
 
 def _fail_runtime(state, config_str: str, *, code_: str, message: str) -> None:
-    if state.mode is OutputMode.json:
-        emit_json(
-            state,
-            {
-                "command": "subset",
-                "status": "error",
-                "error_kind": "runtime",
-                "config": config_str,
-                "code": code_,
-                "error": message,
-            },
-        )
-        return
-    if state.mode is OutputMode.quiet:
-        return
-    state.err_console.print(error("error:"), f"[{code_}] {message}", markup=False)
-    state.err_console.print(" ", hint("hint:"), "rerun with --verbose for the full traceback.")
+    emit_error(
+        state,
+        "subset",
+        message,
+        code=code_,
+        hint="rerun with --verbose for the full traceback.",
+        context={"error_kind": "runtime", "config": config_str},
+    )
 
 
 SUBSET_EPILOG = _SUBSET_EPILOG

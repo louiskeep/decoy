@@ -27,13 +27,14 @@ from decoy.ui.card import render_card
 from decoy.ui.output import (
     OutputMode,
     OutputState,
+    emit_error,
     emit_json,
     emit_json_document,
     print_traceback,
 )
 from decoy.ui.storm_animation import stormy_multistage
 from decoy.ui.table import make_table
-from decoy.ui.theme import accent, code, error, hint, warn
+from decoy.ui.theme import accent, code, hint, warn
 
 PII_NOTE = (
     "PII candidates are SUGGESTIONS based on STORM pattern matching. "
@@ -221,12 +222,7 @@ def _layout_columns(layout: Path | None) -> list[dict]:
 def _emit_error(
     state: OutputState, where: dict[str, Any], message: str, hint_text: str | None
 ) -> None:
-    if state.mode is OutputMode.json:
-        emit_json(state, {"command": "scan", "status": "error", **where, "error": message})
-        return
-    state.err_console.print(error("error:"), message)
-    if hint_text and state.mode is not OutputMode.quiet:
-        state.err_console.print(" ", hint("hint:"), hint_text)
+    emit_error(state, "scan", message, hint=hint_text, context=where)
 
 
 def _failure_message(exc: Exception) -> str:

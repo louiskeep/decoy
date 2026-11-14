@@ -47,8 +47,8 @@ from decoy.cli.gen import (
     read_fit_csv,
     strict_csv,
 )
-from decoy.ui.output import OutputMode, emit_json, setup_output
-from decoy.ui.theme import code, error, hint, success, warn
+from decoy.ui.output import OutputMode, emit_error, emit_json, setup_output
+from decoy.ui.theme import code, hint, success, warn
 
 _DP_REFUSED_LINE = (
     "DP fit is not available on this install: it runs only on a certified platform and package set."
@@ -372,7 +372,7 @@ def fit(
         False,
         "--quiet",
         "-q",
-        help="Suppress stdout. Exit code carries the result.",
+        help="Suppress stdout. Errors still go to stderr; exit code carries the result.",
     ),
     verbose: bool = typer.Option(
         False,
@@ -403,35 +403,22 @@ def fit(
     def _emit_error(
         message: str, *, err_code: str | None = None, hint_text: str | None = None
     ) -> None:
-        if state.mode is OutputMode.json:
-            payload: dict[str, Any] = {
-                "command": "fit",
-                "status": "error",
-                "source": str(source),
-            }
-            if err_code is not None:
-                payload["code"] = err_code
-                payload["message"] = message
-                payload["error"] = f"{err_code}: {message}"
-            else:
-                payload["error"] = message
-            if hint_text is not None:
-                payload["hint"] = hint_text
-            emit_json(state, payload)
-        elif state.mode is not OutputMode.quiet:
-            prefix = f"{err_code}: " if err_code is not None else ""
-            state.err_console.print(error("error:"), f"{prefix}{message}")
-            if hint_text is not None:
-                state.err_console.print(" ", hint("hint:"), hint_text)
+        emit_error(
+            state,
+            "fit",
+            message,
+            code=err_code,
+            hint=hint_text,
+            context={"source": str(source)},
+        )
 
     def _emit_dp_refused(refusal: Any) -> None:
         # The engine text carries the platform and a package fingerprint: JSON
         # and --verbose keep it, the default human line stays plain.
         if state.mode is OutputMode.json:
             _emit_error(refusal.message, err_code=refusal.code, hint_text=_DP_REFUSED_HINT)
-        elif state.mode is not OutputMode.quiet:
-            state.err_console.print(error("error:"), _DP_REFUSED_LINE)
-            state.err_console.print(" ", hint("hint:"), _DP_REFUSED_HINT)
+        else:
+            emit_error(state, "fit", _DP_REFUSED_LINE, hint=_DP_REFUSED_HINT)
             if verbose:
                 state.err_console.print(" ", f"{refusal.code}: {refusal.message}")
 

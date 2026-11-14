@@ -54,7 +54,9 @@ def setup_command(
         False, "--yes", "-y", help="Accept the detected or stored values; do not prompt."
     ),
     json_: bool = typer.Option(False, "--json", help="Emit a JSON result instead of text."),
-    quiet: bool = typer.Option(False, "--quiet", "-q", help="Suppress stdout."),
+    quiet: bool = typer.Option(
+        False, "--quiet", "-q", help="Suppress stdout. Errors still go to stderr."
+    ),
     verbose: bool = typer.Option(False, "--verbose", "-v", help="Enable debug logs on stderr."),
 ) -> None:
     """Set this box's max memory and threads for `decoy run`.

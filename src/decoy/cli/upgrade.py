@@ -63,7 +63,9 @@ def upgrade(
     force: bool = typer.Option(False, "--force", help="Reinstall even if already current."),
     url: str = typer.Option(None, "--url", help="Override the version-document URL.", hidden=True),
     json_: bool = typer.Option(False, "--json", help="Emit a JSON result."),
-    quiet: bool = typer.Option(False, "--quiet", "-q", help="Suppress stdout."),
+    quiet: bool = typer.Option(
+        False, "--quiet", "-q", help="Suppress stdout. Errors still go to stderr."
+    ),
     verbose: bool = typer.Option(False, "--verbose", "-v", help="Debug logs on stderr."),
 ) -> None:
     """Upgrade (or pin) the managed Decoy runtime from the Decoy-hosted channel."""
