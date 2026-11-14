@@ -43,7 +43,7 @@ class NotifyOn(str, Enum):
 class RunContext:
     """Options, then the state each phase sets for the next; see the module docstring."""
 
-    # The 26 options of `decoy run`, as `run()` receives them.
+    # The 27 options of `decoy run`, as `run()` receives them.
     pipeline: PipelineRef | None
     all_: bool
     named: bool  # a pipeline was typed, found or not
@@ -71,6 +71,7 @@ class RunContext:
     post_validate: bool
     post_validate_enforce: bool
     duckdb_source: list[str]
+    no_subset: bool
     otel_endpoint: str
     rows: int | None
     state: OutputState
@@ -128,6 +129,9 @@ class RunContext:
     # Warnings the CLI raises itself (`code`, `message`); they join the engine's in the summary.
     _cli_warnings: list[dict] = field(init=False, default_factory=list)
     _report_quality_metrics: dict | None = field(init=False, default=None)
+    # The engine's `quality_metrics["subset"]` block: counts and fingerprint when the config's
+    # `subset:` was applied, `{"applied": False}` under `--no-subset`, None when it has none.
+    _subset_metrics: dict | None = field(init=False, default=None)
     # `--rows` preview: the sampled tables, set by `_execute.execute_preview`.
     _preview_tables: list[dict] = field(init=False, default_factory=list)
 

@@ -409,6 +409,8 @@ def test_no_native_stays_compatible_with_an_older_engine(
         native_threads=1,
         out_of_core_threads=None,
         out_of_core_budget_bytes=None,
+        # The same pin has `subset_request`, which every run sends.
+        subset_request="config",
     ):
         return real_run_pipeline(
             config,
@@ -424,6 +426,7 @@ def test_no_native_stays_compatible_with_an_older_engine(
             native_threads=native_threads,
             out_of_core_threads=out_of_core_threads,
             out_of_core_budget_bytes=out_of_core_budget_bytes,
+            subset_request=subset_request,
         )
 
     monkeypatch.setattr("decoy_engine.run_pipeline", _old_engine_run_pipeline)
