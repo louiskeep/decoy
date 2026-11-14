@@ -79,6 +79,7 @@ SENTRIES = (
     "tests/sentry/layout/test_package_fanout.py",
     "tests/sentry/layout/test_run_package_shape.py",
     "tests/sentry/run/test_one_run_reason.py",
+    "tests/sentry/run/test_no_subset_edit.py",
     "tests/sentry/layout/test_vendored_files.py",
     "tests/sentry/test_profile_raw_value_isolation.py",
     "tests/sentry/tooling/test_ci_lanes.py",

@@ -12,9 +12,11 @@ from enum import Enum
 from pathlib import Path
 from typing import Any
 
+import typer
+
 from decoy import _native_gate, _resources
 from decoy.cli.gate import GateFinding
-from decoy.cli.io import RunLayout
+from decoy.cli.io import PipelineRef, RunLayout
 from decoy.ui.output import OutputState
 
 # Rows per chunk when `--chunk-size` is not given. The option has no default of its own so a
@@ -41,8 +43,11 @@ class NotifyOn(str, Enum):
 class RunContext:
     """Options, then the state each phase sets for the next; see the module docstring."""
 
-    # The 26 options of `decoy run`, as `run()` receives them.
-    config: Path
+    # The 27 options of `decoy run`, as `run()` receives them.
+    pipeline: PipelineRef | None
+    all_: bool
+    named: bool  # a pipeline was typed, found or not
+    cli: typer.Context
     mode: Mode
     json_: bool
     quiet: bool
@@ -66,10 +71,14 @@ class RunContext:
     post_validate: bool
     post_validate_enforce: bool
     duckdb_source: list[str]
+    no_subset: bool
     otel_endpoint: str
     rows: int | None
     state: OutputState
-    given_as: str = "path"  # "name" when the pipeline was given as a project name
+
+    # Set by `_flow.execute` from `pipeline`, or from the project's only pipeline.
+    config: Path = field(init=False)
+    given_as: str = field(init=False, default="path")  # "name" for a project name
 
     # Set before the try block.
     config_str: str = field(init=False)
@@ -120,6 +129,9 @@ class RunContext:
     # Warnings the CLI raises itself (`code`, `message`); they join the engine's in the summary.
     _cli_warnings: list[dict] = field(init=False, default_factory=list)
     _report_quality_metrics: dict | None = field(init=False, default=None)
+    # The engine's `quality_metrics["subset"]` block: counts and fingerprint when the config's
+    # `subset:` was applied, `{"applied": False}` under `--no-subset`, None when it has none.
+    _subset_metrics: dict | None = field(init=False, default=None)
     # `--rows` preview: the sampled tables, set by `_execute.execute_preview`.
     _preview_tables: list[dict] = field(init=False, default_factory=list)
 

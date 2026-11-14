@@ -7,11 +7,13 @@ from decoy import _native_gate, _resources
 from decoy.cli import gen
 from decoy.cli.extras import check_cloud_endpoints, check_cloud_endpoints_supported
 from decoy.cli.io import (
+    DuckDBSourceError,
     RunLayout,
     check_target_formats,
     iter_source_chunks,
     open_run_layout,
     parquet_schema,
+    parse_flag,
     quarantine_enabled,
     read_source,
     resolve_target_format,
@@ -153,6 +155,56 @@ def _refuse_chunked_integrity_requested(validated: dict) -> None:
 
     if post_scan_integrity_requested(validated):
         raise _ChunkedIntegrityError(_CHUNKED_INTEGRITY_MESSAGE)
+
+
+def _refuse_chunked_integrity(ctx: RunContext) -> None:
+    """Refuse `--chunked` with post-scan integrity before any source is opened or staged.
+
+    The model is validated first so a malformed config still gets its normal validation
+    error from the gate. `--duckdb-source` tables get a placeholder file source for this
+    check only, because staging has not run and the model requires a source per mask table.
+    """
+    from decoy_engine import ConfigError, PipelineValidationError, parse_pipeline_config
+    from decoy_engine.config import PipelineConfigError
+
+    if not isinstance(ctx.raw, dict):
+        return
+    # A null `sources` block is an omitted one, as in staging below.
+    sources = ctx.raw.get("sources")
+    if sources is not None and not isinstance(sources, dict):
+        return
+    probe = {**ctx.raw, "sources": dict(sources or {})}
+    for spec in ctx.duckdb_source:
+        try:
+            probe["sources"][parse_flag(spec)[0]] = {
+                "type": "file",
+                "format": "parquet",
+                "path": "staged.parquet",
+            }
+        except DuckDBSourceError:
+            return
+    try:
+        validated = parse_pipeline_config(probe).model_dump()
+    except (PipelineConfigError, PipelineValidationError, ConfigError):
+        return
+    _refuse_chunked_integrity_requested(validated)
+
+
+def _refuse_chunked_subset(ctx: RunContext) -> None:
+    """Refuse `--chunked` with a `subset:` block before any source is opened.
+
+    The chunked engine cannot apply the block, and the CLI never strips it (`--no-subset`
+    included), so the refusal is the engine's own `config.subset_run_unsupported`, raised here
+    as the same exception type the engine's entry guard raises. The text is fixed.
+    """
+    from decoy_engine import PipelineValidationError, reasons
+
+    if isinstance(ctx.raw, dict) and ctx.raw.get("subset") is not None:
+        raise PipelineValidationError(
+            "subset: is not supported with --chunked; run without --chunked to apply it",
+            path="subset",
+            code=reasons.config.SUBSET_RUN_UNSUPPORTED,
+        )
 
 
 def _check_chunked_tables(config_dict: dict) -> None:
@@ -318,11 +370,15 @@ def execute(ctx: RunContext) -> None:
             vault_writer=ctx.vault_writer,
             base_dir=ctx.config.parent,
             quarantine_path=layout.place_quarantine(ctx.config_dict),
+            # The config's `subset:` block stays as written; `--no-subset` only tells the engine
+            # to leave it unapplied.
+            subset_request="skip" if ctx.no_subset else "config",
             **_key_kwargs,
             **_report_kwargs,
             **_native_gate.run_pipeline_kwargs(ctx.gate_result),
             **_resources.run_pipeline_kwargs(ctx._res),
         )
+        ctx._subset_metrics = result.quality_metrics.get("subset")
         ctx._native_route = _native_gate.classify_route(
             chunked=False,
             any_generate=ctx.any_generate,

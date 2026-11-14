@@ -17,6 +17,7 @@ from decoy.cli.project._columns import (
 )
 from decoy.cli.project._list import LIST_EPILOG, list_command
 from decoy.cli.project._new import NEW_EPILOG, create_project, new_command
+from decoy.cli.project._run_all import only_pipeline, run_all
 from decoy.cli.project._scaffold import (
     SOURCE_SUFFIXES,
     Placement,
@@ -43,10 +44,12 @@ __all__ = [
     "Placement",
     "create_project",
     "emit_column_yaml",
+    "only_pipeline",
     "placed_members",
     "prepare",
     "project_app",
     "resolve_destination",
+    "run_all",
     "source_text",
     "target_text",
     "wrap_review_comment",
