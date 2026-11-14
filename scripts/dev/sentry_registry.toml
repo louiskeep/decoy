@@ -81,3 +81,11 @@ baseline = "tests/sentry/baselines/library-writer-allow.json"
 [[sentry]]
 id = "one-error-emitter"
 baseline = "tests/sentry/baselines/one-error-emitter.json"
+
+[[sentry]]
+id = "env-reads"
+baseline = "tests/sentry/baselines/env-reads.json"
+
+[[sentry]]
+id = "json-stdout-writes"
+baseline = "tests/sentry/baselines/json-stdout-writes.json"

@@ -14,7 +14,6 @@ from __future__ import annotations
 
 import json
 import re
-import sys
 from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any
@@ -25,7 +24,13 @@ from decoy._atomic import AtomicWriteError, WriteMode, describe, write_local_tar
 from decoy.cli._sources import csv_file_source
 from decoy.cli.exit_codes import EXIT_RUNTIME, EXIT_USAGE
 from decoy.ui.card import render_card
-from decoy.ui.output import OutputMode, OutputState, emit_json, print_traceback
+from decoy.ui.output import (
+    OutputMode,
+    OutputState,
+    emit_json,
+    emit_json_document,
+    print_traceback,
+)
 from decoy.ui.storm_animation import stormy_multistage
 from decoy.ui.table import make_table
 from decoy.ui.theme import accent, code, error, hint, warn
@@ -468,7 +473,7 @@ def run_scan(
         raise typer.Exit(code=EXIT_RUNTIME) from None
 
     if streamed:
-        sys.stdout.write(json.dumps(core) + "\n")
+        emit_json_document(state, core, indent=None)
         return
 
     saved = str(out_path) if out_path else None
