@@ -177,6 +177,7 @@ def exit_code_for(exc: BaseException) -> int:
     from decoy_engine.quality.dp_budget import DpBudgetError
     from decoy_engine.quality.dp_provenance import ProvenanceError
     from decoy_engine.reasons.quality import DP_SCHEDULE_MISMATCH
+    from decoy_engine.reasons.runtime import VAULT_EXISTS
     from decoy_engine.verification.postmask import PostScanBlockedError
 
     if isinstance(exc, ProvenanceError):
@@ -200,9 +201,8 @@ def exit_code_for(exc: BaseException) -> int:
     # A blocking post-scan finding is a data result, as `--post-validate-enforce` is.
     if isinstance(exc, PostScanBlockedError):
         return EXIT_FINDINGS
-    # An existing vault is the caller's to resolve. The literal moves to the engine's constant
-    # when the repin that ships it lands (the pinned 0.23.0 has none).
-    if isinstance(exc, VaultError) and exc.code == "vault_exists":
+    # An existing vault is the caller's to resolve.
+    if isinstance(exc, VaultError) and exc.code == VAULT_EXISTS:
         return EXIT_USAGE
     if isinstance(exc, usage_error_types()):
         return EXIT_USAGE
