@@ -62,7 +62,7 @@ from decoy.cli.evidence import (
     verify_manifest,
 )
 from decoy.cli.exit_codes import EXIT_FINDINGS, EXIT_RUNTIME, EXIT_USAGE, exit_code_for
-from decoy.cli.io import entry_format, pipeline_option, resolve_pipeline
+from decoy.cli.io import ReportTarget, entry_format, pipeline_option, report_dest, resolve_pipeline
 from decoy.ui.output import (
     OutputMode,
     OutputState,
@@ -71,7 +71,7 @@ from decoy.ui.output import (
     print_traceback,
     setup_output,
 )
-from decoy.ui.summary import null_rate_pairs, render_fidelity_report
+from decoy.ui.summary import announce_report, null_rate_pairs, render_fidelity_report
 from decoy.ui.theme import accent, code, error, hint, info, risk_high, success, warn
 
 # Grade -> minimum overall_score, mirroring the engine's own grade thresholds
@@ -100,13 +100,12 @@ report_app = typer.Typer(
 # ---------------------------------------------------------------------------
 
 
-def _write_out(state: OutputState, path: Path, text: str) -> None:
-    """Write a report file atomically (owner-only); refuse with the rendered reason."""
-    try:
-        write_local_target(path, text.encode("utf-8"), WriteMode.REPLACE)
-    except AtomicWriteError as exc:
-        state.err_console.print(error("error:"), f"could not write {path}: {describe(exc)}")
-        raise typer.Exit(code=EXIT_USAGE)
+def _write_out(state: OutputState, target: ReportTarget, text: str) -> Path | None:
+    """Write a report file (owner-only); a typed target refuses on failure, a default only warns."""
+    with target.recording():
+        for path in target.paths:
+            write_local_target(path, text.encode("utf-8"), WriteMode.REPLACE)
+    return announce_report(state, target)
 
 
 def _load_manifest(
@@ -1124,7 +1123,7 @@ def _show(
             content = render_markdown(manifest)
         else:
             content = render_html(manifest)
-        _write_out(state, out, content)
+        _write_out(state, ReportTarget(out, False), content)
         fmt_label = "Markdown" if fmt in ("markdown", "md") else "HTML"
         state.console.print(success("ok"), f"{fmt_label} report written to", code(str(out)))
         return
@@ -1816,8 +1815,8 @@ def _fidelity(
     )
     policy_result = apply_quality_policy(report, policy_config, strategy_map=strategy_map)
 
-    if report_out is not None:
-        _write_out(state, report_out, _json.dumps({**report, "policy": policy_result}, indent=2))
+    text = _json.dumps({**report, "policy": policy_result}, indent=2)
+    written = _write_out(state, report_dest("fidelity", output, ref, report_out), text)
 
     verdict = policy_result["verdict"]
     status = "ok" if verdict == "pass" else verdict
@@ -1826,7 +1825,7 @@ def _fidelity(
         envelope = dict(report)
         envelope["command"] = "report fidelity"
         envelope["status"] = status
-        envelope["policy"] = policy_result
+        envelope.update(policy=policy_result, **({"report_path": str(written)} if written else {}))
         emit_json(state, envelope)
     elif state.mode is not OutputMode.quiet:
         render_fidelity_report(
@@ -2038,8 +2037,8 @@ def _integrity(
             config=config_dict,
         )
 
-        if out is not None:
-            _write_out(state, out, _json.dumps(report, indent=2))
+        target = report_dest("integrity", masked, ref, out)
+        written = _write_out(state, target, _json.dumps(report, indent=2))
 
         # Decide exit code based on the report's severity counters.
         fail_count = int(report.get("fail_count") or 0)
@@ -2055,6 +2054,7 @@ def _integrity(
                     "masked": masked_str,
                     "source": source_str,
                     "report": report,
+                    **({"report_path": str(written)} if written else {}),
                 },
             )
         elif state.mode is not OutputMode.quiet:

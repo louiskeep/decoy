@@ -77,24 +77,14 @@ ALLOWLIST: tuple[AllowedSite, ...] = (
     ),
 )
 
-# Default side-file names built in place today. Each moves into `cli/io/_layout.py` in P9 (or
-# `cli/project/_scaffold.py` in P7) and leaves this list.
+# Default names still built in place; each leaves this list in the P10 sweep. P9 moved the
+# side-file names into `cli/io/_layout.py`.
 NAME_ALLOWLIST: tuple[AllowedSite, ...] = (
-    AllowedSite("cli/fit.py", "fit", 1, "Default snapshot name beside the source; moves in P9."),
     AllowedSite(
         "cli/gen/_scaffold.py",
         "layout_for",
         1,
         "Snapshot name in the generate scaffold; moves in the P10 sweep.",
-    ),
-    AllowedSite(
-        "cli/tokenize.py",
-        "detokenize",
-        1,
-        "Default detokenized name beside the input; moves in P9.",
-    ),
-    AllowedSite(
-        "cli/unmask.py", "unmask", 1, "Default unmasked name beside the input; moves in P9."
     ),
 )
 

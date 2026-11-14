@@ -116,9 +116,6 @@
   "cli/report.py::_verify::88ac16526f10": {
    "reason": "legacy error site recorded when the one error emitter landed; converts to emit_error and leaves this baseline, never joins it"
   },
-  "cli/report.py::_write_out::88d83ba1cdfc": {
-   "reason": "legacy error site recorded when the one error emitter landed; converts to emit_error and leaves this baseline, never joins it"
-  },
   "cli/run/_errors.py::fail::64bc6273e082": {
    "reason": "legacy error site recorded when the one error emitter landed; converts to emit_error and leaves this baseline, never joins it"
   },

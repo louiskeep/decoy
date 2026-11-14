@@ -144,6 +144,10 @@ GITIGNORE_WRITE_FAILED = Descriptor(
     "layout.gitignore_write_failed",
     "Could not write {path}; the run goes on without it.",
 )
+REPORT_NOT_WRITTEN = Descriptor(
+    "layout.report_not_written",
+    "The default report was not written; the check's result is unchanged.",
+)
 PROJECT_NESTED = Descriptor(
     "layout.project_nested",
     "{path} is inside another project ({outer}).",
@@ -178,6 +182,7 @@ WARNING_DESCRIPTORS: tuple[Descriptor, ...] = (
     LATEST_LINK_FAILED,
     LATEST_WRITE_FAILED,
     GITIGNORE_WRITE_FAILED,
+    REPORT_NOT_WRITTEN,
     PROJECT_NESTED,
     CONFIG_INSIDE_OUT,
 )

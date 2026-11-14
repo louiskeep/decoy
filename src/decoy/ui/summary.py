@@ -10,8 +10,12 @@ columns and numbers only, never a cell value.
 from __future__ import annotations
 
 from collections.abc import Iterable, Mapping
-from typing import Any
+from pathlib import Path
+from typing import Any, Protocol
 
+import typer
+
+from decoy.ui.output import OutputMode, OutputState, emit_error
 from decoy.ui.table import make_table
 from decoy.ui.theme import accent, code, error, hint, info, success, warn
 
@@ -461,3 +465,40 @@ def render_fidelity_report(
         state.console.print(table)
     elif verdict == "pass":
         state.console.print(success("OK"), "no policy violations.")
+
+
+class _ReportView(Protocol):
+    """What `announce_report` reads of a report target (`decoy.cli.io.ReportTarget`)."""
+
+    path: Path | None
+    implicit: bool
+    warning: _Fixed | None
+    error: str | None
+    exit_code: int
+
+
+class _Fixed(Protocol):
+    code: str
+    message: str
+
+
+def announce_report(state: OutputState, target: _ReportView) -> Path | None:
+    """Say how a report write ended; return the default path written, else None.
+
+    A typed path that failed is refused (`error:` and exit 1). A default that failed gets a fixed,
+    value-free warning on stderr (never under `--quiet`) and the command goes on. A default that
+    was written is named in default mode only; a typed path is not announced.
+    """
+    if target.error is not None:
+        emit_error(state, "report", target.error)
+        raise typer.Exit(code=target.exit_code)
+    if target.warning is not None:
+        if state.mode is not OutputMode.quiet:
+            line = f"{target.warning.code}: {target.warning.message}"
+            state.err_console.print(warn("warning:"), line, markup=False)
+        return None
+    if not target.implicit or target.path is None:
+        return None
+    if state.mode is OutputMode.default:
+        state.console.print("Report:", target.path, markup=False, soft_wrap=True)
+    return target.path

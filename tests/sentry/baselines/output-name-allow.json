@@ -2,17 +2,8 @@
  "sentry_id": "output-name-allow",
  "created_in": "PROJECT-LAYOUT-P2b",
  "entries": {
-  "cli/fit.py::fit": {
-   "reason": "Default snapshot name beside the source; moves in P9."
-  },
   "cli/gen/_scaffold.py::layout_for": {
    "reason": "Snapshot name in the generate scaffold; moves in the P10 sweep."
-  },
-  "cli/tokenize.py::detokenize": {
-   "reason": "Default detokenized name beside the input; moves in P9."
-  },
-  "cli/unmask.py::unmask": {
-   "reason": "Default unmasked name beside the input; moves in P9."
   }
  }
 }
