@@ -85,7 +85,7 @@ NAME_ALLOWLIST: tuple[AllowedSite, ...] = (
         "cli/gen/_scaffold.py",
         "layout_for",
         1,
-        "Snapshot name in the generate scaffold; moves with the scaffold in P7.",
+        "Snapshot name in the generate scaffold; moves in the P10 sweep.",
     ),
     AllowedSite(
         "cli/tokenize.py",

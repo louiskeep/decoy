@@ -107,7 +107,7 @@ declared under `targets:` in the YAML.
 | Command                          | What it does                                                                  |
 |-----------------------------------|-------------------------------------------------------------------------------|
 | `decoy demo`                     | Run a packaged end-to-end mask on synthetic input. Good first call.           |
-| `decoy init [file]`              | Scaffold a starter `pipeline.yaml`. With a file: column-aware via STORM. Without: prompt for preset (`minimal`, `gdpr`, ...). |
+| `decoy init [name\|file]`        | Scaffold `pipelines/<name>/pipeline.yaml` in the current project (`decoy project new DIR` makes one). With a file: column-aware via STORM. Without: prompt for name and preset (`minimal`, `gdpr`, ...). `-o FILE` writes anywhere. |
 | `decoy validate <path>`          | Run the whole pre-run gate (config + compile + preflight): one report, one exit code. |
 | `decoy run <path>`               | Execute a pipeline: read sources, mask, write targets.                        |
 | `decoy project new <dir>`        | Make a project folder (`decoy.yaml`, `pipelines/`, `out/`). `decoy project show` and `list` inspect them. |

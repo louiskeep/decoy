@@ -13,7 +13,7 @@ Try one of:
   decoy tokenize pipeline.yaml --vault tokens.db   Reversible tokenization: mask tokenize columns + write a local vault.
   decoy detokenize pipeline.yaml tokenized.csv --vault tokens.db   Reverse a tokenized file from the local vault.
   decoy fit source.csv             Fit a distribution snapshot for statistical generation.
-  decoy init                       Scaffold a starter pipeline interactively.
+  decoy init &lt;name&gt;                Scaffold a pipeline in the current project.
   decoy setup                      Set this box&#x27;s max memory and threads for `decoy run`.
   decoy project new acme           Make a project folder for one client&#x27;s pipelines and outputs.
   decoy list templates             Browse bundled pipeline templates.
