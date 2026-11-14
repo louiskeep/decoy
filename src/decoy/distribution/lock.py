@@ -55,13 +55,10 @@ def exclusive(
     # a child cannot outlive the holder and keep the lock.
     fd = os.open(home / name, os.O_RDWR | os.O_CREAT, 0o600)
     try:
-        held = False
         try:
-            held = try_lock_exclusive(fd)
+            try_lock_exclusive(fd)
         except OSError:
-            pass
-        if not held:
-            raise busy()
+            raise busy() from None
         yield
     finally:
         os.close(fd)
