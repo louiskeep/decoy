@@ -133,13 +133,16 @@ def check_before_run(
     route: GateRoute,
     state: Any,
     placement: OutputPlacement | None = None,
+    *,
+    skip_subset: bool = False,
 ) -> dict[str, Any]:
     """Run the gate on the parsed YAML; return the validated config or raise.
 
     Warnings never stop a run. In human mode one stderr line gives their count and the
-    command that lists them; `--quiet` and `--json` print nothing extra.
+    command that lists them; `--quiet` and `--json` print nothing extra. `skip_subset` is
+    `--no-subset`: the capacity estimate then prices the full sources.
     """
-    result = run_gate_on_config(raw, config_path, route, placement)
+    result = run_gate_on_config(raw, config_path, route, placement, skip_subset=skip_subset)
     if gate_exit_code(result, fail_on_warning=False) != 0:
         raise PreRunCheckError.from_result(result)
     warnings = sum(1 for f in result.findings if f.severity == "warning")

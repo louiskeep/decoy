@@ -35,7 +35,8 @@ from decoy.cli.run._execute import (
     _ChunkedReportFlagError,
     _load_sources_from_config,
     _note_chunked_key_check_skipped,
-    _refuse_chunked_integrity_requested,
+    _refuse_chunked_integrity,
+    _refuse_chunked_subset,
     _require_local_io_endpoints,
 )
 from decoy.cli.run._vault import (
@@ -293,39 +294,6 @@ def prepare_preview(ctx: RunContext) -> None:
     ctx._res = _resources.resolve(max_memory=ctx.max_memory, threads=ctx.threads)
 
 
-def _refuse_chunked_integrity(ctx: RunContext) -> None:
-    """Refuse `--chunked` with post-scan integrity before any source is opened or staged.
-
-    The model is validated first so a malformed config still gets its normal validation
-    error from the gate. `--duckdb-source` tables get a placeholder file source for this
-    check only, because staging has not run and the model requires a source per mask table.
-    """
-    from decoy_engine import ConfigError, PipelineValidationError, parse_pipeline_config
-    from decoy_engine.config import PipelineConfigError
-
-    if not isinstance(ctx.raw, dict):
-        return
-    # A null `sources` block is an omitted one, as in staging below.
-    sources = ctx.raw.get("sources")
-    if sources is not None and not isinstance(sources, dict):
-        return
-    probe = {**ctx.raw, "sources": dict(sources or {})}
-    for spec in ctx.duckdb_source:
-        try:
-            probe["sources"][parse_flag(spec)[0]] = {
-                "type": "file",
-                "format": "parquet",
-                "path": "staged.parquet",
-            }
-        except DuckDBSourceError:
-            return
-    try:
-        validated = parse_pipeline_config(probe).model_dump()
-    except (PipelineConfigError, PipelineValidationError, ConfigError):
-        return
-    _refuse_chunked_integrity_requested(validated)
-
-
 def prepare(ctx: RunContext, _scopes: contextlib.ExitStack) -> None:
     """Everything between the config read and the first row: the engine import, the config
     guards, `--duckdb-source` staging, the gate, admission and the source load."""
@@ -343,6 +311,7 @@ def prepare(ctx: RunContext, _scopes: contextlib.ExitStack) -> None:
 
     _guard_mask_secret_ref(ctx.raw)
     if ctx.chunked:
+        _refuse_chunked_subset(ctx)
         _refuse_chunked_integrity(ctx)
     # Layout and vault-path refusals need no source, so they come before DuckDB staging and
     # the source preflight: a source failure must not hide either of them.
@@ -412,6 +381,7 @@ def prepare(ctx: RunContext, _scopes: contextlib.ExitStack) -> None:
         GateRoute.CHUNKED if ctx.chunked else GateRoute.PLAIN,
         ctx.state,
         _placement(ctx),
+        skip_subset=ctx.no_subset,
     )
 
     # Cloud (s3/gcs) sources/targets are refused inside the shared
