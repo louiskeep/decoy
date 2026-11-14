@@ -1,7 +1,7 @@
 """AT-21 and AT-22 (P8): `run` with no argument picks the project's only pipeline, `run --all`
 runs every pipeline in its own process.
 
-`--all` starts one child per pipeline (`python -m decoy --project ROOT run YAML --json ...`), so
+`--all` starts one child per pipeline (`python -c <entry point> --project ROOT run YAML --json ...`), so
 engine state, logging and memory limits never carry from one pipeline to the next, and each
 child's exit code keeps its single-run meaning. A process spy sits on `subprocess.run`: it
 records every child command line and either lets the child really run or answers with a made-up
@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import itertools
 import json
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -216,7 +217,8 @@ def test_all_runs_each_pipeline_in_its_own_process_in_name_order(tmp_path, monke
     yamls = [Path(call[call.index("run") + 1]) for call in spy.calls]
     assert [y.parent.name for y in yamls] == ["alpha", "beta", "gamma"]
     for call in spy.calls:
-        assert call[:3] == [sys.executable, "-m", "decoy"]
+        assert call[0] == sys.executable and call[1] == "-c" and "decoy.__main__" in call[2]
+        assert "-m" not in call[:3]
         assert call[call.index("--project") + 1] == str(root)
         assert call.index("--project") < call.index("run")
         assert "--json" in call
@@ -399,3 +401,22 @@ def test_the_fan_out_lives_in_the_project_package_and_spawns_processes() -> None
     text = FAN_OUT.read_text(encoding="utf-8")
     assert "decoy.cli.run" not in text
     assert "subprocess.run" in text
+
+
+@pytest.mark.parametrize("shadow", ["decoy.py", "decoy/__init__.py", "typer.py"])
+def test_a_file_in_the_project_never_replaces_the_installed_cli(
+    tmp_path, monkeypatch, shadow: str
+) -> None:
+    root = _fake_project(tmp_path, ["alpha", "beta"])
+    marker = tmp_path / "shadow-ran"
+    target = root / shadow
+    target.parent.mkdir(exist_ok=True)
+    target.write_text(f"open({str(marker)!r}, 'w').close()\n", encoding="utf-8")
+    monkeypatch.chdir(root)
+    monkeypatch.setenv("PYTHONPATH", os.pathsep.join(p for p in sys.path if p and p != str(root)))
+    spy = _spy(monkeypatch)
+    result = runner.invoke(app, ["run", "--all"])
+    assert not marker.exists()
+    assert result.exit_code == 0, result.output
+    assert len(spy.calls) == 2
+    assert all(len(_runs(root, name)) == 1 for name in ("alpha", "beta"))

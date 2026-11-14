@@ -1,7 +1,7 @@
 """`decoy run` with no argument, and `decoy run --all`.
 
 No argument picks the project's one pipeline. `--all` runs every pipeline of the project, each
-in its own process (`python -m decoy --project ROOT run YAML --json ...`), so engine state, the
+in its own process (`python -c <entry point> --project ROOT run YAML --json ...`), so engine state, the
 logger and memory limits never carry from one pipeline to the next and each child's exit code
 keeps its single-run meaning. `--project` goes to each child so it places outputs exactly as
 this process resolved the project. The run goes on after a failure.
@@ -134,8 +134,21 @@ def _summary_code(codes: Sequence[int]) -> int:
     return next(code for code in _PRIORITY if code in codes)
 
 
+# `-m decoy` would put the current folder first on the import path, so a `decoy.py` or a
+# `decoy/` package inside a project would replace the installed CLI. `-c` with the first entry
+# dropped keeps the same entry point (`decoy.__main__:app`) and the parent's environment
+# (`-I` would drop `PYTHONPATH` and other variables a child needs).
+_CHILD_BOOT = (
+    "import sys\n"
+    "if sys.path and sys.path[0] in ('', '.'):\n"
+    "    del sys.path[0]\n"
+    "from decoy.__main__ import app\n"
+    "app()\n"
+)
+
+
 def _child(root: Path, entry: PipelineEntry, flags: Sequence[str], env: Mapping[str, str]):
-    cmd = [sys.executable, "-m", "decoy", "--project", str(root)]
+    cmd = [sys.executable, "-c", _CHILD_BOOT, "--project", str(root)]
     cmd += ["run", str(entry.yaml), "--json", *flags]
     return subprocess.run(
         cmd, stdout=subprocess.PIPE, text=True, env={**os.environ, **env}, check=False
