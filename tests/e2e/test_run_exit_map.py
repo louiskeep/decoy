@@ -63,6 +63,7 @@ def _patched_cell(key, code: int):
 def _cases():
     from decoy_engine import ConfigError
     from decoy_engine.execution import ExecutionError
+    from decoy_engine.verification.postmask import PostScanBlockedError
 
     return [
         ("config", ConfigError("bad"), 1, ("failed", "usage")),
@@ -73,6 +74,8 @@ def _cases():
             5,
             ("failed", "capacity"),
         ),
+        # A post-scan block (engine 0.24.0) is a verdict on the data: exit 4, not a crash.
+        ("post_scan_blocked", PostScanBlockedError({}), 4, ("findings", None)),
         ("gate", _gate_refusal(1, "validation"), 1, ("failed", "usage")),
         ("gate_capacity", _gate_refusal(5, "capacity"), 5, ("failed", "capacity")),
     ]

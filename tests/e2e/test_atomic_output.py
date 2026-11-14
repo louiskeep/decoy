@@ -233,7 +233,6 @@ _BASE_SHA: dict[str, str] = {
     "mask_api": "f9987e148964006181da8b39f71723fc5f85bc3dd73768ad9f9d6d50d177a9b8",
     "run_csv": "f9987e148964006181da8b39f71723fc5f85bc3dd73768ad9f9d6d50d177a9b8",
     "run_parquet": "fbaa202d72c0db74793d4b068ae984abe3919d95062cc7ca0e7ead23c0f74f1a",
-    "tokenize": "a43f8eb615952715b2d7c6c836e4516efb66e87d5b8f008be14a236039dc71aa",
     "unmask": "f02d2dca5c249826e217b8aaa531146f8d99a4dff1e6cae2555efdbcb55b5ed1",
 }
 
@@ -257,7 +256,7 @@ def _success_outputs(tmp_path: Path) -> dict[str, str]:
     cfg = _config(work, columns=_TOKEN_COLUMNS, out="tokenized.csv")
     vault = work / "tokens.db"
     assert runner.invoke(app, ["tokenize", str(cfg), "--vault", str(vault)]).exit_code == 0
-    got["tokenize"] = _sha(work / "tokenized.csv")
+    # Not pinned: engine 0.24.0 derives tokens under a random per-vault scope.
     result = runner.invoke(
         app, ["detokenize", str(cfg), str(work / "tokenized.csv"), "--vault", str(vault)]
     )

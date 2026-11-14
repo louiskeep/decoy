@@ -140,7 +140,8 @@ def fail(ctx: RunContext, exc: Exception) -> NoReturn:
     engine_exc = exc
     # Dispatch on type: config wrong (EXIT_USAGE) vs run blew up (EXIT_RUNTIME).
     # Imported lazily to keep the engine import off the help path.
-    from decoy_engine import DecoyError, GenerationError
+    from decoy_engine import DecoyError, GenerationError, VaultError, reasons
+    from decoy_engine.verification.postmask import PostScanBlockedError
 
     # CLI install DX (2026-09-25): a pipeline step that lazily imports an
     # optional dependency (boto3/google-cloud-storage for a cloud
@@ -218,6 +219,13 @@ def fail(ctx: RunContext, exc: Exception) -> NoReturn:
             raise RuntimeError("pre-run check carried an exit code with no category")
     elif capacity_code is not None or out_of_memory:
         _category = "capacity"
+    elif isinstance(exc, VaultError) and exc.code == reasons.runtime.VAULT_EXISTS:
+        # An existing vault is refused, never overwritten: the operator picks a new path.
+        _category = "usage"
+    elif isinstance(exc, PostScanBlockedError):
+        # The post-scan gate withheld the output on a verdict about the data, the same
+        # state as a blocking post-validation failure (exit 4), not a crash (exit 3).
+        _category = None
     elif isinstance(exc, GenerationError) and exc.code == UNIQUENESS_IMPOSSIBLE_CODE:
         # A `unique` column or pair the data cannot satisfy (a parent with too
         # few distinct keys, a faker type that ran out) is fixed in the config, so it exits 1
@@ -340,4 +348,6 @@ def fail(ctx: RunContext, exc: Exception) -> NoReturn:
             )
     if ctx.state.verbose:
         print_traceback(ctx.state)
-    raise typer.Exit(code=run_exit_code(_category))
+    raise typer.Exit(
+        code=run_exit_code(_category, blocking_failed=isinstance(exc, PostScanBlockedError))
+    )

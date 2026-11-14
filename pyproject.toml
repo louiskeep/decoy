@@ -115,10 +115,15 @@ dependencies = [
     # lgbm field classifier (scikit-learn, lightgbm) a base dependency, and moves the
     # engine to FSL-1.1-ALv2; row 73acf493 is the CLI runtime profile (67 pins).
     #
+    # 0.24.0 raises the `cryptography` floor to 49 (already in the certified set),
+    # adds the `blocked` isolated-run outcome for a post-scan block, and makes a
+    # profile's `generated_at` end `+00:00`; row 620a48a5 is the CLI runtime
+    # profile (67 pins, unchanged).
+    #
     # Hard-pinned to one engine release. The platform is parked and stays on
     # 0.18.0, so the two pins differ for now. The engine is not on PyPI, so CI
-    # and the smoke docs install the `v0.23.0` git tag.
-    "decoy-engine==0.23.0",
+    # and the smoke docs install the `v0.24.0` git tag.
+    "decoy-engine==0.24.0",
     # Pin the typer minor: `typer utils docs` metavar rendering differs across
     # typer minors (0.26.x emits `TEXT`/`FILE`; 0.27.x emits `<str>`/`<file>`),
     # and docs/cli-reference.md is committed and checked by the test_cli_surface

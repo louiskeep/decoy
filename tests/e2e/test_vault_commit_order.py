@@ -1,11 +1,10 @@
 """A vault (or token map) is durable BEFORE any masked output is published.
 
-Masked output without its vault cannot be reversed, so `decoy run --vault` writes the vault
-first: a 0600 temp file in the vault's directory, fsync, rename, fsync the directory, and only
-then the outputs. Any failure on that path exits 3 with the constant `vault_write_failed` text,
-writes no output and leaves no vault or temp file; a vault renamed in before a failed directory
-fsync is removed, and a pre-existing vault survives a failed rewrite. `decoy tokenize` commits
-its token map before it writes output, for the same reason.
+Masked output without its vault cannot be reversed, so `decoy run --vault` publishes the vault
+first and only then the outputs. The engine owns the publish (0.24.0): a private stage, fsync,
+an exclusive link, a directory fsync. An existing vault is refused (exit 1), never overwritten.
+A failed write exits 3, writes no output and shows no path. `decoy tokenize` commits its token
+map before it writes output, for the same reason.
 """
 
 from __future__ import annotations
@@ -20,7 +19,7 @@ import yaml
 from typer.testing import CliRunner
 
 from decoy.__main__ import app
-from decoy.cli.exit_codes import EXIT_RUNTIME
+from decoy.cli.exit_codes import EXIT_RUNTIME, EXIT_USAGE
 from tests.csv_sources import csv_source
 from tests.keyed_secret import TEST_MASK_SECRET_REF
 
@@ -73,7 +72,6 @@ def _fail_vault_write(monkeypatch: pytest.MonkeyPatch) -> None:
     from decoy_engine.vault import VaultWriter
 
     def _boom(self, path):
-        Path(path).write_bytes(b"partial")
         raise OSError(28, f"No space left on device: {CANARY}")
 
     monkeypatch.setattr(VaultWriter, "write", _boom)
@@ -90,54 +88,62 @@ def _fail_directory_fsync(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(os, "fsync", _fsync)
 
 
-def _assert_failed_clean(result, root: Path, vault: Path) -> None:
+def _assert_no_output(result, root: Path, vault: Path, text: str) -> None:
     assert not list(root.rglob("out.csv")), "masked output was published without its vault"
     assert result.exit_code == EXIT_RUNTIME, result.output
-    flat = " ".join(result.output.split())
-    assert " ".join(_vault_failed_text().split()) in flat
+    assert " ".join(text.split()) in " ".join(result.output.split())
     assert CANARY not in result.output
     assert _leftovers(vault.parent, vault.name) == []
 
 
-@pytest.mark.parametrize("fault", ["vault_write", "directory_fsync"])
-def test_failed_vault_write_publishes_no_output(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, fault: str
+def test_a_failed_vault_write_publishes_no_output(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     cfg = _pipeline(tmp_path)
     vault = tmp_path / "vault.bin"
-    (_fail_vault_write if fault == "vault_write" else _fail_directory_fsync)(monkeypatch)
+    _fail_vault_write(monkeypatch)
     for extra in ([], ["--json"]):
         result = runner.invoke(app, ["run", str(cfg), "--vault", str(vault), *extra])
-        _assert_failed_clean(result, tmp_path, vault)
-        assert not vault.exists(), "a vault renamed in before a failed fsync must be removed"
+        _assert_no_output(result, tmp_path, vault, _vault_failed_text())
+        assert not vault.exists()
 
 
-@pytest.mark.parametrize("fault", ["vault_write", "directory_fsync"])
-def test_a_pre_existing_vault_survives_a_failed_rewrite(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, fault: str
+def test_a_failed_directory_fsync_publishes_no_output(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    """The engine reports its own coded failure; the CLI writes no output after it."""
+    cfg = _pipeline(tmp_path)
+    vault = tmp_path / "vault.bin"
+    _fail_directory_fsync(monkeypatch)
+    result = runner.invoke(app, ["run", str(cfg), "--vault", str(vault)])
+    _assert_no_output(result, tmp_path, vault, "vault_commit_failed")
+
+
+def test_an_existing_vault_is_refused_and_left_alone(tmp_path: Path) -> None:
     vault = tmp_path / "vault.bin"
     first = runner.invoke(app, ["run", str(_pipeline(tmp_path / "first")), "--vault", str(vault)])
     assert first.exit_code == 0, first.output
     before = vault.read_bytes()
-    (_fail_vault_write if fault == "vault_write" else _fail_directory_fsync)(monkeypatch)
     root = tmp_path / "second"
-    result = runner.invoke(app, ["run", str(_pipeline(root)), "--vault", str(vault)])
-    _assert_failed_clean(result, root, vault)
-    assert vault.read_bytes() == before
+    for extra in ([], ["--json"]):
+        result = runner.invoke(app, ["run", str(_pipeline(root)), "--vault", str(vault), *extra])
+        assert result.exit_code == EXIT_USAGE, result.output
+        assert "vault_exists" in result.output
+        assert not list(root.rglob("out.csv")), "masked output was published without its vault"
+        assert vault.read_bytes() == before, "the existing vault was replaced or removed"
+        assert _leftovers(vault.parent, vault.name) == []
 
 
 def test_run_writes_the_vault_durably_before_any_output(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Temp write, data fsync, rename, directory fsync, and only then the outputs."""
+    """The vault is published first, with owner-only mode and no stage left behind."""
     from decoy_engine.vault import VaultWriter
 
     from decoy.cli.run import _execute as run_execute
 
     events: list[str] = []
     real_outputs, real_write = run_execute._write_mask_outputs, VaultWriter.write
-    real_replace, real_fsync = os.replace, os.fsync
     vault = tmp_path / "vault.bin"
 
     def _outputs(*a, **k):
@@ -148,28 +154,12 @@ def test_run_writes_the_vault_durably_before_any_output(
         events.append("vault_write")
         return real_write(self, path)
 
-    def _replace(src, dst, *a, **k):
-        if Path(dst) == vault:
-            events.append("vault_rename")
-        return real_replace(src, dst, *a, **k)
-
-    def _fsync(fd: int) -> None:
-        events.append("fsync_dir" if stat.S_ISDIR(os.fstat(fd).st_mode) else "fsync_file")
-        real_fsync(fd)
-
     monkeypatch.setattr(run_execute, "_write_mask_outputs", _outputs)
     monkeypatch.setattr(VaultWriter, "write", _write)
-    monkeypatch.setattr(os, "replace", _replace)
-    monkeypatch.setattr(os, "fsync", _fsync)
     result = runner.invoke(app, ["run", str(_pipeline(tmp_path)), "--vault", str(vault)])
     assert result.exit_code == 0, result.output
-    assert events[: events.index("outputs") + 1] == [
-        "vault_write",
-        "fsync_file",
-        "vault_rename",
-        "fsync_dir",
-        "outputs",
-    ]
+    assert events[: events.index("outputs") + 1] == ["vault_write", "outputs"]
+    assert vault.exists()
     assert stat.S_IMODE(vault.stat().st_mode) == 0o600
     assert _leftovers(tmp_path, vault.name) == []
 
@@ -215,34 +205,3 @@ def test_tokenize_failed_commit_publishes_no_output(
     assert CANARY not in result.output
     assert not (tmp_path / "out.csv").exists(), "tokenized output was published uncommitted"
     assert not vault.exists()
-
-
-@pytest.mark.parametrize("also_fail_directory_fsync", [False, True])
-def test_preexisting_vault_survives_backup_link_failure(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, also_fail_directory_fsync: bool
-) -> None:
-    """An existing vault that cannot be backed up is never overwritten: abort before the rename."""
-    import errno
-
-    vault = tmp_path / "vault.bin"
-    first = runner.invoke(app, ["run", str(_pipeline(tmp_path / "first")), "--vault", str(vault)])
-    assert first.exit_code == 0, first.output
-    before = vault.read_bytes()
-    attempts: list[tuple[str, str]] = []
-    real_link = os.link
-
-    def _link(src, dst, *a, **k):
-        if Path(src) == vault:
-            attempts.append((str(src), str(dst)))
-            raise OSError(errno.EPERM, f"Operation not permitted: {CANARY}")
-        return real_link(src, dst, *a, **k)
-
-    monkeypatch.setattr(os, "link", _link)
-    if also_fail_directory_fsync:
-        _fail_directory_fsync(monkeypatch)
-    root = tmp_path / "second"
-    for extra in ([], ["--json"]):
-        result = runner.invoke(app, ["run", str(_pipeline(root)), "--vault", str(vault), *extra])
-        _assert_failed_clean(result, root, vault)
-        assert vault.read_bytes() == before, "the pre-existing vault was replaced or removed"
-    assert len(attempts) == 2, "the backup link was never attempted; the test is vacuous"

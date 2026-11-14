@@ -37,6 +37,7 @@ the at-rest mitigation.
 
 from __future__ import annotations
 
+import secrets
 import sqlite3
 from collections.abc import Iterator
 from pathlib import Path
@@ -46,6 +47,11 @@ from decoy._private_file import (
     PrivateFileError,
     open_private,
 )
+
+
+def _mint_scope() -> bytes:
+    """A new vault's derivation scope. One seam so a test can fix it and compare tokens."""
+    return secrets.token_bytes(_SCOPE_BYTES)
 
 
 class TokenVaultError(Exception):
@@ -66,6 +72,13 @@ class TokenVaultError(Exception):
 # detokenize against a future-format vault fails closed with a clear code
 # rather than silently misreading rows.
 _SCHEMA_VERSION = 1
+
+# The engine derives every token under a per-vault, non-secret scope of 16 to 64 bytes that the
+# vault's owner mints once (engine 0.24.0). This store is the owner: it mints the scope when it
+# creates the vault and keeps it in `meta`. A vault with no scope predates the derivation; the
+# engine refuses it, and this store never mints one into an existing vault.
+_SCOPE_KEY = "derivation_scope"
+_SCOPE_BYTES = 32
 
 
 class LocalTokenVault:
@@ -135,6 +148,14 @@ class LocalTokenVault:
             ) from exc
         self._ensure_schema(create=create)
 
+    @property
+    def derivation_scope(self) -> bytes | None:
+        """The vault's token-derivation scope, or None for a vault written without one."""
+        row = self._conn.execute(
+            "SELECT value FROM meta WHERE key = ?", (_SCOPE_KEY,)
+        ).fetchone()
+        return bytes.fromhex(row[0]) if row is not None else None
+
     def _ensure_schema(self, *, create: bool) -> None:
         cur = self._conn.cursor()
         if create:
@@ -154,10 +175,16 @@ class LocalTokenVault:
                 );
                 """
             )
+            fresh = cur.execute("SELECT 1 FROM meta WHERE key = 'schema_version'").fetchone() is None
             cur.execute(
                 "INSERT OR IGNORE INTO meta (key, value) VALUES ('schema_version', ?)",
                 (str(_SCHEMA_VERSION),),
             )
+            if fresh:
+                cur.execute(
+                    "INSERT INTO meta (key, value) VALUES (?, ?)",
+                    (_SCOPE_KEY, _mint_scope().hex()),
+                )
             # The schema itself is durable immediately; only DATA rows wait for
             # the caller's commit() so a failed run leaves an empty vault, not a
             # partial mapping.

@@ -159,21 +159,19 @@ class TestTokenizeRoundTrip:
 
 
 class TestDeterminism:
-    def test_same_plaintext_namespace_yields_same_token_across_runs(
-        self, tmp_path: Path
-    ) -> None:
-        """Two independent tokenize runs (fresh vault each) over the same
-        plaintext + namespace produce identical tokens -- the derivation is
-        deterministic, and the vault makes it stable thereafter."""
+    def test_two_vaults_tokenize_the_same_plaintext_apart(self, tmp_path: Path) -> None:
+        """Engine 0.24.0 derives tokens under a per-vault scope, so two fresh vaults over the
+        same plaintext and namespace mint different tokens: tokens cannot be joined across
+        vaults. The same vault still reuses its tokens (see the next test)."""
         cfg1 = _pipeline(tmp_path, _TOKENIZE_COLS, out_name="t1.csv")
         v1 = tmp_path / "v1.db"
-        runner.invoke(app, ["tokenize", str(cfg1), "--vault", str(v1)])
+        assert runner.invoke(app, ["tokenize", str(cfg1), "--vault", str(v1)]).exit_code == 0
         cfg2 = _pipeline(tmp_path, _TOKENIZE_COLS, out_name="t2.csv")
         v2 = tmp_path / "v2.db"
-        runner.invoke(app, ["tokenize", str(cfg2), "--vault", str(v2)])
+        assert runner.invoke(app, ["tokenize", str(cfg2), "--vault", str(v2)]).exit_code == 0
         a = pd.read_csv(tmp_path / "t1.csv", dtype=str)["email"]
         b = pd.read_csv(tmp_path / "t2.csv", dtype=str)["email"]
-        assert list(a) == list(b)
+        assert set(a).isdisjoint(set(b))
 
     def test_rerun_against_same_vault_reuses_tokens(self, tmp_path: Path) -> None:
         vault = tmp_path / "tokens.db"
