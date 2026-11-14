@@ -37,12 +37,11 @@ from __future__ import annotations
 from pathlib import Path
 
 import typer
-import yaml
 
 from decoy._atomic import AtomicWriteError, WriteMode, describe, write_local_target
+from decoy._config_file import ConfigFileError, load_config_mapping
 from decoy.cli import gen
-from decoy.cli._yaml_errors import sanitize_yaml_error
-from decoy.cli.exit_codes import EXIT_RUNTIME, EXIT_USAGE
+from decoy.cli.exit_codes import EXIT_RUNTIME, EXIT_USAGE, exit_code_for
 from decoy.cli.io import pipeline_argument, resolve_pipeline
 from decoy.ui.output import OutputMode, emit_error, emit_json, setup_output
 from decoy.ui.table import make_table
@@ -173,28 +172,11 @@ def compile(
         )
         raise typer.Exit(code=EXIT_USAGE)
 
-    # Parse YAML -- defensive; real parse errors surface here.
     try:
-        raw = yaml.safe_load(config_path.read_text(encoding="utf-8"))
-    except yaml.YAMLError as exc:
-        # YAMLError quotes the offending source line; sanitize to coordinates.
-        _simple_error(state, config_path, sanitize_yaml_error(exc))
-        raise typer.Exit(code=EXIT_USAGE)
-    except (OSError, UnicodeDecodeError) as exc:
-        # A read/decode failure is a different category; report it as one. The
-        # path is the user's own argument and only the exception TYPE is shown,
-        # never str(exc) (a UnicodeDecodeError repr carries the offending byte).
-        # UnicodeDecodeError is a ValueError, not an OSError, so it is named
-        # explicitly: without it a non-UTF-8 config would escape as an uncaught
-        # traceback and emit no --json envelope.
-        _simple_error(state, config_path, f"could not read {config_path}: {type(exc).__name__}")
-        raise typer.Exit(code=EXIT_USAGE)
-
-    if not isinstance(raw, dict):
-        _simple_error(
-            state, config_path, f"{config_path} does not parse to a YAML mapping at the top level."
-        )
-        raise typer.Exit(code=EXIT_USAGE)
+        raw = load_config_mapping(config_path)
+    except ConfigFileError as exc:
+        _simple_error(state, config_path, exc.message, code=exc.code)
+        raise typer.Exit(code=exit_code_for(exc))
 
     from decoy_engine import __version__ as engine_version
     from decoy_engine.plan import compile_plan
@@ -319,9 +301,9 @@ def compile(
         state.console.print(hint("Wrote plan artifact:"), code(str(out)))
 
 
-def _simple_error(state, config: Path, msg: str) -> None:
+def _simple_error(state, config: Path, msg: str, *, code: str | None = None) -> None:
     """Render a usage error in the compile command's envelope / console style."""
-    emit_error(state, "validate compile", msg, context={"config": str(config)})
+    emit_error(state, "validate compile", msg, code=code, context={"config": str(config)})
 
 
 def _compile_error(state, config: Path, exc: Exception) -> None:

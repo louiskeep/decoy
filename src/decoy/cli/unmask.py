@@ -16,13 +16,12 @@ from __future__ import annotations
 from pathlib import Path
 
 import typer
-import yaml as _yaml
 
 from decoy import _mask_secret, _mask_secret_guidance
 from decoy._atomic import AtomicWriteError, describe
+from decoy._config_file import ConfigFileError, load_config_mapping
 from decoy.cli._sources import read_file
-from decoy.cli._yaml_errors import sanitize_yaml_error
-from decoy.cli.exit_codes import EXIT_RUNTIME, EXIT_USAGE
+from decoy.cli.exit_codes import EXIT_RUNTIME, EXIT_USAGE, exit_code_for
 from decoy.cli.io import (
     TargetFormatError,
     check_output_path,
@@ -132,17 +131,16 @@ def unmask(
     state = setup_output(json_, quiet, verbose)
     config_path = resolve_pipeline(config, state, "unmask").yaml
 
-    def _emit_error(message: str, *, hint_text: str | None = None) -> None:
-        emit_error(state, "unmask", message, hint=hint_text, context={"config": str(config)})
+    def _emit_error(message: str, *, hint_text: str | None = None, code: str | None = None) -> None:
+        emit_error(
+            state, "unmask", message, code=code, hint=hint_text, context={"config": str(config)}
+        )
 
     try:
-        raw = _yaml.safe_load(config_path.read_text(encoding="utf-8"))
-    except _yaml.YAMLError as exc:
-        _emit_error(sanitize_yaml_error(exc))
-        raise typer.Exit(code=EXIT_USAGE)
-    if not isinstance(raw, dict):
-        _emit_error(f"Pipeline YAML must be a YAML mapping (object), not {type(raw).__name__}.")
-        raise typer.Exit(code=EXIT_USAGE)
+        raw = load_config_mapping(config_path)
+    except ConfigFileError as exc:
+        _emit_error(exc.message, code=exc.code)
+        raise typer.Exit(code=exit_code_for(exc))
     try:
         _mask_secret.apply_mask_secret(raw, mask_secret)
     except _mask_secret.MaskSecretFlagError as exc:

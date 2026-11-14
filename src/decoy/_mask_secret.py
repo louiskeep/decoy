@@ -30,9 +30,10 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 from typing import Any, NoReturn
 
-# `vault://` parses in the engine; the CLI registers no provider for it, so the engine refuses
-# it with `secret_provider_unknown` instead of the CLI calling it malformed.
-_REF_PREFIXES = ("env:", "file:", "vault://")
+# The schemes the shape rule lets through. `vault` parses in the engine; the CLI registers no
+# provider for it, so the engine refuses it with `secret_provider_unknown` instead of the CLI
+# calling it malformed.
+_REF_SCHEMES = frozenset({"env", "file", "vault"})
 
 BOTH_SET = (
     "--mask-secret was passed but the YAML already sets "
@@ -41,9 +42,8 @@ BOTH_SET = (
     "remove mask_secret_ref from the config."
 )
 INVALID = (
-    "Invalid mask secret: expected an 'env:NAME' or "
-    "'file:/PATH' reference to a >=32-byte secret (from "
-    "--mask-secret or global_settings.mask_secret_ref). It "
+    "Invalid global_settings.mask_secret_ref or --mask-secret: expected an "
+    "'env:NAME' or 'file:/PATH' reference to a >=32-byte secret. It "
     "is a REFERENCE, never the raw secret. "
     "See: decoy explain keys."
 )
@@ -58,8 +58,23 @@ class MaskSecretFlagError(Exception):
     """A usage error from `apply_mask_secret` (exits EXIT_USAGE); its text holds no value."""
 
 
-def is_valid_mask_secret_ref(value: object) -> bool:
-    return isinstance(value, str) and value.startswith(_REF_PREFIXES)
+def mask_secret_ref_problem(raw: object) -> str | None:
+    """The one shape rule for a mask secret reference: `INVALID`, or None when it is well formed.
+
+    The engine's own parser decides what a reference is (`secret_providers.parse_ref`, which
+    lower-cases the scheme, so `ENV:NAME` passes); this adds the CLI's provider set. The text
+    names no part of `raw`, and a non-string is refused without being formatted.
+    """
+    from decoy_engine.secret_providers import parse_ref
+
+    if not isinstance(raw, str):
+        return INVALID
+    scheme: str | None = None
+    try:
+        scheme = parse_ref(raw).scheme
+    except Exception:
+        scheme = None  # the engine's refusal is the bare `bad_secret_ref`; only the verdict is kept
+    return None if scheme in _REF_SCHEMES else INVALID
 
 
 def apply_mask_secret(
@@ -68,7 +83,6 @@ def apply_mask_secret(
     *,
     error: type[Exception] = MaskSecretFlagError,
     both_set: str = BOTH_SET,
-    invalid: str = INVALID,
 ) -> None:
     """Inject `flag` into the config, then check the effective ref's shape.
 
@@ -79,7 +93,7 @@ def apply_mask_secret(
     settings = config_dict.get("global_settings")
     if settings is not None and not isinstance(settings, dict):
         if flag is not None:
-            raise error(invalid)
+            raise error(INVALID)
         return
     if flag is not None:
         if (settings or {}).get("mask_secret_ref") is not None:
@@ -88,8 +102,9 @@ def apply_mask_secret(
             settings = config_dict["global_settings"] = {}
         settings["mask_secret_ref"] = flag
     ref = (config_dict.get("global_settings") or {}).get("mask_secret_ref")
-    if ref is not None and not is_valid_mask_secret_ref(ref):
-        raise error(invalid)
+    problem = None if ref is None else mask_secret_ref_problem(ref)
+    if problem is not None:
+        raise error(problem)
 
 
 UNSAFE_CODE = "secret_file_permissions_unsafe"
@@ -148,7 +163,7 @@ def _checked_secret_file(config_dict: dict) -> Iterator[dict]:
         os.name == "nt"
         or not isinstance(settings, dict)
         or not isinstance(ref, str)
-        or not ref.startswith("file:")
+        or ref[: len("file:")].lower() != "file:"  # the engine reads the scheme in any case
     ):
         yield config_dict
         return

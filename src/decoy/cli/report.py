@@ -46,8 +46,9 @@ from rich.markup import escape
 
 from decoy import _mask_secret
 from decoy._atomic import AtomicWriteError, WriteMode, describe, write_local_target
+from decoy._config_file import ConfigFileError, load_config_mapping
+from decoy._yaml_errors import sanitize_yaml_error
 from decoy.cli._sources import read_file, read_report_source
-from decoy.cli._yaml_errors import sanitize_yaml_error
 from decoy.cli.evidence import (
     ManifestError,
     _render_manifest_card,
@@ -55,7 +56,7 @@ from decoy.cli.evidence import (
     resolve_manifest_path,
     verify_manifest,
 )
-from decoy.cli.exit_codes import EXIT_FINDINGS, EXIT_RUNTIME, EXIT_USAGE
+from decoy.cli.exit_codes import EXIT_FINDINGS, EXIT_RUNTIME, EXIT_USAGE, exit_code_for
 from decoy.cli.io import entry_format, pipeline_option, resolve_pipeline
 from decoy.ui.output import (
     OutputMode,
@@ -1719,11 +1720,12 @@ def _fidelity(
     source_str = str(source)
     output_str = str(output)
 
-    def _emit_error(message: str) -> None:
+    def _emit_error(message: str, *, code: str | None = None) -> None:
         emit_error(
             state,
             "report fidelity",
             message,
+            code=code,
             context={"source": source_str, "output": output_str},
         )
 
@@ -1752,12 +1754,12 @@ def _fidelity(
         from decoy_engine import parse_pipeline_config
 
         try:
-            raw_cfg = _yaml.safe_load(pipeline_path.read_text(encoding="utf-8"))
+            raw_cfg = load_config_mapping(pipeline_path)
+        except ConfigFileError as exc:
+            _emit_error(exc.message, code=exc.code)
+            raise typer.Exit(code=exit_code_for(exc))
+        try:
             config_dict = parse_pipeline_config(raw_cfg).model_dump()
-        except _yaml.YAMLError as exc:
-            # YAMLError carries the offending source line verbatim; sanitize it.
-            _emit_error(sanitize_yaml_error(exc))
-            raise typer.Exit(code=EXIT_USAGE)
         except Exception as exc:
             _emit_error(f"could not parse --config {pipeline_config}: {exc}")
             raise typer.Exit(code=EXIT_USAGE)
@@ -2003,15 +2005,14 @@ def _integrity(
         config_dict: dict
         table_name: str
         if config_path is not None:
-            import yaml as _yaml
             from decoy_engine import parse_pipeline_config
 
             try:
-                raw = _yaml.safe_load(config_path.read_text(encoding="utf-8"))
-            except _yaml.YAMLError as exc:
-                # The outer handler renders str(exc); a raw YAMLError there would
-                # echo the offending source line. Re-raise a pre-sanitized message.
-                raise ValueError(sanitize_yaml_error(exc)) from None
+                raw = load_config_mapping(config_path)
+            except ConfigFileError as exc:
+                members = {"masked": masked_str, "source": source_str}
+                emit_error(state, "report integrity", exc.message, code=exc.code, context=members)
+                raise typer.Exit(code=exit_code_for(exc))
             config_dict = parse_pipeline_config(raw).model_dump()
             # One source/masked pair: anchor on the first declared table.
             tables = config_dict.get("tables") or []
@@ -2219,23 +2220,19 @@ def _vault(
     used; the seed is not key material. A missing or wrong secret exits 1.
     Exits 0 on success, 1 on a config/vault/usage error.
     """
-    import yaml as _yaml
-
     state = setup_output(json_, quiet, verbose)
     config_path = resolve_pipeline(config, state, "report vault").yaml
 
-    def _emit_error(message: str, *, hint_text: str | None = None) -> None:
-        emit_error(state, "report vault", message, hint=hint_text, context={"vault": str(vault)})
+    def _emit_error(message: str, *, hint_text: str | None = None, code: str | None = None) -> None:
+        emit_error(
+            state, "report vault", message, code=code, hint=hint_text, context={"vault": str(vault)}
+        )
 
-    # Parse config YAML.
     try:
-        raw = _yaml.safe_load(config_path.read_text(encoding="utf-8"))
-    except _yaml.YAMLError as exc:
-        _emit_error(sanitize_yaml_error(exc))
-        raise typer.Exit(code=EXIT_USAGE)
-    if not isinstance(raw, dict):
-        _emit_error(f"Pipeline YAML must be a YAML mapping (object), not {type(raw).__name__}.")
-        raise typer.Exit(code=EXIT_USAGE)
+        raw = load_config_mapping(config_path)
+    except ConfigFileError as exc:
+        _emit_error(exc.message, code=exc.code)
+        raise typer.Exit(code=exit_code_for(exc))
     try:
         _mask_secret.apply_mask_secret(raw, mask_secret)
     except _mask_secret.MaskSecretFlagError as exc:

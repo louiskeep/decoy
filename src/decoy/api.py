@@ -32,7 +32,6 @@ import pandas as pd
 import pyarrow as pa
 
 from decoy import _mask_secret, _mask_secret_guidance, _native_gate
-from decoy._mask_secret import is_valid_mask_secret_ref as _is_valid_mask_secret_ref
 from decoy._row_sample import sample_frame
 from decoy.cli._sources import CSV_DIALECT_KEYS, csv_file_source, resolved_source_config
 from decoy.cli.extras import UnsupportedCloudEndpointError
@@ -84,23 +83,17 @@ def _load_config_dict(config: Any) -> dict:
 
         return copy.deepcopy(config)
     if isinstance(config, (str, Path)):
-        import yaml
-        from decoy_engine.safe_output import yaml_error_text
+        from decoy._config_file import ConfigFileError, load_config_mapping
 
         path = Path(config)
-        yaml_failure: str | None = None
+        refusal: ConfigFileError | None = None
         try:
-            raw = yaml.safe_load(path.read_text(encoding="utf-8"))
-        except yaml.YAMLError as exc:
-            yaml_failure = yaml_error_text(exc)
-        if yaml_failure is not None:
-            # Raised outside the handler: the YAML error quotes the offending line, so it must
-            # be neither the cause nor the context.
-            raise ConfigValidationError(f"{path}: {yaml_failure}")
-        if not isinstance(raw, dict):
-            raise ConfigValidationError(
-                f"{path}: expected a YAML mapping at the top level, got {type(raw).__name__}."
-            )
+            raw = load_config_mapping(path)
+        except ConfigFileError as exc:
+            refusal = exc
+        if refusal is not None:
+            # Raised outside the handler so the library error holds no exception context.
+            raise ConfigValidationError(f"{path}: {refusal.message}")
         return raw
     raise TypeError(f"config must be a path (str/Path) or a dict, got {type(config).__name__}.")
 
@@ -117,12 +110,9 @@ def _validate_mask_secret_ref_shape(raw: dict) -> None:
             f"global_settings must be a mapping (key: value pairs), not a {type(raw_gs).__name__}."
         )
     raw_ref = raw_gs.get("mask_secret_ref") if isinstance(raw_gs, dict) else None
-    if raw_ref is not None and not _is_valid_mask_secret_ref(raw_ref):
-        raise MaskSecretConfigError(
-            "Invalid global_settings.mask_secret_ref: expected an "
-            "'env:NAME' or 'file:/PATH' reference to a >=32-byte secret. "
-            "It is a REFERENCE, never the raw secret."
-        )
+    problem = None if raw_ref is None else _mask_secret.mask_secret_ref_problem(raw_ref)
+    if problem is not None:
+        raise MaskSecretConfigError(problem)
 
 
 def _apply_mask_secret(config_dict: dict, mask_secret: str | None) -> None:
@@ -139,12 +129,6 @@ def _apply_mask_secret(config_dict: dict, mask_secret: str | None) -> None:
             "global_settings.mask_secret_ref. Set the masking secret "
             "in exactly one place: drop mask_secret=, or remove "
             "mask_secret_ref from the config."
-        ),
-        invalid=(
-            "Invalid mask secret: expected an 'env:NAME' or 'file:/PATH' "
-            "reference to a >=32-byte secret (from mask_secret= or "
-            "global_settings.mask_secret_ref). It is a REFERENCE, never "
-            "the raw secret."
         ),
     )
     if (config_dict.get("global_settings") or {}).get("mask_secret_ref") is not None:

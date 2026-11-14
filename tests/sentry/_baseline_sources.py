@@ -371,6 +371,26 @@ SOURCES: tuple[Source, ...] = (
         "tests/sentry/cli_text/test_stdout_writes.py",
         FromScan("tests/sentry/cli_text/_stdout_sites.py"),
     ),
+    Source(
+        "exit-code-owner",
+        "tests/sentry/defects/test_exit_code_owner.py",
+        InCode(
+            "tests/sentry/defects/test_exit_code_owner.py",
+            "ALLOWLIST",
+            key=lambda e: f"{e.file}::{e.function}",
+            reason=lambda e: e.reason,
+        ),
+    ),
+    Source(
+        "config-load-allow",
+        "tests/sentry/io_policy/test_config_load_choke_point.py",
+        InCode(
+            "tests/sentry/io_policy/test_config_load_choke_point.py",
+            "ALLOWLIST",
+            key=lambda e: f"{e.file}::{e.function}::{e.n}",
+            reason=lambda e: f"{e.kind}: {e.reason}",
+        ),
+    ),
     Source("import-layers", ".importlinter", FromFile(".importlinter", import_layer_reasons)),
 )
 

@@ -89,3 +89,11 @@ baseline = "tests/sentry/baselines/env-reads.json"
 [[sentry]]
 id = "json-stdout-writes"
 baseline = "tests/sentry/baselines/json-stdout-writes.json"
+
+[[sentry]]
+id = "exit-code-owner"
+baseline = "tests/sentry/baselines/exit-code-owner.json"
+
+[[sentry]]
+id = "config-load-allow"
+baseline = "tests/sentry/baselines/config-load-allow.json"

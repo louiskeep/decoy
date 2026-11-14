@@ -328,7 +328,7 @@ def test_compile_explain_undeclared_column_rationale(tmp_path: Path) -> None:
 
 
 def test_compile_non_utf8_config_errors_cleanly(tmp_path: Path) -> None:
-    """A non-UTF-8 config fails with a clean read error, not an uncaught
+    """A non-UTF-8 config fails with the loader's `yaml.not_utf8`, not an uncaught
     UnicodeDecodeError traceback, and --json still emits an error envelope.
 
     Regression: narrowing the parse handler from `except Exception` to
@@ -342,5 +342,6 @@ def test_compile_non_utf8_config_errors_cleanly(tmp_path: Path) -> None:
     assert result.exit_code == 1  # EXIT_USAGE, not a crash
     payload = _json.loads(result.stdout)  # the --json envelope must still emit
     assert payload["status"] == "error"
-    # Type-only message: no decoded byte value, no traceback.
-    assert "could not read" in _json.dumps(payload).lower()
+    # The config loader's one refusal: its code and fixed text, no decoded byte, no traceback.
+    assert payload["code"] == "yaml.not_utf8"
+    assert payload["error"] == "Pipeline YAML is not UTF-8 text."

@@ -26,7 +26,8 @@ layers =
     ci | _resources
     ui | distribution | notify | telemetry | templates
     _mask_secret | _mask_secret_guidance | _native_gate | _atomic | _row_sample | _env_flags
-    _private_file | _version
+    _config_file
+    _private_file | _version | _yaml_errors
 ignore_imports =
     decoy.ci.adapters -> decoy.cli.evidence
     decoy.ci.adapters -> decoy.cli.exit_codes

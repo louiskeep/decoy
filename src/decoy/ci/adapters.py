@@ -85,9 +85,9 @@ def validation_outcome(
         try:
             text = data.decode("utf-8")
         except UnicodeDecodeError:
-            # The direct gate would crash here; report it as the parse error it is.
+            # The config loader's own code for this file, the one `decoy validate` reports.
             finding = SafeFinding.create(
-                rule_id="validate.yaml.parse_error",
+                rule_id="validate.yaml.not_utf8",
                 level="error",
                 safe_message_id="ci.validation_failed",
                 check_id=check_id,

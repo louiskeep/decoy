@@ -60,6 +60,7 @@ _CLI_GATE_CODES: frozenset[str] = frozenset(
         "validation_error",
         "yaml.empty",
         "yaml.not_mapping",
+        "yaml.not_utf8",
         "yaml.parse_error",
     }
 )

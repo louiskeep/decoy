@@ -4,8 +4,9 @@ PyYAML's ``YAMLError`` string form (and ``MarkedYAMLError.get_snippet()``) embed
 source line verbatim, so interpolating ``str(exc)`` into a user-facing message echoes whatever sat
 on that line (a password, an API key, raw PII) into stdout, stderr and the ``--json`` envelope.
 
-The text now lives in the engine (``decoy_engine.safe_output.yaml_error_text``), the one copy the
-engine's own config loader uses. This name stays for the commands that import it.
+The text lives in the engine (``decoy_engine.safe_output.yaml_error_text``), the one copy the
+engine's own config loader uses. This module sits below the CLI so the shared config loader
+(``decoy._config_file``) can use it without importing upward.
 """
 
 from __future__ import annotations
