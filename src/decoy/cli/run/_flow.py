@@ -8,6 +8,7 @@ import typer
 
 from decoy._private_file import PrivateFileError
 from decoy.cli.io import RunLayout, mint_invocation_id
+from decoy.cli.project import only_pipeline, run_all
 from decoy.cli.run import _errors, _evidence, _execute, _prepare, _render
 from decoy.cli.run._context import RunContext
 from decoy.cli.run._notify import (
@@ -26,9 +27,76 @@ from decoy.cli.run._prepare import (
 )
 from decoy.ui.progress import spinner
 
+# How each `run` option reaches an `--all` child. Every parameter of `run()` is in exactly one of
+# these tables or in `NOT_FORWARDED`; `tests/e2e/project_layout/test_run_all.py` reads the
+# signature and fails for a new option that is in none. Entries are (flag, RunContext field).
+FORWARD_ENUMS = (("--mode", "mode"), ("--notify-on", "notify_on"))  # always sent, by value
+FORWARD_VALUES = (  # sent when set
+    ("--mask-secret", "mask_secret"),
+    ("--chunk-size", "chunk_size"),
+    ("--max-memory", "max_memory"),
+    ("--threads", "threads"),
+    ("--key-label", "key_label"),
+    ("--otel-endpoint", "otel_endpoint"),
+    ("--rows", "rows"),
+)
+FORWARD_REPEATED = (("--notify", "notify"), ("--duckdb-source", "duckdb_source"))
+FORWARD_SWITCHES = (  # sent when on
+    ("-v", "verbose"),
+    ("--chunked", "chunked"),
+    ("--native", "native"),
+    ("--no-native", "no_native"),
+    ("--explain-plan", "explain_plan"),
+    ("--fidelity", "fidelity"),
+    ("--post-validate", "post_validate"),
+    ("--post-validate-enforce", "post_validate_enforce"),
+)
+# Each names one file, so `--all` would write it once per pipeline: refused with exit 1.
+REFUSED_WITH_ALL = (
+    ("--evidence-out", "evidence_out"),
+    ("--vault", "vault"),
+    ("--out-dir", "out_dir"),
+)
+# Handled apart from forwarding: `ctx`, `config` and `all_` pick the pipelines; the child always
+# gets `--json`, so `json_` and `quiet` (mutually exclusive with it) are not passed; the master
+# key goes by environment, never argv.
+NOT_FORWARDED = ("ctx", "config", "all_", "json_", "quiet", "master_key")
+
+
+def _child_flags(ctx: RunContext) -> list[str]:
+    """The options each `--all` child gets, from the tables above."""
+    flags: list[str] = []
+    for flag, field in FORWARD_ENUMS:
+        flags += [flag, getattr(ctx, field).value]
+    for flag, field in FORWARD_VALUES:
+        if getattr(ctx, field) is not None:
+            flags += [flag, str(getattr(ctx, field))]
+    for flag, field in FORWARD_REPEATED:
+        for value in getattr(ctx, field):
+            flags += [flag, value]
+    return flags + [flag for flag, field in FORWARD_SWITCHES if getattr(ctx, field)]
+
+
+def _bind_pipeline(ctx: RunContext) -> None:
+    """Fan out for `--all`, else settle which YAML this process runs (given, or the only one)."""
+    if ctx.all_:
+        refused = [flag for flag, field in REFUSED_WITH_ALL if getattr(ctx, field) is not None]
+        key = {"DECOY_MASTER_KEY": ctx.master_key} if ctx.master_key is not None else {}
+        run_all(
+            ctx.state,
+            ctx.cli,
+            named=ctx.named,
+            refused=refused,
+            flags=_child_flags(ctx),
+            env=key,
+        )
+    ref = ctx.pipeline if ctx.pipeline is not None else only_pipeline(ctx.state, ctx.cli)
+    ctx.config, ctx.given_as = ref.yaml, ref.given_as
+
 
 def execute(ctx: RunContext) -> None:
     """Run the phases in order. Everything after the `try` runs only on success."""
+    _bind_pipeline(ctx)
     ctx.invocation_id = mint_invocation_id()
     ctx.config_str = str(ctx.config)
 

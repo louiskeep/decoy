@@ -144,10 +144,16 @@ def parse_pipeline_token(ctx: typer.Context, value: str | None) -> PipelineToken
     return PipelineToken(value, "name", flag)
 
 
-def pipeline_argument(*, help: str) -> Any:
-    """The `typer.Argument` of a pipeline parameter: the one declaration every command shares."""
+def pipeline_argument(*, help: str, optional: bool = False) -> Any:
+    """The `typer.Argument` of a pipeline parameter: the one declaration every command shares.
+
+    `optional` is for `run`, which picks the project's only pipeline when none is given.
+    """
     return typer.Argument(
-        ..., callback=parse_pipeline_token, autocompletion=pipeline_names, help=help
+        None if optional else ...,
+        callback=parse_pipeline_token,
+        autocompletion=pipeline_names,
+        help=help,
     )
 
 
@@ -250,8 +256,7 @@ def _by_name(token: PipelineToken) -> PipelineRef:
     project = find_project(None, _select(token.project_flag))
     if project.implicit:
         raise PROJECT_NOT_FOUND.error(where="the current folder")
-    yaml = _member(project.root, name)
-    if yaml is None:
+    if _member(project.root, name) is None:
         names = [entry.name for entry in list_pipelines(project)]
         close = difflib.get_close_matches(name, names, n=1)
         raise PIPELINE_UNKNOWN.error(
@@ -260,8 +265,19 @@ def _by_name(token: PipelineToken) -> PipelineRef:
             known=", ".join(names) or "none",
             close=f" Did you mean {close[0]}?" if close else "",
         )
-    # Placement walks up from the YAML's folder. A marker or `.git` inside `pipelines/<name>/`
-    # would put outputs in another project than the one selected here.
+    return member_ref(project, name)
+
+
+def member_ref(project: Project, name: str) -> PipelineRef:
+    """The `PipelineRef` of a listed member, after the check that no nested marker moves it.
+
+    Placement walks up from the YAML's folder. A marker or `.git` inside `pipelines/<name>/`
+    would put outputs in another project than the one selected, so that is refused here for a
+    name given on the command line and for one picked from `list_pipelines` alike.
+    """
+    yaml = _member(project.root, name)
+    if yaml is None:
+        raise PIPELINE_UNKNOWN.error(name=name, root=project.root, known="none", close="")
     walked = find_project(yaml.resolve().parent, None)
     if not same_path(walked.root, project.root):
         raise PROJECT_MISMATCH.error(
