@@ -28,6 +28,7 @@ import sys
 import time
 from pathlib import Path
 
+from decoy._env_flags import is_ci, safe_env_flag
 from decoy._version import __version__
 from decoy.distribution import layout
 from decoy.distribution import version_document as vd
@@ -39,13 +40,14 @@ _CACHE_NAME = "update-check.json"
 
 
 def _opted_out() -> bool:
-    val = os.environ.get("DECOY_NO_UPDATE_CHECK")
-    return bool(val) and val != "0"
+    # An unknown spelling opts out: a user who typed something for this variable meant to
+    # stop the check, and no network call is the safe side.
+    return safe_env_flag("DECOY_NO_UPDATE_CHECK", default=False, unknown=True)
 
 
 def _interactive() -> bool:
     # CI and non-TTY are not interactive. stdout-not-a-TTY covers piped/`--json` output.
-    if os.environ.get("CI"):
+    if is_ci():
         return False
     try:
         return sys.stderr.isatty() and sys.stdout.isatty()

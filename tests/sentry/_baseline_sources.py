@@ -361,6 +361,16 @@ SOURCES: tuple[Source, ...] = (
         "tests/sentry/cli_text/test_one_error_emitter.py",
         FromScan("tests/sentry/cli_text/_error_sites.py"),
     ),
+    Source(
+        "env-reads",
+        "tests/sentry/io_policy/test_environment_reads.py",
+        FromScan("tests/sentry/io_policy/_env_read_sites.py"),
+    ),
+    Source(
+        "json-stdout-writes",
+        "tests/sentry/cli_text/test_stdout_writes.py",
+        FromScan("tests/sentry/cli_text/_stdout_sites.py"),
+    ),
     Source("import-layers", ".importlinter", FromFile(".importlinter", import_layer_reasons)),
 )
 

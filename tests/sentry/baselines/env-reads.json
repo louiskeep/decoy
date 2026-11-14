@@ -1,0 +1,48 @@
+{
+ "sentry_id": "env-reads",
+ "created_in": "CL2",
+ "entries": {
+  "_update_check.py::check_latest::DECOY_VERSION_URL::1": {
+   "reason": "environment read of a path, URL, secret or number, recorded when the one flag reader landed; moves to decoy._env_flags or leaves this baseline, never joins it"
+  },
+  "ci/_git.py::git_env::<dynamic>::1": {
+   "reason": "environment read of a path, URL, secret or number, recorded when the one flag reader landed; moves to decoy._env_flags or leaves this baseline, never joins it"
+  },
+  "cli/io/_pipelines.py::_env_project::DECOY_PROJECT::1": {
+   "reason": "environment read of a path, URL, secret or number, recorded when the one flag reader landed; moves to decoy._env_flags or leaves this baseline, never joins it"
+  },
+  "cli/run/_notify.py::_dispatch_run_notifications::DECOY_NOTIFY_SMTP_FROM::1": {
+   "reason": "environment read of a path, URL, secret or number, recorded when the one flag reader landed; moves to decoy._env_flags or leaves this baseline, never joins it"
+  },
+  "cli/run/_notify.py::_dispatch_run_notifications::DECOY_NOTIFY_SMTP_HOST::1": {
+   "reason": "environment read of a path, URL, secret or number, recorded when the one flag reader landed; moves to decoy._env_flags or leaves this baseline, never joins it"
+  },
+  "cli/run/_notify.py::_dispatch_run_notifications::DECOY_NOTIFY_SMTP_PASS::1": {
+   "reason": "environment read of a path, URL, secret or number, recorded when the one flag reader landed; moves to decoy._env_flags or leaves this baseline, never joins it"
+  },
+  "cli/run/_notify.py::_dispatch_run_notifications::DECOY_NOTIFY_SMTP_PORT::1": {
+   "reason": "environment read of a path, URL, secret or number, recorded when the one flag reader landed; moves to decoy._env_flags or leaves this baseline, never joins it"
+  },
+  "cli/run/_notify.py::_dispatch_run_notifications::DECOY_NOTIFY_SMTP_USER::1": {
+   "reason": "environment read of a path, URL, secret or number, recorded when the one flag reader landed; moves to decoy._env_flags or leaves this baseline, never joins it"
+  },
+  "cli/run/_notify.py::_dispatch_run_notifications::DECOY_NOTIFY_WEBHOOK_SECRET::1": {
+   "reason": "environment read of a path, URL, secret or number, recorded when the one flag reader landed; moves to decoy._env_flags or leaves this baseline, never joins it"
+  },
+  "cli/run/_notify.py::_start_telemetry::DECOY_OTEL_ENDPOINT::1": {
+   "reason": "environment read of a path, URL, secret or number, recorded when the one flag reader landed; moves to decoy._env_flags or leaves this baseline, never joins it"
+  },
+  "cli/run/_notify.py::_start_telemetry::DECOY_OTEL_HEADERS::1": {
+   "reason": "environment read of a path, URL, secret or number, recorded when the one flag reader landed; moves to decoy._env_flags or leaves this baseline, never joins it"
+  },
+  "distribution/layout.py::decoy_home::DECOY_HOME::1": {
+   "reason": "environment read of a path, URL, secret or number, recorded when the one flag reader landed; moves to decoy._env_flags or leaves this baseline, never joins it"
+  },
+  "distribution/layout.py::launcher_bin_dir::DECOY_BIN_DIR::1": {
+   "reason": "environment read of a path, URL, secret or number, recorded when the one flag reader landed; moves to decoy._env_flags or leaves this baseline, never joins it"
+  },
+  "distribution/release_key.py::pinned_public_pem::DECOY_RELEASE_PUBKEY_FILE::1": {
+   "reason": "environment read of a path, URL, secret or number, recorded when the one flag reader landed; moves to decoy._env_flags or leaves this baseline, never joins it"
+  }
+ }
+}

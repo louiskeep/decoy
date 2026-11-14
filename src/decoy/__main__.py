@@ -7,7 +7,6 @@ through `if __name__ == "__main__":`.
 
 import copy
 import errno
-import os
 from pathlib import Path
 from typing import Any
 
@@ -15,6 +14,7 @@ import typer
 from typer.core import TyperGroup
 
 from decoy import __version__
+from decoy._env_flags import safe_env_flag
 from decoy.cli.ci import ci_app
 from decoy.cli.cockpit import DOCTOR_EPILOG, doctor
 from decoy.cli.demo import DEMO_EPILOG
@@ -141,7 +141,9 @@ class _GuardedGroup(TyperGroup):
         return name, _record_contexts(cmd) if cmd is not None else cmd, rest
 
     def invoke(self, ctx: Any) -> Any:
-        debug = os.environ.get("DECOY_DEBUG") == "1"
+        # Read here, in the crash handler, so it cannot raise. Tracebacks can hold row data,
+        # so an unknown spelling leaves debug off.
+        debug = safe_env_flag("DECOY_DEBUG", default=False, unknown=False)
         try:
             return super().invoke(ctx)
         except _PASS_THROUGH:
