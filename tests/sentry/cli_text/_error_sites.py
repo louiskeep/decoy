@@ -14,6 +14,9 @@ of the tree, so moving a site does not change its key, but editing its expressio
 changed legacy error is a gained key, not a silent reuse of the old entry. Two identical
 expressions in one function get an ordinal suffix so neither hides the other.
 
+The one owner, ``ui/output.py::emit_error``, is not counted: it is where the rule is built.
+A same-named function in any other module is still a site.
+
 Named limits of a syntax walk: an aliased receiver (``err = state.err_console; err.print(...)``)
 and an error object assembled key by key are not seen. ``error`` is matched by name, as the
 output module exports it.
@@ -27,6 +30,10 @@ from collections import Counter
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+# The owner builds the one human error line and the one JSON error object, so its own
+# constructions are the definition of the rule and not a site of it.
+OWNER_PATH = "ui/output.py"
+OWNER_SCOPE = "emit_error"
 SRC = ROOT / "src" / "decoy"
 STYLE_NAME = "error"
 CONSOLE_NAME = "err_console"
@@ -98,6 +105,8 @@ def sites_in_source(source: str, rel: str) -> set[str]:
     seen: Counter[tuple[str, str]] = Counter()
     keys = set()
     for scope, fp in found:
+        if rel == OWNER_PATH and scope.split(".")[0] == OWNER_SCOPE:
+            continue
         ordinal = seen[(scope, fp)]
         seen[(scope, fp)] += 1
         keys.add(f"{rel}::{scope}::{fp}" + (f"#{ordinal}" if ordinal else ""))
@@ -122,3 +131,16 @@ _WHY = (
 def reasons() -> dict[str, str]:
     """Baseline source for the registry test and the one-off generator."""
     return {key: _WHY for key in inventory()}
+
+
+def error_literals(source: str) -> list[ast.Dict | ast.Call]:
+    """Every ``"status": "error"`` dict literal and ``dict(status="error", ...)`` call."""
+    return [
+        n
+        for n in ast.walk(ast.parse(source))
+        if isinstance(n, (ast.Dict, ast.Call)) and not _is_err_print_site(n) and _is_site(n)
+    ]
+
+
+def _is_err_print_site(node: ast.AST) -> bool:
+    return isinstance(node, ast.Call) and _is_err_print(node)

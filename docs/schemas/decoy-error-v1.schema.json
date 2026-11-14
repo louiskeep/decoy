@@ -1,0 +1,34 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://decoy.dev/schemas/decoy-error-v1.schema.json",
+  "title": "Decoy CLI error object (version 1)",
+  "description": "The one object a command writes to stdout under --json when it fails. The five named members are fixed. Any other member is per-command context (for example config, source, output, mode, or run's error_kind) and must hold JSON values only. No member carries data values.",
+  "type": "object",
+  "required": ["command", "status", "error"],
+  "properties": {
+    "command": {
+      "type": "string",
+      "minLength": 1,
+      "description": "The command the user typed, such as `fit` or `report verify`."
+    },
+    "status": {
+      "const": "error"
+    },
+    "error": {
+      "type": "string",
+      "minLength": 1,
+      "description": "The plain message. A reason code is never folded into it."
+    },
+    "code": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_.]*$",
+      "description": "The engine reason code or CLI warning code, when the failure has one."
+    },
+    "hint": {
+      "type": "string",
+      "description": "What to do next."
+    },
+    "message": false
+  },
+  "additionalProperties": true
+}

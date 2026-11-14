@@ -10,8 +10,10 @@ import json as _json
 import os
 import sys
 import warnings
+from collections.abc import Mapping
 from dataclasses import dataclass
 from enum import Enum
+from typing import TypeAlias
 
 import typer
 from rich.cells import cell_len
@@ -160,3 +162,18 @@ def emit_json(state: OutputState, payload: dict) -> None:
     if state.mode is OutputMode.json:
         sys.stdout.write(_json.dumps(payload) + "\n")
         sys.stdout.flush()
+
+
+JsonValue: TypeAlias = "None | bool | int | float | str | list[JsonValue] | dict[str, JsonValue]"
+
+
+def emit_error(
+    state: OutputState,
+    command: str,
+    message: str,
+    *,
+    code: str | None = None,
+    hint: str | None = None,
+    context: Mapping[str, JsonValue] | None = None,
+) -> None:
+    """Stub: the real emitter lands in the next commit."""
