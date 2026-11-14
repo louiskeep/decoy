@@ -33,7 +33,7 @@ from decoy._config_file import ConfigFileError, config_refusal, load_config_mapp
 from decoy.cli._sources import read_file, resolved_source_config
 from decoy.cli._token_vault import LocalTokenVault, TokenVaultError, iter_tokenize_columns
 from decoy.cli.exit_codes import EXIT_RUNTIME, EXIT_USAGE, exit_code_for
-from decoy.cli.gate import layout_findings
+from decoy.cli.gate import PreRunCheckError, layout_findings
 from decoy.cli.io import (
     LayoutError,
     OutputPlacement,
@@ -313,8 +313,12 @@ def tokenize(
             config_path, raw, OutputPlacement.fixed(out_dir, (("--vault", vault),))
         )
         if findings:
-            _emit_error(f"{findings[0].code}: {findings[0].message}")
-            raise typer.Exit(code=EXIT_USAGE)
+            # The renderer `run` uses: the summary, the first code and every finding.
+            refusal = PreRunCheckError.from_findings(findings)
+            members = {"config": config_str, **refusal.json_members()}
+            members.pop("code", None)
+            emit_error(state, "tokenize", str(refusal), code=findings[0].code, context=members)
+            raise typer.Exit(code=refusal.exit_code)
 
     from decoy.cli.run import _load_sources_from_config, _write_mask_outputs
 

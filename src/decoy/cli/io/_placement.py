@@ -12,7 +12,7 @@ import os
 import stat
 import sys
 import unicodedata
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -25,20 +25,24 @@ from decoy.cli.io._layout import (
     check_path_budget,
     contained_path,
     is_placed_relative,
+    is_run_id,
     names_a_file_inside,
+    owning_run,
     pipeline_folder,
-    pipeline_name_for,
+    pipeline_identity,
     project_out_folder,
+    read_claim,
     relative_outputs,
-    report_default_path,
 )
 from decoy.cli.io._layout_errors import (
     DELIVERY_ROOT_SPLIT,
     OUTPUT_DIR_UNUSABLE,
     OUTPUT_PATH_COLLISION,
     OUTPUT_PATH_ESCAPES,
+    REPORT_NOT_WRITTEN,
     SIDE_FILE_IN_OUT,
     LayoutError,
+    LayoutWarning,
 )
 
 if TYPE_CHECKING:
@@ -280,11 +284,10 @@ def layout_issues(
     if fixed is not None:
         folder = fixed.resolve() if fixed.exists() else fixed
     elif placed or urls:
-        yaml = config.resolve()
         try:
-            root = find_project(yaml.parent, None).root
-            name = pipeline_name_for(root, yaml, config_dict.get("name")).name
-            folder, base = pipeline_folder(root, name), f"out/{name}/<run-id>"
+            found, pn = pipeline_identity(config, config_dict.get("name"))
+            name = pn.name
+            folder, base = pipeline_folder(found.root, name), f"out/{name}/<run-id>"
             project_out = folder.parent
         except LayoutError as exc:
             issues.append((None, exc))
@@ -299,10 +302,9 @@ def layout_issues(
         # The cloud kind keeps its pointer lock under the project's out/ (an implicit project
         # uses the config folder), so the side-file rule applies even with --out-dir.
         try:
-            root = find_project(config.resolve().parent, None).root
             # Same naming rule as local delivery; the name itself is used from CC2a on.
-            pipeline_name_for(root, config.resolve(), config_dict.get("name"))
-            project_out = project_out_folder(root)
+            found, _pn = pipeline_identity(config, config_dict.get("name"))
+            project_out = project_out_folder(found.root)
         except LayoutError as exc:
             if all(seen.code != exc.code for _loc, seen in issues):
                 issues.append((None, exc))
@@ -358,24 +360,39 @@ def owning_pipeline(
 ) -> tuple[Path, str] | None:
     """`(project root, run-folder name)` of a pipeline YAML, for finding its run outputs.
 
-    The project is the one given, else the marker folder above the YAML, else the YAML's folder.
     None when the name is refused; the caller then reads files by the suffix rule alone.
     """
-    from decoy.cli.io._project import find_project
-
-    yaml = config.resolve()
     try:
-        root = (project or find_project(yaml.parent, None)).root
-        return root, pipeline_name_for(root, yaml, declared).name
+        found, name = pipeline_identity(config, declared, project)
     except LayoutError:
         return None
+    return found.root, name.name
 
 
-def run_report_path(kind: str, file: Path, ref: PipelineRef | None) -> Path | None:
+def _run_root_of(file: Path) -> Path | None:
+    """The project root of a file inside `<R>/out/<name>/<run-id>/`, for a project with no marker.
+
+    The folder names must fit: a run id, a claim under `out/<name>/`, and `owning_run` agrees.
+    """
+    resolved = file.resolve()
+    for run in resolved.parents:
+        name_dir_, out = run.parent, run.parent.parent
+        if is_run_id(run.name) and read_claim(out, name_dir_.name) is not None:
+            root = out.parent
+            if owning_run(resolved, root, name_dir_.name) is not None:
+                return root
+    return None
+
+
+def _default_report_path(
+    kind: str, file: Path, ref: PipelineRef | None
+) -> Path | LayoutWarning | None:
     """Where `report <kind>` writes by default: `<run>/reports/<kind>.json` for a run output.
 
-    The run is looked for under the pipeline's project, the config's folder and the project
-    found from the file. None for any other file, so nothing new is written for it.
+    The run is looked for under the pipeline's project and the config's folder, then the
+    project found from the file, then the root its own folder names fit. Makes the owner-only
+    `reports/` folder. None for any other file, so nothing new is written for it; a
+    `LayoutWarning` when the folder cannot be made.
     """
     from decoy.cli.io._project import find_project
 
@@ -386,7 +403,24 @@ def run_report_path(kind: str, file: Path, ref: PipelineRef | None) -> Path | No
         roots.append(find_project(file.resolve().parent, None).root)
     except LayoutError:
         pass
-    return report_default_path(kind, file, tuple(roots))
+    if (own := _run_root_of(file)) is not None:
+        roots.append(own)
+    for root in roots:
+        try:
+            names = os.listdir(project_out_folder(root))
+        except OSError:
+            continue
+        run = next((r for n in names if (r := owning_run(file, root, n)) is not None), None)
+        if run is None:
+            continue
+        folder = run.path / "reports"
+        failed = False
+        try:
+            RunLayout.out_dir(folder, create=True)
+        except (NotADirectoryError, PrivateFileError):
+            failed = True
+        return REPORT_NOT_WRITTEN.warning() if failed else folder / f"{kind}.json"
+    return None
 
 
 def open_out_dir(directory: Path) -> RunLayout:
@@ -403,3 +437,31 @@ def open_out_dir(directory: Path) -> RunLayout:
     if failed:
         raise OUTPUT_DIR_UNUSABLE.error()
     return layout
+
+
+@dataclass(frozen=True)
+class ReportTarget:
+    """Where one report goes: a typed path, or the default under a run folder (`implicit`).
+
+    `warning` is set when an implicit report could not be made (its folder, or later its file);
+    it never changes the check's exit code.
+    """
+
+    path: Path | None
+    implicit: bool
+    warning: LayoutWarning | None = None
+
+    def failed(self) -> ReportTarget:
+        return replace(self, warning=REPORT_NOT_WRITTEN.warning())
+
+
+def report_target(
+    kind: str, file: Path, ref: PipelineRef | None, typed: Path | None
+) -> ReportTarget:
+    """The typed path if given, else the default `<run>/reports/<kind>.json` for a run output."""
+    if typed is not None:
+        return ReportTarget(typed, False)
+    found = _default_report_path(kind, file, ref)
+    if isinstance(found, LayoutWarning):
+        return ReportTarget(None, True, found)
+    return ReportTarget(found, True)

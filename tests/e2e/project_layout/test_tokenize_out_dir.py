@@ -144,3 +144,17 @@ def test_without_out_dir_a_run_folder_is_still_used(
     root = _project(tmp_path)
     assert _tokenize(root, monkeypatch, "--vault", "v.db").exit_code == EXIT_OK
     assert list((root / "out" / "orders").glob("*/tok.csv"))
+
+
+def test_a_refusal_carries_its_code_and_every_finding_in_json(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import json
+
+    root = _project(tmp_path)
+    result = _tokenize(root, monkeypatch, "--out-dir", "b", "--vault", "b/tok.csv", "--json")
+    assert result.exit_code == EXIT_USAGE
+    doc = json.loads(result.stdout)
+    assert doc["code"] == "layout.output_path_collision"
+    assert doc["error_kind"] == "validation"
+    assert [m["code"] for m in doc["messages"]] == ["layout.output_path_collision"]

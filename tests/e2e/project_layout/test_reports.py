@@ -102,8 +102,112 @@ def test_a_file_outside_any_run_folder_writes_nothing(tmp_path: Path, kind: str)
     assert _files(root) == before
 
 
-def test_json_stdout_stays_one_document(tmp_path: Path) -> None:
+@pytest.mark.parametrize("kind", ["integrity", "fidelity"])
+def test_json_stdout_stays_one_document_and_names_the_default_report(
+    tmp_path: Path, kind: str
+) -> None:
     _root, src, masked = _masked_run(tmp_path)
-    result = _integrity(masked, src, "--json")
+    args = ("--json",)
+    result = (
+        _integrity(masked, src, *args) if kind == "integrity" else _fidelity(src, masked, *args)
+    )
     assert result.exit_code in (EXIT_OK, 4), result.output
-    json.loads(result.stdout)
+    doc = json.loads(result.stdout)
+    written = masked.parent / "reports" / f"{kind}.json"
+    assert Path(doc["report_path"]).samefile(written)
+    typed = tmp_path / "t.json"
+    flag = "--output" if kind == "integrity" else "--report-out"
+    more = (*args, flag, str(typed))
+    result = (
+        _integrity(masked, src, *more) if kind == "integrity" else _fidelity(src, masked, *more)
+    )
+    assert "report_path" not in json.loads(result.stdout)
+
+
+def test_quiet_prints_nothing_for_a_default_report(tmp_path: Path) -> None:
+    _root, src, masked = _masked_run(tmp_path)
+    result = _integrity(masked, src, "--quiet")
+    assert (masked.parent / "reports" / "integrity.json").is_file()
+    assert "Report" not in result.output
+
+
+def test_report_under_config_by_name_and_by_path(tmp_path: Path, monkeypatch) -> None:
+    root, src, masked = _masked_run(tmp_path)
+    yaml_path = root / "pipelines" / "orders" / "pipeline.yaml"
+    report = masked.parent / "reports" / "integrity.json"
+    for config in (str(yaml_path), "orders"):
+        report.unlink(missing_ok=True)
+        monkeypatch.chdir(root)
+        result = _integrity(masked, src, "--config", config)
+        assert result.exit_code in (EXIT_OK, 4), result.output
+        assert report.is_file()
+
+
+# --- M1: a default report that cannot be written never changes the check's exit ------------
+
+
+def _baseline_exit(masked: Path, src: Path) -> int:
+    return _integrity(masked, src, "--output", str(masked.parent.parent / "base.json")).exit_code
+
+
+def test_a_reports_folder_that_cannot_be_made_warns_and_keeps_the_exit(tmp_path: Path) -> None:
+    _root, src, masked = _masked_run(tmp_path)
+    expected = _baseline_exit(masked, src)
+    (masked.parent / "reports").write_text("in the way", encoding="utf-8")
+    for result in (_integrity(masked, src), _fidelity(src, masked)):
+        assert result.exit_code in (expected, 0, 4), result.output
+        assert "layout.report_not_written" in result.output
+        assert str(masked.parent) not in result.output
+    assert _integrity(masked, src).exit_code == expected
+
+
+def test_a_failed_default_write_warns_and_a_typed_one_still_fails(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from decoy import _atomic
+    from decoy.cli import report as report_module
+
+    _root, src, masked = _masked_run(tmp_path)
+    expected = _baseline_exit(masked, src)
+
+    def boom(*_a: object, **_k: object) -> None:
+        raise _atomic.AtomicWriteError(_atomic.ATOMIC_WRITE_FAILED)
+
+    monkeypatch.setattr(report_module, "write_local_target", boom)
+    result = _integrity(masked, src)
+    assert result.exit_code == expected
+    assert "layout.report_not_written" in result.output
+    assert str(masked.parent) not in result.output
+    typed = _integrity(masked, src, "--output", str(tmp_path / "t.json"))
+    assert typed.exit_code == 1
+
+
+# --- M2: a project with no marker ----------------------------------------------------------
+
+
+def test_a_no_marker_project_still_gets_its_default_report(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    d = tmp_path / "plain"
+    d.mkdir()
+    src = d / "s.csv"
+    pd.DataFrame({"email": pd.Series(["a@example.com"], dtype="string")}).to_csv(src, index=False)
+    cfg = {
+        "version": 2,
+        "global_settings": {"seed": 3},
+        "sources": {"a": csv_source(src)},
+        "tables": [{"name": "a", "columns": [{"name": "email", "strategy": "redact"}]}],
+        "targets": {"a": {"type": "file", "format": "csv", "path": "m.csv"}},
+    }
+    (d / "p.yaml").write_text(yaml.safe_dump(cfg), encoding="utf-8")
+    monkeypatch.chdir(d)
+    assert runner.invoke(app, ["run", "p.yaml"]).exit_code == EXIT_OK
+    (run,) = [p for p in (d / "out" / "p").iterdir() if p.is_dir() and p.name[0].isdigit()]
+    result = _integrity(run / "m.csv", src)
+    assert result.exit_code in (EXIT_OK, 4), result.output
+    assert (run / "reports" / "integrity.json").is_file()
+    stray = d / "stray" / "out" / "p" / run.name
+    stray.mkdir(parents=True)
+    (stray / "m.csv").write_bytes((run / "m.csv").read_bytes())
+    _integrity(stray / "m.csv", src)
+    assert not (stray / "reports").exists()

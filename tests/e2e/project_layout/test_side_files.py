@@ -209,3 +209,65 @@ def test_side_file_default_resolves_a_linked_folder_first(tmp_path: Path) -> Non
     assert _layout.side_file_default("unmasked", tmp_path / "current" / "m.csv") == (
         real.resolve() / "m.unmasked.csv"
     )
+
+
+def test_side_file_default_refuses_an_unknown_kind(tmp_path: Path) -> None:
+    with pytest.raises(KeyError):
+        _layout.side_file_default("bogus", tmp_path / "m.csv")  # type: ignore[arg-type]
+
+
+def test_open_run_layout_and_owning_pipeline_name_the_same_pipeline(tmp_path: Path) -> None:
+    from decoy.cli.io import open_run_layout, owning_pipeline
+
+    root = _project(tmp_path)
+    yaml_path = root / "pipelines" / "orders" / "pipeline.yaml"
+    config = {"targets": {"t": {"type": "file", "format": "csv", "path": "m.csv"}}}
+    yaml_path.write_text(yaml.safe_dump(config), encoding="utf-8")
+    layout = open_run_layout(yaml_path, config, "0a1b2c3d-0000-0000-0000-000000000000")
+    assert layout.run is not None
+    assert owning_pipeline(yaml_path, None, None) == (root.resolve(), layout.run.path.parent.name)
+
+
+def test_open_out_dir_refusal_has_no_cause_or_context(tmp_path: Path) -> None:
+    from decoy.cli.io import LayoutError, open_out_dir
+
+    blocker = tmp_path / "file"
+    blocker.write_text("x", encoding="utf-8")
+    with pytest.raises(LayoutError) as caught:
+        open_out_dir(blocker)
+    assert caught.value.__cause__ is None
+    assert caught.value.__context__ is None
+
+
+@needs_vault
+def test_unmask_and_detokenize_take_a_yaml_path_without_project(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root = _project(tmp_path)
+    run, vault, masked = _mask_run(root, monkeypatch)
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+    monkeypatch.chdir(elsewhere)
+    yaml_path = root / "pipelines" / "orders" / "pipeline.yaml"
+    result = runner.invoke(
+        app, ["unmask", str(yaml_path), str(run / "masked.txt"), "--vault", str(vault)]
+    )
+    assert result.exit_code == EXIT_OK, result.output
+    _assert_recovered(run / "masked.unmasked.csv", masked)
+
+
+@needs_vault
+def test_detokenize_takes_a_yaml_path_without_project(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root = _project(tmp_path)
+    run, vault = _tokenized_run(root, monkeypatch)
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+    monkeypatch.chdir(elsewhere)
+    yaml_path = root / "pipelines" / "orders" / "pipeline.yaml"
+    result = runner.invoke(
+        app, ["detokenize", str(yaml_path), str(run / "tok.txt"), "--vault", str(vault)]
+    )
+    assert result.exit_code == EXIT_OK, result.output
+    assert pd.read_csv(run / "tok.detokenized.csv", dtype=str)["email"].tolist() == _EMAILS

@@ -430,3 +430,21 @@ def render_fidelity_report(
         state.console.print(table)
     elif verdict == "pass":
         state.console.print(success("OK"), "no policy violations.")
+
+
+def announce_report(state: Any, target: Any) -> Any:
+    """Say where an implicit default report went, or warn that it was not made.
+
+    Returns the default path written, else None. A typed report is never announced: the user
+    named it. The warning is a fixed, value-free line on stderr (never `--quiet`).
+    """
+    warning = target.warning
+    if warning is not None and state.mode.value != "quiet":
+        state.err_console.print(
+            warn("warning:"), f"{warning.code}: {warning.message}", markup=False
+        )
+    if not target.implicit or warning is not None or target.path is None:
+        return None
+    if state.mode.value == "default":
+        state.console.print("Report:", target.path, markup=False, soft_wrap=True)
+    return target.path
