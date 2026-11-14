@@ -200,7 +200,9 @@ def _run_config_base(
     return validated, tuple(checks_run), findings
 
 
-def _run_compile_layer(raw: dict[str, Any], config_dir: Path) -> list[GateFinding]:
+def _run_compile_layer(
+    raw: dict[str, Any], config_dir: Path, validated: dict[str, Any]
+) -> list[GateFinding]:
     """The compile layer: a no-profile compile and its plan-compile checks,
     composed from the same helpers `validate compile --no-profile` uses (the
     unique-cardinality detector, the empty sentinel profile, `compile_plan`,
@@ -245,7 +247,8 @@ def _run_compile_layer(raw: dict[str, Any], config_dir: Path) -> list[GateFindin
         profile = empty_profile_for_no_profile(raw, engine_version)
         # `compile_plan` refuses a `subset:` block; the run applies it, so compile what it runs.
         plan = compile_plan(
-            split_subset_config(raw).run_config,
+            # The split reads a validated dump (the config layer's), never the raw YAML.
+            split_subset_config(validated).run_config,
             profile,
             decoy_engine_version=engine_version,
             no_profile=True,
@@ -266,9 +269,12 @@ def _run_compile_layer(raw: dict[str, Any], config_dir: Path) -> list[GateFindin
         )
         return findings
     except SubsetError as exc:
+        # The config layer validated the block, so this is reachable only for a defect the
+        # validated shape cannot rule out; it stays a finding, never a crash.
+        where = getattr(exc, "path", None)
         findings.append(
             GateFinding(
-                "compile", "error", exc.code, exc.message, location="subset", logical_path="subset"
+                "compile", "error", exc.code, exc.message, location=where, logical_path=where
             )
         )
         return findings
@@ -286,6 +292,9 @@ def _run_preflight_layer(
     config: Path,
     route: GateRoute,
     compile_errors: frozenset[tuple[str, str | None]] = frozenset(),
+    *,
+    validated: dict[str, Any] | None = None,
+    skip_subset: bool = False,
 ) -> tuple[list[GateFinding], bool]:
     """The preflight layer: source/file readiness, out-of-core-FK capacity, and native
     companion/eligibility -- the check functions `validate preflight` runs, reused as-is
@@ -309,8 +318,18 @@ def _run_preflight_layer(
     )
 
     acc = _PreflightAccumulator()
+    # `--no-subset` reads every row, so price that: the engine's split returns a copy without
+    # the block, from the validated dump; the config itself is not edited.
+    capacity_raw = raw
+    if skip_subset and validated is not None:
+        from decoy_engine.subset import SubsetError, split_subset_config
+
+        try:
+            capacity_raw = split_subset_config(validated).run_config
+        except SubsetError:
+            pass  # the compile layer reports it; the estimate then says "not applicable"
     _check_source_files(raw, config.parent, acc)
-    _check_capacity(raw, config, acc)
+    _check_capacity(capacity_raw, config, acc)
     _check_native(raw, acc)
 
     if route is GateRoute.CHUNKED:
@@ -353,19 +372,22 @@ def run_gate_on_config(
     config_path: Path,
     route: GateRoute = GateRoute.PLAIN,
     placement: OutputPlacement | None = None,
+    *,
+    skip_subset: bool = False,
 ) -> GateResult:
     """Config + compile + preflight on an already-parsed YAML value, short-circuiting after a
     failed config layer. `config_path` names the YAML; `placement` says where relative outputs
-    land (project placement when None)."""
+    land (project placement when None). `skip_subset` (`--no-subset`) prices the capacity
+    estimate on the config without its `subset:` block, as the run will read it."""
     config, checks_run, config_findings = _run_config_base(raw, config_path, placement)
     if config is None:
         return GateResult(config_findings, frozenset({"config"}), False)
-    compile_findings = _run_compile_layer(raw, config_path.parent)
+    compile_findings = _run_compile_layer(raw, config_path.parent, config)
     compile_errors = frozenset(
         (f.code, f.location) for f in compile_findings if f.severity == "error"
     )
     preflight_findings, capacity_insufficient = _run_preflight_layer(
-        raw, config_path, route, compile_errors
+        raw, config_path, route, compile_errors, validated=config, skip_subset=skip_subset
     )
     return GateResult(
         config_findings + compile_findings + preflight_findings,

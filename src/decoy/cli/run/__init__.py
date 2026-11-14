@@ -361,7 +361,7 @@ def run(
         "--no-subset",
         help=(
             "Mask every source row even when the pipeline has a `subset:` block. The YAML file "
-            "is not changed. The summary and --json then report `subset: applied false`. "
+            "is not changed. The summary then prints `subset: not applied (--no-subset)` and --json shows `applied: false`. "
             "A pipeline with `subset:` is refused under --chunked, with or without this flag."
         ),
     ),

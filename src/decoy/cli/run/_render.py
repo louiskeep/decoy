@@ -39,9 +39,11 @@ def _seed_warnings(raw_cfg: dict | None, *, key_in_effect: bool) -> list[dict]:
 
 
 def subset_summary_line(metrics: dict | None) -> str | None:
-    """The one human line for an applied subset, from the engine's counts; None otherwise."""
-    if not metrics or not metrics.get("applied"):
+    """The one human line for the engine's subset record; None when the config has no block."""
+    if not metrics:
         return None
+    if not metrics.get("applied"):
+        return "subset: not applied (--no-subset)"
     tables = metrics["tables"].values()
     kept = sum(t["kept_rows"] for t in tables)
     source = sum(t["source_rows"] for t in tables)

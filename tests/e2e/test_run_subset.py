@@ -191,9 +191,11 @@ def test_default_run_sends_config(tmp_path: Path, monkeypatch: pytest.MonkeyPatc
     assert seen == ["config"]
 
 
-def test_no_subset_human_output_has_no_subset_line(tmp_path: Path) -> None:
+def test_no_subset_human_output_says_not_applied(tmp_path: Path) -> None:
+    """The help text promises the summary reports `applied false`."""
     result = runner.invoke(app, ["run", str(_config(tmp_path)), "--no-subset"])
     assert result.exit_code == 0, result.output
+    assert "subset: not applied (--no-subset)" in result.output
     assert "subset: kept" not in result.output
 
 
@@ -220,23 +222,88 @@ def test_gate_and_compile_accept_a_subset_pipeline(tmp_path: Path) -> None:
     assert compiled.exit_code == 0, compiled.output
 
 
-def _raise_subset_error(config: dict) -> Any:
+def _edit(path: Path, change) -> None:
+    cfg = yaml.safe_load(path.read_text(encoding="utf-8"))
+    change(cfg)
+    path.write_text(yaml.safe_dump(cfg), encoding="utf-8")
+
+
+def _no_orphan_policy(cfg: dict) -> None:
+    del cfg["relationships"][0]["orphan_policy"]
+
+
+def _subset_is_a_list(cfg: dict) -> None:
+    cfg["subset"] = [{"table": "customers"}]
+
+
+@pytest.mark.parametrize("change", [_no_orphan_policy, _subset_is_a_list])
+def test_a_malformed_subset_config_is_a_schema_error_not_a_traceback(
+    tmp_path: Path, change
+) -> None:
+    """AT-C5: the split reads a validated dump, so `validate compile --explain` and `validate`
+    show the schema error. Neither prints a raw KeyError or AttributeError."""
+    path = _config(tmp_path)
+    _edit(path, change)
+    compiled = runner.invoke(app, ["validate", "compile", str(path), "--explain"])
+    assert compiled.exit_code == 1, compiled.output
+    validated = runner.invoke(app, ["validate", str(path), "--json"])
+    assert validated.exit_code == 1, validated.output
+    for result in (compiled, validated):
+        assert result.exception is None or isinstance(result.exception, SystemExit)
+        for text in ("KeyError", "AttributeError", "Traceback", "object has no attribute"):
+            assert text not in result.output
+
+
+def test_a_composite_length_mismatch_with_subset_is_the_engines_subset_error(
+    tmp_path: Path,
+) -> None:
+    """AT-C5, real trigger: with a profile the empty-profile builder is skipped, so the split is
+    what finds the mismatch. The engine's code is shown and nothing crashes."""
+    from datetime import datetime
+
+    from decoy_engine import reasons
+    from decoy_engine.profile import Profile, profile_to_json
+
+    path = _config(tmp_path)
+    _edit(path, lambda cfg: cfg["relationships"][0]["parent"].update(columns=["id", "id"]))
+    profile = tmp_path / "profile.json"
+    profile.write_text(
+        profile_to_json(
+            Profile(
+                schema_version=1,
+                tables=(),
+                relationships=(),
+                profiled_at=datetime(1970, 1, 1),
+                decoy_engine_version="0",
+                profile_seed=None,
+            )
+        ),
+        encoding="utf-8",
+    )
+    result = runner.invoke(
+        app, ["validate", "compile", str(path), "--explain", "--profile", str(profile)]
+    )
+    assert result.exit_code == 1, result.output
+    assert result.exception is None or isinstance(result.exception, SystemExit)
+    assert reasons.subset.SUBSET_RELATIONSHIP_COMPOSITE_LENGTH in result.output
+
+
+def test_the_gate_turns_a_subset_error_into_a_finding_defensive(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """AT-C5, injected: no real input reaches the gate's `SubsetError` handler once the config
+    layer has validated the block, so the engine's split is made to raise. The handler stays
+    as a defence; this cell proves it reports a finding and does not crash."""
+    import decoy_engine.subset as engine_subset
     from decoy_engine import reasons
     from decoy_engine.subset import SubsetConfigError
 
-    raise SubsetConfigError(
-        code=reasons.subset.SUBSET_UNKNOWN_TABLE, message="subset table unknown"
-    )
+    def boom(config: dict) -> Any:
+        raise SubsetConfigError(
+            code=reasons.subset.SUBSET_UNKNOWN_TABLE, message="subset table unknown"
+        )
 
-
-def test_a_subset_config_error_is_a_gate_finding(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """AT-C5: `validate` reports it as a finding with the engine's code."""
-    import decoy_engine.subset as engine_subset
-    from decoy_engine import reasons
-
-    monkeypatch.setattr(engine_subset, "split_subset_config", _raise_subset_error)
+    monkeypatch.setattr(engine_subset, "split_subset_config", boom)
     result = runner.invoke(app, ["validate", str(_config(tmp_path)), "--json"])
     assert result.exit_code == 1, result.output
     assert result.exception is None or isinstance(result.exception, SystemExit)
@@ -244,14 +311,28 @@ def test_a_subset_config_error_is_a_gate_finding(
     assert reasons.subset.SUBSET_UNKNOWN_TABLE in codes
 
 
-def test_a_subset_config_error_is_a_compile_error_not_a_crash(
+def test_no_subset_over_the_capacity_limit_exits_5(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """AT-C5: `validate compile --explain` prints the error and exits 1."""
-    import decoy_engine.subset as engine_subset
+    """`--no-subset` reads every row, so the gate prices the full run and refuses it. Without
+    the split the estimate reports "not applicable: subset" and the refusal is skipped."""
+    from tests.e2e.test_run_preflight_capacity_parity import _fanin_config
 
-    monkeypatch.setattr(engine_subset, "split_subset_config", _raise_subset_error)
-    result = runner.invoke(app, ["validate", "compile", str(_config(tmp_path)), "--explain"])
-    assert result.exit_code == 1, result.output
-    assert result.exception is None or isinstance(result.exception, SystemExit)
-    assert "subset table unknown" in result.output
+    monkeypatch.setattr(
+        "decoy_engine.execution.out_of_core._budget.detect_effective_memory_bytes",
+        lambda *a, **k: 1024 * 1024,
+    )
+    path = _fanin_config(tmp_path)
+    _edit(
+        path,
+        lambda cfg: cfg.update(
+            subset={
+                "seeds": [
+                    {"table": "parent_0", "mode": "sample", "key_columns": ["id"], "fraction": 0.5}
+                ]
+            }
+        ),
+    )
+    result = runner.invoke(app, ["run", str(path), "--no-subset", "--json"])
+    assert result.exit_code == 5, result.output
+    assert _json.loads(result.stdout)["error_kind"] == "capacity"
