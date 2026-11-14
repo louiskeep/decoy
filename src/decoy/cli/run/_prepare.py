@@ -336,6 +336,10 @@ def prepare(ctx: RunContext, _scopes: contextlib.ExitStack) -> None:
     _guard_mask_secret_ref(ctx.raw)
     if ctx.chunked:
         _refuse_chunked_integrity(ctx)
+    # A taken vault path is known now; refuse it before DuckDB staging or the source
+    # preflight so a source failure cannot hide `vault_exists`.
+    if ctx.vault is not None and not ctx.chunked:
+        refuse_existing_vault(ctx.vault)
 
     # DuckDB-in sources: acquire each flagged relation read-only to a
     # temp Parquet and rewrite the in-memory source to that Parquet
@@ -468,8 +472,6 @@ def prepare(ctx: RunContext, _scopes: contextlib.ExitStack) -> None:
         )
     if ctx.chunked and ctx.vault is not None:
         raise _ChunkedVaultError(_CHUNKED_VAULT_MESSAGE)
-    if ctx.vault is not None:
-        refuse_existing_vault(ctx.vault)
 
     # The engine has no bounded fixed-width iterator, so a chunked
     # run cannot stream one. Refuse before any table is written

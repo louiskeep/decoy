@@ -5,6 +5,8 @@ from __future__ import annotations
 import sqlite3
 from pathlib import Path
 
+import pytest
+
 from decoy.cli._token_vault import _SCOPE_KEY, LocalTokenVault
 
 
@@ -73,8 +75,24 @@ def test_a_second_opener_that_lost_the_scope_race_shares_the_winners_scope(
 def test_only_the_opener_that_created_the_file_reports_created(tmp_path: Path) -> None:
     path = tmp_path / "v.db"
     first = LocalTokenVault(path, create=True)
-    second = LocalTokenVault(path, create=True)
     assert first.created is True
-    assert second.created is False
     first.close()
+    second = LocalTokenVault(path, create=True)
+    assert second.created is False
     second.close()
+
+
+def test_a_second_writer_is_refused_while_the_first_holds_the_vault(tmp_path: Path) -> None:
+    from decoy.cli._token_vault import TokenVaultError
+
+    path = tmp_path / "v.db"
+    first = LocalTokenVault(path, create=True)
+    try:
+        with pytest.raises(TokenVaultError) as raised:
+            LocalTokenVault(path, create=True)
+        assert raised.value.code == "vault_busy"
+        assert str(path) not in raised.value.message
+    finally:
+        first.close()
+    again = LocalTokenVault(path, create=True)
+    again.close()

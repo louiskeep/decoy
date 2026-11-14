@@ -330,8 +330,9 @@ def tokenize(
                 try:
                     token_vault = LocalTokenVault(vault, create=True)
                 except BaseException as open_exc:
-                    if getattr(open_exc, "vault_created", False):
-                        vault.unlink(missing_ok=True)
+                    discard = getattr(open_exc, "vault_discard", None)
+                    if discard is not None:
+                        discard()
                     raise
                 result = run_pipeline(
                     resolved_source_config(config_dict, config_path.parent),
@@ -389,17 +390,14 @@ def tokenize(
     finally:
         if layout is not None and not ok:
             layout.abandon()
+        if token_vault is not None and token_vault.created and not committed:
+            token_vault.discard_unwritten()
         if token_vault is not None:
             token_vault.close()
-        # LocalTokenVault(create=True) writes the file + schema up front, so a
-        # run that fails before commit leaves an empty vault on disk even though
-        # its rows were discarded. Remove that file when THIS run created it and
-        # nothing was committed, so a failed tokenize leaves no empty vault to
-        # mistake for output. `created` comes from an exclusive create, so a vault a
-        # re-run or a concurrent run made is kept: its mappings are intact and only
-        # this run's uncommitted rows were dropped.
-        if token_vault is not None and token_vault.created and not committed:
-            vault.unlink(missing_ok=True)
+        # LocalTokenVault(create=True) writes the file + schema up front, so a run that fails
+        # before commit leaves an empty vault on disk even though its rows were discarded.
+        # `discard_unwritten` (above, under the writer lock) removes it only when THIS run
+        # created it and no run committed mappings to it; a re-run's vault is kept.
 
     if layout is not None:
         for item in layout.commit_latest():

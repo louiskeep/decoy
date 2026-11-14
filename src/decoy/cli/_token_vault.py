@@ -37,15 +37,18 @@ the at-rest mitigation.
 
 from __future__ import annotations
 
+import os
 import secrets
 import sqlite3
 from collections.abc import Iterator
 from pathlib import Path
 
 from decoy._private_file import (
+    PRIVATE_BUSY,
     PRIVATE_MODE_FAILED,
     PrivateFileError,
     create_private_exclusive,
+    lock_exclusive,
     open_private,
 )
 
@@ -104,6 +107,7 @@ class LocalTokenVault:
         self._path = path
         # True only when THIS opener created the vault file; tokenize may delete only that.
         self.created = False
+        self._lock_fd: int | None = None
         if not create and not path.exists():
             raise TokenVaultError(
                 code="vault_not_found",
@@ -141,6 +145,25 @@ class LocalTokenVault:
                         code="vault_open_error",
                         message=f"could not create token vault {path!s}: {exc.code}.",
                     ) from None
+                # One writer per vault for this object's whole life, so a creator's cleanup
+                # can never delete a vault another run is committing to.
+                try:
+                    self._lock_fd = lock_exclusive(path.with_name(f".{path.name}.lock"))
+                except PrivateFileError as exc:
+                    # The lock holder owns the file now; this run must never delete it.
+                    self.created = False
+                    if exc.code == PRIVATE_BUSY:
+                        raise TokenVaultError(
+                            code="vault_busy",
+                            message=(
+                                "another decoy run is writing this token vault; "
+                                "wait for it to finish or use a different --vault."
+                            ),
+                        ) from None
+                    raise TokenVaultError(
+                        code="vault_open_error",
+                        message=f"could not lock token vault {path!s}: {exc.code}.",
+                    ) from None
             try:
                 # isolation_level="" keeps Python's implicit-transaction behavior:
                 # the first write opens a transaction that stays open until an
@@ -152,12 +175,16 @@ class LocalTokenVault:
                 raise TokenVaultError(
                     code="vault_open_error",
                     message=f"could not open token vault {path!s}: {type(exc).__name__}.",
-                ) from exc
+                ) from None
             self._ensure_schema(create=create)
         except BaseException as exc:
-            # No object exists to ask, so the failure carries whether this run made the
-            # file; the caller removes a stub only if it did.
-            exc.vault_created = self.created  # type: ignore[attr-defined]
+            # No object exists to ask, so a failure that left this run holding a vault it
+            # created hands the caller `vault_discard`, which removes the stub under the lock.
+            # Any other failure releases the lock here.
+            if self.created and self._lock_fd is not None:
+                exc.vault_discard = self.discard_unwritten  # type: ignore[attr-defined]
+            else:
+                self._release_lock()
             raise
 
     @property
@@ -308,9 +335,44 @@ class LocalTokenVault:
         """Make accumulated writes durable. Call only after the run succeeds."""
         self._conn.commit()
 
+    def _release_lock(self) -> None:
+        if self._lock_fd is not None:
+            os.close(self._lock_fd)
+            self._lock_fd = None
+
+    def discard_unwritten(self) -> None:
+        """Remove the vault file if this run created it and no run committed mappings to it.
+
+        Runs under the writer lock. A run that opened the file in the gap before this run took
+        the lock may have committed rows; those are kept. Always releases the lock.
+        """
+        try:
+            if self.created:
+                conn = getattr(self, "_conn", None)
+                if conn is None:
+                    # The open failed before a connection existed; a committed vault is
+                    # never empty on disk, a stub is.
+                    unwritten = self._path.stat().st_size == 0
+                else:
+                    conn.rollback()
+                    tables = conn.execute(
+                        "SELECT 1 FROM sqlite_master WHERE name = 'token_map'"
+                    ).fetchone()
+                    unwritten = tables is None or (
+                        conn.execute("SELECT 1 FROM token_map LIMIT 1").fetchone() is None
+                    )
+                    conn.close()
+                if unwritten:
+                    self._path.unlink(missing_ok=True)
+        finally:
+            self._release_lock()
+
     def close(self) -> None:
-        """Close the connection, discarding any uncommitted writes."""
-        self._conn.close()
+        """Close the connection, discarding any uncommitted writes, and release the lock."""
+        try:
+            self._conn.close()
+        finally:
+            self._release_lock()
 
     def __enter__(self) -> LocalTokenVault:
         return self

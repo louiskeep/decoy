@@ -152,14 +152,39 @@ def test_an_existing_vault_is_refused_before_the_masking_step(
         calls.append(1)
         return real(*args, **kwargs)
 
+    import decoy_engine.execution as engine_execution
+
+    from decoy.cli.run import _prepare
+
+    def _spy_other(name: str, real_fn):
+        def _wrapped(*args, **kwargs):
+            calls.append(name)
+            return real_fn(*args, **kwargs)
+
+        return _wrapped
+
     monkeypatch.setattr(decoy_engine, "run_pipeline", _spy)
+    monkeypatch.setattr(
+        _prepare, "acquire_relation", _spy_other("acquire_relation", _prepare.acquire_relation)
+    )
+    monkeypatch.setattr(
+        engine_execution,
+        "estimate_job_capacity",
+        _spy_other("estimate_job_capacity", engine_execution.estimate_job_capacity),
+    )
     root = tmp_path / "second"
     for extra in ([], ["--json"]):
         result = runner.invoke(app, ["run", str(_pipeline(root)), "--vault", str(vault), *extra])
         assert result.exit_code == EXIT_USAGE, result.output
         assert "vault_exists" in result.output
         assert not list(root.rglob("out.csv"))
-    assert calls == [], "the pipeline ran before the existing vault was refused"
+    # A source that cannot be read must not win over the taken vault path.
+    broken = _pipeline(tmp_path / "broken")
+    (tmp_path / "broken" / "a.csv").unlink()
+    result = runner.invoke(app, ["run", str(broken), "--vault", str(vault)])
+    assert result.exit_code == EXIT_USAGE, result.output
+    assert "vault_exists" in result.output
+    assert calls == [], f"work ran before the existing vault was refused: {calls}"
     assert vault.read_bytes() == b"keep"
 
 
@@ -282,3 +307,51 @@ def test_a_failed_tokenize_never_deletes_a_vault_it_did_not_create(
     assert result.exit_code == EXIT_RUNTIME, result.output
     monkeypatch.undo()
     assert vault.read_bytes() == before, "a vault this run did not create was removed"
+
+
+def test_a_creator_that_fails_keeps_the_vault_a_concurrent_run_committed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A creates the file, B opens it and commits, A then fails: B's vault must survive."""
+    import decoy_engine
+
+    from decoy.cli import _token_vault
+
+    cfg = _pipeline(tmp_path, strategy="tokenize")
+    vault = tmp_path / "t.db"
+    real_create = _token_vault.create_private_exclusive
+    inner: list = []
+    real_run = decoy_engine.run_pipeline
+
+    def _create_then_let_b_finish(path: Path) -> bool:
+        made = real_create(path)
+        if made and not inner:
+            inner.append(runner.invoke(app, ["tokenize", str(cfg), "--vault", str(vault)]))
+        return made
+
+    def _fail_for_a(*args, **kwargs):
+        if inner:  # A's own pipeline call, after B finished
+            raise RuntimeError(CANARY)
+        return real_run(*args, **kwargs)
+
+    monkeypatch.setattr(_token_vault, "create_private_exclusive", _create_then_let_b_finish)
+    monkeypatch.setattr(decoy_engine, "run_pipeline", _fail_for_a)
+    result = runner.invoke(app, ["tokenize", str(cfg), "--vault", str(vault)])
+    assert inner and inner[0].exit_code == 0, inner[0].output
+    assert result.exit_code == EXIT_RUNTIME, result.output
+    assert vault.exists(), "A deleted the vault B had committed"
+    with _token_vault.LocalTokenVault(vault, create=False) as kept:
+        assert kept.count() > 0
+
+
+def test_a_second_tokenize_is_refused_while_another_holds_the_vault(tmp_path: Path) -> None:
+    from decoy.cli import _token_vault
+
+    cfg = _pipeline(tmp_path, strategy="tokenize")
+    vault = tmp_path / "t.db"
+    with _token_vault.LocalTokenVault(vault, create=True):
+        result = runner.invoke(app, ["tokenize", str(cfg), "--vault", str(vault)])
+        assert result.exit_code == EXIT_USAGE, result.output
+        assert "vault_busy" in result.output
+        assert not list(tmp_path.rglob("out.csv"))
+    assert vault.exists()

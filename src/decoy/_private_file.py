@@ -5,6 +5,12 @@ here means one module changes when Windows gets real ACLs: `apply_mode`, `create
 and `open_private` are the three functions to replace. Today the Windows branch keeps the
 documented behavior, a file that inherits its folder's permissions.
 
+`create_private_exclusive` and `lock_exclusive` give a writer of a shared file a race-free "I
+created it" and "I am the only writer" answer; the token vault uses both. The writer lock is an
+advisory `flock` on POSIX and a one-byte `msvcrt` lock on Windows, taken on a separate lock
+file so SQLite's own locks on the database never meet it (on macOS they would). The Windows
+branch is untested here.
+
 The creation recipe mirrors the engine's `fileaccess/_private.py` (exclusive create, no
 symlink at the created name, narrow by descriptor) without its file-access policy, so it runs
 where the CLI runs. Sources: POSIX `open` and `umask` (a create mode can only lose bits to the
@@ -33,6 +39,7 @@ import tempfile
 from pathlib import Path
 
 __all__ = [
+    "PRIVATE_BUSY",
     "PRIVATE_EXISTS",
     "PRIVATE_MODE_FAILED",
     "PRIVATE_OPEN_FAILED",
@@ -40,7 +47,9 @@ __all__ = [
     "apply_mode",
     "create_exclusive",
     "create_private_directory",
+    "create_private_exclusive",
     "create_private_temp",
+    "lock_exclusive",
     "open_private",
     "restrict_owner_only",
 ]
@@ -48,6 +57,7 @@ __all__ = [
 PRIVATE_OPEN_FAILED = "private_open_failed"
 PRIVATE_MODE_FAILED = "private_mode_failed"
 PRIVATE_EXISTS = "private_exists"
+PRIVATE_BUSY = "private_busy"
 
 _WINDOWS = sys.platform == "win32"
 _OWNER_FILE = 0o600
@@ -188,6 +198,40 @@ def create_private_exclusive(path: Path) -> bool:
         return False
     os.close(fd)
     return True
+
+
+def lock_exclusive(path: Path) -> int:
+    """Take a non-blocking exclusive writer lock on the file `path`; return its descriptor.
+
+    Creates `path` owner-only if absent and leaves it in place on release. The lock lasts
+    until the caller `os.close`s the descriptor (or the process exits), so a second writer is
+    refused for the whole life of the first, in this process or another. Opens with
+    `O_NOFOLLOW`. Raises `PrivateFileError` with `PRIVATE_BUSY` when another holder has it,
+    `PRIVATE_OPEN_FAILED` on any other failure.
+    """
+    code: str | None = None
+    failed_errno: int | None = None
+    fd = -1
+    flags = os.O_RDWR | os.O_CREAT | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_BINARY", 0)
+    try:
+        fd = os.open(path, flags, _OWNER_FILE)
+        if _WINDOWS:
+            import msvcrt
+
+            msvcrt.locking(fd, msvcrt.LK_NBLCK, 1)  # type: ignore[attr-defined]
+        else:
+            import fcntl
+
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError as exc:
+        busy = exc.errno in (errno.EACCES, errno.EAGAIN, errno.EWOULDBLOCK, errno.EDEADLK)
+        code = PRIVATE_BUSY if busy and fd >= 0 else PRIVATE_OPEN_FAILED
+        failed_errno = exc.errno
+    if code is not None:
+        if fd >= 0:
+            os.close(fd)
+        raise PrivateFileError(code, failed_errno)
+    return fd
 
 
 def _restrict_directory(directory: Path) -> None:
