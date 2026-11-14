@@ -47,6 +47,7 @@ from decoy.cli.io._layout import (
     relative_outputs,
     shown_path,
     side_file_default,
+    side_file_name,
     target_parent_writable,
     write_claim,
 )
@@ -217,6 +218,7 @@ __all__ = [
     "select_table",
     "shown_path",
     "side_file_default",
+    "side_file_name",
     "source_schema_and_chunks",
     "table_records",
     "target_format_issues",

@@ -413,9 +413,9 @@ def test_an_unknown_upstream_code_never_reaches_any_report_format(
 
 
 def test_importing_the_ci_modules_does_not_import_the_engine() -> None:
-    """`decoy ci` first imports the engine inside engine_logging_silenced, from a scratch cwd,
-    so the engine's cwd-relative log file never lands in the checked repository. The allowlist
-    must therefore derive the registry half on first use, not when the module is imported."""
+    """`decoy ci` first imports the engine inside engine_logging_silenced, so the engine's logger
+    is quiet before anything can log. The allowlist must therefore derive the registry half on
+    first use, not when the module is imported."""
     import subprocess
     import sys
 

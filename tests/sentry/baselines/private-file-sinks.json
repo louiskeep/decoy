@@ -2,10 +2,6 @@
  "sentry_id": "private-file-sinks",
  "created_in": "X7c-S3",
  "entries": {
-  "ci/engine_logging.py::engine_logging_silenced::tempfile.TemporaryDirectory::1": {
-   "reason": "Scratch directory for engine log files; the stdlib makes it 0700 on POSIX.",
-   "exit": "WIN-FEAS"
-  },
   "cli/_duckdb_source.py::acquire_relation::execute.copy_to::1": {
    "reason": "COPY writes the unmasked source table into the 0700 spill directory run.py makes; the file takes the umask mode inside it.",
    "exit": "WIN-FEAS"

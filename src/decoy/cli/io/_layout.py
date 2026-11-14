@@ -140,6 +140,11 @@ _SIDE_SUFFIX: dict[str, str] = {
 }
 
 
+def side_file_name(kind: SideKind, stem: str) -> str:
+    """The default name of a side file for a file stem: the one place the suffixes join a stem."""
+    return f"{stem}{_SIDE_SUFFIX[kind]}"
+
+
 def side_file_default(kind: SideKind, input_path: Path, *, parquet: bool = False) -> Path:
     """The default side file beside its input; `current` is resolved first. Unknown kind: `KeyError`."""
     suffix = ".detokenized.parquet" if parquet and kind == "detokenized" else _SIDE_SUFFIX[kind]
