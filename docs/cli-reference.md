@@ -86,15 +86,16 @@ counted on stderr and never stop it. There is no flag to skip the check.
 **Usage**:
 
 ```console
-$ decoy run [OPTIONS] CONFIG
+$ decoy run [OPTIONS] [CONFIG]
 ```
 
 **Arguments**:
 
-* `CONFIG`: Path or name of the YAML pipeline config (a name is looked up in the project).  [required]
+* `[CONFIG]`: Path or name of the YAML pipeline config (a name is looked up in the project). Optional when the project has exactly one pipeline.
 
 **Options**:
 
+* `--all`: Run every pipeline of the project, one process each, in name order. The exit code is the worst child&#x27;s (3, then 5, 1, 4, 2, 0). Takes no pipeline name and refuses --evidence-out, --vault and --out-dir.
 * `-m, --mode [mask|generate]`: Operation: mask existing data or generate synthetic data.  [default: mask]
 * `--json`: Emit a structured JSON result on stdout. Progress goes to stderr.
 * `-q, --quiet`: Suppress stdout. Errors still go to stderr; exit code carries success.
@@ -126,6 +127,12 @@ Examples:
 
   decoy run pipeline.yaml
     Run with default mode (mask).
+
+  decoy run
+    In a project with exactly one pipeline, run it.
+
+  decoy run --all
+    Run every pipeline of the project, one process each, in name order.
 
   decoy run generate.yaml --rows 5
     Preview a generate pipeline: the largest table at 5 rows, the others in proportion.

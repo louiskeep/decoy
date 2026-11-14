@@ -10,6 +10,7 @@ import typer
 
 from decoy.cli.project._list import LIST_EPILOG, list_command
 from decoy.cli.project._new import NEW_EPILOG, create_project, new_command
+from decoy.cli.project._run_all import only_pipeline, run_all
 from decoy.cli.project._show import SHOW_EPILOG, show_command
 
 project_app = typer.Typer(
@@ -22,4 +23,4 @@ project_app.command(name="new", epilog=NEW_EPILOG)(new_command)
 project_app.command(name="show", epilog=SHOW_EPILOG)(show_command)
 project_app.command(name="list", epilog=LIST_EPILOG)(list_command)
 
-__all__ = ["create_project", "project_app"]
+__all__ = ["create_project", "only_pipeline", "project_app", "run_all"]

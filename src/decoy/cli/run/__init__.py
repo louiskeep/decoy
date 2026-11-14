@@ -47,6 +47,12 @@ Examples:
   decoy run pipeline.yaml
     Run with default mode (mask).
 
+  decoy run
+    In a project with exactly one pipeline, run it.
+
+  decoy run --all
+    Run every pipeline of the project, one process each, in name order.
+
   decoy run generate.yaml --rows 5
     Preview a generate pipeline: the largest table at 5 rows, the others in proportion.
     Prints the rows and writes nothing.
@@ -101,8 +107,22 @@ See also: decoy validate compile --explain, decoy report fidelity, decoy validat
 
 
 def run(
+    ctx: typer.Context,
     config: str = pipeline_argument(
-        help="Path or name of the YAML pipeline config (a name is looked up in the project).",
+        help=(
+            "Path or name of the YAML pipeline config (a name is looked up in the project). "
+            "Optional when the project has exactly one pipeline."
+        ),
+        optional=True,
+    ),
+    all_: bool = typer.Option(
+        False,
+        "--all",
+        help=(
+            "Run every pipeline of the project, one process each, in name order. The exit "
+            "code is the worst child's (3, then 5, 1, 4, 2, 0). Takes no pipeline name and "
+            "refuses --evidence-out, --vault and --out-dir."
+        ),
     ),
     mode: Mode = typer.Option(
         Mode.mask,
@@ -378,8 +398,9 @@ def run(
     _flow.execute(
         RunContext(
             state=state,
-            config=ref.yaml,
-            given_as=ref.given_as,
+            pipeline=ref,
+            all_=all_,
+            cli=ctx,
             mode=mode,
             json_=json_,
             quiet=quiet,

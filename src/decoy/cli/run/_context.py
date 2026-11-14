@@ -12,9 +12,11 @@ from enum import Enum
 from pathlib import Path
 from typing import Any
 
+import typer
+
 from decoy import _native_gate, _resources
 from decoy.cli.gate import GateFinding
-from decoy.cli.io import RunLayout
+from decoy.cli.io import PipelineRef, RunLayout
 from decoy.ui.output import OutputState
 
 # Rows per chunk when `--chunk-size` is not given. The option has no default of its own so a
@@ -42,7 +44,9 @@ class RunContext:
     """Options, then the state each phase sets for the next; see the module docstring."""
 
     # The 26 options of `decoy run`, as `run()` receives them.
-    config: Path
+    pipeline: PipelineRef | None
+    all_: bool
+    cli: typer.Context
     mode: Mode
     json_: bool
     quiet: bool
@@ -69,7 +73,10 @@ class RunContext:
     otel_endpoint: str
     rows: int | None
     state: OutputState
-    given_as: str = "path"  # "name" when the pipeline was given as a project name
+
+    # Set by `_flow.execute` from `pipeline`, or from the project's only pipeline.
+    config: Path = field(init=False)
+    given_as: str = field(init=False, default="path")  # "name" for a project name
 
     # Set before the try block.
     config_str: str = field(init=False)

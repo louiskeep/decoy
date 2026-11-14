@@ -8,6 +8,7 @@ import typer
 
 from decoy._private_file import PrivateFileError
 from decoy.cli.io import RunLayout, mint_invocation_id
+from decoy.cli.project import only_pipeline, run_all
 from decoy.cli.run import _errors, _evidence, _execute, _prepare, _render
 from decoy.cli.run._context import RunContext
 from decoy.cli.run._notify import (
@@ -27,8 +28,65 @@ from decoy.cli.run._prepare import (
 from decoy.ui.progress import spinner
 
 
+def _child_flags(ctx: RunContext) -> list[str]:
+    """The options each `--all` child gets. The master key goes by environment, never argv."""
+    flags = ["--mode", ctx.mode.value, "--notify-on", ctx.notify_on.value]
+    valued = (
+        ("--mask-secret", ctx.mask_secret),
+        ("--chunk-size", ctx.chunk_size),
+        ("--max-memory", ctx.max_memory),
+        ("--threads", ctx.threads),
+        ("--key-label", ctx.key_label),
+        ("--otel-endpoint", ctx.otel_endpoint),
+        ("--rows", ctx.rows),
+    )
+    for flag, value in valued:
+        if value is not None:
+            flags += [flag, str(value)]
+    for flag, values in (("--notify", ctx.notify), ("--duckdb-source", ctx.duckdb_source)):
+        for value in values:
+            flags += [flag, value]
+    switches = (
+        ("-v", ctx.verbose),
+        ("--chunked", ctx.chunked),
+        ("--native", ctx.native),
+        ("--no-native", ctx.no_native),
+        ("--explain-plan", ctx.explain_plan),
+        ("--fidelity", ctx.fidelity),
+        ("--post-validate", ctx.post_validate),
+        ("--post-validate-enforce", ctx.post_validate_enforce),
+    )
+    return flags + [flag for flag, on in switches if on]
+
+
+def _bind_pipeline(ctx: RunContext) -> None:
+    """Fan out for `--all`, else settle which YAML this process runs (given, or the only one)."""
+    if ctx.all_:
+        refused = [
+            flag
+            for flag, value in (
+                ("--evidence-out", ctx.evidence_out),
+                ("--vault", ctx.vault),
+                ("--out-dir", ctx.out_dir),
+            )
+            if value is not None
+        ]
+        key = {"DECOY_MASTER_KEY": ctx.master_key} if ctx.master_key is not None else {}
+        run_all(
+            ctx.state,
+            ctx.cli,
+            named=ctx.pipeline is not None,
+            refused=refused,
+            flags=_child_flags(ctx),
+            env=key,
+        )
+    ref = ctx.pipeline if ctx.pipeline is not None else only_pipeline(ctx.state, ctx.cli)
+    ctx.config, ctx.given_as = ref.yaml, ref.given_as
+
+
 def execute(ctx: RunContext) -> None:
     """Run the phases in order. Everything after the `try` runs only on success."""
+    _bind_pipeline(ctx)
     ctx.invocation_id = mint_invocation_id()
     ctx.config_str = str(ctx.config)
 
