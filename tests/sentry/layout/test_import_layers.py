@@ -47,7 +47,7 @@ LAYERS: tuple[str, ...] = (
     "cli : _update_check",
     "ci | _resources",
     "ui | distribution | notify | telemetry | templates",
-    "_mask_secret | _mask_secret_guidance | _native_gate | _atomic | _row_sample",
+    "_mask_secret | _mask_secret_guidance | _native_gate | _atomic | _row_sample | _env_flags",
     "_private_file | _version",
 )
 

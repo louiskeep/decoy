@@ -7,7 +7,6 @@ and writes through the returned `OutputState`. See CLI_UX_GUIDE.md section 4.
 from __future__ import annotations
 
 import json as _json
-import os
 import sys
 import warnings
 from dataclasses import dataclass
@@ -18,6 +17,7 @@ from rich.cells import cell_len
 from rich.console import Console, ConsoleOptions, RenderableType, RenderResult
 from rich.traceback import Trace, Traceback
 
+from decoy._env_flags import no_color
 from decoy.cli.exit_codes import EXIT_USAGE
 from decoy.ui.theme import DECOY_THEME, error, hint
 
@@ -44,12 +44,11 @@ def _make_console(*, stderr: bool) -> Console:
     path, which breaks log greps. It is for lines only: no `Panel` or `Table` goes to it,
     because soft wrap would crop their cell text. Stdout keeps Rich's own layout.
     """
-    no_color = os.environ.get("NO_COLOR") is not None
     return Console(
         stderr=stderr,
         soft_wrap=stderr,
         theme=DECOY_THEME,
-        no_color=no_color,
+        no_color=no_color(),
         highlight=False,
     )
 
@@ -163,4 +162,14 @@ def emit_json(state: OutputState, payload: dict) -> None:
 
 
 def emit_json_document(state: OutputState, doc: object, *, indent: int | None) -> None:
-    return None
+    """Write one raw JSON document to stdout in default mode.
+
+    This is the document a user pipes to a file (`decoy schema`, `decoy scan --output -`), not
+    the `--json` envelope. In `--json` mode stdout belongs to the envelope and in `--quiet`
+    mode to nothing, so a call there is a bug in the caller, not a case to ignore. The message
+    names no part of the document.
+    """
+    if state.mode is not OutputMode.default:
+        raise ValueError("emit_json_document writes only in default output mode.")
+    sys.stdout.write(_json.dumps(doc, indent=indent) + "\n")
+    sys.stdout.flush()

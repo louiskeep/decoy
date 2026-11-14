@@ -77,7 +77,9 @@ def test_is_ci_true(monkeypatch: pytest.MonkeyPatch, value: str) -> None:
     assert _env_flags.is_ci() is True
 
 
-@pytest.mark.parametrize(("value", "expected"), [(None, False), ("", False), ("1", True), ("x", True)])
+@pytest.mark.parametrize(
+    ("value", "expected"), [(None, False), ("", False), ("1", True), ("x", True)]
+)
 def test_no_color_is_any_non_empty_value(
     monkeypatch: pytest.MonkeyPatch, value: str | None, expected: bool
 ) -> None:
@@ -117,7 +119,9 @@ class _Tty:
         return True
 
 
-@pytest.mark.parametrize(("value", "ci"), [("false", False), ("0", False), ("true", True), ("1", True)])
+@pytest.mark.parametrize(
+    ("value", "ci"), [("false", False), ("0", False), ("true", True), ("1", True)]
+)
 def test_update_check_reads_ci_through_the_one_rule(
     monkeypatch: pytest.MonkeyPatch, value: str, ci: bool
 ) -> None:

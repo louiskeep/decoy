@@ -8,13 +8,12 @@ schema file for IDE auto-complete.
 from __future__ import annotations
 
 import json as _json
-import sys
 from pathlib import Path
 from typing import Optional
 
 import typer
 
-from decoy.ui.output import OutputMode, emit_json, setup_output
+from decoy.ui.output import OutputMode, emit_json, emit_json_document, setup_output
 
 _SCHEMA_EPILOG = """\
 Examples:
@@ -65,9 +64,7 @@ def schema(
         # Compose --output and --json: when --json is set, write the envelope;
         # otherwise write the raw schema. Both go to the file, not stdout.
         if state.mode is OutputMode.json:
-            content = _json.dumps(
-                {"command": "schema", "status": "ok", "schema": schema_dict}
-            )
+            content = _json.dumps({"command": "schema", "status": "ok", "schema": schema_dict})
         else:
             content = _json.dumps(schema_dict, indent=2)
         output.write_text(content, encoding="utf-8")
@@ -88,5 +85,4 @@ def schema(
         return
 
     # Default mode: raw indented JSON so it pipes cleanly to a file.
-    sys.stdout.write(_json.dumps(schema_dict, indent=2))
-    sys.stdout.write("\n")
+    emit_json_document(state, schema_dict, indent=2)

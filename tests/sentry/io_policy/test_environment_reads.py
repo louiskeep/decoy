@@ -42,20 +42,33 @@ ALLOWLIST: tuple[AllowedRead, ...] = (
     AllowedRead(
         "distribution/release_key.py", "pinned_public_pem", "DECOY_RELEASE_PUBKEY_FILE", "a path"
     ),
-    AllowedRead("distribution/layout.py", "managed_home", "DECOY_HOME", "a path"),
-    AllowedRead("distribution/layout.py", "bin_dir", "DECOY_BIN_DIR", "a path"),
+    AllowedRead("distribution/layout.py", "decoy_home", "DECOY_HOME", "a path"),
+    AllowedRead("distribution/layout.py", "launcher_bin_dir", "DECOY_BIN_DIR", "a path"),
     AllowedRead("cli/io/_pipelines.py", "_env_project", "DECOY_PROJECT", "a path"),
     AllowedRead("ci/_git.py", "git_env", DYNAMIC, "copies a fixed list of names into a child env"),
-    AllowedRead("cli/run/_notify.py", "_otel_endpoint", "DECOY_OTEL_ENDPOINT", "a URL"),
-    AllowedRead("cli/run/_notify.py", "_otel_headers", "DECOY_OTEL_HEADERS", "a header secret"),
+    AllowedRead("cli/run/_notify.py", "_start_telemetry", "DECOY_OTEL_ENDPOINT", "a URL"),
+    AllowedRead("cli/run/_notify.py", "_start_telemetry", "DECOY_OTEL_HEADERS", "a header secret"),
     AllowedRead(
-        "cli/run/_notify.py", "_smtp_target", "DECOY_NOTIFY_WEBHOOK_SECRET", "a signing secret"
+        "cli/run/_notify.py",
+        "_dispatch_run_notifications",
+        "DECOY_NOTIFY_WEBHOOK_SECRET",
+        "a signing secret",
     ),
-    AllowedRead("cli/run/_notify.py", "_smtp_target", "DECOY_NOTIFY_SMTP_HOST", "a host name"),
-    AllowedRead("cli/run/_notify.py", "_smtp_target", "DECOY_NOTIFY_SMTP_PORT", "a number"),
-    AllowedRead("cli/run/_notify.py", "_smtp_target", "DECOY_NOTIFY_SMTP_USER", "a user name"),
-    AllowedRead("cli/run/_notify.py", "_smtp_target", "DECOY_NOTIFY_SMTP_PASS", "a secret"),
-    AllowedRead("cli/run/_notify.py", "_smtp_target", "DECOY_NOTIFY_SMTP_FROM", "an address"),
+    AllowedRead(
+        "cli/run/_notify.py", "_dispatch_run_notifications", "DECOY_NOTIFY_SMTP_HOST", "a host name"
+    ),
+    AllowedRead(
+        "cli/run/_notify.py", "_dispatch_run_notifications", "DECOY_NOTIFY_SMTP_PORT", "a number"
+    ),
+    AllowedRead(
+        "cli/run/_notify.py", "_dispatch_run_notifications", "DECOY_NOTIFY_SMTP_USER", "a user name"
+    ),
+    AllowedRead(
+        "cli/run/_notify.py", "_dispatch_run_notifications", "DECOY_NOTIFY_SMTP_PASS", "a secret"
+    ),
+    AllowedRead(
+        "cli/run/_notify.py", "_dispatch_run_notifications", "DECOY_NOTIFY_SMTP_FROM", "an address"
+    ),
 )
 
 
@@ -80,8 +93,8 @@ def reads_in_source(source: str, rel: str) -> set[tuple[str, str, str]]:
             found.add((rel, s.scope, _first_arg(call)))
         elif name == "os.environ" and isinstance(parent, ast.Subscript) and parent.value is s.node:
             key = parent.slice
-            literal = isinstance(key, ast.Constant) and isinstance(key.value, str)
-            found.add((rel, s.scope, key.value if literal else DYNAMIC))  # type: ignore[union-attr]
+            named = key.value if isinstance(key, ast.Constant) else None
+            found.add((rel, s.scope, named if isinstance(named, str) else DYNAMIC))
     return found
 
 
