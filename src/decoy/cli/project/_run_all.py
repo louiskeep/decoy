@@ -106,7 +106,7 @@ def only_pipeline(state: OutputState, ctx: typer.Context) -> PipelineRef:
     _fail(state, failure.message, code=failure.code)
 
 
-def _effective(returncode: int, payload: object) -> int:
+def _effective(returncode: int | None, payload: object) -> int:
     """The exit code to count for one child: its own when it is a run code and its JSON parsed."""
     if returncode in _RUN_CODES and isinstance(payload, dict):
         return returncode
@@ -120,7 +120,8 @@ def _parse(stdout: str | None) -> object:
         return None
 
 
-def _record(name: str, returncode: int, payload: object) -> tuple[int, dict]:
+def _record(name: str, returncode: int | None, payload: object) -> tuple[int, dict]:
+    """One child's exit code and record. `returncode` is None when it could not be started."""
     code = _effective(returncode, payload)
     if isinstance(payload, dict) and code == returncode:
         return code, {**payload, "exit_code": code}
@@ -129,7 +130,11 @@ def _record(name: str, returncode: int, payload: object) -> tuple[int, dict]:
         "status": "failed",
         "name": name,
         "exit_code": code,
-        "error": f"The run of {name} did not finish cleanly (process status {returncode}).",
+        "error": (
+            f"The run of {name} could not be started."
+            if returncode is None
+            else f"The run of {name} did not finish cleanly (process status {returncode})."
+        ),
     }
 
 
@@ -138,13 +143,15 @@ def _summary_code(codes: Sequence[int]) -> int:
 
 
 # `-m decoy` would put the current folder first on the import path, so a `decoy.py` or a
-# `decoy/` package inside a project would replace the installed CLI. `-c` with the first entry
-# dropped keeps the same entry point (`decoy.__main__:app`) and the parent's environment
-# (`-I` would drop `PYTHONPATH` and other variables a child needs).
+# `decoy/` package inside a project would replace the installed CLI. A `PYTHONPATH` of `.` or of
+# the project folder does the same, so the boot drops every path entry that resolves to the
+# working folder or to the project root (argv[2], after `--project`) and then runs the same
+# entry point (`decoy.__main__:app`). `-I` would also drop `PYTHONPATH` and other variables a
+# child needs, so the environment passes through.
 _CHILD_BOOT = (
-    "import sys\n"
-    "if sys.path and sys.path[0] in ('', '.'):\n"
-    "    del sys.path[0]\n"
+    "import os, sys\n"
+    "bad = {os.path.realpath(os.getcwd()), os.path.realpath(sys.argv[2])}\n"
+    "sys.path[:] = [p for p in sys.path if os.path.realpath(p or '.') not in bad]\n"
     "from decoy.__main__ import app\n"
     "app()\n"
 )
@@ -202,8 +209,14 @@ def run_all(
         if state.mode is OutputMode.default:
             line = f"Running pipeline {entry.name} ({position} of {len(entries)})"
             state.err_console.print(line, markup=False)
-        done = _child(project.root, entry, flags, env)
-        code, record = _record(entry.name, done.returncode, _parse(done.stdout))
+        returncode: int | None = None
+        stdout: str | None = None
+        try:
+            done = _child(project.root, entry, flags, env)
+            returncode, stdout = done.returncode, done.stdout
+        except OSError:
+            pass  # a child that cannot start counts as 3 below; the exception text is dropped
+        code, record = _record(entry.name, returncode, _parse(stdout))
         records.append(record)
         rows.append((entry.name, code, str(record.get("output_dir", "-"))))
     summary = _summary_code([code for _, code, _ in rows])
@@ -219,4 +232,7 @@ def run_all(
         emit_json(state, body)
     elif state.mode is OutputMode.default:
         _render(state, rows, summary)
+    elif summary != EXIT_OK:
+        failed = sum(1 for r in rows if r[1])
+        emit_error(state, "run", f"{failed} of {len(rows)} pipelines failed.")
     raise typer.Exit(code=summary)

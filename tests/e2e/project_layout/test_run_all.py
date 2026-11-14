@@ -94,8 +94,11 @@ def _runs(root: Path, name: str) -> list[Path]:
 class Spy:
     """Records each child process; `answers` maps a pipeline name to (exit code, stdout)."""
 
-    def __init__(self, answers: dict[str, tuple[int, str]] | None = None) -> None:
+    def __init__(
+        self, answers: dict[str, tuple[int, str]] | None = None, spawn_fails: set[str] = frozenset()
+    ) -> None:
         self.answers = answers
+        self.spawn_fails = spawn_fails
         self.calls: list[list[str]] = []
         self.envs: list[object] = []
         self.codes: list[int] = []
@@ -103,6 +106,9 @@ class Spy:
     def __call__(self, cmd: list[str], *args: object, **kwargs: object):
         self.calls.append([str(part) for part in cmd])
         self.envs.append(kwargs.get("env"))
+        if Path(str(cmd[cmd.index("run") + 1])).parent.name in self.spawn_fails:
+            self.codes.append(-1)
+            raise OSError("secret-row-value cannot be executed")
         if self.answers is None:
             done = REAL_RUN(cmd, *args, **kwargs)  # type: ignore[call-overload]
         else:
@@ -113,8 +119,12 @@ class Spy:
         return done
 
 
-def _spy(monkeypatch: pytest.MonkeyPatch, answers: dict[str, tuple[int, str]] | None = None) -> Spy:
-    spy = Spy(answers)
+def _spy(
+    monkeypatch: pytest.MonkeyPatch,
+    answers: dict[str, tuple[int, str]] | None = None,
+    spawn_fails: set[str] = frozenset(),
+) -> Spy:
+    spy = Spy(answers, spawn_fails)
     monkeypatch.setattr(subprocess, "run", spy)
     return spy
 
@@ -475,9 +485,10 @@ def test_the_fan_out_lives_in_the_project_package_and_spawns_processes() -> None
     assert "subprocess.run" in text
 
 
+@pytest.mark.parametrize("path_mode", ["unset", "dot", "project-root"])
 @pytest.mark.parametrize("shadow", ["decoy.py", "decoy/__init__.py", "typer.py"])
 def test_a_file_in_the_project_never_replaces_the_installed_cli(
-    tmp_path, monkeypatch, shadow: str
+    tmp_path, monkeypatch, shadow: str, path_mode: str
 ) -> None:
     root = _fake_project(tmp_path, ["alpha", "beta"])
     marker = tmp_path / "shadow-ran"
@@ -485,10 +496,44 @@ def test_a_file_in_the_project_never_replaces_the_installed_cli(
     target.parent.mkdir(exist_ok=True)
     target.write_text(f"open({str(marker)!r}, 'w').close()\n", encoding="utf-8")
     monkeypatch.chdir(root)
-    monkeypatch.setenv("PYTHONPATH", os.pathsep.join(p for p in sys.path if p and p != str(root)))
+    others = [p for p in sys.path if p and p != str(root)]
+    first = {"unset": [], "dot": ["."], "project-root": [str(root)]}[path_mode]
+    monkeypatch.setenv("PYTHONPATH", os.pathsep.join([*first, *others]))
     spy = _spy(monkeypatch)
     result = runner.invoke(app, ["run", "--all"])
     assert not marker.exists()
     assert result.exit_code == 0, result.output
     assert len(spy.calls) == 2
     assert all(len(_runs(root, name)) == 1 for name in ("alpha", "beta"))
+
+
+def test_a_child_that_cannot_start_counts_as_3_and_the_rest_still_run(tmp_path, monkeypatch):
+    root = _fake_project(tmp_path, ["alpha", "beta", "gamma"])
+    spy = _spy(
+        monkeypatch,
+        {"alpha": (0, _ok("alpha")), "gamma": (0, _ok("gamma"))},
+        spawn_fails={"beta"},
+    )
+    result = _run_all(root, "--json")
+    assert result.exit_code == 3, result.output
+    assert len(spy.calls) == 3
+    body = json.loads(result.stdout)
+    assert [p["exit_code"] for p in body["pipelines"]] == [0, 3, 0]
+    assert body["pipelines"][1]["name"] == "beta"
+    assert "secret-row-value" not in result.output
+
+
+def test_quiet_still_reports_a_failed_fan_out_on_stderr(tmp_path, monkeypatch) -> None:
+    root = _fake_project(tmp_path, ["alpha", "beta"])
+    _spy(monkeypatch, {"alpha": (0, _ok("alpha")), "beta": (4, _ok("beta"))})
+    result = _run_all(root, "--quiet")
+    assert result.exit_code == 4
+    assert "1 of 2 pipelines failed" in _flat(result.output)
+
+
+def test_quiet_prints_nothing_when_every_child_is_clean(tmp_path, monkeypatch) -> None:
+    root = _fake_project(tmp_path, ["alpha"])
+    _spy(monkeypatch, {"alpha": (0, _ok("alpha"))})
+    result = _run_all(root, "--quiet")
+    assert result.exit_code == 0
+    assert result.output.strip() == ""
