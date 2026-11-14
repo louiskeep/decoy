@@ -121,12 +121,30 @@ def test_bad_input_gives_one_schema_valid_error_object(files: Path, name: str) -
 
 # `init` failures that are not the generate scaffold: every one prints through `emit_error`.
 INIT_FAILURES: dict[str, list[str]] = {
-    "unknown preset": ["init", "--preset", "nosuch"],
+    "unknown preset": ["init", "--preset", "nosuch", "-o", "p.yaml"],
     "preset to stdout under json": ["init", "--preset", "minimal", "-o", "-"],
     "missing input": ["init", "missing.csv"],
     "overwrite refused": ["init", "--preset", "minimal", "-o", GOOD_CSV],
     "scaffold overwrite refused": ["init", GOOD_CSV, "-o", GOOD_CSV],
 }
+
+
+# The text each row must hit. Without `-o` the project check would pre-empt the intended refusal.
+INIT_FAILURE_TEXT = {
+    "unknown preset": "unknown preset",
+    "preset to stdout under json": "-o - prints the YAML on stdout",
+    "missing input": "does not exist",
+    "overwrite refused": "already exists",
+    "scaffold overwrite refused": "already exists",
+}
+
+
+@pytest.mark.parametrize("name", sorted(INIT_FAILURES))
+def test_init_failure_hits_its_intended_refusal(files: Path, name: str) -> None:
+    result = runner.invoke(app, [*INIT_FAILURES[name], "--json"])
+    payload = json.loads(result.stdout.strip().splitlines()[0])
+    assert INIT_FAILURE_TEXT[name] in payload["error"]
+    assert payload.get("code") != "layout.project_not_found"
 
 
 @pytest.mark.parametrize("name", sorted(INIT_FAILURES))

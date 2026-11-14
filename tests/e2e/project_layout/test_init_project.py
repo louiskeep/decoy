@@ -340,3 +340,81 @@ def test_a_planted_link_is_refused_and_the_outside_file_is_untouched(
     assert second.exit_code == EXIT_USAGE, second.output
     assert sorted(p.name for p in outside.iterdir()) == ["victim.yaml"]
     assert victim.read_text(encoding="utf-8") == "keep\n"
+
+
+def _people_csv(path: Path) -> Path:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    pd.DataFrame(
+        {
+            "first_name": ["Ann", "Bo"],
+            "last_name": ["Lee", "Roe"],
+            "email": ["a@x.test", "b@x.test"],
+            "ssn": ["111-22-3333", "222-33-4444"],
+            "account_status": ["open", "closed"],
+        }
+    ).to_csv(path, index=False)
+    return path
+
+
+def test_the_wizard_writes_a_typed_cwd_relative_source_relative_to_the_yaml(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root = _project(tmp_path)
+    _people_csv(root / "data" / "orders.csv")
+    monkeypatch.chdir(root)
+
+    result = runner.invoke(
+        app, ["init", "--preset", "minimal"], input="orders\ndata/orders.csv\n\n"
+    )
+
+    assert result.exit_code == EXIT_OK, result.output
+    doc = _doc(root / "pipelines" / "orders" / "pipeline.yaml")
+    (source_entry,) = doc["sources"].values()
+    assert source_entry["path"] == "../../data/orders.csv"
+    ran = runner.invoke(app, ["run", "orders", "--quiet"])
+    assert ran.exit_code == EXIT_OK, ran.output
+
+
+def test_the_wizard_with_output_file_writes_the_source_relative_to_that_file(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    work = tmp_path / "plain"
+    work.mkdir()
+    _people_csv(work / "orders.csv")
+    monkeypatch.chdir(work)
+
+    result = runner.invoke(
+        app, ["init", "--preset", "minimal", "-o", "sub/p.yaml"], input="orders.csv\n\n"
+    )
+
+    assert result.exit_code == EXIT_OK, result.output
+    (source_entry,) = _doc(work / "sub" / "p.yaml")["sources"].values()
+    assert source_entry["path"] == "../orders.csv"
+    ran = runner.invoke(app, ["run", "sub/p.yaml", "--quiet"])
+    assert ran.exit_code == EXIT_OK, ran.output
+
+
+def test_a_name_that_matches_an_extensionless_file_is_still_a_name(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root = _project(tmp_path)
+    (root / "orders").write_text("not data\n", encoding="utf-8")
+    monkeypatch.chdir(root)
+
+    result = runner.invoke(app, ["init", "orders", "--preset", "minimal", "--quiet"])
+
+    assert result.exit_code == EXIT_OK, result.output
+    assert (root / "pipelines" / "orders" / "pipeline.yaml").is_file()
+
+
+def test_a_failed_generate_fit_leaves_no_pipeline_folder(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root = _project(tmp_path)
+    (root / "empty.csv").write_text("", encoding="utf-8")
+    monkeypatch.chdir(root)
+
+    result = runner.invoke(app, ["init", "gen", "--preset", "generate", "--source", "empty.csv"])
+
+    assert result.exit_code != EXIT_OK
+    assert not (root / "pipelines" / "gen").exists()

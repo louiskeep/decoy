@@ -339,9 +339,13 @@ def test_every_template_with_a_source_is_path_edited():
 
 
 @pytest.mark.parametrize("preset", _PATHED_PRESETS)
-def test_typed_paths_reach_the_written_pipeline(tmp_path: Path, preset: str):
+def test_typed_paths_reach_the_written_pipeline(
+    tmp_path: Path, preset: str, monkeypatch: pytest.MonkeyPatch
+):
     from decoy_engine import PipelineConfig
 
+    # A typed source is relative to the current folder; with the YAML in it, it is written as typed.
+    monkeypatch.chdir(tmp_path)
     out = tmp_path / "pipeline.yaml"
     typed_in = "in #1/o'brien: x.csv"
     typed_out = "out dir/masked.csv"
