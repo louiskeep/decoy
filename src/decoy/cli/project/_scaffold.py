@@ -17,17 +17,24 @@ from __future__ import annotations
 
 import os
 import re
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
+from typing import NoReturn
 
+import typer
+
+from decoy.cli.exit_codes import EXIT_USAGE
 from decoy.cli.io import (
     PIPELINE_NAME_INVALID,
     PIPELINES_DIR,
     PROJECT_NOT_FOUND,
+    LayoutError,
     find_project,
     is_valid_name,
     member_yaml,
 )
+from decoy.ui.output import OutputMode, OutputState, emit_error
 
 DATA_SUFFIXES = (".csv", ".tsv", ".parquet", ".pq")
 _NAME_MAX = 56
@@ -190,6 +197,76 @@ def target_text(source: Path, file_format: str) -> str:
     return f"{source.stem}.masked{ext}"
 
 
+def _refuse(state: OutputState, failure: LayoutError | ScaffoldRefused) -> NoReturn:
+    """Print a placement refusal (a `layout.*` code or fixed text) and exit 1."""
+    emit_error(state, "init", failure.message, code=failure.code)
+    raise typer.Exit(code=EXIT_USAGE)
+
+
+def resolve_destination(
+    state: OutputState,
+    token: str | None,
+    source: Path | None,
+    out: Path | None,
+    explicit: Path | None,
+    *,
+    check_source: Callable[[Path], object] | None,
+) -> tuple[Argument, Placement]:
+    """Settle what `init` writes and where, before anything is read, asked or written.
+
+    `check_source` runs on a named source first (it exits on an unsupported file type). Inside a
+    project with nothing to name the pipeline after, the wizard asks for the name; `--json` and
+    `--quiet` cannot ask and exit 1. Exits 1 on any refusal.
+    """
+    refusal: LayoutError | ScaffoldRefused | None = None
+    argument: Argument | None = None
+    destination: Placement | None = None
+    try:
+        argument = split_argument(token, source)
+    except ScaffoldRefused as exc:
+        refusal = exc
+    if refusal is None and argument is not None and argument.source is not None:
+        if check_source is not None:
+            check_source(argument.source)
+    if refusal is None and argument is not None:
+        try:
+            destination = place(argument, out, explicit)
+        except (LayoutError, ScaffoldRefused) as exc:
+            refusal = exc
+    if refusal is not None:
+        _refuse(state, refusal)
+    assert argument is not None and destination is not None
+    if destination.is_member and destination.name is None and destination.root is not None:
+        if state.mode is not OutputMode.default:
+            emit_error(state, "init", "Give the pipeline a name: decoy init <name>.")
+            raise typer.Exit(code=EXIT_USAGE)
+        try:
+            destination = member_placement(destination.root, typer.prompt("Pipeline name").strip())
+        except LayoutError as exc:
+            refusal = exc
+        if refusal is not None:
+            _refuse(state, refusal)
+    return argument, destination
+
+
+def prepare(state: OutputState, destination: Placement) -> None:
+    """Make the folder the YAML is written into, or refuse with fixed text."""
+    problem: ScaffoldRefused | None = None
+    try:
+        prepare_folder(destination)
+    except ScaffoldRefused as exc:
+        problem = exc
+    if problem is not None:
+        _refuse(state, problem)
+
+
+def placed_members(destination: Placement) -> dict[str, str]:
+    """The `--json` members a project pipeline adds: its name and the project root."""
+    if destination.is_member and destination.name and destination.root:
+        return {"name": destination.name, "project": str(destination.root)}
+    return {}
+
+
 __all__ = [
     "DATA_SUFFIXES",
     "Argument",
@@ -197,7 +274,10 @@ __all__ = [
     "ScaffoldRefused",
     "member_placement",
     "place",
+    "placed_members",
+    "prepare",
     "prepare_folder",
+    "resolve_destination",
     "source_text",
     "split_argument",
     "target_text",

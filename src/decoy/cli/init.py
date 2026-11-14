@@ -18,7 +18,6 @@ binding choice.
 
 from __future__ import annotations
 
-import json as _json
 import re
 from pathlib import Path
 from typing import Any, NoReturn
@@ -31,16 +30,19 @@ from decoy.cli._init_inference import Inference, _infer_strategy_for_column
 from decoy.cli._sources import CSV_DIALECT_KEYS, csv_file_source
 from decoy.cli.completers import init_presets
 from decoy.cli.exit_codes import EXIT_RUNTIME, EXIT_USAGE
-from decoy.cli.io import LayoutError, explicit_project, shown_path
+from decoy.cli.io import explicit_project, shown_path
+from decoy.cli.project._columns import (
+    _emit_column_yaml,
+    _wrap_review_comment,  # noqa: F401  (tests import it from here)
+    _yaml_quote,
+    _yaml_scalar,
+)
 from decoy.cli.project._scaffold import (
-    Argument,
     Placement,
-    ScaffoldRefused,
-    member_placement,
-    place,
-    prepare_folder,
+    placed_members,
+    prepare,
+    resolve_destination,
     source_text,
-    split_argument,
     target_text,
 )
 from decoy.templates import get_template
@@ -52,19 +54,12 @@ _INIT_EPILOG = """\
 Examples:
 
   decoy init members-mask --source data/members.csv
-    In a project: STORM reads the file, picks a starter strategy per column, and writes
+    STORM reads the file, picks a starter strategy per column, and writes
     pipelines/members-mask/pipeline.yaml with `# REVIEW:` comments above every inferred entry.
-    The source is written relative to the pipeline when it is inside the project. Read and edit
-    before running. Then: decoy run members-mask
-
-  decoy init members.csv
-    The same, named after the file: pipelines/members/pipeline.yaml.
+    Read and edit before running. `decoy init members.csv` names it `members`.
 
   decoy init orders --preset hipaa
     Scaffold pipelines/orders/pipeline.yaml from the HIPAA template.
-
-  decoy init
-    In a project: ask for the pipeline name, the preset and the paths.
 
   decoy init customers.csv -o pipeline.yaml
     Write the YAML to a file of your choice, in or outside a project. Its source path is written
@@ -228,103 +223,6 @@ def _load_dataframe(input_file: Path):
     from decoy.cli._sources import read_file
 
     return read_file(input_file, "parquet", None, table=_TABLE_NAME)
-
-
-def _yaml_scalar(value: object) -> str:
-    """A dialect value as a YAML scalar: bools as true/false, text as a JSON-quoted string."""
-    return str(value).lower() if isinstance(value, bool) else _json.dumps(value)
-
-
-def _yaml_quote(value: str) -> str:
-    """Quote a string for the hand-emitted YAML.
-
-    Single-quoted style matches the bundled templates. Single quotes
-    inside the value are escaped by doubling, per the YAML 1.1 spec
-    section 5.3.2 (single-quoted scalars).
-    """
-    escaped = value.replace("'", "''")
-    return f"'{escaped}'"
-
-
-def _wrap_review_comment(review: str, indent: str) -> str:
-    """Wrap a REVIEW comment to ~80 columns and prefix `# REVIEW: ` to the
-    first line, plain `# ` to continuations.
-
-    Indent is the leading whitespace of the surrounding YAML node so
-    the comment lines up with the entry it annotates.
-    """
-    import textwrap
-
-    width = max(40, 80 - len(indent) - len("# REVIEW: "))
-    lines = textwrap.wrap(review, width=width) or [""]
-    out = [f"{indent}# REVIEW: {lines[0]}"]
-    for cont in lines[1:]:
-        out.append(f"{indent}#   {cont}")
-    return "\n".join(out)
-
-
-# Strategies that raise `<strategy>_requires_namespace` at RUNTIME
-# (execution/_strategies/*.py) when `ColumnConfig.namespace` is None.
-# `ColumnConfig.namespace` defaults to None and there is no compile-time
-# check, so a scaffold omitting `namespace:` for one of these passes
-# `decoy validate config` / `PipelineConfig.model_validate` cleanly and
-# then fails `decoy run` with exit 3. hash/fpe/date_shift are the
-# strategies this scaffolder currently emits; shuffle/categorical/
-# bucket_perturb/code_set are included for completeness/future-proofing
-# even though today's `_INFERENCE_TABLE` never picks them.
-_NAMESPACE_REQUIRED_STRATEGIES: frozenset[str] = frozenset(
-    {"hash", "fpe", "date_shift", "shuffle", "categorical", "bucket_perturb", "code_set"}
-)
-
-
-def _emit_column_yaml(name: str, inference: Inference, indent: str = "      ") -> str:
-    """Emit one column block: REVIEW comment + `- name: ...` body.
-
-    The shape matches engine `ColumnConfig` (decoy_engine.config._tables):
-    columns under tables[].columns carry name + strategy + (provider for
-    faker) + namespace (required for hash/fpe/date_shift/shuffle/
-    categorical/bucket_perturb/code_set -- see
-    `_NAMESPACE_REQUIRED_STRATEGIES`) + (provider_config for date_shift /
-    truncate / fpe -- ColumnConfig has no `params` field; extra="forbid"
-    rejects one). date_shift reads provider_config['min_days'] /
-    ['max_days'] (_strategies/_date_shift.py); truncate reads
-    provider_config['length'] (_strategies/_truncate.py -- 'keep' there is
-    a 'head'/'tail' direction flag, not a character count); fpe reads
-    provider_config['charset'] / ['validate_luhn']
-    (_strategies/_fpe.py) -- the scaffold emits charset: digits +
-    validate_luhn: true so masked PANs stay Luhn-valid, matching the
-    bundled PCI template (templates/pci.yaml).
-
-    Namespace value: the column name (`namespace: <name>`), verified to
-    validate and run. REVIEW: columns that SHARE a namespace mask
-    consistently (same source value -> same masked value across those
-    columns); the per-column default here gives every column its own
-    namespace, which is safe but does not give cross-column coherence
-    (e.g. two columns that both hold the same customer id). Edit the
-    namespace value by hand if you need that.
-    """
-    lines = [_wrap_review_comment(inference.review, indent)]
-    lines.append(f"{indent}- name: {name}")
-    body_indent = indent + "  "
-    lines.append(f"{body_indent}strategy: {inference.strategy}")
-    if inference.strategy == "faker" and inference.provider:
-        lines.append(f"{body_indent}provider: {inference.provider}")
-    if inference.strategy in _NAMESPACE_REQUIRED_STRATEGIES:
-        lines.append(f"{body_indent}namespace: {name}")
-    if inference.strategy == "date_shift":
-        lines.append(f"{body_indent}provider_config:")
-        lines.append(f"{body_indent}  min_days: -365")
-        lines.append(f"{body_indent}  max_days: 365")
-    elif inference.strategy == "truncate":
-        lines.append(f"{body_indent}provider_config:")
-        lines.append(f"{body_indent}  length: 3")
-    elif inference.strategy == "fpe":
-        lines.append(f"{body_indent}provider_config:")
-        lines.append(f"{body_indent}  charset: digits")
-        lines.append(f"{body_indent}  validate_luhn: true")
-    if inference.deterministic:
-        lines.append(f"{body_indent}deterministic: true")
-    return "\n".join(lines)
 
 
 def _build_scaffold_yaml(
@@ -524,16 +422,16 @@ def _init(
         None,
         metavar="[NAME|FILE]",
         help=(
-            "The pipeline's name, or a source file (.csv/.tsv/.parquet) to name it after. "
-            "With a file and no --preset, STORM scans it and scaffolds a column-aware pipeline "
-            "with `# REVIEW:` comments above every auto-inferred column."
+            "A short name, or a .csv, .tsv or .parquet data file to take the name from. "
+            "With a data file and no --preset, STORM scans it and scaffolds a column-aware "
+            "pipeline with `# REVIEW:` comments above every auto-inferred column."
         ),
         show_default=False,
     ),
     source: Path = typer.Option(
         None,
         "--source",
-        help="The source file (.csv/.tsv/.parquet) of the pipeline, when NAME is given.",
+        help="The data to scaffold from (.csv/.tsv/.parquet), when NAME is given.",
         show_default=False,
     ),
     out: Path = typer.Option(
@@ -577,34 +475,15 @@ def _init(
     state = setup_output(json_, quiet, verbose)
 
     # Placement is settled before anything is read, asked or written.
-    refusal: LayoutError | ScaffoldRefused | None = None
-    argument: Argument | None = None
-    destination: Placement | None = None
-    try:
-        argument = split_argument(token, source)
-        destination = place(argument, out, explicit_project(ctx))
-    except (LayoutError, ScaffoldRefused) as exc:
-        refusal = exc
-    if refusal is not None:
-        _refuse(state, refusal)
-    assert argument is not None and destination is not None
+    argument, destination = resolve_destination(
+        state,
+        token,
+        source,
+        out,
+        explicit_project(ctx),
+        check_source=None if preset == "generate" else lambda p: _supported_format(state, p),
+    )
     input_file = argument.source
-    if input_file is not None and preset != "generate":
-        _supported_format(state, input_file)
-
-    if destination.is_member and destination.name is None:
-        # Inside a project with nothing to name the pipeline after: the wizard asks.
-        if state.mode is not OutputMode.default:
-            emit_error(state, "init", "Give the pipeline a name: decoy init <name>.")
-            raise typer.Exit(code=EXIT_USAGE)
-        asked = typer.prompt("Pipeline name").strip()
-        try:
-            destination = member_placement(destination.root, asked)
-        except LayoutError as exc:
-            refusal = exc
-        if refusal is not None:
-            _refuse(state, refusal)
-        assert destination is not None
     out = destination.yaml if destination.yaml is not None else Path("-")
     # What the user types next: the pipeline's name in a project, else the file.
     next_ref = destination.name if destination.is_member and destination.name else str(out)
@@ -615,7 +494,7 @@ def _init(
         from decoy.cli.gen import scaffold_generate
 
         if destination.is_member:
-            _prepare(state, destination)
+            prepare(state, destination)
         scaffold_generate(state, input_file, out, yes=yes)
         return
 
@@ -625,16 +504,8 @@ def _init(
     if input_file is not None and preset is None:
         out_is_stdout = destination.is_stdout
 
-        if not out_is_stdout and out.exists() and not yes:
-            if state.mode is not OutputMode.default:
-                _refuse_overwrite(state, out)
-            size = out.stat().st_size
-            state.console.print(
-                f"This will overwrite {shown} ({size} bytes). Continue?",
-            )
-            if not typer.confirm("Overwrite?", default=False):
-                state.console.print(hint("aborted."))
-                raise typer.Exit(code=EXIT_USAGE)
+        if not out_is_stdout and not yes:
+            _confirm_overwrite(state, out, shown)
 
         body, column_count = _scaffold_from_file(
             input_file=input_file,
@@ -647,7 +518,7 @@ def _init(
             sys.stdout.write(body)
             return
 
-        _prepare(state, destination)
+        prepare(state, destination)
         out.write_text(body, encoding="utf-8")
 
         if state.mode is OutputMode.json:
@@ -660,7 +531,7 @@ def _init(
                     "source": str(input_file),
                     "mode": "scaffold-from-file",
                     "column_count": column_count,
-                    **_placed_members(destination),
+                    **placed_members(destination),
                 },
             )
             return
@@ -704,16 +575,8 @@ def _init(
         _template_to_stdout(state, preset)
         return
 
-    if out.exists() and not yes:
-        if state.mode is not OutputMode.default:
-            _refuse_overwrite(state, out)
-        size = out.stat().st_size
-        state.console.print(
-            f"This will overwrite {shown} ({size} bytes). Continue?",
-        )
-        if not typer.confirm("Overwrite?", default=False):
-            state.console.print(hint("aborted."))
-            raise typer.Exit(code=EXIT_USAGE)
+    if not yes:
+        _confirm_overwrite(state, out, shown)
 
     # A source named with a template: its paths go into the pathed presets.
     given_in, given_out = _preset_paths(state, input_file, destination)
@@ -722,7 +585,7 @@ def _init(
         # Non-interactive: produce a scaffold with the chosen (or default) preset.
         chosen = preset or "minimal"
         rendered = _render(chosen, given_in, given_out)
-        _prepare(state, destination)
+        prepare(state, destination)
         out.write_text(rendered, encoding="utf-8")
         emit_json(
             state,
@@ -732,7 +595,7 @@ def _init(
                 "out": str(out),
                 "preset": chosen,
                 "rule_count": _rule_count(rendered),
-                **_placed_members(destination),
+                **placed_members(destination),
             },
         )
         return
@@ -740,7 +603,7 @@ def _init(
     if state.mode is OutputMode.quiet:
         chosen = preset or "minimal"
         rendered = _render(chosen, given_in, given_out)
-        _prepare(state, destination)
+        prepare(state, destination)
         out.write_text(rendered, encoding="utf-8")
         return
 
@@ -783,37 +646,13 @@ def _init(
         emit_error(state, "init", str(exc))
         raise typer.Exit(code=EXIT_RUNTIME) from None
 
-    _prepare(state, destination)
+    prepare(state, destination)
     out.write_text(rendered, encoding="utf-8")
 
     state.console.print()
     state.console.print(success("OK"), "wrote", code(shown), "(preset:", code(chosen) + ")")
     state.console.print(hint("Next:"), code(f"decoy validate config {next_ref}"))
     _print_keyed_hint(state, rendered)
-
-
-def _refuse(state: OutputState, failure: LayoutError | ScaffoldRefused) -> NoReturn:
-    """Print a placement refusal (a `layout.*` code or fixed text) and exit 1."""
-    emit_error(state, "init", failure.message, code=failure.code)
-    raise typer.Exit(code=EXIT_USAGE)
-
-
-def _prepare(state: OutputState, destination: Placement) -> None:
-    """Make the folder the YAML is written into, or refuse with fixed text."""
-    problem: ScaffoldRefused | None = None
-    try:
-        prepare_folder(destination)
-    except ScaffoldRefused as exc:
-        problem = exc
-    if problem is not None:
-        _refuse(state, problem)
-
-
-def _placed_members(destination: Placement) -> dict[str, str]:
-    """The `--json` members a project pipeline adds: its name and the project root."""
-    if destination.is_member and destination.name and destination.root:
-        return {"name": destination.name, "project": str(destination.root)}
-    return {}
 
 
 def _supported_format(state: OutputState, source: Path) -> str:
@@ -838,6 +677,19 @@ def _preset_paths(
         return None, None
     file_format = _supported_format(state, source)
     return source_text(source, destination), target_text(source, file_format)
+
+
+def _confirm_overwrite(state: OutputState, out: Path, shown: str) -> None:
+    """An existing file needs a yes: `--json` and `--quiet` refuse, the wizard asks."""
+    if not out.exists():
+        return
+    if state.mode is not OutputMode.default:
+        _refuse_overwrite(state, out)
+    size = out.stat().st_size
+    state.console.print(f"This will overwrite {shown} ({size} bytes). Continue?")
+    if not typer.confirm("Overwrite?", default=False):
+        state.console.print(hint("aborted."))
+        raise typer.Exit(code=EXIT_USAGE)
 
 
 def _refuse_overwrite(state: OutputState, out: Path) -> NoReturn:

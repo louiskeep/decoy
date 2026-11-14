@@ -88,12 +88,6 @@ NAME_ALLOWLIST: tuple[AllowedSite, ...] = (
         "Snapshot name in the generate scaffold; moves with the scaffold in P7.",
     ),
     AllowedSite(
-        "cli/init.py",
-        "_scaffold_from_file",
-        1,
-        "Default masked target name in the mask scaffold; moves in P7.",
-    ),
-    AllowedSite(
         "cli/tokenize.py",
         "detokenize",
         1,
