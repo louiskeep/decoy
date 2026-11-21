@@ -2,6 +2,7 @@
 
 from functools import partial
 from pathlib import Path
+from typing import Any
 
 from decoy import _native_gate, _resources
 from decoy.cli import gen
@@ -12,6 +13,7 @@ from decoy.cli.io import (
     check_target_formats,
     duckdb_probe_config,
     iter_source_chunks,
+    lazy_sources,
     open_run_layout,
     parquet_schema,
     parse_flags,
@@ -262,8 +264,12 @@ def _require_local_io_endpoints(config_dict: dict) -> None:
     check_cloud_endpoints(config_dict)
 
 
-def _load_sources_from_config(config_dict: dict, base_dir: Path) -> dict:
+def _load_sources_from_config(config_dict: dict, base_dir: Path, *, lazy: bool = False) -> dict:
     """Read each `sources[table]` into a `dict[str, pa.Table]`.
+
+    With `lazy=True` (a plain `decoy run`) each source the engine has a lazy backend for comes
+    back as that `LazySource` instead, and `run_pipeline(resident_fallback=True)` reads whole
+    the ones it cannot keep lazy. `tokenize` and `mask()` keep the default and get tables.
 
     Reads each source by its declared `format` (csv, parquet, fixed_width).
     Sources without a `path` field are skipped (the engine treats absent tables as empty, but
@@ -280,16 +286,19 @@ def _load_sources_from_config(config_dict: dict, base_dir: Path) -> dict:
     check_target_formats(config_dict, chunked=False)
     prepared_sources(config_dict, base_dir=base_dir)
 
-    import pyarrow as pa
-
-    out: dict[str, pa.Table] = {}
+    out: dict[str, Any] = {}
     sources = config_dict.get("sources") or {}
     if not isinstance(sources, dict):
         return out
+    candidates = lazy_sources(config_dict, base_dir) if lazy else {}
     for table_name, src in sources.items():
         if not _native_gate.source_is_materialized(src):
             continue
-        out[table_name] = read_source(table_name, src, base_dir)
+        out[table_name] = (
+            candidates[table_name]
+            if table_name in candidates
+            else read_source(table_name, src, base_dir)
+        )
     return out
 
 
@@ -364,6 +373,9 @@ def execute(ctx: RunContext) -> None:
             instance_default_locale=instance_locale,
             vault_writer=ctx.vault_writer,
             base_dir=ctx.config.parent,
+            # The engine reads whole each lazy candidate it cannot keep lazy (vault, declared
+            # casting, relationship jobs without a bounded route, gated transforms).
+            resident_fallback=True,
             **_progress.run_pipeline_kwargs(run_pipeline, ctx.progress),
             quarantine_path=layout.place_quarantine(ctx.config_dict),
             # The config's `subset:` block stays as written; `--no-subset` only tells the engine

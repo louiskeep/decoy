@@ -103,6 +103,7 @@ from decoy.cli.io._layout_errors import (
     LayoutError,
     LayoutWarning,
 )
+from decoy.cli.io._lazy import lazy_sources
 from decoy.cli.io._pipelines import (
     PipelineEntry,
     PipelineRef,
@@ -244,6 +245,7 @@ __all__ = [
     "iter_source_chunks",
     "layout_failures",
     "layout_issues",
+    "lazy_sources",
     "list_pipelines",
     "load_detector_set",
     "load_scan_set",

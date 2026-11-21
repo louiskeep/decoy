@@ -578,7 +578,7 @@ def prepare(ctx: RunContext, _scopes: contextlib.ExitStack) -> None:
         _check_chunked_tables(ctx.config_dict)
         _note_chunked_key_check_skipped(ctx)
     else:
-        ctx.sources = _load_sources_from_config(ctx.config_dict, ctx.config.parent)
+        ctx.sources = _load_sources_from_config(ctx.config_dict, ctx.config.parent, lazy=True)
     # One admission per run: the vault writer and every engine entry get this
     # provider, so the secret is read once and output and vault share one key.
     ctx.key_provider = _scopes.enter_context(_mask_secret.admitted_key_provider(ctx.config_dict))

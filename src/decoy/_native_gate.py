@@ -422,6 +422,19 @@ def classify_route(
 
     activation = qm.get("unified_slice_activation")
     if activation is None:
+        # The streamed lane runs its own native chunked core and records no unified-slice block;
+        # the engine's route summary says whether a compiled kernel executed (E5).
+        from decoy_engine import route_summary
+
+        summary = route_summary(qm)
+        if summary.route == "auto_chunk":
+            return RouteClassification(
+                applicable=True,
+                state="native" if summary.native_executed else "pandas",
+                label="native (compiled kernel)"
+                if summary.native_executed
+                else "pandas (streamed lane)",
+            )
         return RouteClassification(applicable=True, state="pandas", label="pandas (legacy adapter)")
 
     nodes = activation.get("nodes") or {}
