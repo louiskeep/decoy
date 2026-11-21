@@ -249,6 +249,26 @@ def _tree(path: Path, depth: int = 2) -> frozenset[str]:
     return frozenset(names)
 
 
+# The home paths the CLI itself can write to if it ignored the redirected HOME. They come from
+# the CLI's own path helpers: decoy_home() is ~/.decoy (src/decoy/distribution/layout.py:34) and
+# launcher_bin_dir() is ~/.local/bin (layout.py:101). The whole home is not snapshotted because a
+# shared test node has other jobs writing there while the suite runs, which made AT-J7 flaky.
+_CLI_HOME_PATHS: tuple[tuple[str, ...], ...] = ((".decoy",), (".local", "bin"))
+
+
+def _cli_home_tree(home: Path) -> frozenset[str]:
+    names: set[str] = set()
+    for parts in _CLI_HOME_PATHS:
+        for i in range(1, len(parts)):
+            parent = home.joinpath(*parts[:i])
+            names.add(str(parent) if parent.exists() else "")
+        target = home.joinpath(*parts)
+        if target.exists():
+            names.add(str(target))
+            names |= _tree(target)
+    return frozenset(names)
+
+
 def _data_frames() -> tuple[pl.DataFrame, pl.DataFrame]:
     customers = pl.DataFrame(
         {
@@ -438,7 +458,7 @@ def _build(root: Path, mode: Mode) -> Journey:
     journey = Journey(root, mode, env, secret)
     if mode.bundle_home is not None:
         prove_bundle(Path(mode.prefix[0]), mode.bundle_home, env, journey.cwd, REPO)
-    journey.before = (_tree(Path.home()), _tree(REPO))
+    journey.before = (_cli_home_tree(Path.home()), _tree(REPO))
     ref = f"env:{SECRET_VAR}"
     mask = ["--mask-secret", ref]
     journey.step("CJ-01", [["--version"]], cwd=journey.cwd)
@@ -527,7 +547,7 @@ def _build(root: Path, mode: Mode) -> Journey:
     )
     (shop / "jout" / "strict" / "orders.csv").mkdir(parents=True)
     journey.step("CJ-12", [["run", "shop", *mask, "--out-dir", "jout/strict", "--json"]])
-    journey.after = (_tree(Path.home()), _tree(REPO))
+    journey.after = (_cli_home_tree(Path.home()), _tree(REPO))
     return journey
 
 
@@ -721,6 +741,24 @@ def test_nothing_is_written_outside_the_temp_root(journey: Journey) -> None:
     runs = [r for result in journey.results.values() for r in result.runs]
     assert runs and all(inside(r.cwd, journey.root) for r in runs)
     assert journey.shop.resolve() != REPO.resolve() and not inside(journey.shop, REPO)
+
+
+@pytest.mark.parametrize("parts", _CLI_HOME_PATHS)
+def test_home_snapshot_catches_a_write_to_a_cli_home_path(
+    parts: tuple[str, ...], tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Seeded mutation for AT-J7: a file in a CLI home path changes the snapshot, noise elsewhere does not."""
+    monkeypatch.setenv("HOME", str(tmp_path))
+    before = _cli_home_tree(Path.home())
+    (tmp_path / "decoy").mkdir()
+    (tmp_path / "decoy" / "vmrun-1").write_text("other job")
+    assert _cli_home_tree(Path.home()) == before
+    leaf = tmp_path.joinpath(*parts)
+    leaf.mkdir(parents=True)
+    assert _cli_home_tree(Path.home()) != before
+    mid = _cli_home_tree(Path.home())
+    (leaf / "stray").write_text("x")
+    assert _cli_home_tree(Path.home()) != mid
 
 
 def test_missing_journey_variables_name_the_variable(tmp_path: Path) -> None:
