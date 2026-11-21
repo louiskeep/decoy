@@ -420,7 +420,7 @@ $ decoy fit [OPTIONS] SOURCE
 * `--dp-number TEXT`: &#x27;COL:LO:HI&#x27; -- declare COL as a DP numeric carrier with a data-independent domain (repeatable). Requires --epsilon.
 * `--dp-flag TEXT`: Declare COL as a DP boolean/flag carrier (repeatable). Requires --epsilon.
 * `--dp-text TEXT`: Declare COL as a DP categorical text carrier (repeatable). Requires --epsilon.
-* `--numeric-bins INTEGER`: Bin count per DP numeric column (engine default if omitted). Requires --epsilon.
+* `--numeric-bins INTEGER`: Bins per number column, 2 to 1000 (engine default if omitted). A plain fit uses N as the finest bin width it may use and keeps every bin at 0 or 10 or more rows, so it can write fewer bins; a column that keeps stored values or a quantile grid gets one bin.
 * `--dp-allow-omit`: Allow the DP release to omit source columns nobody declared with --dp-number/--dp-flag/--dp-text (default: omission is a usage error listing the columns). Requires --epsilon.
 * `--fanout COLUMN`: Record how many rows each key of COLUMN has (repeatable): the child-side key of a foreign key. A generate reference column with `distribution: fitted` then gives each generated parent about as many children as the source parents had. Counts only, never a key value. Not supported with --epsilon.
 * `--include-values`: Keep real values of sensitive columns in the snapshot. The file then holds real data. Not supported with --epsilon.

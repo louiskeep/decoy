@@ -13,16 +13,17 @@ The snapshot is written through the engine's `distribution_snapshot_document`:
 columns the sensitivity profile flags have their cell values withheld
 (`value_policy: flagged-redacted/v2`, names in `redacted_columns`).
 `--include-values` keeps them and stamps `value_policy: raw`. Unflagged
-categorical `top_values` still carry real source values; that is why
-statistical categorical columns require the `allow_real_categories: true`
-opt-in at run time.
+columns are floored at 10 rows (rare text labels fold into `other_count`, extremes
+are top and bottom coded, true/false columns stay as they are); the labels kept
+are still real source values, so statistical categorical columns require the
+`allow_real_categories: true` opt-in at run time.
 
 DPS-CLI rewire (docs/plans/2026-07-24-dps-cli-fit-rewire.md). `--epsilon`
 now selects a second, disjoint mode that calls the engine's
 `fit_dp_snapshot` (typed-carrier `dps-marginal/v3`), replacing the removed
 `apply_dp_noise`. The two modes are kept from blurring by making every
 DP-only option (`--delta`, `--dp-number`/`--dp-flag`/`--dp-text`,
-`--numeric-bins`, `--dp-allow-omit`) a usage error when `--epsilon` is
+`--dp-allow-omit`) a usage error when `--epsilon` is
 absent -- otherwise an operator who declares carriers but forgets
 `--epsilon` would silently fall through to the exact, non-DP snapshot (a
 fail-open release of exact data).
@@ -333,7 +334,7 @@ def fit(
     numeric_bins: int = typer.Option(
         None,
         "--numeric-bins",
-        help="Bin count per DP numeric column (engine default if omitted). Requires --epsilon.",
+        help="Bins per number column, 2 to 1000 (engine default if omitted). A plain fit uses N as the finest bin width it may use and keeps every bin at 0 or 10 or more rows, so it can write fewer bins; a column that keeps stored values or a quantile grid gets one bin.",
     ),
     dp_allow_omit: bool = typer.Option(
         False,
@@ -453,7 +454,6 @@ def fit(
     fanout_names = list(dict.fromkeys(fanout))
     has_carrier_decls = bool(dp_number or dp_flag or dp_text)
     delta_given = delta is not None
-    numeric_bins_given = numeric_bins is not None
 
     try:
         if epsilon is None:
@@ -462,8 +462,6 @@ def fit(
                 dp_only_given.append("--delta")
             if has_carrier_decls:
                 dp_only_given.append("--dp-number/--dp-flag/--dp-text")
-            if numeric_bins_given:
-                dp_only_given.append("--numeric-bins")
             if dp_allow_omit:
                 dp_only_given.append("--dp-allow-omit")
             if dp_only_given:
@@ -669,6 +667,7 @@ def fit(
                 include_values=include_values,
                 contingency_top_k=cell_cap,
                 fanout_columns=fanout_names,
+                numeric_bins=numeric_bins,
             )
         except FitSourceError as exc:
             source_error = exc

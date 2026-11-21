@@ -31,6 +31,7 @@ signup_date (datetime), is_active (categorical)
 | `--joint a,b` | Also record how two columns go together. Repeatable. Needed for `condition_on`. |
 | `--joint-max-cells N` | Keep up to N combinations of each `--joint` pair (default 25, at most 1000). Needs `--joint`. Without `--include-values`, a cap above 25 works only when both columns are plain categories. See [Using `condition_on`](#using-condition_on). |
 | `--rows N` | Fit on at most N rows. See [Large files](#large-files-the-row-limit). Not allowed with `--epsilon`. |
+| `--numeric-bins N` | Bins for each number column, a whole number from 2 to 1000. Works for the plain fit and for `--epsilon`. A DP fit uses N as the bin count. A plain fit uses N as the finest bin width it may use (the range divided by N) and keeps every bin at 0 or 10 or more rows, so it can write fewer bins than N. A column that keeps stored values or a quantile grid gets one bin. |
 | `--include-values` | Keep the real values of columns the profiler flags as sensitive. The file then holds real data. Not allowed with `--epsilon`. |
 
 The source must be a CSV. The snapshot file is written readable by its owner
@@ -79,7 +80,7 @@ Every column also records its null count, non-null count and distinct count. The
 In the sample file, `full_name` has 80 distinct values, so it is treated as
 free text and only its length is kept.
 
-**The snapshot can still be sensitive.** `fit` profiles every row it fits on (the whole file, or the sample for a file over the row limit) and withholds the values of every column it flags as personal data (an SSN, a name, an id). The snapshot then carries `value_policy: flagged-redacted/v2` and lists those columns under `redacted_columns`. `fit` prints their names, never their values. A withheld number column keeps one coarse range and a withheld date column keeps years. A column the profiler does not flag still holds its real values. For a category column that looks like this:
+**The snapshot can still be sensitive.** `fit` profiles every row it fits on (the whole file, or the sample for a file over the row limit) and withholds the values of every column it flags as personal data (an SSN, a name, an id). The snapshot then carries `value_policy: flagged-redacted/v2` and lists those columns under `redacted_columns`. `fit` prints their names, never their values. A withheld number column keeps one coarse range and a withheld date column keeps years. A column the profiler does not flag is floored instead: nothing held by fewer than 10 rows is stored. For a category column that looks like this:
 
 ```json
 "state": {
@@ -100,9 +101,29 @@ free text and only its length is kept.
 State codes are harmless. A column of 25 surnames or diagnosis codes is not.
 Do not share a plain snapshot more widely than you would share the source.
 
-A column the profiler does not flag keeps its values, including a rare
-category and its exact largest and smallest number. In the re-test, a
-30-value note column was not flagged and every note was stored word for word.
+A column the profiler does not flag keeps the common part of its values and
+drops the rare part:
+
+- A text category held by fewer than 10 rows is folded into `other_count`. The
+  generated file never holds it. A true/false column is kept as it is, because
+  its two values are public.
+- A number column's exact `min` and `max` are replaced. The ends are top and
+  bottom coded, so the extreme 10 cells on each side do not set a bound.
+- Dates are stored as year ranges with at least 10 rows each. A lone old date
+  joins a wider range.
+- A short sentence column (for example a note field) is stored as free text: its
+  length shape only, no sentence.
+- A combination in a `--joint` pair held by fewer than 10 rows is folded into
+  that pair's `other_count`.
+- A column with too few rows to floor, for example a 15-row file, is withheld
+  and listed under `redacted_columns`, the same as a flagged column. A
+  `statistical` column that uses it fails `decoy validate` with
+  `statistical_snapshot_values_redacted`.
+
+A snapshot with this floor has `schema_version: distribution-snapshot/v2`.
+The kept labels are still real values, so a category column still needs
+`allow_real_categories: true`. `--include-values` keeps every value, with the
+old content.
 
 To sample a withheld column as categories, re-run with `--include-values`. The
 file then holds real data and `fit` warns on stderr with the column names. A
@@ -327,9 +348,9 @@ Measured results from [the QA record](../../records/2026-11-10-cli-qa-generation
 | A column with blanks | Snapshots from older CLI versions dropped blanks (10% and 90% blank both came out 0%). Current `decoy fit` snapshots record the cell format and keep the blank rate. | See [blanks](#blanks). |
 | A date column | Only the year mix is kept. 66% January became 8%. | Generate dates another way if month or weekday matters. |
 | Codes with leading zeros (zip, account numbers) | Read as numbers; leading zeros are lost (10.9% of generated zips were short). | Not fixable at fit time today. Generate these with `faker` or a format rule. |
-| A category held by one person | Stored with `count: 1` and can be generated. | Remove rare values before fitting, or use the DP fit. |
-| A number column's largest or smallest value | Stored exactly as `max` / `min`. | Cap the column before fitting if an extreme identifies someone. |
-| Short free text with 30 or fewer distinct values | Stored and generated word for word. | Drop the column, or mask it first. |
+| A text category held by fewer than 10 rows | Folded into `other_count`. It is not stored and not generated. A true/false column is kept as it is. | None needed. Use `--include-values` only if you must keep it. |
+| A number column's largest or smallest value | Top and bottom coded: the extreme 10 cells on each side do not set `min` or `max`. | None needed. The generated range is a little narrower than the source. |
+| Short free text with 30 or fewer distinct values | Stored as free text: length shape only. Generated text is not the source text. | None needed. Generate the column another way if you need real-looking text. |
 
 ## What this method cannot do
 
@@ -342,7 +363,7 @@ Measured results from [the QA record](../../records/2026-11-10-cli-qa-generation
 - **Free text content.** Only length is kept.
 - **Links between columns** unless you fit the pair with `--joint` and use
   `condition_on`.
-- **Rare categories** beyond the top 20 are lumped into "other".
+- **Rare text categories** beyond the top 20, or held by fewer than 10 rows, are lumped into "other".
 - **Table relationships.** A snapshot describes one file. It does not make a
   child table follow the parent's real fan-out (for example orders per
   customer).

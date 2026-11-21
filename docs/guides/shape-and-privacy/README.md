@@ -64,8 +64,10 @@ The ones to know before you start:
 - The fidelity report gives good grades to wrong number columns, because it
   measures error against the source's full range. Still open. Blanks are
   scored after engine 0.19.0 (engine #438).
-- A plain snapshot can hold one person's value: a rare category, a column's
-  largest or smallest number, or a short note. `decoy fit` does not warn.
+- A plain snapshot keeps no text label, joint cell or year held by fewer than 10
+  rows (a true/false column is kept as it is), no exact largest or smallest
+  number, and no short note word for word. The labels it keeps are still real
+  values.
 - On engine 0.19.0, generated columns with identical settings come out
   identical unless each has its own `source_column`. Fixed after engine 0.19.0
   (engine #421).

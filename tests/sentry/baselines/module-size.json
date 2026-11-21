@@ -4,7 +4,7 @@
  "entries": {
   "src/decoy/cli/fit.py": {
    "reason": "legacy module over the 800-line cap when LAYOUT C2 recorded it; may only shrink",
-   "max": 818
+   "max": 817
   },
   "src/decoy/cli/preflight.py": {
    "reason": "legacy module over the 800-line cap when LAYOUT C2 recorded it; may only shrink",

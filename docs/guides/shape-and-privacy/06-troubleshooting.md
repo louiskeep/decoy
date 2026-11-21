@@ -78,7 +78,7 @@ A DP snapshot used without a `dp:` block gives this same error.
 
 ### `statistical_snapshot_values_redacted`
 
-A `statistical` category column, or a `condition_on` through it, points at a column the snapshot withheld. `decoy fit` flagged the column as sensitive and kept no values. Re-run `decoy fit --include-values` (the file then holds real data) and set `allow_real_categories: true` on the column, or drop the column from the generate config. A DP release (`--epsilon`) needs a certified DP install.
+A `statistical` category column, or a `condition_on` through it, points at a column the snapshot withheld. `decoy fit` flagged the column as sensitive, or the column had too few rows to keep any label held by 10 rows, so the snapshot kept no values. Fit on more rows, or re-run `decoy fit --include-values` (the file then holds real data), and set `allow_real_categories: true` on the column, or drop the column from the generate config. A DP release (`--epsilon`) needs a certified DP install.
 
 ### `statistical_snapshot_unreadable`
 
