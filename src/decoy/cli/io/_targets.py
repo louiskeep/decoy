@@ -418,6 +418,7 @@ def _write_table(
 ) -> None:
     import pandas as pd
     import pyarrow.parquet as pq
+    from decoy_engine import output_table
 
     message = _uncompressed_only_message("output", fmt, path)
     if message is not None:
@@ -434,10 +435,12 @@ def _write_table(
     with stage(path) as tmp:
         if fmt == "csv":
             (data if frame else _csv_frame(data)).to_csv(tmp, index=False, compression=compression)
-        elif frame:
-            data.to_parquet(tmp, index=False)
         else:
-            pq.write_table(data, str(tmp))
+            # One rule for every Parquet target: only the engine's allow-listed metadata is
+            # written, never the source's. A DataFrame goes through Arrow first so pandas does
+            # not write its own `attrs` key.
+            table = pa.Table.from_pandas(data, preserve_index=False) if frame else data
+            pq.write_table(output_table(table), str(tmp))
 
 
 def write_table(
@@ -548,6 +551,7 @@ def write_chunked_output(
     published, including a publication that then failed at the directory sync.
     """
     import pyarrow.parquet as pq
+    from decoy_engine import output_schema, output_table
 
     out_path = layout.place_target(raw_path)
     if fmt not in ("csv", "parquet") or is_archive_csv(fmt, out_path):
@@ -563,11 +567,13 @@ def write_chunked_output(
         schema = empty_schema()
     elif fmt == "parquet":
         schema = cast("pa.Table", first).schema
+    if schema is not None:
+        schema = output_schema(schema)
     with _publication(ledger, name, out_path), staged_local_target(out_path) as tmp:
         if fmt == "parquet":
             with pq.ParquetWriter(str(tmp), schema) as writer:
                 for masked in () if first is _EXHAUSTED else itertools.chain((first,), chunks):
-                    writer.write_table(masked)
+                    writer.write_table(output_table(masked))
         else:
             compression = csv_compression(out_path)
             for index, masked in enumerate(itertools.chain((first,), chunks)):

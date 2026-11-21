@@ -33,7 +33,7 @@ Status: record
 - DATE-SHIFT-FORMAT: S4a (engine #721, `jitter_days` through one window resolver), S4b (engine #728, `date_format` required with a coded refusal, detected format in the starter) and C1 (CLI #342, `decoy init` writes `date_format`). Left: the engine release and the CLI repin.
 - GEN-WINDOWED-BATCH S1 (engine #718, 2026-11-19): batched derive, parse, shift and format for `windowed_date`, same bytes.
 - NONFK-OOM S1 (engine #719) and S4a (engine #717): the resident lower bound with its baseline, and the multi-table split decided in `decide_route`.
-- OUTPUT-METADATA-LEAK: E0 (engine #692), E1 (engine #700) and E2 (engine #726, 2026-11-20). Left: C1.
+- OUTPUT-METADATA-LEAK: E0 (engine #692), E1 (engine #700) and E2 (engine #726, 2026-11-20). C1 (CLI targets) is in review.
 - Row 74 (F26): E1 (engine #638) and E2a (engine #641), both 2026-11-20.
 - Row 24p (GEN-PROVIDERS) E1 (engine #661, 2026-11-20). Row 24n (GEN-REL) slice 1 (engine #523, 2026-11-20). Row 24s (GEN-CATALOG) GC3-E (engine #643, 2026-11-20). Row 24f E2 (engine #732, 2026-11-20).
 - Row 24e (CLI-QA1) DI close: E0 (engine #611), E1 (engine #615) and E2 (engine #736). Left: C1 and C2.

@@ -144,14 +144,6 @@ reason = "Writes into the stager the caller passes; G-ONE-TARGET-WRITE checks th
 [[row]]
 file = "cli/io/_targets.py"
 function = "_write_table"
-sink = "to_parquet"
-ordinal = 1
-disposition = "staged"
-reason = "Writes into the stager the caller passes; G-ONE-TARGET-WRITE checks the stager."
-
-[[row]]
-file = "cli/io/_targets.py"
-function = "_write_table"
 sink = "write_table"
 ordinal = 1
 disposition = "staged"

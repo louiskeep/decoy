@@ -240,6 +240,150 @@ def test_staged_writers_write_only_to_their_staged_temp() -> None:
     assert set(STAGED_WRITERS) <= covered, "a staged writer has no write call to check"
 
 
+# OUTPUT-METADATA-LEAK (CC-6): a Parquet target carries only the engine's allow-listed metadata.
+# Each Parquet sink in these writers takes a value the same function made with `output_table`
+# or `output_schema`, so source metadata cannot reach a published file.
+SANITIZED_WRITERS = ("_write_table", "write_chunked_output")
+_SANITIZERS = frozenset({"output_table", "output_schema"})
+# (positional index, keyword) of the value each Parquet sink call writes.
+_PARQUET_VALUE: dict[str, tuple[int, str] | None] = {
+    "write_table": (0, "table"),
+    "write_to_dataset": (0, "table"),
+    "ParquetWriter": (1, "schema"),
+    "to_parquet": None,  # the receiver is the data; never sanitized, always a finding
+}
+
+
+def _makes(expr: ast.AST) -> bool:
+    return any(
+        isinstance(n, ast.Call)
+        and (getattr(n.func, "id", None) or getattr(n.func, "attr", None)) in _SANITIZERS
+        for n in ast.walk(expr)
+    )
+
+
+def _sanitized_before(func: ast.AST, name: str, line: int) -> bool:
+    """The last assignment to `name` above `line` in `func` is made by a sanitizer call."""
+    last: tuple[int, bool] | None = None
+    for node in ast.walk(func):
+        value: ast.expr | None
+        if isinstance(node, ast.Assign):
+            targets = [t for t in node.targets if isinstance(t, ast.Name)]
+            value = node.value
+        elif isinstance(node, (ast.AnnAssign, ast.AugAssign)) and isinstance(node.target, ast.Name):
+            targets = [node.target]
+            value = node.value
+        else:
+            continue
+        if value is None or node.lineno >= line:
+            continue
+        if any(t.id == name for t in targets) and (last is None or node.lineno > last[0]):
+            last = (node.lineno, _makes(value))
+    return last is not None and last[1]
+
+
+def _is_sanitized(expr: ast.expr | None, func: ast.AST, line: int) -> bool:
+    if isinstance(expr, ast.Call):
+        return _makes(expr)
+    return isinstance(expr, ast.Name) and _sanitized_before(func, expr.id, line)
+
+
+def unsanitized_parquet_writes(source: str) -> list[tuple[int, str]]:
+    """(line, scope) for each Parquet sink in a sanitized writer fed a value it did not sanitize.
+
+    Also covers the per-chunk `writer.write_table(x)` method call: `x` must be sanitized too.
+    """
+    tree = ast.parse(source)
+    funcs = {
+        n.name: n
+        for n in tree.body
+        if isinstance(n, ast.FunctionDef) and n.name in SANITIZED_WRITERS
+    }
+    bad = []
+    for call, scope, _names in call_contexts(
+        source, qualified_match=_owns, method_names=_METHODS, with_calls=STAGE_CALLS
+    ):
+        if scope not in SANITIZED_WRITERS or scope not in funcs:
+            continue
+        func = call.func
+        member = func.attr if isinstance(func, ast.Attribute) else getattr(func, "id", "")
+        if member not in _PARQUET_VALUE:
+            continue
+        slot = _PARQUET_VALUE[member]
+        value = None
+        if slot is not None:
+            value = next((k.value for k in call.keywords if k.arg == slot[1]), None)
+            if value is None and len(call.args) > slot[0]:
+                value = call.args[slot[0]]
+        if slot is None or not _is_sanitized(value, funcs[scope], call.lineno):
+            bad.append((call.lineno, scope))
+    for scope, node in funcs.items():  # the chunk loop writes through a bound writer
+        for n in ast.walk(node):
+            if (
+                isinstance(n, ast.Call)
+                and isinstance(n.func, ast.Attribute)
+                and n.func.attr == "write_table"
+                and getattr(n.func.value, "id", "") == "writer"
+                and not _is_sanitized(n.args[0] if n.args else None, node, n.lineno)
+            ):
+                bad.append((n.lineno, scope))
+    return bad
+
+
+def test_parquet_sinks_in_the_writers_take_sanitized_values() -> None:
+    source = (SRC / CHOKE_POINT).read_text(encoding="utf-8")
+    assert unsanitized_parquet_writes(source) == []
+
+
+_PQ_PRELUDE = "import pyarrow.parquet as pq\nfrom decoy_engine import output_schema, output_table\n"
+
+
+@pytest.mark.parametrize(
+    "scope, body",
+    [
+        ("_write_table", "    pq.write_table(data, path)\n"),
+        ("_write_table", "    data.to_parquet(path)\n"),
+        (
+            "_write_table",
+            "    table = output_table(data)\n    table = data\n    pq.write_table(table, p)\n",
+        ),
+        ("_write_table", "    pq.write_table(data)\n"),
+        ("write_chunked_output", "    pq.ParquetWriter(path, first.schema)\n"),
+        ("write_chunked_output", "    s = first.schema\n    pq.ParquetWriter(path, schema=s)\n"),
+        (
+            "write_chunked_output",
+            "    s = output_schema(first.schema)\n    with pq.ParquetWriter(p, s) as writer:\n"
+            "        writer.write_table(first)\n",
+        ),
+    ],
+)
+def test_the_sanitized_rule_is_red_on_seeds(scope: str, body: str) -> None:
+    source = _PQ_PRELUDE + f"def {scope}(data, path, first, p):\n" + body
+    assert unsanitized_parquet_writes(source) != []
+
+
+@pytest.mark.parametrize(
+    "scope, body",
+    [
+        ("_write_table", "    pq.write_table(output_table(data), path)\n"),
+        ("_write_table", "    table = output_table(data)\n    pq.write_table(table, path)\n"),
+        (
+            "write_chunked_output",
+            "    s = output_schema(first.schema)\n    pq.ParquetWriter(p, s)\n",
+        ),
+        (
+            "write_chunked_output",
+            "    s = output_schema(first.schema)\n    with pq.ParquetWriter(p, s) as writer:\n"
+            "        writer.write_table(output_table(first))\n",
+        ),
+        ("_write_fixed_width", "    pq.write_table(data, path)\n"),
+    ],
+)
+def test_the_sanitized_rule_is_green_on_sanitized_shapes(scope: str, body: str) -> None:
+    source = _PQ_PRELUDE + f"def {scope}(data, path, first, p):\n" + body
+    assert unsanitized_parquet_writes(source) == []
+
+
 _STAGED_PRELUDE = (
     "import pyarrow.parquet as pq\nfrom decoy_engine import write_fixed_width\n"
     "from decoy._atomic import staged_local_target, staged_private_target\n"

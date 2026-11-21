@@ -91,3 +91,11 @@ engine_path = "tests/sentry/tooling/_ci_lanes.py"
 local_path = "tests/sentry/tooling/_ci_lanes.py"
 blob_sha256 = "595ee8301f9c831b1fd164cbbbe6fbeddfff612b4b392434c09b1956c68b0d93"
 commit = "096ecfeae3476fc451024481d173011145287a32"
+
+# The output metadata canary helper (OUTPUT-METADATA-LEAK C1), adapted from the engine's E0 helper;
+# its header lists the differences. blob_sha256 is the engine blob it was adapted from.
+[[mirror]]
+engine_path = "tests/security/_metadata_canary.py"
+local_path = "tests/e2e/cli_fmt/_metadata_canary.py"
+blob_sha256 = "cd34d9732bb9b1470558a1007630aa8ef847b909cbee90442667b7d8be7fc826"
+commit = "54db2e5f273118ff74feca9f53512daba265192a"
