@@ -42,7 +42,6 @@ from pathlib import Path
 from typing import Any
 
 import typer
-from rich.markup import escape
 
 from decoy import _mask_secret
 from decoy._atomic import AtomicWriteError, WriteMode, describe, write_local_target
@@ -71,7 +70,12 @@ from decoy.ui.output import (
     print_traceback,
     setup_output,
 )
-from decoy.ui.summary import announce_report, null_rate_pairs, render_fidelity_report
+from decoy.ui.summary import (
+    announce_report,
+    null_rate_pairs,
+    render_fidelity_report,
+    render_residual_pii,
+)
 from decoy.ui.theme import accent, code, error, hint, info, risk_high, success, warn
 
 # Grade -> minimum overall_score, mirroring the engine's own grade thresholds
@@ -1658,7 +1662,10 @@ def _fidelity(
     min_grade: str | None = typer.Option(
         None,
         "--min-grade",
-        help="Shorthand: minimum letter grade (A/B/C/D) the overall score must reach.",
+        help=(
+            "Shorthand: minimum letter grade (A/B/C/D) the overall score must reach. "
+            "Intended columns count in the grade."
+        ),
     ),
     min_score: float | None = typer.Option(
         None,
@@ -1826,38 +1833,6 @@ def _fidelity(
 
     if verdict == "fail" or (verdict == "warn" and fail_on_warning):
         raise typer.Exit(code=EXIT_FINDINGS)
-
-
-def _render_residual_pii(state: Any, findings: list[Any]) -> None:
-    """One row per residual-PII finding: where, which detector, how bad.
-
-    Only the engine's fixed fields are shown. Its `message` names the detector,
-    the strategy and a rate, never a cell value.
-    """
-    from decoy.ui.table import make_table
-
-    rows = [f for f in findings if isinstance(f, dict)]
-    if not rows:
-        return
-    table = make_table(
-        "Table",
-        "Column",
-        "Detector",
-        "Severity",
-        "Strategy",
-        "Message",
-        title="Residual PII findings",
-    )
-    for f in rows:
-        table.add_row(
-            escape(str(f.get("table", "?"))),
-            escape(str(f.get("column", "?"))),
-            escape(str(f.get("detector_id", "?"))),
-            str(f.get("severity", "?")),
-            escape(str(f.get("configured_strategy") or "-")),
-            escape(str(f.get("message", ""))),
-        )
-    state.console.print(table)
 
 
 # ---------------------------------------------------------------------------
@@ -2059,7 +2034,7 @@ def _integrity(
                 sev_text = ", ".join(f"{k}:{v}" for k, v in sorted(sevs.items()))
                 table.add_row(bucket, str(len(findings)), sev_text)
             state.console.print(table)
-            _render_residual_pii(state, report.get("residual_pii") or [])
+            render_residual_pii(state, report.get("residual_pii") or [])
             counters = (
                 f"pass={report.get('pass_count', 0)}  "
                 f"warning={report.get('warning_count', 0)}  "

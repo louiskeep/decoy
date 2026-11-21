@@ -1694,7 +1694,7 @@ $ decoy report fidelity [OPTIONS] SOURCE OUTPUT
 * `--config TEXT`: Pipeline file (.yaml or .decoy) naming each column&#x27;s strategy, so intentional loss (hash, bucketize, faker, ...) is not flagged as accidental drift. Without it, per-column policy checks run on defaults only.
 * `--policy FILE`: A quality-policy config (YAML or JSON: mode / thresholds / strategy_expectations) overriding --mode / --min-grade / --min-score.
 * `--mode TEXT`: report (record only, verdict always pass) | warn (violations promote verdict to warn) | fail (violations promote verdict to fail). Ignored when --policy sets its own mode.  [default: report]
-* `--min-grade TEXT`: Shorthand: minimum letter grade (A/B/C/D) the overall score must reach.
+* `--min-grade TEXT`: Shorthand: minimum letter grade (A/B/C/D) the overall score must reach. Intended columns count in the grade.
 * `--min-score FLOAT`: Shorthand: minimum overall_score in [0, 1].
 * `--fail-on-warning`: Also exit non-zero (EXIT_FINDINGS) when the policy verdict is &#x27;warn&#x27;.
 * `--report-out PATH`: Write the full quality-report/v1 + policy JSON to this path.

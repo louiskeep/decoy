@@ -139,7 +139,7 @@
  "module-size": {
   "src/decoy/cli/fit.py": {"max": 818, "reason": "legacy module over the 800-line cap when LAYOUT C2 recorded it; may only shrink"},
   "src/decoy/cli/preflight.py": {"max": 839, "reason": "legacy module over the 800-line cap when LAYOUT C2 recorded it; may only shrink"},
-  "src/decoy/cli/report.py": {"max": 2295, "reason": "legacy module over the 800-line cap when LAYOUT C2 recorded it; may only shrink"},
+  "src/decoy/cli/report.py": {"max": 2270, "reason": "legacy module over the 800-line cap when LAYOUT C2 recorded it; may only shrink"},
   "src/decoy/cli/scan.py": {"max": 930, "reason": "legacy module over the 800-line cap when LAYOUT C2 recorded it; may only shrink"}
  },
  "output-name-allow": {

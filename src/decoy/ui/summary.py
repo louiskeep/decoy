@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import Any, Protocol
 
 import typer
+from rich.markup import escape
 
 from decoy.ui.output import OutputMode, OutputState, emit_error
 from decoy.ui.table import make_table
@@ -436,6 +437,45 @@ def null_rate_pairs(
     }
 
 
+_INTENDED_NOTE = (
+    "Columns marked intended were masked with a strategy that replaces values, "
+    "so a low score there is expected."
+)
+
+
+def render_residual_pii(state: Any, findings: list[Any]) -> None:
+    """One row per residual-PII finding: where, which detector, how bad.
+
+    Only the engine's fixed fields are shown. Its `message` names the detector,
+    the strategy and a rate, never a cell value.
+    """
+    rows = [f for f in findings if isinstance(f, dict)]
+    if not rows:
+        return
+    table = make_table(
+        "Table",
+        "Column",
+        "Detector",
+        "Severity",
+        "Strategy",
+        "Same as source",
+        "Message",
+        title="Residual PII findings",
+    )
+    for f in rows:
+        rate = f.get("source_identity_rate")
+        table.add_row(
+            escape(str(f.get("table", "?"))),
+            escape(str(f.get("column", "?"))),
+            escape(str(f.get("detector_id", "?"))),
+            str(f.get("severity", "?")),
+            escape(str(f.get("configured_strategy") or "-")),
+            f"{rate:.2f}" if isinstance(rate, (int, float)) else "-",
+            escape(str(f.get("message", ""))),
+        )
+    state.console.print(table)
+
+
 def render_fidelity_report(
     state: Any,
     report: dict[str, Any],
@@ -472,6 +512,9 @@ def render_fidelity_report(
         verdict_text = error(verdict.upper())
     state.console.print(verdict_text, f"grade {grade}  overall_score {overall_str}")
 
+    intended_columns = set(policy_result.get("intended_columns") or [])
+    intended_joints = {tuple(p) for p in policy_result.get("intended_joints") or []}
+
     columns = report.get("marginal", {}).get("columns", [])
     if columns:
         headers = ["Column", "Comparable", "Similarity"]
@@ -483,6 +526,8 @@ def render_fidelity_report(
                 continue
             sim = col.get("similarity")
             sim_str = f"{sim:.3f}" if isinstance(sim, (int, float)) else "n/a"
+            if col.get("column") in intended_columns:
+                sim_str += " intended"
             row = [
                 str(col.get("column", "?")),
                 "yes" if col.get("comparable") else "no",
@@ -502,12 +547,17 @@ def render_fidelity_report(
                 continue
             sim = j.get("similarity")
             sim_str = f"{sim:.3f}" if isinstance(sim, (int, float)) else "n/a"
+            if tuple(sorted(j.get("columns", []))) in intended_joints:
+                sim_str = "intended"
             table.add_row(
                 "x".join(j.get("columns", [])),
                 "yes" if j.get("comparable") else "no",
                 sim_str,
             )
         state.console.print(table)
+
+    if intended_columns or intended_joints:
+        state.console.print(info(_INTENDED_NOTE))
 
     render_warnings(state, report_warning_records(report.get("warnings") or []))
 
