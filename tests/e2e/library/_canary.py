@@ -5,7 +5,7 @@ cell. `test_canary.py` runs each case and checks both sides: a record of the kin
 (positive) and the canary appears in no file under `.decoy/library/` or `.decoy/logs/`
 (negative). The sentry reads coverage from `CASES`, so a kind is covered only by a case that
 runs, never by a file name. Producers that are not built yet sit in the sentry's pending rows:
-L2 adds `scan-set`, L3a `evidence` and `run-result`, L3b `sample-run`.
+L2 adds `scan-set`, L3b `sample-run`.
 """
 
 from __future__ import annotations
@@ -43,7 +43,11 @@ def _evidence(project: Path) -> None:
     assert result.exit_code == 0, result.output
 
 
-CASES: dict[str, CanaryCase] = {"evidence": CanaryCase("evidence", _evidence)}
+CASES: dict[str, CanaryCase] = {
+    "evidence": CanaryCase("evidence", _evidence),
+    # The same run stores both records; the run-result is the document, not the data.
+    "run-result": CanaryCase("run-result", _evidence),
+}
 
 
 def leaks(decoy_dir: Path, canary: str = CANARY) -> list[str]:

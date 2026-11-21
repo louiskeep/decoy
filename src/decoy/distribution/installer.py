@@ -64,7 +64,7 @@ from pathlib import Path, PurePosixPath
 from typing import Callable
 
 from decoy._env_flags import env_str
-from decoy.distribution import layout, lock, trust_state, verify_extracted
+from decoy.distribution import layout, lock, release_identity, trust_state, verify_extracted
 from decoy.distribution import manifest as manifest_mod
 from decoy.distribution import targets as targets_mod
 from decoy.distribution import version_document as vd
@@ -77,8 +77,9 @@ PostSwapValidator = Callable[[Path], bool]
 _BUNDLE_INFO = "BUNDLE_INFO.json"
 
 # Pinned (non-latest) bundles are release assets: <base>/v<version>/decoy-<version>-<target>.tar.gz.
-# install.sh and install.ps1 carry the same literal; DECOY_BUNDLE_BASE overrides it everywhere.
-DEFAULT_BUNDLE_BASE = "https://github.com/decoy-data/decoy/releases/download"
+# install.sh and install.ps1 carry checked copies (the release identity sentry keeps them equal);
+# DECOY_BUNDLE_BASE overrides it everywhere.
+DEFAULT_BUNDLE_BASE = release_identity.ARTIFACT_BASE
 
 
 def resolve_bundle_base(override: str | None = None) -> str:
@@ -92,7 +93,7 @@ def _explicit_bundle_base(override: str | None = None) -> str:
 
 
 def _bundle_url(base: str, version: str, target: str) -> str:
-    return f"{base.rstrip('/')}/v{version}/decoy-{version}-{target}.tar.gz"
+    return release_identity.artifact_url(version, f"decoy-{version}-{target}.tar.gz", base)
 
 
 @contextlib.contextmanager

@@ -1,11 +1,16 @@
 # G-ONE-PRIVATE-FILE sink registry (see test_private_files.py). One row per watched sink and
 # one-based call ordinal. Private entry-point calls need no row. `exit` marks a baselined row.
+# `output_kind` (G-ONE-OUTPUT-INVENTORY, tests/sentry/io_policy/run_outputs/) names the `OutputKind`
+# of a write in a module `decoy run` reaches, or `not-run`. A `disposition = "entry"` row covers a
+# private entry-point call or an added output primitive (`mkdir`, `replace_symlink`, ...) there;
+# G-ONE-PRIVATE-FILE accepts and skips only structurally valid ones.
 
 [[row]]
 file = "_mask_secret.py"
 function = "_open_checked"
 sink = "os.open"
 ordinal = 1
+output_kind = "not-run"
 disposition = "read"
 reason = "Opens the mask secret file read-only to check its mode on the descriptor; writes nothing."
 
@@ -22,6 +27,7 @@ file = "api.py"
 function = "_stage_source_entry"
 sink = "write_table"
 ordinal = 1
+output_kind = "not-run"
 disposition = "private"
 reason = "Parquet bytes of the caller's DataFrame go into the spool that create_private_temp made 0600."
 via = "create_private_temp"
@@ -31,6 +37,7 @@ file = "cli/_duckdb_source.py"
 function = "acquire_relation"
 sink = "duckdb.connect"
 ordinal = 1
+output_kind = "not-run"
 disposition = "read"
 reason = "Opens the user's DuckDB source database with read_only=True."
 
@@ -39,6 +46,7 @@ file = "cli/_duckdb_source.py"
 function = "acquire_relation"
 sink = "execute.copy_to"
 ordinal = 1
+output_kind = "not-run"
 disposition = "temp"
 reason = "COPY writes the unmasked source table into the 0700 spill directory run.py makes; the file takes the umask mode inside it."
 exit = "WIN-FEAS"
@@ -130,6 +138,7 @@ file = "cli/io/_targets.py"
 function = "_write_fixed_width"
 sink = "write_fixed_width"
 ordinal = 1
+output_kind = "target"
 disposition = "public"
 reason = "Masked fixed-width output keeps the old file's mode bits (OQ3); the engine stages it itself."
 
@@ -138,6 +147,7 @@ file = "cli/io/_targets.py"
 function = "_write_table"
 sink = "to_csv"
 ordinal = 1
+output_kind = "target"
 disposition = "staged"
 reason = "Writes into the stager the caller passes; G-ONE-TARGET-WRITE checks the stager."
 
@@ -146,6 +156,7 @@ file = "cli/io/_targets.py"
 function = "_write_table"
 sink = "to_parquet"
 ordinal = 1
+output_kind = "target"
 disposition = "staged"
 reason = "Writes into the stager the caller passes; G-ONE-TARGET-WRITE checks the stager."
 
@@ -154,6 +165,7 @@ file = "cli/io/_targets.py"
 function = "_write_table"
 sink = "write_table"
 ordinal = 1
+output_kind = "target"
 disposition = "staged"
 reason = "Writes into the stager the caller passes; G-ONE-TARGET-WRITE checks the stager."
 
@@ -162,6 +174,7 @@ file = "cli/io/_targets.py"
 function = "write_targets"
 sink = "write_table"
 ordinal = 1
+output_kind = "target"
 disposition = "public"
 reason = "Masked whole-table output keeps the old file's mode bits (OQ3); masked data is the shareable product."
 
@@ -170,6 +183,7 @@ file = "cli/io/_targets.py"
 function = "write_chunked_output"
 sink = "staged_local_target"
 ordinal = 1
+output_kind = "target"
 disposition = "public"
 reason = "Chunked masked output keeps the old file's mode bits (OQ3)."
 
@@ -178,6 +192,7 @@ file = "cli/io/_targets.py"
 function = "write_chunked_output"
 sink = "ParquetWriter"
 ordinal = 1
+output_kind = "target"
 disposition = "public"
 reason = "Chunked masked output keeps the old file's mode bits (OQ3)."
 
@@ -186,6 +201,7 @@ file = "cli/io/_targets.py"
 function = "write_chunked_output"
 sink = "write_table"
 ordinal = 1
+output_kind = "target"
 disposition = "public"
 reason = "Chunked masked output keeps the old file's mode bits (OQ3)."
 
@@ -194,6 +210,7 @@ file = "cli/io/_targets.py"
 function = "write_chunked_output"
 sink = "to_csv"
 ordinal = 1
+output_kind = "target"
 disposition = "public"
 reason = "Chunked masked output keeps the old file's mode bits (OQ3)."
 
@@ -202,6 +219,7 @@ file = "cli/io/_small_file.py"
 function = "read_small_file"
 sink = "os.open"
 ordinal = 1
+output_kind = "not-run"
 disposition = "read"
 reason = "Opens a project marker, claim or LATEST read-only after an lstat check, without following links or blocking; writes nothing."
 
@@ -210,6 +228,7 @@ file = "cli/run/_prepare.py"
 function = "prepare"
 sink = "tempfile.mkdtemp"
 ordinal = 1
+output_kind = "not-run"
 disposition = "temp"
 reason = "DuckDB spill directory; mkdtemp makes it 0700 on POSIX."
 exit = "WIN-FEAS"
@@ -267,6 +286,7 @@ file = "cli/models/_private.py"
 function = "private_workdir"
 sink = "tempfile.gettempdir"
 ordinal = 1
+output_kind = "not-run"
 disposition = "read"
 reason = "Reads the system temp folder's name; create_private_directory then makes the 0700 install work folder inside it."
 
@@ -275,6 +295,259 @@ file = "cli/models/_private.py"
 function = "write_private"
 sink = "write_bytes"
 ordinal = 1
+output_kind = "not-run"
 disposition = "private"
 reason = "Writes the install's constraints file, pinned-model requirements file and --from wheel copies into the file open_private just created 0600."
 via = "open_private"
+
+[[row]]
+file = "_resources.py"
+function = "write_settings"
+sink = "mkdir"
+ordinal = 1
+disposition = "entry"
+reason = "setup settings folder; `decoy run` never calls it"
+output_kind = "not-run"
+
+[[row]]
+file = "_resources.py"
+function = "write_settings"
+sink = "write_atomic"
+ordinal = 1
+disposition = "entry"
+reason = "setup settings file; `decoy run` never calls it"
+output_kind = "not-run"
+
+[[row]]
+file = "api.py"
+function = "_stage_source_entry"
+sink = "create_private_temp"
+ordinal = 1
+disposition = "entry"
+reason = "the SDK's source spool; not a `decoy run` output"
+output_kind = "not-run"
+
+[[row]]
+file = "cli/gen/_scaffold.py"
+function = "scaffold_generate"
+sink = "mkdir"
+ordinal = 1
+disposition = "entry"
+reason = "`decoy gen` scaffold; imported by run only for names"
+output_kind = "not-run"
+
+[[row]]
+file = "cli/gen/_scaffold.py"
+function = "_publish_pair"
+sink = "publish_local_targets"
+ordinal = 1
+disposition = "entry"
+reason = "`decoy gen` scaffold; imported by run only for names"
+output_kind = "not-run"
+
+[[row]]
+file = "cli/io/_integrity_report.py"
+function = "_write"
+sink = "mkdir"
+ordinal = 1
+disposition = "entry"
+reason = "the first target's folder, made for the report as the target writer does; the same writer serves the implicit report"
+output_kind = "integrity-explicit"
+
+[[row]]
+file = "cli/io/_integrity_report.py"
+function = "_write"
+sink = "write_local_target"
+ordinal = 1
+disposition = "entry"
+reason = "the post-scan report; `--integrity-out` or the default beside the first target (integrity-implicit, one writer)"
+output_kind = "integrity-explicit"
+
+[[row]]
+file = "cli/io/_layout.py"
+function = "prepare_out"
+sink = "mkdir"
+ordinal = 1
+disposition = "entry"
+reason = "`out/` of the project run folder"
+output_kind = "layout"
+
+[[row]]
+file = "cli/io/_layout.py"
+function = "prepare_out"
+sink = "write_local_target"
+ordinal = 1
+disposition = "entry"
+reason = "`out/.gitignore`"
+output_kind = "layout"
+
+[[row]]
+file = "cli/io/_layout.py"
+function = "name_dir"
+sink = "mkdir"
+ordinal = 1
+disposition = "entry"
+reason = "`out/<name>/`, the pipeline folder"
+output_kind = "layout"
+
+[[row]]
+file = "cli/io/_layout.py"
+function = "write_claim"
+sink = "write_atomic"
+ordinal = 1
+disposition = "entry"
+reason = "`out/<name>/PIPELINE`, the pipeline claim"
+output_kind = "layout"
+
+[[row]]
+file = "cli/io/_layout.py"
+function = "create_run_folder"
+sink = "create_private_directory"
+ordinal = 1
+disposition = "entry"
+reason = "the run folder `out/<name>/<run-id>/`"
+output_kind = "layout"
+
+[[row]]
+file = "cli/io/_layout.py"
+function = "RunLayout.out_dir"
+sink = "create_private_directory"
+ordinal = 1
+disposition = "entry"
+reason = "the folder `--out-dir` names, made before targets are written"
+output_kind = "target"
+
+[[row]]
+file = "cli/io/_layout.py"
+function = "RunLayout.commit_latest"
+sink = "write_atomic"
+ordinal = 1
+disposition = "entry"
+reason = "`out/<name>/LATEST`"
+output_kind = "layout"
+
+[[row]]
+file = "cli/io/_layout.py"
+function = "RunLayout.commit_latest"
+sink = "replace_symlink"
+ordinal = 1
+disposition = "entry"
+reason = "`out/<name>/current`, POSIX only"
+output_kind = "layout"
+
+[[row]]
+file = "cli/io/_project.py"
+function = "_create_once"
+sink = "write_local_target"
+ordinal = 1
+disposition = "entry"
+reason = "the files under the project's `.decoy` folder: library-owned, not a run output"
+output_kind = "not-run"
+
+[[row]]
+file = "cli/io/_project.py"
+function = "ensure_decoy_dir"
+sink = "mkdir"
+ordinal = 1
+disposition = "entry"
+reason = "the `.decoy` folder, the default library root: library-owned"
+output_kind = "not-run"
+
+[[row]]
+file = "cli/io/_targets.py"
+function = "write_targets"
+sink = "mkdir"
+ordinal = 1
+disposition = "entry"
+reason = "the folder above a file target"
+output_kind = "target"
+
+[[row]]
+file = "cli/models/_private.py"
+function = "make_private_dir"
+sink = "create_private_directory"
+ordinal = 1
+disposition = "entry"
+reason = "the models install folder; not a `decoy run` output"
+output_kind = "not-run"
+
+[[row]]
+file = "cli/models/_private.py"
+function = "write_private"
+sink = "open_private"
+ordinal = 1
+disposition = "entry"
+reason = "the models install file; not a `decoy run` output"
+output_kind = "not-run"
+
+[[row]]
+file = "cli/project/_new.py"
+function = "create_project"
+sink = "mkdir"
+ordinal = 1
+disposition = "entry"
+reason = "`decoy project new`; not a `decoy run` output"
+output_kind = "not-run"
+
+[[row]]
+file = "cli/project/_new.py"
+function = "create_project"
+sink = "mkdir"
+ordinal = 2
+disposition = "entry"
+reason = "`decoy project new`; not a `decoy run` output"
+output_kind = "not-run"
+
+[[row]]
+file = "cli/project/_scaffold.py"
+function = "prepare_folder"
+sink = "mkdir"
+ordinal = 1
+disposition = "entry"
+reason = "`decoy project` scaffold; not a `decoy run` output"
+output_kind = "not-run"
+
+[[row]]
+file = "cli/run/_evidence.py"
+function = "write_evidence"
+sink = "write_local_target"
+ordinal = 1
+disposition = "entry"
+reason = "`--evidence-out`"
+output_kind = "evidence"
+
+[[row]]
+file = "cli/run/_execute.py"
+function = "execute"
+sink = "_commit_vault"
+ordinal = 1
+disposition = "entry"
+reason = "`--vault`, staged beside the vault and linked in"
+output_kind = "vault"
+
+[[row]]
+file = "cli/run/_result.py"
+function = "_write_file"
+sink = "write_local_target"
+ordinal = 1
+disposition = "entry"
+reason = "`--result`"
+output_kind = "result"
+
+[[row]]
+file = "cli/scanning/_multi.py"
+function = "run_scan"
+sink = "write_local_target"
+ordinal = 1
+disposition = "entry"
+reason = "`decoy scan` output; not a `decoy run` output"
+output_kind = "not-run"
+
+[[row]]
+file = "distribution/layout.py"
+function = "atomic_point_current_at"
+sink = "replace_symlink"
+ordinal = 1
+disposition = "entry"
+reason = "the installer's `current` link; not a `decoy run` output"
+output_kind = "not-run"

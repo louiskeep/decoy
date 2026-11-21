@@ -168,8 +168,16 @@ def _require_parent(root: Path, path: Path) -> tuple[tuple[str, ...], bool]:
 
 def anchor(path: Path) -> Path:
     """The library root as an absolute path, links in it resolved. The root is the one path whose
-    links are followed: the user chose it, and every path below it is judged from it."""
-    return Path(path).resolve()
+    links are followed: the user chose it, and every path below it is judged from it. A path that
+    cannot be resolved (a link loop, a NUL byte) is `library_path_unsafe`."""
+    resolved: Path | None
+    try:
+        resolved = Path(path).resolve()
+    except (OSError, RuntimeError, ValueError):
+        resolved = None
+    if resolved is None:
+        raise _unsafe()
+    return resolved
 
 
 def nearest_existing(path: Path) -> Path:

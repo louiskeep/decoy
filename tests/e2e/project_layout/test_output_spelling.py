@@ -24,7 +24,7 @@ from decoy._atomic import (
     write_local_target,
 )
 from decoy.cli.exit_codes import EXIT_OK, EXIT_RUNTIME, EXIT_USAGE
-from decoy.cli.io import resolved_output_collisions
+from decoy.cli.io import OutputPlacement, resolved_output_collisions, run_outputs
 from tests.e2e.project_layout.test_layout_gate import (
     COLLISION,
     _codes,
@@ -208,5 +208,10 @@ def test_fd_alias_classification_uses_the_kernel_resolved_entry(tmp_path: Path) 
 def test_characterization_the_destination_key_never_raises_on_unencodable_paths(raw: str) -> None:
     """Passes today (`UnicodeEncodeError` is a `ValueError`, which the key already catches)."""
     typed = (("--vault", Path(raw)), ("--evidence-out", Path(raw)))
-    assert resolved_output_collisions({}, None, typed) in (None, ("--vault", "--evidence-out"))
+    outputs = run_outputs({}, OutputPlacement(typed=typed), Path("p.yaml"), None)
+    assert resolved_output_collisions(outputs) in (
+        None,
+        ("--vault", "--evidence-out"),
+        ("--evidence-out", "--vault"),
+    )
     assert json.dumps(raw)  # the cell's input is a plain str, not bytes

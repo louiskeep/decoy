@@ -52,15 +52,13 @@ def _row_json(row: Any) -> dict:
 
 
 def _pipeline_label(cmd: LibraryCommand, ref: PipelineRef) -> str:
-    """The `pipeline` label a run of this pipeline puts on its records (plan 4.3): the YAML's
-    path relative to its project root, so a name, a path and a path typed from a subfolder all
-    select the same records."""
-    from decoy.cli.io import LayoutError, find_project, project_relative_posix
+    """The `pipeline` label a run of this pipeline puts on its records (plan 4.3), from the one
+    resolver the run also uses; a layout fault is a usage error with its code."""
+    from decoy.cli.io import LayoutError, pipeline_label
 
     failure: LayoutError | None = None
     try:
-        project = ref.project or find_project(ref.yaml.parent, None)  # it resolves the start
-        return project_relative_posix(project.root, ref.yaml)
+        return pipeline_label(ref.yaml, ref.project)
     except LayoutError as exc:
         failure = exc
     cmd.fail(str(failure), code=getattr(failure, "code", None))

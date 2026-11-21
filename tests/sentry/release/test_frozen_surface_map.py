@@ -89,6 +89,7 @@ def findings(text: str) -> list[str]:
     found += [f"no row for tag {tag}" for tag in sorted(_tags.source_tags()) if tag not in tagged]
     needles = ("src/decoy/distribution/", "cli-local-1", "src/decoy/_version.py", snapshot)
     needles += ("S7B-KL-1", "docs/release/public-renames.md")
+    needles += ("tests/sentry/release/test_hidden_names.py",)
     for needle in needles:
         if needle not in text:
             found.append(f"no row for {needle}")

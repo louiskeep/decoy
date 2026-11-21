@@ -2,9 +2,6 @@
  "sentry_id": "kind-canary-pending",
  "created_in": "L1c.2",
  "entries": {
-  "run-result": {
-   "reason": "L3a-cli writes run-result records and adds the canary fixture."
-  },
   "sample-run": {
    "reason": "L3b-cli writes sample-run records and adds the canary fixture."
   },

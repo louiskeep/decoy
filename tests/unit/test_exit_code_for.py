@@ -39,6 +39,7 @@ def _classifier_exit(exc: Exception) -> int:
         config_str="pipeline.yaml",
         yaml_mode="mask",
         rows=None,
+        no_library=True,
         layout=None,
         result=None,
         _run_started_at=datetime.now(timezone.utc),

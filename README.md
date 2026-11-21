@@ -215,7 +215,7 @@ vulnerability privately as described in [SECURITY.md](SECURITY.md). The trademar
 
 Functional Source License, Version 1.1, Apache 2.0 Future License
 (FSL-1.1-ALv2). `decoy-engine` moves to the same license from its first FSL
-release onward; engine 0.22.0 and earlier stay Apache-2.0; 0.23.0 and later, including the 0.28.1 this CLI pins
+release onward; engine 0.22.0 and earlier stay Apache-2.0; 0.23.0 and later, including the 0.28.2 this CLI pins
 today, are FSL-1.1-ALv2. You may use, modify and
 redistribute Decoy for any purpose except a Competing Use: offering it, or
 something substantially similar built from it, to others as a commercial

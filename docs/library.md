@@ -2,7 +2,7 @@
 
 Decoy keeps small, value-free records about your pipelines (scan snapshots, run results,
 evidence manifests, sample-run metadata) in one library per project. This page describes what
-exists so far. `decoy run` stores its evidence record (below); scan, run-result and sample
+exists so far. `decoy run` stores its evidence and run-result records (below); scan and sample
 records arrive in later releases. `decoy library path`, `fsck`, `list`, `show`, `diff` and `ref`
 read, check and name what is there.
 
@@ -75,15 +75,30 @@ built once and stored as built, so the record's payload equals that file. It is 
 not `--evidence-out` is given. The record carries the run's invocation id (the manifest's
 `run_id`), the pipeline (the YAML's path from the project root, what `library list --pipeline`
 matches) and the target table names. A failed run, a `--rows` preview and a `--duckdb-source` run
-store none.
+store no evidence record.
+
+The run also stores one `run-result` record: the document that is the `result` member of `--json`,
+built once. It has the same invocation id and links to the evidence record (the evidence links to
+nothing; `library list` and the index find the result from the evidence). A run that failed after it
+started stores a `run-result` with status `failed` and no evidence record; a refusal before the run
+starts, such as a bad option, stores nothing.
 
 - `--no-library`, or `DECOY_LIBRARY=off`, stores nothing for that run.
 - The run card names the record and the library root; `--json` has a `library` object:
-  `{"status": "stored", "root": ..., "evidence": <id>}`, `{"status": "skipped"}`, or
+  `{"status": "stored", "root": ..., "evidence": <id>, "result": <id>}`, `{"status": "skipped"}`, or
   `{"status": "failed", "root": ..., "code": ...}`.
 - A library that cannot be written does not fail the run: stderr gets one warning with the code,
   `--json` says `failed`, and the exit code is the run's own (a delivered run is never reported
   as failed, so an orchestrator does not deliver twice).
+
+A run never writes an output onto the library root. The gate lists every file the run writes
+(targets, quarantine, the post-scan report, `--result`, `--evidence-out`, `--vault`, and the
+project run folder's own files) and refuses the run before anything is written when one of them
+is the root, sits inside it, or holds it, even through a link: `layout.output_path_collision`
+with `the record library` as the first party, exit 1. A library root that cannot be resolved
+(a link loop, a NUL byte) is `library_path_unsafe`: the run delivers its outputs, stores no
+record, warns once and keeps its own exit code, and `--json` says `library.status: failed`.
+`decoy library` commands report the same fault as a coded error with exit 3.
 
 Paths in the record are what the manifest holds: project-relative inside a `decoy.yaml` project,
 absolute otherwise. `export` reduces them to file names unless `--keep-paths` is given.

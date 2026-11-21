@@ -223,8 +223,8 @@ def _normal(result, *spellings: str) -> dict:
             return {
                 k: scrub(v)
                 for k, v in node.items()
-                # `evidence` is the run's library record id, new for every run.
-                if not _VOLATILE.search(k) and k not in ("given_as", "evidence")
+                # `evidence` and `result` are the run's library record ids, new for every run.
+                if not _VOLATILE.search(k) and k not in ("given_as", "evidence", "result")
             }
         if isinstance(node, list):
             return [scrub(v) for v in node]

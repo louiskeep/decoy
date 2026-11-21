@@ -15,8 +15,17 @@ from decoy.cli.io import (
     write_run_report,
 )
 from decoy.cli.project import only_pipeline, run_all
-from decoy.cli.run import _errors, _evidence, _execute, _prepare, _progress, _render, _result
-from decoy.cli.run._context import IntegrityWriteRefusal, RunContext, RunRefusal
+from decoy.cli.run import (
+    _errors,
+    _evidence,
+    _execute,
+    _prepare,
+    _progress,
+    _render,
+    _result,
+    _sample,
+)
+from decoy.cli.run._context import IntegrityWriteRefusal, RunContext, RunRefusal, UsageRefusal
 from decoy.cli.run._notify import (
     _begin_trace,
     _dispatch_run_notifications,
@@ -46,6 +55,7 @@ FORWARD_VALUES = (  # sent when set
     ("--key-label", "key_label"),
     ("--otel-endpoint", "otel_endpoint"),
     ("--rows", "rows"),
+    ("--sample", "sample"),
 )
 FORWARD_REPEATED = (("--notify", "notify"), ("--duckdb-source", "duckdb_source"))
 FORWARD_SWITCHES = (  # sent when on
@@ -67,6 +77,7 @@ REFUSED_WITH_ALL = (
     ("--vault", "vault"),
     ("--result", "result"),
     ("--out-dir", "out_dir"),
+    ("--sample-root", "sample_root"),  # names one table of one pipeline
 )
 # Handled apart from forwarding: `ctx`, `config` and `all_` pick the pipelines; the child always
 # gets `--json`, so `json_` and `quiet` (mutually exclusive with it) are not passed; the master
@@ -145,6 +156,9 @@ def _phases(ctx: RunContext) -> None:
     ctx.raw_cfg = ctx.raw if isinstance(ctx.raw, dict) else None
     ctx.yaml_mode = _detect_mode(ctx.raw_cfg) or ctx.mode.value
 
+    if ctx.sample is not None or ctx.sample_root is not None:
+        _prepare.refuse_sample(ctx)
+        _sample.require_project(ctx)
     if ctx.rows is not None:
         _prepare.refuse_preview(ctx)
 
@@ -183,6 +197,8 @@ def _phases(ctx: RunContext) -> None:
 
                 ctx.progress.add(_trace.recorder.on_event)
                 _scopes.enter_context(use_progress(_trace.recorder))
+            if ctx.sample is not None:
+                _sample.begin(ctx, _scopes)
             if ctx.rows is None and ctx.out_dir is not None:
                 failed = False
                 try:
@@ -201,6 +217,10 @@ def _phases(ctx: RunContext) -> None:
     except typer.Exit:
         # An inner typer.Exit already set its exit code; keep it out of the catch-all below.
         raise
+    except UsageRefusal:
+        # A usage refusal ends in `execute`, with the envelope; `finally` still cleans up. The
+        # write refusals stay with `_errors.fail`, which already gives them their document.
+        raise
     except Exception as exc:
         _failed_with = type(exc).__name__
         _errors.fail(ctx, exc)
@@ -208,6 +228,8 @@ def _phases(ctx: RunContext) -> None:
         # A run that failed before writing anything leaves no empty run folder.
         if not finished and ctx.layout is not None:
             ctx.layout.abandon()
+        if not finished:
+            _sample.discard_scratch(ctx)
         # Tear down any --duckdb-source Parquet snapshots. Runs on success
         # (before the summary tail) and on every error path. By here the run
         # has already consumed the staged Parquet, and --evidence-out is

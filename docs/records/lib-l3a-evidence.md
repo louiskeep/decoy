@@ -69,9 +69,11 @@ restored; `src` clean after.
 L3-readonly uses a file where the `.decoy` folder goes, not a 0555 folder: this container runs as
 root, and root writes through a read-only mode.
 
-Not built (run-result half, RESULT C1a/C1b): L3-records' run-result part, L3-payload-from-finish,
-L3-failed-run's run-result part, L3-log-link, ML3-nolink, ML3-two-way. L3-report-id (`report
-show`, `verify` and `diff` by id) is not built in this part either (see Deviations).
+Run-result half (stacked PR on this branch, `feat/lib-l3a-run-result`): see the section "Run-result
+half" below. Still not built: L3-log-link (waits on L5b, roadmap row 42, which writes the job log),
+L3-baseline-link (waits on L2, row 36: no scan record exists yet, so a run has nothing to link to as
+its baseline) and L3-report-id (`report show`, `verify` and `diff` by id: `report.py` must not
+grow, see Deviations).
 
 ## Finding: some runs' manifests failed the engine's evidence model (resolved by engine 0.28.1)
 
@@ -143,3 +145,110 @@ mypy (no gate in `ci.yml`). The run-result half and `report ... <id>`.
 - The pipeline label now calls `decoy.cli.io.project_relative_posix`, the helper L4a added.
 - `decoy library list` on a project after this lands shows evidence rows. `library show` of one
   prints raw warning text, which is #215's V2-LOG a.
+
+## Run-result half
+
+`decoy.cli.library.store_run_result` stores the document `cli/run/_result.py` already builds, as
+built, once. Its one caller is `_result._store_record`, called from `_write_file`, which both
+`emit` and `report_error` use: every end of the run that writes the `--json` envelope or the
+`--result` file stores the record, and the payload equals the `result` member of `--json`.
+
+- **Link.** The envelope links one way to the run's evidence record (`rel: evidence`) when one was
+  stored. The evidence is stored first and links to nothing. The reverse direction is an index
+  query over `links`.
+- **Labels.** `pipeline`, `tables`, `status` and `exit_code`.
+- **Which runs.** Success, findings and a run that failed after it started (runtime, capacity,
+  cancelled, and a config-caused engine fault that exits 1) store a record. A refusal before the run
+  starts (the engine was never called: `ctx.execution_started` is false) stores
+  nothing, as before, so the "refusal writes no file" sentries stay true. A preview, `--no-library`,
+  `DECOY_LIBRARY=off` and a failed document build store nothing.
+- **Failure (4.17).** A failed store warns once and keeps the exit code. When the evidence store
+  already failed, the run-result store is skipped, so one run gives one warning.
+- **`--json`.** On success the `library` member gains `result` (the run-result record id).
+  Error envelopes are unchanged.
+- **Cells.** `tests/e2e/library/test_run_result_records.py` (L3-records run-result part,
+  L3-payload-from-finish on success and on a runtime failure, L3-failed-run, L3-no-library,
+  L3-readonly, the `--result` file equals the record), the `run-result` canary case, and
+  `tests/sentry/io_policy/test_run_result_store_caller.py` (one caller).
+- **Not covered.** L3-payload-from-finish on a `findings` run (exit 4) has no cell: it needs a
+  post-validate fixture and uses the same `_write_file` path as the cells that exist.
+
+## Mutations at the final head (`057cc05d`, Codex round 2 fix)
+
+Each mutation applied once by exact string replace, the 5 test files below run
+(55 tests with the guard file), the file restored. Cells are
+`tests/e2e/library/test_run_evidence_records.py`, `test_run_result_records.py`,
+`test_library_output_guard.py` and the two `tests/sentry/io_policy/test_*_store_caller.py` files.
+"Red" gives the failing test count.
+
+| Mutation | Result |
+|---|---|
+| ML3-label: label is the file name | red (3) |
+| ML3-drift: the store gets a different manifest than the file | red (10) |
+| ML3-cwd-root: root resolved without the YAML | red (1) |
+| ML3-ignore: off switch ignored (`store = True`) | red (3) |
+| ML3-ignore: `enabled=True` with `--evidence-out` | red (1) |
+| ML3-fail: a failed store raises | red (4) |
+| ML3-silent-fail: no warning on a failed store (evidence, result) | red (3), red (1) |
+| ML3-second-caller: `store_run_result` called under an alias in `_render.py` | red (1) |
+| RR-category-proxy: persistence decided by an outcome proxy, not `execution_started` | red (1) |
+| RR-start-unset: `execution_started` never set | red (8) |
+| RR-pre-start-stores: a pre-start refusal stores a result | red (27) |
+| RR-quiet-silent: no warning under `--quiet` (result, evidence) | red (1), red (1) |
+| RR-link-dropped: run-result does not link its evidence | red (2) |
+| RR-double-warn: result store not skipped after a failed evidence store | red (3) |
+| RR-label-resolver-copy: result label not from the shared resolver | red (3) |
+| LG-registration-removed: the library root is not given to the collision rule | red (25 of 26 guard cells; the `--no-library` control stays green) |
+
+The `ML3-fail` first try (`raise` in the `OSError` handler only) survived, because the
+unwritable-library cells fail through the layout and library errors, not `OSError`. The mutation
+that makes the whole failure return raise is red.
+
+## Output guard (Codex round 2)
+
+The resolved library root is one more destination in `resolved_output_collisions`
+(`OutputPlacement.library`, set once by `output_placement` in `cli/run/_context.py`). A `--result`,
+`--evidence-out`, `--integrity-out` or a configured target at or inside the root is refused by the
+gate with the usual collision refusal before any write. The root is not checked anywhere else.
+Cells: `tests/e2e/library/test_library_output_guard.py` (unset env, relative `DECOY_LIBRARY`,
+absolute `DECOY_LIBRARY`; at the root and inside it; the relative `r.json` case; `--no-library`
+leaves the root free).
+
+## Revision 8 (Codex round 3): one output inventory, one containment rule
+
+Code head `95f390b3`. The mutations below ran on that tree (the record commit changes only this
+file). Each was applied once by exact string replace, the test set run, the file restored. The set is
+the guard matrix (`test_library_output_guard.py`), `tests/sentry/io_policy/run_outputs/`,
+`test_paths.py`, `test_placement_typed_files.py`, `test_library_read_commands.py`, the two run record
+files and `test_private_files.py` (201 tests with the full set green). "Red" gives the failing count.
+
+| Mutation | Result |
+|---|---|
+| MO-implicit-drop: `run_outputs` omits the implicit report | red (5) |
+| MO-report-fork: `report_file` derives its own name | red (1) |
+| MO-second-walk: the collision rule calls `relative_outputs` | red (1) |
+| MO-unlisted-writer: a run writes one more file beside a target | red (13) |
+| MO-one-direction: drop branch (b) of `overlaps_root` | red (11) |
+| MO-entry-only: check the entry, not the followed landing | red (9) |
+| MO-lexical: compare text paths, not `_destination_key` | red (17) |
+| MO-prefix: compare string prefixes | red (1) |
+| MO-narrow-catch: `anchor` catches `OSError` only | red (13) |
+| MO-fault-raises: `_library_root` lets `LibraryError` through | red (10) |
+| MO-re-resolve: a store function calls `resolve_root` again | red (1, the static check) |
+| MO-fault-fallback: on a fault, store under the project `.decoy` | red (9) |
+| MO-cli-root: `LibraryCommand.root()` catches `LayoutError` only | red (1) |
+| MO-two-warnings: the evidence store prints its own warning | red (9) |
+| MO-raw-first-target: `implicit_report_path` gets the raw text | red (2) |
+| MO-sink-unlisted: a run-reached module gains a write call with no row | red (9) |
+| Registration removed (`library = None`) | red (55) |
+
+MO-lexical survived once (201 passed): the first form compared text paths of the landing, and
+`_landing` already resolves links. The mutation that compares the declared output text, with no
+landing and no key, is red. The write audit and the sentry rows are in
+`tests/sentry/io_policy/run_outputs/test_run_output_inventory.py`.
+
+Where the test matrix differs from the plan text: for `integrity-implicit` and `quarantine` the
+report and the quarantine file share their folder with the first target, so when they sit inside the
+root the target does too, and the refusal names the target first. The cells accept either label
+there. The `layout` row's "above" cell has the same property. Also, `--chunked` lists the implicit
+report like any other run (the gate does not know whether a chunked run writes one).

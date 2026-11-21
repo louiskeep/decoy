@@ -143,7 +143,7 @@ def _assert_exact(step: str, new: set[Path], expected: set[Path]) -> None:
 
 def _split_library(step: str, new: set[Path], project: Path, records: int) -> set[Path]:
     """The paths `new` holds outside the project's record library, after checking the library
-    part: a run stores its evidence record by default (LIB plan 4.16), `records` record files
+    part: a run stores its evidence and run-result records by default (LIB plan 4.16), `records` record files
     under `.decoy/library/objects/`, and nothing else of the library writes rows or logs."""
     root = project / DECOY_DIR
     library = {p for p in new if _under(p, root)}
@@ -195,7 +195,7 @@ def test_each_command_writes_only_where_the_guarantee_allows(world: World) -> No
     assert done.returncode == 0, done.stdout + done.stderr
     _assert_quiet(done)
     run = w.run_dir("mask")
-    new = _split_library("run", new, w.project, records=1)
+    new = _split_library("run", new, w.project, records=2)
     _assert_exact("run", new, _out_first(w.project) | _run_paths(w.project, "mask", run, "out.csv"))
     assert json.loads(done.stdout)["output_dir"] == str(run)
     masked = run / "out.csv"
@@ -254,7 +254,7 @@ def test_run_all_writes_only_each_pipelines_run_folder(world: World) -> None:
     expected = _out_first(w.project)
     for name in ("alpha", "beta"):
         expected |= _run_paths(w.project, name, w.run_dir(name), "out.csv")
-    _assert_exact("run --all", _split_library("run --all", new, w.project, records=2), expected)
+    _assert_exact("run --all", _split_library("run --all", new, w.project, records=4), expected)
     assert not list(w.home.rglob("*")), "a command wrote into the home folder"
 
 

@@ -38,6 +38,7 @@ from decoy.cli.io._layout import (
     member_yaml,
     pipeline_folder,
     project_out_folder,
+    project_relative_posix,
     read_latest,
     same_path,
 )
@@ -345,3 +346,15 @@ def resolve_pipeline(token: str | None, state: OutputState, command: str) -> Pip
     elif state.mode is not OutputMode.quiet:
         state.err_console.print(error("error:"), failure.message, markup=False)
     raise typer.Exit(code=EXIT_USAGE)
+
+
+def pipeline_label(yaml: Path, project: Project | None = None) -> str:
+    """The `pipeline` label a run puts on its records and `library list --pipeline` matches: the
+    YAML's path relative to its project root (absolute outside one). The one resolver of it.
+
+    `project` is the already-found project (a `PipelineRef` carries one), else the walk from the
+    YAML's folder. Raises `LayoutError`: a library command ends in a usage error with its code,
+    and a run records it as a failed store (a record is lost, the run is not).
+    """
+    found = project or find_project(yaml.resolve().parent, None)
+    return project_relative_posix(found.root, yaml)

@@ -86,7 +86,8 @@ def test_a_run_stores_one_evidence_record_by_default(project: Path) -> None:
     rows = _evidence_rows(project)
     assert len(rows) == 1
     row = rows[0]
-    assert out["library"] == {
+    # The run-result record (second half of L3a) adds its own id after the evidence's.
+    assert {k: v for k, v in out["library"].items() if k != "result"} == {
         "status": "stored",
         "root": str((project / DECOY_DIR).resolve()),
         "evidence": row.id,

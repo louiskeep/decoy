@@ -21,6 +21,7 @@ from pathlib import Path
 import pytest
 import typer
 import typer.core
+from tests.command_tree import commands, options
 from tests.sentry.cli_text._banned_text import (
     ALLOWLIST,
     BANNED_USER_TEXT,
@@ -41,35 +42,26 @@ def _hits(text: str, exempt: frozenset[str] = frozenset()) -> list[str]:
     return [p.pattern for p in BANNED_USER_TEXT if p.pattern not in exempt and p.search(text)]
 
 
-def _walk(cmd: typer.core.TyperCommand, path: tuple[str, ...] = ()):
-    """Yield (path, command) for the whole tree, hidden commands included."""
-    yield path, cmd
-    if isinstance(cmd, typer.core.TyperGroup):
-        for name, sub in cmd.commands.items():
-            yield from _walk(sub, (*path, name))
-
-
 def _tree_texts(root: typer.core.TyperCommand | None = None) -> list[tuple[str, str]]:
-    root = root or typer.main.get_command(app)
     out: list[tuple[str, str]] = []
-    for path, cmd in _walk(root):
-        label = "decoy " + " ".join(path)
+    for c in commands(root):
+        label = "decoy " + " ".join(c.path)
         for field in ("help", "short_help", "epilog"):
-            value = getattr(cmd, field, None)
+            value = getattr(c.command, field, None)
             if value:
                 out.append((f"{label} {field}", value))
-        for param in cmd.params:
-            help_text = getattr(param, "help", None)
-            if help_text:
-                out.append((f"{label} option {param.name}", help_text))
+    for o in options(root):
+        help_text = getattr(o.param, "help", None)
+        if help_text:
+            out.append((f"decoy {' '.join(o.cmd.path)} option {o.param.name}", help_text))
     return out
 
 
 def _rendered_help_texts() -> list[tuple[str, str]]:
-    root = typer.main.get_command(app)
     out: list[tuple[str, str]] = []
-    for path, cmd in _walk(root):
-        if getattr(cmd, "hidden", False):
+    for c in commands():
+        path = c.path
+        if getattr(c.command, "hidden", False):
             continue
         result = runner.invoke(app, [*path, "--help"], terminal_width=200)
         label = "decoy " + " ".join(path)

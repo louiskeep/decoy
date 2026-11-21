@@ -143,10 +143,12 @@ dependencies = [
     # 0.28.1 makes PyNaCl a base dependency; the CLI runtime profile gains pynacl==1.6.2
     # (70 pins, fingerprint b61dcfd6).
     #
+    # 0.28.2 keeps the 70 pins; only the hashed engine version moves (fingerprint 44aaa90f).
+    #
     # Hard-pinned to one engine release. The platform is parked and stays on
     # 0.18.0, so the two pins differ for now. The engine is not on PyPI, so CI
-    # and the smoke docs install the `v0.28.1` git tag.
-    "decoy-engine==0.28.1",
+    # and the smoke docs install the `v0.28.2` git tag.
+    "decoy-engine==0.28.2",
     # Pin the typer minor: `typer utils docs` metavar rendering differs across
     # typer minors (0.26.x emits `TEXT`/`FILE`; 0.27.x emits `<str>`/`<file>`),
     # and docs/cli-reference.md is committed and checked by the test_cli_surface

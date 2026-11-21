@@ -15,7 +15,7 @@ from tests.unit.library._helpers import envelope, object_files
 
 from decoy.cli import io as cli_io
 from decoy.cli.library import LibraryError, _paths, open_library, resolve_root
-from decoy.cli.library._errors import LIBRARY_PATH_TOO_LONG
+from decoy.cli.library._errors import LIBRARY_PATH_TOO_LONG, LIBRARY_PATH_UNSAFE
 
 MARKER = "kind: decoy-project/v1\n"
 
@@ -174,3 +174,18 @@ def test_long_root_is_refused_on_windows(tmp_path: Path) -> None:
     short_root = _root_of_length(tmp_path, 140)
     open_library(short_root).put(envelope())
     assert len(object_files(short_root)) == 1
+
+
+@pytest.mark.parametrize("fault", [OSError("x"), RuntimeError("loop"), ValueError("nul")])
+def test_an_unresolvable_root_is_library_path_unsafe(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, fault: Exception
+) -> None:
+    """Rule 3: `anchor` is the one resolver, and no resolution fault escapes as itself."""
+
+    def broken(self: Path, strict: bool = False) -> Path:
+        raise fault
+
+    monkeypatch.setattr(Path, "resolve", broken)
+    with pytest.raises(LibraryError) as caught:
+        resolve_root(flag=tmp_path / "lib")
+    assert caught.value.code == LIBRARY_PATH_UNSAFE

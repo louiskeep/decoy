@@ -47,7 +47,8 @@ STREAMING_UNSUPPORTED = "target_format_streaming_unsupported"
 FORMAT_UNKNOWN = "target_format_unknown"
 UNREADABLE = "target_format_unreadable"
 
-_FORMATS = ("csv", "parquet", "fixed_width")
+# The supported target formats and the file suffix a sample gives each: the one registry.
+TARGET_SUFFIX = {"csv": ".csv", "parquet": ".parquet", "fixed_width": ".txt"}
 _SUFFIX_FORMAT = {".csv": "csv", ".parquet": "parquet", ".pq": "parquet"}
 _EXHAUSTED = object()  # a yielded chunk is never mistaken for the end
 _INT64_MIN, _INT64_MAX = -(2**63), 2**63 - 1
@@ -99,6 +100,36 @@ def check_output_path(path: Path) -> None:
         raise TargetFormatError(SUFFIX_MISMATCH, message)
 
 
+def is_target_format(fmt: object) -> bool:
+    """True when `fmt` is a format the CLI writes: csv, parquet or fixed_width."""
+    return isinstance(fmt, str) and fmt in TARGET_SUFFIX
+
+
+def declared_format(entry: object) -> str | None:
+    """The supported format a target entry declares, else None. Reads nothing else."""
+    fmt = entry.get("format") if isinstance(entry, Mapping) else None
+    return fmt if is_target_format(fmt) else None
+
+
+def sample_target_format(table: str, entry: object) -> str:
+    """The format a sample writes for one declared target.
+
+    A file target keeps its declared format. A database or cloud target becomes Parquet.
+    A file target with an unsupported format raises `TargetFormatError` (`FORMAT_UNKNOWN`),
+    as the gate does.
+    """
+    declared = entry if isinstance(entry, Mapping) else {}
+    if declared.get("type", "file") != "file":
+        return "parquet"
+    fmt = declared_format(declared)
+    if fmt is None:
+        raise TargetFormatError(
+            FORMAT_UNKNOWN,
+            f"targets.{table}: unsupported target format; expected csv, parquet or fixed_width",
+        )
+    return fmt
+
+
 def _format_suffix(path: Path) -> str:
     return Path(split_compression(path)[0]).suffix
 
@@ -117,7 +148,7 @@ def _entry_issue(
     table: str, entry: Mapping[str, Any], *, chunked: bool
 ) -> TargetFormatIssue | None:
     fmt = entry.get("format")
-    if not isinstance(fmt, str) or fmt not in _FORMATS:
+    if not is_target_format(fmt):
         return TargetFormatIssue(
             table,
             FORMAT_UNKNOWN,
@@ -199,7 +230,7 @@ def _legacy_format_for_path(path: Path) -> str:
 
 
 def _unreadable(fmt: object, layout: object) -> TargetFormatError | None:
-    if not isinstance(fmt, str) or fmt not in _FORMATS:
+    if not is_target_format(fmt):
         return TargetFormatError(UNREADABLE, "the file's format cannot be determined")
     if fmt == "fixed_width" and (not isinstance(layout, Mapping) or not layout):
         return TargetFormatError(UNREADABLE, "the file's format cannot be determined")

@@ -61,7 +61,7 @@ email                 : faker(person_email)
 ssn                   : redact
 customer_id           : hash in customer_ids
 card                  : fpe(charset: digits, validate_luhn: true) in cards
-dob, admitted         : date_shift(min_days: -30, max_days: 30) in dates
+dob, admitted         : date_shift(min_days: -30, max_days: 30, date_format: "%Y-%m-%d") in dates
 zip                   : truncate(length: 3)
 salary                : shuffle
 first_name, last_name : faker(person_name) in people deterministic
@@ -78,7 +78,7 @@ A trailing `?` marks a rule nobody has checked; the file does not compile until 
 Reuse a rule with `let`, at the pipeline level:
 
 ```decoy-pipeline
-let shift = date_shift(min_days: -30, max_days: 30) in dates
+let shift = date_shift(min_days: -30, max_days: 30, date_format: "%Y-%m-%d") in dates
 mask t from csv("t.csv", header: true) to csv("out/t.csv") { dob, admitted : shift }
 ```
 

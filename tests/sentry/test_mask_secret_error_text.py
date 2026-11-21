@@ -11,6 +11,7 @@ dispatches on the secret code BEFORE its class branches, so a class that is also
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 
 import pandas as pd
@@ -127,8 +128,11 @@ def _expected(surface: str, code: str) -> str:
 
 
 def _assert_value_free(result, tmp_path: Path) -> None:
-    for needle in (CANARY, TEST_MASK_SECRET, TEST_MASK_SECRET_REF, "0644", "Traceback"):
+    for needle in (CANARY, TEST_MASK_SECRET, TEST_MASK_SECRET_REF, "Traceback"):
         assert needle not in result.output, (needle, result.output)
+    # A file mode, matched as a whole number: a timestamp such as 08:40:21.080644Z holds the same
+    # digits and made this check fail by chance.
+    assert not re.search(r"(?<![0-9])0?644(?![0-9])", result.output), result.output
     assert not (tmp_path / "fresh.bin").exists() and not (tmp_path / "bad" / "out.csv").exists()
 
 

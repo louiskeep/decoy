@@ -123,7 +123,6 @@
   "decoy.cli.preflight::preflight::run_config_only_checks": {"reason": "The same third copy of steps 1-3 also runs the config-only checks itself until CONFIG-EXPLICIT C2 folds it onto the gate."}
  },
  "kind-canary-pending": {
-  "run-result": {"reason": "L3a-cli writes run-result records and adds the canary fixture."},
   "sample-run": {"reason": "L3b-cli writes sample-run records and adds the canary fixture."},
   "scan-set": {"reason": "L2-cli writes scan records and adds the scan-set canary fixture."}
  },

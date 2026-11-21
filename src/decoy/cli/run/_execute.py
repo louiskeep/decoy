@@ -322,6 +322,7 @@ def execute(ctx: RunContext) -> None:
     if ctx.layout is None:
         ctx.layout = open_run_layout(ctx.config, ctx.config_dict, ctx.invocation_id)
     layout = ctx.layout
+    ctx.execution_started = True
     if ctx.chunked:
         _chunk_paths = _run_chunked_mask(
             ctx.config_dict,

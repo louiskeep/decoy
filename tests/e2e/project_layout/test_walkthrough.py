@@ -109,7 +109,7 @@ def _tree(home: Path, seeded: tuple[str, ...] = ()) -> list[str]:
 
 
 def _project_entries(name: str, pipelines: tuple[str, ...], records: int) -> list[str]:
-    """A project's entries; `records` is how many evidence records its runs stored (plan 4.16)."""
+    """A project's entries; `records` is how many records (evidence and run-result) its runs stored (plan 4.16)."""
     base = f"work/{name}"
     library = f"{base}/.decoy/library"
     lines = [
@@ -271,7 +271,7 @@ def test_walkthrough(home: Path, seed: _Seed, monkeypatch: pytest.MonkeyPatch) -
     # The whole home folder, entry for entry: nothing beside a YAML, in `work`, or in `logs/`.
     expected = ["data/", "data/acme/", "data/acme/members.csv", "data/globex/"]
     expected += ["data/globex/claims.csv", "data/globex/providers.csv", "work/"]
-    expected += _project_entries("acme", ("members-generate", "members-mask"), records=3)
+    expected += _project_entries("acme", ("members-generate", "members-mask"), records=6)
     expected += _pipeline_out("acme", "members-generate", {second: ("employees.csv",)}, second)
     expected += _pipeline_out(
         "acme",
@@ -282,7 +282,7 @@ def test_walkthrough(home: Path, seed: _Seed, monkeypatch: pytest.MonkeyPatch) -
         },
         third,
     )
-    expected += _project_entries("globex", tuple(stems), records=len(stems))
+    expected += _project_entries("globex", tuple(stems), records=2 * len(stems))
     for name, stem in stems.items():
         expected += _pipeline_out("globex", name, {"<RUN>": (f"{stem}.masked.csv",)}, "<RUN>")
     assert _tree(home, (first, second, third)) == sorted(expected)

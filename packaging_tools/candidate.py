@@ -6,7 +6,7 @@ version and commit, engine tag and commit) and holds the SHA-256 of `SHA256SUMS`
 summary and the readiness instance can be tied to exactly these bytes.
 
     python -m packaging_tools.candidate --dist DIR --cli-version 1.0.0 --cli-sha SHA \\
-        --engine-tag v0.28.1 --engine-commit SHA
+        --engine-tag v0.28.2 --engine-commit SHA
 
 `read_candidate` is the one strict reader the smoke and `scripts/release/record_smoke.py` use,
 and the smoke summary's schema and step names live here so both sides read the same ones.

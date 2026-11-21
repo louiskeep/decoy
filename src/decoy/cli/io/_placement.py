@@ -49,6 +49,7 @@ from decoy.cli.io._layout_errors import (
     LayoutError,
     LayoutWarning,
 )
+from decoy.cli.io._run_outputs import OutputKind, RunOutput, replaces_final, run_outputs
 
 if TYPE_CHECKING:
     from decoy.cli.io._pipelines import PipelineRef
@@ -63,7 +64,8 @@ class OutputPlacement:
     `--out-dir` (`directory`); `preview` is a `--rows` run that writes nothing. `inputs` holds resolved
     input paths no side file may replace (the `--duckdb-source` databases). `typed` holds
     the `(flag, path)` side files (`--evidence-out`, `--vault`, `--result`) that join the collision rule.
-    `chunked` is the route, which the cloud kind cannot use.
+    `library` is the resolved record-library root when this run stores records: no output or
+    side file may land at or inside it. `chunked` is the route, which the cloud kind cannot use.
     """
 
     kind: str = "project"
@@ -71,6 +73,7 @@ class OutputPlacement:
     typed: tuple[tuple[str, Path], ...] = ()
     chunked: bool = False
     inputs: tuple[Path, ...] = ()
+    library: Path | None = None
 
     @classmethod
     def fixed(
@@ -79,24 +82,16 @@ class OutputPlacement:
         typed: tuple[tuple[str, Path], ...] = (),
         chunked: bool = False,
         inputs: tuple[Path, ...] = (),
+        library: Path | None = None,
     ) -> OutputPlacement:
-        return cls("fixed", Path(os.path.abspath(directory)), typed, chunked, inputs)
+        return cls("fixed", Path(os.path.abspath(directory)), typed, chunked, inputs, library)
 
     @classmethod
     def preview(cls) -> OutputPlacement:
         return cls("preview")
 
 
-# The one policy for a destination's final path component. A writer either follows a final
-# symlink (file targets, quarantine, `--evidence-out` and `--result`, which use
-# `write_local_target` REPLACE) or replaces it with a file (`--vault`). Everything not listed follows. The split
-# root, the side-file check and the collision rule all read this, so none decides alone.
-_REPLACES_FINAL = frozenset({"--vault"})
-
-
-def replaces_final(label: str) -> bool:
-    """True when the writer behind `label` (a config location or flag) replaces a final link."""
-    return label in _REPLACES_FINAL
+LIBRARY_LABEL = "the record library"
 
 
 def _landing(path: Path, replaces: bool) -> Path:
@@ -246,53 +241,79 @@ def protected_inputs(
     return tuple(found)
 
 
+_SIDE_KINDS = frozenset(
+    {
+        OutputKind.INTEGRITY_EXPLICIT,
+        OutputKind.INTEGRITY_IMPLICIT,
+        OutputKind.RESULT,
+        OutputKind.EVIDENCE,
+        OutputKind.VAULT,
+    }
+)
+
+
+def overlaps_root(output: RunOutput, root: Path) -> bool:
+    """True when `output` and the library `root` share a destination, in either direction.
+
+    `root` is the anchored root (absolute, links resolved, it may not exist yet). Identity
+    comes only from `_destination_key`, for the entry name and the followed landing, so a link
+    outside the root that points in is caught whichever final-link policy the writer has.
+    (a) at or below: the root is the output's landing or a folder above it.
+    (b) above: the output's landing is the root or a folder above it, existing or not.
+    """
+    root_key = _destination_key(root)
+    above = {_destination_key(folder) for folder in (root, *root.parents)}
+    for landing in (_landing(output.path, True), _landing(output.path, False)):
+        if any(_destination_key(path) == root_key for path in (landing, *landing.parents)):
+            return True
+        if _destination_key(landing) in above:
+            return True
+    return False
+
+
 def resolved_output_collisions(
-    config_dict: dict,
-    base: Path | None,
-    typed: tuple[tuple[str, Path], ...] = (),
+    outputs: tuple[RunOutput, ...],
     protected: tuple[tuple[str, Path], ...] = (),
+    library: Path | None = None,
 ) -> tuple[str, str] | None:
     """The first two outputs that resolve to one destination, as `(first, second)` labels.
 
-    The one collision rule (plan 3.6.1 B). It walks `relative_outputs`, so every local file
-    target and enabled quarantine takes part; `base` is the folder relative paths land in
-    (None when it is unknown), and `typed` adds the side files by flag name. URLs and remote
-    targets do not take part. Labels are config locations or flag names, never path values.
+    The one collision rule (plan 3.6.1 B). It reads only `outputs`, the run's one inventory
+    (`run_outputs`): every local file target, quarantine, side file and layout file takes part.
+    `library` is the record library root: an output that overlaps it, in either direction,
+    is refused with the library as the first party. Labels are config locations or flag names,
+    never path values.
     """
     seen: dict[tuple, str] = {}
     entries: dict[tuple, str] = {}
-    destinations: list[tuple[str, Path, bool]] = []
-    for location, raw in relative_outputs(config_dict):
-        if Path(raw).is_absolute():
-            # As written, like the writer opens it: collapsing ".." as text first would name
-            # the wrong folder when the part before it is a symlink.
-            destinations.append((location, Path(raw), replaces_final(location)))
-        elif is_placed_relative(raw) and base is not None and names_a_file_inside(raw):
-            destinations.append(
-                (location, Path(os.path.normpath(base / raw)), replaces_final(location))
-            )
-    destinations.extend((flag, Path(path).absolute(), replaces_final(flag)) for flag, path in typed)
-    for label, path, replaces in destinations:
-        key = _destination_key(path, replaces_final=replaces)
+    if library is not None:
+        # The run writes its records there, so an output on it would lose to the store.
+        for out in outputs:
+            if overlaps_root(out, library):
+                return LIBRARY_LABEL, out.label
+    for out in outputs:
+        key = _destination_key(out.path, replaces_final=out.replaces_final)
         # A writer that replaces a final link turns it into a file, and a later writer that
         # follows the same name would then replace that file, so one name is one destination
         # whichever way each writer treats the link.
-        entry = key if replaces else _destination_key(path, replaces_final=True)
+        entry = key if out.replaces_final else _destination_key(out.path, replaces_final=True)
         first = seen.get(key) or entries.get(entry)
         if first is not None:
-            return first, label
-        seen[key] = label
-        entries[entry] = label
+            return first, out.label
+        seen[key] = out.label
+        entries[entry] = out.label
     # A side file never lands on an input: the same key, so links and hard links are covered.
     for label, path in protected:
         held = {_destination_key(path), _destination_key(path, replaces_final=True)}
-        for flag, side in typed:
+        for side in outputs:
+            if side.kind not in _SIDE_KINDS:
+                continue
             keys = {
-                _destination_key(Path(side).absolute(), replaces_final=replaces_final(flag)),
-                _destination_key(Path(side).absolute(), replaces_final=True),
+                _destination_key(side.path, replaces_final=side.replaces_final),
+                _destination_key(side.path, replaces_final=True),
             }
             if keys & held:
-                return label, flag
+                return label, side.label
     return None
 
 
@@ -398,10 +419,9 @@ def layout_issues(
     if not issues:
         where = folder if fixed is not None else folder and folder / "<run-id>"
         clash = resolved_output_collisions(
-            config_dict,
-            where,
-            placement.typed,
+            run_outputs(config_dict, placement, config, where),
             protected_inputs(config, config_dict, placement.inputs),
+            placement.library,
         )
         if clash is not None:
             first_location = next((c for c in clash if not c.startswith("--")), None)

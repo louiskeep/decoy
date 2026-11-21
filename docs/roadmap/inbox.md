@@ -18,6 +18,9 @@ Triage empties this page. Each item gets exactly one outcome:
 
 ## Untriaged
 
+- 2026-11-21, language write-up (owner: go with recommended): `decoy validate` on a `.decoy` file shows an engine schema error with the config path but no line number, while `compile_text` has the line. Fix inside row DECOY-LANG.
+- 2026-11-21, language write-up: check that the guide's `date_shift(min_days: -30, max_days: 30)` examples (02-masking.md, cheat-sheet.md, agent-card.md) still compile now that DATE-SHIFT-FORMAT requires `date_format` on text dates; fix the guide in that row if not.
+- 2026-11-21, language write-up: `decoy validate` accepts an S3 target that `decoy run` refuses. Cloud buckets are out of 1.0 (owner 2026-11-21), so this goes with row 64 CLI-CLOUD.
 - 2026-11-18, engine #695 review (FAKER-MIGRATE S1): masking with Faker `address_city` (and the
   reflected `city`) in locale `it_IT` is not deterministic across processes. The same seed and key
   give different output under different `PYTHONHASHSEED` values, on the real `run_pipeline` route,

@@ -171,7 +171,7 @@ ALLOWED_ID_SENTENCES: dict[str, dict[str, int]] = {
         "Decoy (the `decoy-cli` command-line tool; the `decoy-engine` library and "
         "the `decoy-engine-native` companion from their first FSL release onward) is licensed under "
         f"the **{_FSL_NAME}** (SPDX: `FSL-1.1-ALv2`).": 1,
-        "Engine 0.22.0 and earlier stay Apache-2.0; 0.23.0 and later, including the 0.28.1 the CLI "
+        "Engine 0.22.0 and earlier stay Apache-2.0; 0.23.0 and later, including the 0.28.2 the CLI "
         "pins today, are FSL-1.1-ALv2.": 1,
         "Each release becomes Apache-2.0 open source two years after it ships.": 1,
         "**What happens after two years?** Each release is automatically licensed under Apache-2.0 "
@@ -186,7 +186,7 @@ ALLOWED_ID_SENTENCES: dict[str, dict[str, int]] = {
         "Each release becomes Apache-2.0 two years after it ships.": 1,
         f"{_FSL_NAME} (FSL-1.1-ALv2).": 1,
         "`decoy-engine` moves to the same license from its first FSL release onward; engine 0.22.0 "
-        "and earlier stay Apache-2.0; 0.23.0 and later, including the 0.28.1 this CLI pins today, "
+        "and earlier stay Apache-2.0; 0.23.0 and later, including the 0.28.2 this CLI pins today, "
         "are FSL-1.1-ALv2.": 1,
         "Each release converts to the Apache License 2.0 on the second anniversary of its release.": 1,
     },

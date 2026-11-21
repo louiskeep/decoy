@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import contextlib
 import json
+import os
 from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
@@ -318,3 +319,18 @@ def test_diff_refuses_mismatched_kinds_and_opaque_records(root: Path) -> None:
     assert mismatched.exit_code == EXIT_USAGE and "kind" in mismatched.output
     future = _opaque(root)
     assert _cli(root, "diff", a, future).exit_code == EXIT_USAGE
+
+
+def test_a_root_that_cannot_be_resolved_is_a_coded_runtime_error(
+    root: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Rule 3: `anchor` fails on a link loop; every library command reports it, no traceback."""
+    if os.name == "nt":
+        pytest.skip("needs symlinks")
+    (tmp_path / "loop-a").symlink_to(tmp_path / "loop-b")
+    (tmp_path / "loop-b").symlink_to(tmp_path / "loop-a")
+    monkeypatch.setenv("DECOY_LIBRARY", str(tmp_path / "loop-a" / "lib"))
+    result = runner.invoke(app, ["library", "path"])
+    assert result.exit_code == EXIT_RUNTIME, result.output
+    assert "library_path_unsafe" in result.output
+    assert result.exception is None or isinstance(result.exception, SystemExit)

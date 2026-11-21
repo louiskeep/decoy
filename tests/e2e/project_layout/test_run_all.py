@@ -428,6 +428,7 @@ SAMPLES: dict[str, list[str]] = {
     "--key-label": ["--key-label", "demo"],
     "--otel-endpoint": ["--otel-endpoint", "https://collector.example.com/v1/traces"],
     "--rows": ["--rows", "5"],
+    "--sample": ["--sample", "5"],
     "--notify": ["--notify", "email:ops@example.com"],
     "--duckdb-source": ["--duckdb-source", "a=db.duckdb"],
     "-v": ["-v"],

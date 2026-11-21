@@ -84,17 +84,17 @@ The reasons and the day-to-day steps are in the handoff
 
 ## 4. Scope by feature group
 
-52 rows block 1.0, 33 are Later and 12 are Maintenance (2026-11-21). Each cell lists the row
+55 rows block 1.0, 33 are Later and 12 are Maintenance (2026-11-21). Each cell lists the row
 number and short name; the row itself is in the group file. Each group file also lists its v1+
-candidates that have no plan yet (83 in all), and the health file lists 31 maintenance candidates. The named 1.x speed slots (1.0.x to 1.3) are listed in [roadmap/post-1.0-plan.md](roadmap/post-1.0-plan.md).
+candidates that have no plan yet (86 in all), and the health file lists 31 maintenance candidates. The named 1.x speed slots (1.0.x to 1.3) are listed in [roadmap/post-1.0-plan.md](roadmap/post-1.0-plan.md).
 
 | Group | 1.0 (open) | Later (1.x) | Maintenance |
 |---|---|---|---|
-| [Scan and detection](roadmap/groups/scan.md) | 16 NAME-REMOVAL E1, 27 SCAN-MULTI S1c-cli, 29 SCAN-MULTI S3-cli, 32c SCAN-ML-MD, 56 NAME-REMOVAL, CLI half | 30 SCAN-LIB, 31 DIST-INTEGRITY, 32 DRIFT, 80 F15 | none |
+| [Scan and detection](roadmap/groups/scan.md) | 16 NAME-REMOVAL E1, 27 SCAN-MULTI S1c-cli, 29 SCAN-MULTI S3-cli, 32c SCAN-ML-MD, 56 NAME-REMOVAL, CLI half, PRE-SCAN-RUN | 30 SCAN-LIB, 31 DIST-INTEGRITY, 32 DRIFT, 80 F15 | none |
 | [Config, validation and the init wizard](roadmap/groups/config.md) | 24e CLI-QA1, DECOY-LANG | none | none |
-| [Masking, policy, vault and secrets](roadmap/groups/mask.md) | 79 F09, FAKER-MIGRATE, DATE-SHIFT-FORMAT, FAKER-NATIVE-WIDEN, LARGE-STRING-CAST and UF-DOMAIN | 24zt F16-PROHIBIT-DOC, 81 F16, 83 F13 external adapters, TEXT-REDACT-RUST-SPLICE (1.0.x), FPE-CHECKSUM-NATIVE (1.0.x), RUST-DATE-TEXT (1.2) | none |
+| [Masking, policy, vault and secrets](roadmap/groups/mask.md) | 79 F09, FAKER-MIGRATE, DATE-SHIFT-FORMAT, FAKER-NATIVE-WIDEN, LARGE-STRING-CAST and UF-DOMAIN, COLUMN-SHAPE-RULE | 24zt F16-PROHIBIT-DOC, 81 F16, 83 F13 external adapters, TEXT-REDACT-RUST-SPLICE (1.0.x), FPE-CHECKSUM-NATIVE (1.0.x), RUST-DATE-TEXT (1.2) | none |
 | [Fit and generate](roadmap/groups/generate.md) | 24f QA-FIT-REDACT, 24n GEN-REL, 24p GEN-PROVIDERS, 24q GEN-TYPES, 24s GEN-CATALOG, GEN-WINDOWED-BATCH | 24r GEN-INHERIT, GEN-VECTOR-STREAMS (1.0.x) | none |
-| [Run, publication and results](roadmap/groups/run.md) | 24zs F26-RESERVED-NAME, OUTPUT-METADATA-LEAK, 58 F25, 59 F22, 61 CLI delivery, 63 SAMPLE CLI half, 63a RUN-STREAM, 74 F26 CLI local cleanup and engine part, FREEZE-OUTPUT, NONFK-OOM, NATIVE-MISSING-WARN, ENGINE-THREADS-DEFAULT, DOC-DRIFT-ROUTES | 85 F23 resume, CLI half, PER-COLUMN-ROUTING (1.1), CHUNK-PARALLEL (1.3), OOC-QUARANTINE (1.x), OOC-DATE-BUCKET (1.x), FK-CHUNKED-HASH-CHILD (1.x) | none |
+| [Run, publication and results](roadmap/groups/run.md) | 24zs F26-RESERVED-NAME, OUTPUT-METADATA-LEAK, 58 F25, 59 F22, 61 CLI delivery, 63 SAMPLE CLI half, 63a RUN-STREAM, 74 F26 CLI local cleanup and engine part, FREEZE-OUTPUT, NONFK-OOM, NATIVE-MISSING-WARN, ENGINE-THREADS-DEFAULT, DOC-DRIFT-ROUTES, HANDLER-ROW-COUNT | 85 F23 resume, CLI half, PER-COLUMN-ROUTING (1.1), CHUNK-PARALLEL (1.3), OOC-QUARANTINE (1.x), OOC-DATE-BUCKET (1.x), FK-CHUNKED-HASH-CHILD (1.x) | none |
 | [Local record library](roadmap/groups/library.md) | 36 L2-cli, 37 L3a-cli | 38 L3b-cli, 41 L5a-cli, 42 L5b-cli | none |
 | [Sources and targets](roadmap/groups/connect.md) | none | 64 CLI-CLOUD, 64b CLI-DB-SRC, 82 F07, 86 F01, 87 F02 | none |
 | [Quality and evidence](roadmap/groups/trust.md) | none | 68 F36, 69 F35, 70 F32 remainder, 72 F33 CLI verifier and engine signature, 78 F10 | none |

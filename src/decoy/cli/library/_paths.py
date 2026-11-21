@@ -48,6 +48,7 @@ __all__ = [
     "check_root_budget",
     "is_project_folder",
     "record_digest",
+    "resolve_project_root",
     "resolve_root",
 ]
 
@@ -107,6 +108,15 @@ def resolve_root(
     start = anchor(yaml).parent if yaml is not None else None
     root = find_project(start, project).root / DECOY_DIR
     return LibraryRoot(root, env != OFF, "project")
+
+
+def resolve_project_root(project: Path) -> LibraryRoot:
+    """The library root of a found project: `<project>/.decoy`, whatever `DECOY_LIBRARY` says.
+
+    For a command whose files must stay inside the project (a sample's scratch folder). It is
+    a named mode of this resolver, so no caller rebuilds the path itself.
+    """
+    return LibraryRoot(Path(project) / DECOY_DIR, True, "project")
 
 
 def check_root_budget(root: Path) -> None:

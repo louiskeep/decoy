@@ -64,9 +64,10 @@ class LibraryCommand:
         when one is given (its YAML's folder, or `--project`), else of the current folder. A
         root that cannot be found is a usage error."""
         from decoy.cli.io import LayoutError
-        from decoy.cli.library import resolve_root
+        from decoy.cli.library import LibraryError, resolve_root
 
         failure: LayoutError | None = None
+        fault: LibraryError | None = None
         try:
             if pipeline is None:
                 return resolve_root(flag=library)
@@ -74,6 +75,10 @@ class LibraryCommand:
             return resolve_root(flag=library, pipeline=pipeline.yaml, project=project)
         except LayoutError as exc:
             failure = exc
+        except LibraryError as exc:
+            fault = exc
+        if fault is not None:
+            self.fail_library(fault)
         self.fail(str(failure), EXIT_USAGE, code=getattr(failure, "code", None))
 
     def library(self, root: Path) -> Library:

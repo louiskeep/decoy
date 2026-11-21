@@ -248,6 +248,8 @@ def test_at_c2_run_stops_at_the_gate(
 # --- AT-C4: `decoy schema` closes each generate type ------------------------------------------
 
 # The plan's 11 types plus `constant`, `distribution` and `lookup`, added to the engine after it was written.
+# A floor, not the full list: these types must never drop out of the schema. The full set is the
+# engine's live catalog, so a type the engine adds is checked without editing this file.
 _GENERATE_TYPES = (
     "faker", "sequence", "categorical", "formula", "reference", "statistical", "derived",
     "derived_aggregate", "grouped_series", "windowed_date", "group_key", "constant",
@@ -269,7 +271,10 @@ def test_at_c4_schema_closes_every_generate_type() -> None:
         const = branch.get("if", {}).get("properties", {}).get("type", {}).get("const")
         if const is not None:
             closed[const] = branch["then"]
-    assert set(closed) == set(_GENERATE_TYPES)
+    from decoy_engine.config import generate_option_catalog
+
+    assert set(closed) == set(generate_option_catalog())
+    assert set(_GENERATE_TYPES) <= set(closed)
     for type_name, then in closed.items():
         assert then.get("additionalProperties") is False, type_name
         assert {"name", "type", "pooled", "null_probability"} <= set(then["properties"]), type_name

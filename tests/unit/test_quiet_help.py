@@ -4,26 +4,17 @@ from __future__ import annotations
 
 import re
 
-import typer.main
-
-from decoy.__main__ import app
+from tests.command_tree import options
 
 STATES_ERRORS = re.compile(r"errors? still (go to|print)", re.IGNORECASE)
 
 
 def _quiet_options() -> list[tuple[str, str]]:
-    found: list[tuple[str, str]] = []
-
-    def visit(cmd: object, prefix: tuple[str, ...]) -> None:
-        for name, sub in getattr(cmd, "commands", {}).items():
-            path = (*prefix, name)
-            for param in getattr(sub, "params", []):
-                if "--quiet" in getattr(param, "opts", []):
-                    found.append((" ".join(path), getattr(param, "help", None) or ""))
-            visit(sub, path)
-
-    visit(typer.main.get_command(app), ())
-    return found
+    return [
+        (" ".join(o.cmd.path), getattr(o.param, "help", None) or "")
+        for o in options()
+        if o.cmd.path and "--quiet" in o.spellings
+    ]
 
 
 def test_every_quiet_option_says_errors_still_print() -> None:

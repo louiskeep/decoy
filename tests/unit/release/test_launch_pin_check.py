@@ -18,7 +18,7 @@ lpc = importlib.util.module_from_spec(_spec)
 sys.modules["launch_pin_check"] = lpc
 _spec.loader.exec_module(lpc)
 
-TAG = "v0.28.1"
+TAG = "v0.28.2"
 SPEC = f"git+https://github.com/decoy-data/decoy-engine@{TAG}"
 
 

@@ -11,7 +11,7 @@ pipeline {
   seed 7
   secret ref("env:DECOY_MASK_KEY")
 
-  let shift = date_shift(min_days: -30, max_days: 30) in patient_dates
+  let shift = date_shift(min_days: -30, max_days: 30, date_format: "%Y-%m-%d") in patient_dates
 
   mask patients from csv("patients.csv", header: true) to parquet("out/patients.parquet") {
     patient_id            : hash in patient_identity
@@ -50,7 +50,7 @@ written. The ones used most:
 | `hash in <ns>` | A keyed hash; equal inputs match across tables |
 | `fpe(charset: digits) in <ns>` | Format-preserving encryption: nine digits in, nine digits out |
 | `faker(person_email)` | A realistic fake value from a provider |
-| `date_shift(min_days: -30, max_days: 30) in <ns>` | Moves a date by a per-value offset |
+| `date_shift(min_days: -30, max_days: 30, date_format: "%Y-%m-%d") in <ns>` | Moves a date by a per-value offset |
 | `truncate(length: 3)` | Keeps the first characters |
 | `shuffle` | Reorders the column's values among the rows |
 | `keep a, b` | Leaves columns unchanged |

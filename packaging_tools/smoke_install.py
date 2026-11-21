@@ -209,13 +209,13 @@ def main(argv: list[str] | None = None) -> int:
     _run_build_bundle(python_src, wheels, dist, "0.1.0", priv)
     serve = work / "serve"
     (serve / "cli").mkdir(parents=True)
-    v1dir = serve / "0.1.0"
+    v1dir = serve / "v0.1.0"
     v1dir.mkdir()
     for f in dist.glob("decoy-0.1.0-linux-x86_64.tar.gz*"):
         shutil.copy(f, v1dir / f.name)
 
     with _serve(serve) as base:
-        _make_version_doc(dist, serve / "cli" / "version.json", f"{base}/0.1.0", "0.1.0", priv)
+        _make_version_doc(dist, serve / "cli" / "version.json", base, "0.1.0", priv)
         vurl = f"{base}/cli/version.json"
 
         # CASE 1: clean install + --version + run
@@ -260,11 +260,11 @@ def main(argv: list[str] | None = None) -> int:
         nonat = _make_no_native_bundle(work, dist, priv)
         nn_serve = work / "serve_nn"
         (nn_serve / "cli").mkdir(parents=True)
-        (nn_serve / "0.1.0").mkdir()
+        (nn_serve / "v0.1.0").mkdir()
         for f in nonat.glob("decoy-0.1.0-linux-x86_64.tar.gz*"):
-            shutil.copy(f, nn_serve / "0.1.0" / f.name)
+            shutil.copy(f, nn_serve / "v0.1.0" / f.name)
         with _serve(nn_serve) as nnbase:
-            _make_version_doc(nonat, nn_serve / "cli" / "version.json", f"{nnbase}/0.1.0", "0.1.0", priv)
+            _make_version_doc(nonat, nn_serve / "cli" / "version.json", nnbase, "0.1.0", priv)
             h4 = work / "h4"
             r = _install(install_sh, home=h4, bindir=work / "b4",
                          version_url=f"{nnbase}/cli/version.json", pub=pub)
@@ -279,7 +279,7 @@ def main(argv: list[str] | None = None) -> int:
         try:
             dist2 = work / "dist2"
             _run_build_bundle(python_src, wheels, dist2, "0.2.0", priv)
-            v2dir = serve / "0.2.0"
+            v2dir = serve / "v0.2.0"
             v2dir.mkdir()
             for f in dist2.glob("decoy-0.2.0-linux-x86_64.tar.gz*"):
                 shutil.copy(f, v2dir / f.name)
@@ -288,7 +288,7 @@ def main(argv: list[str] | None = None) -> int:
             # earlier HTTP cases). It exercises the identical verify + swap + rollback
             # path. The doc's artifact URLs are file:// paths to the served 0.2.0 dir.
             up_doc = serve / "cli" / "version-upgrade.json"
-            _make_version_doc(dist2, up_doc, f"file://{v2dir}", "0.2.0", priv)
+            _make_version_doc(dist2, up_doc, f"file://{serve}", "0.2.0", priv)
             _run_upgrade_cases(bindir, f"file://{up_doc}", pub, check)
         finally:
             _build_cli_wheel("0.1.0", wheels)  # restore the wheels dir

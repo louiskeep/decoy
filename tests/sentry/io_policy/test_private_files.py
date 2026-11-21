@@ -69,6 +69,9 @@ CHOKE_POINT = "_private_file.py"
 IMPLEMENTATION = frozenset({"_atomic.py", CHOKE_POINT})
 STAGED_FILE = "cli/io/_targets.py"
 DISPOSITIONS = frozenset({"public", "private", "staged", "read", "temp"})
+# A call to a private entry point or an added output primitive that G-ONE-OUTPUT-INVENTORY
+# registers (a row for `output_kind`); this sentry accepts and skips only such rows.
+ENTRY = "entry"
 
 PRIVATE_ENTRY = frozenset(
     {
@@ -92,6 +95,15 @@ _LEAF = frozenset(
 # Raw sinks matched by the dotted name a bound import resolves to.
 _RESOLVED = frozenset({"os.open", "os.fdopen", "sqlite3.connect", "duckdb.connect"})
 _RESOLVED_PREFIX = ("tempfile.",)
+# The write primitives G-ONE-OUTPUT-INVENTORY adds to the scan. They are passed to `collect()` as a
+# parameter and are not part of `_LEAF` or `_RESOLVED`, so P1 does not ask for a row at every
+# `mkdir` in the repository.
+OUTPUT_PRIMITIVES = frozenset(
+    {
+        "replace_symlink", "publish_local_targets", "mkdir", "os.mkdir", "os.makedirs",
+        "os.symlink", "_commit_vault",
+    }
+)  # fmt: skip
 _COPY = ("shutil.copy", "shutil.copy2", "shutil.copyfile", "shutil.copytree", "shutil.move")
 _MODE_CALLS = frozenset({"os.chmod", "os.fchmod", "os.lchmod", "chmod", "lchmod"})
 _MODE_LITERAL = re.compile(r"^[rwxabt+]+(:[a-z]+)?$")
@@ -178,6 +190,7 @@ class Row:
     reason: str
     via: str = ""
     exit: str = ""
+    output_kind: str = ""
 
     @property
     def key(self) -> str:
@@ -247,19 +260,20 @@ def _write_mode(call: ast.Call, *, builtin: bool) -> bool:
     )
 
 
-def classify(site: Site) -> str | None:
-    """The sink kind of a call, or None when the call is not watched."""
+def classify(site: Site, extra: frozenset[str] = frozenset()) -> str | None:
+    """The sink kind of a call, or None when the call is not watched. `extra` adds primitives
+    (dotted names for resolved imports, last names otherwise) to the watched set."""
     call = site.node
     if not isinstance(call, ast.Call):
         return None
     func = call.func
     resolved = site.name
     name = leaf(call, site.bound)  # the resolved member, so an import alias cannot hide a sink
-    if resolved and resolved in _MODE_CALLS | _RESOLVED:
+    if resolved and resolved in _MODE_CALLS | _RESOLVED | extra:
         return resolved
     if resolved and (resolved.startswith(_RESOLVED_PREFIX) or resolved in _COPY):
         return resolved
-    if name in PRIVATE_ENTRY or name in _LEAF:
+    if name in PRIVATE_ENTRY or name in _LEAF or name in extra:
         return name
     if name == "open":
         return "open" if _write_mode(call, builtin=isinstance(func, ast.Name)) else None
@@ -268,13 +282,14 @@ def classify(site: Site) -> str | None:
     return None
 
 
-def collect(files: Mapping[str, str]) -> list[Sink]:
-    """Every watched call in `files` (relative path to source), with one-based ordinals."""
+def collect(files: Mapping[str, str], extra: frozenset[str] = frozenset()) -> list[Sink]:
+    """Every watched call in `files` (relative path to source), with one-based ordinals.
+    `extra` adds primitives to the watched set without changing the module-level sets."""
     out: list[Sink] = []
     for rel in sorted(files):
         seen: dict[tuple[str, str], int] = {}
         for site in sites(ast.parse(files[rel]), with_calls=STAGE_CALLS):
-            kind = classify(site)
+            kind = classify(site, extra)
             if kind is None:
                 continue
             n = seen[(site.scope, kind)] = seen.get((site.scope, kind), 0) + 1
@@ -387,8 +402,20 @@ def _writes_stage_temp(sink: Sink) -> bool:
     return path is not None and is_staged_name(ast.Name(id=path), sink.site.with_names)
 
 
+def is_entry_row(row: Row) -> bool:
+    """A structurally valid `entry` row: its sink is a private entry point or an added output
+    primitive, and it has neither `via` nor `exit`. Its liveness is G-ONE-OUTPUT-INVENTORY's."""
+    return (
+        row.disposition == ENTRY
+        and row.sink in PRIVATE_ENTRY | OUTPUT_PRIMITIVES
+        and not row.via
+        and not row.exit
+    )
+
+
 def rule_p1(all_sinks: list[Sink], rows: list[Row]) -> list[str]:
     out: list[str] = []
+    rows = [r for r in rows if not is_entry_row(r)]
     live = _live(all_sinks)
     by_key: dict[str, Row] = {}
     for r in rows:
@@ -609,7 +636,8 @@ def test_the_census_is_62_watched_sinks(files: dict[str, str]) -> None:
     assert len([s for s in sinks if is_entry(s)]) == 28
     counts: dict[str, int] = {}
     for r in ROWS:
-        counts[r.disposition] = counts.get(r.disposition, 0) + 1
+        if r.disposition != ENTRY:
+            counts[r.disposition] = counts.get(r.disposition, 0) + 1
     assert counts == {"public": 20, "private": 4, "staged": 3, "temp": 2, "read": 5}
 
 

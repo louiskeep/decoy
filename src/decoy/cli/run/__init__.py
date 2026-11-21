@@ -390,6 +390,23 @@ def run(
             "--native, --duckdb-source and --out-dir."
         ),
     ),
+    sample: int = typer.Option(
+        None,
+        "--sample",
+        metavar="N",
+        hidden=True,  # shown once the run branch lands (SAMPLE SC2)
+        help=(
+            "Mask a small, whole-row-consistent sample of the sources into a private scratch "
+            "folder and write nothing else. N is 1 to 1000 head rows per root table."
+        ),
+    ),
+    sample_root: str = typer.Option(
+        None,
+        "--sample-root",
+        metavar="TABLE",
+        hidden=True,  # shown once the run branch lands (SAMPLE SC2)
+        help="With --sample: the table whose first N rows start the sample.",
+    ),
     otel_endpoint: str = typer.Option(
         None,
         "--otel-endpoint",
@@ -453,6 +470,8 @@ def run(
             no_subset=no_subset,
             otel_endpoint=otel_endpoint,
             rows=rows,
+            sample=sample,
+            sample_root=sample_root,
         )
     )
 

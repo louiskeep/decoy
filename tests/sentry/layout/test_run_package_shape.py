@@ -39,6 +39,7 @@ ORDER = (
     "_vault",
     "_result",
     "_execute",
+    "_sample",
     "_prepare",
     "_errors",
     "_render",

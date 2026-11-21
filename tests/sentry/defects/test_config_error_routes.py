@@ -31,7 +31,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-import typer.main
+from tests.command_tree import options
 from tests.sentry._ratchet import load_allowlist
 from typer.testing import CliRunner
 
@@ -422,21 +422,10 @@ _CONFIG_PARAMS = frozenset({"config", "pipeline_config"})
 
 
 def _config_taking_commands() -> set[str]:
-    """Space-joined paths of every leaf command with a config argument or option."""
-    found: set[str] = set()
-
-    def visit(cmd: object, prefix: tuple[str, ...]) -> None:
-        for name, sub in getattr(cmd, "commands", {}).items():
-            path = (*prefix, name)
-            subs = getattr(sub, "commands", None)
-            if subs:
-                visit(sub, path)
-            if any(p.name in _CONFIG_PARAMS for p in getattr(sub, "params", ())):
-                found.add(" ".join(path))
-        return None
-
-    visit(typer.main.get_command(app), ())
-    return found
+    """Space-joined paths of every command below the root with a config argument or option."""
+    return {
+        " ".join(o.cmd.path) for o in options() if o.cmd.path and o.param.name in _CONFIG_PARAMS
+    }
 
 
 def _covered(label: str) -> str:

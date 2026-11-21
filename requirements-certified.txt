@@ -2,16 +2,16 @@
 #
 # This is not the dev/test lock (see pyproject.toml's `dev`/`lint`/`vault`
 # extras). It is the exact 70-package third-party set that, together with
-# decoy-engine 0.28.1 and decoy-cli on CPython 3.10.20 (Linux/x86-64/glibc),
+# decoy-engine 0.28.2 and decoy-cli on CPython 3.10.20 (Linux/x86-64/glibc),
 # reproduces proof-stack fingerprint:
 #
-#   b61dcfd6431f18667d85921b8aa71a78ccc92ebff0dfd46c76b8e04c4bd17c02
+#   44aaa90fef509a80a7c3def099592c6c4326d47d8bbf79d9043171f8e3a61ba9
 #
-# (Was 00f45dee... on a 0.28.0 install that lacked pynacl, 701aa152... on engine 0.28.0 (69 pins), 789b1eae... on engine 0.27.0, dceac0cd... on engine 0.26.0, c80550ef... on engine 0.25.0, 620a48a5... on engine 0.24.0, 73acf493... on engine 0.23.0, d5898d1f... on engine 0.22.0, aa038ddd... on engine 0.21.0, 725f80a3... on engine 0.20.0, 795732eb... on engine 0.19.0, b643894d... on engine 0.18.0, a7b40d54... on engine 0.17.0,
+# (Was b61dcfd6... on engine 0.28.1, 00f45dee... on a 0.28.0 install that lacked pynacl, 701aa152... on engine 0.28.0 (69 pins), 789b1eae... on engine 0.27.0, dceac0cd... on engine 0.26.0, c80550ef... on engine 0.25.0, 620a48a5... on engine 0.24.0, 73acf493... on engine 0.23.0, d5898d1f... on engine 0.22.0, aa038ddd... on engine 0.21.0, 725f80a3... on engine 0.20.0, 795732eb... on engine 0.19.0, b643894d... on engine 0.18.0, a7b40d54... on engine 0.17.0,
 # f2a5910f... on engine 0.7.0 and e75c87e9... on engine 0.6.0; only the decoy-engine version
 # differs, so the pins were unchanged (63 pins) until engine 0.23.0. SCAN-ML M2 made
 # scikit-learn, lightgbm, joblib and threadpoolctl base dependencies of the engine, so
-# 0.23.0 adds those four pins (67 pins), 0.24.0 to 0.27.0 keep them, 0.28.0 adds joserfc and rfc8785 (69 pins), and 0.28.1 adds pynacl (70 pins).)
+# 0.23.0 adds those four pins (67 pins), 0.24.0 to 0.27.0 keep them, 0.28.0 adds joserfc and rfc8785 (69 pins), 0.28.1 adds pynacl (70 pins), and 0.28.2 keeps them.)
 #
 # That fingerprint is one of the certified rows in the engine's
 # `decoy_engine.quality.dp_provenance._CERTIFIED_STACKS` manifest. A real DP
@@ -22,7 +22,7 @@
 # decoy-cli, with NO dev tooling (no pytest, ruff, mypy, hypothesis, or
 # anything else CI needs but a shipped runtime never touches):
 #
-#   uv pip install decoy-engine==0.28.1 decoy-cli
+#   uv pip install decoy-engine==0.28.2 decoy-cli
 #   uv pip install -r requirements-certified.txt
 #
 # Adding, removing, or re-pinning ANY line here changes the fingerprint and

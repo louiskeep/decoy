@@ -30,7 +30,8 @@ import typer
 from decoy._atomic import AtomicWriteError, WriteMode, describe, write_local_target
 from decoy._config_file import ConfigFileError, load_pipeline, read_config_bytes
 from decoy.cli.exit_codes import EXIT_USAGE
-from decoy.cli.io._layout import RunLayout, shown_path, side_file_name
+from decoy.cli.io._layout import RunLayout, shown_path
+from decoy.cli.io._run_outputs import implicit_report_path
 from decoy.ui.output import OutputMode, OutputState, emit_error
 from decoy.ui.theme import warn
 
@@ -126,7 +127,7 @@ def report_file(
     raw = first.get("path") if isinstance(first, Mapping) else None
     if layout is None or not isinstance(raw, str):
         return None
-    return layout.place_target(raw).parent / side_file_name("post_scan", config_path.stem)
+    return implicit_report_path(layout.place_target(raw), config_path)
 
 
 def run_report(config: Mapping[str, Any], metrics: Mapping[str, Any]) -> dict | None:

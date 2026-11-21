@@ -68,7 +68,7 @@ def test_every_writable_kind_has_a_canary_or_a_pending_row() -> None:
 
 def test_pending_rows_are_unique_and_explained() -> None:
     kinds = [p.kind for p in PENDING_ALLOWLIST]
-    assert len(set(kinds)) == len(kinds) == 3
+    assert len(set(kinds)) == len(kinds) == 2
     assert all(len(p.reason.strip()) >= 15 for p in PENDING_ALLOWLIST)
 
 

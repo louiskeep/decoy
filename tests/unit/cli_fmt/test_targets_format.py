@@ -213,7 +213,7 @@ def test_entry_format_refuses_what_it_cannot_read(entry: dict) -> None:
 def test_every_declared_format_has_a_display_name() -> None:
     from decoy.cli import tokenize
 
-    assert set(tokenize._FORMAT_NAMES) == set(_targets._FORMATS)
+    assert set(tokenize._FORMAT_NAMES) == set(_targets.TARGET_SUFFIX)
 
 
 def test_a_private_fixed_width_write_is_refused(tmp_path: Path) -> None:

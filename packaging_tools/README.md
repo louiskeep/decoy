@@ -84,7 +84,7 @@ The native wheel matrix is already green and durable-signed by the engine repo's
    DECOY_RELEASE_KEY_FILE=release-key.pem \
    python -m packaging_tools.make_version_document \
        --version <ver> --min-supported <floor> \
-       --dist dist --base-url https://decoy.dev/cli/<ver> \
+       --dist dist --base-url <artifact base, no version> \
        --out version.json --sign
    ```
 

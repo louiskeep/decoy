@@ -28,12 +28,11 @@ sentries compare entries exactly.
 
 from __future__ import annotations
 
+import importlib.util
 import json
-import re
 import subprocess
 import sys
 from dataclasses import dataclass
-from datetime import date
 from pathlib import Path
 from typing import Any
 
@@ -48,7 +47,20 @@ MIN_REASON = 15
 PLACEHOLDERS = frozenset({"todo", "tbd", "fixme", "xxx", "n/a", "none"})
 # Numeric fields a baseline entry may carry as a count the ratchet lets only fall, each checked.
 CEILING_FIELDS = ("max", "count", "sites")
-DECISION = re.compile(r"^owner \d{4}-\d{2}-\d{2} .{10,}$")
+
+
+def _load_decision_check():
+    """The one dated-owner-decision grammar lives in shipped code; load it by path (stdlib only)."""
+    path = Path(__file__).resolve().parents[2] / "src/decoy/distribution/release_identity.py"
+    spec = importlib.util.spec_from_file_location("_release_identity_for_ratchet", path)
+    assert spec is not None and spec.loader is not None
+    mod = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = mod
+    spec.loader.exec_module(mod)
+    return mod.is_dated_owner_decision
+
+
+_decision_ok = _load_decision_check()
 _GLOB_CHARS = frozenset("*?[]")
 
 
@@ -86,17 +98,6 @@ def load_allowlist(sentry_id: str, root: Path | None = None) -> dict[str, dict[s
     registered, _ = parse_registry((base / REGISTRY).read_text(encoding="utf-8"))
     doc = json.loads((base / registered[sentry_id]).read_text(encoding="utf-8"))
     return dict(doc["entries"])
-
-
-def _decision_ok(decision: object) -> bool:
-    """A dated owner decision: the whole string matches and the date is a real calendar day."""
-    if not isinstance(decision, str) or not DECISION.fullmatch(decision):
-        return False
-    try:
-        date.fromisoformat(decision.split(" ", 2)[1])
-    except ValueError:
-        return False
-    return True
 
 
 def parse_approvals(text: str) -> tuple[dict[str, dict[str, str]], list[str]]:

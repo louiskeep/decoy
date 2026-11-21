@@ -7,26 +7,21 @@ store a second, differently built manifest (ML3-drift).
 
 from __future__ import annotations
 
-import ast
-from pathlib import Path
-
-SRC = Path(__file__).resolve().parents[3] / "src" / "decoy"
-
-
-def _callers() -> list[str]:
-    found: list[str] = []
-    for path in sorted(SRC.rglob("*.py")):
-        rel = path.relative_to(SRC).as_posix()
-        if rel.startswith("cli/library/"):
-            continue
-        for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
-            if isinstance(node, ast.Call):
-                func = node.func
-                name = func.attr if isinstance(func, ast.Attribute) else getattr(func, "id", None)
-                if name == "store_evidence":
-                    found.append(rel)
-    return found
+from tests.sentry.io_policy._store_callers import callers, scan
 
 
 def test_store_evidence_has_exactly_one_caller() -> None:
-    assert _callers() == ["cli/run/_evidence.py"]
+    assert callers("store_evidence") == ["cli/run/_evidence.py"]
+
+
+def test_the_scanner_sees_an_aliased_caller() -> None:
+    """Mutation check: the same call under an alias, or through the module, is still a caller."""
+    aliased = (
+        "from decoy.cli.library import store_evidence as s\ndef f():\n    s({}, pipeline=None)\n"
+    )
+    through_module = "from decoy.cli import library\ndef f():\n    library.store_evidence({})\n"
+    inside = "def f():\n    from decoy.cli.library import store_evidence as s\n    s()\n"
+    assert scan(aliased, "store_evidence") == 1
+    assert scan(through_module, "store_evidence") == 1
+    assert scan(inside, "store_evidence") == 1
+    assert scan("def f():\n    other()\n", "store_evidence") == 0

@@ -1,6 +1,9 @@
 """One walker over the live Click command tree, shared by the surface sentries.
 
-``walk()`` returns every command path with its kind and hidden flag, read from the real
+``commands()`` and ``options()`` are the one parameter-aware traversal: every command (the root
+included, path ``()``) with its Click object and inherited hidden flag, and every option or argument
+with each spelling. Every other walker below is built on them, so a fix to root handling, hidden
+ancestry or aliases lands once. ``walk()`` returns every command path with its kind and hidden flag, read from the real
 ``decoy.__main__.app``. ``visible_paths()`` drops hidden commands (and anything under a hidden
 group); ``registry()`` is the two-level view the docs-consistency sentry uses, hidden included;
 ``json_leaf_commands()`` names the visible leaf commands that take ``--json``.
@@ -8,7 +11,7 @@ group); ``registry()`` is the two-level view the docs-consistency sentry uses, h
 
 from __future__ import annotations
 
-from typing import NamedTuple
+from typing import Any, NamedTuple
 
 import typer.main
 
@@ -21,18 +24,52 @@ class Node(NamedTuple):
     hidden: bool  # the command itself, or any group above it, is hidden
 
 
-def walk() -> list[Node]:
-    nodes: list[Node] = []
+class Cmd(NamedTuple):
+    path: tuple[str, ...]  # () is the root
+    command: Any  # the live Click command
+    is_group: bool
+    hidden: bool  # the command itself, or any group above it, is hidden
 
-    def visit(cmd: object, prefix: tuple[str, ...], hidden_above: bool) -> None:
+
+class Opt(NamedTuple):
+    cmd: Cmd
+    param: Any  # the live Click parameter
+    spellings: tuple[str, ...]  # every flag spelling; the parameter name for an argument
+    hidden: bool  # the parameter itself is hidden (see cmd.hidden for the command)
+
+
+def commands(root: Any = None) -> list[Cmd]:
+    """Every command in the tree, root first, parents before children. A command registered
+    under two names appears once per path."""
+    found: list[Cmd] = []
+
+    def visit(cmd: Any, path: tuple[str, ...], hidden_above: bool) -> None:
+        hidden = hidden_above or bool(getattr(cmd, "hidden", False))
+        found.append(Cmd(path, cmd, bool(getattr(cmd, "commands", None)), hidden))
         for name, sub in getattr(cmd, "commands", {}).items():
-            hidden = hidden_above or bool(getattr(sub, "hidden", False))
-            is_group = bool(getattr(sub, "commands", None))
-            nodes.append(Node((*prefix, name), is_group, hidden))
-            visit(sub, (*prefix, name), hidden)
+            visit(sub, (*path, name), hidden)
 
-    visit(typer.main.get_command(app), (), False)
-    return nodes
+    visit(typer.main.get_command(app) if root is None else root, (), False)
+    return found
+
+
+def options(root: Any = None) -> list[Opt]:
+    """Every parameter of every command, root and group parameters included."""
+    return [
+        Opt(
+            c,
+            p,
+            tuple(getattr(p, "opts", None) or ()) + tuple(getattr(p, "secondary_opts", None) or ())
+            or (str(p.name),),
+            bool(getattr(p, "hidden", False)),
+        )
+        for c in commands(root)
+        for p in getattr(c.command, "params", ())
+    ]
+
+
+def walk() -> list[Node]:
+    return [Node(c.path, c.is_group, c.hidden) for c in commands() if c.path]
 
 
 def visible_paths() -> set[tuple[str, ...]]:
@@ -54,14 +91,8 @@ def registry() -> tuple[set[str], dict[str, set[str]]]:
 
 def json_leaf_commands() -> set[str]:
     """Space-joined paths of the visible leaf commands that take ``--json``."""
-    root = typer.main.get_command(app)
-    found: set[str] = set()
-    for path in visible_paths():
-        cmd = root
-        for part in path:
-            cmd = cmd.commands[part]  # type: ignore[attr-defined]
-        if not getattr(cmd, "commands", None) and any(
-            "--json" in getattr(p, "opts", []) for p in cmd.params
-        ):
-            found.add(" ".join(path))
-    return found
+    return {
+        " ".join(o.cmd.path)
+        for o in options()
+        if o.cmd.path and not o.cmd.hidden and not o.cmd.is_group and "--json" in o.spellings
+    }

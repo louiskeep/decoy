@@ -210,6 +210,52 @@ def refuse_preview(ctx: RunContext) -> None:
         raise UsageRefusal(_PREVIEW_QUARANTINE)
 
 
+_SAMPLE_REFUSED = (
+    ("--rows", lambda c: c.rows is not None),
+    ("--chunked", lambda c: c.chunked),
+    ("--chunk-size", lambda c: c.chunk_size is not None),
+    ("--vault", lambda c: c.vault is not None),
+    ("--evidence-out", lambda c: c.evidence_out is not None),
+    ("--notify", lambda c: bool(c.notify)),
+    ("--duckdb-source", lambda c: bool(c.duckdb_source)),
+    ("--out-dir", lambda c: c.out_dir is not None),
+)
+
+
+def refuse_sample(ctx: RunContext) -> None:
+    """Exit 1 before any engine call when `--sample` cannot run: a size outside the engine's
+    range, a flag that writes elsewhere, `--sample-root` without `--sample` or beside a
+    `subset:` block, or a generated parent of a masked child. Names flags and tables only."""
+    from decoy_engine.subset import SAMPLE_ROWS_MAX, SAMPLE_ROWS_MIN, sample_refusal_edge
+
+    if ctx.sample is None:
+        raise UsageRefusal("--sample-root needs --sample.")
+    if not SAMPLE_ROWS_MIN <= ctx.sample <= SAMPLE_ROWS_MAX:
+        raise UsageRefusal(
+            f"--sample takes a whole number from {SAMPLE_ROWS_MIN} to {SAMPLE_ROWS_MAX}."
+        )
+    for flag, given in _SAMPLE_REFUSED:
+        if given(ctx):
+            raise UsageRefusal(f"--sample cannot run with {flag}.")
+    raw = ctx.raw_cfg
+    if ctx.sample_root is not None and not ctx.no_subset and (raw or {}).get("subset") is not None:
+        raise UsageRefusal(
+            "--sample-root cannot run with a `subset:` block. Add --no-subset to ignore the block."
+        )
+    edge = None
+    if isinstance(raw, dict):
+        # A config the engine cannot read is left to the gate, which names the fault.
+        with contextlib.suppress(Exception):
+            edge = sample_refusal_edge(raw)
+    if edge is not None:
+        parent, parent_cols, child, child_cols = edge
+        raise UsageRefusal(
+            "--sample is refused: a sampled generated parent would orphan the masked child. "
+            f"Generated parent {parent} ({', '.join(parent_cols)}), masked child {child} "
+            f"({', '.join(child_cols)})."
+        )
+
+
 def _guard_mask_secret_ref(raw: object) -> None:
     """DE-02 secret-disclosure ROOT guard: validate the RAW YAML `mask_secret_ref` BEFORE
     PipelineConfig.model_validate(raw). A wrong-type value would raise a Pydantic

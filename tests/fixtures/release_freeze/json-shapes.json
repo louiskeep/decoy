@@ -284,6 +284,8 @@
       "/overall_score": "number",
       "/pairwise/joints": "[]",
       "/pairwise/score": "null",
+      "/policy/intended_columns": "[]",
+      "/policy/intended_joints": "[]",
       "/policy/mode": "string",
       "/policy/schema_version": "string",
       "/policy/verdict": "string",

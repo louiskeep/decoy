@@ -1,0 +1,18 @@
+{
+ "sentry_id": "old-org-refs",
+ "created_in": "CLI-REL-S0id",
+ "entries": {
+  "docs/plans/2026-10-28-b1-cli-tokenize-completion-remote.md": {
+   "reason": "archived plan, record of the branch at the time",
+   "count": 1
+  },
+  "docs/records/2026-11-10-cli-qa-generation-distribution-models.md": {
+   "reason": "dated QA record, kept as written",
+   "count": 1
+  },
+  "docs/release/smoke-log.md": {
+   "reason": "dated smoke runs recorded with their run URLs; GitHub redirects them",
+   "count": 18
+  }
+ }
+}

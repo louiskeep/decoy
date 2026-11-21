@@ -7,8 +7,8 @@ from rich.text import Text
 
 from decoy._atomic import AtomicWriteError, WriteMode, describe, write_local_target
 from decoy._version import __version__ as _cli_version
-from decoy.cli.io import LayoutError, find_project, project_relative_posix
-from decoy.cli.run._context import EvidenceWriteRefusal, RunContext
+from decoy.cli.io import LayoutError, find_project
+from decoy.cli.run._context import EvidenceWriteRefusal, RunContext, library_choice, library_label
 from decoy.ui.output import OutputMode
 from decoy.ui.theme import warn
 
@@ -24,14 +24,6 @@ def _marked_project_root(config: Path) -> Path | None:
     except LayoutError:
         return None
     return None if found.implicit else found.root
-
-
-def _pipeline_label(config: Path) -> str:
-    """The `pipeline` label on the run's records: what `decoy library list --pipeline` matches."""
-    try:
-        return project_relative_posix(find_project(config.resolve().parent, None).root, config)
-    except LayoutError:
-        return config.resolve().as_posix()
 
 
 def write_evidence(ctx: RunContext) -> None:
@@ -80,14 +72,23 @@ def write_evidence(ctx: RunContext) -> None:
             ctx.state.console.print(_success("Evidence:"), str(ctx.evidence_out))
     from decoy.cli.library import store_evidence
 
-    ctx.library_outcome = store_evidence(
-        manifest,
-        pipeline=ctx.config,
-        label=_pipeline_label(ctx.config),
-        invocation_id=ctx.invocation_id,
-        enabled=store,
+    choice = library_choice(ctx)
+    if choice.code is not None:
+        return  # the root fault was warned about once, where it was found
+    label = library_label(ctx.config)
+    ctx.library_outcome = (
+        store_evidence(
+            manifest,
+            root=choice.root,
+            label=label,
+            invocation_id=ctx.invocation_id,
+            enabled=store,
+        )
+        if isinstance(label, str)
+        else label
     )
-    if ctx.library_outcome.status == "failed" and ctx.state.mode is not OutputMode.quiet:
+    # Not gated on --quiet: a warning about a lost record is not chatter.
+    if ctx.library_outcome.status == "failed":
         ctx.state.err_console.print(
             warn("warning:"),
             Text(
@@ -100,4 +101,5 @@ def write_evidence(ctx: RunContext) -> None:
 def _record_skipped(ctx: RunContext) -> None:
     from decoy.cli.library import StoreOutcome
 
-    ctx.library_outcome = StoreOutcome("skipped")
+    if ctx.library_outcome is None or ctx.library_outcome.status != "failed":
+        ctx.library_outcome = StoreOutcome("skipped")

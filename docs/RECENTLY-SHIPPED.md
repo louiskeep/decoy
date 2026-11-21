@@ -11,6 +11,19 @@ the roadmap's current + next-up, and reconcile any trailing plan STATUS lines.
 
 Status: record
 
+## 2026-11-21: merges of the day
+
+- **Engine #747 (STAMP-IMPORT, `94ec3cb6`):** the release stamp no longer deletes the `UNRELEASED` import from a reason module, so a new unreleased code on a stamped module no longer fails at import. A sentry checks every reason module.
+- **Engine #741 (row 79, F09 E1, `152de220`):** vaults are written as v3 with an authenticated, versioned header; v2 vaults open read-only. An older engine cannot open a v3 vault.
+- **CLI #365 (row 63, SAMPLE SC1, `1c63fe74`):** the sample run writes into a staged folder and refuses unsafe output names before it writes.
+- **Engine #745 (COLUMN-SHAPE-RULE E0, `5bc0227e`):** `bucket_perturb` never writes an unparsed date cell through unmasked.
+- **CLI #368 (`0da58741`):** roadmap rows PRE-SCAN-RUN and HANDLER-ROW-COUNT.
+- **Engine #684 (row 82, F07 E3b) not merged:** held as a draft until 1.1, because row 82 is a Later row.
+
+## 2026-11-21: engine 0.28.2 repin (CLI)
+
+- **CLI**: the engine repin to 0.28.2 (tag `v0.28.2`, engine #740, `2bee0c523`). `requirements-certified.txt` keeps its 70 pins; fingerprint is now `44aaa90f...`, a certified row in the engine.
+
 ## 2026-11-21: roadmap catch-up for merges of 2026-11-13 to 2026-11-20
 
 - Row 24zx (MAC-WHEEL-RUNNERS) is closed. Its only slice, E5 of the V1 fix batch, is engine #651 (2026-11-20): a PR that does not touch the native companion no longer waits for a macOS runner. The owner swapped the three required `companion-wheel-macos` checks for `companion-wheel-macos-ok` on 2026-11-20. Row 24zo (CI-SELECT-GAP) shares slice E5 (`engine-gate/verdict` status and the `verify` check) but stays open until the owner adds that status to the required checks. Earlier slices of the same batch: E1 #649 (row 24zp) and E2 #648 (row 24zu).
@@ -75,7 +88,7 @@ git logs). Dates are the UTC merge dates from GitHub.
 
 ## 2026-11-19
 
-Engine 0.28.0 (tag `v0.28.0`, engine #698, `7dc9e30bd`) was cut at 00:45 UTC. The CLI pins 0.28.1 (CLI #327). Engine entries below 0.28.0 marked "after the tag" are in no release yet.
+Engine 0.28.0 (tag `v0.28.0`, engine #698, `7dc9e30bd`) was cut at 00:45 UTC. The CLI pins 0.28.2 (CLI #327, then the 0.28.2 repin). Engine entries below 0.28.0 marked "after the tag" are in no release yet.
 
 - **Engine** (`fa656aa23`, engine #700; `ce542ffaa`, engine #692, 2026-11-18): OUTPUT-METADATA-LEAK slices E0 and E1 (roadmap row OUTPUT-METADATA-LEAK, partly merged). E0 is the canary matrix across every output route. E1: published Parquet files carry only an allow-list of key/value metadata, through new `output_schema` and `output_table`. Extension-type columns are written as their storage type, except `arrow.uuid`, `arrow.bool8`, `arrow.json` and the pandas period and interval types. E2 (carrier sites) and C1 (CLI) are left.
 - **Engine** (`cc0149152`, engine #707): PROFILE-SAMPLE-LABELS slice E0 (partly merged). `ProfileSource.sample_frame(n)` returns n rows unless the source ended. Cloud CSV scans now profile the requested 10,000 rows, so their null counts, distinct counts and profile hash can change.

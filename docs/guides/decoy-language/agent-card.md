@@ -60,7 +60,7 @@ Strategies: `redact`, `hash`, `fpe`, `tokenize`, `faker(<provider>)`, `date_shif
 `grouped_series`, `windowed_date`. `keep a, b` leaves columns unchanged.
 
 Options used most: `fpe(charset: digits)` (also `alpha`, `alphanum`, `ALPHANUM`; `validate_luhn: true`
-for card numbers), `date_shift(min_days: -30, max_days: 30)`, `truncate(length: 3)`,
+for card numbers), `date_shift(min_days: -30, max_days: 30, date_format: "%Y-%m-%d")`, `truncate(length: 3)`,
 `geo_generalize(type: zip, ...)`. `redact`, `hash` and `shuffle` need none.
 
 Common providers for `faker`: `person_name`, `person_first_name`, `person_last_name`,
@@ -75,7 +75,7 @@ pipeline {
   secret ref("env:DECOY_MASK_KEY")
   unconfigured columns error
 
-  let shift = date_shift(min_days: -30, max_days: 30) in patient_dates
+  let shift = date_shift(min_days: -30, max_days: 30, date_format: "%Y-%m-%d") in patient_dates
 
   mask patients from csv("patients.csv", header: true, delimiter: "|") to csv("out/patients.csv") {
     where status != 'TEST' and age >= 18

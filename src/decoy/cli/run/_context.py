@@ -18,13 +18,16 @@ from decoy import _native_gate, _resources
 from decoy.cli.gate import GateFinding
 from decoy.cli.io import (
     DuckDBSourceError,
+    LayoutError,
     OutputPlacement,
     PipelineRef,
     RunLayout,
     parse_flags,
+    pipeline_label,
     resolve_path,
 )
 from decoy.ui.output import OutputState
+from decoy.ui.theme import warn
 
 # Rows per chunk when `--chunk-size` is not given. The option has no default of its own so a
 # preview can tell whether it was passed.
@@ -81,6 +84,21 @@ class NotifyOn(str, Enum):
     always = "always"
 
 
+def library_label(config: Path) -> str | Any:
+    """The record label of this run (`decoy.cli.io.pipeline_label`, the resolver `library list`
+    uses), or a failed `StoreOutcome` carrying the layout code: a record is lost, the run is not."""
+    from decoy_engine.reasons import warning
+
+    from decoy.cli.library import StoreOutcome
+
+    try:
+        return pipeline_label(config)
+    except LayoutError as exc:
+        return StoreOutcome(
+            "failed", code=str(getattr(exc, "code", None) or warning.LIBRARY_WRITE_FAILED)
+        )
+
+
 @dataclass(slots=True)
 class RunContext:
     """Options, then the state each phase sets for the next; see the module docstring."""
@@ -119,6 +137,8 @@ class RunContext:
     no_subset: bool
     otel_endpoint: str
     rows: int | None
+    sample: int | None
+    sample_root: str | None
     state: OutputState
 
     # Set by `_flow.execute` from `pipeline`, or from the project's only pipeline.
@@ -143,6 +163,9 @@ class RunContext:
     _report_flags: bool = field(init=False)
     _run_started_at: datetime = field(init=False)
     started: float = field(init=False)
+    # True from the moment `_execute.execute` hands the pipeline to the engine. A failure before
+    # it is a refusal (nothing ran); one after it is a run that failed, whatever its category.
+    execution_started: bool = field(init=False, default=False)
     # One id per command: the run folder name, the evidence `run_id` and later records share it.
     invocation_id: str = field(init=False)
     # Where this run writes; opened by `_execute` once the gate has passed.
@@ -158,6 +181,12 @@ class RunContext:
     _collector: Any = field(init=False, default=None)
     _execution: Any = field(init=False, default=None)
 
+    # `--sample`: the project found for the pipeline, the library holding its scratch, and the
+    # private scratch folder every sample output lands in (`_sample`).
+    _sample_project: Any = field(init=False, default=None)
+    _library: Any = field(init=False, default=None)
+    _scratch: Path | None = field(init=False, default=None)
+
     # Temp dir holding Parquet snapshots acquired from --duckdb-source inputs;
     # created only when the flag is used, torn down in the run's finally.
     _duckdb_tmpdir: Path | None = field(init=False, default=None)
@@ -170,6 +199,8 @@ class RunContext:
     _ev_engine_warnings: tuple = field(init=False, default=())
     # The library's `StoreOutcome` for this run's evidence record; None until stored or skipped.
     library_outcome: Any = field(init=False, default=None)
+    # The library root this run resolved, once (`library_choice`); None until first asked.
+    _library: Any = field(init=False, default=None)
     # Row count for the --notify event; unconditional (unlike _ev_row_counts,
     # which only fills for --evidence-out). None for --chunked runs (no
     # ExecutionResult to count).
@@ -255,6 +286,53 @@ def output_placement(ctx: RunContext) -> OutputPlacement:
         except DuckDBSourceError:
             continue
         databases.append(resolve_path(flag.db_path, ctx.config.parent))
+    library = library_choice(ctx).root
     if ctx.out_dir is not None:
-        return OutputPlacement.fixed(ctx.out_dir, typed, ctx.chunked, tuple(databases))
-    return OutputPlacement(typed=typed, chunked=ctx.chunked, inputs=tuple(databases))
+        return OutputPlacement.fixed(ctx.out_dir, typed, ctx.chunked, tuple(databases), library)
+    return OutputPlacement(
+        typed=typed, chunked=ctx.chunked, inputs=tuple(databases), library=library
+    )
+
+
+@dataclass(frozen=True)
+class LibraryChoice:
+    """Where this run's records go: `root` is the resolved library root, or None when records
+    are off or the project finder refused (the gate reports that). `code` is set when the root
+    could not be resolved: the run delivers, stores nothing and warns once."""
+
+    root: Path | None = None
+    code: str | None = None
+
+
+def library_choice(ctx: RunContext) -> LibraryChoice:
+    """The library root of this run, resolved once and kept on the context.
+
+    The gate, the evidence store and the result store all read this one answer, so a root the
+    gate did not check is never written. A root that cannot be resolved (`library_path_unsafe`)
+    is warned about here, once, and recorded as the run's failed library outcome; the run's exit
+    code is its own (plan 4.17).
+    """
+    if ctx._library is None:
+        ctx._library = _resolve_library(ctx)
+    return ctx._library
+
+
+def _resolve_library(ctx: RunContext) -> LibraryChoice:
+    if ctx.no_library or ctx.rows is not None:
+        return LibraryChoice()
+    from decoy.cli.library import LibraryError, StoreOutcome, resolve_root
+
+    try:
+        found = resolve_root(pipeline=Path(ctx.config))
+    except LayoutError:
+        return LibraryChoice()
+    except LibraryError as exc:
+        ctx.library_outcome = StoreOutcome("failed", code=exc.code)
+        # Not gated on --quiet: a warning about a lost record is not chatter.
+        ctx.state.err_console.print(
+            warn("warning:"),
+            f"{exc.code}: the run's records were not stored in the library",
+            markup=False,
+        )
+        return LibraryChoice(code=exc.code)
+    return LibraryChoice(root=found.path) if found.records else LibraryChoice()

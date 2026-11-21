@@ -41,9 +41,11 @@ from decoy.cli._sources import (
 from decoy.cli.extras import UnsupportedCloudEndpointError
 from decoy.cli.io import (
     OUTPUT_PATH_COLLISION,
+    OutputPlacement,
     RunLayout,
     prepared_sources,
     resolved_output_collisions,
+    run_outputs,
 )
 from decoy.cli.io._targets import claimed_format, format_for_path
 from decoy.cli.run import (
@@ -403,7 +405,7 @@ def _refuse_output_collisions(config_dict: dict, layout: RunLayout) -> None:
     quarantine = layout.place_quarantine(config_dict)
     if quarantine is not None:
         placed["quarantine"] = {"enabled": True, "output_path": quarantine}
-    clash = resolved_output_collisions(placed, None)
+    clash = resolved_output_collisions(run_outputs(placed, OutputPlacement(), Path(), None))
     if clash is not None:
         raise OUTPUT_PATH_COLLISION.error(first=clash[0], second=clash[1])
 

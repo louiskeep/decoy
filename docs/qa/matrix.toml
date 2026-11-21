@@ -95,7 +95,7 @@ expect = "exit 1 before any run"
 # mixed in" means passthrough columns beside a hash column. `decoy run` rejects `strategy:
 # tokenize` itself (exit 3, `tokenize_requires_vault`; the `decoy tokenize` verb serves it), so
 # the "redact with vault column" mix is a `vault: true` column on `redact` with a namespace. Only
-# the `--vault` flag is refused under `--chunked` (src/decoy/cli/run/_prepare.py:455), not the
+# the `--vault` flag is refused under `--chunked` (src/decoy/cli/run/_prepare.py:501), not the
 # marker, so `--chunked` with this mix is a valid run.
 [[matrix.constraints]]
 id = "mask-keyed-needs-secret"
@@ -109,7 +109,7 @@ expect = "exit 1, code keyed_strategy_requires_secret, before any data is read"
 id = "mask-vault-flag-needs-vault-column"
 kind = "refused"
 when = { vault = "--vault", strategy_mix = ["hash only", "fpe and date_shift", "faker and categorical", "bucketize and truncate", "text_redact on free text", "passthrough mixed in"] }
-doc = "src/decoy/cli/run/_prepare.py:485"
+doc = "src/decoy/cli/run/_prepare.py:526"
 cites = ["vault_columns_declared"]
 expect = "exit 1, a reason that says no column declares vault: true"
 

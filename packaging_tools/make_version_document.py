@@ -19,6 +19,7 @@ import time
 from pathlib import Path
 
 from decoy.distribution import manifest as manifest_mod
+from decoy.distribution import release_identity
 from decoy.distribution import targets as targets_mod
 from decoy.distribution import version_document as vd
 
@@ -31,9 +32,8 @@ def _read_sha256(sha_path: Path) -> str:
 def collect_artifacts(dist_dir: Path, *, version: str, base_url: str) -> dict[str, dict[str, str]]:
     """One {url, sha256, sig} per target that has a built tarball in ``dist_dir``.
 
-    ``base_url`` is the directory the bundles are published under; the per-file names
-    follow the assembler's convention (``decoy-<version>-<target>.tar.gz`` + ``.sig``)."""
-    base = base_url.rstrip("/")
+    ``base_url`` is the artifact base (no version); URLs come from
+    `release_identity.artifact_url`: ``<base>/v<version>/decoy-<version>-<target>.tar.gz`` + ``.sig``."""
     artifacts: dict[str, dict[str, str]] = {}
     for target in targets_mod.SUPPORTED_TARGETS:
         name = f"decoy-{version}-{target}.tar.gz"
@@ -49,9 +49,9 @@ def collect_artifacts(dist_dir: Path, *, version: str, base_url: str) -> dict[st
         if actual != declared:
             raise ValueError(f"{name}: sidecar sha256 {declared} != actual {actual}")
         artifacts[target] = {
-            "url": f"{base}/{name}",
+            "url": release_identity.artifact_url(version, name, base_url),
             "sha256": actual,
-            "sig": f"{base}/{name}.sig",
+            "sig": release_identity.artifact_url(version, name + ".sig", base_url),
         }
     return artifacts
 
@@ -61,7 +61,7 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--version", required=True, help="the latest release version")
     ap.add_argument("--min-supported", required=True)
     ap.add_argument("--dist", required=True, help="dir holding the built tarballs + sidecars")
-    ap.add_argument("--base-url", required=True, help="published base URL for the bundles")
+    ap.add_argument("--base-url", required=True, help="artifact base URL, without the v<version> directory")
     ap.add_argument("--out", required=True, help="output path for version.json")
     ap.add_argument("--serial", type=int, default=None,
                     help="monotonic document serial (default: current unix time, always rising)")
