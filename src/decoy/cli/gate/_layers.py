@@ -90,6 +90,18 @@ def _plan_error_fields(error: Exception) -> tuple[str, str, str | None]:
     return code, message, (translated.extra if translated is not None else None)
 
 
+def _plan_error_hint(code: str) -> str | None:
+    """A value-free next step for a plan-compile refusal a user can fix in the config file."""
+    from decoy_engine import reasons
+
+    if code == reasons.plan.DATE_SHIFT_REQUIRES_DATE_FORMAT:
+        return (
+            "set provider_config.date_format on the date_shift column to the strptime format "
+            'of its dates, for example "%Y-%m-%d".'
+        )
+    return None
+
+
 def _loader_finding(problem: ConfigProblem) -> GateFinding:
     return GateFinding("config", "error", problem.code, problem.text, hint=problem.hint)
 
@@ -133,8 +145,7 @@ def _schema_findings(refusal: PipelineConfigError) -> list[GateFinding]:
     schema refusal in one shape.
     """
     return [
-        GateFinding("config", "error", p.code, p.text, p.location or None)
-        for p in refusal.problems
+        GateFinding("config", "error", p.code, p.text, p.location or None) for p in refusal.problems
     ]
 
 
@@ -204,7 +215,13 @@ def _run_config_base(
     except PlanCompileError as exc:
         err_code, message, extra = _plan_error_fields(exc)
         finding = GateFinding(
-            "config", "error", err_code, message, logical_path=exc.path or None, extra=extra
+            "config",
+            "error",
+            err_code,
+            message,
+            logical_path=exc.path or None,
+            extra=extra,
+            hint=_plan_error_hint(err_code),
         )
         return None, (), [finding]
 
@@ -309,6 +326,7 @@ def _run_compile_layer(
                 location=exc.path or None,
                 logical_path=exc.path or None,
                 extra=extra,
+                hint=_plan_error_hint(err_code),
             )
         )
         return findings

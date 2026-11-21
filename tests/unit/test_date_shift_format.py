@@ -2,9 +2,10 @@
 
 Every date_shift in a shipped template carries `provider_config.date_format`.
 `decoy init` writes one only when the engine reports one format fits every
-value. On engine 0.28.1 (no completeness flag) init deliberately emits
-date_shift with no format, as before, so the engine guesses it; the engine
-release that refuses a format-less date_shift also reports the flag.
+value (`format_pattern_complete`, reported since engine 0.28.2, which also
+refuses a format-less date_shift at plan compile). The cells that stub a match
+without the flag cover only the fallback for an older engine; a real 0.28.2
+scan always carries the flag.
 """
 
 from __future__ import annotations
@@ -126,7 +127,7 @@ def test_date_redact_review_is_value_free_and_emits():
 
 
 def test_engine_without_flag_keeps_origin_main_output_for_dd_mm_slash_data():
-    """0.28.1: DD/MM slash data is detected us_date with %m/%d/%Y. Writing that
+    """Stub without the flag (older engine): DD/MM slash data is detected us_date with %m/%d/%Y. Writing that
     format fails 603/1000 rows; today's init writes date_shift with no
     date_format and the engine guesses. That output must not change."""
     inf = _infer_strategy_for_column(_Stats("d", [_Match("us_date", "%m/%d/%Y")]))
@@ -158,8 +159,8 @@ def test_ambiguous_date_column_keeps_format():
 
 def test_emit_allows_date_shift_without_format_only_for_absent_flag_path():
     """Guard (L2): the writer does not raise on a format-less date_shift. That
-    shape is produced only when the engine reports no completeness flag
-    (0.28.x), and the engine release that refuses it also reports the flag."""
+    shape is produced only for a stub with no completeness flag. Engine 0.28.2
+    reports the flag, so a real scan never reaches it."""
     no_flag = _infer_strategy_for_column(_Stats("d", [_Match("iso_date", "%Y-%m-%d")]))
     assert no_flag.date_format is None
     assert "date_format" not in yaml.safe_load(emit_column_yaml("d", no_flag))[0]["provider_config"]

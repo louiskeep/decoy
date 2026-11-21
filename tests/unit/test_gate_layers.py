@@ -177,6 +177,24 @@ def test_compile_layer_missing_extra_keeps_the_extra_name(
     ]
 
 
+def test_compile_layer_date_format_refusal_carries_its_hint(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Mutation: drop `hint=` where the compile layer builds its plan-error finding."""
+    import decoy_engine.plan as engine_plan
+
+    def _refuse(*_a: Any, **_k: Any) -> Any:
+        raise engine_plan.PlanCompileError(
+            "date_shift_requires_date_format", "tables.t.columns.c", "refused"
+        )
+
+    monkeypatch.setattr(engine_plan, "compile_plan", _refuse)
+    result = run_gate(_config(tmp_path))
+    (finding,) = [f for f in result.findings if f.layer == "compile"]
+    assert finding.code == "date_shift_requires_date_format"
+    assert finding.hint is not None and "date_format" in finding.hint
+
+
 # -- target-overwrite advisory lives in the config layer -----------------------
 
 
