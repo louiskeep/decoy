@@ -21,9 +21,11 @@ pipeline {
   }
 
   generate claims rows 3000 to csv("./claims.csv") {
-    claim_id      = sequence(1, step: 1)
-    visit_id      <- visits.visit_id
-    amount_billed = faker(random_int, faker_kwargs: {min: 50, max: 5000})
-    claim_status  = categorical({Approved: 0.7, Pending: 0.2, Denied: 0.1})
+    claim_id       = sequence(1, step: 1)
+    visit_id       <- visits.visit_id
+    amount_billed  = distribution(uniform, low: 50, high: 5000, output_type: "decimal(2)")
+    diagnosis_code = lookup(codeset: icd10)
+    procedure_code = lookup(codeset: hcpcs)
+    claim_status   = categorical({Approved: 0.7, Pending: 0.2, Denied: 0.1})
   }
 }

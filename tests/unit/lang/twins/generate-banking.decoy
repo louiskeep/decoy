@@ -21,10 +21,11 @@ pipeline {
   }
 
   generate transactions rows 10000 to csv("./transactions.csv") {
-    transaction_id = sequence(1, step: 1)
-    account_id     <- accounts.account_id
-    posted_on      = faker(date_this_year)
-    amount         = faker(random_int, faker_kwargs: {min: 1, max: 4000})
-    channel        = categorical({Card: 0.5, Transfer: 0.2, ATM: 0.1, "Direct debit": 0.15, Cheque: 0.05})
+    transaction_id    = sequence(1, step: 1)
+    account_id        <- accounts.account_id
+    posted_on         = faker(date_this_year)
+    amount            = distribution(uniform, low: 1, high: 4000, output_type: "decimal(2)")
+    merchant_category = lookup(codeset: mcc)
+    channel           = categorical({Card: 0.5, Transfer: 0.2, ATM: 0.1, "Direct debit": 0.15, Cheque: 0.05})
   }
 }

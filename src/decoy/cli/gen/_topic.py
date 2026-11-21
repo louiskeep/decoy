@@ -67,6 +67,7 @@ def type_entries() -> list[dict[str, Any]]:
             "type": type_,
             "required": list(spec.required),
             "optional": list(spec.optional),
+            "one_of": list(spec.one_of),
             "required_when": {
                 selector: {value: list(keys) for value, keys in by_value.items()}
                 for selector, by_value in spec.required_when.items()
@@ -82,6 +83,8 @@ def type_lines() -> list[str]:
     for entry in type_entries():
         lines += [f"  {entry['type']}", f"      required: {_names(tuple(entry['required']))}"]
         lines.append(f"      optional: {_names(tuple(entry['optional']))}")
+        if entry["one_of"]:
+            lines.append(f"      exactly one of: {_names(tuple(entry['one_of']))}")
         for selector, by_value in entry["required_when"].items():
             for value, keys in by_value.items():
                 lines.append(f"      when {selector} = {value}: requires {_names(tuple(keys))}")
@@ -97,7 +100,11 @@ def common_options() -> tuple[str, ...]:
 
 def generation_body() -> str:
     """The whole topic: prose, the catalog blocks, then the options every type accepts."""
-    tail = f"\nEvery type also accepts: {_names(common_options())}."
+    tail = (
+        f"\nEvery type also accepts: {_names(common_options())}."
+        "\nValue lists: `decoy list faker-types` (faker_type) and"
+        " `decoy list codesets` (lookup codeset)."
+    )
     return _HEAD + "\n".join(type_lines()) + "\n" + tail
 
 

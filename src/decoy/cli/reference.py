@@ -6,16 +6,17 @@ verbs over the engine registries:
 
   decoy list KIND         KIND in {strategies, providers, checksums,
                           validators, templates, disguises,
-                          generate-types, faker-types}
+                          generate-types, faker-types, codesets}
   decoy show KIND [NAME]  KIND in {strategy, provider, template} (NAME required)
                           plus `show schema` (no NAME, `--output` accepted)
 
 Both verbs are thin dispatch tables onto the existing per-registry readers
 (cockpit's `_strategies_list`/`_providers_list`/`_checksums_list`/
-`_validators_list`/`_strategies_inspect`/`_providers_inspect`, templates'
-`_list`/`_show`, and the `schema` body). The only new reader is `list
-disguises`, which enumerates the engine's regulatory Disguise bundles via the
-public `decoy_engine.disguises.load_disguises` export.
+`_validators_list`/`_generate_types_list`/`_faker_types_list`/`_codesets_list`/
+`_strategies_inspect`/`_providers_inspect`, templates' `_list`/`_show`, and the
+`schema` body). `list disguises` is defined here: it enumerates the engine's
+regulatory Disguise bundles via the public `decoy_engine.disguises.load_disguises`
+export.
 
 The dispatched readers' option defaults are `typer.OptionInfo`, not bools, so
 the dispatcher always calls them with CONCRETE `json_`/`quiet`/`verbose` values.
@@ -31,6 +32,7 @@ import typer
 
 from decoy.cli.cockpit import (
     _checksums_list,
+    _codesets_list,
     _faker_types_list,
     _generate_types_list,
     _providers_inspect,
@@ -66,9 +68,7 @@ def _disguises_list(json_: bool, quiet: bool, verbose: bool) -> None:
     from decoy_engine.disguises import load_disguises
 
     bundles = sorted(load_disguises(), key=lambda d: d.id)
-    entries = [
-        {"id": d.id, "name": d.name, "rules": len(d.field_rules)} for d in bundles
-    ]
+    entries = [{"id": d.id, "name": d.name, "rules": len(d.field_rules)} for d in bundles]
 
     if state.mode is OutputMode.json:
         emit_json(
@@ -116,18 +116,19 @@ _LIST_READERS: dict[str, Callable[[bool, bool, bool], None]] = {
     "disguises": _disguises_list,
     "generate-types": _generate_types_list,
     "faker-types": _faker_types_list,
+    "codesets": _codesets_list,
 }
 
 _LIST_KINDS = tuple(_LIST_READERS)
 
-_LIST_EPILOG = """\
+_LIST_EPILOG = f"""\
 Examples:
 
   decoy list strategies
     Every registered mask strategy with its class.
 
   decoy list providers --json
-    Every generation provider as JSON.
+    Every registered provider (mask `provider:` and generate `type: provider` columns), as JSON.
 
   decoy list disguises
     The regulatory Disguise bundles (hipaa, gdpr, ...) with rule counts.
@@ -138,8 +139,10 @@ Examples:
   decoy list faker-types
     Every value a generate column's `faker_type` accepts.
 
-Kinds: strategies, providers, checksums, validators, templates, disguises,
-generate-types, faker-types.
+  decoy list codesets
+    Every shipped code set a `lookup` column or the `code_set` strategy accepts.
+
+Kinds: {", ".join(_LIST_KINDS)}.
 
 See also: decoy show, decoy explain.
 """
@@ -149,7 +152,7 @@ def list_(
     kind: str = typer.Argument(
         ...,
         metavar="KIND",
-        help="What to list: strategies|providers|checksums|validators|templates|disguises|generate-types|faker-types.",
+        help=f"What to list: {'|'.join(_LIST_KINDS)}.",
     ),
     json_: bool = typer.Option(
         False, "--json", help="Emit the listing as a JSON envelope instead of a table."
@@ -161,12 +164,7 @@ def list_(
         False, "--verbose", "-v", help="Enable debug-level CLI logs on stderr."
     ),
 ) -> None:
-    """List the contents of one engine registry.
-
-    One verb over the live registries: strategies, providers, checksums,
-    validators, templates, regulatory disguise bundles, and the generate column types
-    and faker types.
-    """
+    """List the contents of one engine registry (full text set below from the kinds table)."""
     reader = _LIST_READERS.get(kind)
     if reader is None:
         _reject_kind(
@@ -179,6 +177,13 @@ def list_(
         )
     # Concrete bools: the readers' own defaults are typer.OptionInfo.
     reader(json_, quiet, verbose)
+
+
+# The kinds in the command help come from the reader table, not a second literal list.
+list_.__doc__ = (
+    "List the contents of one engine registry.\n\n"
+    f"    One verb over the live registries. Kinds: {', '.join(_LIST_KINDS)}.\n    "
+)
 
 
 # ---------------------------------------------------------------------------
@@ -209,6 +214,7 @@ _SINGULAR_TO_PLURAL = {
     "validator": "validators",
     "generate-type": "generate-types",
     "faker-type": "faker-types",
+    "codeset": "codesets",
 }
 _PLURAL_TO_SINGULAR = {v: k for k, v in _SINGULAR_TO_PLURAL.items()}
 
@@ -251,9 +257,7 @@ def show(
         help="(schema only) Write the schema to this file instead of stdout.",
         show_default=False,
     ),
-    json_: bool = typer.Option(
-        False, "--json", help="Emit a JSON record instead of human output."
-    ),
+    json_: bool = typer.Option(False, "--json", help="Emit a JSON record instead of human output."),
     quiet: bool = typer.Option(
         False, "--quiet", "-q", help="Suppress stdout. Errors still go to stderr."
     ),
@@ -350,9 +354,7 @@ def _reject_kind(
         # A plural typed at `show`, e.g. `show strategies` -> `show strategy NAME`.
         singular = _PLURAL_TO_SINGULAR[kind]
         suggestion = (
-            f"decoy show {singular} NAME"
-            if singular in _SHOW_DETAIL
-            else f"decoy show {singular}"
+            f"decoy show {singular} NAME" if singular in _SHOW_DETAIL else f"decoy show {singular}"
         )
     else:
         close = get_close_matches(kind, valid, n=1, cutoff=0.6)
@@ -380,12 +382,8 @@ def _reject_kind(
     else:
         state.err_console.print(error("error:"), f"unknown kind {kind!r}.")
         if suggestion is not None:
-            state.err_console.print(
-                " ", hint("hint:"), "did you mean", code(suggestion) + "?"
-            )
-        state.err_console.print(
-            " ", hint("hint:"), f"valid kinds for {verb}:", valid_str + "."
-        )
+            state.err_console.print(" ", hint("hint:"), "did you mean", code(suggestion) + "?")
+        state.err_console.print(" ", hint("hint:"), f"valid kinds for {verb}:", valid_str + ".")
     raise typer.Exit(code=EXIT_USAGE)
 
 

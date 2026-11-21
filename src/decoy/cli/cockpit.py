@@ -191,7 +191,7 @@ def _providers_list(
         False, "--verbose", "-v", help="Enable debug-level CLI logs on stderr."
     ),
 ) -> None:
-    """List every registered generation provider in the engine."""
+    """List every registered provider, used by mask `provider:` columns and generate `type: provider` columns."""
     state = setup_output(json_, quiet, verbose)
 
     # Read the REAL engine registry at runtime.
@@ -243,6 +243,14 @@ def _providers_list(
         hint("Tip:"),
         "inspect one with",
         code("decoy show provider <name>") + ".",
+        "Providers serve mask",
+        code("provider:"),
+        "columns and generate",
+        code("type: provider"),
+        "columns. For",
+        code("type: faker"),
+        "use",
+        code("decoy list faker-types") + ".",
     )
 
 
@@ -279,9 +287,11 @@ def _generate_types_list(json_: bool, quiet: bool, verbose: bool) -> None:
     state.console.print(accent(f"Generate column types ({len(entries)}):"))
     table = make_table("Type", "Required", "Optional")
     for e in entries:
-        table.add_row(
-            e["type"], ", ".join(e["required"]) or "none", ", ".join(e["optional"]) or "none"
-        )
+        required = ", ".join(e["required"])
+        if e["one_of"]:
+            group = "one of: " + ", ".join(e["one_of"])
+            required = f"{required}; {group}" if required else group
+        table.add_row(e["type"], required or "none", ", ".join(e["optional"]) or "none")
     state.console.print(table)
     state.console.print()
     state.console.print("Every type also accepts:", ", ".join(common) or "none")
@@ -324,6 +334,47 @@ def _faker_types_list(json_: bool, quiet: bool, verbose: bool) -> None:
         "use one as",
         code("faker_type:"),
         "on a generate column.",
+    )
+
+
+def _codesets_list(json_: bool, quiet: bool, verbose: bool) -> None:
+    """List every shipped code set a `lookup` column or the `code_set` strategy accepts."""
+    state = setup_output(json_, quiet, verbose)
+
+    from decoy_engine import code_set_catalog
+
+    catalog = code_set_catalog()
+
+    if state.mode is OutputMode.json:
+        emit_json(
+            state,
+            {
+                "command": "list codesets",
+                "status": "ok",
+                "count": len(catalog),
+                "codesets": [{"name": n, "description": d} for n, d in catalog.items()],
+            },
+        )
+        return
+
+    if state.mode is OutputMode.quiet:
+        return
+
+    state.console.print(accent(f"Code sets ({len(catalog)}):"))
+    table = make_table("Name", "Description")
+    for name, description in catalog.items():
+        table.add_row(name, description)
+    state.console.print(table)
+    state.console.print()
+    state.console.print(
+        hint("Tip:"),
+        "use one as",
+        code("codeset:"),
+        "on a",
+        code("type: lookup"),
+        "generate column, or as the mask",
+        code("code_set"),
+        "strategy.",
     )
 
 

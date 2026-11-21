@@ -6,6 +6,7 @@
 #
 #   decoy run pipeline.yaml
 #
+# Premiums and claim amounts show the `distribution` type with two-decimal output.
 # Edit `row_count`, the categories and the weights to match the shape you need.
 
 version: 2
@@ -55,9 +56,11 @@ tables:
         type: faker
         faker_type: date_this_decade
       - name: annual_premium
-        type: faker
-        faker_type: random_int
-        faker_kwargs: {min: 150, max: 4000}
+        type: distribution
+        family: uniform
+        low: 150
+        high: 4000
+        output_type: decimal(2)
 
   - name: claims
     row_count: 600
@@ -74,9 +77,11 @@ tables:
         type: faker
         faker_type: date_this_year
       - name: claim_amount
-        type: faker
-        faker_type: random_int
-        faker_kwargs: {min: 100, max: 25000}
+        type: distribution
+        family: uniform
+        low: 100
+        high: 25000
+        output_type: decimal(2)
       - name: claim_status
         type: categorical
         categories: ["Open", "Paid", "Denied", "Withdrawn"]

@@ -6,6 +6,7 @@
 #
 #   decoy run pipeline.yaml
 #
+# Claims show `lookup` (ICD-10 and HCPCS code sets) and a `distribution` money column.
 # Edit `row_count`, the categories and the weights to match the shape you need.
 
 version: 2
@@ -74,9 +75,17 @@ tables:
         reference_table: visits
         reference_column: visit_id
       - name: amount_billed
-        type: faker
-        faker_type: random_int
-        faker_kwargs: {min: 50, max: 5000}
+        type: distribution
+        family: uniform
+        low: 50
+        high: 5000
+        output_type: decimal(2)
+      - name: diagnosis_code
+        type: lookup
+        codeset: icd10
+      - name: procedure_code
+        type: lookup
+        codeset: hcpcs
       - name: claim_status
         type: categorical
         categories: ["Approved", "Pending", "Denied"]

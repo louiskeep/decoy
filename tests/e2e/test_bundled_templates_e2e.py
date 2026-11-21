@@ -231,7 +231,8 @@ def test_generate_template_validates_runs_and_links_keys(name: str, tmp_path: Pa
     config_path = tmp_path / f"{name}.yaml"
     config_path.write_text(yaml.safe_dump(cfg), encoding="utf-8")
 
-    validate = runner.invoke(app, ["validate", "config", str(config_path)])
+    # The whole gate, the command a user runs, not only the config check.
+    validate = runner.invoke(app, ["validate", str(config_path)])
     assert validate.exit_code == 0, f"{name}: validate failed:\n{validate.output}"
     run = runner.invoke(app, ["run", str(config_path)])
     assert run.exit_code == 0, f"{name}: run failed:\n{run.output}"
@@ -253,7 +254,7 @@ def test_generate_template_validates_runs_and_links_keys(name: str, tmp_path: Pa
 
 @pytest.mark.parametrize("name", _generate_names())
 def test_generate_template_uses_only_catalog_types(name: str):
-    from decoy_engine import list_generate_faker_providers
+    from decoy_engine import code_set_catalog, list_generate_faker_providers
     from decoy_engine.config import generate_option_catalog
 
     catalog = generate_option_catalog()
@@ -268,6 +269,11 @@ def test_generate_template_uses_only_catalog_types(name: str):
             assert set(spec.required) <= set(col), f"{name}.{col['name']}: missing required"
             if col["type"] == "faker":
                 assert col["faker_type"] in fakers, f"{name}.{col['name']}: {col['faker_type']}"
+            if spec.one_of:
+                given = [k for k in spec.one_of if k in col]
+                assert len(given) == 1, f"{name}.{col['name']}: give exactly one of {spec.one_of}"
+            if "codeset" in col:
+                assert col["codeset"] in code_set_catalog(), f"{name}.{col['name']}: codeset"
 
 
 def test_generate_templates_carry_no_real_looking_seeds():
@@ -288,3 +294,46 @@ def test_industry_template_key_columns_are_all_references(name: str):
             if owners:
                 assert col["type"] == "reference", f"{name}.{table['name']}.{col['name']}"
                 assert col["reference_table"] == owners[0]
+
+
+def _generated_frames(name: str, tmp_path: Path) -> tuple[dict, dict[str, pd.DataFrame]]:
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    cfg = yaml.safe_load(get_template(name).body)
+    for table in cfg["tables"]:
+        table["row_count"] = SMALL_ROWS
+    for target in cfg["targets"].values():
+        target["path"] = str(tmp_path / Path(target["path"]).name)
+    config_path = tmp_path / f"{name}.yaml"
+    config_path.write_text(yaml.safe_dump(cfg), encoding="utf-8")
+    run = runner.invoke(app, ["run", str(config_path)])
+    assert run.exit_code == 0, f"{name}: run failed:\n{run.output}"
+    frames = {n: pd.read_csv(Path(t["path"]), dtype=str) for n, t in cfg["targets"].items()}
+    return cfg, frames
+
+
+def _all_match(series: pd.Series, pattern: str) -> bool:
+    import re
+
+    return bool(len(series)) and all(
+        isinstance(v, str) and re.fullmatch(pattern, v) for v in series
+    )
+
+
+def test_industry_templates_apply_lookup_codesets(tmp_path: Path):
+    _, health = _generated_frames("generate-healthcare", tmp_path / "h")
+    assert _all_match(health["claims"]["diagnosis_code"], r"[A-Z][0-9][0-9A-Z].*")
+    assert _all_match(health["claims"]["procedure_code"], r"[A-Z][0-9]{4}")
+    _, bank = _generated_frames("generate-banking", tmp_path / "b")
+    assert _all_match(bank["transactions"]["merchant_category"], r"[0-9]{4}")
+
+
+@pytest.mark.parametrize("name", _generate_names())
+def test_industry_template_money_columns_are_two_decimal_in_range(name: str, tmp_path: Path):
+    cfg, frames = _generated_frames(name, tmp_path)
+    for table in cfg["tables"]:
+        for col in table["generate_columns"]:
+            if col["type"] == "distribution":
+                assert col.get("output_type") == "decimal(2)", f"{name}.{col['name']}"
+                values = frames[table["name"]][col["name"]]
+                assert _all_match(values, r"-?[0-9]+\.[0-9]{2}")
+                assert all(col["low"] <= float(v) <= col["high"] for v in values)

@@ -16,14 +16,14 @@ pipeline {
     policyholder_id <- policyholders.policyholder_id
     product         = categorical({Auto: 0.35, Home: 0.3, Life: 0.15, Renters: 0.15, Travel: 0.05})
     start_date      = faker(date_this_decade)
-    annual_premium  = faker(random_int, faker_kwargs: {min: 150, max: 4000})
+    annual_premium  = distribution(uniform, low: 150, high: 4000, output_type: "decimal(2)")
   }
 
   generate claims rows 600 to csv("./claims.csv") {
     claim_id     = sequence(1, step: 1)
     policy_id    <- policies.policy_id
     filed_on     = faker(date_this_year)
-    claim_amount = faker(random_int, faker_kwargs: {min: 100, max: 25000})
+    claim_amount = distribution(uniform, low: 100, high: 25000, output_type: "decimal(2)")
     claim_status = categorical({Open: 0.25, Paid: 0.55, Denied: 0.15, Withdrawn: 0.05})
   }
 }

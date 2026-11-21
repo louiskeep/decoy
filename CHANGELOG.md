@@ -11,6 +11,8 @@ version numbers follow the [versioning policy](docs/release/versioning.md).
 
 ### Added
 
+- **`decoy list codesets` (GEN-CATALOG GC3, row 24s).** It lists every shipped code set with its description, read from the engine, for `type: lookup` with `codeset:` and the mask `code_set` strategy. `decoy list generate-types` and `decoy explain generation` now show the `one_of` group (`lookup` takes exactly one of `file` and `codeset`), and `decoy explain generation` points at `decoy list faker-types` and `decoy list codesets`. The kind names in `decoy list --help` come from one table. `decoy list providers` now says it lists the providers used by mask `provider:` columns and generate `type: provider` columns. The healthcare and banking starter templates add code set columns (ICD-10, HCPCS, MCC), and the money columns in the healthcare, banking, insurance, retail and HR templates use `distribution` with two-decimal output.
+
 - **`decoy run --sample N` and `--sample-root TABLE`, hidden until the sample run lands (SAMPLE SC1).** The options check their input and refuse unsafe combinations (eight flags, a bad root table, a generated parent above a masked child) before anything is read. A sample run writes only into a staged scratch folder that is deleted on failure, and refuses unsafe output names before it writes. A request that passes every check stops with `--sample is not available yet` until SC2.
 
 ### Changed

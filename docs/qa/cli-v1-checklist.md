@@ -379,7 +379,7 @@ null shape and the generation catalog. Engine sections 12 and 13 own the generat
 | GEN-11 | `decoy run gen-basic --rows 20`; `decoy run <mask config> --rows 20` with a mask table in the config; `decoy run gen-basic --rows 20 --vault v.bin` | 0, 1, 1 | Prints rows and writes nothing; both others are refused | 24o | |
 | GEN-12 | `decoy run gen-basic --mode generate --fidelity` (no mask table) | 1 | Refused before any engine call | 24o | |
 | GEN-13 | `decoy run gen-basic --mode generate` on a run that triggers the fidelity warning; then `decoy run gen-basic --mode generate --json` | 0, 0 | The warning reaches stdout and `--json` | 24o | |
-| GEN-14 | The catalog command; `decoy list templates` | tbd | **Not built.** Every generate type, option and provider from the engine registries; one starter template each for healthcare, banking, insurance, retail, telecom and HR | 24s | |
+| GEN-14 | `decoy list generate-types`; `decoy list faker-types`; `decoy list codesets`; `decoy list providers`; `decoy list templates` | 0, 0, 0, 0, 0 | The first four read the engine registries; the templates list shows one starter template each for healthcare, banking, insurance, retail, telecom and HR | 24s | |
 | GEN-15 | `decoy run gen-basic --mode generate` with `DECOY_MASTER_KEY` set; `decoy run gen-basic --mode generate` without it | 0, 0 | With a key, `global_settings.seed` does not change generated tables; without, the seeded path is used and the summary says which | 24o | |
 | GEN-16 | `decoy init gen-x --preset generate --json` | 0 | The written YAML carries no stale `mode:` text and validates | 24e | |
 

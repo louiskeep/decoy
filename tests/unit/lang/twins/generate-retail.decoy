@@ -24,6 +24,6 @@ pipeline {
     order_id         <- orders.order_id
     product_category = categorical({Apparel: 0.25, Home: 0.2, Electronics: 0.15, Beauty: 0.15, Grocery: 0.25})
     quantity         = faker(random_int, faker_kwargs: {min: 1, max: 5})
-    unit_price       = faker(random_int, faker_kwargs: {min: 3, max: 400})
+    unit_price       = distribution(uniform, low: 3, high: 400, output_type: "decimal(2)")
   }
 }

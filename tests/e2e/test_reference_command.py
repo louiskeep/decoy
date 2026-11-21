@@ -210,9 +210,7 @@ def test_list_singular_cross_suggests_plural():
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.parametrize(
-    "old", ["strategies", "providers", "checksums", "validators", "templates"]
-)
+@pytest.mark.parametrize("old", ["strategies", "providers", "checksums", "validators", "templates"])
 def test_old_subapps_removed(old):
     result = runner.invoke(app, [old, "list"])
     assert result.exit_code != 0
@@ -302,3 +300,102 @@ def test_list_singular_generate_type_cross_suggests_plural():
     result = runner.invoke(app, ["list", "generate-type"])
     assert result.exit_code == EXIT_USAGE
     assert "decoy list generate-types" in result.stderr
+
+
+# ---------------------------------------------------------------------------
+# list codesets, derived kind help, one_of, provider wording -- GEN-CATALOG GC3
+# ---------------------------------------------------------------------------
+
+
+def test_list_codesets_json_equals_the_engine_catalog():
+    from decoy_engine import code_set_catalog
+
+    catalog = code_set_catalog()
+    result = runner.invoke(app, ["list", "codesets", "--json"])
+    assert result.exit_code == 0, result.output
+    payload = _json.loads(result.stdout)
+    assert payload["command"] == "list codesets"
+    assert payload["status"] == "ok"
+    assert payload["count"] == len(catalog)
+    assert [c["name"] for c in payload["codesets"]] == list(catalog)
+    for entry in payload["codesets"]:
+        assert entry["description"] == catalog[entry["name"]]
+
+
+def test_list_codesets_human_output_names_icd10_and_the_lookup_tip():
+    result = runner.invoke(app, ["list", "codesets"])
+    assert result.exit_code == 0, result.output
+    assert "icd10" in result.stdout
+    assert "codeset:" in result.stdout
+
+
+def test_list_singular_codeset_cross_suggests_plural():
+    result = runner.invoke(app, ["list", "codeset"])
+    assert result.exit_code == EXIT_USAGE
+    assert "decoy list codesets" in result.stderr
+
+
+def _list_command():
+    import typer.main
+
+    group = typer.main.get_command(app)
+    return group.commands["list"]  # type: ignore[attr-defined]
+
+
+def _kinds_after(text: str, marker: str) -> set[str]:
+    import re
+
+    tail = " ".join(text.split()).split(marker, 1)[1]
+    return {k for k in re.split(r"[|,.\s]+", tail) if k}
+
+
+def test_every_list_kind_inventory_equals_the_reader_table():
+    from decoy.cli.reference import _LIST_READERS
+
+    kinds = set(_LIST_READERS)
+    cmd = _list_command()
+    arg = next(p for p in cmd.params if p.name == "kind")
+    assert _kinds_after(arg.help, "What to list:") == kinds
+    epilog = " ".join((cmd.epilog or "").split())
+    kinds_line = epilog.split("Kinds:", 1)[1].split("See also", 1)[0]
+    assert _kinds_after("x " + kinds_line, "x") == kinds
+    doc = " ".join((cmd.help or "").split())
+    for kind in kinds:
+        assert kind in doc, f"{kind} missing from the list command help"
+    result = runner.invoke(app, ["list", "nope"])
+    for kind in kinds:
+        assert kind in result.stderr
+
+
+def test_list_generate_types_carries_one_of_from_the_engine():
+    from decoy_engine.config import generate_option_catalog
+
+    catalog = generate_option_catalog()
+    result = runner.invoke(app, ["list", "generate-types", "--json"])
+    payload = _json.loads(result.stdout)
+    for entry in payload["generate_types"]:
+        assert entry["one_of"] == list(catalog[entry["type"]].one_of)
+    lookup = next(e for e in payload["generate_types"] if e["type"] == "lookup")
+    assert lookup["one_of"] == ["file", "codeset"]
+    human = runner.invoke(app, ["list", "generate-types"])
+    assert "one of: file, codeset" in " ".join(human.stdout.split())
+    explain = runner.invoke(app, ["explain", "generation"])
+    assert "exactly one of: file, codeset" in explain.stdout
+
+
+def test_explain_generation_points_at_the_value_lists():
+    result = runner.invoke(app, ["explain", "generation"])
+    assert "decoy list faker-types" in result.stdout
+    assert "decoy list codesets" in result.stdout
+
+
+def test_providers_wording_does_not_say_generation_provider():
+    helped = runner.invoke(app, ["list", "--help"])
+    assert "generation provider" not in " ".join(helped.stdout.split())
+    listed = runner.invoke(app, ["list", "providers"])
+    assert "generation provider" not in " ".join(listed.stdout.split())
+    # The registry serves mask `provider:` columns and generate `type: provider` columns.
+    for text in (" ".join(helped.stdout.split()), " ".join(listed.stdout.split())):
+        assert "provider:" in text and "type: provider" in text
+    tip = " ".join(listed.stdout.split())
+    assert "faker-types" in tip and "type: faker" in tip

@@ -6,6 +6,7 @@
 #
 #   decoy run pipeline.yaml
 #
+# Transactions show `lookup` (the MCC code set) and a `distribution` money column.
 # Edit `row_count`, the categories and the weights to match the shape you need.
 
 version: 2
@@ -77,9 +78,14 @@ tables:
         type: faker
         faker_type: date_this_year
       - name: amount
-        type: faker
-        faker_type: random_int
-        faker_kwargs: {min: 1, max: 4000}
+        type: distribution
+        family: uniform
+        low: 1
+        high: 4000
+        output_type: decimal(2)
+      - name: merchant_category
+        type: lookup
+        codeset: mcc
       - name: channel
         type: categorical
         categories: ["Card", "Transfer", "ATM", "Direct debit", "Cheque"]

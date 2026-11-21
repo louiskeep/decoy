@@ -23,6 +23,6 @@ pipeline {
     payroll_id  = sequence(1, step: 1)
     employee_id <- employees.employee_id
     pay_date    = faker(date_this_year)
-    gross_pay   = faker(random_int, faker_kwargs: {min: 1500, max: 12000})
+    gross_pay   = distribution(uniform, low: 1500, high: 12000, output_type: "decimal(2)")
   }
 }
